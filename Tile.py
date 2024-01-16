@@ -1,5 +1,6 @@
 
 from math import cos, floor, pi, sin, sqrt
+import math
 
 ORIENTATION = [[sqrt(3), sqrt(3) / 2, 0, 3.0/2], 
                [sqrt(3) / 3, -1 / 3, 0, 2.0/3, 0.5]]
@@ -23,7 +24,7 @@ class Px:
     def y(self,v): self._y = v
 
     def into_hx(self, size: int):
-        pt = Px(self._x / size.x, self._y / size.y)
+        pt = Px(self._x / size, self._y / size)
         q = ORIENTATION[1][0] * pt.x + ORIENTATION[1][1] * pt.y
         r = ORIENTATION[1][2] * pt.x + ORIENTATION[1][3] * pt.y
         return self.hex_round(q,r)
@@ -65,9 +66,9 @@ class Hx:
     def s(self): return -self.q-self.r
 
     def into_px(self, size) -> Px:
-        x = (ORIENTATION[0][0] * self._q + ORIENTATION[0][1] * self._r) * size.x
-        y = (ORIENTATION[0][2] * self._q + ORIENTATION[0][3] * self._r) * size.y
-        return Px(x,round(y - size.y/4))
+        x = (ORIENTATION[0][0] * self._q + ORIENTATION[0][1] * self._r) * size
+        y = (ORIENTATION[0][2] * self._q + ORIENTATION[0][3] * self._r) * size
+        return Px(round(x),round(y - size/4))
 
 class Tile:
     def __init__(self, size: int):
@@ -75,7 +76,7 @@ class Tile:
 
     def hx_offset(self, corner: int) -> Px:
         angle = 2 * pi * (0.5+corner) / 6
-        return Px(round(self._size * cos(angle)), round(self._size * sin(angle)))
+        return Px(math.ceil(self._size * cos(angle)), math.ceil(self._size * sin(angle)))
 
     def into_polygon(self):
         corners = []

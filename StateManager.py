@@ -1,10 +1,8 @@
 from logging import debug
 import pyglet
 
-class StateManager(pyglet.event.EventDispatcher):
-    KEY_STATE = 'key_state'
+class StateManager(pyglet.window.EventDispatcher):
     CONSOLE = 'console'
-    WINDOW = 'window'
     ACTOR = 'actor'
     SCENE = 'scene'
     UI = 'ui'
@@ -12,7 +10,9 @@ class StateManager(pyglet.event.EventDispatcher):
     STATE_PLAY          = 1 << 0
     STATE_UI_CONSOLE    = 1 << 1
 
-    def __init__(self):
+    def __init__(self, window, key_state_manager):
+        self.window = window
+        self.key_state_manager = key_state_manager
         self.state = None
         self.them = {}
 
@@ -20,19 +20,17 @@ class StateManager(pyglet.event.EventDispatcher):
         curr = self.state
         debug('args({},{})'.format(sym,mod))
         if(curr & StateManager.STATE_PLAY):
-            if(sym == pyglet.window.key.QUOTELEFT):
+            if(sym == pyglet.window.key.QUOTELEFT and self.state & ~StateManager.STATE_UI_CONSOLE):
+                self.window.push_handlers(self.them[StateManager.CONSOLE])
+                self.state &= ~StateManager.STATE_PLAY
                 self.state |= StateManager.STATE_UI_CONSOLE
         if(curr & StateManager.STATE_UI_CONSOLE):
             if(sym == pyglet.window.key.ESCAPE): 
+                self.window.pop_handlers(self.them[StateManager.CONSOLE])
                 self.state &= ~StateManager.STATE_UI_CONSOLE
 
-        turnoff = curr ^ self.state & ~self.state
-        if(turnoff & StateManager.STATE_UI_CONSOLE):
-            self.push_handlers()
-
-
-    def begin(self,window):
-        window.push_handlers(self,self.them[StateManager.KEY_STATE],self.them[StateManager.ACTOR])
+    def begin(self):
+        self.window.push_handlers(self, self.key_state_manager, self.them[StateManager.ACTOR])
         self.state = self.STATE_PLAY
 
     def register(self,id,it):

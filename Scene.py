@@ -1,12 +1,11 @@
-from logging import debug
-from math import floor, sqrt
-import random
+from math import sqrt
+import math
 import pyglet
 
 from Tile import Hx, Px
 
-TILE_SIZE=24
-TILE_PX=Px(TILE_SIZE,TILE_SIZE)
+TILE_SIZE=18
+TILE_WIDTH=math.ceil(sqrt(3)*TILE_SIZE)
 R=10
 
 class Scene(pyglet.event.EventDispatcher):
@@ -20,18 +19,18 @@ class Scene(pyglet.event.EventDispatcher):
 
 
     def highlight_at(self,px):
-        hx = px.into_hx(TILE_PX)
+        hx = px.into_hx(TILE_SIZE)
         if self.actor_at == hx: return 
         last = self.tiles.get(self.actor_at,None)
         if not last is None: 
-            last.scale = 0.5
+            last.scale = (TILE_WIDTH/self.textures["green"].width)
             last.group = self.groups[1]
 
         curr = self.tiles.get(hx,None)
         if curr is None: return
         self.dispatch_event('on_discover',hx)
         self.actor_at = hx
-        curr.scale = 0.6
+        curr.scale *= 1.2
         curr.group = self.groups[2]
 
     def draw(self):
@@ -51,8 +50,8 @@ class Scene(pyglet.event.EventDispatcher):
                 #                              color=tuple(random.choices(list(range(150,255)), k=3)),
                 #                              batch=self._batch)
                 tile = pyglet.sprite.Sprite(img=self.textures['green'],batch=self.batch,group=self.groups[1])
-                tile.scale = 0.5
-                px = hx.into_px(TILE_PX)
+                tile.scale = TILE_WIDTH/self.textures["green"].width
+                px = hx.into_px(TILE_SIZE)
                 tile.x = px.x
                 tile.y = px.y+TILE_SIZE
                 self.tiles[hx]=tile

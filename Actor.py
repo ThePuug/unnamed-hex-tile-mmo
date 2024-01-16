@@ -5,7 +5,7 @@ from logging import debug
 
 from Tile import Px
 
-SPEED = 60
+SPEED = 90
 SPEED_ANG_X = SPEED*math.cos(60*math.pi/180) #30
 SPEED_ANG_Y = SPEED*math.sin(60*math.pi/180) #52
 

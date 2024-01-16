@@ -21,13 +21,9 @@ logging.basicConfig(stream=sys.stderr,
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-state_manager = StateManager()
-
-key_state_handler = pyglet.window.key.KeyStateHandler()
-state_manager.register(StateManager.KEY_STATE, key_state_handler)
-
 window = pyglet.window.Window(fullscreen=False)
-state_manager.register(StateManager.WINDOW, window)
+key_state_handler = pyglet.window.key.KeyStateHandler()
+state_manager = StateManager(window,key_state_handler)
 
 batch = pyglet.graphics.Batch()
 groups = [pyglet.graphics.Group(order = 0),
@@ -79,9 +75,10 @@ state_manager.register(StateManager.CONSOLE,console)
 ui = Ui(console)
 state_manager.register(StateManager.UI,ui)
 
-state_manager.begin(window)
+state_manager.begin()
 
 camera = CenteredCamera(window)
+camera.zoom = 3
 camera_ui = Camera(window)
 @window.event
 def on_draw():
