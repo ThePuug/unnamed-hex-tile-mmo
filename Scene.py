@@ -1,5 +1,7 @@
+from logging import debug
 from math import sqrt
 import math
+import random
 import pyglet
 
 from Tile import Hx, Px
@@ -23,7 +25,7 @@ class Scene(pyglet.event.EventDispatcher):
         if self.actor_at == hx: return 
         last = self.tiles.get(self.actor_at,None)
         if not last is None: 
-            last.scale = (TILE_WIDTH/self.textures["green"].width)
+            last.scale = (TILE_WIDTH+1)/self.textures["green"].width
             last.group = self.groups[1]
 
         curr = self.tiles.get(hx,None)
@@ -49,8 +51,8 @@ class Scene(pyglet.event.EventDispatcher):
                 # tile = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Tile(TILE_SIZE).into_polygon()],
                 #                              color=tuple(random.choices(list(range(150,255)), k=3)),
                 #                              batch=self._batch)
-                tile = pyglet.sprite.Sprite(img=self.textures['green'],batch=self.batch,group=self.groups[1])
-                tile.scale = TILE_WIDTH/self.textures["green"].width
+                tile = pyglet.sprite.Sprite(img=random.choice(list(self.textures.values())),batch=self.batch,group=self.groups[1])
+                tile.scale = (TILE_WIDTH+1)/self.textures["green"].width
                 px = hx.into_px(TILE_SIZE)
                 tile.x = px.x
                 tile.y = px.y+TILE_SIZE

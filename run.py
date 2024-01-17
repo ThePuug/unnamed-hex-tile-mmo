@@ -32,16 +32,19 @@ groups = [pyglet.graphics.Group(order = 0),
           pyglet.graphics.Group(order = 3),
           pyglet.graphics.Group(order = 4)]
 
-textures_tiles = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=1,columns=1))
+textures_tiles = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=1,columns=5))
 for it in textures_tiles:
     it.anchor_x = it.width/2
     it.anchor_y = it.height/2
 images_tiles = {
-    'green': textures_tiles[0],
-    # 'bend_r-y': textures_tiles[8],
-    # 'bend_r+y': textures_tiles[5],
-    # 'straight_r': textures_tiles[7],
-    # 'straight_qs': textures_tiles[3],
+    'bend_r+y': textures_tiles[0],
+    'bend_-r+y': textures_tiles[0].get_transform(flip_x=True),
+    'bend_r-y': textures_tiles[1],
+    'bend_-r-y': textures_tiles[1].get_transform(flip_x=True),
+    'straight_q': textures_tiles[2],
+    'straight_s': textures_tiles[2].get_transform(flip_x=True),
+    'straight_r': textures_tiles[3],
+    'green': textures_tiles[4],
     # 'straight+x': textures_tiles[2],
     # 'corner+x': textures_tiles[1],
     # 'corner+y': textures_tiles[4],
@@ -78,7 +81,6 @@ state_manager.register(StateManager.UI,ui)
 state_manager.begin()
 
 camera = CenteredCamera(window)
-camera.zoom = 3
 camera_ui = Camera(window)
 @window.event
 def on_draw():
