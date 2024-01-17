@@ -7,7 +7,7 @@ import pyglet
 from Tile import Hx, Px
 
 TILE_SIZE=18
-TILE_WIDTH=math.ceil(sqrt(3)*TILE_SIZE)
+TILE_WIDTH=sqrt(3)*TILE_SIZE
 R=10
 
 class Scene(pyglet.event.EventDispatcher):

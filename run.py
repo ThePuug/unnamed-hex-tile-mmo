@@ -81,6 +81,7 @@ state_manager.register(StateManager.UI,ui)
 state_manager.begin()
 
 camera = CenteredCamera(window)
+# camera.zoom = 4
 camera_ui = Camera(window)
 @window.event
 def on_draw():
