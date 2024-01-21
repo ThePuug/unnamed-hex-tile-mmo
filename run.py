@@ -1,4 +1,5 @@
 import logging
+import math
 import pyglet
 import sys
 
@@ -7,81 +8,19 @@ from Camera import Camera, CenteredCamera
 from Console import Console
 from Scene import Scene
 from StateManager import StateManager
-from Ui import Ui
+from Tile import Px
+from Overlay import Overlay
 
 LOGLEVEL = logging.DEBUG
-
-GROUP_BACKGROUND = 1
-GROUP_FOREGROUND = 2
-GROUP_ACTOR = 3
-GROUP_OVERLAY = 4
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
+
 window = pyglet.window.Window(fullscreen=False)
-key_state_handler = pyglet.window.key.KeyStateHandler()
-state_manager = StateManager(window,key_state_handler)
-
-batch = pyglet.graphics.Batch()
-groups = [pyglet.graphics.Group(order = 0),
-          pyglet.graphics.Group(order = 1),
-          pyglet.graphics.Group(order = 2),
-          pyglet.graphics.Group(order = 3),
-          pyglet.graphics.Group(order = 4)]
-
-textures_tiles = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=1,columns=5))
-for it in textures_tiles:
-    it.anchor_x = it.width/2
-    it.anchor_y = it.height/2
-images_tiles = {
-    'bend_r+y': textures_tiles[0],
-    'bend_-r+y': textures_tiles[0].get_transform(flip_x=True),
-    'bend_r-y': textures_tiles[1],
-    'bend_-r-y': textures_tiles[1].get_transform(flip_x=True),
-    'straight_q': textures_tiles[2],
-    'straight_s': textures_tiles[2].get_transform(flip_x=True),
-    'straight_r': textures_tiles[3],
-    'green': textures_tiles[4],
-    # 'straight+x': textures_tiles[2],
-    # 'corner+x': textures_tiles[1],
-    # 'corner+y': textures_tiles[4],
-    # 'corner-y': textures_tiles[0],
-}
-scene = Scene(images_tiles, batch, groups)
-state_manager.register(StateManager.SCENE, scene)
-
-# generate and anchor actor frames at bottom center
-frames_blank = pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/blank.png"),rows=4,columns=4)
-for it in frames_blank:
-    it.anchor_x = 31
-    it.anchor_y = 5
-animations = {
-    "walk_n": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [1,2,3,0]], duration=0.4),
-    "walk_e": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [5,6,7,4]], duration=0.4),
-    "walk_w": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [9,10,11,8]], duration=0.4),
-    "walk_s": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [13,14,15,12]], duration=0.4),
-    "stand_n": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [0,2]], duration=0.4),
-    "stand_e": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [4,6]], duration=0.4),
-    "stand_w": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [8,10]], duration=0.4),
-    "stand_s": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [12,14]], duration=0.4)}
-actor = Actor(pyglet.sprite.Sprite(animations["walk_s"], group=groups[GROUP_ACTOR], batch=batch), animations, key_state_handler)
-state_manager.register(StateManager.ACTOR,actor)
-
-batch_ui = pyglet.graphics.Batch()
-
-console = Console("",50,50,window.width-100,batch=batch_ui)
-state_manager.register(StateManager.CONSOLE,console)
-
-ui = Ui(console)
-state_manager.register(StateManager.UI,ui)
-
-state_manager.begin()
-
 camera = CenteredCamera(window)
-# camera.zoom = 4
 camera_ui = Camera(window)
 @window.event
 def on_draw():
@@ -91,11 +30,81 @@ def on_draw():
     with camera_ui:
         batch_ui.draw()
 
-them = [actor,scene]
+key_state_handler = pyglet.window.key.KeyStateHandler()
+state_manager = StateManager(window, key_state_handler)
+
+batch = pyglet.graphics.Batch()
+groups = [pyglet.graphics.Group(order = i) for i in range(11)]
+
+streets_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=4,columns=4))
+for it in streets_sheet:
+    it.anchor_x = it.width/2
+    it.anchor_y = (3*it.height/4)/2
+streets = [
+    streets_sheet[2],
+    streets_sheet[1],
+    streets_sheet[0],
+    streets_sheet[0].get_transform(flip_x=True),
+    streets_sheet[5],
+    streets_sheet[5].get_transform(flip_x=True),
+    streets_sheet[6],
+    streets_sheet[6].get_transform(flip_x=True),
+    streets_sheet[7],
+    streets_sheet[7].get_transform(flip_x=True),
+    streets_sheet[4],
+    streets_sheet[4].get_transform(flip_x=True),
+    streets_sheet[8],
+    streets_sheet[8].get_transform(flip_x=True),
+    streets_sheet[9],
+    streets_sheet[9].get_transform(flip_x=True),
+    streets_sheet[10],
+    streets_sheet[10].get_transform(flip_x=True),
+    streets_sheet[11],
+    streets_sheet[11].get_transform(flip_x=True),
+    streets_sheet[14],
+    streets_sheet[14].get_transform(flip_x=True),
+    streets_sheet[15],
+    streets_sheet[15].get_transform(flip_x=True),
+    streets_sheet[12],
+    streets_sheet[13],
+    streets_sheet[13].get_transform(flip_x=True),
+]
+buildings_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/buildings.png"),rows=1,columns=2))
+for it in buildings_sheet:
+    it.anchor_x = it.width/2
+    it.anchor_y = (3*it.height/4)/2
+buildings = [
+    buildings_sheet[1],
+    buildings_sheet[0],
+]
+decorators_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/decorations.png"),rows=1,columns=1))
+for it in decorators_sheet:
+    # it.anchor_x = it.width/2
+    it.anchor_y = (1*it.height/4)
+decorators = [
+    decorators_sheet[0],
+    decorators_sheet[0].get_transform(flip_x=True)
+]
+scene = Scene(streets, buildings, decorators, batch, groups)
+state_manager.register(StateManager.SCENE, scene)
+
+actor = Actor(key_state_handler, batch, groups)
+state_manager.register(StateManager.ACTOR, actor)
+
+overlay = Overlay(scene, batch, groups[len(groups)-1])
+state_manager.register(StateManager.OVERLAY,overlay)
+
+batch_ui = pyglet.graphics.Batch()
+
+console = Console(Px(window.width,window.height,0),batch=batch_ui)
+state_manager.register(StateManager.CONSOLE,console)
+console.toggle() # off
+
+state_manager.begin()
+
 def on_update(dt): 
-    for it in them: it.update(dt)
+    actor.update(dt)
     camera.position = actor.px.x, actor.px.y
-    scene.highlight_at(actor.px)
 
 pyglet.clock.schedule_interval(on_update, 1/120.0)
 
