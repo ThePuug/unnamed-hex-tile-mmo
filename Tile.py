@@ -1,4 +1,5 @@
 from math import cos, pi, sin, sqrt
+import math
 
 ORIENTATION = [[sqrt(3), sqrt(3) / 2, 0, 3.0/2], 
                [sqrt(3) / 3, -1 / 3, 0, 2.0/3, 0.5]]
@@ -12,13 +13,11 @@ class Px:
     def __hash__(self): return hash((self.x,self.y,self.z))
     def __eq__(self,other): return self.x==other.x and self.y==other.y and self.z==other.z
 
-    def into_hx(self, size: int):
-        px = Px(self.x / size, self.y / size, self.z)
+    def into_hx(self):
+        px = Px(self.x / (Tile.WIDTH/2), self.y / (Tile.HEIGHT/2), self.z)
         q = ORIENTATION[1][0] * px.x + ORIENTATION[1][1] * px.y
         r = ORIENTATION[1][2] * px.x + ORIENTATION[1][3] * px.y
         return self.hex_round(q,r,self.z)
-    
-    def offset(self,x,y,z): return Hx(self.x+x,self.y+y,self.z+z)
 
     def hex_round(self, aq, ar, az):
         q = int(round(aq))
@@ -47,21 +46,24 @@ class Hx:
     @property
     def s(self): return -self.q-self.r
 
-    def into_px(self, size) -> Px:
-        x = (ORIENTATION[0][0] * self.q + ORIENTATION[0][1] * self.r) * size
-        y = (ORIENTATION[0][2] * self.q + ORIENTATION[0][3] * self.r) * size
-        return Px(x,y - size/4, self.z)
+    def into_px(self):
+        x = (ORIENTATION[0][0] * self.q + ORIENTATION[0][1] * self.r) * (Tile.SIZE)
+        y = (ORIENTATION[0][2] * self.q + ORIENTATION[0][3] * self.r) * (Tile.ISO_SCALE*Tile.SIZE)
+        return Px(x,y - Tile.HEIGHT/4, self.z)
     
-    def offset(self,q,r,z): return Hx(self.q+q,self.r+r,self.z+z)
-
 class Tile:
-    def __init__(self, size: int, z):
-        self.size = size
+    SIZE=48
+    ISO_SCALE=3/4
+    WIDTH=sqrt(3)*SIZE
+    HEIGHT=ISO_SCALE*SIZE*2
+    RISE=1/2*SIZE
+
+    def __init__(self, z):
         self.z = z
 
-    def hx_offset(self, corner: int) -> Px:
+    def hx_offset(self, corner):
         angle = 2 * pi * (0.5+corner) / 6
-        return Px(self.size * cos(angle), self.size * sin(angle), self.z)
+        return Px((Tile.SIZE) * cos(angle), (Tile.ISO_SCALE*Tile.SIZE) * sin(angle), self.z)
 
     def into_polygon(self):
         corners = []

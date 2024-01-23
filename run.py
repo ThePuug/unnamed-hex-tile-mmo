@@ -39,7 +39,7 @@ groups = [pyglet.graphics.Group(order = i) for i in range(11)]
 streets_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=4,columns=4))
 for it in streets_sheet:
     it.anchor_x = it.width/2
-    it.anchor_y = (3*it.height/4)/2
+    it.anchor_y = 3/4*it.height/2
 streets = [
     streets_sheet[2],
     streets_sheet[1],
@@ -72,7 +72,7 @@ streets = [
 buildings_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/buildings.png"),rows=1,columns=2))
 for it in buildings_sheet:
     it.anchor_x = it.width/2
-    it.anchor_y = (3*it.height/4)/2
+    it.anchor_y = 3/4*it.height/2
 buildings = [
     buildings_sheet[1],
     buildings_sheet[0],
@@ -80,7 +80,7 @@ buildings = [
 decorators_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/decorations.png"),rows=1,columns=1))
 for it in decorators_sheet:
     # it.anchor_x = it.width/2
-    it.anchor_y = (1*it.height/4)
+    it.anchor_y = 1/4*it.height
 decorators = [
     decorators_sheet[0],
     decorators_sheet[0].get_transform(flip_x=True)

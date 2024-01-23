@@ -3,21 +3,15 @@ from math import sqrt
 import math
 import pyglet
 
-from Tile import Hx
+from Tile import Hx, Tile
 
 class Scene(pyglet.event.EventDispatcher):
-    TILE_SIZE=48
-    TILE_WIDTH=math.ceil(sqrt(3)*TILE_SIZE)
-    TILE_HEIGHT=math.ceil(TILE_SIZE*2)
-    TILE_RISE=math.ceil(3*TILE_SIZE/4)
     R=5
 
     def __init__(self, streets, buildings, decorators, batch, groups):
         self.streets = streets
         self.buildings = buildings
         self.decorators = decorators
-        self.scale_x = Scene.TILE_WIDTH/81
-        self.scale_y = Scene.TILE_HEIGHT/70
         self.batch = batch
         self.groups = groups
         self.tiles = {}
@@ -28,8 +22,8 @@ class Scene(pyglet.event.EventDispatcher):
             self.dispatch_event('on_discover',hx)
 
     def on_add_decoration(self, hx, offset, decorator):
-        new_hx = hx.offset(0,0,1)
-        new_tile = self.create_tile(new_hx,decorator)
+        new_hx = Hx(hx.q,hx.r,hx.z+1)
+        new_tile = self.create_tile(new_hx,decorator, (Tile.WIDTH/6 / decorator.width, Tile.HEIGHT/4 / decorator.height))
         new_tile.x += offset.x
         new_tile.y += offset.y
         if(self.decorations.get(new_hx,None) is None): self.decorations[new_hx] = []
@@ -38,7 +32,7 @@ class Scene(pyglet.event.EventDispatcher):
     def on_change_tile(self, hx, background, above):
         self.tiles.get(hx).image = background
 
-        abhx = hx.offset(0,0,2)
+        abhx = Hx(hx.q,hx.r,hx.z+2)
         ab = self.tiles.get(abhx,None)
         if above is not None:
             if ab is None: self.tiles[abhx] = self.create_tile(abhx,above)
@@ -56,13 +50,17 @@ class Scene(pyglet.event.EventDispatcher):
                 if not(self.tiles.get(hx,None) is None): continue
                 self.tiles[hx] = self.create_tile(hx,self.streets[0])
     
-    def create_tile(self,hx,img):
-        px = hx.into_px(Scene.TILE_SIZE)
+    def create_tile(self,hx,img,scale = None):
+        px = hx.into_px()
         new = pyglet.sprite.Sprite(img=img,batch=self.batch,group=self.groups[hx.z])
-        new.scale_x = self.scale_x
-        new.scale_y = self.scale_y
+        if scale is None:
+            new.scale_x = Tile.WIDTH / (img.width-2)
+            new.scale_y = Tile.HEIGHT / (3/4*img.height-2)
+        else:
+            new.scale_x = scale[0]
+            new.scale_y = scale[1]
         new.x = px.x
-        new.y = px.y + Scene.TILE_SIZE/2 + (px.z//2)*(Scene.TILE_HEIGHT/3)
+        new.y = px.y + Tile.HEIGHT/4 + (px.z//2)*(Tile.RISE)
         return new
 
 

@@ -4,7 +4,7 @@ from pyglet.window import key
 from logging import debug
 from Scene import Scene
 
-from Tile import Px, Tile
+from Tile import Hx, Px, Tile
 
 SPEED = 90
 SPEED_ANG_X = SPEED*math.cos(60*math.pi/180)
@@ -30,15 +30,15 @@ class Actor(pyglet.event.EventDispatcher):
         self.sprite = pyglet.sprite.Sprite(self.animations["walk_s"], group=self.groups[self.z+2], batch=batch)
         self.sprite.scale = 0.66
         self.key_handler = key_state_handler
-        self.heading = (0,0)
-        self.focus = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Tile(Scene.TILE_SIZE, self.px.z).into_polygon()],color=(255,255,150,50), batch=batch,group=self.groups[self.z+2])
-        self.focus.anchor_position = (-Scene.TILE_WIDTH/2,-Scene.TILE_HEIGHT/2)
+        self.heading = Hx(0,0,0)
+        self.focus = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Tile(self.px.z).into_polygon()],color=(255,255,150,50), batch=batch,group=self.groups[self.z+1])
+        self.focus.anchor_position = (-Tile.WIDTH/2,-Tile.HEIGHT/2)
 
     @property
     def px(self): return Px(self.sprite.position[0],self.sprite.position[1],self.z)
 
     def on_key_press(self,sym,mod):
-        if(sym == key.C): self.dispatch_event('on_build',Px(self.focus.x,self.focus.y,self.z).into_hx(Scene.TILE_SIZE))
+        if(sym == key.C): self.dispatch_event('on_build',Px(self.focus.x,self.focus.y,self.z).into_hx())
 
     def update(self, dt):
         if not(self.key_handler[key.LEFT] or self.key_handler[key.RIGHT] or self.key_handler[key.UP] or self.key_handler[key.DOWN]):
@@ -50,47 +50,53 @@ class Actor(pyglet.event.EventDispatcher):
         if self.key_handler[key.UP]: 
             if self.sprite.image != self.animations["walk_n"]: 
                 self.sprite.image = self.animations["walk_n"]
-                self.heading = (0, 0.75)
             if self.key_handler[key.LEFT]:
                 self.sprite.x -= SPEED_ANG_X*dt
                 self.sprite.y += SPEED_ANG_Y*dt
+                self.heading = Hx(-1,+1,self.z)
             elif self.key_handler[key.RIGHT]:
                 self.sprite.x += SPEED_ANG_X*dt
                 self.sprite.y += SPEED_ANG_Y*dt
+                self.heading = Hx(0,+1,self.z)
             else:
                 self.sprite.y += SPEED*dt
+                if(self.heading == Hx(-1,0,self.z) or self.heading == Hx(-1,+1,self.z) or self.heading == Hx(0,-1,self.z)): self.heading = Hx(-1,+1,self.z)
+                else: self.heading = Hx(0,+1,self.z)
         if self.key_handler[key.DOWN]: 
             if self.sprite.image != self.animations["walk_s"]:
                 self.sprite.image = self.animations["walk_s"]
-                self.heading = (0, -0.75)
             if self.key_handler[key.LEFT]:
                 self.sprite.x -= SPEED_ANG_X*dt
                 self.sprite.y -= SPEED_ANG_Y*dt
+                self.heading = Hx(0,-1,self.z)
             elif self.key_handler[key.RIGHT]:
                 self.sprite.x += SPEED_ANG_X*dt
                 self.sprite.y -= SPEED_ANG_Y*dt
+                self.heading = Hx(+1,-1,self.z)
             else:
                 self.sprite.y -= SPEED*dt
+                if(self.heading == Hx(1,0,self.z) or self.heading == Hx(+1,-1,self.z) or self.heading == Hx(0,1,self.z)): self.heading = Hx(+1,-1,self.z)
+                else: self.heading = Hx(0,-1,self.z)
         
         if self.key_handler[key.RIGHT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
             self.sprite.x += SPEED*dt
+            self.heading = Hx(+1,+0,self.z)
             if self.sprite.image != self.animations["walk_e"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_e"]
-                self.heading = (1.1, 0)
         
         if self.key_handler[key.LEFT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
             self.sprite.x -= SPEED*dt
+            self.heading = Hx(-1,+0,self.z)
             if self.sprite.image != self.animations["walk_w"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
-                self.sprite.image = self.animations["walk_w"]
-                self.heading = (-1.1, 0)
+                self.sprite.image = self.animations["walk_w"]  
 
-        new_focus_hx = Px(self.sprite.position[0] + Scene.TILE_WIDTH  * self.heading[0], 
-                       self.sprite.position[1] + Scene.TILE_HEIGHT * self.heading[1], self.z).into_hx(Scene.TILE_SIZE)
-        new_focus_px = new_focus_hx.into_px(Scene.TILE_SIZE)
-        # need to incorporate z
-        if new_focus_px.x != self.focus.position[0] or new_focus_px.y != self.focus.position[1]: 
+        focus = Px(self.focus.position[0],self.focus.position[1],self.z).into_hx()
+        curr_hx = Px(self.sprite.x,self.sprite.y,self.z).into_hx()
+        new_focus_hx = Hx(self.heading.q+curr_hx.q,self.heading.r+curr_hx.r,self.z)
+        if new_focus_hx.q != focus.q or new_focus_hx.r != focus.r:
             self.dispatch_event('on_looking_at',new_focus_hx)
-            self.focus.position = (new_focus_px.x, new_focus_px.y)
+            new_focus_px = new_focus_hx.into_px()
+            self.focus.position = (new_focus_px.x,new_focus_px.y)
 
 Actor.register_event_type('on_looking_at')
 Actor.register_event_type('on_build')

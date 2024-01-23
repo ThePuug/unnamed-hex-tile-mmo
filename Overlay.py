@@ -3,7 +3,7 @@ from logging import debug
 from pyglet.window import key
 
 from Scene import Scene
-from Tile import Px
+from Tile import Px, Tile
 
 PADDING = 10
 
@@ -13,16 +13,16 @@ class Overlay(pyglet.event.EventDispatcher):
         self.curr = 0
 
         self.border = pyglet.shapes.Rectangle(0,0,0,0, color=(225, 225, 225, 255), batch=batch, group=group)
-        self.border.width = Scene.TILE_WIDTH*3 + 4*PADDING
-        self.border.height = Scene.TILE_HEIGHT + 2*PADDING
+        self.border.width = Tile.WIDTH*3 + 4*PADDING
+        self.border.height = Tile.HEIGHT + 2*PADDING
         self.border.anchor_x = self.border.width / 2
-        self.border.anchor_y = -Scene.TILE_HEIGHT
+        self.border.anchor_y = -Tile.HEIGHT
         self.border.visible = False
 
         self.opts = [pyglet.sprite.Sprite(scene.streets[0],batch=batch,group=group) for it in range(3)]
         for it in self.opts:
-            it.scale_x = Scene.TILE_WIDTH/83
-            it.scale_y = Scene.TILE_HEIGHT/96
+            it.scale_x = Tile.WIDTH/scene.streets[0].width
+            it.scale_y = Tile.HEIGHT/(3/4*scene.streets[0].height)
             it.visible = False
     
     def on_key_press(self,sym,mod):
@@ -37,18 +37,18 @@ class Overlay(pyglet.event.EventDispatcher):
             self.update_options()
         if(sym == key.B):
             self.dispatch_event("on_change_tile", self.hx, self.scene.streets[0], self.scene.buildings[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-3*Scene.TILE_WIDTH/6,-3*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-2*Scene.TILE_WIDTH/6,-4*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-1*Scene.TILE_WIDTH/6,-5*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(1*Scene.TILE_WIDTH/6,-5*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(2*Scene.TILE_WIDTH/6,-4*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(3*Scene.TILE_WIDTH/6,-3*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-3*Scene.TILE_WIDTH/6,-1*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-2*Scene.TILE_WIDTH/6,-2*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(-1*Scene.TILE_WIDTH/6,-3*Scene.TILE_HEIGHT/12,0), self.scene.decorators[0])
-            self.dispatch_event("on_add_decoration", self.hx, Px(1*Scene.TILE_WIDTH/6,-3*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(2*Scene.TILE_WIDTH/6,-2*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
-            self.dispatch_event("on_add_decoration", self.hx, Px(3*Scene.TILE_WIDTH/6,-1*Scene.TILE_HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-3*Tile.WIDTH/6,-3*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-2*Tile.WIDTH/6,-4*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-1*Tile.WIDTH/6,-5*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(1*Tile.WIDTH/6,-5*Tile.HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(2*Tile.WIDTH/6,-4*Tile.HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(3*Tile.WIDTH/6,-3*Tile.HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-3*Tile.WIDTH/6,-1*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-2*Tile.WIDTH/6,-2*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(-1*Tile.WIDTH/6,-3*Tile.HEIGHT/12,0), self.scene.decorators[0])
+            self.dispatch_event("on_add_decoration", self.hx, Px(1*Tile.WIDTH/6,-3*Tile.HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(2*Tile.WIDTH/6,-2*Tile.HEIGHT/12,0), self.scene.decorators[1])
+            self.dispatch_event("on_add_decoration", self.hx, Px(3*Tile.WIDTH/6,-1*Tile.HEIGHT/12,0), self.scene.decorators[1])
             self.border.visible = False
             for it in self.opts: it.visible = False
         if(sym == key.SPACE):
@@ -58,7 +58,7 @@ class Overlay(pyglet.event.EventDispatcher):
 
     def on_build(self,hx):
         self.hx = hx
-        px = hx.into_px(Scene.TILE_SIZE)
+        px = hx.into_px()
         self.border.position = (px.x,px.y)
         self.border.visible = True
 
@@ -66,8 +66,8 @@ class Overlay(pyglet.event.EventDispatcher):
         for i,it in enumerate(self.scene.streets):
             if it == tile.image: self.curr = i
         for i,it in enumerate(self.opts):
-            it.position = (px.x+Scene.TILE_WIDTH*(i-1)+PADDING*(i-1),
-                           px.y+Scene.TILE_HEIGHT*1.5+PADDING,0)
+            it.position = (px.x+Tile.WIDTH*(i-1)+PADDING*(i-1),
+                           px.y+Tile.HEIGHT*1.5+PADDING,0)
             it.visible = True
         self.update_options()
 
