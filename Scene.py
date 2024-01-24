@@ -1,6 +1,3 @@
-from logging import debug
-from math import sqrt
-import math
 import pyglet
 
 from Tile import Hx, Tile
@@ -8,10 +5,10 @@ from Tile import Hx, Tile
 class Scene(pyglet.event.EventDispatcher):
     R=5
 
-    def __init__(self, streets, buildings, decorators, batch, groups):
-        self.streets = streets
-        self.buildings = buildings
-        self.decorators = decorators
+    def __init__(self, assets, batch, groups):
+        self.streets = assets.streets
+        self.buildings = assets.buildings
+        self.decorators = assets.decorators
         self.batch = batch
         self.groups = groups
         self.tiles = {}

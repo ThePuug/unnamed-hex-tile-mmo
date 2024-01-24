@@ -1,9 +1,10 @@
 import logging
-import math
 import pyglet
 import sys
+from pyglet.gl import glTexParameteri, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_NEAREST
 
 from Actor import Actor
+from Assets import Assets
 from Camera import Camera, CenteredCamera
 from Console import Console
 from Scene import Scene
@@ -36,56 +37,7 @@ state_manager = StateManager(window, key_state_handler)
 batch = pyglet.graphics.Batch()
 groups = [pyglet.graphics.Group(order = i) for i in range(11)]
 
-streets_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/streets.png"),rows=4,columns=4))
-for it in streets_sheet:
-    it.anchor_x = it.width/2
-    it.anchor_y = 3/4*it.height/2
-streets = [
-    streets_sheet[2],
-    streets_sheet[1],
-    streets_sheet[0],
-    streets_sheet[0].get_transform(flip_x=True),
-    streets_sheet[5],
-    streets_sheet[5].get_transform(flip_x=True),
-    streets_sheet[6],
-    streets_sheet[6].get_transform(flip_x=True),
-    streets_sheet[7],
-    streets_sheet[7].get_transform(flip_x=True),
-    streets_sheet[4],
-    streets_sheet[4].get_transform(flip_x=True),
-    streets_sheet[8],
-    streets_sheet[8].get_transform(flip_x=True),
-    streets_sheet[9],
-    streets_sheet[9].get_transform(flip_x=True),
-    streets_sheet[10],
-    streets_sheet[10].get_transform(flip_x=True),
-    streets_sheet[11],
-    streets_sheet[11].get_transform(flip_x=True),
-    streets_sheet[14],
-    streets_sheet[14].get_transform(flip_x=True),
-    streets_sheet[15],
-    streets_sheet[15].get_transform(flip_x=True),
-    streets_sheet[12],
-    streets_sheet[13],
-    streets_sheet[13].get_transform(flip_x=True),
-]
-buildings_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/buildings.png"),rows=1,columns=2))
-for it in buildings_sheet:
-    it.anchor_x = it.width/2
-    it.anchor_y = 3/4*it.height/2
-buildings = [
-    buildings_sheet[1],
-    buildings_sheet[0],
-]
-decorators_sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/decorations.png"),rows=1,columns=1))
-for it in decorators_sheet:
-    # it.anchor_x = it.width/2
-    it.anchor_y = 1/4*it.height
-decorators = [
-    decorators_sheet[0],
-    decorators_sheet[0].get_transform(flip_x=True)
-]
-scene = Scene(streets, buildings, decorators, batch, groups)
+scene = Scene(Assets(), batch, groups)
 state_manager.register(StateManager.SCENE, scene)
 
 actor = Actor(key_state_handler, batch, groups)
