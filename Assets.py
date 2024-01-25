@@ -11,7 +11,7 @@ class Assets:
             (9,False),(9,True),(10,False),(10,True),(11,False),(11,True),(14,False),(14,True),(15,False),(15,True),(12,False),(13,False),(13,True)
             ])
         self.buildings = self.load("assets/sprites/buildings.png",Px(1,2,0),Px(1,3/4,0),[(1,False),(0,False)])
-        self.decorators = self.load("assets/sprites/decorations.png",Px(1,1,0),Px(1,1/2,0),[(0,False),(0,True)])
+        self.decorators = self.load("assets/sprites/decorations.png",Px(1,1,0),Px(0,1/2,0),[(0,False),(0,True)])
 
     def load(self, img, grid_size, anchor_factor = None, order = None):
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size.x,columns=grid_size.y))

@@ -53,7 +53,7 @@ class Hx:
     
 class Tile:
     SIZE=48
-    ISO_SCALE=3/4
+    ISO_SCALE=2/3
     WIDTH=sqrt(3)*SIZE
     HEIGHT=ISO_SCALE*SIZE*2
     RISE=1/2*SIZE

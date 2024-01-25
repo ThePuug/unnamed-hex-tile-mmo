@@ -8,7 +8,7 @@ from Tile import Hx, Px, Tile
 
 SPEED = 90
 SPEED_ANG_X = SPEED*math.cos(60*math.pi/180)
-SPEED_ANG_Y = SPEED*math.sin(60*math.pi/180)
+SPEED_ANG_Y = Tile.ISO_SCALE*SPEED*math.sin(60*math.pi/180)
 
 class Actor(pyglet.event.EventDispatcher):
     def __init__(self, key_state_handler, batch, groups):

@@ -28,6 +28,9 @@ class Scene(pyglet.event.EventDispatcher):
 
     def on_change_tile(self, hx, background, above):
         self.tiles.get(hx).image = background
+        decorations = self.decorations.get(Hx(hx.q,hx.r,hx.z+1),[])
+        [it.delete() for it in decorations]
+        self.decorations[hx] = []
 
         abhx = Hx(hx.q,hx.r,hx.z+2)
         ab = self.tiles.get(abhx,None)
