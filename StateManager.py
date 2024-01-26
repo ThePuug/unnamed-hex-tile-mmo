@@ -22,7 +22,6 @@ class StateManager(pyglet.event.EventDispatcher):
         self.them = {}
 
     def on_overlay(self,*args):
-        debug("{}".format([*args]))
         if(self.state & StateManager.STATE_PLAY):
             self.window.pop_handlers()
             self.window.pop_handlers()
@@ -31,7 +30,6 @@ class StateManager(pyglet.event.EventDispatcher):
             self.dispatch_event("on_open",*args)
 
     def on_close(self,*args):
-        debug("{}".format([*args]))
         if(self.state & StateManager.STATE_UI_OVERLAY):
             self.window.pop_handlers()
             self.window.push_handlers(self.key_state_handler)

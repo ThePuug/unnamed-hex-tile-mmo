@@ -43,7 +43,6 @@ class Overlay(pyglet.event.EventDispatcher):
         return pyglet.event.EVENT_HANDLED
 
     def on_open(self,hx,opts):
-        debug("{},{}".format(hx,opts))
         self.hx = hx
         self.opts = opts
         px = hx.into_px()

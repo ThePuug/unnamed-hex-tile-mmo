@@ -29,16 +29,15 @@ class Actor(pyglet.event.EventDispatcher):
         self.sprite = pyglet.sprite.Sprite(self.animations["walk_s"], group=self.groups[self.z+2], batch=batch)
         self.sprite.scale = 0.66
         self.key_handler = key_state_handler
-        self.heading = Hx(0,0,0)
+        self.heading = Hx(0,0,self.z)
         self.focus = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Tile(self.px.z).into_polygon()],color=(255,255,150,50), batch=batch,group=self.groups[self.z+1])
         self.focus.anchor_position = (-Tile.WIDTH/2,-Tile.HEIGHT/2)
 
     @property
-    def px(self): return Px(self.sprite.position[0],self.sprite.position[1],self.z)
+    def px(self): return Px(self.sprite.position,self.z)
 
     def on_action(self,evt,*args):
-        debug("{},{}".format(evt, *args))
-        self.dispatch_event(evt,Px(self.focus.x,self.focus.y,self.z).into_hx(),*args)
+        self.dispatch_event(evt,Px(self.focus.position,self.z).into_hx(),*args)
 
     def update(self, dt):
         if not(self.key_handler[key.LEFT] or self.key_handler[key.RIGHT] or self.key_handler[key.UP] or self.key_handler[key.DOWN]):
@@ -90,13 +89,13 @@ class Actor(pyglet.event.EventDispatcher):
             if self.sprite.image != self.animations["walk_w"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_w"]  
 
-        curr_hx = Px(self.sprite.x,self.sprite.y,self.z).into_hx()
-        curr_focus_hx = Px(self.focus.x,self.focus.y,self.z).into_hx()
+        curr_hx = Px(self.sprite.position,self.z).into_hx()
+        curr_focus_hx = Px(self.focus.position,self.z).into_hx()
         new_focus_hx = Hx(self.heading.q+curr_hx.q,self.heading.r+curr_hx.r,self.z)
         if new_focus_hx.q != curr_focus_hx.q or new_focus_hx.r != curr_focus_hx.r:
-            self.dispatch_event('on_looking_at',new_focus_hx)
             new_focus_px = new_focus_hx.into_px()
             self.focus.position = (new_focus_px.x,new_focus_px.y)
+            self.dispatch_event('on_looking_at',new_focus_hx)
 
 Actor.register_event_type('on_looking_at')
 Actor.register_event_type('on_overlay')

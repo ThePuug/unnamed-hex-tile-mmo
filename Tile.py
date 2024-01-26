@@ -19,7 +19,7 @@ class Px:
     def __eq__(self,other): return self.x==other.x and self.y==other.y and self.z==other.z
 
     def into_hx(self):
-        px = Px(self.x / (Tile.WIDTH/2), self.y / (Tile.HEIGHT/2), self.z)
+        px = Px(self.x / (Tile.SIZE), self.y / (Tile.ISO_SCALE * Tile.SIZE), self.z)
         q = ORIENTATION[1][0] * px.x + ORIENTATION[1][1] * px.y
         r = ORIENTATION[1][2] * px.x + ORIENTATION[1][3] * px.y
         return self.hex_round(q,r,self.z)
