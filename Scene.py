@@ -2,10 +2,12 @@ import pyglet
 
 from Tile import Hx, Tile
 
+R=5
+
 class Scene(pyglet.event.EventDispatcher):
-    R=5
 
     def __init__(self, assets, batch, groups):
+        self.terrain = assets.terrain
         self.streets = assets.streets
         self.buildings = assets.buildings
         self.decorators = assets.decorators
@@ -13,6 +15,19 @@ class Scene(pyglet.event.EventDispatcher):
         self.groups = groups
         self.tiles = {}
         self.decorations = {}
+
+    def create_tile(self,hx,img,scale = None):
+        px = hx.into_px()
+        new = pyglet.sprite.Sprite(img=img,batch=self.batch,group=self.groups[hx.z])
+        if scale is None:
+            new.scale_x = Tile.WIDTH / (img.width-2)
+            new.scale_y = Tile.HEIGHT / (3/4*img.height-2)
+        else:
+            new.scale_x = scale[0]
+            new.scale_y = scale[1]
+        new.x = px.x
+        new.y = px.y + Tile.HEIGHT/4 + (px.z//2)*(Tile.RISE)
+        return new
 
     def on_looking_at(self, hx):
         if self.tiles.get(hx,None) is None:
@@ -26,7 +41,7 @@ class Scene(pyglet.event.EventDispatcher):
         if(self.decorations.get(new_hx,None) is None): self.decorations[new_hx] = []
         self.decorations[new_hx].append(new_tile)
 
-    def on_change_tile(self, hx, background, above):
+    def on_select(self, hx, background, above):
         self.tiles.get(hx).image = background
         decorations = self.decorations.get(Hx(hx.q,hx.r,hx.z+1),[])
         [it.delete() for it in decorations]
@@ -42,26 +57,12 @@ class Scene(pyglet.event.EventDispatcher):
             del self.tiles[abhx]
 
     def on_discover(self, c):
-        for q in range(-Scene.R, Scene.R+1):
-            r1 = max(-Scene.R, -q-Scene.R)
-            r2 = min( Scene.R, -q+Scene.R)
+        for q in range(-R, R+1):
+            r1 = max(-R, -q-R)
+            r2 = min( R, -q+R)
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.tiles[hx] = self.create_tile(hx,self.streets[0])
+                self.tiles[hx] = self.create_tile(hx,self.terrain[0])
     
-    def create_tile(self,hx,img,scale = None):
-        px = hx.into_px()
-        new = pyglet.sprite.Sprite(img=img,batch=self.batch,group=self.groups[hx.z])
-        if scale is None:
-            new.scale_x = Tile.WIDTH / (img.width-2)
-            new.scale_y = Tile.HEIGHT / (3/4*img.height-2)
-        else:
-            new.scale_x = scale[0]
-            new.scale_y = scale[1]
-        new.x = px.x
-        new.y = px.y + Tile.HEIGHT/4 + (px.z//2)*(Tile.RISE)
-        return new
-
-
 Scene.register_event_type('on_discover')

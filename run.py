@@ -2,6 +2,7 @@ import logging
 import pyglet
 import sys
 from pyglet.gl import glTexParameteri, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_NEAREST
+from ActionBar import ActionBar
 
 from Actor import Actor
 from Assets import Assets
@@ -37,16 +38,21 @@ state_manager = StateManager(window, key_state_handler)
 batch = pyglet.graphics.Batch()
 groups = [pyglet.graphics.Group(order = i) for i in range(11)]
 
-scene = Scene(Assets(), batch, groups)
+assets = Assets()
+
+scene = Scene(assets, batch, groups)
 state_manager.register(StateManager.SCENE, scene)
 
 actor = Actor(key_state_handler, batch, groups)
 state_manager.register(StateManager.ACTOR, actor)
 
-overlay = Overlay(scene, batch, groups[len(groups)-1])
+overlay = Overlay(assets.streets[0], batch, groups[len(groups)-1])
 state_manager.register(StateManager.OVERLAY,overlay)
 
 batch_ui = pyglet.graphics.Batch()
+
+action_bar = ActionBar(window,scene,batch=batch_ui)
+state_manager.register(StateManager.ACTION_BAR,action_bar)
 
 console = Console(Px(window.width,window.height,0),batch=batch_ui)
 state_manager.register(StateManager.CONSOLE,console)

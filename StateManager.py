@@ -2,15 +2,18 @@ from logging import debug
 import pyglet
 from pyglet.window import key
 
-class StateManager:
+from Tile import Px
+
+class StateManager(pyglet.event.EventDispatcher):
     CONSOLE = 'console'
     ACTOR = 'actor'
     SCENE = 'scene'
     OVERLAY = 'overlay'
+    ACTION_BAR = 'action_bar'
 
     STATE_PLAY          = 1 << 0
     STATE_UI_CONSOLE    = 1 << 1
-    STATE_UI_BUILD      = 1 << 2
+    STATE_UI_OVERLAY    = 1 << 2
 
     def __init__(self, window, key_state_handler):
         self.window = window
@@ -18,42 +21,37 @@ class StateManager:
         self.state = 0
         self.them = {}
 
-    def on_key_press(self,sym,mod):
+    def on_overlay(self,*args):
+        debug("{}".format([*args]))
         if(self.state & StateManager.STATE_PLAY):
-            if(sym == key.ESCAPE):
-                self.window.pop_handlers()
-                self.window.push_handlers(self.key_state_handler)
-                self.window.push_handlers(self.them[StateManager.ACTOR])
-                self.state = StateManager.STATE_PLAY if self.state != StateManager.STATE_PLAY else 0
-            elif(self.state == StateManager.STATE_PLAY and sym == key.QUOTELEFT):
-                self.window.pop_handlers()
-                self.window.pop_handlers()
-                self.window.push_handlers(self.them[StateManager.CONSOLE])
-                self.them[StateManager.CONSOLE].toggle()
-                self.state |= StateManager.STATE_UI_CONSOLE
-            elif(self.state == StateManager.STATE_PLAY and sym == key.C):
-                self.window.pop_handlers()
-                self.window.pop_handlers()
-                self.window.push_handlers(self.them[StateManager.OVERLAY])
-                self.state |= StateManager.STATE_UI_BUILD
-            elif(self.state & StateManager.STATE_UI_CONSOLE and sym == key.ENTER
-                 or self.state & StateManager.STATE_UI_BUILD and sym == key.SPACE
-                 or self.state & StateManager.STATE_UI_BUILD and sym == key.B):
-                self.window.pop_handlers()
-                self.window.push_handlers(self.key_state_handler)
-                self.window.push_handlers(self.them[StateManager.ACTOR])
-                self.state = StateManager.STATE_PLAY
-        if(self.state != 0): return pyglet.event.EVENT_HANDLED
+            self.window.pop_handlers()
+            self.window.pop_handlers()
+            self.window.push_handlers(self.them[StateManager.OVERLAY])
+            self.state |= StateManager.STATE_UI_OVERLAY
+            self.dispatch_event("on_open",*args)
+
+    def on_close(self,*args):
+        debug("{}".format([*args]))
+        if(self.state & StateManager.STATE_UI_OVERLAY):
+            self.window.pop_handlers()
+            self.window.push_handlers(self.key_state_handler)
+            self.window.push_handlers(self.them[StateManager.ACTION_BAR])
+            self.state = StateManager.STATE_PLAY
 
     def begin(self):
         self.window.push_handlers(self)
         self.window.push_handlers(self.key_state_handler)
-        self.window.push_handlers(self.them[StateManager.ACTOR])
+        self.window.push_handlers(self.them[StateManager.ACTION_BAR])
+        self.push_handlers(self.them[StateManager.OVERLAY])
+        self.them[StateManager.ACTOR].push_handlers(self)
+        self.them[StateManager.OVERLAY].push_handlers(self)
         self.them[StateManager.ACTOR].push_handlers(self.them[StateManager.SCENE])
-        self.them[StateManager.ACTOR].push_handlers(self.them[StateManager.OVERLAY])
-        self.them[StateManager.SCENE].push_handlers(self.them[StateManager.ACTOR])
+        self.them[StateManager.ACTION_BAR].push_handlers(self.them[StateManager.ACTOR])
         self.them[StateManager.OVERLAY].push_handlers(self.them[StateManager.SCENE])
+        self.them[StateManager.SCENE].push_handlers(self.them[StateManager.ACTOR])
         self.state |= StateManager.STATE_PLAY
 
     def register(self,id,it):
         self.them[id] = it
+
+StateManager.register_event_type('on_open')

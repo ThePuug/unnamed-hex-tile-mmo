@@ -5,10 +5,15 @@ ORIENTATION = [[sqrt(3), sqrt(3) / 2, 0, 3.0/2],
                [sqrt(3) / 3, -1 / 3, 0, 2.0/3, 0.5]]
 
 class Px:
-    def __init__(self, x, y, z):
-        self.x = x
-        self.y = y
-        self.z = z
+    def __init__(self, *args):
+        if(type(args[0]) is tuple):
+            self.x = args[0][0]
+            self.y = args[0][1]
+            self.z = 0 if len(args) < 2 else args[1]
+        else:
+            self.x = args[0]
+            self.y = args[1]
+            self.z = 0 if len(args) < 3 else args[2]
 
     def __hash__(self): return hash((self.x,self.y,self.z))
     def __eq__(self,other): return self.x==other.x and self.y==other.y and self.z==other.z
@@ -35,10 +40,15 @@ class Px:
         return Hx(q, r, az)
 
 class Hx:
-    def __init__(self, q, r, z):
-        self.q = q
-        self.r = r
-        self.z = z
+    def __init__(self, *args):
+        if(type(args[0]) is tuple):
+            self.q = args[0][0]
+            self.r = args[0][1]
+            self.z = 0 if len(args) < 2 else args[1]
+        else:
+            self.q = args[0]
+            self.r = args[1]
+            self.z = 0 if len(args) < 3 else args[2]
     
     def __hash__(self): return hash((self.q,self.r,self.z))
     def __eq__(self,other): return self.q==other.q and self.r==other.r and self.z==other.z
