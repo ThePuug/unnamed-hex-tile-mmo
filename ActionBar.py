@@ -1,8 +1,5 @@
-from logging import debug
 import pyglet
 from pyglet.window import key
-
-from Scene import Scene
 
 PADDING = 8
 BUTTON_SIZE = 48
@@ -26,6 +23,8 @@ class ActionBar(pyglet.event.EventDispatcher):
             self.buttons.append(button)
         self.buttons[0].event = ["on_action","on_overlay",self.scene.terrain]
         self.buttons[1].event = ["on_action","on_overlay",self.scene.streets]
+        self.buttons[2].event = ["on_action","on_overlay",self.scene.decorators]
+        self.buttons[3].event = ["on_action","on_overlay",self.scene.buildings]
 
     def on_key_press(self,sym,mod):
         if(sym == key.Q): self.dispatch_event(*self.buttons[0].event)

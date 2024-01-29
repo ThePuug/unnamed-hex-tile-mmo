@@ -10,10 +10,10 @@ from Camera import Camera, CenteredCamera
 from Console import Console
 from Scene import Scene
 from StateManager import StateManager
-from Tile import Px
 from Overlay import Overlay
 
 LOGLEVEL = logging.DEBUG
+DEPTH = 10
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
@@ -35,10 +35,10 @@ def on_draw():
 key_state_handler = pyglet.window.key.KeyStateHandler()
 state_manager = StateManager(window, key_state_handler)
 
-batch = pyglet.graphics.Batch()
-groups = [pyglet.graphics.Group(order = i) for i in range(11)]
-
 assets = Assets()
+
+batch = pyglet.graphics.Batch()
+groups = [pyglet.graphics.Group(order = i) for i in range(DEPTH+1+Assets.MAX_HEIGHT)]
 
 scene = Scene(assets, batch, groups)
 state_manager.register(StateManager.SCENE, scene)
@@ -46,7 +46,7 @@ state_manager.register(StateManager.SCENE, scene)
 actor = Actor(key_state_handler, batch, groups)
 state_manager.register(StateManager.ACTOR, actor)
 
-overlay = Overlay(assets.streets[0], batch, groups[len(groups)-1])
+overlay = Overlay(batch, groups[len(groups)-Assets.MAX_HEIGHT:])
 state_manager.register(StateManager.OVERLAY,overlay)
 
 batch_ui = pyglet.graphics.Batch()
@@ -54,7 +54,7 @@ batch_ui = pyglet.graphics.Batch()
 action_bar = ActionBar(window,scene,batch=batch_ui)
 state_manager.register(StateManager.ACTION_BAR,action_bar)
 
-console = Console(Px(window.width,window.height,0),batch=batch_ui)
+console = Console((window.width,window.height,0),batch=batch_ui)
 state_manager.register(StateManager.CONSOLE,console)
 console.toggle() # off
 

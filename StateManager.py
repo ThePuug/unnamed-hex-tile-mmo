@@ -1,8 +1,4 @@
-from logging import debug
 import pyglet
-from pyglet.window import key
-
-from Tile import Px
 
 class StateManager(pyglet.event.EventDispatcher):
     CONSOLE = 'console'

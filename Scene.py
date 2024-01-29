@@ -1,8 +1,11 @@
+from logging import debug
 import pyglet
 
-from Tile import Hx, Tile
+from HxPx import Hx
+from Tile import Tile
 
 R=5
+NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
 
 class Scene(pyglet.event.EventDispatcher):
 
@@ -16,45 +19,20 @@ class Scene(pyglet.event.EventDispatcher):
         self.tiles = {}
         self.decorations = {}
 
-    def create_tile(self,hx,img,scale = None):
-        px = hx.into_px()
-        new = pyglet.sprite.Sprite(img=img,batch=self.batch,group=self.groups[hx.z])
-        if scale is None:
-            new.scale_x = Tile.WIDTH / (img.width-2)
-            new.scale_y = Tile.HEIGHT / (3/4*img.height-2)
-        else:
-            new.scale_x = scale[0]
-            new.scale_y = scale[1]
-        new.x = px.x
-        new.y = px.y + Tile.HEIGHT/4 + (px.z//2)*(Tile.RISE)
-        return new
-
     def on_looking_at(self, hx):
         if self.tiles.get(hx,None) is None:
             self.dispatch_event('on_discover',hx)
 
-    def on_add_decoration(self, hx, offset, decorator):
-        new_hx = Hx(hx.q,hx.r,hx.z+1)
-        new_tile = self.create_tile(new_hx,decorator, (Tile.WIDTH/6 / decorator.width, Tile.HEIGHT/4 / decorator.height))
-        new_tile.x += offset.x
-        new_tile.y += offset.y
-        if(self.decorations.get(new_hx,None) is None): self.decorations[new_hx] = []
-        self.decorations[new_hx].append(new_tile)
-
-    def on_select(self, hx, background, above):
-        self.tiles.get(hx).image = background
-        decorations = self.decorations.get(Hx(hx.q,hx.r,hx.z+1),[])
-        [it.delete() for it in decorations]
-        self.decorations[hx] = []
-
-        abhx = Hx(hx.q,hx.r,hx.z+2)
-        ab = self.tiles.get(abhx,None)
-        if above is not None:
-            if ab is None: self.tiles[abhx] = self.create_tile(abhx,above)
-            else: ab.image = above
-        elif above is None and ab is not None: 
-            ab.image.delete()
-            del self.tiles[abhx]
+    def on_select(self, hx, layerset):
+        for i,it in enumerate(layerset.layers):
+            if it is None: continue
+            hxi = Hx(hx.q,hx.r,hx.z+i)
+            tile = self.tiles.get(hxi)
+            sprite = layerset.into_sprite(i,self.batch)
+            if tile is not None:
+                self.tiles[hxi].sprite.delete()
+                del self.tiles[hxi]
+            self.tiles[hxi] = Tile(hxi,sprite,self.groups[hxi.z])
 
     def on_discover(self, c):
         for q in range(-R, R+1):
@@ -63,6 +41,12 @@ class Scene(pyglet.event.EventDispatcher):
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.tiles[hx] = self.create_tile(hx,self.terrain[0])
+                self.tiles[hx] = Tile(hx, self.terrain[0].into_sprite(0,self.batch), self.groups[hx.z])
+    
+    def on_move_to(self, actor, px):
+        hx = px.into_hx()
+        for it in [self.tiles.get(Hx(hx.q+offset.q,hx.r+offset.r,hx.z)) for offset in NEIGHBORS + [hx]]:
+            if it is not None:
+                debug("{},{}->{},{}".format(it.sprite.x, it.sprite.y, it.sprite.width, it.sprite.height))
     
 Scene.register_event_type('on_discover')

@@ -19,12 +19,12 @@ class Console(pyglet.event.EventDispatcher):
         height = font.ascent - font.descent
 
         self.label = pyglet.text.Label('> ', font.name, font.size, x=MARGIN/2, y=MARGIN/2, anchor_x='center', anchor_y='bottom', color=(0,0,0,255), batch=batch)
-        self.layout = pyglet.text.layout.IncrementalTextLayout(self.document, size.y-MARGIN, height, multiline=True, batch=batch)
+        self.layout = pyglet.text.layout.IncrementalTextLayout(self.document, size[1]-MARGIN, height, multiline=True, batch=batch)
         self.caret = pyglet.text.caret.Caret(self.layout,batch=batch)
 
         self.layout.x = MARGIN/2+PADDING
         self.layout.y = MARGIN/2
-        self.border = pyglet.shapes.Rectangle(MARGIN/2-PADDING,MARGIN/2-PADDING,size.x-MARGIN+2*PADDING,height+2*PADDING, 
+        self.border = pyglet.shapes.Rectangle(MARGIN/2-PADDING,MARGIN/2-PADDING,size[0]-MARGIN+2*PADDING,height+2*PADDING, 
                                               color=(255, 255, 255, 100), batch=batch)
 
         self.cmd = Cmd()
