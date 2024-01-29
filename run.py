@@ -13,7 +13,7 @@ from StateManager import StateManager
 from Overlay import Overlay
 
 LOGLEVEL = logging.DEBUG
-DEPTH = 10
+DEPTH = 11
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
@@ -38,7 +38,7 @@ state_manager = StateManager(window, key_state_handler)
 assets = Assets()
 
 batch = pyglet.graphics.Batch()
-groups = [pyglet.graphics.Group(order = i) for i in range(DEPTH+1+Assets.MAX_HEIGHT)]
+groups = [pyglet.graphics.Group(order = i) for i in range(DEPTH+(Assets.MAX_HEIGHT//2+1)*2)]
 
 scene = Scene(assets, batch, groups)
 state_manager.register(StateManager.SCENE, scene)
@@ -46,7 +46,7 @@ state_manager.register(StateManager.SCENE, scene)
 actor = Actor(key_state_handler, batch, groups)
 state_manager.register(StateManager.ACTOR, actor)
 
-overlay = Overlay(batch, groups[len(groups)-Assets.MAX_HEIGHT:])
+overlay = Overlay(batch, groups[DEPTH:])
 state_manager.register(StateManager.OVERLAY,overlay)
 
 batch_ui = pyglet.graphics.Batch()
