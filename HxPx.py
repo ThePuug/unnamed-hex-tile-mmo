@@ -76,6 +76,16 @@ class Px:
     @property
     def offset(self): return self._offset
 
+    @property
+    def vertices(self):
+        corners = []
+        for i in range(6):
+            px = self
+            angle = 2 * pi * (0.5+i) / 6
+            offset = Px(px.tile_size * cos(angle), (px.iso_scale*px.tile_size) * sin(angle))
+            corners.append(Px(px.x+offset.x, px.y+offset.y))
+        return corners
+
     def into_hx(self):
         x = self.x/self._tile_size*CONSTS[0]
         y = self.y/(self.iso_scale*self._tile_size)*-CONSTS[0]
@@ -88,7 +98,7 @@ class Px:
         q = floor(qf)                   # pseudo x, quantized and thus requires floor
         r = -floor(rf)                  # pseudo y, quantized and thus requires floor
         return Hx(q, r, self.z)
-
+    
 class Hx:
     def __init__(self, q, r, z):
         self.q = q

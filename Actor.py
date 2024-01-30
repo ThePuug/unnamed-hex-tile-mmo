@@ -46,6 +46,7 @@ class Actor(pyglet.event.EventDispatcher):
 
     def update(self, dt):
         was = self.px
+        pos = copy.copy(self.px)
         if not(self.key_handler[key.LEFT] or self.key_handler[key.RIGHT] or self.key_handler[key.UP] or self.key_handler[key.DOWN]):
             if self.sprite.image == self.animations["walk_n"]: self.sprite.image = self.animations["stand_n"]
             if self.sprite.image == self.animations["walk_e"]: self.sprite.image = self.animations["stand_e"]
@@ -55,52 +56,43 @@ class Actor(pyglet.event.EventDispatcher):
         if self.key_handler[key.UP]: 
             if self.sprite.image != self.animations["walk_n"]: 
                 self.sprite.image = self.animations["walk_n"]
-            if self.key_handler[key.LEFT]:
-                self.sprite.x -= self.speed_ang_x*dt
-                self.sprite.y += self.speed_ang_y*dt
+            if self.key_handler[key.LEFT] or not self.key_handler[key.RIGHT] and (self.heading == Hx(-1,0,0) or self.heading == Hx(-1,+1,0) or self.heading == Hx(+1,-1,0)):
+                pos.x -= self.speed_ang_x*dt
+                pos.y += self.speed_ang_y*dt
                 self.heading = Hx(-1,+1,0)
-            elif self.key_handler[key.RIGHT]:
-                self.sprite.x += self.speed_ang_x*dt
-                self.sprite.y += self.speed_ang_y*dt
-                self.heading = Hx(0,+1,0)
             else:
-                self.sprite.y += self.speed*dt
-                if(self.heading == Hx(-1,0,0) or self.heading == Hx(-1,+1,0) or self.heading == Hx(0,-1,0)): self.heading = Hx(-1,+1,0)
-                else: self.heading = Hx(0,+1,0)
+                pos.x += self.speed_ang_x*dt
+                pos.y += self.speed_ang_y*dt
+                self.heading = Hx(0,+1,0)
         if self.key_handler[key.DOWN]: 
             if self.sprite.image != self.animations["walk_s"]:
                 self.sprite.image = self.animations["walk_s"]
-            if self.key_handler[key.LEFT]:
-                self.sprite.x -= self.speed_ang_x*dt
-                self.sprite.y -= self.speed_ang_y*dt
-                self.heading = Hx(0,-1,0)
-            elif self.key_handler[key.RIGHT]:
-                self.sprite.x += self.speed_ang_x*dt
-                self.sprite.y -= self.speed_ang_y*dt
+            if self.key_handler[key.RIGHT] or not self.key_handler[key.LEFT] and (self.heading == Hx(1,0,0) or self.heading == Hx(+1,-1,0) or self.heading == Hx(-1,1,0)):
+                pos.x += self.speed_ang_x*dt
+                pos.y -= self.speed_ang_y*dt
                 self.heading = Hx(+1,-1,0)
             else:
-                self.sprite.y -= self.speed*dt
-                if(self.heading == Hx(1,0,0) or self.heading == Hx(+1,-1,0) or self.heading == Hx(0,1,0)): self.heading = Hx(+1,-1,0)
-                else: self.heading = Hx(0,-1,0)
+                pos.x -= self.speed_ang_x*dt
+                pos.y -= self.speed_ang_y*dt
+                self.heading = Hx(0,-1,0)
         
         if self.key_handler[key.RIGHT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
-            self.sprite.x += self.speed*dt
+            pos.x += self.speed*dt
             self.heading = Hx(+1,+0,0)
             if self.sprite.image != self.animations["walk_e"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_e"]
         
         if self.key_handler[key.LEFT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
-            self.sprite.x -= self.speed*dt
+            pos.x -= self.speed*dt
             self.heading = Hx(-1,+0,0)
             if self.sprite.image != self.animations["walk_w"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_w"]
 
-        now = Px(self.sprite.position,self.at.z)
-        if(now != was): 
+        if(pos != was):
             self.cursor.position = (self.sprite.position[0],self.sprite.position[1])
-            self.dispatch_event('on_move_to',self,now)
+            self.dispatch_event('on_move_to',self,pos)
 
-        now_hx = now.into_hx()
+        now_hx = pos.into_hx()
         was_focus_hx = Px(self.focus.position,self.at.z-1).into_hx()
         now_focus_hx = Hx(self.heading.q+now_hx.q,self.heading.r+now_hx.r,self.at.z-1)
         if now_focus_hx.q != was_focus_hx.q or now_focus_hx.r != was_focus_hx.r:

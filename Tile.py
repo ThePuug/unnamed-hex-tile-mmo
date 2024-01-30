@@ -1,10 +1,14 @@
+import random
+import pyglet
 import copy
-from HxPx import Hx, Px, inv_hexmod
+
+from HxPx import TRANSFORM_SM, Hx, Px, inv_hexmod
 
 class Tile:
     RISE=24
 
     def __init__(self, pos, sprite, group):
+        self.collider = pyglet.shapes.Polygon(*[[it.x,it.y] for it in pos.vertices],color=random.choices(range(0,200),k=3)+[50])
         self.contents = [None]*7
         self.sprite = sprite
         if sprite is not None: self.sprite.group = group
@@ -22,6 +26,8 @@ class Tile:
         elif type(v) is Px: 
             self._hx = v.into_hx()
             self._px = v
+        self.collider.delete()
+        self.collider = pyglet.shapes.Polygon(*[[it.x,it.y] for it in self._px.vertices],color=random.choices(range(0,200),k=3)+[50])
         self.update_position()
 
     @property
@@ -45,6 +51,7 @@ class Tile:
             if it is not None: 
                 offset = inv_hexmod(i)
                 px = Px(new_pos[0]+offset[0], new_pos[1]+offset[1], 0)
+                px.transform = TRANSFORM_SM
                 it.pos = px
         
 class TileSet:
