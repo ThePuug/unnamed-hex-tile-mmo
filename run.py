@@ -22,6 +22,7 @@ logging.basicConfig(stream=sys.stderr,
 
 
 window = pyglet.window.Window(fullscreen=False)
+fps = pyglet.window.FPSDisplay(window=window)
 camera = CenteredCamera(window)
 camera_ui = Camera(window)
 @window.event
@@ -31,6 +32,7 @@ def on_draw():
         batch.draw()
     with camera_ui:
         batch_ui.draw()
+        fps.draw()
 
 key_state_handler = pyglet.window.key.KeyStateHandler()
 state_manager = StateManager(window, key_state_handler)

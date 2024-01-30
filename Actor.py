@@ -1,4 +1,5 @@
 import copy
+from logging import debug
 import math
 import pyglet
 from pyglet.window import key
@@ -12,12 +13,14 @@ class Actor(pyglet.event.EventDispatcher):
         self.key_handler = key_state_handler
         self.groups = groups
         self.at = Hx(0,0,1)
-        self.heading = copy.copy(self.at)
+        self.heading = Hx(0,0,0)
+        self.cursor = pyglet.shapes.Rectangle(0,0,2,2,(255,0,0,255),batch,groups[10])
+        self.cursor.anchor_position = (1,1)
         self.focus = pyglet.shapes.Polygon(*[[it.x,it.y] for it in self.at.vertices],color=(255,255,150,50), batch=batch, group=self.groups[self.at.z+1])
-        self.focus.anchor_position = (-self.at.width/2,-self.at.height/2)
+        self.focus.anchor_position = (-self.at.width/2,-self.at.height/4)
         self.speed = DEFAULT_SPEED
-        self.speed_ang_y = self.speed*math.cos(60*math.pi/180)
-        self.speed_ang_x = self.at.iso_scale*self.speed*math.sin(60*math.pi/180)
+        self.speed_ang_x = self.speed*math.cos(60*math.pi/180)
+        self.speed_ang_y = self.at.iso_scale*self.speed*math.sin(60*math.pi/180)
 
         frames_blank = pyglet.image.ImageGrid(pyglet.resource.image("assets/sprites/blank.png"),rows=4,columns=4)
         for it in frames_blank:
@@ -55,45 +58,47 @@ class Actor(pyglet.event.EventDispatcher):
             if self.key_handler[key.LEFT]:
                 self.sprite.x -= self.speed_ang_x*dt
                 self.sprite.y += self.speed_ang_y*dt
-                self.heading = Hx(-1,+1,self.at.z)
+                self.heading = Hx(-1,+1,0)
             elif self.key_handler[key.RIGHT]:
                 self.sprite.x += self.speed_ang_x*dt
                 self.sprite.y += self.speed_ang_y*dt
-                self.heading = Hx(0,+1,self.at.z)
+                self.heading = Hx(0,+1,0)
             else:
                 self.sprite.y += self.speed*dt
-                if(self.heading == Hx(-1,0,self.at.z) or self.heading == Hx(-1,+1,self.at.z) or self.heading == Hx(0,-1,self.at.z)): self.heading = Hx(-1,+1,self.at.z)
-                else: self.heading = Hx(0,+1,self.at.z)
+                if(self.heading == Hx(-1,0,0) or self.heading == Hx(-1,+1,0) or self.heading == Hx(0,-1,0)): self.heading = Hx(-1,+1,0)
+                else: self.heading = Hx(0,+1,0)
         if self.key_handler[key.DOWN]: 
             if self.sprite.image != self.animations["walk_s"]:
                 self.sprite.image = self.animations["walk_s"]
             if self.key_handler[key.LEFT]:
                 self.sprite.x -= self.speed_ang_x*dt
                 self.sprite.y -= self.speed_ang_y*dt
-                self.heading = Hx(0,-1,self.at.z)
+                self.heading = Hx(0,-1,0)
             elif self.key_handler[key.RIGHT]:
                 self.sprite.x += self.speed_ang_x*dt
                 self.sprite.y -= self.speed_ang_y*dt
-                self.heading = Hx(+1,-1,self.at.z)
+                self.heading = Hx(+1,-1,0)
             else:
                 self.sprite.y -= self.speed*dt
-                if(self.heading == Hx(1,0,self.at.z) or self.heading == Hx(+1,-1,self.at.z) or self.heading == Hx(0,1,self.at.z)): self.heading = Hx(+1,-1,self.at.z)
-                else: self.heading = Hx(0,-1,self.at.z)
+                if(self.heading == Hx(1,0,0) or self.heading == Hx(+1,-1,0) or self.heading == Hx(0,1,0)): self.heading = Hx(+1,-1,0)
+                else: self.heading = Hx(0,-1,0)
         
         if self.key_handler[key.RIGHT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
             self.sprite.x += self.speed*dt
-            self.heading = Hx(+1,+0,self.at.z)
+            self.heading = Hx(+1,+0,0)
             if self.sprite.image != self.animations["walk_e"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_e"]
         
         if self.key_handler[key.LEFT] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]):
             self.sprite.x -= self.speed*dt
-            self.heading = Hx(-1,+0,self.at.z)
+            self.heading = Hx(-1,+0,0)
             if self.sprite.image != self.animations["walk_w"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_w"]
 
         now = Px(self.sprite.position,self.at.z)
-        if(now != was): self.dispatch_event('on_move_to',self,now)
+        if(now != was): 
+            self.cursor.position = (self.sprite.position[0],self.sprite.position[1])
+            self.dispatch_event('on_move_to',self,now)
 
         now_hx = now.into_hx()
         was_focus_hx = Px(self.focus.position,self.at.z-1).into_hx()

@@ -1,13 +1,13 @@
 import copy
-from HxPx import Hx, Px
-
+from HxPx import Hx, Px, inv_hexmod
 
 class Tile:
     RISE=24
 
     def __init__(self, pos, sprite, group):
+        self.contents = [None]*7
         self.sprite = sprite
-        self.sprite.group = group
+        if sprite is not None: self.sprite.group = group
         self.pos = pos
 
     @property
@@ -18,27 +18,34 @@ class Tile:
         self._pos = v
         if type(v) is Hx: 
             self._hx = v
-            self.px = v.into_px()
+            self._px = v.into_px()
         elif type(v) is Px: 
-            self.px = v
             self._hx = v.into_hx()
+            self._px = v
+        self.update_position()
 
     @property
     def hx(self): return self._hx
 
-    @hx.setter
-    def hx(self, v):
-        self._hx = v
-        self.px = v.into_px()
-
     @property
     def px(self): return self._px
 
-    @px.setter
-    def px(self, v):
-        self._px = v
-        self._hx = v.into_hx()
-        self.sprite.position = (v.x, v.y + self._hx.height/4 + v.z//2*Tile.RISE, v.z)
+    def delete(self):
+        if self.sprite is not None: self.sprite.delete()
+        for it in self.contents: 
+            if it is not None: 
+                it.delete()
+                it = None
+                
+    def update_position(self):
+        new_pos = (self._px.x, self._px.y + self._px.z//2*Tile.RISE, self._px.z)
+        if self.sprite is not None: 
+            self.sprite.position = new_pos
+        for i,it in enumerate(self.contents): 
+            if it is not None: 
+                offset = inv_hexmod(i)
+                px = Px(new_pos[0]+offset[0], new_pos[1]+offset[1], 0)
+                it.pos = px
         
 class TileSet:
     def __init__(self, pos, layerset, batch, groups):
@@ -67,7 +74,7 @@ class TileSet:
     def layers(self, v):
         for i in range(len(self._layers)): 
             if self._layers[0] is not None:
-                self._layers[0].sprite.delete()
+                self._layers[0].delete()
             del self._layers[0]
         for i in range(len(v.layers)):
             if v.layers[i] is None:
