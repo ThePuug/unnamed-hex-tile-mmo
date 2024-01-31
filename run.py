@@ -1,7 +1,6 @@
 import logging
 import pyglet
 import sys
-from pyglet.gl import glTexParameteri, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_NEAREST
 from ActionBar import ActionBar
 
 from Actor import Actor

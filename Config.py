@@ -1,0 +1,16 @@
+from math import sqrt
+
+TILE_SIZE = 48
+ISO_SCALE = 3/4
+RISE = 24
+
+HXM_R = 1
+HXM_S = 3*HXM_R + 2
+HXM_A = 3*pow(HXM_R,2)+3*HXM_R+1
+
+# PRECALCULATED CONSTANTS
+TILE_WIDTH = sqrt(3)*TILE_SIZE
+TILE_HEIGHT = ISO_SCALE*TILE_SIZE*2
+
+ONE_SQRT3 = 1/sqrt(3)
+SQRT3 = sqrt(3)

@@ -21,10 +21,10 @@ class ActionBar(pyglet.event.EventDispatcher):
             button = Button(pyglet.shapes.Rectangle(i*(PADDING+BUTTON_SIZE),0,BUTTON_SIZE,BUTTON_SIZE, color=(225, 225, 225, 100), batch=batch), None)
             button.slot.anchor_position = (self.bar.width/2 - window.width/2 - PADDING, -PADDING)
             self.buttons.append(button)
-        self.buttons[0].event = ["on_action","on_overlay",False, self.scene.terrain]
-        self.buttons[1].event = ["on_action","on_overlay",False, self.scene.streets]
-        self.buttons[2].event = ["on_action","on_overlay",True, self.scene.decorators]
-        self.buttons[3].event = ["on_action","on_overlay",False, self.scene.buildings]
+        self.buttons[0].event = ["on_action","on_overlay",None, self.scene.terrain]
+        self.buttons[1].event = ["on_action","on_overlay",None, self.scene.streets]
+        self.buttons[2].event = ["on_action","on_overlay",0, self.scene.decorators]
+        self.buttons[3].event = ["on_action","on_overlay",None, self.scene.buildings]
 
     def on_key_press(self,sym,mod):
         if(sym == key.Q): self.dispatch_event(*self.buttons[0].event)
