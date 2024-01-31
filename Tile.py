@@ -44,7 +44,7 @@ class Hex:
         if self.sprite is not None: self.sprite.delete()
 
 class Decorator(Hex):
-    SIZE = TILE_SIZE / 3 # TODO: calc from HXM config
+    SIZE = TILE_SIZE/3 # TODO: calc from HXM config
 
     def __init__(self, pos, sprite, hxm, group):
         self._hxm = hxm
@@ -67,7 +67,7 @@ class Decorator(Hex):
         offset = inv_hexmod(self.hxm)
         new_pos = (self._px.x + offset[0], self._px.y + offset[1] + self._px.z//2*RISE,0)
         self.collider.delete()
-        self.collider = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Px(new_pos).vertices(self.SIZE)])
+        self.collider = pyglet.shapes.Polygon(*[[it.x,it.y] for it in Px(new_pos).vertices(self.SIZE,ORIENTATION_PNTY)])
         self.sprite.position = new_pos
 
 class Tile(Hex):

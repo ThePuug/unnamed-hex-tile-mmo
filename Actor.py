@@ -36,7 +36,7 @@ class Actor(pyglet.event.EventDispatcher):
             "stand_w": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [8,10]], duration=0.4),
             "stand_s": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [12,14]], duration=0.4)}
         self.sprite = pyglet.sprite.Sprite(self.animations["walk_s"], group=self.groups[self.at.z+1], batch=batch)
-        self.sprite.scale = 0.66
+        self.sprite.scale = 0.6
 
     @property
     def px(self): return Px(self.sprite.position,self.at.z)

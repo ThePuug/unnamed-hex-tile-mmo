@@ -26,7 +26,7 @@ class Assets:
             ],(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
         self.terrain = self.load("assets/sprites/terrain.png",(5,1),(1,3/4),None,(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
         self.buildings = self.load("assets/sprites/buildings.png",(2,1),(1,3/4),[[None,(1,False),(0,False)]],(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
-        self.decorators = self.load("assets/sprites/decorators.png",(2,1),(1,5/4),[[None,(0,False),None,(1,False)]],((TILE_WIDTH/3)/(27),(TILE_HEIGHT/3)/(1/2*64)))
+        self.decorators = self.load("assets/sprites/decorators.png",(3,1),(1,1),[[None,(0,False),None,(1,False),None,(2,False)]],((TILE_WIDTH/3)/(27),(TILE_HEIGHT/3)/(1/2*64)))
         Assets.MAX_HEIGHT = max([max([len(set.layers) for set in set]) for set in [self.streets,self.terrain,self.buildings,self.decorators]])
 
     def load(self, img, grid_size, anchor_factor = None, order = None, scale = None):

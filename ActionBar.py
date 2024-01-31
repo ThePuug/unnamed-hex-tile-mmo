@@ -5,11 +5,14 @@ PADDING = 8
 BUTTON_SIZE = 48
 NUM_ACTIONS = 8
 
+KEYS = [key.Q,key.W,key.E,key.R,key._1,key._2,key._3,key._4]
+
 class Button:
-    __slots__ = ['slot', 'event']
-    def __init__(self,slot,event):
+    __slots__ = ['slot', 'event','key']
+    def __init__(self,slot,event,key):
         self.slot = slot
         self.event = event
+        self.key = key
 
 class ActionBar(pyglet.event.EventDispatcher):
     def __init__(self,window,scene,batch):
@@ -18,7 +21,10 @@ class ActionBar(pyglet.event.EventDispatcher):
         self.bar.anchor_x = self.bar.width/2
         self.buttons = []
         for i in range(8):
-            button = Button(pyglet.shapes.Rectangle(i*(PADDING+BUTTON_SIZE),0,BUTTON_SIZE,BUTTON_SIZE, color=(225, 225, 225, 100), batch=batch), None)
+            button = Button(pyglet.shapes.Rectangle(i*(PADDING+BUTTON_SIZE),0,BUTTON_SIZE,BUTTON_SIZE, color=(225, 225, 225, 100), batch=batch), 
+                            None, 
+                            pyglet.text.Label(str(key.symbol_string(KEYS[i])), bold=True, batch=batch))
+            button.key.position = (window.width/2 - self.bar.width/2 + i*(PADDING+BUTTON_SIZE) + BUTTON_SIZE/2, PADDING+BUTTON_SIZE/2, 0)
             button.slot.anchor_position = (self.bar.width/2 - window.width/2 - PADDING, -PADDING)
             self.buttons.append(button)
         self.buttons[0].event = ["on_action","on_overlay",None, self.scene.terrain]
