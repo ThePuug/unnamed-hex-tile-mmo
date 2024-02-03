@@ -6,10 +6,9 @@ from Config import *
 class Tile:
     SIZE = TILE_SIZE
 
-    def __init__(self, pos, sprite, flags, batch):
+    def __init__(self, pos, sprite, flags):
         self.flags = flags
         self.sprite = sprite
-        self.batch = batch
         self.collider = collision.Poly(collision.Vector(0,0),[collision.Vector(it.x,it.y) for it in Px(0,0).vertices(self.SIZE)])
         self.pos = pos
 
@@ -38,3 +37,9 @@ class Tile:
         if self.sprite is not None: 
             self.sprite.delete()
             self.sprite = None
+
+    def __getstate__(self):
+        return {
+            "flags": self.flags,
+            "sprite": {"typ": self.sprite._typ, "idx": self.sprite._idx}
+        }

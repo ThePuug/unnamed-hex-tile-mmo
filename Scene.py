@@ -1,3 +1,5 @@
+from logging import debug
+import pickle
 import collision
 import pyglet
 
@@ -9,12 +11,10 @@ NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)
 
 class Scene(pyglet.event.EventDispatcher):
 
-    def __init__(self, tile_factories, batch):
-        self.terrain = tile_factories.terrain
-        self.buildings = tile_factories.buildings
-        self.decorators = tile_factories.decorators
+    def __init__(self, assets, batch):
+        self.assets = assets
         self.batch = batch
-        self.tiles = {}
+        self.tiles = self.from_file()
         self.decorations = {}
         self.on_discover(Hx(0,0,0))
 
@@ -45,7 +45,7 @@ class Scene(pyglet.event.EventDispatcher):
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.tiles[hx] = self.terrain[0].create(hx,self.batch)
+                self.tiles[hx] = self.assets["terrain"][0].create(hx,self.batch)
     
     def on_move_to(self, actor, px):
         hx = px.into_hx()
@@ -58,5 +58,24 @@ class Scene(pyglet.event.EventDispatcher):
                 if it is not None and it.sprite is not None and collision.collide(actor.collider,it.collider,response):
                     return
             actor.px = px
+
+    def to_file(self):
+        try:
+            pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
+        except Exception as e:
+            debug(e)
+
+    def from_file(self):
+        try:
+            tiles = {}
+            data = pickle.load(pyglet.resource.file("default.0","rb"))
+            for hx,it in data.items():
+                tile = self.assets[it.sprite["typ"]][it.sprite["idx"]].create(hx,self.batch)
+                tile.flags = it.flags
+                tiles[hx] = tile
+            return tiles
+        except Exception as e:
+            debug(e)
+            return {}
 
 Scene.register_event_type('on_discover')

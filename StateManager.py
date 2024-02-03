@@ -1,4 +1,5 @@
 import pyglet
+from pyglet.window import key
 
 class StateManager(pyglet.event.EventDispatcher):
     CONSOLE = 'console'
@@ -31,6 +32,8 @@ class StateManager(pyglet.event.EventDispatcher):
             self.window.push_handlers(self.key_state_handler)
             self.window.push_handlers(self.them[StateManager.ACTION_BAR])
             self.state = StateManager.STATE_PLAY
+        else:
+            self.them[StateManager.SCENE].to_file()
 
     def begin(self):
         self.window.push_handlers(self)

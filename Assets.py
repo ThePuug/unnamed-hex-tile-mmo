@@ -49,30 +49,36 @@ fragment_shader = pyglet.graphics.shader.Shader(fragment_source, "fragment")
 depth_shader = pyglet.graphics.shader.ShaderProgram(vertex_shader, fragment_shader)
 
 class TileFactory:
-    def __init__(self, img, scale, flags):
+    def __init__(self, img, scale, flags, typ, idx):
         self.img = img
         self.scale = scale
         self.flags = flags
+        self._typ = typ
+        self._idx = idx
 
     def create(self, pos, batch):
         sprite = DepthSprite(self.img,batch=batch,program=depth_shader)
+        sprite._typ = self._typ
+        sprite._idx = self._idx
         sprite.scale_x = TILE_WIDTH / (self.img.width * self.scale.x)
         sprite.scale_y *= TILE_HEIGHT / (self.img.height * self.scale.y)
-        return Tile(pos, sprite, self.flags, batch)
+        return Tile(pos, sprite, self.flags)
 
 class Assets:
     def __init__(self):
-        pyglet.resource.path = ['assets/sprites']
-        pyglet.resource.reindex()
-        #                           filename,         grid,  anchors, order, scale,     flags 
-        self.terrain    = self.load("terrain.png",    (5,1), (1,1),   None,  Px(1,1),   FLAG_SOLID)
-        self.buildings  = self.load("buildings.png",  (1,1), (1,5/4), None,  Px(1,3/4), FLAG_SOLID)
-        self.decorators = self.load("decorators.png", (1,1), (1,1/3), None,  Px(1,1/3))
+        self._assets = {}
+        #         filename,         grid,  anchors, order, scale,     flags 
+        self.load("terrain.png",    (5,1), (1,1),   None,  Px(1,1),   FLAG_SOLID)
+        self.load("buildings.png",  (1,1), (1,5/4), None,  Px(1,3/4), FLAG_SOLID)
+        self.load("decorators.png", (1,1), (1,1/3), None,  Px(1,1/3))
+
+    def __getitem__(self, v): return self._assets[v]
 
     def load(self, img, grid_size, anchor_factor = None, order = None, scale = Px(1,1), flags = 0):
+        typ = img[:img.index('.')]
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size[1],columns=grid_size[0]))
         for it in sheet:
             it.anchor_x = (1 if anchor_factor is None else anchor_factor[0])*it.width/2
             it.anchor_y = (1 if anchor_factor is None else anchor_factor[1])*it.height/2
         if order is None: order = [(it,False) for it in range(len(sheet))]
-        return [TileFactory(sheet[it[0]].get_transform(flip_x=it[1]), scale, flags) for it in order]
+        self._assets[typ] = [TileFactory(sheet[it[0]].get_transform(flip_x=it[1]), scale, flags, typ, i) for i,it in enumerate(order)]

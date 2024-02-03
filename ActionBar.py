@@ -29,19 +29,19 @@ class ActionBar(pyglet.event.EventDispatcher):
             button.key.position = (window.width/2 - self.bar.width/2 + i*(PADDING+BUTTON_SIZE) + BUTTON_SIZE/2, PADDING+BUTTON_SIZE/2, 0)
             button.slot.anchor_position = (self.bar.width/2 - window.width/2 - PADDING, -PADDING)
             self.buttons.append(button)
-        self.buttons[0].event = ["on_action","on_overlay",Hx(0,0,0),self.scene.terrain]
-        self.buttons[2].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.decorators]
-        self.buttons[3].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.buildings]
+        self.buttons[0].event = ["on_action","on_overlay",Hx(0,0,0),self.scene.assets["terrain"]]
+        self.buttons[2].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.assets["decorators"]]
+        self.buttons[3].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.assets["buildings"]]
 
     def on_key_press(self,sym,mod):
-        if(sym == key.Q): self.dispatch_event(*self.buttons[0].event)
-        if(sym == key.W): self.dispatch_event(*self.buttons[1].event)
-        if(sym == key.E): self.dispatch_event(*self.buttons[2].event)
-        if(sym == key.R): self.dispatch_event(*self.buttons[3].event)
-        if(sym == key._1): self.dispatch_event(*self.buttons[4].event)
-        if(sym == key._2): self.dispatch_event(*self.buttons[5].event)
-        if(sym == key._3): self.dispatch_event(*self.buttons[6].event)
-        if(sym == key._4): self.dispatch_event(*self.buttons[7].event)
-        if(sym == key.SPACE): self.dispatch_event("on_action","on_jump",None)
+        if sym == key.Q: self.dispatch_event(*self.buttons[0].event)
+        if sym == key.W: self.dispatch_event(*self.buttons[1].event)
+        if sym == key.E: self.dispatch_event(*self.buttons[2].event)
+        if sym == key.R: self.dispatch_event(*self.buttons[3].event)
+        if sym == key._1: self.dispatch_event(*self.buttons[4].event)
+        if sym == key._2: self.dispatch_event(*self.buttons[5].event)
+        if sym == key._3: self.dispatch_event(*self.buttons[6].event)
+        if sym == key._4: self.dispatch_event(*self.buttons[7].event)
+        if sym == key.SPACE: self.dispatch_event("on_action","on_jump",None)
 
 ActionBar.register_event_type("on_action")
