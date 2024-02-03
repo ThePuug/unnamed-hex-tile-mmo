@@ -6,24 +6,23 @@ from ActionBar import ActionBar
 from Actor import Actor
 from Assets import Assets
 from Camera import Camera, CenteredCamera
+from Config import *
 from Console import Console
 from Scene import Scene
 from StateManager import StateManager
 from Overlay import Overlay
-
-LOGLEVEL = logging.DEBUG
-DEPTH = 11
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-
 window = pyglet.window.Window(fullscreen=False)
+
 fps = pyglet.window.FPSDisplay(window=window)
 camera = CenteredCamera(window)
 camera_ui = Camera(window)
+
 @window.event
 def on_draw():
     window.clear()
@@ -39,15 +38,14 @@ state_manager = StateManager(window, key_state_handler)
 assets = Assets()
 
 batch = pyglet.graphics.Batch()
-groups = [pyglet.graphics.Group(order = i) for i in range(DEPTH+(Assets.MAX_HEIGHT//2+1)*2)]
 
-scene = Scene(assets, batch, groups)
+scene = Scene(assets, batch)
 state_manager.register(StateManager.SCENE, scene)
 
-actor = Actor(key_state_handler, batch, groups)
+actor = Actor(key_state_handler, batch)
 state_manager.register(StateManager.ACTOR, actor)
 
-overlay = Overlay(batch, groups[DEPTH:])
+overlay = Overlay(batch)
 state_manager.register(StateManager.OVERLAY,overlay)
 
 batch_ui = pyglet.graphics.Batch()

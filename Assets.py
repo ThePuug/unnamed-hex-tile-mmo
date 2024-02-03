@@ -1,41 +1,78 @@
 import pyglet
-from pyglet.gl import glTexParameteri, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_NEAREST
-
+from pyglet.graphics import *
 from Config import *
-from HxPx import Hx
+from HxPx import Px
+from Tile import Tile
 
-class LayerSet:
-    def __init__(self, layers, scale):
-        self.layers = layers if layers is not None else []
-        self.scale = scale if scale is not None else (0,0)
+fragment_source = """#version 150 core
+    in vec4 vertex_colors;
+    in vec3 texture_coords;
+    out vec4 final_colors;
 
-    def into_sprite(self, z, batch):
-        if self.layers[z] is None: return None
-        it = pyglet.sprite.Sprite(self.layers[z],batch=batch)
-        it.scale_x = self.scale[0]
-        it.scale_y = self.scale[1]
-        return it
+    uniform sampler2D sprite_texture;
+
+    void main()
+    {
+        final_colors = texture(sprite_texture, texture_coords.xy) * vertex_colors;
+        
+        // No GL_ALPHA_TEST in core, use shader to discard.
+        if(final_colors.a < 0.01){
+            discard;
+        }
+    }
+"""
+
+class DepthSpriteGroup(pyglet.sprite.SpriteGroup):
+    def set_state(self):
+        self.program.use()
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(self.texture.target, self.texture.id)
+
+        glEnable(GL_BLEND)
+        glBlendFunc(self.blend_src, self.blend_dest)
+
+        glEnable(GL_DEPTH_TEST)
+        glDepthFunc(GL_LESS)
+
+    def unset_state(self):
+        glDisable(GL_BLEND)
+        glDisable(GL_DEPTH_TEST)
+        self.program.stop()
+
+class DepthSprite(pyglet.sprite.AdvancedSprite):
+    group_class = DepthSpriteGroup
+
+# Re-use vertex source and create new shader with alpha testing.
+vertex_shader = pyglet.graphics.shader.Shader(pyglet.sprite.vertex_source, "vertex")
+fragment_shader = pyglet.graphics.shader.Shader(fragment_source, "fragment")
+depth_shader = pyglet.graphics.shader.ShaderProgram(vertex_shader, fragment_shader)
+
+class TileFactory:
+    def __init__(self, img, scale, flags):
+        self.img = img
+        self.scale = scale
+        self.flags = flags
+
+    def create(self, pos, batch):
+        sprite = DepthSprite(self.img,batch=batch,program=depth_shader)
+        sprite.scale_x = TILE_WIDTH / (self.img.width * self.scale.x)
+        sprite.scale_y *= TILE_HEIGHT / (self.img.height * self.scale.y)
+        return Tile(pos, sprite, self.flags, batch)
 
 class Assets:
-    MAX_HEIGHT = 1
     def __init__(self):
-        hx = Hx(0,0,0)
-        self.streets = self.load("assets/sprites/streets.png",(4,4),(1,3/4),[
-            [(2,False)],[(1,False)],[(0,False)],[(0,True)],[(5,False)],[(5,True)],[(6,False)],[(6,True)],[(7,False)],[(7,True)],[(4,False)],[(4,True)],[(8,False)],[(8,True)],
-            [(9,False)],[(9,True)],[(10,False)],[(10,True)],[(11,False)],[(11,True)],[(14,False)],[(14,True)],[(15,False)],[(15,True)],[(12,False)],[(13,False)],[(13,True)]
-            ],(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
-        self.terrain = self.load("assets/sprites/terrain.png",(5,1),(1,3/4),None,(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
-        self.buildings = self.load("assets/sprites/buildings.png",(2,1),(1,3/4),[[None,(1,False),(0,False)]],(TILE_WIDTH/(83-2),TILE_HEIGHT/(3/4*128-2)))
-        self.decorators = self.load("assets/sprites/decorators.png",(3,1),(1,1),[[None,(0,False),None,(1,False),None,(2,False)]],((TILE_WIDTH/3)/(27),(TILE_HEIGHT/3)/(1/2*64)))
-        Assets.MAX_HEIGHT = max([max([len(set.layers) for set in set]) for set in [self.streets,self.terrain,self.buildings,self.decorators]])
+        pyglet.resource.path = ['assets/sprites']
+        pyglet.resource.reindex()
+        #                           filename,         grid,  anchors, order, scale,     flags 
+        self.terrain    = self.load("terrain.png",    (5,1), (1,1),   None,  Px(1,1),   FLAG_SOLID)
+        self.buildings  = self.load("buildings.png",  (1,1), (1,5/4), None,  Px(1,3/4), FLAG_SOLID)
+        self.decorators = self.load("decorators.png", (1,1), (1,1/3), None,  Px(1,1/3))
 
-    def load(self, img, grid_size, anchor_factor = None, order = None, scale = None):
+    def load(self, img, grid_size, anchor_factor = None, order = None, scale = Px(1,1), flags = 0):
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size[1],columns=grid_size[0]))
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST)
         for it in sheet:
             it.anchor_x = (1 if anchor_factor is None else anchor_factor[0])*it.width/2
             it.anchor_y = (1 if anchor_factor is None else anchor_factor[1])*it.height/2
-        if order is None: order = [[(it,False)] for it in range(len(sheet))]
-        imgs = [ [None if z is None else sheet[z[0]].get_transform(flip_x=z[1]) for z in it] for it in order ]
-        return [LayerSet(layers,scale) for layers in imgs]
+        if order is None: order = [(it,False) for it in range(len(sheet))]
+        return [TileFactory(sheet[it[0]].get_transform(flip_x=it[1]), scale, flags) for it in order]
