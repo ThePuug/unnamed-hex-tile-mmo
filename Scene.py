@@ -4,14 +4,18 @@ import collision
 import pyglet
 
 from Config import *
-from HxPx import Hx
+from HxPx import Hx, Px
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
 
-class Scene(pyglet.event.EventDispatcher):
+class Impl(pyglet.event.EventDispatcher):
+    def __init__(self):
+        self.actors = {}
 
+class Scene(Impl):
     def __init__(self, assets, batch):
+        super().__init__()
         self.assets = assets
         self.batch = batch
         self.tiles = self.from_file()
@@ -47,7 +51,9 @@ class Scene(pyglet.event.EventDispatcher):
                 if not(self.tiles.get(hx,None) is None): continue
                 self.tiles[hx] = self.assets["terrain"][0].create(hx,self.batch)
     
-    def on_move_to(self, actor, px):
+    def do_move_actor(self, id, evt):
+        actor = self.actors[id]
+        px = Px(*evt.pos)
         hx = px.into_hx()
         tile = self.tiles.get(hx)
         if(tile is not None and tile.flags & FLAG_SOLID):
@@ -79,3 +85,4 @@ class Scene(pyglet.event.EventDispatcher):
             return {}
 
 Scene.register_event_type('on_discover')
+Scene.register_event_type('on_try')

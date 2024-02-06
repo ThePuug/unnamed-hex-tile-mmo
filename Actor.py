@@ -5,13 +5,28 @@ import pyglet
 from pyglet.window import key
 
 from Config import *
+from Event import ActorMoveEvent
 from HxPx import Hx, Px
 from Assets import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 90
 
-class Actor(pyglet.event.EventDispatcher):
-    def __init__(self, key_state_handler, batch):
+class Impl(pyglet.event.EventDispatcher):
+    def __init__(self, id):
+        self.id = id
+        self.last_clock = 0
+
+    def on_move_to(self, e):
+        # avoid speed hack by sending a large dt
+        if(self.last_clock + e.dt > pyglet.clock._time): return
+        self.last_clock = pyglet.clock._time
+        self.dispatch_event("do_actor_move", e.id, Px(*e[:3]))
+
+Impl.register_event_type('do_actor_move')
+
+class Actor(Impl):
+    def __init__(self, id, key_state_handler, batch):
+        super().__init__(id)
         self.key_handler = key_state_handler
         self.heading = Hx(0,0,0)
         self.focus = Hx(0,0,0)
@@ -59,7 +74,7 @@ class Actor(pyglet.event.EventDispatcher):
 
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
-        elif(evt == "on_jump"): self.dispatch_event("on_move_to", self, self.focus.into_px())
+        elif(evt == "on_jump"): self.dispatch_event("on_try", "do_actor_move", self, self.focus.into_px())
 
     def update(self, dt):
         self.collider.pos = collision.Vector(self.px.x, self.px.y)
@@ -109,7 +124,7 @@ class Actor(pyglet.event.EventDispatcher):
             if self.sprite.image != self.animations["walk_w"] and not(self.key_handler[key.UP] or self.key_handler[key.DOWN]): 
                 self.sprite.image = self.animations["walk_w"]
 
-        if(now_px != was_px): self.dispatch_event('on_move_to', self, now_px)
+        if(now_px != was_px): self.dispatch_event('on_try',ActorMoveEvent(self.id, (now_px.x,now_px.y,now_px.z), dt))
 
     def recalc(self):
         was_focus_hx = self.focus
@@ -123,7 +138,19 @@ class Actor(pyglet.event.EventDispatcher):
 
         if now_focus_hx != was_focus_hx: self.dispatch_event('on_looking_at', self, now_focus_hx, was_focus_hx)
 
-Actor.register_event_type('on_move_to')
+Actor.register_event_type('on_try')
 Actor.register_event_type('on_looking_at')
 Actor.register_event_type('on_overlay')
 Actor.register_event_type('on_jump')
+
+class Factory:
+    def __init__(self, key_state_handler, batch):
+        self.key_state_handler = key_state_handler
+        self.batch = batch
+
+    def create(self, id):
+        return Actor(id, self.key_state_handler if id == 0 else None, self.batch)
+
+class ImplFactory:
+    def create(self, id):
+        return Impl(id)        

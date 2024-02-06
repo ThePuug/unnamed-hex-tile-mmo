@@ -1,3 +1,14 @@
+drop table if exists user;
+create table user(
+    name string not null
+    snowflake int not null
+);
+delete from user;
+insert into user
+values('Puug',0)
+    ,('Letnicha',0)
+;
+
 drop table if exists recipe_decomposer;
 create table recipe_decomposer(
     facility string not null,

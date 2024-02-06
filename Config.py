@@ -3,6 +3,9 @@ from math import sqrt
 
 LOGLEVEL = logging.DEBUG
 
+SERVER = "localhost"
+SERVER_PORT = 42424
+
 ISO_SCALE = 3/4
 
 DEPTH = 10
