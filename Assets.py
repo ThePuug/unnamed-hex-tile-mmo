@@ -67,14 +67,14 @@ class TileFactory:
 class Assets:
     def __init__(self):
         self._assets = {}
-        #         filename,         grid,  anchors, order, scale,     flags 
-        self.load("terrain.png",    (5,1), (1,1),   None,  Px(1,1),   FLAG_SOLID)
-        self.load("buildings.png",  (1,1), (1,5/4), None,  Px(1,3/4), FLAG_SOLID)
-        self.load("decorators.png", (1,1), (1,1/3), None,  Px(1,1/3))
+        #         filename,         grid,  anchors, scale,     flags 
+        self.load("terrain.png",    (5,1), (1,1),   Px(1,1),   FLAG_SOLID, None)
+        self.load("buildings.png",  (1,1), (1,5/4), Px(1,3/4), FLAG_SOLID, None)
+        self.load("decorators.png", (1,1), (1,1/3), Px(1,1/3), FLAG_NONE,  None)
 
     def __getitem__(self, v): return self._assets[v]
 
-    def load(self, img, grid_size, anchor_factor = None, order = None, scale = Px(1,1), flags = 0):
+    def load(self, img, grid_size, anchor_factor = None, scale = Px(1,1), flags = 0, order = None):
         typ = img[:img.index('.')]
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size[1],columns=grid_size[0]))
         for it in sheet:

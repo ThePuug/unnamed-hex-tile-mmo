@@ -36,16 +36,18 @@ class Px:
     def __sub__(self, v): return Px(self.x-v.x,self.y-v.y,self.z-v.z)
 
     def vertices(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
+        tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
         corners = []
         for i in range(6):
             px = self
             angle = 2 * pi * (orientation[2]+i) / 6
-            offset = Px(tile_size*cos(angle), ISO_SCALE*tile_size*sin(angle))
+            offset = Px(tile_size_w*cos(angle), ISO_SCALE*tile_size*sin(angle))
             corners.append(Px(px.x+offset.x, px.y+offset.y))
         return corners
 
     def into_hx(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
-        px = Px(self.x/tile_size, self.y / (ISO_SCALE*tile_size), self.z)
+        tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
+        px = Px(self.x/tile_size_w, self.y / (ISO_SCALE*tile_size), self.z)
         q = orientation[1][0] * px.x + orientation[1][1] * px.y
         r = orientation[1][2] * px.x + orientation[1][3] * px.y
         return hex_round(q,r,self.z)
@@ -70,16 +72,18 @@ class Hx:
     def s(self): return -self.q-self.r
 
     def vertices(self, tile_size=TILE_SIZE, orientation=ORIENTATION_PNTY):
+        tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
         corners = []
         for i in range(6):
             px = self.into_px()
-            angle = 2 * pi * (orientation[2]+i) / 6
-            offset = Px(tile_size * cos(angle), (ISO_SCALE*tile_size) * sin(angle))
+            angle = 2*pi*(orientation[2]+i)/6
+            offset = Px(tile_size_w*cos(angle), (ISO_SCALE*tile_size)*sin(angle))
             corners.append(Px(px.x+offset.x, px.y+offset.y))
         return corners
 
     def into_px(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
-        x = (orientation[0][0] * self.q + orientation[0][1] * self.r) * (tile_size)
+        tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
+        x = (orientation[0][0] * self.q + orientation[0][1] * self.r) * (tile_size_w)
         y = (orientation[0][2] * self.q + orientation[0][3] * self.r) * (ISO_SCALE*tile_size)
         return Px(x, y, self.z)
     

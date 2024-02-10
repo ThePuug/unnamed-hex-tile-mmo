@@ -44,21 +44,21 @@ class Impl(pyglet.event.EventDispatcher):
 
         heading_hx = actor.hx+Hx(*evt.heading)
         heading_px = heading_hx.into_px()
-        offset_px = heading_px - actor.px
-        angle = math.atan2(offset_px.y,offset_px.x)
+        offset_px = heading_px-actor.px
+        angle = math.atan2(offset_px.y, offset_px.x)
         new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
         
         tile = self.tiles.get(actor.hx)
         if(tile is not None and tile.flags & FLAG_SOLID):
             collider = copy(actor.collider)
-            collider.pos = collision.Vector(new_px.x,new_px.y)
+            collider.pos = collision.Vector(new_px.x, new_px.y)
             response = collision.Response()
-            for it in [self.tiles.get(actor.hx+it+Hx(0,0,z+1)) for it in NEIGHBORS for z in range(actor.height)]:
+            for it in [self.tiles.get(actor.hx+it+Hx(0, 0, z+1)) for it in NEIGHBORS for z in range(actor.height)]:
                 response.reset()
-                if it is not None and it.sprite is not None and collision.collide(collider,it.collider,response): 
-                    if heading_hx == it.hx - Hx(0,0,1): return
-                    offset_px = heading_px - Px(*it.collider.pos,0)
-                    angle = math.atan2(offset_px.y,offset_px.x)
+                if it is not None and it.sprite is not None and collision.collide(collider, it.collider, response): 
+                    if heading_hx == it.hx - Hx(0, 0, it.hx.z-heading_hx.z): return
+                    offset_px = heading_px - Px(*it.collider.pos, 0)
+                    angle = math.atan2(offset_px.y, offset_px.x)
                     new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
                     break
             evt.pos = (new_px.x, new_px.y, new_px.z)
