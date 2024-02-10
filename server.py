@@ -64,6 +64,12 @@ state_manager.begin()
 
 def on_update(dt):
     state_manager.update(dt)
+    for i,it in server.clients.items():
+        if it.do_exit.is_set(): 
+            state_manager.dispatch_event('on_do', None, ActorUnloadEvent(i))
+            it.sock.close()
+            del server.clients[i]
+            break
     for i,it in scene.actors.items(): it.update(dt)
 pyglet.clock.schedule_interval(on_update, 1/20.0)
 

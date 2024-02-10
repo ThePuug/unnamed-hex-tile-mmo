@@ -15,6 +15,10 @@ class ActorLoadEvent(Event):
     pos: tuple
     event = "load_actor"
 
+class ActorUnloadEvent(Event):
+    id: int
+    event = "unload_actor"
+
 class ConnectionInitEvent(Event):
     tid: int
     event = "init_connection"
@@ -24,4 +28,4 @@ class SceneLoadEvent(Event):
     md5: str
     event = "load_scene"
 
-REGISTRY = [ActorMoveEvent, ActorLoadEvent, ConnectionInitEvent]
+REGISTRY = [ActorMoveEvent, ActorLoadEvent, ActorUnloadEvent, ConnectionInitEvent]

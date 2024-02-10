@@ -46,6 +46,7 @@ Impl.register_event_type('try_move_actor')
 Impl.register_event_type('do_move_actor')
 Impl.register_event_type('try_load_actor')
 Impl.register_event_type('do_load_actor')
+Impl.register_event_type('do_unload_actor')
 Impl.register_event_type('try_init_connection')
 Impl.register_event_type('do_init_connection')
 

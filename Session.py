@@ -16,10 +16,11 @@ class Session():
         self.outgoing = outgoing
         self.incoming = incoming
 
-        thread = threading.Thread(target=Session.sync, args=[self])
-        thread.daemon = True
-        thread.start()
-        self.tid = thread.ident
+        self.do_exit = threading.Event()
+        self.thread = threading.Thread(target=Session.sync, args=[self])
+        self.thread.daemon = True
+        self.thread.start()
+        self.tid = self.thread.ident
 
     def sync(self):
 
@@ -31,8 +32,11 @@ class Session():
                     it = self.sock.recv(1024)
                 except Exception as e:
                     error(e)
+                    self.do_exit.set()
                     return False
-                if not it: return False
+                if not it: 
+                    self.do_exit.set()
+                    return False
                 it = rest + it
                 i = 0
 

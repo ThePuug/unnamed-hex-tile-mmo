@@ -68,6 +68,9 @@ class Impl(pyglet.event.EventDispatcher):
         actor = self.actors[evt.id]
         actor.px = Px(*evt.pos)
 
+    def do_unload_actor(self, _, evt):
+        del self.actors[evt.id]
+
     def to_file(self):
         try:
             pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
