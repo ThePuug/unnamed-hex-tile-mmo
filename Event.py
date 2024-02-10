@@ -5,11 +5,23 @@ class Event(quickle.Struct):
 
 class ActorMoveEvent(Event):
     id: int
-    pos: tuple
+    heading: tuple
     dt: float
-    event = "do_move_actor"
+    pos: tuple
+    event = "move_actor"
 
 class ActorLoadEvent(Event):
     id: int
-    is_self: bool
-    event = "do_load_actor"
+    pos: tuple
+    event = "load_actor"
+
+class ConnectionInitEvent(Event):
+    tid: int
+    event = "init_connection"
+
+class SceneLoadEvent(Event):
+    filename: str
+    md5: str
+    event = "load_scene"
+
+REGISTRY = [ActorMoveEvent, ActorLoadEvent, ConnectionInitEvent]

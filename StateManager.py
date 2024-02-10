@@ -1,8 +1,8 @@
 from logging import debug
 import pyglet
-from Event import ActorLoadEvent
 
-from Session import Session
+from Config import *
+from Event import *
 
 SCENE = 'scene'
 OVERLAY = 'overlay'
@@ -12,85 +12,89 @@ STATE_PLAY       = 1 << 0
 STATE_UI_OVERLAY = 1 << 1
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self,actor_factory):
-        self.actor_factory = actor_factory
+    def __init__(self, session):
+        self.session = session
         self.state = 0
-        self.them = {}
+        self.registry = {}
 
-    def do_load_actor(self, tid, evt):
-        id = tid if evt.is_self else evt.id
-        actor = self.actor_factory.create(id)
-        self.push_handlers(actor)
-        actor.push_handlers(self)
-        # self.them[SCENE].push_handlers(actor)
-        self.them[SCENE].actors[id] = actor
+    # Impl tries everything, and sends back what is done
+    def on_try(self, tid, evt): self.dispatch_event("try_{}".format(evt.event), tid, evt)
+    def on_do(self, tid, evt):
+        self.dispatch_event("do_{}".format(evt.event), tid, evt)
+        self.session.send(evt, tid)
+
+    def try_init_connection(self, tid, evt):
+        evt.tid = tid
+        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,(it.px.x,it.px.y,it.px.z)))
+        self.dispatch_event("on_do", tid, evt)
 
     def begin(self):
-        self.push_handlers(self.them[SCENE])
+        self.push_handlers(self.registry[SCENE])
+        self.registry[SCENE].push_handlers(self)
         self.state |= STATE_PLAY
 
-    def register(self,id,it):
-        self.them[id] = it
+    def update(self, dt):
+        for tid, evt in self.session.recv():
+            self.dispatch_event("on_try", tid, evt)
 
-Impl.register_event_type('do_move_actor')
+    def register(self, id, it):
+        self.registry[id] = it
+
 Impl.register_event_type('on_try')
-Impl.register_event_type('on_confirm')
+Impl.register_event_type('on_do')
+Impl.register_event_type('try_move_actor')
+Impl.register_event_type('do_move_actor')
+Impl.register_event_type('try_load_actor')
+Impl.register_event_type('do_load_actor')
+Impl.register_event_type('try_init_connection')
+Impl.register_event_type('do_init_connection')
 
 class StateManager(Impl):
-    def __init__(self, session, window, key_state_handler, actor_factory):
-        super().__init__(actor_factory)
-        self.session = session
+    def __init__(self, session, window, key_state_handler):
+        super().__init__(session)
         self.window = window
         self.key_state_handler = key_state_handler
+        self.tid = None
 
-    def on_try(self, e, sync=False):
-        self.session.send(e)
-        if not sync: self.dispatch_event(e.event, 0, e)
+    # Client sends everything it tries to server, and does everything it is told to
+    def on_do(self, tid, evt): self.dispatch_event("do_{}".format(evt.event), tid, evt)
+    def on_try(self, tid, evt, sync=False):
+        if not sync: self.dispatch_event("try_{}".format(evt.event), tid, evt)
+        self.session.send(evt, tid)
+    
+    def do_init_connection(self, tid, evt):
+        self.tid = evt.tid
+        self.dispatch_event('on_try', tid, ActorLoadEvent(evt.tid, (0,0,0)), True)
 
-    def do_load_actor(self, evt):
-        super().do_load_actor(0, evt)
-        if evt.is_self: self.them[ACTION_BAR].push_handlers(self.them[SCENE].actors[evt.id])
-
-    def on_overlay(self,*args):
+    def on_overlay(self, *args):
         if(self.state & STATE_PLAY):
             self.window.pop_handlers()
             self.window.pop_handlers()
-            self.window.push_handlers(self.them[OVERLAY])
+            self.window.push_handlers(self.registry[OVERLAY])
             self.state |= STATE_UI_OVERLAY
             self.dispatch_event("on_open",*args)
 
-    def on_close(self,*args):
+    def on_close(self, *args):
         if(self.state & STATE_UI_OVERLAY):
             self.window.pop_handlers()
             self.window.push_handlers(self.key_state_handler)
-            self.window.push_handlers(self.them[ACTION_BAR])
+            self.window.push_handlers(self.registry[ACTION_BAR])
             self.state = STATE_PLAY
         else:
-            self.them[SCENE].to_file()
+            self.registry[SCENE].to_file()
 
     def begin(self):
         super().begin()
-        self.dispatch_event('do_load_actor',ActorLoadEvent(0, True))
-        self.session.push_handlers(self)
         self.window.push_handlers(self)
         self.window.push_handlers(self.key_state_handler)
-        self.window.push_handlers(self.them[ACTION_BAR])
-        self.push_handlers(self.them[OVERLAY])
-        self.them[OVERLAY].push_handlers(self)
-        self.them[OVERLAY].push_handlers(self.them[SCENE])
+        self.window.push_handlers(self.registry[ACTION_BAR])
+        self.push_handlers(self.registry[OVERLAY])
+        self.registry[OVERLAY].push_handlers(self)
+        self.registry[OVERLAY].push_handlers(self.registry[SCENE])    
+        self.dispatch_event('on_try', None, ConnectionInitEvent(None), True)
 
     def update(self, dt):
-        started = pyglet.clock._time.time()
-        processed = 0
-        for tid, seq, evt in self.session.recv():
-            self.dispatch_event(evt.event, tid, evt)
-            processed += 1
-        if processed > 0: debug("processed {} in {}".format(processed, pyglet.clock._time.time()-started))
-    
-    def confirm(self, tid, seq, evt): pass
-
+        for tid, evt in self.session.recv():
+            self.dispatch_event("do_{}".format(evt.event), tid, evt)
 
 StateManager.register_event_type('on_open')
-StateManager.register_event_type('do_move_to')
-StateManager.register_event_type('do_move_actor')
-StateManager.register_event_type('do_load_actor')

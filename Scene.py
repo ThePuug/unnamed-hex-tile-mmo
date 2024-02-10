@@ -1,26 +1,97 @@
-from logging import debug
-import pickle
 import collision
+from copy import copy
+from logging import debug, warn
+import math
+import pickle
 import pyglet
 
 from Config import *
+from Event import *
 from HxPx import Hx, Px
+from StateManager import ACTION_BAR
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self):
+    def __init__(self, assets, actor_factory, state_manager, batch):
+        self.assets = assets
+        self.actor_factory = actor_factory
+        self.batch = batch
+        self.state_manager = state_manager
         self.actors = {}
+        self.decorations = {}
+        self.tiles = self.from_file()
+
+    def try_load_actor(self, _, evt): 
+        self.dispatch_event("on_do", None, evt)
+
+    def do_load_actor(self, _, evt):
+        actor = self.actor_factory.create(evt)
+        self.state_manager.push_handlers(actor)
+        actor.push_handlers(self.state_manager)
+        self.push_handlers(actor)
+        actor.push_handlers(self)
+        self.actors[evt.id] = actor
+
+    def try_move_actor(self, _, evt):
+        actor = self.actors[evt.id]
+
+        if(actor.last_clock + evt.dt > pyglet.clock._time.time()): 
+            warn("dt too big")
+            return
+        self.last_clock = pyglet.clock._time.time()
+
+        heading_hx = actor.hx+Hx(*evt.heading)
+        heading_px = heading_hx.into_px()
+        offset_px = heading_px - actor.px
+        angle = math.atan2(offset_px.y,offset_px.x)
+        new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+        
+        tile = self.tiles.get(actor.hx)
+        if(tile is not None and tile.flags & FLAG_SOLID):
+            collider = copy(actor.collider)
+            collider.pos = collision.Vector(new_px.x,new_px.y)
+            response = collision.Response()
+            for it in [self.tiles.get(actor.hx+it+Hx(0,0,z+1)) for it in NEIGHBORS for z in range(actor.height)]:
+                response.reset()
+                if it is not None and it.sprite is not None and collision.collide(collider,it.collider,response): return
+            evt.pos = (new_px.x, new_px.y, new_px.z)
+            self.dispatch_event("on_do", None, evt)
+    
+    def do_move_actor(self, _, evt):
+        actor = self.actors[evt.id]
+        actor.px = Px(*evt.pos)
+
+    def to_file(self):
+        try:
+            pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
+        except Exception as e:
+            debug(e)
+
+    def from_file(self):
+        try:
+            tiles = {}
+            data = pickle.load(pyglet.resource.file("default.0","rb"))
+            for hx,it in data.items():
+                tile = self.assets[it.sprite["typ"]][it.sprite["idx"]].create(hx, self.batch)
+                tile.flags = it.flags
+                tiles[hx] = tile
+            return tiles
+        except Exception as e:
+            debug(e)
+            return {}
+
+Impl.register_event_type("on_do")
+Impl.register_event_type('on_try')
 
 class Scene(Impl):
-    def __init__(self, assets, batch):
-        super().__init__()
-        self.assets = assets
-        self.batch = batch
-        self.tiles = self.from_file()
-        self.decorations = {}
-        self.on_discover(Hx(0,0,0))
+
+    def do_load_actor(self, tid, evt):
+        super().do_load_actor(tid, evt)
+        if evt.id == self.state_manager.tid:
+            self.state_manager.actor = self.actors[evt.id]
+            self.state_manager.registry[ACTION_BAR].push_handlers(self.actors[evt.id])
 
     def on_looking_at(self, actor, now, was):
         if self.tiles.get(was) is not None: self.tiles.get(was).sprite.color = (255,255,255)
@@ -51,38 +122,4 @@ class Scene(Impl):
                 if not(self.tiles.get(hx,None) is None): continue
                 self.tiles[hx] = self.assets["terrain"][0].create(hx,self.batch)
     
-    def do_move_actor(self, id, evt):
-        actor = self.actors[id]
-        px = Px(*evt.pos)
-        hx = px.into_hx()
-        tile = self.tiles.get(hx)
-        if(tile is not None and tile.flags & FLAG_SOLID):
-            actor.collider.pos = collision.Vector(px.x,px.y)
-            response = collision.Response()
-            for it in [self.tiles.get(hx+it+Hx(0,0,z+1)) for it in NEIGHBORS for z in range(actor.height)]:
-                response.reset()
-                if it is not None and it.sprite is not None and collision.collide(actor.collider,it.collider,response):
-                    return
-            actor.px = px
-
-    def to_file(self):
-        try:
-            pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
-        except Exception as e:
-            debug(e)
-
-    def from_file(self):
-        try:
-            tiles = {}
-            data = pickle.load(pyglet.resource.file("default.0","rb"))
-            for hx,it in data.items():
-                tile = self.assets[it.sprite["typ"]][it.sprite["idx"]].create(hx,self.batch)
-                tile.flags = it.flags
-                tiles[hx] = tile
-            return tiles
-        except Exception as e:
-            debug(e)
-            return {}
-
 Scene.register_event_type('on_discover')
-Scene.register_event_type('on_try')

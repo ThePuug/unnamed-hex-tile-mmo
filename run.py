@@ -28,24 +28,21 @@ fps = pyglet.window.FPSDisplay(window=window)
 camera = CenteredCamera(window)
 camera_ui = Camera(window)
 
-batch = pyglet.graphics.Batch()
-
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((SERVER,SERVER_PORT))
 session = Session(sock, deque(), deque())
 
 key_state_handler = pyglet.window.key.KeyStateHandler()
-state_manager = StateManager.StateManager(session, window, key_state_handler, Actor.Factory(key_state_handler, batch))
-
-scene = Scene(Assets(), batch)
-state_manager.register(StateManager.SCENE, scene)
-
-overlay = Overlay(batch)
-state_manager.register(StateManager.OVERLAY,overlay)
-
+batch = pyglet.graphics.Batch()
 batch_ui = pyglet.graphics.Batch()
 
+state_manager = StateManager.StateManager(session, window, key_state_handler)
+scene = Scene(Assets(), Actor.Factory(key_state_handler, batch), state_manager, batch)
+overlay = Overlay(batch)
 action_bar = ActionBar(window,scene,batch=batch_ui)
+
+state_manager.register(StateManager.SCENE, scene)
+state_manager.register(StateManager.OVERLAY,overlay)
 state_manager.register(StateManager.ACTION_BAR,action_bar)
 
 state_manager.begin()
@@ -61,10 +58,11 @@ def on_draw():
 
 def on_update(dt):
     state_manager.update(dt)
-    actor = scene.actors.get(0, None)
-    if actor is not None:
-        actor.update(dt)
-        camera.position = actor.px.into_screen()[:2]
+    if state_manager.tid is not None:
+        actor = state_manager.registry[StateManager.SCENE].actors.get(state_manager.tid)
+        if actor is not None:
+            actor.update(dt)
+            camera.position = actor.px.into_screen()[:2]
 pyglet.clock.schedule_interval(on_update, 1/120.0)
 
 if __name__ == "__main__": 

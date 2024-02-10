@@ -1,4 +1,3 @@
-from collections import deque
 from logging import debug, error
 import pyglet
 import quickle
@@ -7,17 +6,15 @@ import threading
 from Config import *
 from Event import *
 
-registry = [ActorMoveEvent, ActorLoadEvent]
 OK = b'\x4f\x4b'
 
-class Session(pyglet.event.EventDispatcher):
+class Session():
     def __init__(self, sock, incoming, outgoing):
         self.sock = sock
-        self.encoder = quickle.Encoder(registry=registry)
-        self.decoder = quickle.Decoder(registry=registry)
+        self.encoder = quickle.Encoder(registry=REGISTRY)
+        self.decoder = quickle.Decoder(registry=REGISTRY)
         self.outgoing = outgoing
         self.incoming = incoming
-        self.seq = -1
 
         thread = threading.Thread(target=Session.sync, args=[self])
         thread.daemon = True
@@ -25,6 +22,7 @@ class Session(pyglet.event.EventDispatcher):
         self.tid = thread.ident
 
     def sync(self):
+
         rest = bytes()
         while True:
             while True:
@@ -51,16 +49,17 @@ class Session(pyglet.event.EventDispatcher):
                     # take an event
                     tok = it[i:i+sz]
                     i = i+sz
-                    tid, seq, evt = self.decoder.loads(tok)
-                    self.incoming.append((tid, seq, evt))
+                    tid, evt = self.decoder.loads(tok)
+                    if tid == None: tid = self.tid
+                    self.incoming.append((tid, evt))
                 if it[i:i+2] == OK: 
                     rest = it[i+2:]
                     break
                 else: rest = it[i:]
             
             while self.outgoing:
-                tid, seq, evt = self.outgoing.popleft()
-                it = self.encoder.dumps((tid, seq, evt))
+                tid, evt = self.outgoing.popleft()
+                it = self.encoder.dumps((tid, evt))
                 try:
                     self.sock.send(len(it).to_bytes(2, 'big', signed=False))
                     self.sock.send(it)
@@ -69,12 +68,8 @@ class Session(pyglet.event.EventDispatcher):
                     return False
             self.sock.send(OK)
 
-    def send(self, evt):
-        self.seq += 1
-        self.outgoing.append((self.tid, self.seq, evt))
+    def send(self, evt, _tid = None):
+        self.outgoing.append((None, evt))
 
     def recv(self):
         while self.incoming: yield self.incoming.popleft()
-
-Session.register_event_type('do_load_actor')
-Session.register_event_type('do_move_actor')

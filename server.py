@@ -7,6 +7,7 @@ import sys
 import threading
 
 import Actor
+from Assets import Assets
 from Config import *
 from Event import *
 import Scene
@@ -33,32 +34,38 @@ class Server:
     
     def recv(self):
         while self.incoming: yield self.incoming.popleft()
+    
+    def send(self, evt, tid = None):
+        if tid == None:
+            for i,it in self.clients.items(): it.send(evt, i)
+        else:
+            it = self.clients.get(tid)
+            if it is not None: it.send(evt, tid)
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-actor_factory = Actor.ImplFactory()
-state_manager = StateManager.Impl(actor_factory)
+pyglet.resource.path = ['assets/sprites','data/maps']
+pyglet.resource.reindex()
 
-scene = Scene.Impl()
+server = Server()
+thread = threading.Thread(target=Server.accept, args=[server])
+thread.daemon = True
+thread.start()
+
+state_manager = StateManager.Impl(server)
+
+scene = Scene.Impl(Assets(), Actor.ImplFactory(), state_manager, None)
+
 state_manager.register(StateManager.SCENE, scene)
-
 state_manager.begin()
 
 def on_update(dt):
-    started = pyglet.clock._time.time()
-    processed = 0
-    for tid, seq, evt in server.recv():
-        state_manager.dispatch_event(evt.event, tid, evt)
-        processed += 1
-    if processed > 0: debug("processed {} events in {}".format(processed,started-pyglet.clock._time.time()))
+    state_manager.update(dt)
+    for i,it in scene.actors.items(): it.update(dt)
 pyglet.clock.schedule_interval(on_update, 1/20.0)
 
 if __name__ == "__main__": 
-    server = Server()
-    thread = threading.Thread(target=Server.accept, args=[server])
-    thread.daemon = True
-    thread.start()
     pyglet.app.run()
