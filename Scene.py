@@ -55,7 +55,12 @@ class Impl(pyglet.event.EventDispatcher):
             response = collision.Response()
             for it in [self.tiles.get(actor.hx+it+Hx(0,0,z+1)) for it in NEIGHBORS for z in range(actor.height)]:
                 response.reset()
-                if it is not None and it.sprite is not None and collision.collide(collider,it.collider,response): return
+                if it is not None and it.sprite is not None and collision.collide(collider,it.collider,response): 
+                    if heading_hx == it.hx - Hx(0,0,1): return
+                    offset_px = heading_px - Px(*it.collider.pos,0)
+                    angle = math.atan2(offset_px.y,offset_px.x)
+                    new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+                    break
             evt.pos = (new_px.x, new_px.y, new_px.z)
             self.dispatch_event("on_do", None, evt)
     
