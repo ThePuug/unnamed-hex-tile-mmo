@@ -2,52 +2,71 @@ import pyglet
 from pyglet.window import key
 
 from Config import *
-from HxPx import Hx, Px
+from HxPx import Px
 
 PADDING = 10
 
+class Border:
+    def __init__(self, pos, size, asset_factory, batch):
+        self.size = size
+        self.sprites = [asset_factory.create_sprite("ui", 0, batch, pos),
+                        asset_factory.create_sprite("ui", 1, batch, pos),
+                        asset_factory.create_sprite("ui", 0, batch, pos)]
+        for i,it in enumerate(self.sprites):
+            it.scale_y = size.y / it.height
+            it.visible = False
+        self.sprites[1].scale_x = (size.x-self.sprites[0].width-self.sprites[2].width) / self.sprites[1].width
+
+    @property
+    def visible(self): return self.sprites[0].visible
+
+    @visible.setter
+    def visible(self, v):
+        for it in self.sprites: it.visible = v
+
+    @property
+    def position(self): return self.sprites[1].position
+
+    @position.setter
+    def position(self, v):
+        for i,it in enumerate(self.sprites): 
+            it.x = v.x+(i-1)*(self.size.x-it.width)/2
+            it.y = v.y
+
 class Overlay(pyglet.event.EventDispatcher):
-    def __init__(self, batch):
+    def __init__(self, asset_factory, batch):
+        self.asset_factory = asset_factory
         self.batch = batch
         self.curr = 0
-        self.border = pyglet.shapes.Rectangle(0,0,0,0, color=(225, 225, 225, 255), batch=batch)
-        self.border.width = TILE_WIDTH*3 + 4*PADDING
-        self.border.height = TILE_HEIGHT + 2*PADDING
-        self.border.anchor_x = self.border.width / 2
-        self.border.anchor_y = -TILE_HEIGHT
-        self.border.visible = False
-        self.guides = [pyglet.shapes.Polygon(*[[it.x,it.y] for it in Hx(0,0,0).vertices()],color=(150,150,255,150), batch=batch) for _ in range(3)]
-        for it in self.guides: 
-            it.anchor_x = -TILE_WIDTH/2
-            it.anchor_y = -TILE_HEIGHT/4
-            it.visible = False
+        self.border = Border(Px(0,0,0), Px(TILE_WIDTH*3+4*PADDING, TILE_HEIGHT+2*PADDING), asset_factory, batch)
+        self.guides = [asset_factory.create_sprite("terrain", 5, batch, Px(0,0,0)) for _ in range(3)]
+        for it in self.guides: it.visible = False
         self.display = [None for _ in range(3)]
 
     def on_key_press(self,sym,mod):
         if(sym == key.ESCAPE): 
             self.reset()
         if(sym == key.LEFT):
-            self.curr = self.curr-1 if self.curr > 0 else len(self.opts)-1
+            self.curr = self.curr-1 % len(self.opts)
             self.update_options()
         if(sym == key.RIGHT):
-            self.curr = self.curr+1 if self.curr < len(self.opts)-1 else 0
+            self.curr = self.curr+1 % len(self.opts)
             self.update_options()
         if(sym == key.SPACE):
-            self.dispatch_event("on_select", self.hx, self.opts[self.curr])
+            self.dispatch_event("on_select", self.hx, self.opts[self.curr % len(self.opts)])
             self.reset()
         return pyglet.event.EVENT_HANDLED
 
-    def on_open(self,hx,opts):
+    def on_open(self, hx, opts):
         self.hx = hx
         self.opts = opts
         px = hx.into_px()
-        self.border.position = (px.x,px.y)
+        self.border.position = px + Px(0,TILE_HEIGHT*1.5+PADDING,0)
         self.border.visible = True
-
         self.curr = 0
         for i in range(len(self.display)):
-            pos = Px(px.x+TILE_WIDTH*(i-1)+PADDING*(i-1),px.y+TILE_HEIGHT*1.5+PADDING,hx.z)
-            self.guides[i].position = (pos.x,pos.y)
+            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*1.5+PADDING,0)
+            self.guides[i].position = (pos.x,pos.y,pos.z)
             self.guides[i].visible = True
         self.update_options()
 
@@ -55,25 +74,19 @@ class Overlay(pyglet.event.EventDispatcher):
         if self.curr is None: return
         px = self.hx.into_px()
 
-        pos = Px(px.x+TILE_WIDTH*(0-1)+PADDING*(0-1),px.y+TILE_HEIGHT*1.5+PADDING,self.hx.z)
-        if(self.display[0] is not None): self.display[0].delete()
-        self.display[0] = self.opts[self.curr-1 if self.curr > 0 else len(self.opts)-1].create(pos, self.batch)
-
-        pos = Px(px.x+TILE_WIDTH*(1-1)+PADDING*(1-1),px.y+TILE_HEIGHT*1.5+PADDING,self.hx.z)
-        if(self.display[1] is not None): self.display[1].delete()
-        self.display[1] = self.opts[self.curr].create(pos, self.batch)
-
-        pos = Px(px.x+TILE_WIDTH*(2-1)+PADDING*(2-1),px.y+TILE_HEIGHT*1.5+PADDING,self.hx.z)
-        if(self.display[2] is not None): self.display[2].delete()
-        self.display[2] = self.opts[self.curr+1 if self.curr < len(self.opts)-1 else 0].create(pos, self.batch)
+        for i in range(len(self.display)):
+            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*1.5+PADDING,0)
+            if self.display[i] is not None: self.display[i].delete()
+            typ, idx = self.opts[(self.curr+1-i) % len(self.opts)]
+            self.display[i] = self.asset_factory.create_sprite(typ, idx, self.batch, pos)
     
     def reset(self):
         self.dispatch_event("on_close")
         self.border.visible = False
         for it in self.guides: it.visible = False
-        for it in self.display: 
+        for i,it in enumerate(self.display): 
             it.delete()
-            it = None
+            self.display[i] = None
 
 Overlay.register_event_type('on_close')
 Overlay.register_event_type('on_select')

@@ -7,7 +7,7 @@ import sys
 import threading
 
 import Actor
-from Assets import Assets
+import Asset
 from Config import *
 from Event import *
 import Scene
@@ -57,7 +57,7 @@ thread.start()
 
 state_manager = StateManager.Impl(server)
 
-scene = Scene.Impl(Assets(), Actor.ImplFactory(), state_manager, None)
+scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None)
 
 state_manager.register(StateManager.SCENE, scene)
 state_manager.begin()

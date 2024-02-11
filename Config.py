@@ -32,3 +32,6 @@ ORIENTATION_FLAT = [[3/2, 0, SQRT3/2, SQRT3],
 
 FLAG_NONE  = 0
 FLAG_SOLID = 1 << 0
+
+# UTILITIES
+New = lambda **kwargs: type("Object", (), kwargs)

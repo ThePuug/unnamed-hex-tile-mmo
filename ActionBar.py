@@ -29,9 +29,9 @@ class ActionBar(pyglet.event.EventDispatcher):
             button.key.position = (window.width/2 - self.bar.width/2 + i*(PADDING+BUTTON_SIZE) + BUTTON_SIZE/2, PADDING+BUTTON_SIZE/2, 0)
             button.slot.anchor_position = (self.bar.width/2 - window.width/2 - PADDING, -PADDING)
             self.buttons.append(button)
-        self.buttons[0].event = ["on_action","on_overlay",Hx(0,0,0),self.scene.assets["terrain"]]
-        self.buttons[2].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.assets["decorators"]]
-        self.buttons[3].event = ["on_action","on_overlay",Hx(0,0,1),self.scene.assets["buildings"]]
+        self.buttons[0].event = ["on_action","on_overlay",Hx(0,0,0),[("terrain",i) for i in range(len(self.scene.asset_factory._assets["terrain"]))]]
+        self.buttons[2].event = ["on_action","on_overlay",Hx(0,0,1),[("decorators",i) for i in range(len(self.scene.asset_factory._assets["decorators"]))]]
+        self.buttons[3].event = ["on_action","on_overlay",Hx(0,0,1),[("buildings",i) for i in range(len(self.scene.asset_factory._assets["buildings"]))]]
 
     def on_key_press(self,sym,mod):
         if sym == key.Q: self.dispatch_event(*self.buttons[0].event)

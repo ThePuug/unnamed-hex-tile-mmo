@@ -41,5 +41,10 @@ class Tile:
     def __getstate__(self):
         return {
             "flags": self.flags,
-            "sprite": {"typ": self.sprite._typ, "idx": self.sprite._idx}
+            "sprite": {
+                "texture": {
+                    "typ": self.sprite._typ, 
+                    "idx": self.sprite._idx
+                }
+            }
         }

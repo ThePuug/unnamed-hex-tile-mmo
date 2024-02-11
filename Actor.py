@@ -1,12 +1,11 @@
 import collision
-import math
 import pyglet
 from pyglet.window import key
 
 from Config import *
 from Event import ActorMoveEvent
 from HxPx import Hx, Px
-from Assets import DepthSprite, depth_shader
+from Asset import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 90
 

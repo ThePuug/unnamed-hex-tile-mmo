@@ -14,14 +14,15 @@ R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self, assets, actor_factory, state_manager, batch):
-        self.assets = assets
+    def __init__(self, asset_factory, actor_factory, state_manager, batch):
+        self.asset_factory = asset_factory
         self.actor_factory = actor_factory
         self.batch = batch
         self.state_manager = state_manager
         self.actors = {}
         self.decorations = {}
         self.tiles = self.from_file()
+        self.dispatch_event("on_discover", Hx(0,0,0))
 
     def try_load_actor(self, _, evt): 
         self.dispatch_event("on_do", None, evt)
@@ -82,8 +83,7 @@ class Impl(pyglet.event.EventDispatcher):
             tiles = {}
             data = pickle.load(pyglet.resource.file("default.0","rb"))
             for hx,it in data.items():
-                tile = self.assets[it.sprite["typ"]][it.sprite["idx"]].create(hx, self.batch)
-                tile.flags = it.flags
+                tile = self.asset_factory.create_tile(it.sprite["texture"]["typ"], it.sprite["texture"]["idx"], self.batch, hx.into_px(), it.flags)
                 tiles[hx] = tile
             return tiles
         except Exception as e:
@@ -113,13 +113,14 @@ class Scene(Impl):
             it.sprite.color = (200,200,100)
         elif now.z < 5: self.dispatch_event('on_discover',Hx(now.q,now.r,0))
 
-    def on_select(self, hx, factory):
+    def on_select(self, hx, asset):
+        typ, idx = asset
         hxz = Hx(hx.q,hx.r,hx.z)
         tile = self.tiles.get(hxz)
         if tile is not None:
             self.tiles[hxz].delete()
             del self.tiles[hxz]
-        self.tiles[hxz] = factory.create(hxz,self.batch)
+        self.tiles[hxz] = self.asset_factory.create_tile(typ, idx, self.batch, hxz.into_px())
 
     def on_discover(self, c):
         for q in range(-R, R+1):
@@ -128,6 +129,6 @@ class Scene(Impl):
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.tiles[hx] = self.assets["terrain"][0].create(hx,self.batch)
+                self.tiles[hx] = self.asset_factory.create_tile("terrain", 0, self.batch, hx.into_px())
     
 Scene.register_event_type('on_discover')
