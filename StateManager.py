@@ -1,4 +1,5 @@
 from logging import debug
+import sys
 import pyglet
 
 from Config import *
@@ -28,6 +29,10 @@ class Impl(pyglet.event.EventDispatcher):
         for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,(it.px.x,it.px.y,it.px.z)))
         self.dispatch_event("on_do", tid, evt)
 
+    def on_close(self):
+        self.registry[SCENE].to_file()
+        sys.exit(0)
+
     def begin(self):
         self.push_handlers(self.registry[SCENE])
         self.registry[SCENE].push_handlers(self)
@@ -49,6 +54,7 @@ Impl.register_event_type('do_load_actor')
 Impl.register_event_type('do_unload_actor')
 Impl.register_event_type('try_init_connection')
 Impl.register_event_type('do_init_connection')
+Impl.register_event_type('on_close')
 
 class StateManager(Impl):
     def __init__(self, session, window, key_state_handler):
@@ -81,8 +87,6 @@ class StateManager(Impl):
             self.window.push_handlers(self.key_state_handler)
             self.window.push_handlers(self.registry[ACTION_BAR])
             self.state = STATE_PLAY
-        else:
-            self.registry[SCENE].to_file()
 
     def begin(self):
         super().begin()

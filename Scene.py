@@ -1,6 +1,6 @@
 import collision
 from copy import copy
-from logging import debug, warn
+from logging import debug, info, warn
 import math
 import pickle
 import pyglet
@@ -74,6 +74,7 @@ class Impl(pyglet.event.EventDispatcher):
         del self.actors[evt.id]
 
     def to_file(self):
+        info("saving scene")
         try:
             pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
         except Exception as e:

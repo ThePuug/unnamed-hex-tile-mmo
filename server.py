@@ -1,6 +1,7 @@
 from collections import deque
 import logging
 from logging import debug
+import signal
 import pyglet
 import socket
 import sys
@@ -74,4 +75,5 @@ def on_update(dt):
 pyglet.clock.schedule_interval(on_update, 1/20.0)
 
 if __name__ == "__main__": 
+    signal.signal(signal.SIGINT, lambda sig,frame: state_manager.dispatch_event('on_close'))
     pyglet.app.run()
