@@ -42,7 +42,7 @@ class Px:
             px = self
             angle = 2 * pi * (orientation[2]+i) / 6
             offset = Px(tile_size_w*cos(angle), ISO_SCALE*tile_size*sin(angle))
-            corners.append(Px(px.x+offset.x, px.y+offset.y))
+            corners.append(px+offset)
         return corners
 
     def into_hx(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):

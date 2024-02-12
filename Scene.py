@@ -51,10 +51,11 @@ class Impl(pyglet.event.EventDispatcher):
         
         tile = self.tiles.get(actor.hx)
         if(tile is not None and tile.flags & FLAG_SOLID):
-            collider = copy(actor.collider)
-            collider.pos = collision.Vector(new_px.x, new_px.y)
+            collider = collision.Poly(collision.Vector(new_px.x, new_px.y), 
+                                      [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
             response = collision.Response()
-            for it in [self.tiles.get(actor.hx+it+Hx(0, 0, z+1)) for it in NEIGHBORS for z in range(actor.height)]:
+            for hx in [it+Hx(0,0,z+1) for it in NEIGHBORS for z in range(actor.height)]:
+                it = self.tiles.get(actor.hx+hx)
                 response.reset()
                 if it is not None and it.sprite is not None and collision.collide(collider, it.collider, response): 
                     if heading_hx == it.hx - Hx(0, 0, it.hx.z-heading_hx.z): return
