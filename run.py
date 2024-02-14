@@ -33,7 +33,7 @@ asset_factory = Asset.Factory()
 
 camera = CenteredCamera(window)
 batch = pyglet.graphics.Batch()
-state_manager = StateManager.StateManager(session, window, key_state_handler)
+state_manager = StateManager.StateManager(session, window, key_state_handler, asset_factory)
 scene = Scene(asset_factory, Actor.Factory(key_state_handler, batch), state_manager, batch)
 
 batch_overlay = pyglet.graphics.Batch()

@@ -1,14 +1,13 @@
 import collision
-from copy import copy
 from logging import debug, info, warn
 import math
-import pickle
 import pyglet
 
 from Config import *
 from Event import *
 from HxPx import Hx, Px
 from StateManager import ACTION_BAR
+from Quickle import ENCODER, DECODER
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
@@ -19,14 +18,11 @@ class Impl(pyglet.event.EventDispatcher):
         self.actor_factory = actor_factory
         self.batch = batch
         self.state_manager = state_manager
+        self.tiles = {}
         self.actors = {}
         self.decorations = {}
-        self.tiles = self.from_file()
-        self.dispatch_event("on_discover", Hx(0,0,0))
 
-    def try_load_actor(self, _, evt): 
-        self.dispatch_event("on_do", None, evt)
-
+    def try_load_actor(self, _, evt): self.dispatch_event("on_do", None, evt)
     def do_load_actor(self, _, evt):
         actor = self.actor_factory.create(evt)
         self.state_manager.push_handlers(actor)
@@ -65,32 +61,40 @@ class Impl(pyglet.event.EventDispatcher):
                     break
             evt.pos = (new_px.x, new_px.y, new_px.z)
             self.dispatch_event("on_do", None, evt)
-    
-    def do_move_actor(self, _, evt):
-        actor = self.actors[evt.id]
-        actor.px = Px(*evt.pos)
+    def do_move_actor(self, _, evt): self.actors[evt.id].px = Px(*evt.pos)
 
     def do_unload_actor(self, _, evt):
         del self.actors[evt.id]
 
-    def to_file(self):
-        info("saving scene")
-        try:
-            pickle.dump(self.tiles,pyglet.resource.file("default.0",'wb'))
-        except Exception as e:
-            debug(e)
+    def try_select_overlay(self, _, evt): self.dispatch_event("on_do", None, evt)
+    def do_select_overlay(self, _, evt):
+        hxz = Hx(*evt.hx)
+        tile = self.tiles.get(hxz)
+        if tile is not None:
+            self.tiles[hxz].delete()
+            del self.tiles[hxz]
+        self.tiles[hxz] = self.asset_factory.create_tile(evt.typ, evt.idx, self.batch, hxz.into_px())
 
     def from_file(self):
         try:
             tiles = {}
-            data = pickle.load(pyglet.resource.file("default.0","rb"))
-            for hx,it in data.items():
-                tile = self.asset_factory.create_tile(it.sprite["texture"]["typ"], it.sprite["texture"]["idx"], self.batch, hx.into_px(), it.flags)
+            info("loading scene")
+            data = DECODER.loads(pyglet.resource.file("default.0","rb").read())
+            for i,it in data.items():
+                hx = Hx(*i)
+                tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, self.batch, hx.into_px(), it.flags)
                 tiles[hx] = tile
+            if len(tiles) == 0: raise Exception("no tiles in scene")
             return tiles
         except Exception as e:
             debug(e)
-            return {}
+            hx = Hx(0,0,0)
+            tiles[hx] = self.asset_factory.create_tile("terrain", 0, self.batch, hx.into_px())
+            return tiles
+    
+    @property
+    def state(self):
+        return dict([(i.state, it.state) for i,it in self.tiles.items()])
 
 Impl.register_event_type("on_do")
 Impl.register_event_type('on_try')
@@ -103,6 +107,10 @@ class Scene(Impl):
             self.state_manager.actor = self.actors[evt.id]
             self.state_manager.registry[ACTION_BAR].push_handlers(self.actors[evt.id])
 
+    def do_unload_actor(self, tid, evt):
+        self.actors[evt.id].sprite.delete()
+        super().do_unload_actor(tid, evt)
+
     def on_looking_at(self, actor, now, was):
         if self.tiles.get(was) is not None: self.tiles.get(was).sprite.color = (255,255,255)
         it = self.tiles.get(now+Hx(0,0,1))
@@ -114,15 +122,6 @@ class Scene(Impl):
             actor.focus = it.hx
             it.sprite.color = (200,200,100)
         elif now.z < 5: self.dispatch_event('on_discover',Hx(now.q,now.r,0))
-
-    def on_select(self, hx, asset):
-        typ, idx = asset
-        hxz = Hx(hx.q,hx.r,hx.z)
-        tile = self.tiles.get(hxz)
-        if tile is not None:
-            self.tiles[hxz].delete()
-            del self.tiles[hxz]
-        self.tiles[hxz] = self.asset_factory.create_tile(typ, idx, self.batch, hxz.into_px())
 
     def on_discover(self, c):
         for q in range(-R, R+1):

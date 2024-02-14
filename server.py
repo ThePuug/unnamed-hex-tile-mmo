@@ -59,8 +59,9 @@ thread.start()
 state_manager = StateManager.Impl(server)
 
 scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None)
-
+scene.tiles = scene.from_file()
 state_manager.register(StateManager.SCENE, scene)
+
 state_manager.begin()
 
 def on_update(dt):

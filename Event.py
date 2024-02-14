@@ -23,9 +23,19 @@ class ConnectionInitEvent(Event):
     tid: int
     event = "init_connection"
 
+class OverlaySelectEvent(Event):
+    hx: tuple
+    typ: str
+    idx: int
+    event = "select_overlay"
+
 class SceneLoadEvent(Event):
-    filename: str
-    md5: str
+    data: bytes
     event = "load_scene"
 
-REGISTRY = [ActorMoveEvent, ActorLoadEvent, ActorUnloadEvent, ConnectionInitEvent]
+REGISTRY = [ActorMoveEvent, 
+            ActorLoadEvent, 
+            ActorUnloadEvent, 
+            ConnectionInitEvent, 
+            OverlaySelectEvent,
+            SceneLoadEvent]

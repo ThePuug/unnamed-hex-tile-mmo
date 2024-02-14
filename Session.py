@@ -1,18 +1,15 @@
 from logging import debug, error
-import pyglet
-import quickle
 import threading
 
 from Config import *
 from Event import *
+from Quickle import ENCODER, DECODER
 
 OK = b'\x4f\x4b'
 
 class Session():
     def __init__(self, sock, incoming, outgoing):
         self.sock = sock
-        self.encoder = quickle.Encoder(registry=REGISTRY)
-        self.decoder = quickle.Decoder(registry=REGISTRY)
         self.outgoing = outgoing
         self.incoming = incoming
 
@@ -53,7 +50,7 @@ class Session():
                     # take an event
                     tok = it[i:i+sz]
                     i = i+sz
-                    tid, evt = self.decoder.loads(tok)
+                    tid, evt = DECODER.loads(tok)
                     if tid == None: tid = self.tid
                     self.incoming.append((tid, evt))
                 if it[i:i+2] == OK: 
@@ -63,7 +60,7 @@ class Session():
             
             while self.outgoing:
                 tid, evt = self.outgoing.popleft()
-                it = self.encoder.dumps((tid, evt))
+                it = ENCODER.dumps((tid, evt))
                 try:
                     self.sock.send(len(it).to_bytes(2, 'big', signed=False))
                     self.sock.send(it)

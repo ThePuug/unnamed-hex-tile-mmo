@@ -56,11 +56,20 @@ class Px:
         hx = self.into_hx()
         return (self.x+offset[0], self.y+self.z*TILE_RISE+offset[1], -hx.r+self.z+offset[2])
     
+    @property
+    def state(self): return (self.x, self.y, self.z)
+    
 class Hx:
-    def __init__(self, q, r, z):
-        self.q = q
-        self.r = r
-        self.z = z
+    def __init__(self, *args):
+        # create from position tuple
+        if(type(args[0]) is tuple):
+            self.q = args[0][0]
+            self.r = args[0][1]
+            self.z = 0 if len(args) < 2 else args[1]
+        else:
+            self.q = args[0]
+            self.r = args[1]
+            self.z = 0 if len(args) < 3 else args[2]
     
     def __hash__(self): return hash((self.q, self.r, self.z))
     def __eq__(self,other): return self.q==other.q and self.r==other.r and self.z==other.z
@@ -90,3 +99,8 @@ class Hx:
     def into_screen(self, offset=Px(0,0,0)):
         px = self.into_px()
         return (px.x+offset[0], px.y+px.z*TILE_RISE+offset[1], -self.r+self.z+offset[2])
+    
+    @property
+    def state(self): return (self.q, self.r, self.z)
+    
+

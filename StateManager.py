@@ -1,9 +1,11 @@
-from logging import debug
+from logging import debug, info
 import sys
 import pyglet
 
 from Config import *
 from Event import *
+from HxPx import Hx
+from Quickle import ENCODER, DECODER
 
 SCENE = 'scene'
 OVERLAY = 'overlay'
@@ -26,11 +28,17 @@ class Impl(pyglet.event.EventDispatcher):
 
     def try_init_connection(self, tid, evt):
         evt.tid = tid
-        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,(it.px.x,it.px.y,it.px.z)))
         self.dispatch_event("on_do", tid, evt)
 
+    def try_load_scene(self, tid, evt):        
+        evt.data = ENCODER.dumps(self.registry[SCENE].state)
+        self.dispatch_event("on_do", tid, evt)
+        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state))
+        self.dispatch_event('on_do', None, ActorLoadEvent(tid, (0,0,0)))
+
     def on_close(self):
-        self.registry[SCENE].to_file()
+        info("saving scene")
+        pyglet.resource.file("default.0","wb").write(ENCODER.dumps(self.registry[SCENE].state))
         sys.exit(0)
 
     def begin(self):
@@ -47,20 +55,25 @@ class Impl(pyglet.event.EventDispatcher):
 
 Impl.register_event_type('on_try')
 Impl.register_event_type('on_do')
-Impl.register_event_type('try_move_actor')
-Impl.register_event_type('do_move_actor')
-Impl.register_event_type('try_load_actor')
-Impl.register_event_type('do_load_actor')
-Impl.register_event_type('do_unload_actor')
-Impl.register_event_type('try_init_connection')
-Impl.register_event_type('do_init_connection')
 Impl.register_event_type('on_close')
+Impl.register_event_type('try_init_connection')
+Impl.register_event_type('try_load_actor')
+Impl.register_event_type('try_load_scene')
+Impl.register_event_type('try_move_actor')
+Impl.register_event_type('try_select_overlay')
+Impl.register_event_type('do_init_connection')
+Impl.register_event_type('do_load_actor')
+Impl.register_event_type('do_load_scene')
+Impl.register_event_type('do_move_actor')
+Impl.register_event_type('do_select_overlay')
+Impl.register_event_type('do_unload_actor')
 
 class StateManager(Impl):
-    def __init__(self, session, window, key_state_handler):
+    def __init__(self, session, window, key_state_handler, asset_factory):
         super().__init__(session)
         self.window = window
         self.key_state_handler = key_state_handler
+        self.asset_factory = asset_factory
         self.tid = None
 
     # Client sends everything it tries to server, and does everything it is told to
@@ -69,9 +82,22 @@ class StateManager(Impl):
         if not sync: self.dispatch_event("try_{}".format(evt.event), tid, evt)
         self.session.send(evt, tid)
     
-    def do_init_connection(self, tid, evt):
+    def do_init_connection(self, _, evt): 
         self.tid = evt.tid
-        self.dispatch_event('on_try', tid, ActorLoadEvent(evt.tid, (0,0,0)), True)
+        self.dispatch_event('on_try', self.tid, SceneLoadEvent(None), True)
+
+    def do_load_scene(self, tid, evt):
+        for i,it in DECODER.loads(evt.data).items(): 
+            hx = Hx(*i)
+            tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, self.registry[SCENE].batch, hx.into_px(), it.flags)
+            self.registry[SCENE].tiles[hx] = tile
+
+    def on_close(self, *args):
+        if(self.state & STATE_UI_OVERLAY):
+            self.window.pop_handlers()
+            self.window.push_handlers(self.key_state_handler)
+            self.window.push_handlers(self.registry[ACTION_BAR])
+            self.state = STATE_PLAY
 
     def on_overlay(self, *args):
         if(self.state & STATE_PLAY):
@@ -80,13 +106,6 @@ class StateManager(Impl):
             self.window.push_handlers(self.registry[OVERLAY])
             self.state |= STATE_UI_OVERLAY
             self.dispatch_event("on_open",*args)
-
-    def on_close(self, *args):
-        if(self.state & STATE_UI_OVERLAY):
-            self.window.pop_handlers()
-            self.window.push_handlers(self.key_state_handler)
-            self.window.push_handlers(self.registry[ACTION_BAR])
-            self.state = STATE_PLAY
 
     def begin(self):
         super().begin()
