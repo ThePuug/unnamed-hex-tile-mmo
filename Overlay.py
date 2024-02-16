@@ -2,7 +2,7 @@ import pyglet
 from pyglet.window import key
 
 from Config import *
-from Event import OverlaySelectEvent
+from Event import TileChangeEvent
 from HxPx import Px
 
 PADDING = 10
@@ -55,7 +55,7 @@ class Overlay(pyglet.event.EventDispatcher):
             self.update_options()
         if(sym == key.SPACE):
             it = self.opts[self.curr % len(self.opts)]
-            self.dispatch_event("on_try", None, OverlaySelectEvent((self.hx.q, self.hx.r, self.hx.z), it[0], it[1]), True)
+            self.dispatch_event("on_try", None, TileChangeEvent((self.hx.q, self.hx.r, self.hx.z), it[0], it[1]), True)
             self.reset()
         return pyglet.event.EVENT_HANDLED
 

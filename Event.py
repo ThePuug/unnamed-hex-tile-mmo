@@ -23,19 +23,24 @@ class ConnectionInitEvent(Event):
     tid: int
     event = "init_connection"
 
-class OverlaySelectEvent(Event):
-    hx: tuple
-    typ: str
-    idx: int
-    event = "select_overlay"
-
 class SceneLoadEvent(Event):
     data: bytes
     event = "load_scene"
+
+class TileChangeEvent(Event):
+    hx: tuple
+    typ: str
+    idx: int
+    event = "change_tile"
+
+class TileDiscoverEvent(Event):
+    hx: tuple
+    event = "discover_tile"
 
 REGISTRY = [ActorMoveEvent, 
             ActorLoadEvent, 
             ActorUnloadEvent, 
             ConnectionInitEvent, 
-            OverlaySelectEvent,
-            SceneLoadEvent]
+            SceneLoadEvent,
+            TileChangeEvent,
+            TileDiscoverEvent]

@@ -59,10 +59,15 @@ thread.start()
 state_manager = StateManager.Impl(server)
 
 scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None)
-scene.tiles = scene.from_file()
 state_manager.register(StateManager.SCENE, scene)
 
 state_manager.begin()
+
+try:
+    scene.tiles = scene.from_file()
+except Exception as e:
+    debug(e)
+    state_manager.dispatch_event("on_try", None, TileDiscoverEvent((0,0,0)))
 
 def on_update(dt):
     state_manager.update(dt)

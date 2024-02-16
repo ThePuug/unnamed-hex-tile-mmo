@@ -66,8 +66,18 @@ class Impl(pyglet.event.EventDispatcher):
     def do_unload_actor(self, _, evt):
         del self.actors[evt.id]
 
-    def try_select_overlay(self, _, evt): self.dispatch_event("on_do", None, evt)
-    def do_select_overlay(self, _, evt):
+    def try_discover_tile(self, tid, evt):
+        c = Hx(*evt.hx)
+        for q in range(-R, R+1):
+            r1 = max(-R, -q-R)
+            r2 = min( R, -q+R)
+            for r in range(r1,r2+1):
+                hx = Hx(c.q + q, c.r + r, c.z)
+                if not(self.tiles.get(hx,None) is None): continue
+                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 0))
+
+    def try_change_tile(self, _, evt): self.dispatch_event("on_do", None, evt)
+    def do_change_tile(self, _, evt):
         hxz = Hx(*evt.hx)
         tile = self.tiles.get(hxz)
         if tile is not None:
@@ -76,21 +86,15 @@ class Impl(pyglet.event.EventDispatcher):
         self.tiles[hxz] = self.asset_factory.create_tile(evt.typ, evt.idx, self.batch, hxz.into_px())
 
     def from_file(self):
-        try:
-            tiles = {}
-            info("loading scene")
-            data = DECODER.loads(pyglet.resource.file("default.0","rb").read())
-            for i,it in data.items():
-                hx = Hx(*i)
-                tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, self.batch, hx.into_px(), it.flags)
-                tiles[hx] = tile
-            if len(tiles) == 0: raise Exception("no tiles in scene")
-            return tiles
-        except Exception as e:
-            debug(e)
-            hx = Hx(0,0,0)
-            tiles[hx] = self.asset_factory.create_tile("terrain", 0, self.batch, hx.into_px())
-            return tiles
+        tiles = {}
+        info("loading scene")
+        data = DECODER.loads(pyglet.resource.file("default.0","rb").read())
+        for i,it in data.items():
+            hx = Hx(*i)
+            tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, self.batch, hx.into_px(), it.flags)
+            tiles[hx] = tile
+        if len(tiles) == 0: raise Exception("no tiles in scene")
+        return tiles
     
     @property
     def state(self):
@@ -121,15 +125,5 @@ class Scene(Impl):
         if it is not None: 
             actor.focus = it.hx
             it.sprite.color = (200,200,100)
-        elif now.z < 5: self.dispatch_event('on_discover',Hx(now.q,now.r,0))
-
-    def on_discover(self, c):
-        for q in range(-R, R+1):
-            r1 = max(-R, -q-R)
-            r2 = min( R, -q+R)
-            for r in range(r1,r2+1):
-                hx = Hx(c.q + q, c.r + r, c.z)
-                if not(self.tiles.get(hx,None) is None): continue
-                self.tiles[hx] = self.asset_factory.create_tile("terrain", 0, self.batch, hx.into_px())
+        elif now.z < 5: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
     
-Scene.register_event_type('on_discover')
