@@ -1,22 +1,27 @@
 import collision
 import pyglet
 from pyglet.window import key
+from pyglet.math import Vec2
 
 from Config import *
-from Event import ActorMoveEvent
+from Event import *
 from HxPx import Hx, Px
 from Asset import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 90
+DEFAULT_VERTICAL = 1.33
 
 class Impl(pyglet.event.EventDispatcher):
     def __init__(self, evt):
         self.id = evt.id
         self.last_clock = 0
         self.heading = Hx(0,0,0)
+        self.air_dz = 0
+        self.air_time = None
         self.focus = Hx(0,0,0)
         self.height = 2
         self.speed = DEFAULT_SPEED
+        self.vertical = DEFAULT_VERTICAL
         self.px = Px(*(evt.pos if evt.pos is not None else (0,0,0)))
         self.collider = collision.Poly(collision.Vector(self.px.x, self.px.y), 
                                        [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
@@ -41,7 +46,10 @@ class Impl(pyglet.event.EventDispatcher):
 
     def update(self, dt):
         self.collider.pos = collision.Vector(self.px.x, self.px.y)
-        if(self.px.into_hx() != self.hx): self.hx = self.px_into_hx() # TODO: remove this hack and do jumping right
+        if(self.air_time is not None): 
+            self.air_time += dt
+            if (self.air_time*self.speed/TILE_RISE)/self.vertical > 1: self.air_dz -= self.speed/TILE_RISE*dt
+            else: self.air_dz = Vec2(0,0).lerp(Vec2(0,self.vertical), (self.air_time*self.speed/TILE_RISE)/self.vertical).y
 
     def recalc(self):
         was_focus_hx = self.focus
@@ -75,10 +83,20 @@ class Actor(Impl):
 
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
-        elif(evt == "on_jump"): self.dispatch_event("on_try", "do_actor_move", self, self.focus.into_px())
+        if(evt == "on_jump"): 
+            heading = self.heading 
+            if not(self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]):
+                heading = Hx(0, 0, 0)
+            self.dispatch_event("on_try", self.id, ActorMoveEvent(id=self.id, heading=heading.state,
+                                                                  dt=0, pos=None,
+                                                                  air_dz=0, air_time=0))
 
     def update(self, dt):
         super().update(dt)
+        if self.air_time is not None: 
+            self.dispatch_event('on_try', self.id, ActorMoveEvent(id=self.id, heading=self.heading.state, 
+                                                                  dt=dt, pos=None,
+                                                                  air_dz=self.air_dz, air_time=self.air_time))
         if not(self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]):
             if self.sprite.image == self.animations["walk_n"]: self.sprite.image = self.animations["stand_n"]
             if self.sprite.image == self.animations["walk_e"]: self.sprite.image = self.animations["stand_e"]
@@ -110,13 +128,14 @@ class Actor(Impl):
                 if self.sprite.image != self.animations["walk_w"] and not(self.key_state[key.UP] or self.key_state[key.DOWN]): 
                     self.sprite.image = self.animations["walk_w"]
 
-            self.dispatch_event('on_try', self.id, ActorMoveEvent(self.id, (self.heading.q, self.heading.r, self.heading.z), dt, None))
+            self.dispatch_event('on_try', self.id, ActorMoveEvent(id=self.id, heading=self.heading.state, 
+                                                                  dt=dt, pos=None,
+                                                                  air_dz=self.air_dz, air_time=self.air_time))
+        self.recalc()
 
     def recalc(self):
         super().recalc()
-        # was_position = self.sprite.position
-        # now_position = self.sprite.position
-        self.sprite.position = self._px.into_screen((0,0,1))
+        self.sprite.position = self._px.into_screen((0,self.air_dz*TILE_RISE,self.air_dz+self.height))
 
 Actor.register_event_type('on_overlay')
 Actor.register_event_type('on_jump')

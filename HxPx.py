@@ -1,4 +1,5 @@
 from math import cos, pi, sin
+import math
 
 from Config import *
 
@@ -29,11 +30,11 @@ class Px:
             self.y = args[1]
             self.z = 0 if len(args) < 3 else args[2]
 
-    def __hash__(self): return hash((self.x,self.y,self.z))
+    def __hash__(self): return hash((self.x, self.y, self.z))
     def __eq__(self,other): return self.x==other.x and self.y==other.y and self.z==other.z
 
-    def __add__(self, v): return Px(self.x+v.x,self.y+v.y,self.z+v.z)
-    def __sub__(self, v): return Px(self.x-v.x,self.y-v.y,self.z-v.z)
+    def __add__(self, v): return Px(self.x+v.x, self.y+v.y, self.z+v.z)
+    def __sub__(self, v): return Px(self.x-v.x, self.y-v.y, self.z-v.z)
 
     def vertices(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
@@ -96,7 +97,7 @@ class Hx:
         y = (orientation[0][2] * self.q + orientation[0][3] * self.r) * (ISO_SCALE*tile_size)
         return Px(x, y, self.z)
     
-    def into_screen(self, offset=Px(0,0,0)):
+    def into_screen(self, offset=(0,0,0)):
         px = self.into_px()
         return (px.x+offset[0], px.y+px.z*TILE_RISE+offset[1], -self.r+self.z+offset[2])
     

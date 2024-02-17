@@ -44,24 +44,55 @@ class Impl(pyglet.event.EventDispatcher):
         offset_px = heading_px-actor.px
         angle = math.atan2(offset_px.y, offset_px.x)
         new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
-        
-        tile = self.tiles.get(actor.hx)
-        if(tile is not None and tile.flags & FLAG_SOLID):
-            collider = collision.Poly(collision.Vector(new_px.x, new_px.y), 
-                                      [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
-            response = collision.Response()
-            for hx in [it+Hx(0,0,z+1) for it in NEIGHBORS for z in range(actor.height)]:
-                it = self.tiles.get(actor.hx+hx)
-                response.reset()
-                if it is not None and it.sprite is not None and collision.collide(collider, it.collider, response): 
-                    if heading_hx == it.hx - Hx(0, 0, it.hx.z-heading_hx.z): return
-                    offset_px = heading_px - Px(*it.collider.pos, 0)
-                    angle = math.atan2(offset_px.y, offset_px.x)
-                    new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+
+        if actor.air_time is None and not(evt.air_time == 0):
+            evt.air_time = None
+            evt.air_dz = 0
+
+        if actor.air_time is not None and actor.air_dz > 1:
+            it = self.tiles.get(new_px.into_hx()+Hx(0,0,math.floor(actor.air_dz)))
+            if(it is not None and it.flags & FLAG_SOLID):
+                new_px.z += math.floor(actor.air_dz)
+                evt.air_dz -= math.floor(actor.air_dz)
+
+        if actor.air_dz <= 0:
+            if actor.air_time is not None:
+                for it in [self.tiles.get(new_px.into_hx()+Hx(0,0,z)) 
+                           for z in range(math.ceil(actor.air_dz+evt.dt*actor.speed/TILE_RISE),math.floor(actor.air_dz),-1)]:
+                    if it is not None and it.flags & FLAG_SOLID:
+                        new_px.z = it.hx.z
+                        evt.air_dz = 0
+                        evt.air_time = None
+                        break
+            else:
+                it = self.tiles.get(new_px.into_hx())
+                if it is None or not(it.flags & FLAG_SOLID):
+                    evt.air_time = actor.vertical*TILE_RISE/actor.speed
+                    evt.air_dz = 0
+
+        collider = collision.Poly(collision.Vector(new_px.x, new_px.y), 
+                                    [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
+        response = collision.Response()
+        for hx in [it+Hx(0,0,z+1+max(0,math.floor(evt.air_dz))) for it in NEIGHBORS for z in range(actor.height)]:
+            it = self.tiles.get(actor.hx+hx)
+            response.reset()
+            if it is not None and it.sprite is not None and collision.collide(collider, it.collider, response): 
+                if heading_hx == it.hx - Hx(0, 0, it.hx.z-heading_hx.z): 
+                    new_px = Px(actor.px.x, actor.px.y, new_px.z)
                     break
-            evt.pos = (new_px.x, new_px.y, new_px.z)
-            self.dispatch_event("on_do", None, evt)
-    def do_move_actor(self, _, evt): self.actors[evt.id].px = Px(*evt.pos)
+                offset_px = heading_px - Px(*it.collider.pos, 0)
+                angle = math.atan2(offset_px.y, offset_px.x)
+                new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+                break
+
+        evt.pos = new_px.state
+        self.dispatch_event("on_do", None, evt)
+
+    def do_move_actor(self, _, evt): 
+        actor = self.actors[evt.id]
+        actor.px = Px(*evt.pos)
+        actor.air_dz = evt.air_dz
+        actor.air_time = evt.air_time
 
     def do_unload_actor(self, _, evt):
         del self.actors[evt.id]
@@ -108,8 +139,9 @@ class Scene(Impl):
     def do_load_actor(self, tid, evt):
         super().do_load_actor(tid, evt)
         if evt.id == self.state_manager.tid:
-            self.state_manager.actor = self.actors[evt.id]
-            self.state_manager.registry[ACTION_BAR].push_handlers(self.actors[evt.id])
+            actor = self.actors[evt.id]
+            self.state_manager.actor = actor
+            self.state_manager.registry[ACTION_BAR].push_handlers(actor)
 
     def do_unload_actor(self, tid, evt):
         self.actors[evt.id].sprite.delete()

@@ -1,6 +1,6 @@
 from collections import deque
 import logging
-from logging import debug
+from logging import debug, info
 import signal
 import pyglet
 import socket
@@ -26,9 +26,9 @@ class Server:
 
     def accept(self):
         while True:
-            debug("ready to accept a connection")
+            info("ready to accept a connection")
             sock, addr = self.sock.accept()
-            debug("accepted from {}".format(addr))
+            info("accepted from {}".format(addr))
             sock.send(OK)
             session = Session(sock, self.incoming, deque())
             self.clients[session.tid] = session

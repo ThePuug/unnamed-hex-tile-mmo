@@ -7,7 +7,9 @@ class ActorMoveEvent(Event):
     id: int
     heading: tuple
     dt: float
+    air_time: float
     pos: tuple
+    air_dz: float
     event = "move_actor"
 
 class ActorLoadEvent(Event):
