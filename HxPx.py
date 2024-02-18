@@ -99,7 +99,7 @@ class Hx:
     
     def into_screen(self, offset=(0,0,0)):
         px = self.into_px()
-        return (px.x+offset[0], px.y+px.z*TILE_RISE+offset[1], -self.r+self.z+offset[2])
+        return (px.x+offset[0], px.y+px.z*TILE_RISE+offset[1], -self.r+offset[2])
     
     @property
     def state(self): return (self.q, self.r, self.z)

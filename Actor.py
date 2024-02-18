@@ -8,7 +8,7 @@ from Event import *
 from HxPx import Hx, Px
 from Asset import DepthSprite, depth_shader
 
-DEFAULT_SPEED = 90
+DEFAULT_SPEED = 120
 DEFAULT_VERTICAL = 1.33
 DEFAULT_HEIGHT = 3
 
@@ -61,7 +61,6 @@ class Impl(pyglet.event.EventDispatcher):
             actor.air_time += dt
             if (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical > 1: actor.air_dz -= actor.speed/(TILE_RISE*2)*dt
             else: actor.air_dz = Vec2(0,0).lerp(Vec2(0,actor.vertical), (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical).y
-            self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt))
 
     def recalc(self):
         was_focus_hx = self.focus
@@ -140,7 +139,9 @@ class Actor(Impl):
                     self.sprite.image = self.animations["walk_e"]
 
     def update(self, actor, dt):
-        if actor.air_time is not None: super().update(actor, dt)
+        if actor.air_time is not None: 
+            super().update(actor, dt)
+            self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt))
         else:
             if self.key_state[key.SPACE]: 
                 actor.air_time = 0
