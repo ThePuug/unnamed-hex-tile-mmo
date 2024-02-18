@@ -36,12 +36,12 @@ class Server:
     def recv(self):
         while self.incoming: yield self.incoming.popleft()
     
-    def send(self, evt, tid = None):
+    def send(self, evt, tid, seq):
         if tid == None:
-            for i,it in self.clients.items(): it.send(evt, i)
+            for i,it in self.clients.items(): it.send(evt, i, seq)
         else:
             it = self.clients.get(tid)
-            if it is not None: it.send(evt, tid)
+            if it is not None: it.send(evt, tid, seq)
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 

@@ -1,4 +1,5 @@
-from logging import debug, info
+from collections import deque
+from logging import debug, info, warn
 import sys
 import pyglet
 
@@ -18,13 +19,16 @@ class Impl(pyglet.event.EventDispatcher):
     def __init__(self, session):
         self.session = session
         self.state = 0
+        self.seq = -1
         self.registry = {}
 
     # Impl tries everything, and sends back what is done
-    def on_try(self, tid, evt): self.dispatch_event("try_{}".format(evt.event), tid, evt)
+    def on_try(self, tid, evt, seq = None):
+        self.seq = seq
+        self.dispatch_event("try_{}".format(evt.event), tid, evt)
     def on_do(self, tid, evt):
         self.dispatch_event("do_{}".format(evt.event), tid, evt)
-        self.session.send(evt, tid)
+        self.session.send(evt, tid, self.seq)
 
     def try_init_connection(self, tid, evt):
         evt.tid = tid
@@ -47,8 +51,8 @@ class Impl(pyglet.event.EventDispatcher):
         self.state |= STATE_PLAY
 
     def update(self, dt):
-        for tid, evt in self.session.recv():
-            self.dispatch_event("on_try", tid, evt)
+        for tid, evt, seq in self.session.recv():
+            self.dispatch_event("on_try", tid, evt, seq)
 
     def register(self, id, it):
         self.registry[id] = it
@@ -78,12 +82,26 @@ class StateManager(Impl):
         self.key_state_handler = key_state_handler
         self.asset_factory = asset_factory
         self.tid = None
+        self.evt_deque = deque()
 
     # Client sends everything it tries to server, and does everything it is told to
-    def on_do(self, tid, evt): self.dispatch_event("do_{}".format(evt.event), tid, evt)
+    def on_do(self, tid, evt, seq=None): 
+        if seq is not None:
+            while True:
+                i, it = self.evt_deque.popleft()
+                if i == seq: break
+                else: warn("skipping seq {}".format(i))
+        self.dispatch_event("do_{}".format(evt.event), tid, evt)
+        for _,it in list(self.evt_deque):
+            self.dispatch_event("do_{}".format(it.event), tid, it)
     def on_try(self, tid, evt, sync=False):
-        if not sync: self.dispatch_event("try_{}".format(evt.event), tid, evt)
-        self.session.send(evt, tid)
+        seq = None
+        if not sync: 
+            self.seq += 1
+            seq = self.seq
+            self.evt_deque.append((seq, evt))
+            self.dispatch_event("try_{}".format(evt.event), tid, evt)
+        self.session.send(evt, tid, seq)
     
     def do_init_connection(self, _, evt): 
         self.tid = evt.tid
@@ -121,7 +139,7 @@ class StateManager(Impl):
         self.dispatch_event('on_try', None, ConnectionInitEvent(None), True)
 
     def update(self, dt):
-        for tid, evt in self.session.recv():
-            self.dispatch_event("do_{}".format(evt.event), tid, evt)
+        for tid, evt, seq in self.session.recv():
+            self.dispatch_event("on_do", tid, evt, seq)
 
 StateManager.register_event_type('on_open')

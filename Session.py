@@ -52,17 +52,17 @@ class Session():
                     # take an event
                     tok = it[i:i+sz]
                     i = i+sz
-                    tid, evt = DECODER.loads(tok)
+                    tid, evt, seq = DECODER.loads(tok)
                     if tid == None: tid = self.tid
-                    self.incoming.append((tid, evt))
+                    self.incoming.append((tid, evt, seq))
                 if it[i:i+2] == OK: 
                     rest = it[i+2:]
                     break
                 else: rest = it[i:]
 
             while self.outgoing:
-                tid, evt = self.outgoing.popleft()
-                it = ENCODER.dumps((tid, evt))
+                tid, evt, seq = self.outgoing.popleft()
+                it = ENCODER.dumps((tid, evt, seq))
                 try:
                     self.sock.send(len(it).to_bytes(2, 'big', signed=False))
                     self.sock.send(it)
@@ -71,8 +71,8 @@ class Session():
                     return False
             self.sock.send(OK)
 
-    def send(self, evt, _tid = None):
-        self.outgoing.append((None, evt))
+    def send(self, evt, _, seq):
+        self.outgoing.append((None, evt, seq))
 
     def recv(self):
         while self.incoming: yield self.incoming.popleft()
