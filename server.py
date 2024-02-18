@@ -77,7 +77,7 @@ def on_update(dt):
             it.sock.close()
             del server.clients[i]
             break
-    for i,it in scene.actors.items(): it.update(dt)
+    for i,it in scene.actors.items(): it.update(it.state,dt)
 pyglet.clock.schedule_interval(on_update, 1/20.0)
 
 if __name__ == "__main__": 

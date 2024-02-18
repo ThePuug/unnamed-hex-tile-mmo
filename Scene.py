@@ -61,7 +61,7 @@ class Impl(pyglet.event.EventDispatcher):
         if actor.air_dz <= 0:
             if actor.air_time is not None:
                 for it in [self.tiles.get(new_px.into_hx()+Hx(0,0,z)) 
-                           for z in range(math.ceil(actor.air_dz+evt.dt*actor.speed/TILE_RISE),math.floor(actor.air_dz),-1)]:
+                           for z in range(math.ceil(actor.air_dz+evt.dt*actor.speed/(TILE_RISE*2)),math.floor(actor.air_dz),-1)]:
                     if it is not None and it.flags & FLAG_SOLID:
                         new_px.z = it.hx.z
                         evt.actor.air_dz = 0
@@ -70,7 +70,7 @@ class Impl(pyglet.event.EventDispatcher):
             else:
                 it = self.tiles.get(new_px.into_hx())
                 if it is None or not(it.flags & FLAG_SOLID):
-                    evt.actor.air_time = actor.vertical*TILE_RISE/actor.speed
+                    evt.actor.air_time = actor.vertical*(TILE_RISE*2)/actor.speed
                     evt.actor.air_dz = 0
         
         if evt.actor.air_dz is None: evt.actor.air_dz = actor.air_dz

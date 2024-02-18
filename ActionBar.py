@@ -42,6 +42,5 @@ class ActionBar(pyglet.event.EventDispatcher):
         if sym == key._2: self.dispatch_event(*self.buttons[5].event)
         if sym == key._3: self.dispatch_event(*self.buttons[6].event)
         if sym == key._4: self.dispatch_event(*self.buttons[7].event)
-        if sym == key.SPACE: self.dispatch_event("on_action","on_jump",None)
 
 ActionBar.register_event_type("on_action")

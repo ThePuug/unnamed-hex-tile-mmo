@@ -65,7 +65,7 @@ def on_update(dt):
     if state_manager.tid is not None:
         actor = state_manager.registry[StateManager.SCENE].actors.get(state_manager.tid)
         if actor is not None:
-            actor.update(dt)
+            actor.update(actor.state, dt)
             camera.position = actor.px.into_screen()[:2]
 pyglet.clock.schedule_interval(on_update, 1/120.0)
 

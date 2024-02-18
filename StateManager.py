@@ -53,15 +53,15 @@ class Impl(pyglet.event.EventDispatcher):
     def register(self, id, it):
         self.registry[id] = it
 
-Impl.register_event_type('on_try')
-Impl.register_event_type('on_do')
 Impl.register_event_type('on_close')
+Impl.register_event_type('on_try')
 Impl.register_event_type('try_change_tile')
 Impl.register_event_type('try_discover_tile')
 Impl.register_event_type('try_init_connection')
 Impl.register_event_type('try_load_actor')
 Impl.register_event_type('try_load_scene')
 Impl.register_event_type('try_move_actor')
+Impl.register_event_type('on_do')
 Impl.register_event_type('do_change_tile')
 Impl.register_event_type('do_discover_tile')
 Impl.register_event_type('do_init_connection')
