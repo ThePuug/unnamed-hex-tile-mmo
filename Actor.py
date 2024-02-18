@@ -10,6 +10,18 @@ from Asset import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 90
 DEFAULT_VERTICAL = 1.33
+DEFAULT_HEIGHT = 3
+
+class State(quickle.Struct):
+    id: int
+    height: int
+    heading: tuple
+    speed: int
+    last_clock: float
+    vertical: float
+    air_dz: float
+    air_time: float
+    px: tuple
 
 class Impl(pyglet.event.EventDispatcher):
     def __init__(self, evt):
@@ -19,7 +31,7 @@ class Impl(pyglet.event.EventDispatcher):
         self.air_dz = 0
         self.air_time = None
         self.focus = Hx(0,0,0)
-        self.height = 2
+        self.height = 3
         self.speed = DEFAULT_SPEED
         self.vertical = DEFAULT_VERTICAL
         self.px = Px(*(evt.pos if evt.pos is not None else (0,0,0)))
@@ -57,6 +69,24 @@ class Impl(pyglet.event.EventDispatcher):
         now_focus_hx = self.hx+self.heading
         if now_focus_hx != was_focus_hx: self.dispatch_event('on_looking_at', self, now_focus_hx, was_focus_hx)
 
+    @property
+    def state(self): return State(id=self.id, 
+                                  height=self.height, 
+                                  heading=self.heading.state, 
+                                  speed=self.speed, 
+                                  last_clock=self.last_clock,
+                                  vertical=self.vertical, 
+                                  air_dz=self.air_dz, 
+                                  air_time=self.air_time, 
+                                  px=self.px.state)
+    
+    @state.setter
+    def state(self, v):
+        self.px = Px(*v.px)
+        self.air_dz = v.air_dz
+        self.air_time = v.air_time
+        self.last_clock = v.last_clock
+
 Impl.register_event_type('on_try')
 Impl.register_event_type('on_looking_at')
 
@@ -84,19 +114,13 @@ class Actor(Impl):
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
         if(evt == "on_jump"): 
-            heading = self.heading 
-            if not(self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]):
-                heading = Hx(0, 0, 0)
-            self.dispatch_event("on_try", self.id, ActorMoveEvent(id=self.id, heading=heading.state,
-                                                                  dt=0, pos=None,
-                                                                  air_dz=0, air_time=0))
+            actor = self.state
+            actor.air_time = 0
+            self.dispatch_event("on_try", self.id, ActorMoveEvent(actor=actor, dt=0))
 
     def update(self, dt):
         super().update(dt)
-        if self.air_time is not None: 
-            self.dispatch_event('on_try', self.id, ActorMoveEvent(id=self.id, heading=self.heading.state, 
-                                                                  dt=dt, pos=None,
-                                                                  air_dz=self.air_dz, air_time=self.air_time))
+        if self.air_time is not None: self.dispatch_event('on_try', self.id, ActorMoveEvent(actor=self.state, dt=dt))
         if not(self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]):
             if self.sprite.image == self.animations["walk_n"]: self.sprite.image = self.animations["stand_n"]
             if self.sprite.image == self.animations["walk_e"]: self.sprite.image = self.animations["stand_e"]
@@ -106,14 +130,18 @@ class Actor(Impl):
             if self.key_state[key.UP]: 
                 if self.sprite.image != self.animations["walk_n"]: 
                     self.sprite.image = self.animations["walk_n"]
-                if self.key_state[key.LEFT] or not self.key_state[key.RIGHT] and (self.heading == Hx(-1,0,0) or self.heading == Hx(-1,+1,0) or self.heading == Hx(+1,-1,0)):
+                if self.key_state[key.LEFT] or not self.key_state[key.RIGHT] and (self.heading == Hx(-1,0,0) or 
+                                                                                  self.heading == Hx(-1,+1,0) or 
+                                                                                  self.heading == Hx(+1,-1,0)):
                     self.heading = Hx(-1,+1,0)
                 else:
                     self.heading = Hx(0,+1,0)
             if self.key_state[key.DOWN]: 
                 if self.sprite.image != self.animations["walk_s"]:
                     self.sprite.image = self.animations["walk_s"]
-                if self.key_state[key.RIGHT] or not self.key_state[key.LEFT] and (self.heading == Hx(1,0,0) or self.heading == Hx(+1,-1,0) or self.heading == Hx(-1,1,0)):
+                if self.key_state[key.RIGHT] or not self.key_state[key.LEFT] and (self.heading == Hx(1,0,0) or 
+                                                                                  self.heading == Hx(+1,-1,0) or 
+                                                                                  self.heading == Hx(-1,1,0)):
                     self.heading = Hx(+1,-1,0)
                 else:
                     self.heading = Hx(0,-1,0)
@@ -128,9 +156,7 @@ class Actor(Impl):
                 if self.sprite.image != self.animations["walk_w"] and not(self.key_state[key.UP] or self.key_state[key.DOWN]): 
                     self.sprite.image = self.animations["walk_w"]
 
-            self.dispatch_event('on_try', self.id, ActorMoveEvent(id=self.id, heading=self.heading.state, 
-                                                                  dt=dt, pos=None,
-                                                                  air_dz=self.air_dz, air_time=self.air_time))
+            self.dispatch_event('on_try', self.id, ActorMoveEvent(actor=self.state, dt=dt))
         self.recalc()
 
     def recalc(self):

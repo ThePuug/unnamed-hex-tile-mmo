@@ -1,5 +1,6 @@
 from logging import debug, error
 import threading
+from time import sleep
 
 from Config import *
 from Event import *
@@ -24,6 +25,7 @@ class Session():
         rest = bytes()
         while True:
             while True:
+                # sleep(.05)
                 # read some more data
                 try:
                     it = self.sock.recv(1024)
@@ -57,7 +59,7 @@ class Session():
                     rest = it[i+2:]
                     break
                 else: rest = it[i:]
-            
+
             while self.outgoing:
                 tid, evt = self.outgoing.popleft()
                 it = ENCODER.dumps((tid, evt))

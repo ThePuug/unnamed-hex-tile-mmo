@@ -7,7 +7,7 @@ from Config import *
 from Event import *
 from HxPx import Hx, Px
 from StateManager import ACTION_BAR
-from Quickle import ENCODER, DECODER
+from Quickle import DECODER
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
@@ -32,28 +32,31 @@ class Impl(pyglet.event.EventDispatcher):
         self.actors[evt.id] = actor
 
     def try_move_actor(self, _, evt):
-        actor = self.actors[evt.id]
+        actor = self.actors[evt.actor.id].state
 
-        if(actor.last_clock + evt.dt > pyglet.clock._time.time()): 
-            warn("dt too big")
-            return
-        self.last_clock = pyglet.clock._time.time()
+        # now = pyglet.clock._time.time()
+        # if(now-actor.last_clock < evt.dt): 
+        #     warn("dt bigger than:{}, (was:{}, dt:{}, now:{})".format(now-actor.last_clock,actor.last_clock, evt.dt, now))
+        #     # return
+        # evt.actor.last_clock = now
 
-        heading_hx = actor.hx+Hx(*evt.heading)
+        px = Px(*actor.px)
+        hx = px.into_hx()
+        heading_hx = hx+Hx(*evt.actor.heading)
         heading_px = heading_hx.into_px()
-        offset_px = heading_px-actor.px
-        angle = math.atan2(offset_px.y, offset_px.x)
-        new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+        heading_offset_px = heading_px-px
+        heading_offset_angle = math.atan2(heading_offset_px.y, heading_offset_px.x)
+        new_px = px + Px(actor.speed*evt.dt*math.cos(heading_offset_angle), ISO_SCALE*actor.speed*evt.dt*math.sin(heading_offset_angle), 0)
 
-        if actor.air_time is None and not(evt.air_time == 0):
-            evt.air_time = None
-            evt.air_dz = 0
+        if actor.air_time is None and not(evt.actor.air_time == 0):
+            evt.actor.air_time = None
+            evt.actor.air_dz = 0
 
         if actor.air_time is not None and actor.air_dz > 1:
             it = self.tiles.get(new_px.into_hx()+Hx(0,0,math.floor(actor.air_dz)))
             if(it is not None and it.flags & FLAG_SOLID):
                 new_px.z += math.floor(actor.air_dz)
-                evt.air_dz -= math.floor(actor.air_dz)
+                evt.actor.air_dz = actor.air_dz - math.floor(actor.air_dz)
 
         if actor.air_dz <= 0:
             if actor.air_time is not None:
@@ -61,43 +64,40 @@ class Impl(pyglet.event.EventDispatcher):
                            for z in range(math.ceil(actor.air_dz+evt.dt*actor.speed/TILE_RISE),math.floor(actor.air_dz),-1)]:
                     if it is not None and it.flags & FLAG_SOLID:
                         new_px.z = it.hx.z
-                        evt.air_dz = 0
-                        evt.air_time = None
+                        evt.actor.air_dz = 0
+                        evt.actor.air_time = None
                         break
             else:
                 it = self.tiles.get(new_px.into_hx())
                 if it is None or not(it.flags & FLAG_SOLID):
-                    evt.air_time = actor.vertical*TILE_RISE/actor.speed
-                    evt.air_dz = 0
+                    evt.actor.air_time = actor.vertical*TILE_RISE/actor.speed
+                    evt.actor.air_dz = 0
+        
+        if evt.actor.air_dz is None: evt.actor.air_dz = actor.air_dz
 
         collider = collision.Poly(collision.Vector(new_px.x, new_px.y), 
                                     [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
         response = collision.Response()
-        for hx in [it+Hx(0,0,z+1+max(0,math.floor(evt.air_dz))) for it in NEIGHBORS for z in range(actor.height)]:
-            it = self.tiles.get(actor.hx+hx)
+        for neighbor in [it+Hx(0,0,z+1+max(0,math.floor(evt.actor.air_dz))) for it in NEIGHBORS for z in range(actor.height)]:
+            it = self.tiles.get(hx+neighbor)
             response.reset()
             if it is not None and it.sprite is not None and collision.collide(collider, it.collider, response): 
                 if heading_hx == it.hx - Hx(0, 0, it.hx.z-heading_hx.z): 
-                    new_px = Px(actor.px.x, actor.px.y, new_px.z)
+                    new_px = Px(px.x, px.y, new_px.z)
                     break
-                offset_px = heading_px - Px(*it.collider.pos, 0)
-                angle = math.atan2(offset_px.y, offset_px.x)
-                new_px = actor.px + Px(actor.speed*evt.dt*math.cos(angle), ISO_SCALE*actor.speed*evt.dt*math.sin(angle), 0)
+                heading_offset_px = heading_px - Px(*it.collider.pos, 0)
+                heading_offset_angle = math.atan2(heading_offset_px.y, heading_offset_px.x)
+                new_px = px + Px(actor.speed*evt.dt*math.cos(heading_offset_angle), ISO_SCALE*actor.speed*evt.dt*math.sin(heading_offset_angle), 0)
                 break
 
-        evt.pos = new_px.state
+        evt.actor.px = new_px.state
         self.dispatch_event("on_do", None, evt)
-
-    def do_move_actor(self, _, evt): 
-        actor = self.actors[evt.id]
-        actor.px = Px(*evt.pos)
-        actor.air_dz = evt.air_dz
-        actor.air_time = evt.air_time
+    def do_move_actor(self, _, evt): self.actors[evt.actor.id].state = evt.actor
 
     def do_unload_actor(self, _, evt):
         del self.actors[evt.id]
 
-    def try_discover_tile(self, tid, evt):
+    def try_discover_tile(self, _, evt):
         c = Hx(*evt.hx)
         for q in range(-R, R+1):
             r1 = max(-R, -q-R)
