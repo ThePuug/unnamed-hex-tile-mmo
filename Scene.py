@@ -31,7 +31,7 @@ class Impl(pyglet.event.EventDispatcher):
         actor.push_handlers(self)
         self.actors[evt.id] = actor
 
-    def try_move_actor(self, _, evt):
+    def try_move_actor(self, tid, evt):
         actor = self.actors[evt.actor.id].state
 
         # now = pyglet.clock._time.time()
@@ -91,10 +91,10 @@ class Impl(pyglet.event.EventDispatcher):
                 break
 
         evt.actor.px = new_px.state
-        self.dispatch_event("on_do", None, evt)
-    def do_move_actor(self, _, evt): self.actors[evt.actor.id].state = evt.actor
+        self.dispatch_event("on_do", tid, evt, True)
+    def do_move_actor(self, tid, evt): self.actors[evt.actor.id].state = evt.actor
 
-    def do_unload_actor(self, _, evt):
+    def do_unload_actor(self, tid, evt):
         del self.actors[evt.id]
 
     def try_discover_tile(self, _, evt):
@@ -105,10 +105,10 @@ class Impl(pyglet.event.EventDispatcher):
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 0))
+                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 0), True)
 
-    def try_change_tile(self, _, evt): self.dispatch_event("on_do", None, evt)
-    def do_change_tile(self, _, evt):
+    def try_change_tile(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
+    def do_change_tile(self, tid, evt):
         hxz = Hx(*evt.hx)
         tile = self.tiles.get(hxz)
         if tile is not None:

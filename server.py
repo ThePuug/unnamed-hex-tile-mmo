@@ -15,10 +15,10 @@ import Scene
 from Session import OK, Session
 import StateManager
 
-class Server:
+class Server(pyglet.event.EventDispatcher):
     def __init__(self):
         self.incoming = deque()
-        self.clients = {}
+        self.sessions = {}
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind(("localhost",SERVER_PORT))
@@ -31,17 +31,20 @@ class Server:
             info("accepted from {}".format(addr))
             sock.send(OK)
             session = Session(sock, self.incoming, deque())
-            self.clients[session.tid] = session
+            self.sessions[session.tid] = session
     
-    def recv(self):
-        while self.incoming: yield self.incoming.popleft()
-    
-    def send(self, evt, tid, seq):
-        if tid == None:
-            for i,it in self.clients.items(): it.send(evt, i, seq)
-        else:
-            it = self.clients.get(tid)
-            if it is not None: it.send(evt, tid, seq)
+    def on_send(self, tid, evt, seq, broadcast):
+        if broadcast:
+            for i,it in self.sessions.items():
+                it.on_send(tid, evt, seq if it.tid == tid else None)
+        else: self.sessions[tid].on_send(tid, evt, seq)
+
+    def update(self, dt):
+        while self.incoming:
+            tid, evt, seq = self.incoming.popleft()
+            self.dispatch_event("on_try", tid, evt, seq)
+
+Server.register_event_type("on_try")
 
 logging.basicConfig(stream=sys.stderr, 
                     level=LOGLEVEL, 
@@ -56,11 +59,11 @@ thread = threading.Thread(target=Server.accept, args=[server])
 thread.daemon = True
 thread.start()
 
-state_manager = StateManager.Impl(server)
-
+state_manager = StateManager.Impl()
+server.push_handlers(state_manager)
+state_manager.push_handlers(server)
 scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None)
 state_manager.register(StateManager.SCENE, scene)
-
 state_manager.begin()
 
 try:
@@ -70,12 +73,12 @@ except Exception as e:
     state_manager.dispatch_event("on_try", None, TileDiscoverEvent((0,0,0)))
 
 def on_update(dt):
-    state_manager.update(dt)
-    for i,it in server.clients.items():
+    server.update(dt)
+    for i,it in server.sessions.items():
         if it.do_exit.is_set(): 
-            state_manager.dispatch_event('on_do', None, ActorUnloadEvent(i))
+            state_manager.dispatch_event('on_do', None, ActorUnloadEvent(i), True)
             it.sock.close()
-            del server.clients[i]
+            del server.sessions[i]
             break
     for i,it in scene.actors.items(): it.update(it.state,dt)
 pyglet.clock.schedule_interval(on_update, 1/20.0)

@@ -35,7 +35,8 @@ asset_factory = Asset.Factory()
 
 camera = CenteredCamera(window)
 batch = pyglet.graphics.Batch()
-state_manager = StateManager.StateManager(session, window, key_state_handler, asset_factory)
+state_manager = StateManager.StateManager(window, key_state_handler, asset_factory)
+state_manager.push_handlers(session)
 scene = Scene(asset_factory, Actor.Factory(key_state_handler, batch), state_manager, batch)
 
 batch_overlay = pyglet.graphics.Batch()
@@ -61,7 +62,8 @@ def on_draw():
         fps.draw()
 
 def on_update(dt):
-    state_manager.update(dt)
+    for tid, evt, seq in session.recv():
+        state_manager.dispatch_event("on_do", tid, evt, None, seq)
     if state_manager.tid is not None:
         actor = state_manager.registry[StateManager.SCENE].actors.get(state_manager.tid)
         if actor is not None:

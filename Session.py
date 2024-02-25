@@ -25,7 +25,6 @@ class Session():
         rest = bytes()
         while True:
             while True:
-                # sleep(.05)
                 # read some more data
                 try:
                     it = self.sock.recv(1024)
@@ -71,8 +70,8 @@ class Session():
                     return False
             self.sock.send(OK)
 
-    def send(self, evt, _, seq):
-        self.outgoing.append((None, evt, seq))
+    def on_send(self, tid, evt, seq):
+        self.outgoing.append((tid, evt, seq))
 
     def recv(self):
         while self.incoming: yield self.incoming.popleft()

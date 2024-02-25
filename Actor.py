@@ -141,11 +141,11 @@ class Actor(Impl):
     def update(self, actor, dt):
         if actor.air_time is not None: 
             super().update(actor, dt)
-            self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt))
+            self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
         else:
             if self.key_state[key.SPACE]: 
                 actor.air_time = 0
-                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt))
+                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
             elif self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]:
                 heading = Hx(*actor.heading)
                 if self.key_state[key.UP]: 
@@ -162,7 +162,7 @@ class Actor(Impl):
                 elif self.key_state[key.LEFT]: heading = Hx(-1,+0,0)
 
                 actor.heading = heading.state
-                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt))
+                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
         self.recalc()
 
     def recalc(self):

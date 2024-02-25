@@ -16,29 +16,28 @@ STATE_PLAY       = 1 << 0
 STATE_UI_OVERLAY = 1 << 1
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self, session):
-        self.session = session
+    def __init__(self):
         self.state = 0
         self.seq = -1
         self.registry = {}
 
     # Impl tries everything, and sends back what is done
-    def on_try(self, tid, evt, seq = None):
+    def on_do(self, tid, evt, broadcast):
+        self.dispatch_event("do_{}".format(evt.event), tid, evt)
+        self.dispatch_event("on_send", tid, evt, self.seq, broadcast)
+    def on_try(self, tid, evt, seq):
         self.seq = seq
         self.dispatch_event("try_{}".format(evt.event), tid, evt)
-    def on_do(self, tid, evt):
-        self.dispatch_event("do_{}".format(evt.event), tid, evt)
-        self.session.send(evt, tid, self.seq)
 
     def try_init_connection(self, tid, evt):
         evt.tid = tid
-        self.dispatch_event("on_do", tid, evt)
+        self.dispatch_event("on_do", tid, evt, False)
 
-    def try_load_scene(self, tid, evt):        
+    def try_load_scene(self, tid, evt):
         evt.data = ENCODER.dumps(self.registry[SCENE].state)
-        self.dispatch_event("on_do", tid, evt)
-        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state))
-        self.dispatch_event('on_do', None, ActorLoadEvent(tid, (0,0,0)))
+        self.dispatch_event("on_do", tid, evt, False)
+        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state), False)
+        self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,0)), True)
 
     def on_close(self):
         info("saving scene")
@@ -50,22 +49,9 @@ class Impl(pyglet.event.EventDispatcher):
         self.registry[SCENE].push_handlers(self)
         self.state |= STATE_PLAY
 
-    def update(self, dt):
-        for tid, evt, seq in self.session.recv():
-            self.dispatch_event("on_try", tid, evt, seq)
-
     def register(self, id, it):
         self.registry[id] = it
 
-Impl.register_event_type('on_close')
-Impl.register_event_type('on_try')
-Impl.register_event_type('try_change_tile')
-Impl.register_event_type('try_discover_tile')
-Impl.register_event_type('try_init_connection')
-Impl.register_event_type('try_load_actor')
-Impl.register_event_type('try_load_scene')
-Impl.register_event_type('try_move_actor')
-Impl.register_event_type('on_do')
 Impl.register_event_type('do_change_tile')
 Impl.register_event_type('do_discover_tile')
 Impl.register_event_type('do_init_connection')
@@ -75,9 +61,22 @@ Impl.register_event_type('do_move_actor')
 Impl.register_event_type('do_select_overlay')
 Impl.register_event_type('do_unload_actor')
 
+Impl.register_event_type('on_broadcast')
+Impl.register_event_type('on_close')
+Impl.register_event_type('on_do')
+Impl.register_event_type('on_send')
+Impl.register_event_type('on_try')
+
+Impl.register_event_type('try_change_tile')
+Impl.register_event_type('try_discover_tile')
+Impl.register_event_type('try_init_connection')
+Impl.register_event_type('try_load_actor')
+Impl.register_event_type('try_load_scene')
+Impl.register_event_type('try_move_actor')
+
 class StateManager(Impl):
-    def __init__(self, session, window, key_state_handler, asset_factory):
-        super().__init__(session)
+    def __init__(self, window, key_state_handler, asset_factory):
+        super().__init__()
         self.window = window
         self.key_state_handler = key_state_handler
         self.asset_factory = asset_factory
@@ -85,8 +84,8 @@ class StateManager(Impl):
         self.evt_deque = deque()
 
     # Client sends everything it tries to server, and does everything it is told to
-    def on_do(self, tid, evt, seq=None): 
-        if seq is not None:
+    def on_do(self, tid, evt, broadcast, seq=None): 
+        if seq is not None and tid == self.tid:
             while True:
                 i, it = self.evt_deque.popleft()
                 if i == seq: break
@@ -94,16 +93,16 @@ class StateManager(Impl):
         self.dispatch_event("do_{}".format(evt.event), tid, evt)
         for _,it in list(self.evt_deque):
             self.dispatch_event("do_{}".format(it.event), tid, it)
-    def on_try(self, tid, evt, sync=False):
+    def on_try(self, tid, evt, sync):
         seq = None
         if not sync: 
             self.seq += 1
             seq = self.seq
             self.evt_deque.append((seq, evt))
             self.dispatch_event("try_{}".format(evt.event), tid, evt)
-        self.session.send(evt, tid, seq)
+        self.dispatch_event("on_send", tid, evt, seq)
     
-    def do_init_connection(self, _, evt): 
+    def do_init_connection(self, tid, evt): 
         self.tid = evt.tid
         self.dispatch_event('on_try', self.tid, SceneLoadEvent(None), True)
 
@@ -137,9 +136,5 @@ class StateManager(Impl):
         self.registry[OVERLAY].push_handlers(self)
         self.registry[OVERLAY].push_handlers(self.registry[SCENE])    
         self.dispatch_event('on_try', None, ConnectionInitEvent(None), True)
-
-    def update(self, dt):
-        for tid, evt, seq in self.session.recv():
-            self.dispatch_event("on_do", tid, evt, seq)
 
 StateManager.register_event_type('on_open')
