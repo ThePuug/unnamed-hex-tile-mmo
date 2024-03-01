@@ -1,7 +1,8 @@
+from logging import debug
 import collision
 import pyglet
 from pyglet.window import key
-from pyglet.math import Vec2
+from pyglet.math import Vec2, Vec3
 
 from Config import *
 from Event import *
@@ -95,6 +96,8 @@ Impl.register_event_type('on_looking_at')
 class Actor(Impl):
     def __init__(self, evt, key_state_handler, batch):
         self.key_state = key_state_handler
+        self.disp_dt = 0
+        self.disp_pos = (0,0,0)
 
         frames_blank = pyglet.image.ImageGrid(pyglet.resource.image("blank.png"), rows=4, columns=4)
         for it in frames_blank:
@@ -116,7 +119,7 @@ class Actor(Impl):
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
 
-    def do_move_actor(self, _, evt):
+    def do_move_actor(self, tid, evt):
         if evt.actor.id != self.id: return
         heading = Hx(*evt.actor.heading)
         if heading == Hx(0,0,0):
@@ -150,24 +153,24 @@ class Actor(Impl):
                 heading = Hx(*actor.heading)
                 if self.key_state[key.UP]: 
                     if self.key_state[key.LEFT] or not self.key_state[key.RIGHT] and (heading == Hx(-1,0,0) or 
-                                                                                    heading == Hx(-1,+1,0) or 
-                                                                                    heading == Hx(+1,-1,0)): heading = Hx(-1,+1,0)
+                                                                                      heading == Hx(-1,+1,0) or 
+                                                                                      heading == Hx(+1,-1,0)): heading = Hx(-1,+1,0)
                     else: heading = Hx(0,+1,0)
                 elif self.key_state[key.DOWN]: 
                     if self.key_state[key.RIGHT] or not self.key_state[key.LEFT] and (heading == Hx(1,0,0) or 
-                                                                                    heading == Hx(+1,-1,0) or 
-                                                                                    heading == Hx(-1,1,0)): heading = Hx(+1,-1,0)
+                                                                                      heading == Hx(+1,-1,0) or 
+                                                                                      heading == Hx(-1,1,0)): heading = Hx(+1,-1,0)
                     else: heading = Hx(0,-1,0)
                 elif self.key_state[key.RIGHT]: heading = Hx(+1,+0,0)            
                 elif self.key_state[key.LEFT]: heading = Hx(-1,+0,0)
 
                 actor.heading = heading.state
                 self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
-        self.recalc()
 
     def recalc(self):
         super().recalc()
-        self.sprite.position = self._px.into_screen((0,self.air_dz*TILE_RISE,self.air_dz+self.height))
+        if self.disp_dt <= 0: self.disp_pos = self.px.into_screen((0,self.air_dz*TILE_RISE,self.air_dz+self.height))
+        self.sprite.position = self.disp_pos
 
 Actor.register_event_type('on_overlay')
 

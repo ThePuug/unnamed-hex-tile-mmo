@@ -34,12 +34,6 @@ class Impl(pyglet.event.EventDispatcher):
     def try_move_actor(self, tid, evt):
         actor = self.actors[evt.actor.id].state
 
-        # now = pyglet.clock._time.time()
-        # if(now-actor.last_clock < evt.dt): 
-        #     warn("dt bigger than:{}, (was:{}, dt:{}, now:{})".format(now-actor.last_clock,actor.last_clock, evt.dt, now))
-        #     # return
-        # evt.actor.last_clock = now
-
         px = Px(*actor.px)
         hx = px.into_hx()
         heading_hx = hx+Hx(*evt.actor.heading)
@@ -142,6 +136,10 @@ class Scene(Impl):
             actor = self.actors[evt.id]
             self.state_manager.actor = actor
             self.state_manager.registry[ACTION_BAR].push_handlers(actor)
+
+    def do_move_actor(self, tid, evt):
+        super().do_move_actor(tid, evt)
+        self.actors[evt.actor.id].disp_dt += evt.dt
 
     def do_unload_actor(self, tid, evt):
         self.actors[evt.id].sprite.delete()

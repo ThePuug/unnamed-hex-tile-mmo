@@ -1,8 +1,9 @@
 from collections import deque
 import logging
-import math
+from logging import debug
 import socket
 import pyglet
+from pyglet.math import Vec3
 import sys
 
 from ActionBar import ActionBar
@@ -69,6 +70,13 @@ def on_update(dt):
         if actor is not None:
             actor.update(actor.state, dt)
             camera.position = actor.px.into_screen()[:2]
+    for i,it in state_manager.registry[StateManager.SCENE].actors.items():
+        if it.disp_dt > 0:
+            pos = it.px.into_screen((0,it.air_dz*TILE_RISE,it.air_dz+it.height))
+            it.disp_pos = Vec3(it.disp_pos[0],it.disp_pos[1],it.disp_pos[2]).lerp(Vec3(pos[0],pos[1],pos[2]),min(1,dt/it.disp_dt))[:3]
+            it.disp_dt = max(0,it.disp_dt-dt)
+        it.recalc()
+
 pyglet.clock.schedule_interval(on_update, 1/120.0)
 
 if __name__ == "__main__": 

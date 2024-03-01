@@ -92,15 +92,13 @@ class Factory:
         sprite = DepthSprite(asset.texture, batch=batch, program=depth_shader)
         sprite._typ = typ
         sprite._idx = idx
-        sprite.scale_x = TILE_WIDTH / (asset.texture.width * asset.tile_scale[0])
-        sprite.scale_y *= TILE_HEIGHT / (asset.texture.height * asset.tile_scale[1])
+        sprite.scale_x = (TILE_WIDTH) / (asset.texture.width * asset.tile_scale[0])
+        sprite.scale_y *= (TILE_HEIGHT) / (asset.texture.height * asset.tile_scale[1])
         return Tile(pos, sprite, flags if flags is not None else asset.flags)
 
     def load(self, img, grid_size, anchor_factor = None, tile_scale = Px(1,1), sprite_scale = Px(1,1), flags = FLAG_NONE):
         typ = img[:img.index('.')]
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size[1],columns=grid_size[0]))
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST)
         for it in sheet:
             it.anchor_x = (1 if anchor_factor is None else anchor_factor[0])*it.width/2
             it.anchor_y = (1 if anchor_factor is None else anchor_factor[1])*it.height/2

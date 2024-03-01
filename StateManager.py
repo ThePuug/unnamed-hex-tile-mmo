@@ -86,13 +86,17 @@ class StateManager(Impl):
     # Client sends everything it tries to server, and does everything it is told to
     def on_do(self, tid, evt, broadcast, seq=None): 
         if seq is not None and tid == self.tid:
-            while True:
+            while self.evt_deque:
                 i, it = self.evt_deque.popleft()
                 if i == seq: break
                 else: warn("skipping seq {}".format(i))
-        self.dispatch_event("do_{}".format(evt.event), tid, evt)
-        for _,it in list(self.evt_deque):
-            self.dispatch_event("do_{}".format(it.event), tid, it)
+            evt.dt = 0
+            self.dispatch_event("do_{}".format(evt.event), tid, evt)
+            for i,it in list(self.evt_deque):
+                if isinstance(it,ActorMoveEvent): it.dt = 0
+                self.dispatch_event("do_{}".format(it.event), tid, it)
+        else: self.dispatch_event("do_{}".format(evt.event), tid, evt)
+
     def on_try(self, tid, evt, sync):
         seq = None
         if not sync: 

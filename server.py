@@ -81,7 +81,7 @@ def on_update(dt):
             del server.sessions[i]
             break
     for i,it in scene.actors.items(): it.update(it.state,dt)
-pyglet.clock.schedule_interval(on_update, 1/20.0)
+pyglet.clock.schedule_interval(on_update, 1/5.0) # intentionally slow server updates
 
 if __name__ == "__main__": 
     signal.signal(signal.SIGINT, lambda sig,frame: state_manager.dispatch_event('on_close'))
