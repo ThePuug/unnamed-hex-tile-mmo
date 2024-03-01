@@ -72,9 +72,9 @@ def on_update(dt):
             camera.position = actor.px.into_screen()[:2]
     for i,it in state_manager.registry[StateManager.SCENE].actors.items():
         if it.disp_dt > 0:
-            pos = it.px.into_screen((0,it.air_dz*TILE_RISE,it.air_dz+it.height))
-            it.disp_pos = Vec3(it.disp_pos[0],it.disp_pos[1],it.disp_pos[2]).lerp(Vec3(pos[0],pos[1],pos[2]),min(1,dt/it.disp_dt))[:3]
-            it.disp_dt = max(0,it.disp_dt-dt)
+            pos = Px(*(it.px.into_screen((0, it.air_dz*TILE_RISE, it.height+it.air_dz))))
+            it.disp_pos = it.disp_pos.lerp(pos, min(1, dt/it.disp_dt))
+            it.disp_dt = max(0, it.disp_dt-dt)
         it.recalc()
 
 pyglet.clock.schedule_interval(on_update, 1/120.0)

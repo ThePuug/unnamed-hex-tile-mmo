@@ -51,7 +51,11 @@ class Session():
                     # take an event
                     tok = it[i:i+sz]
                     i = i+sz
-                    tid, evt, seq = DECODER.loads(tok)
+                    try:
+                        tid, evt, seq = DECODER.loads(tok)
+                    except Exception as e:
+                        debug(e)
+                        continue
                     if tid == None: tid = self.tid
                     self.incoming.append((tid, evt, seq))
                 if it[i:i+2] == OK: 

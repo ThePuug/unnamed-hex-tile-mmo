@@ -97,7 +97,7 @@ class Actor(Impl):
     def __init__(self, evt, key_state_handler, batch):
         self.key_state = key_state_handler
         self.disp_dt = 0
-        self.disp_pos = (0,0,0)
+        self.disp_pos = Px(0,0,0)
 
         frames_blank = pyglet.image.ImageGrid(pyglet.resource.image("blank.png"), rows=4, columns=4)
         for it in frames_blank:
@@ -169,8 +169,8 @@ class Actor(Impl):
 
     def recalc(self):
         super().recalc()
-        if self.disp_dt <= 0: self.disp_pos = self.px.into_screen((0,self.air_dz*TILE_RISE,self.air_dz+self.height))
-        self.sprite.position = self.disp_pos
+        if self.disp_dt <= 0: self.disp_pos = self.px.into_screen((0,self.air_dz*TILE_RISE,self.height+self.air_dz))
+        self.sprite.position = self.disp_pos[:3]
 
 Actor.register_event_type('on_overlay')
 
