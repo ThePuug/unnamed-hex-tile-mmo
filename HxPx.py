@@ -41,7 +41,7 @@ class Px(Vec3):
     
     def into_screen(self, offset=(0,0,0)):
         hx = self.into_hx()
-        pos = self + Px(0,self.z*TILE_RISE,-hx.r*100) + Px(*offset) # supports depth of 100 with 650 r values
+        pos = self + Px(0,self.z*TILE_RISE,-hx.r*DEPTH) + Px(*offset)
         pos.z = (pos.z / pow(2,16)) * 255 # normalize 16 bit z to default projection depth range
         return pos
     

@@ -3,7 +3,6 @@ import logging
 from logging import debug
 import socket
 import pyglet
-from pyglet.math import Vec3
 import sys
 
 from ActionBar import ActionBar

@@ -3,15 +3,13 @@ from math import sqrt
 
 LOGLEVEL = logging.DEBUG
 
-SERVER = "localhost"
+SERVER = "192.168.43.92"
 SERVER_PORT = 42424
 
 ISO_SCALE = 3/4
 
-DEPTH = 10
+DEPTH = 100
 TILE_SIZE = 24
-
-LOAD_BUF_SIZE = pow(2,16)
 
 # PRECALCULATED CONSTANTS
 ONE_SQRT3 = 1/sqrt(3)

@@ -1,6 +1,5 @@
 from logging import debug, error
 import threading
-from time import sleep
 
 from Config import *
 from Event import *
@@ -38,14 +37,14 @@ class Session():
                 it = rest + it
                 i = 0
 
-                while len(it[i:]) > 0:
+                while len(it[i:]) > 2:
                     # OK is end of send
                     tok = it[i:i+2]
                     if tok == OK: break
 
                     # recv more if not enough available
                     sz = int.from_bytes(tok, 'big', signed=False)
-                    if len(it[i:]) < sz: break
+                    if len(it[i+2:]) < sz: break
                     i += 2
 
                     # take an event
