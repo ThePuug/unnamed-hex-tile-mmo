@@ -14,10 +14,11 @@
 
 # Play
 Currently not alot to do, but getting a base down to build on
-- `Q` to change the focused tile
-- `E` to plant a tree
-- `R` to build a solid structure
+- `<UP> <LEFT> <RIGHT> <DOWN>` to move
 - `<SPACE>` to jump
+- `Q` to change the terrain
+- `E` to plant a tree
+- `R` to build a solid structure (that you can jump onto)
 
 # Technical Features
 - authoritative server - everything that affects the game world is done by the server

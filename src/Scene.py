@@ -99,7 +99,7 @@ class Impl(pyglet.event.EventDispatcher):
             for r in range(r1,r2+1):
                 hx = Hx(c.q + q, c.r + r, c.z)
                 if not(self.tiles.get(hx,None) is None): continue
-                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 0), True)
+                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 1), True)
 
     def try_change_tile(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
     def do_change_tile(self, tid, evt):
@@ -108,7 +108,8 @@ class Impl(pyglet.event.EventDispatcher):
         if tile is not None:
             self.tiles[hxz].delete()
             del self.tiles[hxz]
-        self.tiles[hxz] = self.asset_factory.create_tile(evt.typ, evt.idx, self.batch, hxz.into_px())
+        if evt.typ is not None and evt.idx is not None:
+            self.tiles[hxz] = self.asset_factory.create_tile(evt.typ, evt.idx, self.batch, hxz.into_px())
 
     def from_file(self):
         tiles = {}

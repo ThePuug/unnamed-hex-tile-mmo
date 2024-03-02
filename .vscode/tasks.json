@@ -4,17 +4,20 @@
         {
             "label": "run.py",
             "type": "shell",
-            "command": "src/run.py"
+            "command": "src/run.py",
+            "problemMatcher": []
         },
         {
             "label": "run.py (2)",
             "type": "shell",
-            "command": "src/run.py"
+            "command": "src/run.py",
+            "problemMatcher": []
         },
         {
             "label": "server.py",
             "type": "shell",
-            "command": "src/server.py"
+            "command": "src/server.py",
+            "problemMatcher": []
         }
     ]
 }

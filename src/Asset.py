@@ -74,7 +74,7 @@ default_shader = pyglet.graphics.shader.ShaderProgram(vertex_default, fragment_d
 class Factory:
     def __init__(self):
         self._assets = {}
-        self.load("terrain.png", (6,1), (1,1), (1,1), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
+        self.load("terrain.png", (7,1), (1,1), (1,1), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
         self.load("buildings.png", (1,1), (1,5/4), (1,3/4), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
         self.load("decorators.png", (1,1), (1,1/3), (1,1/3), (TILE_WIDTH/27,TILE_HEIGHT*3/96), FLAG_NONE)
         self.load("ui.png", (2,1), (1,1), (0,0), (1,1), FLAG_NONE)

@@ -70,7 +70,7 @@ try:
     scene.tiles = scene.from_file()
 except Exception as e:
     debug(e)
-    state_manager.dispatch_event("on_try", None, TileDiscoverEvent((0,0,0)))
+    state_manager.dispatch_event("on_try", None, TileDiscoverEvent((0,0,0)), None)
 
 def on_update(dt):
     server.update(dt)
