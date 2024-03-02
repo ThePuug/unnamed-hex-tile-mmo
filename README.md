@@ -25,8 +25,8 @@ Currently not alot to do, but getting a base down to build on
 - lag/latency correction - render position updates smoothly
 
 # Game features
-- hex tile based world - embraces hex tile superiority for mapping, think outside the box
-- freedom of movement, tile-based dynamics - freely move and navigate the environment, but interaction remains tile-based
+- hex tile based world - embraces hex tile superiority for mapping
+- freedom of movement - freely move and navigate the environment without tile locking
 - tile alignment - drift towards tile centers when moving
-- yz-axis ordering - z-axis depth testing respects y-axis for to get a 3D world in a simple isometric view
-- hot load all state - players, tiles, and decorations all load state direct from server, and rendered with local assets
+- yz-axis ordering - z-axis depth testing respects y-axis to get a 3D world in a simple isometric view
+- hot load all state - scenes, players, tiles, and decorations all load state direct from server
