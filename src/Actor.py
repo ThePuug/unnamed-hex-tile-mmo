@@ -169,7 +169,7 @@ class Actor(Impl):
 
     def recalc(self):
         super().recalc()
-        if self.disp_dt <= 0: self.disp_pos = self.px.into_screen((0,self.air_dz*TILE_RISE,self.height+self.air_dz))
+        if self.disp_dt <= 0: self.disp_pos = self.px.into_screen((0, self.air_dz*TILE_RISE, 1+self.height+self.air_dz))
         self.sprite.position = self.disp_pos[:3]
 
 Actor.register_event_type('on_overlay')

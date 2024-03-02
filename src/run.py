@@ -3,6 +3,7 @@ import logging
 from logging import debug
 import socket
 import pyglet
+from pyglet.window import key
 import sys
 
 from ActionBar import ActionBar
@@ -24,7 +25,7 @@ logging.basicConfig(stream=sys.stderr,
 pyglet.resource.path = ['../assets/sprites']
 pyglet.resource.reindex()
 
-window = pyglet.window.Window(fullscreen=False)
+window = pyglet.window.Window(fullscreen=False, resizable=True)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((SERVER,SERVER_PORT))
@@ -62,16 +63,19 @@ def on_draw():
         fps.draw()
 
 def on_update(dt):
+    if key_state_handler[key.MINUS] or key_state_handler[key.NUM_SUBTRACT]: camera.zoom -= .1
+    if key_state_handler[key.EQUAL] or key_state_handler[key.NUM_ADD]: camera.zoom += .1
+
     for tid, evt, seq in session.recv():
         state_manager.dispatch_event("on_do", tid, evt, None, seq)
     if state_manager.tid is not None:
         actor = state_manager.registry[StateManager.SCENE].actors.get(state_manager.tid)
         if actor is not None:
             actor.update(actor.state, dt)
-            camera.position = actor.px.into_screen()[:2]
+            camera.position = actor.px.into_screen((0,18,0))[:2]
     for i,it in state_manager.registry[StateManager.SCENE].actors.items():
         if it.disp_dt > 0:
-            pos = Px(*(it.px.into_screen((0, it.air_dz*TILE_RISE, it.height+it.air_dz))))
+            pos = Px(*(it.px.into_screen((0, it.air_dz*TILE_RISE, 1+it.height+it.air_dz))))
             it.disp_pos = it.disp_pos.lerp(pos, min(1, dt/it.disp_dt))
             it.disp_dt = max(0, it.disp_dt-dt)
         it.recalc()

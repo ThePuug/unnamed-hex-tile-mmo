@@ -8,8 +8,8 @@
 - if you want to allow others to connect to your server you might need to adjust local firewall rules
 
 # Run
-- from `src`, run `server.py` to start the server
-- run `src`, run `run.py` to start a client
+- run `src/server.py` to start the server
+- run `src/run.py` to start a client
 - run `setup.py build` to create a redistributable executable for the current machines architecture
 
 # Play
@@ -19,6 +19,7 @@ Currently not alot to do, but getting a base down to build on
 - `Q` to change the terrain
 - `E` to plant a tree
 - `R` to build a solid structure (that you can jump onto)
+- `<PLUS> <MINUS>` to zoom
 
 # Technical Features
 - authoritative server - everything that affects the game world is done by the server
