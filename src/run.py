@@ -21,7 +21,7 @@ logging.basicConfig(stream=sys.stderr,
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-pyglet.resource.path = ['assets/sprites','data/maps']
+pyglet.resource.path = ['../assets/sprites']
 pyglet.resource.reindex()
 
 window = pyglet.window.Window(fullscreen=False)

@@ -1,0 +1,4 @@
+collision==1.2.2
+cx_Freeze==6.15.15
+pyglet==2.0.12
+quickle==0.4.0

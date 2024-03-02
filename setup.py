@@ -16,5 +16,5 @@ setup(
     version="0.1.0",
     description="Hex grid mmo (pre-alpha)",
     options={"build_exe": build_exe_options},
-    executables=[Executable("run.py", base=base)],
+    executables=[Executable("src/run.py", base=base)],
 )
