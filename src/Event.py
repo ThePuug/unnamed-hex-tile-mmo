@@ -26,9 +26,8 @@ class SceneLoadEvent(Event):
     event = "load_scene"
 
 class TileChangeEvent(Event):
-    hx: tuple
-    typ: str
-    idx: int
+    hx: quickle.Struct
+    tile: quickle.Struct
     event = "change_tile"
 
 class TileDiscoverEvent(Event):

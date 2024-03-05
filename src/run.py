@@ -12,7 +12,7 @@ import Asset
 from Camera import Camera, CenteredCamera
 from Config import *
 from HxPx import Px
-from Scene import Scene
+from Scene.Scene import Scene
 from Session import Session
 import StateManager
 from Overlay import Overlay

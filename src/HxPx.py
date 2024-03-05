@@ -19,22 +19,22 @@ def hex_round(aq, ar, az):
     return Hx(q, r, az)
 
 class Px(Vec3):
+    def __init__(self, x, y, z): super().__init__(x, y, z)
+
     def __add__(self, v): return Px(*super().__add__(v))
     def __sub__(self, v): return Px(*super().__sub__(v))
 
     def vertices(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
-        corners = []
         for i in range(6):
             px = self
             angle = 2 * pi * (orientation[2]+i) / 6
             offset = Px(tile_size_w*cos(angle), ISO_SCALE*tile_size*sin(angle), 0)
-            corners.append(px+offset)
-        return corners
+            yield px+offset
 
     def into_hx(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
-        px = Px(self.x/tile_size_w, self.y / (ISO_SCALE*tile_size), self.z)
+        px = Px(self.x/tile_size_w, self.y/(ISO_SCALE*tile_size), self.z)
         q = orientation[1][0] * px.x + orientation[1][1] * px.y
         r = orientation[1][2] * px.x + orientation[1][3] * px.y
         return hex_round(q,r,self.z)
@@ -71,23 +71,17 @@ class Hx:
 
     def vertices(self, tile_size=TILE_SIZE, orientation=ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
-        corners = []
         for i in range(6):
             px = self.into_px()
             angle = 2*pi*(orientation[2]+i)/6
             offset = Px(tile_size_w*cos(angle), (ISO_SCALE*tile_size)*sin(angle))
-            corners.append(Px(px.x+offset.x, px.y+offset.y))
-        return corners
+            yield Px(px.x+offset.x, px.y+offset.y)
 
     def into_px(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
         x = (orientation[0][0] * self.q + orientation[0][1] * self.r) * (tile_size_w)
         y = (orientation[0][2] * self.q + orientation[0][3] * self.r) * (ISO_SCALE*tile_size)
         return Px(x, y, self.z)
-    
-    # def into_screen(self, offset=(0,0,0)):
-    #     px = self.into_px()
-    #     return (px.x+offset[0], px.y+px.z*TILE_RISE+offset[1], -self.r+offset[2])
     
     @property
     def state(self): return (self.q, self.r, self.z)
