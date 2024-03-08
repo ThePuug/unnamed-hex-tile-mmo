@@ -35,8 +35,8 @@ class Impl(pyglet.event.EventDispatcher):
         self.dispatch_event("on_do", tid, evt, False)
 
     def try_load_scene(self, tid, evt):
-        evt.data = ENCODER.dumps(self.registry[SCENE].state)
-        self.dispatch_event("on_do", tid, evt, False)
+        for i,it in list(self.registry[SCENE].tiles.items()):
+            self.dispatch_event("on_do", tid, TileChangeEvent(i.state, it.state), False)
         for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state), False)
         z = math.floor((self.registry[SCENE].generator.at(Hx(0,0,-1))/255.0)*20)
         self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,z)), True)
@@ -110,13 +110,7 @@ class StateManager(Impl):
     
     def do_init_connection(self, tid, evt): 
         self.tid = evt.tid
-        self.dispatch_event('on_try', self.tid, SceneLoadEvent(None), True)
-
-    def do_load_scene(self, tid, evt):
-        for i,it in DECODER.loads(evt.data).items(): 
-            hx = Hx(*i)
-            tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, self.registry[SCENE].batch, hx.into_px(), it.flags)
-            self.registry[SCENE].tiles[hx] = tile
+        self.dispatch_event('on_try', self.tid, SceneLoadEvent(), True)
 
     def on_close(self, *args):
         if(self.state & STATE_UI_OVERLAY):

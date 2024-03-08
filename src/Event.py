@@ -22,7 +22,6 @@ class ConnectionInitEvent(Event):
     event = "init_connection"
 
 class SceneLoadEvent(Event):
-    data: bytes
     event = "load_scene"
 
 class TileChangeEvent(Event):

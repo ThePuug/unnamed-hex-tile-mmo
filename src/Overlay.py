@@ -66,7 +66,7 @@ class Overlay(pyglet.event.EventDispatcher):
     def on_open(self, hx, opts):
         self.hx = hx
         self.opts = list(opts)
-        self.opts.insert(0,("terrain", 0))
+        self.opts.insert(0,("biomes", 0))
         px = hx.into_px()
         self.border.position = px + Px(0,TILE_HEIGHT*1.5+PADDING,0)
         self.border.visible = True
