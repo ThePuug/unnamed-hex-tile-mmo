@@ -21,8 +21,6 @@ Currently not alot to do, but getting a base down to build on
 - `R` to build a solid structure (that you can jump onto)
 - `<PLUS> <MINUS>` to zoom
 
-# Technical Features
-
 # Game features
 - procedural terrain - use perlin noise for terrain generation
 - hot load all state - scenes, players, tiles, and decorations all load state direct from server
