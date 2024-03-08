@@ -11,7 +11,7 @@ import Actor
 import Asset
 from Config import *
 from Event import *
-import Scene
+import Scene.Scene as Scene
 from Session import OK, Session
 import StateManager
 

@@ -1,5 +1,6 @@
 from collections import deque
 from logging import debug, info, warn
+import math
 import sys
 import pyglet
 
@@ -37,7 +38,8 @@ class Impl(pyglet.event.EventDispatcher):
         evt.data = ENCODER.dumps(self.registry[SCENE].state)
         self.dispatch_event("on_do", tid, evt, False)
         for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state), False)
-        self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,0)), True)
+        z = math.floor((self.registry[SCENE].generator.at(Hx(0,0,-1))/255.0)*20)
+        self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,z)), True)
 
     def on_close(self):
         info("saving scene")

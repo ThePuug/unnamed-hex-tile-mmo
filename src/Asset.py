@@ -1,9 +1,13 @@
+from logging import debug
+import math
 import pyglet
 from pyglet.graphics import *
+from pyglet.math import Vec2
 from pyglet.sprite import AdvancedSprite
 
 from Config import *
-from HxPx import Px
+from HxPx import Hx, Px
+from Scene.Generator import Generator
 from Tile import Tile
 
 fragment_source = """#version 150 core
@@ -75,7 +79,7 @@ class Factory:
     def __init__(self):
         self._assets = {}
         self.load("terrain.png", (7,1), (1,1), (1,1), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
-        self.load("buildings.png", (1,1), (1,5/4), (1,3/4), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
+        self.load("buildings.png", (1,1), (1,4/3), (1,96/136), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
         self.load("decorators.png", (1,1), (1,1/3), (1,1/3), (TILE_WIDTH/27,TILE_HEIGHT*3/96), FLAG_NONE)
         self.load("ui.png", (2,1), (1,1), (0,0), (1,1), FLAG_NONE)
 
@@ -87,16 +91,16 @@ class Factory:
         sprite.position = (pos.x,pos.y,pos.z)
         return sprite
 
-    def create_tile(self, typ, idx, batch, pos = Px(0,0,0), flags = None):
+    def create_tile(self, typ, idx, batch, px = Px(0,0,0), flags = None):
         asset = self._assets[typ][idx]
         sprite = DepthSprite(asset.texture, batch=batch, program=depth_shader)
         sprite._typ = typ
         sprite._idx = idx
         sprite.scale_x = (TILE_WIDTH) / (asset.texture.width * asset.tile_scale[0])
         sprite.scale_y *= (TILE_HEIGHT) / (asset.texture.height * asset.tile_scale[1])
-        return Tile(pos, sprite, flags if flags is not None else asset.flags)
+        return Tile(px, sprite, flags if flags is not None else asset.flags)
 
-    def load(self, img, grid_size, anchor_factor = None, tile_scale = Px(1,1), sprite_scale = Px(1,1), flags = FLAG_NONE):
+    def load(self, img, grid_size, anchor_factor = None, tile_scale = Vec2(1,1), sprite_scale = Vec2(1,1), flags = FLAG_NONE):
         typ = img[:img.index('.')]
         sheet = pyglet.image.TextureGrid(pyglet.image.ImageGrid(pyglet.resource.image(img),rows=grid_size[1],columns=grid_size[0]))
         for it in sheet:

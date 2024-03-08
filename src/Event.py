@@ -10,7 +10,7 @@ class ActorMoveEvent(Event):
 
 class ActorLoadEvent(Event):
     id: int
-    pos: tuple
+    px: tuple
     event = "load_actor"
 
 class ActorUnloadEvent(Event):
@@ -26,9 +26,8 @@ class SceneLoadEvent(Event):
     event = "load_scene"
 
 class TileChangeEvent(Event):
-    hx: tuple
-    typ: str
-    idx: int
+    hx: quickle.Struct
+    tile: quickle.Struct
     event = "change_tile"
 
 class TileDiscoverEvent(Event):

@@ -1,4 +1,5 @@
 import pyglet
+from pyglet.math import Vec2
 from pyglet.window import key
 
 from Config import *
@@ -39,7 +40,7 @@ class Overlay(pyglet.event.EventDispatcher):
         self.asset_factory = asset_factory
         self.batch = batch
         self.curr = 0
-        self.border = Border(Px(0,0,0), Px(TILE_WIDTH*3+4*PADDING, TILE_HEIGHT+2*PADDING), asset_factory, batch)
+        self.border = Border(Px(0,0,0), Vec2(TILE_WIDTH*3+4*PADDING, TILE_HEIGHT+2*PADDING), asset_factory, batch)
         self.guides = [asset_factory.create_sprite("terrain", 6, batch, Px(0,0,0)) for _ in range(3)]
         for it in self.guides: it.visible = False
         self.display = [None for _ in range(3)]
@@ -56,9 +57,9 @@ class Overlay(pyglet.event.EventDispatcher):
         if(sym == key.SPACE):
             i = self.curr % len(self.opts)
             it = self.opts[i]
-            self.dispatch_event("on_try", None, TileChangeEvent((self.hx.q, self.hx.r, self.hx.z), 
-                                                                it[0] if i>0 else None, 
-                                                                it[1] if i>0 else None), True)
+            state = None
+            if i > 0: state = self.asset_factory.create_tile(it[0], it[1], None, self.hx.into_px(), None).state
+            self.dispatch_event("on_try", None, TileChangeEvent(self.hx.state, state), True)
             self.reset()
         return pyglet.event.EVENT_HANDLED
 

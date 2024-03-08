@@ -6,8 +6,9 @@ import pyglet
 from Config import *
 from Event import *
 from HxPx import Hx, Px
-from StateManager import ACTION_BAR
 from Quickle import DECODER
+from Scene.Generator import Generator
+from StateManager import ACTION_BAR
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
@@ -21,6 +22,7 @@ class Impl(pyglet.event.EventDispatcher):
         self.tiles = {}
         self.actors = {}
         self.decorations = {}
+        self.generator = Generator()
 
     def try_load_actor(self, _, evt): self.dispatch_event("on_do", None, evt)
     def do_load_actor(self, _, evt):
@@ -91,15 +93,17 @@ class Impl(pyglet.event.EventDispatcher):
     def do_unload_actor(self, tid, evt):
         del self.actors[evt.id]
 
-    def try_discover_tile(self, _, evt):
+    def try_discover_tile(self, tid, evt):
         c = Hx(*evt.hx)
         for q in range(-R, R+1):
             r1 = max(-R, -q-R)
             r2 = min( R, -q+R)
             for r in range(r1,r2+1):
-                hx = Hx(c.q + q, c.r + r, c.z)
-                if not(self.tiles.get(hx,None) is None): continue
-                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, "terrain", 1), True)
+                hx = c + Hx(q,r,0)
+                hx.z = math.floor((self.generator.at(Hx(hx.q,hx.r,-1))/255.0)*20)
+                if self.tiles.get(hx) is not None: continue
+                tile = self.asset_factory.create_tile("terrain", 1, self.batch, hx.into_px())
+                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
 
     def try_change_tile(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
     def do_change_tile(self, tid, evt):
@@ -108,8 +112,8 @@ class Impl(pyglet.event.EventDispatcher):
         if tile is not None:
             self.tiles[hxz].delete()
             del self.tiles[hxz]
-        if evt.typ is not None and evt.idx is not None:
-            self.tiles[hxz] = self.asset_factory.create_tile(evt.typ, evt.idx, self.batch, hxz.into_px())
+        if evt.tile.sprite__typ is not None and evt.tile.sprite__idx is not None:
+            self.tiles[hxz] = self.asset_factory.create_tile(evt.tile.sprite__typ, evt.tile.sprite__idx, self.batch, hxz.into_px())
 
     def from_file(self):
         tiles = {}
@@ -130,6 +134,9 @@ Impl.register_event_type("on_do")
 Impl.register_event_type('on_try')
 
 class Scene(Impl):
+    def __init__(self, asset_factory, actor_factory, state_manager, batch):
+        super().__init__(asset_factory, actor_factory, state_manager, batch)
+        # self.tectonics[hx] = pyglet.shapes.Polygon(*[[it.x,it.y] for it in hx.vertices()],color=(it,it,it,255),batch=self.batch)
 
     def do_load_actor(self, tid, evt):
         super().do_load_actor(tid, evt)
@@ -150,11 +157,11 @@ class Scene(Impl):
         if self.tiles.get(was) is not None: self.tiles.get(was).sprite.color = (255,255,255)
         it = self.tiles.get(now+Hx(0,0,1))
         if it is None:
-            for i in range(5): 
+            for i in range(R): 
                 it = self.tiles.get(now-Hx(0,0,i))
                 if it is not None: break
         if it is not None: 
             actor.focus = it.hx
             it.sprite.color = (200,200,100)
-        elif now.z < 5: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
+        else: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
     

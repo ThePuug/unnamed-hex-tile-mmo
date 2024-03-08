@@ -2,7 +2,7 @@ from logging import debug
 import collision
 import pyglet
 from pyglet.window import key
-from pyglet.math import Vec2, Vec3
+from pyglet.math import Vec2
 
 from Config import *
 from Event import *
@@ -10,7 +10,7 @@ from HxPx import Hx, Px
 from Asset import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 120
-DEFAULT_VERTICAL = 1.33
+DEFAULT_VERTICAL = 1.2
 DEFAULT_HEIGHT = 3
 
 class State(quickle.Struct):
@@ -35,18 +35,12 @@ class Impl(pyglet.event.EventDispatcher):
         self.height = DEFAULT_HEIGHT
         self.speed = DEFAULT_SPEED
         self.vertical = DEFAULT_VERTICAL
-        self.px = Px(*(evt.pos if evt.pos is not None else (0,0,0)))
+        self.px = Px(*(evt.px))
         self.collider = collision.Poly(collision.Vector(self.px.x, self.px.y), 
                                        [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
 
     @property
     def hx(self): return self._hx
-
-    @hx.setter
-    def hx(self, v):
-        self._hx = v
-        self._px = v.into_px()
-        self.recalc()
 
     @property
     def px(self): return self._px

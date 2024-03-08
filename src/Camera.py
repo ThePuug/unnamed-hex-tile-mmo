@@ -3,7 +3,7 @@ import pyglet
 class Camera:
     """ A simple 2D camera that contains the speed and offset."""
 
-    def __init__(self, window: pyglet.window.Window, scroll_speed=1, min_zoom=1, max_zoom=10):
+    def __init__(self, window: pyglet.window.Window, scroll_speed=1, min_zoom=0.1, max_zoom=10):
         assert min_zoom <= max_zoom, "Minimum zoom must not be greater than maximum zoom"
         self._window = window
         self.scroll_speed = scroll_speed
