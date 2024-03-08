@@ -63,7 +63,7 @@ thread.start()
 state_manager = StateManager.Impl()
 server.push_handlers(state_manager)
 state_manager.push_handlers(server)
-scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None, Generator.Impl())
+scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None, Generator.Impl(42)) # TODO magic number
 state_manager.register(StateManager.SCENE, scene)
 state_manager.begin()
 
