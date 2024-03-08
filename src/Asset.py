@@ -1,13 +1,10 @@
-from logging import debug
-import math
 import pyglet
 from pyglet.graphics import *
 from pyglet.math import Vec2
 from pyglet.sprite import AdvancedSprite
 
 from Config import *
-from HxPx import Hx, Px
-from Scene.Generator import Generator
+from HxPx import Px
 from Tile import Tile
 
 fragment_source = """#version 150 core

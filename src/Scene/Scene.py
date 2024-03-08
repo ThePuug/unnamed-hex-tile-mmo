@@ -1,5 +1,5 @@
 import collision
-from logging import debug, info, warn
+from logging import info
 import math
 import pyglet
 
@@ -7,14 +7,13 @@ from Config import *
 from Event import *
 from HxPx import Hx, Px
 from Quickle import DECODER
-from Scene.Generator import Generator
 from StateManager import ACTION_BAR
 
 R=5
 NEIGHBORS = [Hx(+1,0,0),Hx(+1,-1,0),Hx(0,-1,0),Hx(-1,0,0),Hx(-1,+1,0),Hx(0,+1,0)]
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self, asset_factory, actor_factory, state_manager, batch):
+    def __init__(self, asset_factory, actor_factory, state_manager, batch, generator):
         self.asset_factory = asset_factory
         self.actor_factory = actor_factory
         self.batch = batch
@@ -22,7 +21,7 @@ class Impl(pyglet.event.EventDispatcher):
         self.tiles = {}
         self.actors = {}
         self.decorations = {}
-        self.generator = Generator()
+        self.generator = generator
 
     def try_load_actor(self, _, evt): self.dispatch_event("on_do", None, evt)
     def do_load_actor(self, _, evt):
@@ -135,7 +134,7 @@ Impl.register_event_type('on_try')
 
 class Scene(Impl):
     def __init__(self, asset_factory, actor_factory, state_manager, batch):
-        super().__init__(asset_factory, actor_factory, state_manager, batch)
+        super().__init__(asset_factory, actor_factory, state_manager, batch, None)
         # self.tectonics[hx] = pyglet.shapes.Polygon(*[[it.x,it.y] for it in hx.vertices()],color=(it,it,it,255),batch=self.batch)
 
     def do_load_actor(self, tid, evt):

@@ -11,6 +11,7 @@ import Actor
 import Asset
 from Config import *
 from Event import *
+import Scene.Generator as Generator
 import Scene.Scene as Scene
 from Session import OK, Session
 import StateManager
@@ -62,7 +63,7 @@ thread.start()
 state_manager = StateManager.Impl()
 server.push_handlers(state_manager)
 state_manager.push_handlers(server)
-scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None)
+scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None, Generator.Impl())
 state_manager.register(StateManager.SCENE, scene)
 state_manager.begin()
 

@@ -3,7 +3,7 @@ from noise import snoise2
 
 from HxPx import Hx
 
-class Generator:
+class Impl:
     def __init__(self):
         # TODO magic numbers
         self.octaves =  1
