@@ -101,7 +101,7 @@ class Impl(pyglet.event.EventDispatcher):
                 hx = c + Hx(q,r,0)
                 hx.z = math.floor((self.generator.at(Hx(hx.q,hx.r,-1))/255.0)*20)
                 if self.tiles.get(hx) is not None: continue
-                tile = self.asset_factory.create_tile("biomes", 1, self.batch, hx.into_px())
+                tile = self.asset_factory.create_tile("biomes", 1 if hx.z < 10 else 3, self.batch, hx.into_px())
                 self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
 
     def try_change_tile(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
