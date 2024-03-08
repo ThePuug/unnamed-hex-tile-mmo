@@ -30,7 +30,7 @@ class Px(Vec3):
             px = self
             angle = 2 * pi * (orientation[2]+i) / 6
             offset = Px(tile_size_w*cos(angle), ISO_SCALE*tile_size*sin(angle), 0)
-            yield px+offset
+            yield Px(*(px+offset)[:3])
 
     def into_hx(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
@@ -69,13 +69,13 @@ class Hx:
     @property
     def s(self): return -self.q-self.r
 
-    def vertices(self, tile_size=TILE_SIZE, orientation=ORIENTATION_PNTY):
-        tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
-        for i in range(6):
-            px = self.into_px()
-            angle = 2*pi*(orientation[2]+i)/6
-            offset = Px(tile_size_w*cos(angle), (ISO_SCALE*tile_size)*sin(angle))
-            yield Px(px.x+offset.x, px.y+offset.y)
+    # def vertices(self, tile_size=TILE_SIZE, orientation=ORIENTATION_PNTY):
+    #     tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)
+    #     for i in range(6):
+    #         px = self.into_px()
+    #         angle = 2*pi*(orientation[2]+i)/6
+    #         offset = Px(tile_size_w*cos(angle), (ISO_SCALE*tile_size)*sin(angle))
+    #         yield Px(px.x+offset.x, px.y+offset.y)
 
     def into_px(self, tile_size = TILE_SIZE, orientation = ORIENTATION_PNTY):
         tile_size_w = TILE_SIZE_W if TILE_SIZE==tile_size else round(tile_size * sqrt(3)) / sqrt(3)

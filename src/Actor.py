@@ -35,7 +35,7 @@ class Impl(pyglet.event.EventDispatcher):
         self.height = DEFAULT_HEIGHT
         self.speed = DEFAULT_SPEED
         self.vertical = DEFAULT_VERTICAL
-        self.px = Px(*(evt.pos if evt.pos is not None else (0,0,0)))
+        self.px = Px(*(evt.px))
         self.collider = collision.Poly(collision.Vector(self.px.x, self.px.y), 
                                        [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
 

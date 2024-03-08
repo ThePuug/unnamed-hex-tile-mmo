@@ -10,7 +10,7 @@ class ActorMoveEvent(Event):
 
 class ActorLoadEvent(Event):
     id: int
-    pos: tuple
+    px: tuple
     event = "load_actor"
 
 class ActorUnloadEvent(Event):

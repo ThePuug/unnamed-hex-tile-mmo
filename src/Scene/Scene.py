@@ -22,6 +22,7 @@ class Impl(pyglet.event.EventDispatcher):
         self.tiles = {}
         self.actors = {}
         self.decorations = {}
+        self.generator = Generator()
 
     def try_load_actor(self, _, evt): self.dispatch_event("on_do", None, evt)
     def do_load_actor(self, _, evt):
@@ -99,6 +100,8 @@ class Impl(pyglet.event.EventDispatcher):
             r2 = min( R, -q+R)
             for r in range(r1,r2+1):
                 hx = c + Hx(q,r,0)
+                hx.z = math.floor((self.generator.at(Hx(hx.q,hx.r,-1))/255.0)*20)
+                if self.tiles.get(hx) is not None: continue
                 tile = self.asset_factory.create_tile("terrain", 1, self.batch, hx.into_px())
                 self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
 
@@ -154,11 +157,11 @@ class Scene(Impl):
         if self.tiles.get(was) is not None: self.tiles.get(was).sprite.color = (255,255,255)
         it = self.tiles.get(now+Hx(0,0,1))
         if it is None:
-            for i in range(5): 
+            for i in range(R): 
                 it = self.tiles.get(now-Hx(0,0,i))
                 if it is not None: break
         if it is not None: 
             actor.focus = it.hx
             it.sprite.color = (200,200,100)
-        elif now.z < 5: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
+        else: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
     

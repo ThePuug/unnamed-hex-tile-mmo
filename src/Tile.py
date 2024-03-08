@@ -25,6 +25,8 @@ class Tile:
     def hx(self,v): 
         self._hx = v
         self._px = v.into_px()
+        self.collider.pos = collision.Vector(self._px.x,self._px.y)
+        if self.sprite is not None: self.sprite.position = self._px.into_screen((0,0,0))[:3] # TODO move to Impl
 
     @property
     def px(self): return self._px
@@ -33,6 +35,8 @@ class Tile:
     def px(self, v):
         self._px = v
         self._hx = v.into_hx()
+        self.collider.pos = collision.Vector(self._px.x,self._px.y)
+        if self.sprite is not None: self.sprite.position = self._px.into_screen((0,0,0))[:3] # TODO move to Impl
 
     def delete(self):
         if self.sprite is not None: 

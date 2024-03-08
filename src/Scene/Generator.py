@@ -5,9 +5,10 @@ from HxPx import Hx
 
 class Generator:
     def __init__(self):
-        self.octaves =  2 # TODO magic number
-        self.sz = 16 # floor(pow(2,16) / 100)-1
-        self.freq = 32.0 * self.octaves # TODO magic number
+        # TODO magic numbers
+        self.octaves =  1
+        self.sz = floor(pow(2,16) / 100)-1
+        self.freq = 64.0 * self.octaves
         self.tiles = {}
         for q in range(-self.sz,self.sz):
             for r in range(-self.sz, self.sz):

@@ -1,4 +1,5 @@
 from logging import debug
+import math
 import pyglet
 from pyglet.graphics import *
 from pyglet.math import Vec2
@@ -81,7 +82,6 @@ class Factory:
         self.load("buildings.png", (1,1), (1,4/3), (1,96/136), (TILE_WIDTH/83,TILE_HEIGHT/96), FLAG_SOLID)
         self.load("decorators.png", (1,1), (1,1/3), (1,1/3), (TILE_WIDTH/27,TILE_HEIGHT*3/96), FLAG_NONE)
         self.load("ui.png", (2,1), (1,1), (0,0), (1,1), FLAG_NONE)
-        self.generator = Generator()
 
     def create_sprite(self, typ, idx, batch, pos = Px(0,0,0)):
         asset = self._assets[typ][idx]
@@ -98,9 +98,6 @@ class Factory:
         sprite._idx = idx
         sprite.scale_x = (TILE_WIDTH) / (asset.texture.width * asset.tile_scale[0])
         sprite.scale_y *= (TILE_HEIGHT) / (asset.texture.height * asset.tile_scale[1])
-        hx = px.into_hx()
-        base = self.generator.at(Hx(hx.q,hx.r,-1))
-        debug("({},{})={}".format(hx.q, hx.r, base))
         return Tile(px, sprite, flags if flags is not None else asset.flags)
 
     def load(self, img, grid_size, anchor_factor = None, tile_scale = Vec2(1,1), sprite_scale = Vec2(1,1), flags = FLAG_NONE):
