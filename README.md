@@ -22,13 +22,14 @@ Currently not alot to do, but getting a base down to build on
 - `<PLUS> <MINUS>` to zoom
 
 # Technical Features
+
+# Game features
+- procedural terrain - use perlin noise for terrain generation
+- hot load all state - scenes, players, tiles, and decorations all load state direct from server
 - authoritative server - everything that affects the game world is done by the server
 - predictive rendering - we will try to render on client side, and confirm all actions from the server to keep it feeling native
 - lag/latency correction - render position updates smoothly
-
-# Game features
-- hex tile based world - embraces hex tile superiority for mapping
-- freedom of movement - freely move and navigate the environment without tile locking
 - tile alignment - drift towards tile centers when moving
+- freedom of movement - freely move and navigate the environment without tile locking
 - yz-axis ordering - z-axis depth testing respects y-axis to get a 3D world in a simple isometric view
-- hot load all state - scenes, players, tiles, and decorations all load state direct from server
+- hex tile based world - embraces hex tile superiority for mapping
