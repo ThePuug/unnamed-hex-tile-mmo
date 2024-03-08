@@ -112,7 +112,7 @@ class Impl(pyglet.event.EventDispatcher):
         if tile is not None:
             self.tiles[hxz].delete()
             del self.tiles[hxz]
-        if evt.tile.sprite__typ is not None and evt.tile.sprite__idx is not None:
+        if evt.tile is not None:
             self.tiles[hxz] = self.asset_factory.create_tile(evt.tile.sprite__typ, evt.tile.sprite__idx, self.batch, hxz.into_px())
 
     def from_file(self):
