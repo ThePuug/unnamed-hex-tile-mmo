@@ -100,13 +100,13 @@ class Impl(pyglet.event.EventDispatcher):
             for r in range(r1,r2+1):
                 hx = c + Hx(q,r,0)
                 
-                hx.z = math.floor(self.generator.elevation(Hx(hx.q,hx.r,0))*20)
+                hx.z = self.generator.elevation(Hx(hx.q,hx.r,0))
                 if self.tiles.get(hx) is not None: continue
-                tile = self.asset_factory.create_tile("biomes", 1 if hx.z < 10 else 3 if hx.z < 15 else 5, self.batch, hx.into_px())
+                tile = self.asset_factory.create_tile("biomes", 1 if hx.z < 50 else 3 if hx.z < 75 else 5, self.batch, hx.into_px())
                 self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
                 
                 hx.z += 1
-                if math.floor(self.generator.vegetation(Hx(hx.q,hx.r,0))*2) == 1:
+                if self.generator.vegetation(Hx(hx.q,hx.r,0)) > 66:
                     tile = self.asset_factory.create_tile("decorators", 0, self.batch, hx.into_px())
                     self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
 

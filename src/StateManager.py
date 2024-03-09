@@ -38,7 +38,7 @@ class Impl(pyglet.event.EventDispatcher):
         for i,it in list(self.registry[SCENE].tiles.items()):
             self.dispatch_event("on_do", tid, TileChangeEvent(i.state, it.state), False)
         for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state), False)
-        z = math.floor(self.registry[SCENE].generator.elevation(Hx(0,0,0))*20)
+        z = self.registry[SCENE].generator.elevation(Hx(0,0,0))
         self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,z)), True)
 
     def on_close(self):

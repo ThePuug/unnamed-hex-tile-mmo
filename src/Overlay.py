@@ -13,9 +13,9 @@ class Border:
         self.size = size
         self.sprites = [asset_factory.create_sprite("ui", 0, batch, pos),
                         asset_factory.create_sprite("ui", 1, batch, pos),
-                        asset_factory.create_sprite("ui", 0, batch, pos)]
+                        asset_factory.create_sprite("ui", 2, batch, pos)]
         for i,it in enumerate(self.sprites):
-            it.scale_y = size.y / it.height
+            it.scale_y = size.y/it.height
             it.visible = False
         self.sprites[1].scale_x = (size.x-self.sprites[0].width-self.sprites[2].width) / self.sprites[1].width
 
@@ -40,7 +40,7 @@ class Overlay(pyglet.event.EventDispatcher):
         self.asset_factory = asset_factory
         self.batch = batch
         self.curr = 0
-        self.border = Border(Px(0,0,0), Vec2(TILE_WIDTH*3+4*PADDING, TILE_HEIGHT+2*PADDING), asset_factory, batch)
+        self.border = Border(Px(0,0,0), Vec2(TILE_WIDTH*3+4*PADDING, TILE_HEIGHT*(17/12)+2*PADDING), asset_factory, batch)
         self.guides = [asset_factory.create_sprite("terrain", 6, batch, Px(0,0,0)) for _ in range(3)]
         for it in self.guides: it.visible = False
         self.display = [None for _ in range(3)]
@@ -67,22 +67,22 @@ class Overlay(pyglet.event.EventDispatcher):
         self.hx = hx
         self.opts = list(opts)
         self.opts.insert(0,("biomes", 0))
-        px = hx.into_px()
-        self.border.position = px + Px(0,TILE_HEIGHT*1.5+PADDING,0)
+        px = hx.into_px().into_screen(Px(0,TILE_HEIGHT*1.5+PADDING,0))
+        self.border.position = px
         self.border.visible = True
         self.curr = 1
         for i in range(len(self.display)):
-            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*1.5+PADDING,0)
-            self.guides[i].position = (pos.x,pos.y,pos.z)
+            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*(19/68),0)
+            self.guides[i].position = pos[:3]
             self.guides[i].visible = True
         self.update_options()
 
     def update_options(self):
         if self.curr is None: return
-        px = self.hx.into_px()
+        px = self.hx.into_px().into_screen(Px(0,TILE_HEIGHT*1.5+PADDING,0))
 
         for i in range(len(self.display)):
-            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*1.5+PADDING,0)
+            pos = px + Px(TILE_WIDTH*(1-i)+PADDING*(1-i),TILE_HEIGHT*(19/68),0)
             if self.display[i] is not None: self.display[i].delete()
             typ, idx = self.opts[(self.curr+1-i) % len(self.opts)]
             self.display[i] = self.asset_factory.create_sprite(typ, idx, self.batch, pos)
