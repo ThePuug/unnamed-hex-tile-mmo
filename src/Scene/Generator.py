@@ -1,19 +1,17 @@
-from math import floor
 import random
 from noise.perlin import SimplexNoise
 
-from HxPx import Hx
+ELEVATION = 0
+VEGETATION = 1
 
 class Impl:
     def __init__(self, seed):
-        sz = floor(pow(2,16) / 100)-1
-        random.seed(seed)
-        noise = SimplexNoise(permutation_table=random.sample(range(sz), sz))
-        self.octaves =  1
-        self.freq = 64.0 * self.octaves
         self.tiles = {}
-        for q in range(-sz,sz):
-            for r in range(-sz, sz):
-                self.tiles[Hx(q,r,-1)] = int(noise.noise2(q/self.freq, r/self.freq) * 127.0 + 128.0)
+        random.seed(seed)
 
-    def at(self, hx): return self.tiles.get(hx,None)
+        period = pow(2,9)
+        self._elevation = SimplexNoise(permutation_table=random.sample(range(period), period))
+        self._vegetation = SimplexNoise(permutation_table=random.sample(range(period), period))
+
+    def elevation(self, hx): return self._elevation.noise2(hx.q/256.0, hx.r/256.0)/2.0 + 0.5
+    def vegetation(self, hx): return self._vegetation.noise2(hx.q/16.0, hx.r/16.0)/2.0 + 0.5

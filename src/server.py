@@ -76,7 +76,7 @@ except Exception as e:
 def on_update(dt):
     server.update(dt)
     for i,it in server.sessions.items():
-        if it.do_exit.is_set(): 
+        if it.do_exit.is_set():
             state_manager.dispatch_event('on_do', None, ActorUnloadEvent(i), True)
             it.sock.close()
             del server.sessions[i]
