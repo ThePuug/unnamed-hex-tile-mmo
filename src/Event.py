@@ -9,12 +9,11 @@ class ActorMoveEvent(Event):
     event = "move_actor"
 
 class ActorLoadEvent(Event):
-    id: int
-    px: tuple
+    actor: quickle.Struct
     event = "load_actor"
 
 class ActorUnloadEvent(Event):
-    id: int
+    actor: quickle.Struct
     event = "unload_actor"
 
 class ConnectionInitEvent(Event):

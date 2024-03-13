@@ -1,12 +1,13 @@
 from collections import deque
-from logging import debug, info, warn
-import math
+from logging import info, warning
 import sys
 import pyglet
+import Actor
 
 from Config import *
 from Event import *
-from HxPx import Hx
+from HxPx import Hx, Px
+from LogId import LOGID
 from Quickle import ENCODER, DECODER
 
 SCENE = 'scene'
@@ -17,10 +18,11 @@ STATE_PLAY       = 1 << 0
 STATE_UI_OVERLAY = 1 << 1
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self):
+    def __init__(self, actor_factory):
         self.state = 0
         self.seq = -1
         self.registry = {}
+        self.actor_factory = actor_factory
 
     # Impl tries everything, and sends back what is done
     def on_do(self, tid, evt, broadcast):
@@ -37,9 +39,11 @@ class Impl(pyglet.event.EventDispatcher):
     def try_load_scene(self, tid, evt):
         for i,it in list(self.registry[SCENE].tiles.items()):
             self.dispatch_event("on_do", tid, TileChangeEvent(i.state, it.state), False)
-        for i,it in self.registry[SCENE].actors.items(): self.dispatch_event("on_do", tid, ActorLoadEvent(i,it.px.state), False)
+        for i,it in list(self.registry[SCENE].npcs.items()) + list(self.registry[SCENE].pcs.items()): 
+            self.dispatch_event("on_do", tid, ActorLoadEvent(it.state), False)
         z = self.registry[SCENE].generator.elevation(Hx(0,0,0))
-        self.dispatch_event('on_do', tid, ActorLoadEvent(tid, (0,0,z)), True)
+        actor = self.actor_factory.create(tid, "blank", Px(0,0,z))
+        self.dispatch_event('on_do', tid, ActorLoadEvent(actor.state), True)
 
     def on_close(self):
         info("saving scene")
@@ -75,13 +79,13 @@ Impl.register_event_type('try_init_connection')
 Impl.register_event_type('try_load_actor')
 Impl.register_event_type('try_load_scene')
 Impl.register_event_type('try_move_actor')
+Impl.register_event_type('try_unload_actor')
 
 class StateManager(Impl):
-    def __init__(self, window, key_state_handler, asset_factory):
-        super().__init__()
+    def __init__(self, window, key_state_handler, actor_factory):
+        super().__init__(actor_factory)
         self.window = window
         self.key_state_handler = key_state_handler
-        self.asset_factory = asset_factory
         self.tid = None
         self.evt_deque = deque()
 
@@ -91,7 +95,7 @@ class StateManager(Impl):
             while self.evt_deque:
                 i, it = self.evt_deque.popleft()
                 if i == seq: break
-                else: warn("skipping seq {}".format(i))
+                else: warning("{:} - skipping seq {}".format(LOGID.SKIP_SEQ , i))
             evt.dt = 0
             self.dispatch_event("do_{}".format(evt.event), tid, evt)
             for i,it in list(self.evt_deque):

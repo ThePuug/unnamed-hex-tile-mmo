@@ -1,4 +1,3 @@
-from logging import debug
 import collision
 import pyglet
 from pyglet.window import key
@@ -7,7 +6,6 @@ from pyglet.math import Vec2
 from Config import *
 from Event import *
 from HxPx import Hx, Px
-from Asset import DepthSprite, depth_shader
 
 DEFAULT_SPEED = 120
 DEFAULT_VERTICAL = 1.2
@@ -23,10 +21,14 @@ class State(quickle.Struct):
     air_dz: float
     air_time: float
     px: tuple
+    typ: str
+    busy: False
 
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self, evt):
-        self.id = evt.id
+    def __init__(self, id, typ, px, behaviour):
+        self.id = id
+        self.typ = typ
+        self.behaviour = behaviour
         self.last_clock = 0
         self.heading = Hx(0,0,0)
         self.air_dz = 0
@@ -35,7 +37,8 @@ class Impl(pyglet.event.EventDispatcher):
         self.height = DEFAULT_HEIGHT
         self.speed = DEFAULT_SPEED
         self.vertical = DEFAULT_VERTICAL
-        self.px = Px(*(evt.px))
+        self.px = Px(*(px[:3]))
+        self.busy = False
         self.collider = collision.Poly(collision.Vector(self.px.x, self.px.y), 
                                        [collision.Vector(it.x, it.y) for it in Px(0,0,0).vertices(7, ORIENTATION_FLAT)], 0)
 
@@ -56,6 +59,10 @@ class Impl(pyglet.event.EventDispatcher):
             actor.air_time += dt
             if (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical > 1: actor.air_dz -= actor.speed/(TILE_RISE*2)*dt
             else: actor.air_dz = Vec2(0,0).lerp(Vec2(0,actor.vertical), (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical).y
+            self.dispatch_event('on_try', self.id, ActorMoveEvent(actor, dt), False)
+        
+        elif self.behaviour is not None:
+            self.behaviour.update(self, dt)
 
     def recalc(self):
         was_focus_hx = self.focus
@@ -72,7 +79,9 @@ class Impl(pyglet.event.EventDispatcher):
                                   vertical=self.vertical, 
                                   air_dz=self.air_dz, 
                                   air_time=self.air_time, 
-                                  px=self.px.state)
+                                  px=self.px.state,
+                                  typ=self.typ,
+                                  busy=self.busy)
     
     @state.setter
     def state(self, v):
@@ -82,33 +91,21 @@ class Impl(pyglet.event.EventDispatcher):
         self.air_dz = v.air_dz
         self.air_time = v.air_time  
         self.last_clock = v.last_clock
-
+        self.typ = v.typ
+        self.busy = v.busy
 
 Impl.register_event_type('on_try')
 Impl.register_event_type('on_looking_at')
 
 class Actor(Impl):
-    def __init__(self, evt, key_state_handler, batch):
+    def __init__(self, id, typ, px, key_state_handler, asset_factory):
         self.key_state = key_state_handler
         self.disp_dt = 0
         self.disp_pos = Px(0,0,0)
-
-        frames_blank = pyglet.image.ImageGrid(pyglet.resource.image("blank.png"), rows=4, columns=4)
-        for it in frames_blank:
-            it.anchor_x = 31
-            it.anchor_y = 5
-        self.animations = {
-            "walk_n": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [1,2,3,0]], duration=0.4),
-            "walk_e": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [5,6,7,4]], duration=0.4),
-            "walk_w": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [9,10,11,8]], duration=0.4),
-            "walk_s": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [13,14,15,12]], duration=0.4),
-            "stand_n": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [0,2]], duration=0.4),
-            "stand_e": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [4,6]], duration=0.4),
-            "stand_w": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [8,10]], duration=0.4),
-            "stand_s": pyglet.image.Animation.from_image_sequence([frames_blank[i] for i in [12,14]], duration=0.4)}
-        self.sprite = DepthSprite(self.animations["walk_s"], batch=batch, program=depth_shader)
-        self.sprite.scale = 1
-        super().__init__(evt)
+        sprite, anims = asset_factory.create_actor(typ)
+        self.sprite = sprite
+        self.animations = anims
+        super().__init__(id, typ, px, None)
 
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
@@ -136,9 +133,11 @@ class Actor(Impl):
                     self.sprite.image = self.animations["walk_e"]
 
     def update(self, actor, dt):
+        if actor.id != self.id: return
         if actor.air_time is not None: 
-            super().update(actor, dt)
-            self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
+            actor.air_time += dt
+            if (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical > 1: actor.air_dz -= actor.speed/(TILE_RISE*2)*dt
+            else: actor.air_dz = Vec2(0,0).lerp(Vec2(0,actor.vertical), (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical).y
         else:
             if self.key_state[key.SPACE]: 
                 actor.air_time = 0
@@ -169,13 +168,16 @@ class Actor(Impl):
 Actor.register_event_type('on_overlay')
 
 class Factory:
-    def __init__(self, key_state_handler, batch):
+    def __init__(self, key_state_handler, asset_factory):
         self.key_state_handler = key_state_handler
-        self.batch = batch
+        self.asset_factory = asset_factory
 
-    def create(self, evt):
-        return Actor(evt, self.key_state_handler, self.batch)
+    def create(self, id, typ, px): return Actor(id, typ, px, self.key_state_handler, self.asset_factory)
 
 class ImplFactory:
-    def create(self, evt):
-        return Impl(evt)        
+    def __init__(self, behaviour_factory):
+        self.behaviour_factory = behaviour_factory
+
+    def create(self, id, typ, px, **kwargs): 
+        behaviour = kwargs.pop("behaviour", typ)
+        return Impl(id, typ, px, self.behaviour_factory.create(behaviour))

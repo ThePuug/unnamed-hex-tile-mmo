@@ -1,6 +1,6 @@
 from collections import deque
 import logging
-from logging import debug
+from logging import debug, warning
 import socket
 import pyglet
 from pyglet.window import key
@@ -12,6 +12,7 @@ import Asset
 from Camera import Camera, CenteredCamera
 from Config import *
 from HxPx import Px
+from LogId import LOGID
 from Scene.Scene import Scene
 from Session import Session
 import StateManager
@@ -29,19 +30,19 @@ window = pyglet.window.Window(fullscreen=False, resizable=True)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((SERVER,SERVER_PORT))
-
 session = Session(sock, deque(), deque())
+
+batch = pyglet.graphics.Batch()
 key_state_handler = pyglet.window.key.KeyStateHandler()
-asset_factory = Asset.Factory()
+asset_factory = Asset.Factory(batch)
+actor_factory = Actor.Factory(key_state_handler, asset_factory)
 
 camera = CenteredCamera(window)
-batch = pyglet.graphics.Batch()
 state_manager = StateManager.StateManager(window, key_state_handler, asset_factory)
 state_manager.push_handlers(session)
-scene = Scene(asset_factory, Actor.Factory(key_state_handler, batch), state_manager, batch)
+scene = Scene(actor_factory, asset_factory, state_manager)
 
-batch_overlay = pyglet.graphics.Batch()
-overlay = Overlay(asset_factory, batch_overlay)
+overlay = Overlay(asset_factory)
 
 camera_ui = Camera(window)
 batch_ui = pyglet.graphics.Batch()
@@ -57,7 +58,6 @@ def on_draw():
     window.clear()
     with camera:
         batch.draw()
-        batch_overlay.draw()
     with camera_ui:
         batch_ui.draw()
         fps.draw()
@@ -69,11 +69,12 @@ def on_update(dt):
     for tid, evt, seq in session.recv():
         state_manager.dispatch_event("on_do", tid, evt, None, seq)
     if state_manager.tid is not None:
-        actor = state_manager.registry[StateManager.SCENE].actors.get(state_manager.tid)
-        if actor is not None:
+        actor = state_manager.registry[StateManager.SCENE].pcs.get(state_manager.tid)
+        if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, state_manager.tid))
+        else:
             actor.update(actor.state, dt)
             camera.position = actor.px.into_screen((0,18,0))[:2]
-    for i,it in state_manager.registry[StateManager.SCENE].actors.items():
+    for i,it in list(state_manager.registry[StateManager.SCENE].pcs.items()) + list(state_manager.registry[StateManager.SCENE].npcs.items()):
         if it.disp_dt > 0:
             pos = Px(*(it.px.into_screen((0, it.air_dz*TILE_RISE, 1+it.height+it.air_dz))))
             it.disp_pos = it.disp_pos.lerp(pos, min(1, dt/it.disp_dt))

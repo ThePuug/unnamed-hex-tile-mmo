@@ -1,6 +1,6 @@
 from collections import deque
 import logging
-from logging import debug, info
+from logging import debug, info, warning
 import signal
 import pyglet
 import socket
@@ -9,12 +9,17 @@ import threading
 
 import Actor
 import Asset
+import Behaviour
 from Config import *
 from Event import *
-import Scene.Generator as Generator
-import Scene.Scene as Scene
+from HxPx import Hx
+from LogId import LOGID
+import Scene.Generator
+import Scene.Scene
 from Session import OK, Session
 import StateManager
+
+R = Scene.Scene.R*3
 
 class Server(pyglet.event.EventDispatcher):
     def __init__(self):
@@ -60,10 +65,12 @@ thread = threading.Thread(target=Server.accept, args=[server])
 thread.daemon = True
 thread.start()
 
-state_manager = StateManager.Impl()
+behaviour_factory = Behaviour.Factory()
+actor_factory = Actor.ImplFactory(behaviour_factory)
+state_manager = StateManager.Impl(actor_factory)
 server.push_handlers(state_manager)
 state_manager.push_handlers(server)
-scene = Scene.Impl(Asset.Factory(), Actor.ImplFactory(), state_manager, None, Generator.Impl(42)) # TODO magic number
+scene = Scene.Scene.Impl(actor_factory, Asset.Factory(None), state_manager, Scene.Generator.Impl(42)) # TODO magic number
 state_manager.register(StateManager.SCENE, scene)
 state_manager.begin()
 
@@ -77,11 +84,24 @@ def on_update(dt):
     server.update(dt)
     for i,it in server.sessions.items():
         if it.do_exit.is_set():
-            state_manager.dispatch_event('on_do', None, ActorUnloadEvent(i), True)
+            actor = state_manager.registry[StateManager.SCENE].pcs.get(i,None)
+            if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, i))
+            else: state_manager.dispatch_event('on_do', None, ActorUnloadEvent(actor.state), True)
             it.sock.close()
             del server.sessions[i]
             break
-    for i,it in scene.actors.items(): it.update(it.state,dt)
+    active = []
+    inactive = list(scene.npcs.items())
+    for i,it in list(scene.pcs.items()): 
+        it.update(it.state,dt)
+        for j,jt in list(inactive):
+            if it.hx.dist(jt.hx) < R: 
+                inactive.remove((j,jt))
+                active.append((j,jt))
+    for i,it in active:
+        it.update(it.state,dt)
+    if dt > 0.06: warning("dt > 0.06: {}".format(dt))
+        
 pyglet.clock.schedule_interval(on_update, 1/20.0)
 
 if __name__ == "__main__": 
