@@ -1,0 +1,34 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": [
+				"--bin", "server"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "rust: cargo run (server)"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": ["--bin", "client"],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "rust: cargo run (client a)"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": ["--bin", "client"],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "rust: cargo run (client b)"
+		}
+	]
+}

@@ -3,7 +3,7 @@ from pyglet.math import Vec2
 from pyglet.window import key
 
 from Config import *
-from Event import TileChangeEvent
+from Event import TileChange
 from HxPx import Px
 
 PADDING = 10
@@ -58,7 +58,7 @@ class Overlay(pyglet.event.EventDispatcher):
             it = self.opts[i]
             state = None
             if i > 0: state = self.asset_factory.create_tile(it[0], it[1], self.hx.into_px()).state
-            self.dispatch_event("on_try", None, TileChangeEvent(self.hx.state, state), True)
+            self.dispatch_event("on_try", None, TileChange(self.hx.state, state), True)
             self.reset()
         return pyglet.event.EVENT_HANDLED
 

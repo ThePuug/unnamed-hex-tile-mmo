@@ -7,7 +7,7 @@ from pyglet.window import key
 import sys
 
 from ActionBar import ActionBar
-import Actor
+import Actor.Actor as Actor
 import Asset
 from Camera import Camera, CenteredCamera
 from Config import *
@@ -23,7 +23,7 @@ logging.basicConfig(stream=sys.stderr,
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-pyglet.resource.path = ['../assets/sprites']
+pyglet.resource.path = ['../../assets/sprites']
 pyglet.resource.reindex()
 
 window = pyglet.window.Window(fullscreen=False, resizable=True)

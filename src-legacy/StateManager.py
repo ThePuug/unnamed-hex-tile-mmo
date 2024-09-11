@@ -2,13 +2,12 @@ from collections import deque
 from logging import info, warning
 import sys
 import pyglet
-import Actor
+import ormsgpack
 
 from Config import *
 from Event import *
 from HxPx import Hx, Px
 from LogId import LOGID
-from Quickle import ENCODER, DECODER
 
 SCENE = 'scene'
 OVERLAY = 'overlay'
@@ -25,29 +24,29 @@ class Impl(pyglet.event.EventDispatcher):
         self.actor_factory = actor_factory
 
     # Impl tries everything, and sends back what is done
-    def on_do(self, tid, evt, broadcast):
-        self.dispatch_event("do_{}".format(evt.event), tid, evt)
-        self.dispatch_event("on_send", tid, evt, self.seq, broadcast)
-    def on_try(self, tid, evt, seq):
-        self.seq = seq
-        self.dispatch_event("try_{}".format(evt.event), tid, evt)
+    # def on_do(self, tid, evt, broadcast):
+    #     self.dispatch_event("do_{}".format(type(evt).__name__), tid, evt)
+    #     self.dispatch_event("on_send", tid, evt, self.seq, broadcast)
+    # def on_try(self, tid, evt, seq):
+    #     self.seq = seq
+    #     self.dispatch_event("try_{}".format(type(evt).__name__), tid, evt)
 
-    def try_init_connection(self, tid, evt):
-        evt.tid = tid
-        self.dispatch_event("on_do", tid, evt, False)
+    # def try_ConnectionInit(self, tid, evt):
+    #     evt.tid = tid
+    #     self.dispatch_event("on_do", tid, evt, False)
 
-    def try_load_scene(self, tid, evt):
+    def try_SceneLoad(self, tid, evt):
         for i,it in list(self.registry[SCENE].tiles.items()):
-            self.dispatch_event("on_do", tid, TileChangeEvent(i.state, it.state), False)
+            self.dispatch_event("on_do", tid, TileChange(i.state, it.state), False)
         for i,it in list(self.registry[SCENE].npcs.items()) + list(self.registry[SCENE].pcs.items()): 
-            self.dispatch_event("on_do", tid, ActorLoadEvent(it.state), False)
+            self.dispatch_event("on_do", tid, ActorLoad(it.state), False)
         z = self.registry[SCENE].generator.elevation(Hx(0,0,0))
         actor = self.actor_factory.create(tid, "blank", Px(0,0,z))
-        self.dispatch_event('on_do', tid, ActorLoadEvent(actor.state), True)
+        self.dispatch_event('on_do', tid, ActorLoad(actor.state), True)
 
     def on_close(self):
         info("saving scene")
-        pyglet.resource.file("default.0","wb").write(ENCODER.dumps(self.registry[SCENE].state))
+        pyglet.resource.file("default.0","wb").write(ormsgpack.packb(self.registry[SCENE].state))
         sys.exit(0)
 
     def begin(self):
@@ -58,14 +57,14 @@ class Impl(pyglet.event.EventDispatcher):
     def register(self, id, it):
         self.registry[id] = it
 
-Impl.register_event_type('do_change_tile')
-Impl.register_event_type('do_discover_tile')
-Impl.register_event_type('do_init_connection')
-Impl.register_event_type('do_load_actor')
-Impl.register_event_type('do_load_scene')
-Impl.register_event_type('do_move_actor')
-Impl.register_event_type('do_select_overlay')
-Impl.register_event_type('do_unload_actor')
+Impl.register_event_type('do_TileChange')
+Impl.register_event_type('do_TileDiscover')
+Impl.register_event_type('do_ConnectionInit')
+Impl.register_event_type('do_ActorLoad')
+Impl.register_event_type('do_SceneLoad')
+Impl.register_event_type('do_ActorMove')
+Impl.register_event_type('do_OverlaySelect')
+Impl.register_event_type('do_ActorUnload')
 
 Impl.register_event_type('on_broadcast')
 Impl.register_event_type('on_close')
@@ -73,13 +72,13 @@ Impl.register_event_type('on_do')
 Impl.register_event_type('on_send')
 Impl.register_event_type('on_try')
 
-Impl.register_event_type('try_change_tile')
-Impl.register_event_type('try_discover_tile')
-Impl.register_event_type('try_init_connection')
-Impl.register_event_type('try_load_actor')
-Impl.register_event_type('try_load_scene')
-Impl.register_event_type('try_move_actor')
-Impl.register_event_type('try_unload_actor')
+Impl.register_event_type('try_TileChange')
+Impl.register_event_type('try_TileDiscover')
+Impl.register_event_type('try_ConnectionInit')
+Impl.register_event_type('try_ActorLoad')
+Impl.register_event_type('try_SceneLoad')
+Impl.register_event_type('try_ActorMove')
+Impl.register_event_type('try_ActorUnload')
 
 class StateManager(Impl):
     def __init__(self, window, key_state_handler, actor_factory):
@@ -97,11 +96,11 @@ class StateManager(Impl):
                 if i == seq: break
                 else: warning("{:} - skipping seq {}".format(LOGID.SKIP_SEQ , i))
             evt.dt = 0
-            self.dispatch_event("do_{}".format(evt.event), tid, evt)
+            self.dispatch_event("do_{}".format(type(evt).__name__), tid, evt)
             for i,it in list(self.evt_deque):
-                if isinstance(it,ActorMoveEvent): it.dt = 0
-                self.dispatch_event("do_{}".format(it.event), tid, it)
-        else: self.dispatch_event("do_{}".format(evt.event), tid, evt)
+                if isinstance(it,ActorMove): it.dt = 0
+                self.dispatch_event("do_{}".format(type(it).__name__), tid, it)
+        else: self.dispatch_event("do_{}".format(type(evt).__name__), tid, evt)
 
     def on_try(self, tid, evt, sync):
         seq = None
@@ -109,12 +108,12 @@ class StateManager(Impl):
             self.seq += 1
             seq = self.seq
             self.evt_deque.append((seq, evt))
-            self.dispatch_event("try_{}".format(evt.event), tid, evt)
+            self.dispatch_event("try_{}".format(type(evt).__name__), tid, evt)
         self.dispatch_event("on_send", tid, evt, seq)
     
-    def do_init_connection(self, tid, evt): 
+    def do_ConnectionInit(self, tid, evt): 
         self.tid = evt.tid
-        self.dispatch_event('on_try', self.tid, SceneLoadEvent(), True)
+        self.dispatch_event('on_try', self.tid, SceneLoad(), True)
 
     def on_close(self, *args):
         if(self.state & STATE_UI_OVERLAY):
@@ -139,6 +138,6 @@ class StateManager(Impl):
         self.push_handlers(self.registry[OVERLAY])
         self.registry[OVERLAY].push_handlers(self)
         self.registry[OVERLAY].push_handlers(self.registry[SCENE])    
-        self.dispatch_event('on_try', None, ConnectionInitEvent(None), True)
+        self.dispatch_event('on_try', None, ConnectionInit(None), True)
 
 StateManager.register_event_type('on_open')

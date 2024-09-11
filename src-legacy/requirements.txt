@@ -1,5 +1,5 @@
 collision==1.2.2
 cx_Freeze==6.15.15
+msgpack==1.0.8
 noise==1.2.2
 pyglet==2.0.14
-quickle==0.4.0

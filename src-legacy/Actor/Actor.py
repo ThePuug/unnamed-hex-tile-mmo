@@ -3,6 +3,7 @@ import pyglet
 from pyglet.window import key
 from pyglet.math import Vec2
 
+from Actor.State import State
 from Config import *
 from Event import *
 from HxPx import Hx, Px
@@ -11,32 +12,19 @@ DEFAULT_SPEED = 120
 DEFAULT_VERTICAL = 1.2
 DEFAULT_HEIGHT = 3
 
-class State(quickle.Struct):
-    id: int
-    height: int
-    heading: tuple
-    speed: int
-    last_clock: float
-    vertical: float
-    air_dz: float
-    air_time: float
-    px: tuple
-    typ: str
-    busy: False
-
 class Impl(pyglet.event.EventDispatcher):
-    def __init__(self, id, typ, px, behaviour):
+    def __init__(self, id, typ, px, **kwargs):
+        self.height = kwargs.pop("height", DEFAULT_HEIGHT)
+        self.speed = kwargs.pop("speed", DEFAULT_SPEED)
+        self.vertical = kwargs.pop("vertical", DEFAULT_VERTICAL)
+        self.behaviour = kwargs.pop("behaviour", None)
         self.id = id
         self.typ = typ
-        self.behaviour = behaviour
         self.last_clock = 0
         self.heading = Hx(0,0,0)
         self.air_dz = 0
         self.air_time = None
         self.focus = Hx(0,0,0)
-        self.height = DEFAULT_HEIGHT
-        self.speed = DEFAULT_SPEED
-        self.vertical = DEFAULT_VERTICAL
         self.px = Px(*(px[:3]))
         self.busy = False
         self.collider = collision.Poly(collision.Vector(self.px.x, self.px.y), 
@@ -59,7 +47,7 @@ class Impl(pyglet.event.EventDispatcher):
             actor.air_time += dt
             if (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical > 1: actor.air_dz -= actor.speed/(TILE_RISE*2)*dt
             else: actor.air_dz = Vec2(0,0).lerp(Vec2(0,actor.vertical), (actor.air_time*actor.speed/(TILE_RISE*2))/actor.vertical).y
-            self.dispatch_event('on_try', self.id, ActorMoveEvent(actor, dt), False)
+            self.dispatch_event('on_try', self.id, ActorMove(actor, dt), False)
         
         elif self.behaviour is not None:
             self.behaviour.update(self, dt)
@@ -92,25 +80,27 @@ class Impl(pyglet.event.EventDispatcher):
         self.air_time = v.air_time  
         self.last_clock = v.last_clock
         self.typ = v.typ
+        self.speed = v.speed
+        self.height = v.height
         self.busy = v.busy
 
 Impl.register_event_type('on_try')
 Impl.register_event_type('on_looking_at')
 
 class Actor(Impl):
-    def __init__(self, id, typ, px, key_state_handler, asset_factory):
+    def __init__(self, id, typ, px, key_state_handler, asset_factory, **kwargs):
         self.key_state = key_state_handler
         self.disp_dt = 0
         self.disp_pos = Px(0,0,0)
         sprite, anims = asset_factory.create_actor(typ)
         self.sprite = sprite
         self.animations = anims
-        super().__init__(id, typ, px, None)
+        super().__init__(id, typ, px, **kwargs)
 
     def on_action(self, evt, hx, *args):
         if(evt == "on_overlay"): self.dispatch_event(evt, self.hx+self.heading+hx, *args)
 
-    def do_move_actor(self, tid, evt):
+    def do_ActorMove(self, tid, evt):
         if evt.actor.id != self.id: return
         heading = Hx(*evt.actor.heading)
         if heading == Hx(0,0,0):
@@ -141,7 +131,7 @@ class Actor(Impl):
         else:
             if self.key_state[key.SPACE]: 
                 actor.air_time = 0
-                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
+                self.dispatch_event('on_try', actor.id, ActorMove(actor=actor, dt=dt), False)
             elif self.key_state[key.LEFT] or self.key_state[key.RIGHT] or self.key_state[key.UP] or self.key_state[key.DOWN]:
                 heading = Hx(*actor.heading)
                 if self.key_state[key.UP]: 
@@ -158,7 +148,7 @@ class Actor(Impl):
                 elif self.key_state[key.LEFT]: heading = Hx(-1,+0,0)
 
                 actor.heading = heading.state
-                self.dispatch_event('on_try', actor.id, ActorMoveEvent(actor=actor, dt=dt), False)
+                self.dispatch_event('on_try', actor.id, ActorMove(actor=actor, dt=dt), False)
 
     def recalc(self):
         super().recalc()
@@ -172,12 +162,13 @@ class Factory:
         self.key_state_handler = key_state_handler
         self.asset_factory = asset_factory
 
-    def create(self, id, typ, px): return Actor(id, typ, px, self.key_state_handler, self.asset_factory)
+    def create(self, id, typ, px): 
+        return Actor(id, typ, px, self.key_state_handler, self.asset_factory)
 
 class ImplFactory:
     def __init__(self, behaviour_factory):
         self.behaviour_factory = behaviour_factory
 
     def create(self, id, typ, px, **kwargs): 
-        behaviour = kwargs.pop("behaviour", typ)
-        return Impl(id, typ, px, self.behaviour_factory.create(behaviour))
+        behaviour = self.behaviour_factory.create(kwargs.pop('behaviour',typ))
+        return Impl(id, typ, px, behaviour=behaviour, **kwargs)

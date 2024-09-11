@@ -2,13 +2,13 @@ import random
 import collision
 from logging import info, warning
 import math
+import ormsgpack
 import pyglet
 
 from Config import *
 from Event import *
 from HxPx import Hx, Px
 from LogId import LOGID
-from Quickle import DECODER
 from StateManager import ACTION_BAR
 
 R=5
@@ -25,8 +25,8 @@ class Impl(pyglet.event.EventDispatcher):
         self.decorations = {}
         self.generator = generator
 
-    def try_load_actor(self, tid, evt): self.dispatch_event("on_do", None, evt)
-    def do_load_actor(self, tid, evt):
+    def try_ActorLoad(self, tid, evt): self.dispatch_event("on_do", None, evt)
+    def do_ActorLoad(self, tid, evt):
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         while evt.actor.id is None:
             id = random.randint(0, pow(2,32)-1)
@@ -38,7 +38,7 @@ class Impl(pyglet.event.EventDispatcher):
         actor.push_handlers(self)
         actors[evt.actor.id] = actor
 
-    def try_move_actor(self, tid, evt):
+    def try_ActorMove(self, tid, evt):
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         actor = actors[evt.actor.id]
         if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, evt.actor.id))
@@ -96,20 +96,20 @@ class Impl(pyglet.event.EventDispatcher):
 
         evt.actor.px = new_px.state
         self.dispatch_event("on_do", tid, evt, True)
-    def do_move_actor(self, tid, evt): 
+    def do_ActorMove(self, tid, evt): 
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         actor = actors.get(evt.actor.id,None)
         if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, evt.actor.id))
         else: actor.state = evt.actor
 
-    def try_unload_actor(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
-    def do_unload_actor(self, tid, evt):
+    def try_ActorUnload(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
+    def do_ActorUnload(self, tid, evt):
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         actor = actors.get(evt.actor.id,None)
         if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, evt.actor.id))
         else: del actors[evt.actor.id]
 
-    def try_discover_tile(self, tid, evt):
+    def try_TileDiscover(self, tid, evt):
         c = Hx(*evt.hx)
         for q in range(-R, R+1):
             r1 = max(-R, -q-R)
@@ -120,33 +120,33 @@ class Impl(pyglet.event.EventDispatcher):
                 hx.z = self.generator.elevation(Hx(hx.q,hx.r,0))
                 if self.tiles.get(hx) is not None: continue
                 tile = self.asset_factory.create_tile("biomes", 1 if hx.z < 50 else 3 if hx.z < 75 else 5, hx.into_px())
-                self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
+                self.dispatch_event("on_do", None, TileChange(hx.state, tile.state), True)
 
                 if random.randint(0,100) == 100:
-                    self.dispatch_event("on_do", None, ActorLoadEvent(self.actor_factory.create(None, "dog", hx.into_px()).state), True)
+                    self.dispatch_event("on_do", None, ActorLoad(self.actor_factory.create(None, "dog", hx.into_px(), speed=60, height=1).state), True)
 
                 hx.z += 1
                 if self.generator.vegetation(Hx(hx.q,hx.r,0)) > 66:
                     tile = self.asset_factory.create_tile("decorators", 0, hx.into_px())
-                    self.dispatch_event("on_do", None, TileChangeEvent(hx.state, tile.state), True)
+                    self.dispatch_event("on_do", None, TileChange(hx.state, tile.state), True)
                 
-    def try_change_tile(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
-    def do_change_tile(self, tid, evt):
+    def try_TileChange(self, tid, evt): self.dispatch_event("on_do", tid, evt, True)
+    def do_TileChange(self, tid, evt):
         hxz = Hx(*evt.hx)
         tile = self.tiles.get(hxz)
         if tile is not None:
             self.tiles[hxz].delete()
             del self.tiles[hxz]
         if evt.tile is not None:
-            self.tiles[hxz] = self.asset_factory.create_tile(evt.tile.sprite__typ, evt.tile.sprite__idx, hxz.into_px())
+            self.tiles[hxz] = self.asset_factory.create_tile(evt.tile.typ, evt.tile.idx, hxz.into_px())
 
     def from_file(self):
         tiles = {}
         info("loading scene")
-        data = DECODER.loads(pyglet.resource.file("default.0","rb").read())
+        data = ormsgpack.unpackb(pyglet.resource.file("default.0","rb").read())
         for i,it in data.items():
             hx = Hx(*i)
-            tile = self.asset_factory.create_tile(it.sprite__typ, it.sprite__idx, hx.into_px(), it.flags)
+            tile = self.asset_factory.create_tile(it.typ, it.idx, hx.into_px(), it.flags)
             tiles[hx] = tile
         if len(tiles) == 0: raise Exception("no tiles in scene")
         info("{} tiles loaded".format(len(tiles)))
@@ -163,7 +163,7 @@ class Scene(Impl):
     def __init__(self, actor_factory, asset_factory, state_manager):
         super().__init__(actor_factory, asset_factory, state_manager, None)
 
-    def do_load_actor(self, tid, evt):
+    def do_ActorLoad(self, tid, evt):
         super().do_load_actor(tid, evt)
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         actor = actors.get(evt.actor.id,None)
@@ -172,18 +172,18 @@ class Scene(Impl):
             self.state_manager.actor = actor
             self.state_manager.registry[ACTION_BAR].push_handlers(actor)
 
-    def do_move_actor(self, tid, evt):
-        super().do_move_actor(tid, evt)
+    def do_ActorMove(self, tid, evt):
+        super().do_ActorMove(tid, evt)
         actors = self.pcs if evt.actor.typ == "blank" else self.npcs
         actor = actors.get(evt.actor.id,None)
         if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, evt.actor.id))
         else: actor.disp_dt += evt.dt
 
-    def do_unload_actor(self, tid, evt):
+    def do_ActorUnload(self, tid, evt):
         actor = self.pcs.get(evt.id,None)
         if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, evt.id))
         else: actor.sprite.delete()
-        super().do_unload_actor(tid, evt)
+        super().do_ActorUnload(tid, evt)
 
     def on_looking_at(self, actor, now, was):
         if self.tiles.get(was) is not None: self.tiles.get(was).sprite.color = (255,255,255)
@@ -195,5 +195,5 @@ class Scene(Impl):
         if it is not None: 
             actor.focus = it.hx
             it.sprite.color = (200,200,100)
-        else: self.dispatch_event("on_try", None, TileDiscoverEvent(Hx(now.q,now.r,0).state), True)
+        else: self.dispatch_event("on_try", None, TileDiscover(Hx(now.q,now.r,0).state), True)
     

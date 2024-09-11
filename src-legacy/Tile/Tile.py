@@ -1,13 +1,8 @@
 import collision
-import quickle
 
-from HxPx import Hx, Px
+from HxPx import Px
 from Config import *
-
-class State(quickle.Struct):
-    flags: int = 0
-    sprite__typ: str
-    sprite__idx: int
+from Tile.State import State
 
 class Tile:
     SIZE = TILE_SIZE
@@ -45,6 +40,6 @@ class Tile:
 
     @property
     def state(self):
-        return State(flags          = self.flags, 
-                     sprite__typ    = self.sprite._typ, 
-                     sprite__idx    = self.sprite._idx)
+        return State(flags  = self.flags, 
+                     typ    = self.sprite._typ, 
+                     idx    = self.sprite._idx)

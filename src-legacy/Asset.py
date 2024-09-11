@@ -5,7 +5,7 @@ from pyglet.sprite import AdvancedSprite
 
 from Config import *
 from HxPx import Px
-from Tile import Tile
+from Tile.Tile import Tile
 
 fragment_source = """#version 150 core
     in vec4 vertex_colors;

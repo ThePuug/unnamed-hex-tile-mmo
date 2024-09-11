@@ -7,16 +7,15 @@ import socket
 import sys
 import threading
 
-import Actor
+from Actor.Actor import ImplFactory as ActorFactory
 import Asset
 import Behaviour
 from Config import *
 from Event import *
-from HxPx import Hx
 from LogId import LOGID
 import Scene.Generator
 import Scene.Scene
-from Session import OK, Session
+from Session import Session as Session
 import StateManager
 
 R = Scene.Scene.R*3
@@ -35,7 +34,7 @@ class Server(pyglet.event.EventDispatcher):
             info("ready to accept a connection")
             sock, addr = self.sock.accept()
             info("accepted from {}".format(addr))
-            sock.send(OK)
+            sock.send(b'OK')
             session = Session(sock, self.incoming, deque())
             self.sessions[session.tid] = session
     
@@ -57,7 +56,7 @@ logging.basicConfig(stream=sys.stderr,
                     format='%(levelname)-5s %(asctime)s %(module)s:%(funcName)s %(message)s',
                     datefmt="%Y-%m-%dT%H:%M:%S")
 
-pyglet.resource.path = ['../assets/sprites','../data/maps']
+pyglet.resource.path = ['../../assets/sprites','../../data/maps']
 pyglet.resource.reindex()
 
 server = Server()
@@ -66,7 +65,7 @@ thread.daemon = True
 thread.start()
 
 behaviour_factory = Behaviour.Factory()
-actor_factory = Actor.ImplFactory(behaviour_factory)
+actor_factory = ActorFactory(behaviour_factory)
 state_manager = StateManager.Impl(actor_factory)
 server.push_handlers(state_manager)
 state_manager.push_handlers(server)
@@ -78,7 +77,7 @@ try:
     scene.tiles = scene.from_file()
 except Exception as e:
     debug(e)
-    state_manager.dispatch_event("on_try", None, TileDiscoverEvent((0,0,0)), None)
+    state_manager.dispatch_event("on_try", None, TileDiscover((0,0,0)), None)
 
 def on_update(dt):
     server.update(dt)
@@ -86,7 +85,7 @@ def on_update(dt):
         if it.do_exit.is_set():
             actor = state_manager.registry[StateManager.SCENE].pcs.get(i,None)
             if actor is None: warning("{:} - Actor not found: {}".format(LOGID.NF_ACTOR, i))
-            else: state_manager.dispatch_event('on_do', None, ActorUnloadEvent(actor.state), True)
+            else: state_manager.dispatch_event('on_do', None, ActorUnload(actor.state), True)
             it.sock.close()
             del server.sessions[i]
             break
