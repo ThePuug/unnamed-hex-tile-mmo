@@ -10,6 +10,5 @@ pub struct Client {
     pub ent: Option<Entity>,
 }
 
-
 #[derive(Debug, Default, Resource)]
 pub struct Rpcs(pub HashMap<Entity,Entity>);

@@ -4,6 +4,4 @@ use bevy::prelude::*;
 use renet::ClientId;
 
 #[derive(Default, Resource)]
-pub struct Lobby {
-    pub clients: HashMap<ClientId, Entity>,
-}
+pub struct Lobby(pub HashMap<ClientId, Entity>);

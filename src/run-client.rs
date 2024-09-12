@@ -18,9 +18,9 @@ use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 use common::{
     components::{
         keybits::KeyBits, 
-        prelude::{Event, *}
+        prelude::{Event, *},
     },
-    input::*
+    input::*,
 };
 use client::{
     resources::*,
@@ -70,7 +70,6 @@ fn do_server_events(
                                 texture_atlas_layout = texture_atlas_layouts.add(layout);
                             }
                         }
-
                         let loc = commands
                             .spawn((
                                 SpriteBundle {
@@ -122,21 +121,20 @@ fn setup(
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins((
-        DefaultPlugins,
-        ImagePlugin::default_nearest(),
-        AssetPlugin {
+    app.add_plugins((DefaultPlugins
+        .set(ImagePlugin::default_nearest())
+        .set(AssetPlugin {
             file_path: "../assets".into(),
             ..default()
-        },
-        LogPlugin {
+        })
+        .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=warn,naga=warn".to_owned()
-                    +",client=trace"
-                    +",client::common::input=info"
+            filter:  "wgpu=error,bevy=warn,naga=warn,".to_owned()
+                    +"client=info,"
+                    +"client::common::input=info,"
                     ,
             custom_layer: |_| None,
-        },
+        }),
         RenetClientPlugin,
         NetcodeClientPlugin,
     ));

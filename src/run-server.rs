@@ -19,7 +19,7 @@ use renet::{
 };
 
 use common::{
-    components::prelude::{*, Event},
+    components::prelude::{Event, *},
     input::*,
 };
 use server::resources::*;
@@ -63,15 +63,15 @@ fn do_manage_connections(
                 let ent = commands.spawn(Transform::default()).id();
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                for (_, &ent) in lobby.clients.iter() {
+                for (_, &ent) in lobby.0.iter() {
                     let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
                     server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
-                lobby.clients.insert(*client_id, ent);
+                lobby.0.insert(*client_id, ent);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.clients.remove(&client_id).unwrap();
+                let ent = lobby.0.remove(&client_id).unwrap();
                 commands.entity(ent).despawn();
                 let message = bincode::serialize(&Message::Do { event: Event::Despawn { ent }}).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
@@ -92,7 +92,7 @@ fn do_manage_connections(
                 Message::Try { event } => {
                     match event {
                         Event::Input { ent: _, key_bits } => {
-                            if let Some(&ent) = lobby.clients.get(&client_id) {
+                            if let Some(&ent) = lobby.0.get(&client_id) {
                                 if let Some(mut commands) = commands.get_entity(ent) {
                                     trace!("Player {} input: {:?}", ent, key_bits);
                                     commands.insert(key_bits);
@@ -120,9 +120,9 @@ fn main() {
         MinimalPlugins,
         LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=warn".to_owned()
-                    +",server=info"
-                    +",server::common::input=trace"
+            filter:  "wgpu=error,bevy=warn,".to_owned()
+                    +"server=info,"
+                    +"server::common::input=info,"
                     ,
             custom_layer: |_| None,
         },
