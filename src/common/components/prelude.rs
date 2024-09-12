@@ -10,7 +10,7 @@ pub enum EntityType {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Event {
-    Spawn { ent: Entity, typ: EntityType },
+    Spawn { ent: Entity, typ: EntityType, translation: Vec3 },
     Despawn { ent: Entity },
     Input { ent: Entity, key_bits: KeyBits },
 }

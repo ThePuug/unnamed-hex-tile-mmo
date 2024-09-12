@@ -61,7 +61,7 @@ fn do_server_events(
         match message {
             Message::Do { event } => {
                 match event {
-                    Event::Spawn { ent, typ } => {
+                    Event::Spawn { ent, typ, translation } => {
                         let (texture, layout, texture_atlas_layout);
                         match typ {
                             EntityType::Player => {
@@ -74,6 +74,7 @@ fn do_server_events(
                             .spawn((
                                 SpriteBundle {
                                     texture,
+                                    transform: Transform::from_translation(translation),
                                     ..default()
                                 },
                                 TextureAtlas {
@@ -93,7 +94,6 @@ fn do_server_events(
                         commands.entity(rpcs.0.remove(&ent).unwrap()).despawn();
                     }
                     Event::Input { ent, key_bits } => {
-                        trace!("Player {} input: {:?}", ent, key_bits);
                         commands.entity(*rpcs.0.get(&ent).unwrap()).insert(key_bits);
                     }
                 }

@@ -55,16 +55,26 @@ fn do_manage_connections(
     mut commands: Commands,
     mut server: ResMut<RenetServer>,
     mut lobby: ResMut<Lobby>,
+    mut query: Query<&Transform>,
     ) {
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
                 let ent = commands.spawn(Transform::default()).id();
-                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
+                let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
+                    ent, 
+                    typ: EntityType::Player, 
+                    translation: Vec3::ZERO 
+                }}).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
-                    let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
+                    let transform = query.get_mut(ent).unwrap();
+                    let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
+                        ent, 
+                        typ: EntityType::Player, 
+                        translation: transform.translation,
+                    }}).unwrap();
                     server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.0.insert(*client_id, ent);
@@ -94,7 +104,6 @@ fn do_manage_connections(
                         Event::Input { ent: _, key_bits } => {
                             if let Some(&ent) = lobby.0.get(&client_id) {
                                 if let Some(mut commands) = commands.get_entity(ent) {
-                                    trace!("Player {} input: {:?}", ent, key_bits);
                                     commands.insert(key_bits);
                                     let message = bincode::serialize(&Message::Do { event: Event::Input { ent, key_bits } }).unwrap();
                                     server.broadcast_message(DefaultChannel::ReliableOrdered, message);
