@@ -19,80 +19,12 @@ use renet::{
 };
 
 use common::{
-    components::{*, Event},
+    components::prelude::{*, Event},
     input::*,
-    hxpx::*,
 };
 use server::resources::*;
 
 const PROTOCOL_ID: u64 = 7;
-
-fn do_manage_connections(
-    mut server_events: EventReader<ServerEvent>,
-    mut commands: Commands,
-    mut server: ResMut<RenetServer>,
-    mut lobby: ResMut<Lobby>,
-    ) {
-    for event in server_events.read() {
-        match event {
-            ServerEvent::ClientConnected { client_id } => {
-                info!("Player {} connected", client_id);
-                let pos = Hx { q: 0, r: 0, z: 0 };
-                let player = Player { 
-                    id: *client_id,
-                    pos
-                };
-                let ent = commands.spawn(player).id();
-                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player, pos }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                lobby.clients.insert(*client_id, ent);
-            }
-            ServerEvent::ClientDisconnected { client_id, reason } => {
-                info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.clients.remove(&client_id).unwrap();
-                commands.entity(ent).despawn();
-                let message = bincode::serialize(&Message::Do { event: Event::Despawn { ent }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-            }
-        }
-    }
- }
-
- fn try_client_events(
-    mut server: ResMut<RenetServer>,
-    mut commands: Commands,
-    lobby: Res<Lobby>,
- ) {
-    for client_id in server.clients_id() {
-        while let Some(serialized) = server.receive_message(client_id, DefaultChannel::ReliableOrdered) {
-            let message = bincode::deserialize(&serialized).unwrap();
-            match message {
-                Message::Try { event } => {
-                    match event {
-                        Event::Input { ent, input } => {
-                            if let Some(client) = lobby.clients.get(&client_id) {
-                                if let Some(mut entity) = commands.get_entity(ent) {
-                                    if client == &ent {
-                                        trace!("Player {} input: {:?}", ent, input);
-                                        entity.insert(input);
-                                        let message = bincode::serialize(&Message::Do { event }).unwrap();
-                                        server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            warn!("Unexpected try event: {:?}", event);
-                        }
-                    }
-                }
-                Message::Do { event } => {
-                    warn!("Unexpected do event: {:?}", event);
-                }
-            }
-        }
-    }
- }
 
 fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     let public_addr = "0.0.0.0:5000".parse().unwrap();
@@ -118,25 +50,99 @@ fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     }
 }
 
+fn do_manage_connections(
+    mut server_events: EventReader<ServerEvent>,
+    mut commands: Commands,
+    mut server: ResMut<RenetServer>,
+    mut lobby: ResMut<Lobby>,
+    ) {
+    for event in server_events.read() {
+        match event {
+            ServerEvent::ClientConnected { client_id } => {
+                info!("Player {} connected", client_id);
+                let ent = commands.spawn(Transform::default()).id();
+                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
+                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                for (_, &ent) in lobby.clients.iter() {
+                    let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ: EntityType::Player }}).unwrap();
+                    server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                lobby.clients.insert(*client_id, ent);
+            }
+            ServerEvent::ClientDisconnected { client_id, reason } => {
+                info!("Player {} disconnected: {}", client_id, reason);
+                let ent = lobby.clients.remove(&client_id).unwrap();
+                commands.entity(ent).despawn();
+                let message = bincode::serialize(&Message::Do { event: Event::Despawn { ent }}).unwrap();
+                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+            }
+        }
+    }
+ }
+
+ fn try_client_events(
+    mut server: ResMut<RenetServer>,
+    mut commands: Commands,
+    lobby: Res<Lobby>,
+ ) {
+    for client_id in server.clients_id() {
+        while let Some(serialized) = server.receive_message(client_id, DefaultChannel::ReliableOrdered) {
+            let message = bincode::deserialize(&serialized).unwrap();
+            match message {
+                Message::Try { event } => {
+                    match event {
+                        Event::Input { ent: _, key_bits } => {
+                            if let Some(&ent) = lobby.clients.get(&client_id) {
+                                if let Some(mut commands) = commands.get_entity(ent) {
+                                    trace!("Player {} input: {:?}", ent, key_bits);
+                                    commands.insert(key_bits);
+                                    let message = bincode::serialize(&Message::Do { event: Event::Input { ent, key_bits } }).unwrap();
+                                    server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                                }
+                            }
+                        }
+                        _ => {
+                            warn!("Unexpected try event: {:?}", event);
+                        }
+                    }
+                }
+                Message::Do { event } => {
+                    warn!("Unexpected do event: {:?}", event);
+                }
+            }
+        }
+    }
+ }
+
 fn main() {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin {
-        level: bevy::log::Level::DEBUG,
-        filter: "wgpu=error,bevy=warn".to_string(),
-        custom_layer: |_| None,
-    });
-    app.init_resource::<Lobby>();
+    app.add_plugins((
+        MinimalPlugins,
+        LogPlugin {
+            level: bevy::log::Level::TRACE,
+            filter:  "wgpu=error,bevy=warn".to_owned()
+                    +",server=info"
+                    +",server::common::input=trace"
+                    ,
+            custom_layer: |_| None,
+        },
+        TransformPlugin,
+        RenetServerPlugin,
+        NetcodeServerPlugin,
+    ));
 
-    app.add_plugins(RenetServerPlugin);
-    app.add_plugins(NetcodeServerPlugin);
+    app.add_systems(Update, (
+        panic_on_error_system,
+        do_manage_connections,
+        try_client_events,
+        handle_input,
+    ));
+
     let (server, transport) = new_renet_server();
+
+    app.init_resource::<Lobby>();
     app.insert_resource(server);
     app.insert_resource(transport);
 
-    app.add_systems(Update,(do_manage_connections, try_client_events, handle_input).run_if(resource_exists::<RenetServer>));
-    app.add_systems(Update, panic_on_error_system);
-
-    debug!("starting server");
     app.run();
 }

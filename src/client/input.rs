@@ -2,7 +2,10 @@ use bevy::prelude::*;
 use renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    common::components::{*, Event},
+    common::{
+        components::prelude::{*, Event},
+        input::*,
+    },
     client::resources::*,
 };
 
@@ -12,18 +15,17 @@ pub fn ui_input(
     mut client: ResMut<Client>,
 ) {
     if let Some(ent) = client.ent {
-        let mut keys = 0;
-        if keyboard.pressed(KeyCode::KeyW) { keys = keys | (KeyBit::UP as u8); }
-        if keyboard.pressed(KeyCode::KeyS) { keys = keys | (KeyBit::DOWN as u8); }
-        if keyboard.pressed(KeyCode::KeyA) { keys = keys | (KeyBit::LEFT as u8); }
-        if keyboard.pressed(KeyCode::KeyD) { keys = keys | (KeyBit::RIGHT as u8); }
+        let mut key_bits = default();
+        if keyboard.pressed(KeyCode::ArrowUp) { key_bits |= KEYBIT_UP; }
+        if keyboard.pressed(KeyCode::ArrowDown) { key_bits |= KEYBIT_DOWN; }
+        if keyboard.pressed(KeyCode::ArrowLeft) { key_bits |= KEYBIT_LEFT; }
+        if keyboard.pressed(KeyCode::ArrowRight) { key_bits |= KEYBIT_RIGHT; }
 
-        if keys != client.input.keys {
-            client.input.keys = keys;
-            trace!("New input: {:?}", client.input.keys);
+        if key_bits != client.key_bits {
+            client.key_bits = key_bits;
+            trace!("New input: {:?}", client.key_bits);
+            let message = bincode::serialize(&Message::Try { event: Event::Input { ent, key_bits }}).unwrap();
+            conn.send_message(DefaultChannel::ReliableOrdered, message);
         }
-
-        let message = bincode::serialize(&Message::Try { event: Event::Input { ent, input: client.input }}).unwrap();
-        conn.send_message(DefaultChannel::ReliableOrdered, message);
     }
 }

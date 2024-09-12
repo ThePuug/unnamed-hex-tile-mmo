@@ -6,7 +6,6 @@ use std::net::UdpSocket;
 
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
-    client_connected,
     renet::{
         transport::ClientAuthentication,
         ConnectionConfig, DefaultChannel, RenetClient,
@@ -17,8 +16,10 @@ use bevy_renet::{
 use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
-    components::{*, Event},
-    hxpx::*,
+    components::{
+        keybits::KeyBits, 
+        prelude::{Event, *}
+    },
     input::*
 };
 use client::{
@@ -46,29 +47,22 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     (client, transport)
 }
 
-fn setup(
-    mut commands: Commands,
-) {
-    commands.spawn(Camera2dBundle::default());
-}
-
 fn do_server_events(
     mut conn: ResMut<RenetClient>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut client: ResMut<Client>,
+    mut rpcs: ResMut<Rpcs>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let message = bincode::deserialize(&serialized).unwrap();
+        trace!("do_server_events: {:?}", message);
         match message {
             Message::Do { event } => {
                 match event {
-                    Event::Spawn { ent, typ, pos } => {
-                        debug!("Spawn {{ {}, {:?}, {:?} }}", ent, typ, pos);
-
+                    Event::Spawn { ent, typ } => {
                         let (texture, layout, texture_atlas_layout);
-                        let pos_px = Px::from(pos);
                         match typ {
                             EntityType::Player => {
                                 texture = asset_server.load("sprites/blank.png");
@@ -77,20 +71,19 @@ fn do_server_events(
                             }
                         }
 
-                        let ent = commands
-                            .get_or_spawn(ent)
-                            .insert((
+                        let loc = commands
+                            .spawn((
                                 SpriteBundle {
                                     texture,
-                                    transform: Transform::from_xyz(pos_px.x.into(),pos_px.y.into(),pos_px.z.into()),
                                     ..default()
                                 },
                                 TextureAtlas {
                                     layout: texture_atlas_layout,
                                     index: 0,
                                 },
-                                Input { keys: 0 }
+                                KeyBits::default(),
                             )).id();
+                        rpcs.0.insert(ent, loc);
                         if client.ent == None { 
                             client.ent = Some(ent); 
                             debug!("Player {} is the local player", ent);
@@ -98,11 +91,11 @@ fn do_server_events(
                     }
                     Event::Despawn { ent } => {
                         debug!("Player {} disconnected", ent);
-                        commands.entity(ent).despawn();
+                        commands.entity(rpcs.0.remove(&ent).unwrap()).despawn();
                     }
-                    Event::Input { ent, input } => {
-                        trace!("Player {} input: {:?}", ent, input);
-                        commands.entity(ent).insert(input);
+                    Event::Input { ent, key_bits } => {
+                        trace!("Player {} input: {:?}", ent, key_bits);
+                        commands.entity(*rpcs.0.get(&ent).unwrap()).insert(key_bits);
                     }
                 }
             }
@@ -121,33 +114,47 @@ fn panic_on_error_system(
     }
 }
 
+fn setup(
+    mut commands: Commands,
+) {
+    commands.spawn(Camera2dBundle::default());
+}
+
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins
-        .set(ImagePlugin::default_nearest())
-        .set(AssetPlugin {
+    app.add_plugins((
+        DefaultPlugins,
+        ImagePlugin::default_nearest(),
+        AssetPlugin {
             file_path: "../assets".into(),
             ..default()
-        })
-        .set(LogPlugin {
+        },
+        LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter: "wgpu=error,bevy=warn,naga=warn".to_string(),
+            filter:  "wgpu=error,bevy=warn,naga=warn".to_owned()
+                    +",client=trace"
+                    +",client::common::input=info"
+                    ,
             custom_layer: |_| None,
-        })
-    );
-    app.init_resource::<Client>();
+        },
+        RenetClientPlugin,
+        NetcodeClientPlugin,
+    ));
 
-    app.add_plugins(RenetClientPlugin);
-    app.add_plugins(NetcodeClientPlugin);
+    app.add_systems(Startup, setup);
+    app.add_systems(Update, (
+        panic_on_error_system,
+        ui_input,
+        do_server_events,
+        handle_input,
+    ));
+
     let (client, transport) = new_renet_client();
+
+    app.init_resource::<Client>();
+    app.init_resource::<Rpcs>();
     app.insert_resource(client);
     app.insert_resource(transport);
 
-    app.add_systems(Startup, setup);
-    app.add_systems(Update, ui_input);
-    app.add_systems(Update, (do_server_events, handle_input).run_if(client_connected));
-    app.add_systems(Update, panic_on_error_system);
-
-    trace!("Starting client...");
     app.run();
 }
