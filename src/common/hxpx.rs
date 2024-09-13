@@ -1,4 +1,17 @@
+use std::ops::Add;
+
+use bevy::math::Vec3;
 use serde::{Deserialize, Serialize};
+
+const SQRT_3: f32 = 1.7320508;
+const TILE_SIZE: f32 = 24.;
+const TILE_SIZE_W: f32 = (TILE_SIZE * SQRT_3) / SQRT_3;
+const ISO_SCALE: f32 = 3./4.;
+const ORIENTATION: ([f32; 4], [f32; 4], f32) = (
+    [SQRT_3, SQRT_3/2., 0., 3./2.],
+    [SQRT_3/3., -1./3., 0., 2./3.],
+    0.5
+);
 
 #[derive(Debug, Default, Eq, PartialEq, Hash, Copy, Clone, Serialize, Deserialize)]
 pub struct Hx {
@@ -7,27 +20,27 @@ pub struct Hx {
     pub z: i16
 }
 
-impl From<Hx> for (i16,i16,i16) {
-    fn from(hx: Hx) -> (i16,i16,i16) {
-        (hx.q,hx.r,hx.z)
+impl Add<Hx> for Hx {
+    type Output = Hx;
+    fn add(self, rhs: Hx) -> Self::Output {
+        Hx { q: self.q + rhs.q, r: self.r + rhs.r, z: self.z + rhs.z }
     }
 }
 
-#[derive(Debug, Default, Eq, PartialEq, Hash, Copy, Clone, Serialize, Deserialize)]
-pub struct Px {
-    pub x: i16,
-    pub y: i16,
-    pub z: i16
-}
-
-impl From<Px> for (i16,i16,i16) {
-    fn from(px: Px) -> (i16,i16,i16) {
-        (px.x,px.y,px.z)
+impl From<Vec3> for Hx {
+    fn from(px: Vec3) -> Hx {
+        let px = Vec3 { x: px.x / TILE_SIZE_W, y: px.y / (ISO_SCALE * TILE_SIZE), z: px.z };
+        let q = ORIENTATION.1[0] * px.x + ORIENTATION.1[1] * px.y;
+        let r = ORIENTATION.1[2] * px.x + ORIENTATION.1[3] * px.y;
+        Hx { q: q.round() as i16, r: r.round() as i16, z: px.z.round() as i16 }
     }
 }
 
-impl From<Hx> for Px {
-    fn from(_hx: Hx) -> Px {
-        Px { x:0, y:0, z:0 }
+impl From<Hx> for Vec3 {
+    fn from(hx: Hx) -> Vec3 {
+        let x = (ORIENTATION.0[0] * hx.q as f32 + ORIENTATION.0[1] * hx.r as f32) * TILE_SIZE_W;
+        let y = (ORIENTATION.0[2] * hx.q as f32 + ORIENTATION.0[3] * hx.r as f32) * ISO_SCALE * TILE_SIZE;
+        let z = hx.z as f32;
+        Vec3 { x, y, z }
     }
 }

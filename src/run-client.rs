@@ -17,14 +17,15 @@ use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
     components::{
-        keybits::KeyBits, 
+        animationconfig::*,
+        keybits::*, 
         prelude::{Event, *},
     },
     input::*,
 };
 use client::{
-    resources::*,
-    input::*,
+    input::*, 
+    resources::*
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -81,7 +82,9 @@ fn do_server_events(
                                     layout: texture_atlas_layout,
                                     index: 0,
                                 },
+                                AnimationConfig::new(0, 3, 2),
                                 KeyBits::default(),
+                                Heading::default(),
                             )).id();
                         rpcs.0.insert(ent, loc);
                         if client.ent == None { 
@@ -101,6 +104,23 @@ fn do_server_events(
             Message::Try { event } => {
                 warn!("Unexpected try event: {:?}", event);
             }
+        }
+    }
+}
+
+fn update_animations(
+    time: Res<Time>,
+    mut query: Query<(&mut AnimationConfig, &mut TextureAtlas, &mut Sprite)>,
+) {
+    for (mut config, mut atlas, mut sprite) in &mut query {
+        config.frame_timer.tick(time.delta());
+        if config.frame_timer.just_finished() {
+            if atlas.index >= config.last_sprite_index || atlas.index < config.first_sprite_index { atlas.index = config.first_sprite_index; } 
+            else {
+                atlas.index += 1;
+                config.frame_timer = AnimationConfig::timer_from_fps(config.fps);
+            }
+            sprite.flip_x = config.flip_x;
         }
     }
 }
@@ -131,7 +151,7 @@ fn main() {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,naga=warn,".to_owned()
                     +"client=info,"
-                    +"client::common::input=info,"
+                    +"client::common::input=trace,"
                     ,
             custom_layer: |_| None,
         }),
@@ -145,6 +165,7 @@ fn main() {
         ui_input,
         do_server_events,
         handle_input,
+        update_animations,
     ));
 
     let (client, transport) = new_renet_client();

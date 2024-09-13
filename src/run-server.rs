@@ -61,7 +61,7 @@ fn do_manage_connections(
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
-                let ent = commands.spawn(Transform::default()).id();
+                let ent = commands.spawn((Transform::default(),Heading::default())).id();
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
                     ent, 
                     typ: EntityType::Player, 
