@@ -4,6 +4,7 @@ mod client;
 use std::time::{Duration, SystemTime};
 use std::net::UdpSocket;
 
+// use bevy::render::texture;
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
     renet::{
@@ -16,9 +17,9 @@ use bevy_renet::{
 use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
-    components::{
+    components::{ *,
         keybits::*, 
-        prelude::{Event, *},
+        message::{Event, *},
     },
     input::*,
 };
@@ -51,10 +52,9 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 fn do_server_events(
     mut conn: ResMut<RenetClient>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut client: ResMut<Client>,
     mut rpcs: ResMut<Rpcs>,
+    texture_handles: Res<TextureHandles>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let message = bincode::deserialize(&serialized).unwrap();
@@ -63,34 +63,40 @@ fn do_server_events(
             Message::Do { event } => {
                 match event {
                     Event::Spawn { ent, typ, translation } => {
-                        let (texture, layout, texture_atlas_layout);
+                        let mut entity = commands.spawn_empty();
                         match typ {
-                            EntityType::Player => {
-                                texture = asset_server.load("sprites/blank.png");
-                                layout = TextureAtlasLayout::from_grid(UVec2{x:32,y:44}, 4, 3, None, None);
-                                texture_atlas_layout = texture_atlas_layouts.add(layout);
-                            }
-                        }
-                        let loc = commands
-                            .spawn((
-                                SpriteBundle {
-                                    texture,
-                                    transform: Transform::from_translation(translation),
-                                    ..default()
-                                },
+                            EntityType::Actor => {
+                                entity.insert((SpriteBundle {
+                                   texture: texture_handles.actor.0.clone(),
+                                   transform: Transform::from_translation(translation),
+                                    ..default()},
                                 TextureAtlas {
-                                    layout: texture_atlas_layout,
+                                    layout: texture_handles.actor.1.clone(),
                                     index: 0,
                                 },
                                 AnimationConfig::new([
-                                    AnimationDirection { start:0, end:3, flip:false },
                                     AnimationDirection { start:8, end:11, flip:false },
+                                    AnimationDirection { start:0, end:3, flip:false },
                                     AnimationDirection { start:4, end:7, flip:false },
                                     AnimationDirection { start:4, end:7, flip:true }],
                                     2,0),
                                 KeyBits::default(),
                                 Heading::default(),
-                            )).id();
+                                ));
+                            }
+                            EntityType::Decorator(desc) => {
+                                entity.insert((
+                                    SpriteBundle {
+                                        texture: texture_handles.decorator.0.clone(),
+                                        ..default()},
+                                    TextureAtlas {
+                                        layout: texture_handles.decorator.1.clone(),
+                                        index: desc.index,
+                                        ..default()}
+                                ));
+                            }
+                        }
+                        let loc = entity.id();
                         rpcs.0.insert(ent, loc);
                         if client.ent == None { 
                             client.ent = Some(ent); 
@@ -158,8 +164,20 @@ fn panic_on_error_system(
 
 fn setup(
     mut commands: Commands,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    asset_server: Res<AssetServer>,
 ) {
     commands.spawn(Camera2dBundle::default());
+    commands.insert_resource(TextureHandles {
+        actor: (
+            asset_server.load("sprites/blank.png"),
+            texture_atlas_layouts.add(TextureAtlasLayout::from_grid(UVec2{x:32,y:44}, 4, 3, None, None))
+        ),
+        decorator: (
+            asset_server.load("sprites/biomes.png"),
+            texture_atlas_layouts.add(TextureAtlasLayout::from_grid(UVec2{x:83,y:136}, 7, 1, None, None))
+        ),
+    });
 }
 
 fn main() {

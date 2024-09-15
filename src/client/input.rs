@@ -3,7 +3,7 @@ use renet::{DefaultChannel, RenetClient};
 
 use crate::{
     common::{
-        components::prelude::{*, Event},
+        components::message::{*, Event},
         input::*,
     },
     client::resources::*,

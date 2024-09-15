@@ -40,7 +40,7 @@ pub fn handle_input(
             let target = loc + heading.0;
             let delta = Vec3::from(target).xy() - transform.translation.xy();
             trace!("loc: {:?}, target: {:?}, delta: {:?}", loc, target, delta);
-            transform.translation += (delta.normalize_or_zero() * 100. * time.delta_seconds()).extend(0.);
+            transform.translation += (delta.normalize_or_zero() * 100. * time.delta_seconds()).extend(0.);            
         }
     }
 }

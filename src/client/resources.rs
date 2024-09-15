@@ -12,3 +12,9 @@ pub struct Client {
 
 #[derive(Debug, Default, Resource)]
 pub struct Rpcs(pub HashMap<Entity,Entity>);
+
+#[derive(Resource)]
+pub struct TextureHandles {
+    pub actor: (Handle<Image>, Handle<TextureAtlasLayout>),
+    pub decorator: (Handle<Image>, Handle<TextureAtlasLayout>),
+}

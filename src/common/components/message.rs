@@ -1,12 +1,10 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::keybits::KeyBits;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum EntityType {
-    Player,
-}
+use super::{
+    keybits::KeyBits, 
+    EntityType
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Event {

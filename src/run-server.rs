@@ -19,7 +19,9 @@ use renet::{
 };
 
 use common::{
-    components::prelude::{Event, *},
+    components::{ *,
+        message::{Event, *},
+    },
     input::*,
 };
 use server::resources::*;
@@ -64,7 +66,7 @@ fn do_manage_connections(
                 let ent = commands.spawn((Transform::default(),Heading::default())).id();
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
                     ent, 
-                    typ: EntityType::Player, 
+                    typ: EntityType::Actor, 
                     translation: Vec3::ZERO 
                 }}).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
@@ -72,7 +74,7 @@ fn do_manage_connections(
                     let transform = query.get_mut(ent).unwrap();
                     let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
                         ent, 
-                        typ: EntityType::Player, 
+                        typ: EntityType::Actor, 
                         translation: transform.translation,
                     }}).unwrap();
                     server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
