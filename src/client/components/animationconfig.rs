@@ -2,23 +2,27 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
+pub struct AnimationDirection {
+    pub start: usize,
+    pub end: usize,
+    pub flip: bool,
+}
+
 #[derive(Component)]
 pub struct AnimationConfig {
-    pub first_sprite_index: usize,
-    pub last_sprite_index: usize,
+    pub opts: [AnimationDirection; 4],
     pub fps: u8,
     pub frame_timer: Timer,
-    pub flip_x: bool,
+    pub selected: usize,
 }
 
 impl AnimationConfig {
-    pub fn new(first: usize, last: usize, fps: u8) -> Self {
+    pub fn new(opts: [AnimationDirection; 4], fps: u8, selected: usize) -> Self {
         Self {
-            first_sprite_index: first,
-            last_sprite_index: last,
+            opts,
             fps,
             frame_timer: Self::timer_from_fps(fps),
-            flip_x: false,
+            selected,
         }
     }
 

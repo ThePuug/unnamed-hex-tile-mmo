@@ -1,12 +1,7 @@
-use std::time::Duration;
-
 use bevy::prelude::*;
 
 use super::{
-    components::{
-        animationconfig::AnimationConfig, 
-        keybits::*
-    }, 
+    components::keybits::*, 
     hxpx::*,
 };
 
@@ -21,9 +16,9 @@ pub const KEYBIT_RIGHT: u8 = 1 << 3;
 
 pub fn handle_input(
     time: Res<Time>,
-    mut query: Query<(&KeyBits, &mut Transform, &mut Heading, &mut AnimationConfig)>,
+    mut query: Query<(&KeyBits, &mut Transform, &mut Heading)>,
 ) {
-    for (&keys, mut transform, mut heading, mut config) in query.iter_mut() {
+    for (&keys, mut transform, mut heading) in query.iter_mut() {
         if keys & (KEYBIT_UP | KEYBIT_DOWN | KEYBIT_LEFT | KEYBIT_RIGHT) != default() {
             if keys & KEYBIT_UP != default() {
                 if keys & KEYBIT_LEFT != default() || keys & KEYBIT_RIGHT == default()
@@ -40,28 +35,6 @@ pub fn handle_input(
             } 
             else if keys & KEYBIT_RIGHT != default() { *heading = Heading { 0:Hx {q: 1,r: 0,z: 0} }; }
             else if keys & KEYBIT_LEFT != default() { *heading = Heading { 0:Hx {q:-1,r: 0,z: 0} }; }
-            
-            if keys & (KEYBIT_UP | KEYBIT_DOWN) != default() {
-                if keys & KEYBIT_UP != default() && config.first_sprite_index != 0 { 
-                    config.first_sprite_index = 0; 
-                    config.last_sprite_index = 3;
-                    config.frame_timer.set_elapsed(Duration::from_secs(1));
-                } else if keys & KEYBIT_DOWN != default() && config.first_sprite_index != 8 { 
-                    config.first_sprite_index = 8;
-                    config.last_sprite_index = 11;
-                    config.frame_timer.set_elapsed(Duration::from_secs(1));
-                }
-            } else if keys & KEYBIT_LEFT != default() && (config.first_sprite_index != 4 || config.flip_x) {
-                config.first_sprite_index = 4;
-                config.last_sprite_index = 7;
-                config.flip_x = false;
-                config.frame_timer.set_elapsed(Duration::from_secs(1));
-            } else if keys & KEYBIT_RIGHT != default() && (config.first_sprite_index != 4 || !config.flip_x) {
-                config.first_sprite_index = 4;
-                config.last_sprite_index = 7;
-                config.flip_x = true;
-                config.frame_timer.set_elapsed(Duration::from_secs(1));
-            }
 
             let loc = Hx::from(transform.translation);
             let target = loc + heading.0;
