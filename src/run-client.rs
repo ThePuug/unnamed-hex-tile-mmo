@@ -22,11 +22,18 @@ use common::{
         message::{Event, *},
     },
     input::*,
+    resources::map::*,
+    systems::handle_input::*,
 };
 use client::{
     components::animationconfig::*,
     input::*, 
-    resources::*
+    resources::*,
+    systems::{
+        do_server_events::*,
+        try_events::*,
+        update_animations::*,
+    },
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -47,111 +54,6 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     let client = RenetClient::new(ConnectionConfig::default());
 
     (client, transport)
-}
-
-fn do_server_events(
-    mut conn: ResMut<RenetClient>,
-    mut commands: Commands,
-    mut client: ResMut<Client>,
-    mut rpcs: ResMut<Rpcs>,
-    texture_handles: Res<TextureHandles>,
-) {
-    while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
-        let message = bincode::deserialize(&serialized).unwrap();
-        trace!("do_server_events: {:?}", message);
-        match message {
-            Message::Do { event } => {
-                match event {
-                    Event::Spawn { ent, typ, translation } => {
-                        let mut entity = commands.spawn_empty();
-                        match typ {
-                            EntityType::Actor => {
-                                entity.insert((SpriteBundle {
-                                   texture: texture_handles.actor.0.clone(),
-                                   transform: Transform::from_translation(translation),
-                                    ..default()},
-                                TextureAtlas {
-                                    layout: texture_handles.actor.1.clone(),
-                                    index: 0,
-                                },
-                                AnimationConfig::new([
-                                    AnimationDirection { start:8, end:11, flip:false },
-                                    AnimationDirection { start:0, end:3, flip:false },
-                                    AnimationDirection { start:4, end:7, flip:false },
-                                    AnimationDirection { start:4, end:7, flip:true }],
-                                    2,0),
-                                KeyBits::default(),
-                                Heading::default(),
-                                ));
-                            }
-                            EntityType::Decorator(desc) => {
-                                entity.insert((
-                                    SpriteBundle {
-                                        texture: texture_handles.decorator.0.clone(),
-                                        ..default()},
-                                    TextureAtlas {
-                                        layout: texture_handles.decorator.1.clone(),
-                                        index: desc.index,
-                                        ..default()}
-                                ));
-                            }
-                        }
-                        let loc = entity.id();
-                        rpcs.0.insert(ent, loc);
-                        if client.ent == None { 
-                            client.ent = Some(ent); 
-                            debug!("Player {} is the local player", ent);
-                        }
-                    }
-                    Event::Despawn { ent } => {
-                        debug!("Player {} disconnected", ent);
-                        commands.entity(rpcs.0.remove(&ent).unwrap()).despawn();
-                    }
-                    Event::Input { ent, key_bits } => {
-                        commands.entity(*rpcs.0.get(&ent).unwrap()).insert(key_bits);
-                    }
-                }
-            }
-            Message::Try { event } => {
-                warn!("Unexpected try event: {:?}", event);
-            }
-        }
-    }
-}
-
-fn update_animations(
-    time: Res<Time>,
-    mut query: Query<(&mut AnimationConfig, &mut TextureAtlas, &mut Sprite, &KeyBits)>,
-) {
-    for (mut config, mut atlas, mut sprite, keys) in &mut query {
-        config.frame_timer.tick(time.delta());
-        if config.frame_timer.just_finished() {
-            if atlas.index >= config.opts[config.selected].end || atlas.index < config.opts[config.selected].start { 
-                atlas.index = config.opts[config.selected].start; 
-            } else {
-                atlas.index += 1;
-                config.frame_timer = AnimationConfig::timer_from_fps(config.fps);
-            }
-        }
-
-        let fps = config.fps as f32;
-        if *keys & (KEYBIT_UP | KEYBIT_DOWN) != default() {
-            if *keys & KEYBIT_UP != default() && config.selected != 0 { 
-                config.selected = 0;
-                config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-            } else if *keys & KEYBIT_DOWN != default() && config.selected != 1 { 
-                config.selected = 1;
-                config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-            }
-        } else if *keys & KEYBIT_LEFT != default() && config.selected != 2 {
-            config.selected = 2;
-            config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-        } else if *keys & KEYBIT_RIGHT != default() && config.selected != 3 {
-            config.selected = 3;
-            config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-        }
-        sprite.flip_x = config.opts[config.selected].flip;
-    }
 }
 
 fn panic_on_error_system(
@@ -190,8 +92,9 @@ fn main() {
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=warn,naga=warn,".to_owned()
+            filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
                     +"client=info,"
+                    +"client::client::input=trace,"
                     +"client::common::input=trace,"
                     ,
             custom_layer: |_| None,
@@ -200,6 +103,8 @@ fn main() {
         NetcodeClientPlugin,
     ));
 
+    app.add_event::<Event>();
+
     app.add_systems(Startup, setup);
     app.add_systems(Update, (
         panic_on_error_system,
@@ -207,12 +112,14 @@ fn main() {
         do_server_events,
         handle_input,
         update_animations,
+        try_events,
     ));
 
     let (client, transport) = new_renet_client();
 
     app.init_resource::<Client>();
     app.init_resource::<Rpcs>();
+    app.init_resource::<Map>();
     app.insert_resource(client);
     app.insert_resource(transport);
 

@@ -1,12 +1,11 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    keybits::KeyBits, 
-    EntityType
+use super::{ *,
+    keybits::*,
 };
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
 pub enum Event {
     Spawn { ent: Entity, typ: EntityType, translation: Vec3 },
     Despawn { ent: Entity },

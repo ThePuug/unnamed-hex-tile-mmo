@@ -3,7 +3,7 @@ use std::ops::{BitAnd, BitOr, BitOrAssign};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct KeyBits(pub u8);
 
 impl BitAnd<u8> for KeyBits {

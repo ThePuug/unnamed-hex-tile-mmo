@@ -8,7 +8,7 @@ use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
     renet::{
         transport::{ServerAuthentication, ServerConfig},
-        ConnectionConfig, RenetServer, ServerEvent,
+        ConnectionConfig, RenetServer,
     },
     transport::NetcodeServerPlugin,
     RenetServerPlugin,
@@ -23,8 +23,17 @@ use common::{
         message::{Event, *},
     },
     input::*,
+    resources::map::*,
+    systems::handle_input::*,
 };
-use server::resources::*;
+use server::{
+    resources::*,
+    systems::{
+        try_client_events::*,
+        do_manage_connections::*,
+        do_events::*,
+    },
+};
 
 const PROTOCOL_ID: u64 = 7;
 
@@ -52,79 +61,6 @@ fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     }
 }
 
-fn do_manage_connections(
-    mut server_events: EventReader<ServerEvent>,
-    mut commands: Commands,
-    mut server: ResMut<RenetServer>,
-    mut lobby: ResMut<Lobby>,
-    mut query: Query<&Transform>,
-    ) {
-    for event in server_events.read() {
-        match event {
-            ServerEvent::ClientConnected { client_id } => {
-                info!("Player {} connected", client_id);
-                let ent = commands.spawn((Transform::default(),Heading::default())).id();
-                let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
-                    ent, 
-                    typ: EntityType::Actor, 
-                    translation: Vec3::ZERO 
-                }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                for (_, &ent) in lobby.0.iter() {
-                    let transform = query.get_mut(ent).unwrap();
-                    let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
-                        ent, 
-                        typ: EntityType::Actor, 
-                        translation: transform.translation,
-                    }}).unwrap();
-                    server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-                lobby.0.insert(*client_id, ent);
-            }
-            ServerEvent::ClientDisconnected { client_id, reason } => {
-                info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.0.remove(&client_id).unwrap();
-                commands.entity(ent).despawn();
-                let message = bincode::serialize(&Message::Do { event: Event::Despawn { ent }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-            }
-        }
-    }
- }
-
- fn try_client_events(
-    mut server: ResMut<RenetServer>,
-    mut commands: Commands,
-    lobby: Res<Lobby>,
- ) {
-    for client_id in server.clients_id() {
-        while let Some(serialized) = server.receive_message(client_id, DefaultChannel::ReliableOrdered) {
-            let message = bincode::deserialize(&serialized).unwrap();
-            match message {
-                Message::Try { event } => {
-                    match event {
-                        Event::Input { ent: _, key_bits } => {
-                            if let Some(&ent) = lobby.0.get(&client_id) {
-                                if let Some(mut commands) = commands.get_entity(ent) {
-                                    commands.insert(key_bits);
-                                    let message = bincode::serialize(&Message::Do { event: Event::Input { ent, key_bits } }).unwrap();
-                                    server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                                }
-                            }
-                        }
-                        _ => {
-                            warn!("Unexpected try event: {:?}", event);
-                        }
-                    }
-                }
-                Message::Do { event } => {
-                    warn!("Unexpected do event: {:?}", event);
-                }
-            }
-        }
-    }
- }
-
 fn main() {
     let mut app = App::new();
     app.add_plugins((
@@ -142,16 +78,20 @@ fn main() {
         NetcodeServerPlugin,
     ));
 
+    app.add_event::<Event>();
+
     app.add_systems(Update, (
         panic_on_error_system,
         do_manage_connections,
         try_client_events,
         handle_input,
+        do_events,
     ));
 
     let (server, transport) = new_renet_server();
 
     app.init_resource::<Lobby>();
+    app.init_resource::<Map>();
     app.insert_resource(server);
     app.insert_resource(transport);
 
