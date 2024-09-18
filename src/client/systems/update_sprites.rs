@@ -4,9 +4,9 @@ use crate::*;
 
 pub fn update_animations(
     time: Res<Time>,
-    mut query: Query<(&mut AnimationConfig, &mut TextureAtlas, &mut Sprite, &KeyBits)>,
+    mut query: Query<(&mut Sprite, &KeyBits, &mut AnimationConfig, &mut TextureAtlas)>,
 ) {
-    for (mut config, mut atlas, mut sprite, keys) in &mut query {
+    for (mut sprite, keys, mut config, mut atlas) in &mut query {
         config.frame_timer.tick(time.delta());
         if config.frame_timer.just_finished() {
             if atlas.index >= config.opts[config.selected].end || atlas.index < config.opts[config.selected].start { 
@@ -34,5 +34,13 @@ pub fn update_animations(
             config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
         }
         sprite.flip_x = config.opts[config.selected].flip;
+    }
+}
+
+pub fn update_transforms(
+    mut query: Query<(&mut Transform, &Pos)>,
+) {
+    for (mut transform, pos) in &mut query {
+        transform.translation = pos.into_screen();
     }
 }

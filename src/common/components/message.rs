@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{ *,
+use crate::common::components::{ *,
     keybits::*,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
 pub enum Event {
-    Spawn { ent: Entity, typ: EntityType, translation: Vec3 },
+    Spawn { ent: Entity, typ: EntityType, hx: Hx },
     Despawn { ent: Entity },
     Input { ent: Entity, key_bits: KeyBits },
 }

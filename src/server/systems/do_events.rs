@@ -2,8 +2,9 @@ use bevy::prelude::*;
 use renet::*;
 
 use crate::common::{
-    components::message::{*, Event},
-    hxpx::*,
+    components::{ *,
+        message::{Event, *},
+    },
     resources::map::*,
 };
 
@@ -15,13 +16,17 @@ pub fn do_events(
 ) {
     for &event in events.read() {
         match event {
-            Event::Spawn { mut ent, typ, translation } => {
+            Event::Spawn { mut ent, typ, hx } => {
+                let pos = Pos { hx, ..default() };
                 ent = commands.spawn((
-                    Transform::from_translation(translation), 
-                    typ
+                    pos,
+                    typ,
+                    Transform {
+                        translation: pos.into_screen(),
+                        ..default()}, 
                 )).id();
-                map.0.insert(Hx::from(translation), ent);
-                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ, translation }}).unwrap();
+                map.0.insert(hx, ent);
+                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
             _ => {

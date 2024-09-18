@@ -1,5 +1,5 @@
 pub mod components;
-pub mod hxpx;
+pub mod hx;
 pub mod input;
 pub mod resources;
 pub mod systems;

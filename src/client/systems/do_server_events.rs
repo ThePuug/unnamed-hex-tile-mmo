@@ -3,9 +3,9 @@ use renet::{DefaultChannel, RenetClient};
 
 use crate::{*,
     common::{
-        components::message::{*, Event}, 
-        hxpx::*,
+        components::message::{*, Event},
         resources::map::*,
+        hx::*,
     }
 };
 
@@ -19,29 +19,34 @@ pub fn do_server_events(
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let message = bincode::deserialize(&serialized).unwrap();
-        trace!("do_server_events: {:?}", message);
         match message {
             Message::Do { event } => {
                 match event {
-                    Event::Spawn { ent, typ, translation } => {
+                    Event::Spawn { ent, typ, hx } => {
+                        let pos = Pos { hx, ..default() };
                         match typ {
                             EntityType::Actor => {
-                                let loc = commands.spawn((SpriteBundle {
-                                   texture: texture_handles.actor.0.clone(),
-                                   transform: Transform::from_translation(translation),
-                                    ..default()},
-                                TextureAtlas {
-                                    layout: texture_handles.actor.1.clone(),
-                                    index: 0,
-                                },
-                                AnimationConfig::new([
-                                    AnimationDirection { start:8, end:11, flip:false },
-                                    AnimationDirection { start:0, end:3, flip:false },
-                                    AnimationDirection { start:4, end:7, flip:false },
-                                    AnimationDirection { start:4, end:7, flip:true }],
-                                    2,0),
-                                KeyBits::default(),
-                                Heading::default(),
+                                let loc = commands.spawn((
+                                    SpriteBundle {
+                                        texture: texture_handles.actor.0.clone(),
+                                        transform: Transform {
+                                            translation: pos.into_screen(),
+                                            ..default()},
+                                        ..default()},
+                                    TextureAtlas {
+                                        layout: texture_handles.actor.1.clone(),
+                                        index: 0,
+                                    },
+                                    AnimationConfig::new([
+                                        AnimationDirection { start:8, end:11, flip:false },
+                                        AnimationDirection { start:0, end:3, flip:false },
+                                        AnimationDirection { start:4, end:7, flip:false },
+                                        AnimationDirection { start:4, end:7, flip:true }],
+                                        2,0),
+                                    KeyBits::default(),
+                                    Heading::default(),
+                                    typ,
+                                    pos,
                                 )).id();
                                 rpcs.0.insert(ent, loc);
                                 if client.ent == None { 
@@ -53,15 +58,19 @@ pub fn do_server_events(
                                 let loc = commands.spawn((
                                     SpriteBundle {
                                         texture: texture_handles.decorator.0.clone(),
-                                        transform: Transform::from_translation(translation),
+                                        transform: Transform {
+                                            scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_W / 83., z: 1. },
+                                            translation: pos.into_screen(),
+                                            ..default()},
                                         ..default()},
                                     TextureAtlas {
                                         layout: texture_handles.decorator.1.clone(),
                                         index: desc.index,
                                         ..default()},
                                     typ,
+                                    pos,
                                 )).id();
-                                map.0.insert(Hx::from(translation), loc);
+                                map.0.insert(hx, loc);
                             }
                         }
                     }

@@ -1,10 +1,11 @@
+#![feature(let_chains)]
+
 mod common;
 mod client;
 
 use std::time::{Duration, SystemTime};
 use std::net::UdpSocket;
 
-// use bevy::render::texture;
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
     renet::{
@@ -32,7 +33,7 @@ use client::{
     systems::{
         do_server_events::*,
         try_events::*,
-        update_animations::*,
+        update_sprites::*,
     },
 };
 
@@ -93,7 +94,7 @@ fn main() {
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
-                    +"client=info,"
+                    +"client=debug,"
                     +"client::client::input=trace,"
                     +"client::common::input=trace,"
                     ,
@@ -112,6 +113,7 @@ fn main() {
         do_server_events,
         handle_input,
         update_animations,
+        update_transforms,
         try_events,
     ));
 

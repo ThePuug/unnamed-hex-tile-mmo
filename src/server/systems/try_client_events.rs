@@ -24,7 +24,7 @@ pub fn try_client_events(
                             }
                         }
                         _ => {
-                            warn!("Unexpected try event: {:?}", event);
+                            debug!("Unexpected try event: {:?}", event);
                         }
                     }
                 }

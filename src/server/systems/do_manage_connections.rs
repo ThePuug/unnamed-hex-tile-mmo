@@ -8,25 +8,29 @@ pub fn do_manage_connections(
     mut commands: Commands,
     mut server: ResMut<RenetServer>,
     mut lobby: ResMut<Lobby>,
-    mut query: Query<&Transform>,
+    mut query: Query<&Pos>,
     ) {
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
-                let ent = commands.spawn((Transform::default(),Heading::default())).id();
+                let ent = commands.spawn((
+                    Transform::default(),
+                    Heading::default(),
+                    Pos::default()
+                )).id();
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
                     ent, 
                     typ: EntityType::Actor, 
-                    translation: Vec3::ZERO 
+                    hx: Pos::default().hx, 
                 }}).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
-                    let transform = query.get_mut(ent).unwrap();
+                    let pos = query.get_mut(ent).unwrap();
                     let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
                         ent, 
                         typ: EntityType::Actor, 
-                        translation: transform.translation,
+                        hx: pos.hx,
                     }}).unwrap();
                     server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }

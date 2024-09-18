@@ -10,9 +10,6 @@ pub fn ui_input(
 ) {
     if let Some(ent) = client.ent {
         let mut key_bits = default();
-        keyboard.get_just_pressed().into_iter().for_each(|it| {
-            trace!("Pressed: {:?}", it);
-        });
         if keyboard.any_pressed([KeyCode::ArrowUp, KeyCode::Lang3]) { key_bits |= KEYBIT_UP; }
         if keyboard.any_pressed([KeyCode::ArrowDown, KeyCode::NumpadEnter]) { key_bits |= KEYBIT_DOWN; }
         if keyboard.any_pressed([KeyCode::ArrowLeft, KeyCode::Convert]) { key_bits |= KEYBIT_LEFT; }
