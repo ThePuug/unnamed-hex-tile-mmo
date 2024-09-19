@@ -1,9 +1,11 @@
-use std::ops::Add;
+use std::{
+    f32::consts::SQRT_3, 
+    ops::Add
+};
 
 use bevy::math::Vec3;
 use serde::{Deserialize, Serialize};
 
-const SQRT_3: f32 = 1.7320508;
 pub const TILE_SIZE: f32 = 24.;
 pub const ISO_SCALE: f32 = 3. / 4.;
 pub const TILE_SIZE_H: f32 = TILE_SIZE * 2. * ISO_SCALE;

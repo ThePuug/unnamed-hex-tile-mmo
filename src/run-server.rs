@@ -1,3 +1,5 @@
+#![feature(more_float_constants)]
+
 mod common;
 mod server;
 

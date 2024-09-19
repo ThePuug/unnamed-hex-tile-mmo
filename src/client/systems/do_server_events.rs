@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, sprite::Anchor};
 use renet::{DefaultChannel, RenetClient};
 
 use crate::{*,
@@ -32,6 +32,9 @@ pub fn do_server_events(
                                         transform: Transform {
                                             translation: pos.into_screen(),
                                             ..default()},
+                                        sprite: Sprite {
+                                            anchor: Anchor::BottomCenter,
+                                            ..default()},
                                         ..default()},
                                     TextureAtlas {
                                         layout: texture_handles.actor.1.clone(),
@@ -59,8 +62,11 @@ pub fn do_server_events(
                                     SpriteBundle {
                                         texture: texture_handles.decorator.0.clone(),
                                         transform: Transform {
-                                            scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_W / 83., z: 1. },
+                                            scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 83., z: 1. },
                                             translation: pos.into_screen(),
+                                            ..default()},
+                                        sprite: Sprite {
+                                            anchor: Anchor::Custom(Vec2{ x: 0., y: (68.-TILE_SIZE*2.) / 138. }),
                                             ..default()},
                                         ..default()},
                                     TextureAtlas {
