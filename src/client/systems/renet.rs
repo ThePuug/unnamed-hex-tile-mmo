@@ -79,7 +79,7 @@ pub fn do_server_events(
                                     SpriteBundle {
                                         texture: texture_handles.decorator.0.clone(),
                                         transform: Transform {
-                                            scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 83., z: 1. },
+                                            scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
                                             translation: pos.into_screen(),
                                             ..default()},
                                         sprite: Sprite {

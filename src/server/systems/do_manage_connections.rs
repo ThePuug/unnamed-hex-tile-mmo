@@ -20,7 +20,7 @@ pub fn do_manage_connections(
                 let pos = Pos { hx: Hx { q: 0, r: 0, z: 1 }, offset: Vec3::ZERO };
                 let ent = commands.spawn((
                     Transform::default(),
-                    Heading::default(),
+                    Heading(Hx { q: 0, r: 0, z: -1 }),
                     pos,
                 )).id();
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
