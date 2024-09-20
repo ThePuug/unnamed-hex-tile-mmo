@@ -24,6 +24,10 @@ pub fn do_events(
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
+            Event::Move { ent, pos, heading } => {
+                let message = bincode::serialize(&Message::Do { event: Event::Move { ent, pos, heading }}).unwrap();
+                conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
+            }
             _ => {}
         }
     }

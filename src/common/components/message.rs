@@ -10,6 +10,7 @@ pub enum Event {
     Spawn { ent: Entity, typ: EntityType, hx: Hx },
     Despawn { ent: Entity },
     Input { ent: Entity, key_bits: KeyBits, dt: u8 },
+    Move { ent: Entity, pos: Pos, heading: Heading },
 }
 
 #[derive(Component, Debug, Deserialize, Serialize)]

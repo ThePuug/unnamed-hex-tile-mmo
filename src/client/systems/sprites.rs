@@ -1,16 +1,21 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 
-use crate::*;
+use crate::{ *,
+    common::hx::*,
+};
 
 pub fn update_animations(
     time: Res<Time>,
-    mut query: Query<(&KeyBits, &mut Sprite, &mut AnimationConfig, &mut TextureAtlas)>,
+    mut query: Query<(&Heading, &mut Sprite, &mut AnimationConfig, &mut TextureAtlas)>,
 ) {
-    for (key_bits, mut sprite, mut config, mut atlas) in &mut query {
+    for (heading, mut sprite, mut config, mut atlas) in &mut query {
         config.frame_timer.tick(time.delta());
         if config.frame_timer.just_finished() {
-            if atlas.index >= config.opts[config.selected].end || atlas.index < config.opts[config.selected].start { 
-                atlas.index = config.opts[config.selected].start; 
+            let opt = &config.opts[config.selected];
+            if atlas.index >= opt.end || atlas.index < opt.start { 
+                atlas.index = opt.start + (atlas.index+1) % (1 + opt.end - opt.start);
             } else {
                 atlas.index += 1;
                 config.frame_timer = AnimationConfig::timer_from_fps(config.fps);
@@ -18,21 +23,16 @@ pub fn update_animations(
         }
 
         let fps = config.fps as f32;
-        if *key_bits & (KEYBIT_UP | KEYBIT_DOWN) != default() {
-            if *key_bits & KEYBIT_UP != default() && config.selected != 0 { 
-                config.selected = 0;
-                config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-            } else if *key_bits & KEYBIT_DOWN != default() && config.selected != 1 { 
-                config.selected = 1;
-                config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-            }
-        } else if *key_bits & KEYBIT_LEFT != default() && config.selected != 2 {
-            config.selected = 2;
-            config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-        } else if *key_bits & KEYBIT_RIGHT != default() && config.selected != 3 {
-            config.selected = 3;
-            config.frame_timer.set_elapsed(Duration::from_secs_f32(1./fps));
-        }
+        let selected0 = config.selected;
+        config.selected = match heading.0 {
+            Hx { q: _, r: 1, z: _ } => 0,
+            Hx { q: _, r: -1, z: _ } => 1,
+            Hx { q: -1, r: 0, z: _ } => 2,
+            Hx { q: 1, r: 0, z: _ } => 3,
+            _ => config.selected,
+        };
+        if selected0 != config.selected { config.frame_timer.set_elapsed(Duration::from_secs_f32(1. / fps)); }
+
         sprite.flip_x = config.opts[config.selected].flip;
     }
 }

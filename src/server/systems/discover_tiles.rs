@@ -5,9 +5,9 @@ use crate::{*, Event};
 pub fn discover_tiles(
     mut writer: EventWriter<Event>,
     map: Res<Map>,
-    query: Query<(&Pos, &Heading)>,
+    query: Query<(Entity, &Pos, &Heading)>,
 ) {
-    for (pos, heading) in query.iter() {
+    for (ent, pos, heading) in query.iter() {
         let target = pos.hx + heading.0;
         if !map.0.contains_key(&target) {
             writer.send(Event::Spawn { 
@@ -16,5 +16,7 @@ pub fn discover_tiles(
                 hx: target,
             });
         }
+
+        writer.send(Event::Move { ent, pos: *pos, heading: *heading });
     }
 }

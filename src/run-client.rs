@@ -4,14 +4,14 @@
 mod common;
 mod client;
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use std::net::UdpSocket;
 
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
     renet::{
         transport::ClientAuthentication,
-        ConnectionConfig, RenetClient,
+        ConnectionConfig,
     },
     transport::NetcodeClientPlugin,
     RenetClientPlugin,
@@ -37,24 +37,6 @@ use client::{
 };
 
 const PROTOCOL_ID: u64 = 7;
-
-fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
-    let server_addr = "127.0.0.1:5000".parse().unwrap();
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let client_id = current_time.as_millis() as u64;
-    let authentication = ClientAuthentication::Unsecure {
-        client_id,
-        protocol_id: PROTOCOL_ID,
-        server_addr,
-        user_data: None,
-    };
-
-    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-    let client = RenetClient::new(ConnectionConfig::default());
-
-    (client, transport)
-}
 
 fn panic_on_error_system(
     mut renet_error: EventReader<NetcodeTransportError>

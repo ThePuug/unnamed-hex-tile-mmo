@@ -14,6 +14,8 @@ pub fn ui_input(
         if keyboard.any_pressed([KeyCode::ArrowDown, KeyCode::NumpadEnter]) { key_bits |= KEYBIT_DOWN; }
         if keyboard.any_pressed([KeyCode::ArrowLeft, KeyCode::Convert]) { key_bits |= KEYBIT_LEFT; }
         if keyboard.any_pressed([KeyCode::ArrowRight, KeyCode::NonConvert]) { key_bits |= KEYBIT_RIGHT; }
+        if keyboard.any_pressed([KeyCode::Minus]) { key_bits |= KEYBIT_ZOOM_OUT; }
+        if keyboard.any_pressed([KeyCode::Equal]) { key_bits |= KEYBIT_ZOOM_IN; }
 
         *key_bits0 = key_bits;
         let dt_f32 = time.delta_seconds() * 1000.;
@@ -23,10 +25,14 @@ pub fn ui_input(
 }
 
 pub fn camera(
-    mut camera: Query<&mut Transform, (With<Actor>, With<OrthographicProjection>, Without<Pos>)>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut camera: Query<(&mut Transform, &mut OrthographicProjection), (With<Actor>, Without<Pos>)>,
     actor: Query<&Transform, (With<Pos>, With<Actor>)>,
 ) {
-    if let Ok(transform) = actor.get_single() {
-        camera.single_mut().translation = transform.translation;
+    if let Ok(a_transform) = actor.get_single() {
+        let (mut c_transform, mut projection) = camera.single_mut();
+        c_transform.translation = a_transform.translation + Vec3 { x: 0., y: 24., z: 0. };
+        if keyboard.any_pressed([KeyCode::Minus]) { projection.scale *= 1.05; }
+        if keyboard.any_pressed([KeyCode::Equal]) { projection.scale /= 1.05; }
     }
 }

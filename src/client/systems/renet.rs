@@ -8,6 +8,24 @@ use crate::{*, Event,
     },
 };
 
+pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
+    let server_addr = "127.0.0.1:5000".parse().unwrap();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    let client_id = current_time.as_millis() as u64;
+    let authentication = ClientAuthentication::Unsecure {
+        client_id,
+        protocol_id: PROTOCOL_ID,
+        server_addr,
+        user_data: None,
+    };
+
+    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
+    let client = RenetClient::new(ConnectionConfig::default());
+
+    (client, transport)
+}
+
 pub fn do_server_events(
     mut commands: Commands,
     mut conn: ResMut<RenetClient>,
@@ -81,10 +99,25 @@ pub fn do_server_events(
                     }
                     Event::Despawn { ent } => {
                         debug!("Player {} disconnected", ent);
-                        commands.entity(l2r.0.remove_by_right(&ent).unwrap().1).despawn();
+                        if let Some(ent) = l2r.0.remove_by_right(&ent) {
+                            commands.entity(ent.0).despawn();
+                        } else {
+                            warn!("Player {} not found when Despawn received", ent);
+                        }
                     }
                     Event::Input { ent, key_bits, dt } => {
-                        events.send(Event::Input { ent: *l2r.0.get_by_right(&ent).unwrap(), key_bits, dt });
+                        if let Some(ent) = l2r.0.get_by_right(&ent) {
+                            events.send(Event::Input { ent: *ent, key_bits, dt });
+                        } else {
+                            warn!("Player {} not found when Input received", ent);
+                        }
+                    }
+                    Event::Move { ent, pos, heading } => {
+                        if let Some(ent) = l2r.0.get_by_right(&ent) {
+                            commands.entity(*ent).insert((pos, heading));
+                        } else {
+                            warn!("Player {} not found when Move received", ent);
+                        }
                     }
                 }
             }
