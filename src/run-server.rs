@@ -24,16 +24,16 @@ use common::{
     components::{ *,
         message::{Event, *},
     },
-    input::*,
     resources::map::*,
     systems::handle_input::*,
 };
 use server::{
     resources::*,
     systems::{
-        try_client_events::*,
+        discover_tiles::*,
         do_manage_connections::*,
         do_events::*,
+        try_client_events::*,
     },
 };
 
@@ -87,6 +87,7 @@ fn main() {
         do_manage_connections,
         try_client_events,
         handle_input,
+        discover_tiles,
         do_events,
     ));
 

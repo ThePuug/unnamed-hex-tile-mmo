@@ -1,3 +1,3 @@
-pub mod do_server_events;
-pub mod try_events;
-pub mod update_sprites;
+pub mod input;
+pub mod renet;
+pub mod sprites;

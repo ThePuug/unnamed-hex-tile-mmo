@@ -11,7 +11,7 @@ use bevy::{log::LogPlugin, prelude::*};
 use bevy_renet::{
     renet::{
         transport::ClientAuthentication,
-        ConnectionConfig, DefaultChannel, RenetClient,
+        ConnectionConfig, RenetClient,
     },
     transport::NetcodeClientPlugin,
     RenetClientPlugin,
@@ -21,20 +21,18 @@ use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 use common::{
     components::{ *,
         keybits::*, 
-        message::{Event, *},
+        message::Event,
     },
-    input::*,
     resources::map::*,
     systems::handle_input::*,
 };
 use client::{
     components::animationconfig::*,
-    input::*, 
     resources::*,
     systems::{
-        do_server_events::*,
-        try_events::*,
-        update_sprites::*,
+        renet::*,
+        input::*,
+        sprites::*,
     },
 };
 
@@ -71,7 +69,10 @@ fn setup(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     asset_server: Res<AssetServer>,
 ) {
-    commands.spawn(Camera2dBundle::default());
+    commands.spawn((
+        Camera2dBundle::default(),
+        Actor
+    ));
     commands.insert_resource(TextureHandles {
         actor: (
             asset_server.load("sprites/blank.png"),
@@ -96,8 +97,8 @@ fn main() {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
                     +"client=debug,"
-                    +"client::client::input=trace,"
                     +"client::common::input=trace,"
+                    +"client::client::systems=trace,"
                     ,
             custom_layer: |_| None,
         }),
@@ -116,12 +117,12 @@ fn main() {
         update_animations,
         update_transforms,
         try_events,
+        camera,
     ));
 
     let (client, transport) = new_renet_client();
 
-    app.init_resource::<Client>();
-    app.init_resource::<Rpcs>();
+    app.init_resource::<EntityMap>();
     app.init_resource::<Map>();
     app.insert_resource(client);
     app.insert_resource(transport);

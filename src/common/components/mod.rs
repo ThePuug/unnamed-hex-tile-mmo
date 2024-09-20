@@ -1,10 +1,15 @@
+pub mod message;
+pub mod keybits;
+
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::common::hx::*;
 
-pub mod message;
-pub mod keybits;
+pub const KEYBIT_UP: u8 = 1 << 0;
+pub const KEYBIT_DOWN: u8 = 1 << 1; 
+pub const KEYBIT_LEFT: u8 = 1 << 2; 
+pub const KEYBIT_RIGHT: u8 = 1 << 3; 
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct DecoratorDescriptor {
@@ -34,3 +39,9 @@ impl IntoScreen for Pos {
         Vec3 { z: (self.hx.z - self.hx.r) as f32, ..v } + self.offset
     }
 }
+
+#[derive(Clone, Component, Copy, Default)]
+pub struct Heading(pub Hx);
+
+#[derive(Clone, Component, Copy, Default)] 
+pub struct Actor;

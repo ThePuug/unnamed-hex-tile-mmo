@@ -4,13 +4,13 @@ use renet::ServerEvent;
 use crate::{*, Event};
 
 pub fn do_manage_connections(
-    mut server_events: EventReader<ServerEvent>,
     mut commands: Commands,
-    mut server: ResMut<RenetServer>,
+    mut conn: ResMut<RenetServer>,
+    mut reader: EventReader<ServerEvent>,
     mut lobby: ResMut<Lobby>,
     mut query: Query<&Pos>,
-    ) {
-    for event in server_events.read() {
+) {
+    for event in reader.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
@@ -24,7 +24,7 @@ pub fn do_manage_connections(
                     typ: EntityType::Actor, 
                     hx: Pos::default().hx, 
                 }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
                     let pos = query.get_mut(ent).unwrap();
                     let message = bincode::serialize(&Message::Do { event: Event::Spawn { 
@@ -32,7 +32,7 @@ pub fn do_manage_connections(
                         typ: EntityType::Actor, 
                         hx: pos.hx,
                     }}).unwrap();
-                    server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.0.insert(*client_id, ent);
             }
@@ -41,7 +41,7 @@ pub fn do_manage_connections(
                 let ent = lobby.0.remove(&client_id).unwrap();
                 commands.entity(ent).despawn();
                 let message = bincode::serialize(&Message::Do { event: Event::Despawn { ent }}).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
         }
     }

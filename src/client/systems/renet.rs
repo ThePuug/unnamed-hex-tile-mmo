@@ -1,19 +1,18 @@
 use bevy::{prelude::*, sprite::Anchor};
 use renet::{DefaultChannel, RenetClient};
 
-use crate::{*,
+use crate::{*, Event,
     common::{
-        components::message::{*, Event},
-        resources::map::*,
         hx::*,
-    }
+        components::message::*,
+    },
 };
 
 pub fn do_server_events(
-    mut conn: ResMut<RenetClient>,
     mut commands: Commands,
-    mut client: ResMut<Client>,
-    mut rpcs: ResMut<Rpcs>,
+    mut conn: ResMut<RenetClient>,
+    mut events: EventWriter<Event>,
+    mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
     texture_handles: Res<TextureHandles>,
 ) {
@@ -51,10 +50,10 @@ pub fn do_server_events(
                                     typ,
                                     pos,
                                 )).id();
-                                rpcs.0.insert(ent, loc);
-                                if client.ent == None { 
-                                    client.ent = Some(ent); 
-                                    debug!("Player {} is the local player", ent);
+                                l2r.0.insert(loc, ent);
+                                if l2r.0.len() == 1 {
+                                    commands.get_entity(loc).unwrap().insert(Actor);
+                                    debug!("Player server:{} is local:{}", ent, loc);
                                 }
                             }
                             EntityType::Decorator(desc) => {
@@ -82,15 +81,36 @@ pub fn do_server_events(
                     }
                     Event::Despawn { ent } => {
                         debug!("Player {} disconnected", ent);
-                        commands.entity(rpcs.0.remove(&ent).unwrap()).despawn();
+                        commands.entity(l2r.0.remove_by_right(&ent).unwrap().1).despawn();
                     }
-                    Event::Input { ent, key_bits } => {
-                        commands.entity(*rpcs.0.get(&ent).unwrap()).insert(key_bits);
+                    Event::Input { ent, key_bits, dt } => {
+                        events.send(Event::Input { ent: *l2r.0.get_by_right(&ent).unwrap(), key_bits, dt });
                     }
                 }
             }
             Message::Try { event } => {
                 warn!("Unexpected try event: {:?}", event);
+            }
+        }
+    }
+}
+
+pub fn try_events(
+    mut conn: ResMut<RenetClient>,
+    mut events: EventReader<Event>,
+    l2r: Res<EntityMap>,
+) {
+    for &event in events.read() {
+        let message;
+        match event {
+            Event::Input { ent, key_bits, dt } => {
+                message = bincode::serialize(&Message::Try { event: Event::Input { 
+                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                    key_bits, dt }}).unwrap();
+                conn.send_message(DefaultChannel::ReliableOrdered, message);
+            }
+            _ => {
+                warn!("Unexpected event: {:?}", event);
             }
         }
     }

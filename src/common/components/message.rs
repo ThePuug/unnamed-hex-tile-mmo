@@ -9,7 +9,7 @@ use crate::common::components::{ *,
 pub enum Event {
     Spawn { ent: Entity, typ: EntityType, hx: Hx },
     Despawn { ent: Entity },
-    Input { ent: Entity, key_bits: KeyBits },
+    Input { ent: Entity, key_bits: KeyBits, dt: u8 },
 }
 
 #[derive(Component, Debug, Deserialize, Serialize)]

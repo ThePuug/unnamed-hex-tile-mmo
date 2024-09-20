@@ -4,23 +4,19 @@ use renet::*;
 use crate::{*, Event};
 
 pub fn try_client_events(
-    mut server: ResMut<RenetServer>,
-    mut commands: Commands,
+    mut conn: ResMut<RenetServer>,
+    mut writer: EventWriter<Event>,
     lobby: Res<Lobby>,
  ) {
-    for client_id in server.clients_id() {
-        while let Some(serialized) = server.receive_message(client_id, DefaultChannel::ReliableOrdered) {
+    for client_id in conn.clients_id() {
+        while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let message = bincode::deserialize(&serialized).unwrap();
             match message {
                 Message::Try { event } => {
                     match event {
-                        Event::Input { ent: _, key_bits } => {
+                        Event::Input { ent: _, key_bits, dt } => {
                             if let Some(&ent) = lobby.0.get(&client_id) {
-                                if let Some(mut commands) = commands.get_entity(ent) {
-                                    commands.insert(key_bits);
-                                    let message = bincode::serialize(&Message::Do { event: Event::Input { ent, key_bits } }).unwrap();
-                                    server.broadcast_message(DefaultChannel::ReliableOrdered, message);
-                                }
+                                writer.send(Event::Input { ent, key_bits, dt });
                             }
                         }
                         _ => {

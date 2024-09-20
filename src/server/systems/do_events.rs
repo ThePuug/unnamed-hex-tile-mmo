@@ -1,20 +1,15 @@
 use bevy::prelude::*;
 use renet::*;
 
-use crate::common::{
-    components::{ *,
-        message::{Event, *},
-    },
-    resources::map::*,
-};
+use crate::{*, Event};
 
 pub fn do_events(
-    mut conn: ResMut<RenetServer>,
-    mut events: EventReader<Event>,
     mut commands: Commands,
+    mut conn: ResMut<RenetServer>,
+    mut reader: EventReader<Event>,
     mut map: ResMut<Map>,
 ) {
-    for &event in events.read() {
+    for &event in reader.read() {
         match event {
             Event::Spawn { mut ent, typ, hx } => {
                 let pos = Pos { hx, ..default() };
@@ -29,9 +24,7 @@ pub fn do_events(
                 let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
-            _ => {
-                warn!("Unexpected do event: {:?}", event);
-            }
+            _ => {}
         }
     }
 }
