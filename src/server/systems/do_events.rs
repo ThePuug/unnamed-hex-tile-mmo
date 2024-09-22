@@ -1,31 +1,34 @@
 use bevy::prelude::*;
 use renet::*;
 
-use crate::{*, Event};
+use crate::{*,
+    common::message::{*, Event},
+};
 
 pub fn do_events(
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
-    mut reader: EventReader<Event>,
-    mut map: ResMut<Map>,
+    mut reader: EventReader<Do>,
+    mut map: ResMut<TerrainedMap>,
 ) {
-    for &event in reader.read() {
-        match event {
-            Event::Spawn { mut ent, typ, hx } => {
-                let pos = Pos { hx, ..default() };
+    for &message in reader.read() {
+        trace!("Message: {:?}", message);
+        match message {
+            Do { event: Event::Spawn { mut ent, typ, hx } } => {
                 ent = commands.spawn((
-                    pos,
+                    hx,
+                    Offset::default(),
                     typ,
                     Transform {
-                        translation: pos.into_screen(),
+                        translation: (hx,Offset::default()).into_screen(),
                         ..default()}, 
                 )).id();
-                map.0.insert(hx, ent);
-                let message = bincode::serialize(&Message::Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
+                map.insert(hx, ent);
+                let message = bincode::serialize(&Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
-            Event::Move { ent, pos, heading } => {
-                let message = bincode::serialize(&Message::Do { event: Event::Move { ent, pos, heading }}).unwrap();
+            Do { event: Event::Move { ent, hx, heading } } => {
+                let message = bincode::serialize(&Do { event: Event::Move { ent, hx, heading }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
             _ => {}

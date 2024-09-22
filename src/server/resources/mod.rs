@@ -1,3 +1,5 @@
+pub mod map;
+
 use std::collections::HashMap;
 
 use bevy::prelude::*;

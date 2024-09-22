@@ -19,12 +19,10 @@ use bevy_renet::{
 use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
+    message::*,
     components::{ *,
-        keybits::*, 
-        message::Event,
     },
     resources::map::*,
-    systems::handle_input::*,
 };
 use client::{
     components::animationconfig::*,
@@ -78,9 +76,9 @@ fn main() {
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
-                    +"client=debug,"
-                    +"client::common::input=trace,"
-                    +"client::client::systems=trace,"
+                    +"client=trace,"
+                    // +"client::common::input=trace,"
+                    // +"client::client::systems=trace,"
                     ,
             custom_layer: |_| None,
         }),
@@ -88,16 +86,18 @@ fn main() {
         NetcodeClientPlugin,
     ));
 
-    app.add_event::<Event>();
+    app.add_event::<Do>();
+    app.add_event::<Try>();
 
     app.add_systems(Startup, setup);
     app.add_systems(Update, (
         panic_on_error_system,
-        ui_input,
         do_server_events,
         handle_input,
         update_animations,
         update_transforms,
+        update_positions,
+        update_headings,
         try_events,
         camera,
     ));

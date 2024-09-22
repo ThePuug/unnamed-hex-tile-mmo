@@ -21,41 +21,23 @@ use renet::{
 };
 
 use common::{
-    components::{ *,
-        message::{Event, *},
-    },
+    message::*,
+    components::*,
     resources::map::*,
-    systems::handle_input::*,
 };
 use server::{
-    resources::*,
+    resources::{ *,
+        map::*,
+    },
     systems::{
         discover_tiles::*,
         do_manage_connections::*,
         do_events::*,
-        try_client_events::*,
+        physics::*,
     },
 };
 
 const PROTOCOL_ID: u64 = 7;
-
-fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let public_addr = "0.0.0.0:5000".parse().unwrap();
-    let socket = UdpSocket::bind(public_addr).unwrap();
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let server_config = ServerConfig {
-        current_time,
-        max_clients: 64,
-        protocol_id: PROTOCOL_ID,
-        public_addresses: vec![public_addr],
-        authentication: ServerAuthentication::Unsecure,
-    };
-
-    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-    let server = RenetServer::new(ConnectionConfig::default());
-
-    (server, transport)
-}
 
 fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     for e in renet_error.read() {
@@ -70,8 +52,8 @@ fn main() {
         LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,".to_owned()
-                    +"server=info,"
-                    +"server::common::input=info,"
+                    +"server=debug,"
+                    // +"server::common::input=info,"
                     ,
             custom_layer: |_| None,
         },
@@ -80,21 +62,22 @@ fn main() {
         NetcodeServerPlugin,
     ));
 
-    app.add_event::<Event>();
+    app.add_event::<Do>();
+    app.add_event::<Try>();
 
     app.add_systems(Update, (
         panic_on_error_system,
         do_manage_connections,
         try_client_events,
-        handle_input,
-        discover_tiles,
+        try_discover,
+        try_move,
+        update_positions,
         do_events,
     ));
 
     let (server, transport) = new_renet_server();
-
     app.init_resource::<Lobby>();
-    app.init_resource::<Map>();
+    app.init_resource::<TerrainedMap>();
     app.insert_resource(server);
     app.insert_resource(transport);
 

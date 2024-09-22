@@ -1,22 +1,27 @@
 use bevy::prelude::*;
 
-use crate::{*, Event};
+use crate::{*,
+    common::message::{*, Event},
+};
 
-pub fn discover_tiles(
-    mut writer: EventWriter<Event>,
-    map: Res<Map>,
-    query: Query<(Entity, &Pos, &Heading)>,
+pub fn try_discover(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    map: Res<TerrainedMap>,
 ) {
-    for (ent, pos, heading) in query.iter() {
-        let target = pos.hx + heading.0;
-        if !map.0.contains_key(&target) {
-            writer.send(Event::Spawn { 
-                ent: Entity::PLACEHOLDER,
-                typ: EntityType::Decorator(DecoratorDescriptor { index: 1, is_solid: true }), 
-                hx: target,
-            });
+    for &message in reader.read() {
+        match message {
+            Try { event: Event::Discover { hx, .. } } => {
+                let (loc, ent) = map.find(hx, 3);
+                if let Some(hx) = loc {
+                    writer.send(Do { event: Event::Spawn { 
+                        ent,
+                        typ: EntityType::Decorator(DecoratorDescriptor{ index: 1, is_solid: true }), 
+                        hx,
+                    } }); 
+                }
+            }
+            _ => {}
         }
-
-        writer.send(Event::Move { ent, pos: *pos, heading: *heading });
     }
 }

@@ -1,20 +1,9 @@
-pub mod message;
-pub mod keybits;
-
-use std::ops::Add;
+pub mod hx;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::common::hx::*;
-
-pub const KEYBIT_UP: u8 = 1 << 0;
-pub const KEYBIT_DOWN: u8 = 1 << 1; 
-pub const KEYBIT_LEFT: u8 = 1 << 2; 
-pub const KEYBIT_RIGHT: u8 = 1 << 3; 
-pub const KEYBIT_ZOOM_OUT: u8 = 1 << 4;
-pub const KEYBIT_ZOOM_IN: u8 = 1 << 5;
-
+use crate::common::components::hx::*;
 pub trait IntoScreen {
     fn into_screen(self) -> Vec3;
 }
@@ -32,22 +21,16 @@ pub enum EntityType {
 }
 
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
-pub struct Pos {
-    pub hx: Hx,
-    pub offset: Vec3,
-}
+pub struct Offset(pub Vec3);
 
-impl IntoScreen for Pos {
+impl IntoScreen for (Hx, Offset) {
     fn into_screen(self) -> Vec3 {
-        let v: Vec3 = self.hx.into();
-        Vec3 { z: (self.hx.z - self.hx.r) as f32, ..v } + self.offset
-    }
-}
-
-impl Add for Pos {
-    type Output = Pos;
-    fn add(self, rhs: Pos) -> Self::Output {
-        Pos { hx: self.hx + rhs.hx, offset: self.offset + rhs.offset }
+        // z-offset is game coords
+        let v: Vec3 = Vec3{ z: self.0.z as f32 + self.1.0.z, ..self.0.into()};
+        // normalize to orthographic range
+        let z = ((v.z - self.0.r as f32 * 100.) / 2_i32.pow(16) as f32) * 1000.;
+        // xy-offset are screen coords
+        v + Vec3 { x: 0., y: v.z * TILE_RISE, z } + self.1.0.xy().extend(0.)
     }
 }
 
@@ -56,3 +39,6 @@ pub struct Heading(pub Hx);
 
 #[derive(Clone, Component, Copy, Default)] 
 pub struct Actor;
+
+#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct LastSeen(pub u64);

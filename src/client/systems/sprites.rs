@@ -3,7 +3,10 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::{ *,
-    common::hx::*,
+    common::{
+        message::{*, Event},
+        components::hx::*,
+    },
 };
 
 pub fn update_animations(
@@ -38,9 +41,44 @@ pub fn update_animations(
 }
 
 pub fn update_transforms(
-    mut query: Query<(&mut Transform, &Pos)>,
+    mut writer: EventWriter<Try>,
+    mut query: Query<(Entity, &mut Transform, &Hx, &Offset, &Heading), Changed<Offset>>,
 ) {
-    for (mut transform, pos) in &mut query {
-        transform.translation = pos.into_screen();
+    for (ent, mut transform, &hx0, &offset, &heading) in &mut query {
+        transform.translation = (hx0, offset).into_screen();
+        let hx = Hx::from(Vec3::from(hx0) + offset.0);
+        if hx != hx0 {
+            writer.send(Try { event: Event::Move { ent, hx, heading } });
+            writer.send(Try { event: Event::Discover { hx } });
+        }
+    }
+}
+
+pub fn update_headings(
+    mut writer: EventWriter<Try>,
+    mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
+) {
+    for (ent, &hx, &heading) in &mut query {
+        writer.send(Try { event: Event::Move { ent, hx, heading } });
+        writer.send(Try { event: Event::Discover { hx } });
+    }
+}
+
+pub fn update_positions(
+    mut reader: EventReader<Do>,
+    mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
+) {
+    for &message in reader.read() {
+        match message {
+            Do { event: Event::Move { ent, hx, heading } } => {
+                trace!("Move: {:?} {:?} {:?}", ent, hx, heading);
+                if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
+                    *hx0 = hx; 
+                    *offset0 = Offset::default(); // Offset(offset0.0 - Vec3::from(hx));
+                    *heading0 = heading;
+                }
+            }
+            _ => {}
+        }
     }
 }
