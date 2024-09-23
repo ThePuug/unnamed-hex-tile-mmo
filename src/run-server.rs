@@ -33,6 +33,7 @@ use server::{
         discover_tiles::*,
         do_manage_connections::*,
         do_events::*,
+        input::*,
         physics::*,
     },
 };
@@ -70,6 +71,7 @@ fn main() {
         do_manage_connections,
         try_client_events,
         try_discover,
+        try_input,
         try_move,
         update_positions,
         do_events,

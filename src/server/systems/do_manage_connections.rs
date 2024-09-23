@@ -82,15 +82,22 @@ pub fn try_client_events(
             let message = bincode::deserialize(&serialized).unwrap();
             trace!("Message: {:?}", message);
             match message {
+                Try { event: Event::Discover { hx } } => {
+                    writer.send(Try { event: Event::Discover { hx } });
+                }
+                Try { event: Event::Input { ent, key_bits } } => {
+                    if let Some(&cent) = lobby.0.get(&client_id) {
+                        if cent == ent {
+                            writer.send(Try { event: Event::Input { ent, key_bits }});
+                        }
+                    }
+                }
                 Try { event: Event::Move { ent, hx, heading } } => {
                     if let Some(&cent) = lobby.0.get(&client_id) {
                         if cent == ent {
                             writer.send(Try { event: Event::Move { ent, hx, heading }});
                         }
                     }
-                }
-                Try { event: Event::Discover { hx } } => {
-                    writer.send(Try { event: Event::Discover { hx } });
                 }
                 _ => {}
             }

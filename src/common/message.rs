@@ -7,10 +7,11 @@ use crate::{ *,
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Event {
-    Spawn { ent: Entity, typ: EntityType, hx: Hx },
     Despawn { ent: Entity },
-    Move { ent: Entity, hx: Hx, heading: Heading },
     Discover { hx: Hx },
+    Input { ent: Entity, key_bits: KeyBits },
+    Move { ent: Entity, hx: Hx, heading: Heading },
+    Spawn { ent: Entity, typ: EntityType, hx: Hx },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]

@@ -125,15 +125,21 @@ pub fn try_events(
 ) {
     for &message in messages.read() {
         match message {
+            Try { event: Event::Discover { hx } } => {
+                let message = bincode::serialize(&Try { event: Event::Discover { 
+                    hx }}).unwrap();
+                conn.send_message(DefaultChannel::ReliableOrdered, message);
+            }
+            Try { event: Event::Input { ent, key_bits } } => {
+                let message = bincode::serialize(&Try { event: Event::Input { 
+                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                    key_bits }}).unwrap();
+                conn.send_message(DefaultChannel::ReliableOrdered, message);
+            }
             Try { event: Event::Move { ent, hx, heading } } => {
                 let message = bincode::serialize(&Try { event: Event::Move { 
                     ent: *l2r.0.get_by_left(&ent).unwrap(), 
                     hx, heading }}).unwrap();
-                conn.send_message(DefaultChannel::ReliableOrdered, message);
-            }
-            Try { event: Event::Discover { hx } } => {
-                let message = bincode::serialize(&Try { event: Event::Discover { 
-                    hx }}).unwrap();
                 conn.send_message(DefaultChannel::ReliableOrdered, message);
             }
             _ => {}
