@@ -1,46 +1,54 @@
 use bevy::prelude::*;
 
 use crate::{*,
-    common::components::hx::*,
+    common::{
+        components::hx::*,
+        message::{*, Event},
+    },
 };
 
 pub fn handle_input(
+    mut writer: EventWriter<Try>,
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&Hx, &mut Offset, &mut Heading), With<Actor>>,
+    mut query: Query<(Entity, &Hx, &mut Offset, &mut Heading, &mut Transform), With<Actor>>,
 ) {
-    if let Ok((&hx0, mut offset0, mut heading0)) = query.get_single_mut() {
-        let mut heading = *heading0;
-        if keyboard.any_pressed([
-            KeyCode::ArrowUp,
-            KeyCode::ArrowDown,
-            KeyCode::ArrowLeft,
-            KeyCode::ArrowRight,
-        ])
-        {
-            if keyboard.any_pressed([KeyCode::ArrowUp]) {
-                if keyboard.any_pressed([KeyCode::ArrowLeft]) || !keyboard.any_pressed([KeyCode::ArrowRight])
-                    &&(heading.0 == Hx {q:-1, r: 0, z: -1}
-                    || heading.0 == Hx {q:-1, r: 1, z: -1}
-                    || heading.0 == Hx {q: 1, r:-1, z: -1}) { heading = Heading(Hx {q:-1, r: 1, z: -1}); }
-                else  { heading = Heading { 0:Hx {q: 0, r: 1, z: -1} }; }
-            } else if keyboard.any_pressed([KeyCode::ArrowDown]) {
-                if keyboard.any_pressed([KeyCode::ArrowRight]) || !keyboard.any_pressed([KeyCode::ArrowLeft])
-                    &&(heading.0 == Hx {q: 1, r: 0, z: -1}
-                    || heading.0 == Hx {q: 1, r:-1, z: -1}
-                    || heading.0 == Hx {q:-1, r: 1, z: -1}) { heading = Heading { 0:Hx {q: 1, r: -1, z: -1} }; }
-                else { heading = Heading { 0:Hx {q: 0, r:-1, z: -1} }; }
+    if let Ok((ent, &hx0, mut offset0, mut heading0, mut transform0)) = query.get_single_mut() {
+        let px = Vec3::from(hx0);
+        let curr = px + offset0.0;
+        let mut heading = Heading::default();
+        if keyboard.any_pressed([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD,]) {
+            if keyboard.any_pressed([KeyCode::KeyW]) {
+                if keyboard.any_pressed([KeyCode::KeyA]) || !keyboard.any_pressed([KeyCode::KeyD])
+                    &&(heading0.0 == Hx {q:-1, r: 0, z: 0}
+                    || heading0.0 == Hx {q:-1, r: 1, z: 0}
+                    || heading0.0 == Hx {q: 1, r:-1, z: 0}) { heading = Heading(Hx {q:-1, r: 1, z: 0}); }
+                else  { heading = Heading(Hx {q: 0, r: 1, z: 0}); }
+            } else if keyboard.any_pressed([KeyCode::KeyS]) {
+                if keyboard.any_pressed([KeyCode::KeyD]) || !keyboard.any_pressed([KeyCode::KeyA])
+                    &&(heading0.0 == Hx {q: 1, r: 0, z: 0}
+                    || heading0.0 == Hx {q: 1, r:-1, z: 0}
+                    || heading0.0 == Hx {q:-1, r: 1, z: 0}) { heading = Heading(Hx {q: 1, r: -1, z: 0}); }
+                else { heading = Heading(Hx {q: 0, r:-1, z: 0}); }
             } 
-            else if keyboard.any_pressed([KeyCode::ArrowRight]) { heading = Heading { 0:Hx {q: 1, r: 0, z: -1} }; }
-            else if keyboard.any_pressed([KeyCode::ArrowLeft]) { heading = Heading { 0:Hx {q:-1, r: 0, z: -1} }; }
-        
-            let target = hx0 + heading.0;
-            let px = Vec3::from(hx0);
-            let delta = Vec3::from(target).xy() - (px + offset0.0).xy();
-            let offset = Offset(offset0.0 + (delta.normalize_or_zero() * 100. * time.delta_seconds()).extend(0.));
+            else if keyboard.any_pressed([KeyCode::KeyD]) { heading = Heading(Hx {q: 1, r: 0, z: 0}); }
+            else if keyboard.any_pressed([KeyCode::KeyA]) { heading = Heading(Hx {q:-1, r: 0, z: 0}); }
+        }
 
-            if heading0.0 != heading.0 { *heading0 = heading };
-            if offset0.0 != offset.0 { *offset0 = offset };
+        let target = match heading.0 {
+            Hx { q: 0, r: 0, z: 0} => px.lerp(Vec3::from(hx0 + heading0.0),0.25),
+            _ => px.lerp(Vec3::from(hx0 + heading.0),1.25),
+        };
+
+        let dist = curr.distance(target);
+        let ratio = 0_f32.max((dist - 100_f32 * time.delta_seconds()) / dist);
+        offset0.0 = curr.lerp(target, 1. - ratio) - px;
+        transform0.translation = (hx0, *offset0).into_screen();
+
+        let hx = Hx::from(px + offset0.0);
+        if hx != hx0 || heading.0 != Hx::default() && heading.0 != heading0.0 { 
+            heading0.0 = heading.0;
+            writer.send(Try { event: Event::Move { ent, hx, heading } }); 
         }
     }
 }
@@ -48,7 +56,7 @@ pub fn handle_input(
 pub fn camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera: Query<(&mut Transform, &mut OrthographicProjection), (With<Actor>, Without<Hx>, Without<Offset>)>,
-    actor: Query<&Transform, (With<Hx>, With<Offset>, With<Actor>)>,
+    actor: Query<&Transform, (With<Actor>, With<Hx>, With<Offset>)>,
 ) {
     if let Ok(a_transform) = actor.get_single() {
         let (mut c_transform, mut projection) = camera.single_mut();

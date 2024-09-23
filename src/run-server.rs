@@ -52,7 +52,7 @@ fn main() {
         LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,".to_owned()
-                    +"server=debug,"
+                    +"server=trace,"
                     // +"server::common::input=info,"
                     ,
             custom_layer: |_| None,

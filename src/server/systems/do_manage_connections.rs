@@ -41,7 +41,7 @@ pub fn do_manage_connections(
                 let offset = Offset(Vec3::ZERO);
                 let ent = commands.spawn((
                     Transform::default(),
-                    Heading(Hx { q: 0, r: 0, z: -1 }),
+                    Heading(Hx { q: 0, r: 0, z: 0 }),
                     hx, offset,
                 )).id();
                 let message = bincode::serialize(&Do { event: Event::Spawn { 
