@@ -23,6 +23,7 @@ use common::{
     components::{ *,
     },
     resources::map::*,
+    systems::physics::*,
 };
 use client::{
     components::animationconfig::*,
@@ -93,6 +94,7 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         do_server_events,
+        do_move,
         handle_input,
         update_animations,
         update_transforms,

@@ -2,57 +2,61 @@ use bevy::prelude::*;
 
 use crate::{*,
     common::{
-        components::hx::*,
+        components::{
+            hx::*,
+            keybits::*,
+        },
         message::{*, Event},
     },
 };
 
 pub fn handle_input(
     mut writer: EventWriter<Try>,
-    time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &Hx, &mut Offset, &mut Heading, &mut Transform), With<Actor>>,
+    mut query: Query<(Entity, &mut Heading, &mut KeyBits), With<Actor>>,
 ) {
-    if let Ok((ent, &hx0, mut offset0, mut heading0, mut transform0)) = query.get_single_mut() {
+    if let Ok((ent, mut heading0, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
-        if keyboard.any_just_pressed([KeyCode::Space]) { key_bits.0 |= 1 << 0; }
-        if key_bits != KeyBits::default() { writer.send(Try { event: Event::Input { ent, key_bits } }); }
+        if keyboard.any_just_pressed([KeyCode::Space]) { key_bits |= KB_JUMP; }
 
-        let px = Vec3::from(hx0);
-        let curr = px + offset0.0;
-        let mut heading = Heading::default();
         if keyboard.any_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight,]) {
             if keyboard.any_pressed([KeyCode::ArrowUp]) {
                 if keyboard.any_pressed([KeyCode::ArrowLeft]) || !keyboard.any_pressed([KeyCode::ArrowRight])
                     &&(heading0.0 == Hx {q:-1, r: 0, z: 0}
                     || heading0.0 == Hx {q:-1, r: 1, z: 0}
-                    || heading0.0 == Hx {q: 1, r:-1, z: 0}) { heading = Heading(Hx {q:-1, r: 1, z: 0}); }
-                else  { heading = Heading(Hx {q: 0, r: 1, z: 0}); }
+                    || heading0.0 == Hx {q: 1, r:-1, z: 0}) { 
+                        heading0.0 = Hx {q:-1, r: 1, z: 0}; 
+                        key_bits |= KB_HEADING_Q | KB_HEADING_R;
+                    }                    
+                else  { 
+                    heading0.0 = Hx {q: 0, r: 1, z: 0};
+                    key_bits |= KB_HEADING_R
+                }
             } else if keyboard.any_pressed([KeyCode::ArrowDown]) {
                 if keyboard.any_pressed([KeyCode::ArrowRight]) || !keyboard.any_pressed([KeyCode::ArrowLeft])
                     &&(heading0.0 == Hx {q: 1, r: 0, z: 0}
                     || heading0.0 == Hx {q: 1, r:-1, z: 0}
-                    || heading0.0 == Hx {q:-1, r: 1, z: 0}) { heading = Heading(Hx {q: 1, r: -1, z: 0}); }
-                else { heading = Heading(Hx {q: 0, r:-1, z: 0}); }
+                    || heading0.0 == Hx {q:-1, r: 1, z: 0}) { 
+                        heading0.0 = Hx {q: 1, r: -1, z: 0};
+                        key_bits |= KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG; 
+                    }
+                else { 
+                    heading0.0 = Hx {q: 0, r:-1, z: 0};
+                    key_bits |= KB_HEADING_R | KB_HEADING_NEG;
+                }
             } 
-            else if keyboard.any_pressed([KeyCode::ArrowRight]) { heading = Heading(Hx {q: 1, r: 0, z: 0}); }
-            else if keyboard.any_pressed([KeyCode::ArrowLeft]) { heading = Heading(Hx {q:-1, r: 0, z: 0}); }
+            else if keyboard.any_pressed([KeyCode::ArrowRight]) { 
+                heading0.0 = Hx {q: 1, r: 0, z: 0}; 
+                key_bits |= KB_HEADING_Q
+            } else if keyboard.any_pressed([KeyCode::ArrowLeft]) { 
+                heading0.0 = Hx {q:-1, r: 0, z: 0}; 
+                key_bits |= KB_HEADING_Q | KB_HEADING_NEG;
+            }
         }
 
-        let target = match heading.0 {
-            Hx { q: 0, r: 0, z: 0} => px.lerp(Vec3::from(hx0 + heading0.0),0.25),
-            _ => px.lerp(Vec3::from(hx0 + heading.0),1.25),
-        };
-        
-        let dist = curr.distance(target);
-        let ratio = 0_f32.max((dist - 100_f32 * time.delta_seconds()) / dist);
-        offset0.0 = curr.lerp(target, 1. - ratio) - px;
-        transform0.translation = (hx0, *offset0).into_screen();
-
-        let hx = Hx::from(px + offset0.0);
-        if hx != hx0 || heading.0 != Hx::default() && heading.0 != heading0.0 { 
-            heading0.0 = heading.0;
-            writer.send(Try { event: Event::Move { ent, hx, heading } }); 
+        if *keybits0 != key_bits {
+            *keybits0 = key_bits;
+            writer.send(Try { event: Event::Input { ent, key_bits } });
         }
     }
 }

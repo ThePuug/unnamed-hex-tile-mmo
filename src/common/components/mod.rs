@@ -1,4 +1,5 @@
 pub mod hx;
+pub mod keybits;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,3 @@ pub struct Actor;
 
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
 pub struct LastSeen(pub u64);
-
-#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct KeyBits(pub u8);

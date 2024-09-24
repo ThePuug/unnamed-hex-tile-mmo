@@ -63,21 +63,3 @@ pub fn update_headings(
         writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
     }
 }
-
-pub fn update_positions(
-    mut reader: EventReader<Do>,
-    mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
-) {
-    for &message in reader.read() {
-        match message {
-            Do { event: Event::Move { ent, hx, heading } } => {
-                if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                    *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
-                    *hx0 = hx; 
-                    *heading0 = heading;
-                }
-            }
-            _ => {}
-        }
-    }
-}

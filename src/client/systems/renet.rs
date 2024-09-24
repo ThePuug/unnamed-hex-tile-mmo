@@ -1,4 +1,5 @@
 use bevy::{prelude::*, sprite::Anchor};
+use keybits::KeyBits;
 use renet::{DefaultChannel, RenetClient};
 
 use crate::{*,
@@ -64,6 +65,7 @@ pub fn do_server_events(
                             typ,
                             hx,
                             Offset::default(),
+                            KeyBits::default(),
                         )).id();
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
@@ -134,12 +136,6 @@ pub fn try_events(
                 let message = bincode::serialize(&Try { event: Event::Input { 
                     ent: *l2r.0.get_by_left(&ent).unwrap(), 
                     key_bits }}).unwrap();
-                conn.send_message(DefaultChannel::ReliableOrdered, message);
-            }
-            Try { event: Event::Move { ent, hx, heading } } => {
-                let message = bincode::serialize(&Try { event: Event::Move { 
-                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                    hx, heading }}).unwrap();
                 conn.send_message(DefaultChannel::ReliableOrdered, message);
             }
             _ => {}
