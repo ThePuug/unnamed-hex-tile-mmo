@@ -17,42 +17,42 @@ pub fn update_positions(
     mut query: Query<(Entity, &Heading, &mut Hx, &mut Offset, Option<&mut AirTime>, Option<&KeyBits>)>,
 ) {
     for (ent, &heading, mut hx0, mut offset0, air_time, key_bits) in query.iter_mut() {
-        let px = Vec3::from(*hx0);
-        let curr = px + offset0.0;
-
-        let (floor, _) = map.find(*hx0, 10);
         let mut offset = *offset0;
+
+        let xy = Vec3::from(*hx0).xy();
+        let xy_curr = xy + offset0.0.xy();
+
+        let (hx_floor, _) = map.find(*hx0, 10);
     
         if let Some(mut air_time) = air_time { 
             if air_time.0 > 0. { air_time.0 -= time.delta_seconds(); }
             else {
-                let d_fall = time.delta_seconds() * 10.;
-                if floor.is_none() 
-                    || px.z + offset.0.z - d_fall > floor.unwrap().z as f32 + 1. { 
-                    offset.0.z -= d_fall; 
+                let z_fall = time.delta_seconds() * 10.;
+                if hx_floor.is_none() 
+                    || hx0.z as f32 + offset.0.z - z_fall > hx_floor.unwrap().z as f32 + 1. { 
+                    offset.0.z -= z_fall;
                 } else {
-                    offset.0.z = floor.unwrap().z as f32 - px.z + 1.;
+                    offset.0.z = hx_floor.unwrap().z as f32 - hx0.z as f32 + 1.;
                     commands.entity(ent).remove::<AirTime>();
                 }
             }
         }
 
-        let target = px.lerp(Vec3::from(*hx0 + heading.0),
+        let xy_target = xy.lerp(Vec3::from(*hx0 + heading.0).xy(),
             if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
             else { 0.25 }); 
         
-        let dist = curr.distance(target);
-        let ratio = 0_f32.max((dist - 100_f32 * time.delta_seconds()) / dist);
-        offset0.0 = curr.lerp(target, 1. - ratio) - px;
+        let xy_dist = xy_curr.distance(xy_target);
+        let ratio = 0_f32.max((xy_dist - 100_f32 * time.delta_seconds()) / xy_dist);
+        offset.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
 
-        let hx = Hx::from(px);
+        let hx = Hx::from(xy.extend(hx0.z as f32) + offset.0);
         if *hx0 != hx { 
             trace!("Moving {:?} from {:?} to {:?}", ent, *hx0, hx);
-            offset.0 = px - Vec3::from(hx);
+            offset0.0 = offset.0 - Vec3::from(hx - *hx0);
             *hx0 = hx;
             writer.send(Try { event: Event::Move { ent, hx, heading } }); 
-        }
-        *offset0 = offset;
+        } else { *offset0 = offset; }
     }
 }
 

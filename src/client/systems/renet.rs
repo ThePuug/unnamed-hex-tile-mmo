@@ -74,7 +74,6 @@ pub fn do_server_events(
                         }
                     }
                     EntityType::Decorator(desc) => {
-                        // despawn old tile (if any) and spawn new one
                         let loc = map.remove(hx);
                         if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
                         let loc = commands.spawn((
