@@ -28,7 +28,7 @@ use common::{
 };
 use server::{
     resources::{ *,
-        map::*,
+        terrain::*,
     },
     systems::{
         discover_tiles::*,

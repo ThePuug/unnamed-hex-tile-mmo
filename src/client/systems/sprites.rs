@@ -5,7 +5,10 @@ use bevy::prelude::*;
 use crate::{ *,
     common::{
         message::{*, Event},
-        components::hx::*,
+        components::{
+            hx::*,
+            keybits::*,
+        },
     },
 };
 
@@ -42,13 +45,14 @@ pub fn update_animations(
 
 pub fn update_transforms(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &Hx, &Heading, &mut Offset), Without<Actor>>,
+    mut query: Query<(&mut Transform, &Hx, &Heading, &mut Offset, Option<&KeyBits>)>,
 ) {
-    for (mut transform, &hx, &heading, mut offset0) in &mut query {
+    for (mut transform, &hx, &heading, mut offset0, key_bits) in &mut query {
         let px = Vec3::from(hx);
-        let curr = px + offset0.0;
-        let target = px.lerp(Vec3::from(hx + heading.0),0.25);
-        let dist = curr.distance(target);
+        let target = px.lerp(Vec3::from(hx + heading.0),
+            if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
+            else { 0.25 });
+        let dist = (px + offset0.0).distance(target);
         let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
         offset0.0 = offset0.0.lerp(target - px, 1. - ratio);
         transform.translation = (hx, *offset0).into_screen();

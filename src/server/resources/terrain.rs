@@ -11,4 +11,3 @@ impl Terrain {
         (self.generator.get([x as f64 / 3000., y as f64 / 3000.]) * 10.) as i16
     }
 }
-

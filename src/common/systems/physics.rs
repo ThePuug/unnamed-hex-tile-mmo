@@ -14,42 +14,40 @@ pub fn update_positions(
     mut writer: EventWriter<Try>,
     map: Res<Map>,
     time: Res<Time>,
-    mut query: Query<(Entity, &Heading, &KeyBits, &mut Hx, &mut Offset, Option<&mut AirTime>)>,
+    mut query: Query<(Entity, &Heading, &mut Hx, &mut Offset, Option<&mut AirTime>, Option<&KeyBits>)>,
 ) {
-    for (ent, &heading, &key_bits, mut hx0, mut offset0, air_time) in query.iter_mut() {
+    for (ent, &heading, mut hx0, mut offset0, air_time, key_bits) in query.iter_mut() {
         let px = Vec3::from(*hx0);
         let curr = px + offset0.0;
 
-        let (floor, _) = map.find(*hx0, 3);
+        let (floor, _) = map.find(*hx0, 10);
         let mut offset = *offset0;
     
         if let Some(mut air_time) = air_time { 
-            if air_time.0 > 0. {air_time.0 -= time.delta_seconds(); }
-            else { commands.entity(ent).remove::<AirTime>(); }
-        } else {
-            let d_fall = time.delta_seconds() * 10.;
-            if floor.is_none() 
-                || px.z + offset.0.z - d_fall > floor.unwrap().z as f32 + 1. { 
-                offset.0.z -= d_fall; 
-            } else {
-                offset.0.z = floor.unwrap().z as f32 - px.z + 1.;
+            if air_time.0 > 0. { air_time.0 -= time.delta_seconds(); }
+            else {
+                let d_fall = time.delta_seconds() * 10.;
+                if floor.is_none() 
+                    || px.z + offset.0.z - d_fall > floor.unwrap().z as f32 + 1. { 
+                    offset.0.z -= d_fall; 
+                } else {
+                    offset.0.z = floor.unwrap().z as f32 - px.z + 1.;
+                    commands.entity(ent).remove::<AirTime>();
+                }
             }
         }
-        let px = Vec3::from(*hx0) + offset.0;
 
-        let target = if key_bits & (KB_HEADING_Q | KB_HEADING_R) { 
-            px.lerp(Vec3::from(*hx0 + heading.0),0.25) 
-        } else {
-            px.lerp(Vec3::from(*hx0 + heading.0),1.25) 
-        };
+        let target = px.lerp(Vec3::from(*hx0 + heading.0),
+            if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
+            else { 0.25 }); 
         
         let dist = curr.distance(target);
         let ratio = 0_f32.max((dist - 100_f32 * time.delta_seconds()) / dist);
         offset0.0 = curr.lerp(target, 1. - ratio) - px;
-        let px = Vec3::from(*hx0) + offset.0;
 
         let hx = Hx::from(px);
         if *hx0 != hx { 
+            trace!("Moving {:?} from {:?} to {:?}", ent, *hx0, hx);
             offset.0 = px - Vec3::from(hx);
             *hx0 = hx;
             writer.send(Try { event: Event::Move { ent, hx, heading } }); 

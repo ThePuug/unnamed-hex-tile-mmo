@@ -18,18 +18,11 @@ pub struct Map {
 
 impl Lookup for Map {
     fn find(&self, hx: Hx, dist: u8) -> (Option<Hx>, Entity) {
-        match self.map.get(&hx) {
-            Some(ent) => (Some(hx), *ent),
-            None => {
-                for i in 1..=dist as i16 {
-                    let hx = hx + Hx { z: 0-i, ..hx };
-                    if let Some(ent) = self.map.get(&hx) { return (Some(hx), *ent); }
-                    let hx = hx + Hx { z: i, ..hx };
-                    if let Some(ent) = self.map.get(&hx) { return (Some(hx), *ent); }
-                }
-                (None, Entity::PLACEHOLDER)
-            },
+        for i in 0..=dist as i16 {
+            let hx = hx + Hx { z: 0-i, ..hx };
+            if let Some(ent) = self.map.get(&hx) { return (Some(hx), *ent); }
         }
+        (None, Entity::PLACEHOLDER)
     }
 
     fn get(&self, hx: Hx) -> Entity {
