@@ -19,12 +19,12 @@ pub fn try_input(
             Try { event: Event::Input { ent, key_bits } } => {
                 let (mut heading0, mut offset0, mut key_bits0, air_time0) = query.get_mut(ent).unwrap();
                 let heading = Heading(
-                    if key_bits & (KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG) { Hx { q: 1, r: -1, z: 0 } }
-                    else if key_bits & (KB_HEADING_Q | KB_HEADING_R) { Hx { q: -1, r: 1, z: 0 } }
-                    else if key_bits & (KB_HEADING_Q | KB_HEADING_NEG) { Hx { q: -1, r: 0, z: 0 } }
-                    else if key_bits & (KB_HEADING_R | KB_HEADING_NEG) { Hx { q: 0, r: -1, z: 0 } }
-                    else if key_bits & KB_HEADING_Q { Hx { q: 1, r: 0, z: 0 } }
-                    else if key_bits & KB_HEADING_R { Hx { q: 0, r: 1, z: 0 } }
+                    if !(key_bits ^ (KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG)) { Hx { q: 1, r: -1, z: 0 } }
+                    else if !(key_bits ^ (KB_HEADING_Q | KB_HEADING_R)) { Hx { q: -1, r: 1, z: 0 } }
+                    else if !(key_bits ^ (KB_HEADING_Q | KB_HEADING_NEG)) { Hx { q: -1, r: 0, z: 0 } }
+                    else if !(key_bits ^ (KB_HEADING_R | KB_HEADING_NEG)) { Hx { q: 0, r: -1, z: 0 } }
+                    else if !(key_bits ^ KB_HEADING_Q) { Hx { q: 1, r: 0, z: 0 } }
+                    else if !(key_bits ^ KB_HEADING_R) { Hx { q: 0, r: 1, z: 0 } }
                     else { Hx::default() });
                 if *heading0 != heading { *heading0 = heading; }
                 if key_bits & KB_JUMP && air_time0.is_none() {

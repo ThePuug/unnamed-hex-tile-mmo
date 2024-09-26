@@ -47,12 +47,8 @@ pub fn update_positions(
         offset.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
 
         let hx = Hx::from(xy.extend(hx0.z as f32) + offset.0);
-        if *hx0 != hx { 
-            trace!("Moving {:?} from {:?} to {:?}", ent, *hx0, hx);
-            offset0.0 = offset.0 - Vec3::from(hx - *hx0);
-            *hx0 = hx;
-            writer.send(Try { event: Event::Move { ent, hx, heading } }); 
-        } else { *offset0 = offset; }
+        if *hx0 != hx { writer.send(Try { event: Event::Move { ent, hx, heading } }); }
+        *offset0 = offset;
     }
 }
 
@@ -64,6 +60,7 @@ pub fn do_move(
         match message {
             Do { event: Event::Move { ent, hx, heading } } => {
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
+                    trace!("from: {:?} to: {:?}", *hx0, hx);
                     *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
                     *hx0 = hx; 
                     *heading0 = heading;
