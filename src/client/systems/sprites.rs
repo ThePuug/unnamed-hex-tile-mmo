@@ -58,12 +58,3 @@ pub fn update_transforms(
         transform.translation = (hx, *offset0).into_screen();
     }
 }
-
-pub fn update_headings(
-    mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
-) {
-    for (_ent, &hx, &heading) in &mut query {
-        writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
-    }
-}

@@ -14,15 +14,15 @@ pub fn update_positions(
     mut writer: EventWriter<Try>,
     map: Res<Map>,
     time: Res<Time>,
-    mut query: Query<(Entity, &Heading, &mut Hx, &mut Offset, Option<&mut AirTime>, Option<&KeyBits>)>,
+    mut query: Query<(Entity, &Heading, &Hx, &mut Offset, Option<&mut AirTime>, Option<&KeyBits>)>,
 ) {
-    for (ent, &heading, mut hx0, mut offset0, air_time, key_bits) in query.iter_mut() {
+    for (ent, &heading, &hx0, mut offset0, air_time, key_bits) in query.iter_mut() {
         let mut offset = *offset0;
 
-        let xy = Vec3::from(*hx0).xy();
+        let xy = Vec3::from(hx0).xy();
         let xy_curr = xy + offset0.0.xy();
 
-        let (hx_floor, _) = map.find(*hx0, 10);
+        let (hx_floor, _) = map.find(hx0, 10);
     
         if let Some(mut air_time) = air_time { 
             if air_time.0 > 0. { air_time.0 -= time.delta_seconds(); }
@@ -38,7 +38,7 @@ pub fn update_positions(
             }
         }
 
-        let xy_target = xy.lerp(Vec3::from(*hx0 + heading.0).xy(),
+        let xy_target = xy.lerp(Vec3::from(hx0 + heading.0).xy(),
             if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
             else { 0.25 }); 
         
@@ -47,7 +47,7 @@ pub fn update_positions(
         offset.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
 
         let hx = Hx::from(xy.extend(hx0.z as f32) + offset.0);
-        if *hx0 != hx { writer.send(Try { event: Event::Move { ent, hx, heading } }); }
+        if hx0 != hx { writer.send(Try { event: Event::Move { ent, hx, heading } }); }
         *offset0 = offset;
     }
 }
@@ -62,11 +62,21 @@ pub fn do_move(
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
                     trace!("from: {:?} to: {:?}", *hx0, hx);
                     *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
-                    *hx0 = hx; 
-                    *heading0 = heading;
+                    if *hx0 != hx { *hx0 = hx; }
+                    if *heading0 != heading { *heading0 = heading; }
                 }
             }
             _ => {}
         }
+    }
+}
+
+pub fn update_headings(
+    mut writer: EventWriter<Try>,
+    mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
+) {
+    for (_ent, &hx, &heading) in &mut query {
+        writer.send(Try { event: Event::Move { ent: _ent, hx, heading } });
+        writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
     }
 }

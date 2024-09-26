@@ -25,7 +25,7 @@ pub fn try_input(
                     else if !(key_bits ^ (KB_HEADING_R | KB_HEADING_NEG)) { Hx { q: 0, r: -1, z: 0 } }
                     else if !(key_bits ^ KB_HEADING_Q) { Hx { q: 1, r: 0, z: 0 } }
                     else if !(key_bits ^ KB_HEADING_R) { Hx { q: 0, r: 1, z: 0 } }
-                    else { Hx::default() });
+                    else { heading0.0 });
                 if *heading0 != heading { *heading0 = heading; }
                 if key_bits & KB_JUMP && air_time0.is_none() {
                     commands.entity(ent).insert(AirTime(0.5));

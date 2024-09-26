@@ -72,6 +72,7 @@ fn main() {
         try_local_events,
         try_input,
         update_positions,
+        update_headings,
         do_events,
         do_move,
     ));
