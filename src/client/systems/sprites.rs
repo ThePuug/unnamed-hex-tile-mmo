@@ -3,9 +3,9 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::{ *,
-    common::{
-        message::{*, Event},
-        components::hx::*,
+    common::components::{
+        hx::*,
+        keybits::*,
     },
 };
 
@@ -42,42 +42,16 @@ pub fn update_animations(
 
 pub fn update_transforms(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &Hx, &Heading, &mut Offset), Without<Actor>>,
+    mut query: Query<(&mut Transform, &Hx, &Heading, &mut Offset, Option<&KeyBits>)>,
 ) {
-    for (mut transform, &hx, &heading, mut offset0) in &mut query {
+    for (mut transform, &hx, &heading, mut offset0, key_bits) in &mut query {
         let px = Vec3::from(hx);
-        let curr = px + offset0.0;
-        let target = px.lerp(Vec3::from(hx + heading.0),0.25);
-        let dist = curr.distance(target);
+        let target = px.lerp(Vec3::from(hx + heading.0),
+            if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
+            else { 0.25 });
+        let dist = (px + offset0.0).distance(target);
         let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
         offset0.0 = offset0.0.lerp(target - px, 1. - ratio);
         transform.translation = (hx, *offset0).into_screen();
-    }
-}
-
-pub fn update_headings(
-    mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
-) {
-    for (_ent, &hx, &heading) in &mut query {
-        writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
-    }
-}
-
-pub fn update_positions(
-    mut reader: EventReader<Do>,
-    mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
-) {
-    for &message in reader.read() {
-        match message {
-            Do { event: Event::Move { ent, hx, heading } } => {
-                if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                    *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
-                    *hx0 = hx; 
-                    *heading0 = heading;
-                }
-            }
-            _ => {}
-        }
     }
 }

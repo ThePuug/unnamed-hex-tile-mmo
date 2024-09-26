@@ -23,6 +23,7 @@ use common::{
     components::{ *,
     },
     resources::map::*,
+    systems::physics::*,
 };
 use client::{
     components::animationconfig::*,
@@ -93,13 +94,14 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         do_server_events,
-        handle_input,
-        update_animations,
-        update_transforms,
-        update_positions,
-        update_headings,
+        do_input,
+        do_move,
         try_events,
-        camera,
+        update_animations,
+        update_camera,
+        update_headings,
+        update_transforms,
+        handle_input,
     ));
 
     let (client, transport) = new_renet_client();

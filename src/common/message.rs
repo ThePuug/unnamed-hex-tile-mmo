@@ -2,7 +2,10 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{ *,
-    common::components::hx::*,
+    common::components::{
+        hx::*,
+        keybits::*,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

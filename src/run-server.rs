@@ -24,17 +24,16 @@ use common::{
     message::*,
     components::*,
     resources::map::*,
+    systems::physics::*,
 };
 use server::{
     resources::{ *,
-        map::*,
+        terrain::*,
     },
     systems::{
         discover_tiles::*,
-        do_manage_connections::*,
-        do_events::*,
+        renet::*,
         input::*,
-        physics::*,
     },
 };
 
@@ -69,17 +68,19 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         do_manage_connections,
-        try_client_events,
-        try_discover,
-        try_input,
-        try_move,
-        update_positions,
         do_events,
+        do_input,
+        do_move,
+        try_client_events,
+        try_local_events,
+        try_input,
+        update_headings,
     ));
 
     let (server, transport) = new_renet_server();
     app.init_resource::<Lobby>();
-    app.init_resource::<TerrainedMap>();
+    app.init_resource::<Map>();
+    app.init_resource::<Terrain>();
     app.insert_resource(server);
     app.insert_resource(transport);
 

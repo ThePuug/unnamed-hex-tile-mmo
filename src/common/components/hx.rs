@@ -1,6 +1,6 @@
 use std::{
     f64::consts::SQRT_3, 
-    ops::Add
+    ops::{Add, Sub}
 };
 
 use bevy::prelude::*;
@@ -30,6 +30,13 @@ impl Add<Hx> for Hx {
     type Output = Hx;
     fn add(self, rhs: Hx) -> Self::Output {
         Hx { q: self.q + rhs.q, r: self.r + rhs.r, z: self.z + rhs.z }
+    }
+}
+
+impl Sub<Hx> for Hx {
+    type Output = Hx;
+    fn sub(self, rhs: Hx) -> Self::Output {
+        Hx { q: self.q - rhs.q, r: self.r - rhs.r, z: self.z - rhs.z }
     }
 }
 

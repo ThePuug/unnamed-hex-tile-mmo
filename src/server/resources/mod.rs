@@ -1,4 +1,4 @@
-pub mod map;
+pub mod terrain;
 
 use std::collections::HashMap;
 

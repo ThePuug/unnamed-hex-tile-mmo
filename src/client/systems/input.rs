@@ -2,62 +2,76 @@ use bevy::prelude::*;
 
 use crate::{*,
     common::{
-        components::hx::*,
+        components::{
+            hx::*,
+            keybits::*,
+        },
         message::{*, Event},
     },
 };
 
+pub const KEYCODES_JUMP: [KeyCode; 1] = [KeyCode::Space];
+pub const KEYCODES_UP: [KeyCode; 2] = [KeyCode::ArrowUp, KeyCode::Lang3];
+pub const KEYCODES_DOWN: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::NumpadEnter];
+pub const KEYCODES_LEFT: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::Convert];
+pub const KEYCODES_RIGHT: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::NonConvert];
+
 pub fn handle_input(
     mut writer: EventWriter<Try>,
-    time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &Hx, &mut Offset, &mut Heading, &mut Transform), With<Actor>>,
+    mut query: Query<(Entity, &mut Heading, &mut KeyBits), With<Actor>>,
 ) {
-    if let Ok((ent, &hx0, mut offset0, mut heading0, mut transform0)) = query.get_single_mut() {
+    keyboard.get_just_pressed().for_each(|key| { trace!("key pressed: {:?}", key) });
+    if let Ok((ent, mut heading0, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
-        if keyboard.any_just_pressed([KeyCode::Space]) { key_bits.0 |= 1 << 0; }
-        if key_bits != KeyBits::default() { writer.send(Try { event: Event::Input { ent, key_bits } }); }
+        if keyboard.any_just_pressed(KEYCODES_JUMP) { key_bits |= KB_JUMP; }
 
-        let px = Vec3::from(hx0);
-        let curr = px + offset0.0;
-        let mut heading = Heading::default();
-        if keyboard.any_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight,]) {
-            if keyboard.any_pressed([KeyCode::ArrowUp]) {
-                if keyboard.any_pressed([KeyCode::ArrowLeft]) || !keyboard.any_pressed([KeyCode::ArrowRight])
-                    &&(heading0.0 == Hx {q:-1, r: 0, z: 0}
-                    || heading0.0 == Hx {q:-1, r: 1, z: 0}
-                    || heading0.0 == Hx {q: 1, r:-1, z: 0}) { heading = Heading(Hx {q:-1, r: 1, z: 0}); }
-                else  { heading = Heading(Hx {q: 0, r: 1, z: 0}); }
-            } else if keyboard.any_pressed([KeyCode::ArrowDown]) {
-                if keyboard.any_pressed([KeyCode::ArrowRight]) || !keyboard.any_pressed([KeyCode::ArrowLeft])
-                    &&(heading0.0 == Hx {q: 1, r: 0, z: 0}
-                    || heading0.0 == Hx {q: 1, r:-1, z: 0}
-                    || heading0.0 == Hx {q:-1, r: 1, z: 0}) { heading = Heading(Hx {q: 1, r: -1, z: 0}); }
-                else { heading = Heading(Hx {q: 0, r:-1, z: 0}); }
+        let mut heading = *heading0;
+        if keyboard.any_pressed([KEYCODES_UP, KEYCODES_DOWN, KEYCODES_LEFT, KEYCODES_RIGHT].concat()) {
+            if keyboard.any_pressed(KEYCODES_UP) {
+                if keyboard.any_pressed(KEYCODES_LEFT) || !keyboard.any_pressed(KEYCODES_RIGHT)
+                    &&(heading.0 == Hx {q:-1, r: 0, z: 0}
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}) { 
+                        heading.0 = Hx {q:-1, r: 1, z: 0}; 
+                        key_bits |= KB_HEADING_Q | KB_HEADING_R;
+                    }
+                else  { 
+                    heading.0 = Hx {q: 0, r: 1, z: 0};
+                    key_bits |= KB_HEADING_R
+                }
+            } else if keyboard.any_pressed(KEYCODES_DOWN) {
+                if keyboard.any_pressed(KEYCODES_RIGHT) || !keyboard.any_pressed(KEYCODES_LEFT)
+                    &&(heading.0 == Hx {q: 1, r: 0, z: 0}
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}) { 
+                        heading.0 = Hx {q: 1, r: -1, z: 0};
+                        key_bits |= KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG; 
+                    }
+                else { 
+                    heading.0 = Hx {q: 0, r:-1, z: 0};
+                    key_bits |= KB_HEADING_R | KB_HEADING_NEG;
+                }
             } 
-            else if keyboard.any_pressed([KeyCode::ArrowRight]) { heading = Heading(Hx {q: 1, r: 0, z: 0}); }
-            else if keyboard.any_pressed([KeyCode::ArrowLeft]) { heading = Heading(Hx {q:-1, r: 0, z: 0}); }
+            else if keyboard.any_pressed(KEYCODES_RIGHT) { 
+                heading.0 = Hx {q: 1, r: 0, z: 0}; 
+                key_bits |= KB_HEADING_Q
+            } else if keyboard.any_pressed(KEYCODES_LEFT) {
+                heading.0 = Hx {q:-1, r: 0, z: 0}; 
+                key_bits |= KB_HEADING_Q | KB_HEADING_NEG;
+            }
         }
 
-        let target = match heading.0 {
-            Hx { q: 0, r: 0, z: 0} => px.lerp(Vec3::from(hx0 + heading0.0),0.25),
-            _ => px.lerp(Vec3::from(hx0 + heading.0),1.25),
-        };
-        
-        let dist = curr.distance(target);
-        let ratio = 0_f32.max((dist - 100_f32 * time.delta_seconds()) / dist);
-        offset0.0 = curr.lerp(target, 1. - ratio) - px;
-        transform0.translation = (hx0, *offset0).into_screen();
+        if *heading0 != heading { *heading0 = heading; }
 
-        let hx = Hx::from(px + offset0.0);
-        if hx != hx0 || heading.0 != Hx::default() && heading.0 != heading0.0 { 
-            heading0.0 = heading.0;
-            writer.send(Try { event: Event::Move { ent, hx, heading } }); 
+        if *keybits0 != key_bits {
+            *keybits0 = key_bits;
+            writer.send(Try { event: Event::Input { ent, key_bits } });
         }
     }
 }
 
-pub fn camera(
+pub fn update_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera: Query<(&mut Transform, &mut OrthographicProjection), (With<Actor>, Without<Hx>, Without<Offset>)>,
     actor: Query<&Transform, (With<Actor>, With<Hx>, With<Offset>)>,
