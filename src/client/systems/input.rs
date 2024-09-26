@@ -26,40 +26,43 @@ pub fn handle_input(
         let mut key_bits = KeyBits::default();
         if keyboard.any_just_pressed(KEYCODES_JUMP) { key_bits |= KB_JUMP; }
 
+        let mut heading = *heading0;
         if keyboard.any_pressed([KEYCODES_UP, KEYCODES_DOWN, KEYCODES_LEFT, KEYCODES_RIGHT].concat()) {
             if keyboard.any_pressed(KEYCODES_UP) {
                 if keyboard.any_pressed(KEYCODES_LEFT) || !keyboard.any_pressed(KEYCODES_RIGHT)
-                    &&(heading0.0 == Hx {q:-1, r: 0, z: 0}
-                    || heading0.0 == Hx {q:-1, r: 1, z: 0}
-                    || heading0.0 == Hx {q: 1, r:-1, z: 0}) { 
-                        heading0.0 = Hx {q:-1, r: 1, z: 0}; 
+                    &&(heading.0 == Hx {q:-1, r: 0, z: 0}
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}) { 
+                        heading.0 = Hx {q:-1, r: 1, z: 0}; 
                         key_bits |= KB_HEADING_Q | KB_HEADING_R;
                     }
                 else  { 
-                    heading0.0 = Hx {q: 0, r: 1, z: 0};
+                    heading.0 = Hx {q: 0, r: 1, z: 0};
                     key_bits |= KB_HEADING_R
                 }
             } else if keyboard.any_pressed(KEYCODES_DOWN) {
                 if keyboard.any_pressed(KEYCODES_RIGHT) || !keyboard.any_pressed(KEYCODES_LEFT)
-                    &&(heading0.0 == Hx {q: 1, r: 0, z: 0}
-                    || heading0.0 == Hx {q: 1, r:-1, z: 0}
-                    || heading0.0 == Hx {q:-1, r: 1, z: 0}) { 
-                        heading0.0 = Hx {q: 1, r: -1, z: 0};
+                    &&(heading.0 == Hx {q: 1, r: 0, z: 0}
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}) { 
+                        heading.0 = Hx {q: 1, r: -1, z: 0};
                         key_bits |= KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG; 
                     }
                 else { 
-                    heading0.0 = Hx {q: 0, r:-1, z: 0};
+                    heading.0 = Hx {q: 0, r:-1, z: 0};
                     key_bits |= KB_HEADING_R | KB_HEADING_NEG;
                 }
             } 
             else if keyboard.any_pressed(KEYCODES_RIGHT) { 
-                heading0.0 = Hx {q: 1, r: 0, z: 0}; 
+                heading.0 = Hx {q: 1, r: 0, z: 0}; 
                 key_bits |= KB_HEADING_Q
             } else if keyboard.any_pressed(KEYCODES_LEFT) {
-                heading0.0 = Hx {q:-1, r: 0, z: 0}; 
+                heading.0 = Hx {q:-1, r: 0, z: 0}; 
                 key_bits |= KB_HEADING_Q | KB_HEADING_NEG;
             }
         }
+
+        if *heading0 != heading { *heading0 = heading; }
 
         if *keybits0 != key_bits {
             *keybits0 = key_bits;
@@ -68,7 +71,7 @@ pub fn handle_input(
     }
 }
 
-pub fn camera(
+pub fn update_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera: Query<(&mut Transform, &mut OrthographicProjection), (With<Actor>, Without<Hx>, Without<Offset>)>,
     actor: Query<&Transform, (With<Actor>, With<Hx>, With<Offset>)>,

@@ -85,9 +85,6 @@ pub fn try_client_events(
             let message = bincode::deserialize(&serialized).unwrap();
             trace!("Message: {:?}", message);
             match message {
-                Try { event: Event::Discover { hx } } => {
-                    writer.send(Try { event: Event::Discover { hx } });
-                }
                 Try { event: Event::Input { key_bits, .. } } => {
                     if let Some(&ent) = lobby.0.get(&client_id) {
                         writer.send(Try { event: Event::Input { ent, key_bits }});

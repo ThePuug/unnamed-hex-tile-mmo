@@ -17,7 +17,7 @@ pub fn try_local_events(
         trace!("Message: {:?}", message);
         match message {
             Try { event: Event::Discover { hx, .. } } => {
-                let (loc, ent) = map.find(hx, 10);
+                let (loc, ent) = map.find(hx + Hx { z: 1, ..default() }, -10);
                 if let Some(hx) = loc {
                     writer.send(Do { event: Event::Spawn { 
                         ent,

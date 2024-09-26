@@ -9,7 +9,7 @@ use crate::{ *,
     },
 };
 
-pub fn update_positions(
+pub fn do_input(
     mut commands: Commands,
     mut writer: EventWriter<Try>,
     map: Res<Map>,
@@ -22,7 +22,7 @@ pub fn update_positions(
         let xy = Vec3::from(hx0).xy();
         let xy_curr = xy + offset0.0.xy();
 
-        let (hx_floor, _) = map.find(hx0, 10);
+        let (hx_floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -10);
     
         if let Some(mut air_time) = air_time { 
             if air_time.0 > 0. { air_time.0 -= time.delta_seconds(); }
@@ -32,7 +32,7 @@ pub fn update_positions(
                     || hx0.z as f32 + offset.0.z - z_fall > hx_floor.unwrap().z as f32 + 1. { 
                     offset.0.z -= z_fall;
                 } else {
-                    offset.0.z = hx_floor.unwrap().z as f32 - hx0.z as f32 + 1.;
+                    offset.0.z = hx_floor.unwrap().z as f32 + 1. - hx0.z as f32;
                     commands.entity(ent).remove::<AirTime>();
                 }
             }
@@ -60,10 +60,12 @@ pub fn do_move(
         match message {
             Do { event: Event::Move { ent, hx, heading } } => {
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                    trace!("from: {:?} to: {:?}", *hx0, hx);
                     *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
-                    if *hx0 != hx { *hx0 = hx; }
-                    if *heading0 != heading { *heading0 = heading; }
+                    if *hx0 != hx { 
+                        *hx0 = hx; 
+                        *heading0 = heading;
+                    }
+                    else if *heading0 != heading { *heading0 = heading; }
                 }
             }
             _ => {}

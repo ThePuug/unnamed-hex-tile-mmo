@@ -3,12 +3,9 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::{ *,
-    common::{
-        message::{*, Event},
-        components::{
-            hx::*,
-            keybits::*,
-        },
+    common::components::{
+        hx::*,
+        keybits::*,
     },
 };
 

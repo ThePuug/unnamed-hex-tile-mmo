@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use crate::common::components::hx::*;
 
 pub trait Lookup {
-    fn find(&self, hx: Hx, dist: u8) -> (Option<Hx>, Entity);
+    fn find(&self, hx: Hx, dist: i8) -> (Option<Hx>, Entity);
     fn get(&self, hx: Hx) -> Entity;
     fn insert(&mut self, hx: Hx, ent: Entity);
     fn remove(&mut self, hx: Hx) -> Entity;
@@ -17,9 +17,9 @@ pub struct Map {
 }
 
 impl Lookup for Map {
-    fn find(&self, hx: Hx, dist: u8) -> (Option<Hx>, Entity) {
+    fn find(&self, hx: Hx, dist: i8) -> (Option<Hx>, Entity) {
         for i in 0..=dist as i16 {
-            let hx = hx + Hx { z: 0-i, ..hx };
+            let hx = hx + Hx { z: 0+i, ..hx };
             if let Some(ent) = self.map.get(&hx) { return (Some(hx), *ent); }
         }
         (None, Entity::PLACEHOLDER)

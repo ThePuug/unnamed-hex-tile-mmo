@@ -68,13 +68,13 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         do_manage_connections,
+        do_events,
+        do_input,
+        do_move,
         try_client_events,
         try_local_events,
         try_input,
-        update_positions,
         update_headings,
-        do_events,
-        do_move,
     ));
 
     let (server, transport) = new_renet_server();
