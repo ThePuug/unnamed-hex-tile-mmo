@@ -17,14 +17,13 @@ pub const KEYCODES_LEFT: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::Convert];
 pub const KEYCODES_RIGHT: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::NonConvert];
 
 pub fn handle_input(
-    mut writer: EventWriter<Try>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &mut Heading, &mut KeyBits), With<Actor>>,
+    mut query: Query<(&mut Heading, &mut KeyBits), With<Actor>>,
 ) {
     keyboard.get_just_pressed().for_each(|key| { trace!("key pressed: {:?}", key) });
-    if let Ok((ent, mut heading0, mut keybits0)) = query.get_single_mut() {
+    if let Ok((mut heading0, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
-        if keyboard.any_just_pressed(KEYCODES_JUMP) { key_bits |= KB_JUMP; }
+        key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed(KEYCODES_JUMP));
 
         let mut heading = *heading0;
         if keyboard.any_pressed([KEYCODES_UP, KEYCODES_DOWN, KEYCODES_LEFT, KEYCODES_RIGHT].concat()) {
@@ -34,11 +33,11 @@ pub fn handle_input(
                     || heading.0 == Hx {q:-1, r: 1, z: 0}
                     || heading.0 == Hx {q: 1, r:-1, z: 0}) { 
                         heading.0 = Hx {q:-1, r: 1, z: 0}; 
-                        key_bits |= KB_HEADING_Q | KB_HEADING_R;
+                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true);
                     }
                 else  { 
                     heading.0 = Hx {q: 0, r: 1, z: 0};
-                    key_bits |= KB_HEADING_R
+                    key_bits.set_pressed([KB_HEADING_R], true);
                 }
             } else if keyboard.any_pressed(KEYCODES_DOWN) {
                 if keyboard.any_pressed(KEYCODES_RIGHT) || !keyboard.any_pressed(KEYCODES_LEFT)
@@ -46,28 +45,25 @@ pub fn handle_input(
                     || heading.0 == Hx {q: 1, r:-1, z: 0}
                     || heading.0 == Hx {q:-1, r: 1, z: 0}) { 
                         heading.0 = Hx {q: 1, r: -1, z: 0};
-                        key_bits |= KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG; 
+                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true); 
                     }
                 else { 
                     heading.0 = Hx {q: 0, r:-1, z: 0};
-                    key_bits |= KB_HEADING_R | KB_HEADING_NEG;
+                    key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                 }
             } 
             else if keyboard.any_pressed(KEYCODES_RIGHT) { 
+                key_bits.set_pressed([KB_HEADING_Q], true);
                 heading.0 = Hx {q: 1, r: 0, z: 0}; 
-                key_bits |= KB_HEADING_Q
             } else if keyboard.any_pressed(KEYCODES_LEFT) {
+                key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
                 heading.0 = Hx {q:-1, r: 0, z: 0}; 
-                key_bits |= KB_HEADING_Q | KB_HEADING_NEG;
             }
         }
 
         if *heading0 != heading { *heading0 = heading; }
-
-        if *keybits0 != key_bits {
-            *keybits0 = key_bits;
-            writer.send(Try { event: Event::Input { ent, key_bits } });
-        }
+        if *keybits0 != key_bits { *keybits0 = key_bits; }
+        // writer.send(Try { event: Event::Input { ent, key_bits } });
     }
 }
 
@@ -84,3 +80,13 @@ pub fn update_camera(
     }
 }
 
+pub fn generate_input(
+    mut writer: EventWriter<Try>,
+    time: Res<Time>,
+    query: Query<(Entity, &KeyBits), With<Actor>>,
+) {
+    if let Ok((ent, &key_bits)) = query.get_single() {
+        let dt = (time.delta_seconds() * 1000.) as u16;
+        writer.send(Try { event: Event::Input { ent, key_bits, dt } });
+    }
+}

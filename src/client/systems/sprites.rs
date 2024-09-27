@@ -47,7 +47,7 @@ pub fn update_transforms(
     for (mut transform, &hx, &heading, mut offset0, key_bits) in &mut query {
         let px = Vec3::from(hx);
         let target = px.lerp(Vec3::from(hx + heading.0),
-            if key_bits.is_some() && (*(key_bits.unwrap()) & (KB_HEADING_Q | KB_HEADING_R)) { 1.25 }
+            if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
             else { 0.25 });
         let dist = (px + offset0.0).distance(target);
         let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);

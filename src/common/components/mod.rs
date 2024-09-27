@@ -39,10 +39,8 @@ impl IntoScreen for (Hx, Offset) {
 pub struct Heading(pub Hx);
 
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
-pub struct AirTime(pub f32);
+pub struct AirTime(pub i16);
 
 #[derive(Clone, Component, Copy, Default)] 
 pub struct Actor;
 
-#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
-pub struct LastSeen(pub u64);

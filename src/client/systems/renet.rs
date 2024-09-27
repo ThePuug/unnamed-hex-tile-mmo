@@ -7,6 +7,7 @@ use crate::{*,
         message::{*, Event},
         components::hx::*,
     },
+    client::resources::*,
 };
 
 pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
@@ -123,19 +124,33 @@ pub fn try_events(
     mut conn: ResMut<RenetClient>,
     mut messages: EventReader<Try>,
     l2r: Res<EntityMap>,
+    mut queue: ResMut<InputQueue>,
 ) {
     for &message in messages.read() {
         match message {
-            Try { event: Event::Discover { hx } } => {
-                let message = bincode::serialize(&Try { event: Event::Discover { 
-                    hx }}).unwrap();
-                conn.send_message(DefaultChannel::ReliableOrdered, message);
+            Try { event: Event::Move { ent, .. } } => {
+                if let Some(key_bits_last) = queue.0.pop() {
+                    let message = bincode::serialize(&Try { event: Event::Input { 
+                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                        key_bits: key_bits_last.key_bits, 
+                        dt: key_bits_last.dt }}).unwrap();
+                    conn.send_message(DefaultChannel::ReliableOrdered, message);
+                }
             }
-            Try { event: Event::Input { ent, key_bits } } => {
-                let message = bincode::serialize(&Try { event: Event::Input { 
-                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                    key_bits }}).unwrap();
-                conn.send_message(DefaultChannel::ReliableOrdered, message);
+            Try { event: Event::Input { ent, key_bits, dt } } => {
+                let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt });
+                if key_bits.key_bits != key_bits_last.key_bits.key_bits
+                    || key_bits_last.dt > 1000 {
+                    trace!("key_bits: {:?} for {:?}", key_bits_last.key_bits, key_bits_last.dt);
+                    let message = bincode::serialize(&Try { event: Event::Input { 
+                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                        key_bits: key_bits_last.key_bits, 
+                        dt: key_bits_last.dt }}).unwrap();
+                    conn.send_message(DefaultChannel::ReliableOrdered, message);
+                    key_bits_last = InputAccumulator { key_bits, dt: 0 };
+                }
+                key_bits_last.dt += dt;
+                queue.0.push(key_bits_last);
             }
             _ => {}
         }

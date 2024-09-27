@@ -93,6 +93,7 @@ fn main() {
     app.add_systems(Startup, setup);
     app.add_systems(Update, (
         panic_on_error_system,
+        generate_input,
         do_server_events,
         do_input,
         do_move,
@@ -108,6 +109,7 @@ fn main() {
 
     app.init_resource::<EntityMap>();
     app.init_resource::<Map>();
+    app.init_resource::<InputQueue>();
     app.insert_resource(client);
     app.insert_resource(transport);
 
