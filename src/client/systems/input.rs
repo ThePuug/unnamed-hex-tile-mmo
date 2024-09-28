@@ -94,14 +94,18 @@ pub fn update_transforms(
     time: Res<Time>,
     mut query: Query<(&Hx, &Heading, &mut Offset, &mut Transform, Option<&KeyBits>)>,
 ) {
-    for (&hx0, &heading0, mut offset0, mut transform, key_bits) in &mut query {
-        let px = Vec3::from(hx0) + offset0.0;
-        let target = px.lerp(Vec3::from(hx0 + heading0.0),
+    for (&hx, &heading, mut offset0, mut transform0, key_bits) in &mut query {
+        let px = Vec3::from(hx);
+        let curr = px + offset0.0;
+        let xy = Vec3::from(Hx::from(curr)).xy();
+
+        let target = xy.lerp(Vec3::from(hx + heading.0).xy(),
         if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
         else { 0.25 });
-        let dist = (px + offset0.0).distance(target);
+        
+        let dist = curr.xy().distance(target);
         let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
-        offset0.0 = offset0.0.lerp(target - px, 1. - ratio);
-        transform.translation = (hx0, *offset0).into_screen(); 
+        offset0.0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.0.z);
+        transform0.translation = (hx, *offset0).into_screen(); 
     }
 }

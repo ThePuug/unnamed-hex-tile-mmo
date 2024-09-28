@@ -21,8 +21,9 @@ pub fn do_input(
                 if let Ok((ent, &heading, &hx0, mut offset0, air_time)) = query.get_mut(ent) {
                     let mut offset = *offset0;
 
-                    let xy = Vec3::from(hx0).xy();
-                    let xy_curr = xy + offset0.0.xy();
+                    let px = Vec3::from(hx0);
+                    let curr = px + offset0.0;
+                    let xy = Vec3::from(Hx::from(curr)).xy();
 
                     let (hx_floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -10);
                 
@@ -43,9 +44,9 @@ pub fn do_input(
                         if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
                         else { 0.25 });
                     
-                    let xy_dist = xy_curr.distance(xy_target);
+                    let xy_dist = curr.xy().distance(xy_target);
                     let ratio = 0_f32.max((xy_dist - dt as f32 / 10.) / xy_dist);
-                    offset0.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
+                    offset0.0 = (curr.xy().lerp(xy_target, 1. - ratio) - px.xy()).extend(offset.0.z);
                 }
             }
             _ => {}
