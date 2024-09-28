@@ -97,9 +97,10 @@ pub fn update_transforms(
     for (&hx, &heading, mut offset0, mut transform0, key_bits) in &mut query {
         let px = Vec3::from(hx);
         let curr = px + offset0.0;
-        let xy = Vec3::from(Hx::from(curr)).xy();
+        let curr_hx = Hx::from(curr);
+        let curr_px = Vec3::from(curr_hx).xy();
 
-        let target = xy.lerp(Vec3::from(hx + heading.0).xy(),
+        let target = curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(),
         if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
         else { 0.25 });
         
