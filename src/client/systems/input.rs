@@ -63,7 +63,6 @@ pub fn handle_input(
 
         if *heading0 != heading { *heading0 = heading; }
         if *keybits0 != key_bits { *keybits0 = key_bits; }
-        // writer.send(Try { event: Event::Input { ent, key_bits } });
     }
 }
 
@@ -88,5 +87,21 @@ pub fn generate_input(
     if let Ok((ent, &key_bits)) = query.get_single() {
         let dt = (time.delta_seconds() * 1000.) as u16;
         writer.send(Try { event: Event::Input { ent, key_bits, dt } });
+    }
+}
+
+pub fn update_transforms(
+    time: Res<Time>,
+    mut query: Query<(&Hx, &Heading, &mut Offset, &mut Transform, Option<&KeyBits>)>,
+) {
+    for (&hx0, &heading0, mut offset0, mut transform, key_bits) in &mut query {
+        let px = Vec3::from(hx0) + offset0.0;
+        let target = px.lerp(Vec3::from(hx0 + heading0.0),
+        if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
+        else { 0.25 });
+        let dist = (px + offset0.0).distance(target);
+        let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
+        offset0.0 = offset0.0.lerp(target - px, 1. - ratio);
+        transform.translation = (hx0, *offset0).into_screen(); 
     }
 }

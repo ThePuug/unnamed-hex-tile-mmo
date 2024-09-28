@@ -12,7 +12,6 @@ use crate::{ *,
 pub fn do_input(
     mut commands: Commands,
     mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
     map: Res<Map>,
     mut query: Query<(Entity, &Heading, &Hx, &mut Offset, Option<&mut AirTime>)>,
 ) {
@@ -40,18 +39,13 @@ pub fn do_input(
                             }
                         }
                     }
-
                     let xy_target = xy.lerp(Vec3::from(hx0 + heading.0).xy(),
                         if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
                         else { 0.25 });
                     
                     let xy_dist = xy_curr.distance(xy_target);
                     let ratio = 0_f32.max((xy_dist - dt as f32 / 10.) / xy_dist);
-                    offset.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
-
-                    let hx = Hx::from(xy.extend(hx0.z as f32) + offset.0);
-                    if hx0 != hx { writer.send(Try { event: Event::Move { ent, hx, heading } }); }
-                    *offset0 = offset;
+                    offset0.0 = (xy_curr.lerp(xy_target, 1. - ratio) - xy).extend(offset.0.z);
                 }
             }
             _ => {}
@@ -84,8 +78,19 @@ pub fn update_headings(
     mut writer: EventWriter<Try>,
     mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
 ) {
-    for (_ent, &hx, &heading) in &mut query {
-        writer.send(Try { event: Event::Move { ent: _ent, hx, heading } });
+    for (ent, &hx, &heading) in &mut query {
+        writer.send(Try { event: Event::Move { ent, hx, heading } });
         writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
+    }
+}
+
+pub fn update_offsets(
+    mut writer: EventWriter<Try>,
+    mut query: Query<(Entity, &Hx, &Heading, &Offset), Changed<Offset>>,
+) {
+    for (ent, &hx0, &heading, &offset) in &mut query {
+        let px = Vec3::from(hx0);
+        let hx = Hx::from(px + offset.0);
+        if hx0 != hx { writer.send(Try { event: Event::Move { ent, hx, heading } }); }
     }
 }

@@ -75,6 +75,7 @@ fn main() {
         try_local_events,
         try_input,
         update_headings,
+        update_offsets,
     ));
 
     let (server, transport) = new_renet_server();

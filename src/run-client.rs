@@ -101,6 +101,7 @@ fn main() {
         update_animations,
         update_camera,
         update_headings,
+        update_offsets,
         update_transforms,
         handle_input,
     ));
