@@ -147,7 +147,7 @@ pub fn try_events(
                     let message = bincode::serialize(&Try { event: Event::Input { 
                         ent: *l2r.0.get_by_left(&ent).unwrap(), 
                         key_bits: key_bits_last.key_bits, 
-                        dt: key_bits_last.dt + dt }}).unwrap();
+                        dt: key_bits_last.dt }}).unwrap();
                     conn.send_message(DefaultChannel::ReliableOrdered, message);
                     key_bits_last = InputAccumulator { key_bits, dt: 0 };
                 }

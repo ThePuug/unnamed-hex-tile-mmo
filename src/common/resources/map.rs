@@ -6,7 +6,7 @@ use crate::common::components::hx::*;
 
 pub trait Lookup {
     fn find(&self, hx: Hx, dist: i8) -> (Option<Hx>, Entity);
-    fn get(&self, hx: Hx) -> Entity;
+    // fn get(&self, hx: Hx) -> Entity;
     fn insert(&mut self, hx: Hx, ent: Entity);
     fn remove(&mut self, hx: Hx) -> Entity;
 }
@@ -25,9 +25,9 @@ impl Lookup for Map {
         (None, Entity::PLACEHOLDER)
     }
 
-    fn get(&self, hx: Hx) -> Entity {
-        *self.map.get(&hx).unwrap_or(&Entity::PLACEHOLDER)
-    }
+    // fn get(&self, hx: Hx) -> Entity {
+    //     *self.map.get(&hx).unwrap_or(&Entity::PLACEHOLDER)
+    // }
 
     fn insert(&mut self, hx: Hx, ent: Entity) {
         self.map.insert(hx, ent);

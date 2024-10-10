@@ -100,9 +100,12 @@ pub fn update_transforms(
         let curr_hx = Hx::from(curr);
         let curr_px = Vec3::from(curr_hx).xy();
 
-        let target = curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(),
-        if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
-        else { 0.25 });
+        let target = 
+            if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 
+                curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(),1.25)
+            } else { 
+                px.xy().lerp(Vec3::from(hx + heading.0).xy(),0.25)
+            };
         
         let dist = curr.xy().distance(target);
         let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
