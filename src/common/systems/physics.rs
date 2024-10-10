@@ -12,19 +12,19 @@ use crate::{ *,
 pub fn do_input(
     // mut commands: Commands,
     mut reader: EventReader<Do>,
-    // map: Res<Map>,
+    map: Res<Map>,
     mut query: Query<(Entity, &Heading, &Hx, &mut Offset, Option<&mut AirTime>)>,
 ) {
     for &message in reader.read() {
         match message {
             Do { event: Event::Input { ent, key_bits, dt } } => {
                 if let Ok((_ent, &heading, &hx0, mut offset0, _air_time)) = query.get_mut(ent) {
-                    // let mut offset = *offset0;
+                    let mut offset = offset0.0;
 
                     let px = Vec3::from(hx0);
-                    let curr = px + offset0.0;
+                    let curr = px + offset;
                     let curr_hx = Hx::from(curr);
-                    let curr_px = Vec3::from(curr_hx).xy();
+                    let curr_px = Vec3::from(curr_hx);
 
                     // let (hx_floor, _) = map.find(curr_hx + Hx{ z: 1, ..default() }, -10);
                     // 
@@ -42,16 +42,18 @@ pub fn do_input(
                     //     }
                     // }
                     
+                    let far = curr_px.lerp(Vec3::from(curr_hx + heading.0), 1.25);
+                    let near = px.lerp(Vec3::from(hx0 + heading.0), 0.25);
+                    let next = map.get(Hx::from(far));
                     let target = 
-                        if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 
-                            curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25)
-                        } else { 
-                            px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 0.25)
-                        };
-                    
-                    let dist = curr.xy().distance(target);
+                        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { far }
+                        else { near };
+
+                    let dist = curr.distance(target);
                     let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
-                    offset0.0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.0.z);
+                    offset = curr.lerp(target, 1. - ratio) - px;                    
+
+                    offset0.0 = offset;
                 }
             }
             _ => {}
@@ -86,7 +88,7 @@ pub fn update_headings(
 ) {
     for (ent, &hx, &heading) in &mut query {
         writer.send(Try { event: Event::Move { ent, hx, heading } });
-        writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
+        // writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
     }
 }
 

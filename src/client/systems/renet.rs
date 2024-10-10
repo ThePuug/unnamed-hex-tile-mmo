@@ -130,10 +130,8 @@ pub fn try_events(
     for &message in reader.read() {
         match message {
             Try { event: Event::Move { ent, .. } } => {
-                trace!("::try_events try move");
                 if let Some(key_bits_last) = queue.0.pop() {
-                    trace!("::try_events move key_bits: {:?} for {:?}", key_bits_last.key_bits, key_bits_last.dt);
-                    let message = bincode::serialize(&Try { event: Event::Input { 
+                    let message = bincode::serialize(&Try { event: Event::Input {
                         ent: *l2r.0.get_by_left(&ent).unwrap(), 
                         key_bits: key_bits_last.key_bits, 
                         dt: key_bits_last.dt }}).unwrap();
@@ -145,7 +143,7 @@ pub fn try_events(
                 let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt: 0 });
                 if key_bits.key_bits != key_bits_last.key_bits.key_bits
                     || key_bits_last.dt > 1000 {
-                    trace!("::try_events iput key_bits: {:?} for {:?}", key_bits_last.key_bits, key_bits_last.dt);
+                    // trace!("::try_events iput key_bits: {:?} for {:?}", key_bits_last.key_bits, key_bits_last.dt);
                     let message = bincode::serialize(&Try { event: Event::Input { 
                         ent: *l2r.0.get_by_left(&ent).unwrap(), 
                         key_bits: key_bits_last.key_bits, 
