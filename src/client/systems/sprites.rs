@@ -36,3 +36,13 @@ pub fn update_animations(
         sprite.flip_x = config.opts[config.selected].flip;
     }
 }
+
+pub fn update_transforms(
+    // time: Res<Time>,
+    mut query: Query<(&Hx, &Offset, &mut Transform)>,
+) {
+    for (&hx, &offset, mut transform0) in &mut query {
+        let target = (hx, offset).into_screen();
+        transform0.translation = target;
+    }
+}

@@ -89,27 +89,3 @@ pub fn generate_input(
         writer.send(Try { event: Event::Input { ent, key_bits, dt } });
     }
 }
-
-pub fn update_transforms(
-    time: Res<Time>,
-    mut query: Query<(&Hx, &Heading, &mut Offset, &mut Transform, Option<&KeyBits>)>,
-) {
-    for (&hx, &heading, mut offset0, mut transform0, key_bits) in &mut query {
-        let px = Vec3::from(hx);
-        let curr = px + offset0.0;
-        let curr_hx = Hx::from(curr);
-        let curr_px = Vec3::from(curr_hx).xy();
-
-        let target = 
-            if key_bits.is_some() && key_bits.unwrap().any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 
-                curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(),1.25)
-            } else { 
-                px.xy().lerp(Vec3::from(hx + heading.0).xy(),0.25)
-            };
-        
-        let dist = curr.xy().distance(target);
-        let ratio = 0_f32.max((dist - 100. * time.delta_seconds()) / dist);
-        offset0.0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.0.z);
-        transform0.translation = (hx, *offset0).into_screen(); 
-    }
-}

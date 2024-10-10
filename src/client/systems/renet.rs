@@ -122,11 +122,12 @@ pub fn do_server_events(
 
 pub fn try_events(
     mut conn: ResMut<RenetClient>,
-    mut messages: EventReader<Try>,
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
     l2r: Res<EntityMap>,
     mut queue: ResMut<InputQueue>,
 ) {
-    for &message in messages.read() {
+    for &message in reader.read() {
         match message {
             Try { event: Event::Move { ent, .. } } => {
                 trace!("::try_events try move");
@@ -140,6 +141,7 @@ pub fn try_events(
                 }
             }
             Try { event: Event::Input { ent, key_bits, dt } } => {
+                writer.send(Do { event: Event::Input { ent, key_bits, dt } });
                 let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt: 0 });
                 if key_bits.key_bits != key_bits_last.key_bits.key_bits
                     || key_bits_last.dt > 1000 {
@@ -152,7 +154,7 @@ pub fn try_events(
                     key_bits_last = InputAccumulator { key_bits, dt: 0 };
                 }
                 key_bits_last.dt += dt;
-                queue.0.push(key_bits_last);
+                queue.0.push(key_bits_last);                
             }
             _ => {}
         }

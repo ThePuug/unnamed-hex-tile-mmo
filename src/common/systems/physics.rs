@@ -42,9 +42,12 @@ pub fn do_input(
                     //     }
                     // }
                     
-                    let target = curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(),
-                        if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 1.25 }
-                        else { 0.25 });
+                    let target = 
+                        if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { 
+                            curr_px.lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25)
+                        } else { 
+                            px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 0.25)
+                        };
                     
                     let dist = curr.xy().distance(target);
                     let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
