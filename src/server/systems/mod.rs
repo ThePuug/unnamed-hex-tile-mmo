@@ -1,3 +1,3 @@
-pub mod discover_tiles;
+pub mod actor;
 pub mod renet;
 pub mod input;

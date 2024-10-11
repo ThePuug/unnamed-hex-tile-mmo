@@ -38,11 +38,16 @@ pub fn update_animations(
 }
 
 pub fn update_transforms(
-    // time: Res<Time>,
-    mut query: Query<(&Hx, &Offset, &mut Transform)>,
+    time: Res<Time>,
+    mut query: Query<(&Hx, &Heading, &mut Transform)>,
 ) {
-    for (&hx, &offset, mut transform0) in &mut query {
-        let target = (hx, offset).into_screen();
-        transform0.translation = target;
+    for (&hx, &heading, mut transform0) in &mut query {
+        let target = (hx, Offset(Vec3::ZERO.lerp(Vec3::from(heading.0), 0.25))).into_screen();
+
+        let dist = transform0.translation.distance(target);
+        let ratio = 0_f32.max((dist - time.delta_seconds() * 100.) / dist);
+
+        let transform = transform0.translation.lerp(target,1.-ratio);
+        transform0.translation = transform;
     }
 }

@@ -9,7 +9,7 @@ use crate::{*,
     },
 };
 
-pub fn try_local_events(
+pub fn try_move(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
     map: Res<Map>,

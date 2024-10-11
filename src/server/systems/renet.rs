@@ -75,7 +75,7 @@ pub fn do_manage_connections(
     }
  }
 
-pub fn try_client_events(
+pub fn write_try(
     mut writer: EventWriter<Try>,
     mut conn: ResMut<RenetServer>,
     lobby: Res<Lobby>,
@@ -96,7 +96,7 @@ pub fn try_client_events(
     }
  }
 
- pub fn do_events(
+ pub fn broadcast_do(
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<Do>,

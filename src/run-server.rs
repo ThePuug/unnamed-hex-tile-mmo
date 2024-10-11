@@ -31,7 +31,7 @@ use server::{
         terrain::*,
     },
     systems::{
-        discover_tiles::*,
+        actor::*,
         renet::*,
         input::*,
     },
@@ -67,12 +67,12 @@ fn main() {
 
     app.add_systems(Update, (
         panic_on_error_system,
+        broadcast_do,
         do_manage_connections,
-        do_events,
         do_input,
         do_move,
-        try_client_events,
-        try_local_events,
+        write_try,
+        try_move,
         try_input,
         update_headings,
         update_offsets,

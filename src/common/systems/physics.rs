@@ -88,7 +88,6 @@ pub fn update_headings(
 ) {
     for (ent, &hx, &heading) in &mut query {
         writer.send(Try { event: Event::Move { ent, hx, heading } });
-        // writer.send(Try { event: Event::Discover { hx: hx + heading.0 + Hx { q: 0, r: 0, z: -1 } } });
     }
 }
 

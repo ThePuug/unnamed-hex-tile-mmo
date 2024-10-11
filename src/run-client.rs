@@ -94,16 +94,16 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         generate_input,
-        do_server_events,
+        write_do,
         do_input,
         do_move,
-        try_events,
+        send_try,
         update_animations,
         update_camera,
         update_headings,
         update_offsets,
         update_transforms,
-        handle_input,
+        update_keybits,
     ));
 
     let (client, transport) = new_renet_client();

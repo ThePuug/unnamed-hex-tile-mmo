@@ -28,7 +28,7 @@ pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     (client, transport)
 }
 
-pub fn do_server_events(
+pub fn write_do(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     mut conn: ResMut<RenetClient>,
@@ -71,7 +71,6 @@ pub fn do_server_events(
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
                             commands.get_entity(loc).unwrap().insert(Actor);
-                            debug!("Player server:{} is local:{}", ent, loc);
                         }
                     }
                     EntityType::Decorator(desc) => {
@@ -120,7 +119,7 @@ pub fn do_server_events(
     }
 }
 
-pub fn try_events(
+pub fn send_try(
     mut conn: ResMut<RenetClient>,
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,

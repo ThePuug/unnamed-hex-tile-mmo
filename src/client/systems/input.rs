@@ -16,11 +16,11 @@ pub const KEYCODES_DOWN: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::NumpadEnte
 pub const KEYCODES_LEFT: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::Convert];
 pub const KEYCODES_RIGHT: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::NonConvert];
 
-pub fn handle_input(
+pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Heading, &mut KeyBits), With<Actor>>,
 ) {
-    keyboard.get_just_pressed().for_each(|key| { trace!("key pressed: {:?}", key) });
+    // keyboard.get_just_pressed().for_each(|key| { trace!("key pressed: {:?}", key) });
     if let Ok((mut heading0, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
         key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed(KEYCODES_JUMP));
