@@ -26,6 +26,14 @@ pub struct Hx {
     pub z: i16,
 }
 
+impl Hx {
+    pub fn distance(&self, other: &Hx) -> i16 {
+        ((self.q - other.q).abs() 
+            + (self.q + self.r - other.q - other.r).abs()
+            + (self.r - other.r).abs()) / 2        
+    }
+}
+
 impl Add<Hx> for Hx {
     type Output = Hx;
     fn add(self, rhs: Hx) -> Self::Output {

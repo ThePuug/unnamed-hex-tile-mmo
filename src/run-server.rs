@@ -53,7 +53,6 @@ fn main() {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,".to_owned()
                     +"server=trace,"
-                    // +"server::common::input=info,"
                     ,
             custom_layer: |_| None,
         },
@@ -72,6 +71,7 @@ fn main() {
         do_input,
         do_move,
         write_try,
+        try_discover,
         try_move,
         try_input,
         update_headings,

@@ -20,7 +20,6 @@ pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Heading, &mut KeyBits), With<Actor>>,
 ) {
-    // keyboard.get_just_pressed().for_each(|key| { trace!("key pressed: {:?}", key) });
     if let Ok((mut heading0, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
         key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed(KEYCODES_JUMP));

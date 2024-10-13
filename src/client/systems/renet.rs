@@ -130,11 +130,12 @@ pub fn send_try(
         match message {
             Try { event: Event::Move { ent, .. } } => {
                 if let Some(key_bits_last) = queue.0.pop() {
-                    let message = bincode::serialize(&Try { event: Event::Input {
-                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                        key_bits: key_bits_last.key_bits, 
-                        dt: key_bits_last.dt }}).unwrap();
-                    conn.send_message(DefaultChannel::ReliableOrdered, message);
+                    conn.send_message(DefaultChannel::ReliableOrdered, 
+                        bincode::serialize(&Try { event: Event::Input {
+                            ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                            key_bits: key_bits_last.key_bits, 
+                            dt: key_bits_last.dt 
+                    }}).unwrap());
                 }
             }
             Try { event: Event::Input { ent, key_bits, dt } } => {
@@ -142,16 +143,23 @@ pub fn send_try(
                 let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt: 0 });
                 if key_bits.key_bits != key_bits_last.key_bits.key_bits
                     || key_bits_last.dt > 1000 {
-                    // trace!("::try_events iput key_bits: {:?} for {:?}", key_bits_last.key_bits, key_bits_last.dt);
-                    let message = bincode::serialize(&Try { event: Event::Input { 
-                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                        key_bits: key_bits_last.key_bits, 
-                        dt: key_bits_last.dt }}).unwrap();
-                    conn.send_message(DefaultChannel::ReliableOrdered, message);
+                    conn.send_message(DefaultChannel::ReliableOrdered, 
+                        bincode::serialize(&Try { event: Event::Input { 
+                            ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                            key_bits: key_bits_last.key_bits, 
+                            dt: key_bits_last.dt 
+                    }}).unwrap());
                     key_bits_last = InputAccumulator { key_bits, dt: 0 };
                 }
                 key_bits_last.dt += dt;
                 queue.0.push(key_bits_last);                
+            }
+            Try { event: Event::Discover { ent, hx } } => { 
+                conn.send_message(DefaultChannel::ReliableOrdered, 
+                    bincode::serialize(&Try { event: Event::Discover { 
+                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                        hx 
+                }}).unwrap());
             }
             _ => {}
         }

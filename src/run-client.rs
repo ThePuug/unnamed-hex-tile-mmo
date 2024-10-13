@@ -78,8 +78,6 @@ fn main() {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
                     +"client=trace,"
-                    // +"client::common::input=trace,"
-                    // +"client::client::systems=trace,"
                     ,
             custom_layer: |_| None,
         }),

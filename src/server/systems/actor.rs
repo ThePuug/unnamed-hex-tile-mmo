@@ -1,5 +1,3 @@
-use std::cmp::{max, min};
-
 use bevy::prelude::*;
 
 use crate::{*,
@@ -12,36 +10,57 @@ use crate::{*,
 pub fn try_move(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
-    map: Res<Map>,
-    terrain: Res<Terrain>,
  ) {
     for &message in reader.read() {
-        trace!("Message: {:?}", message);
         match message {
             Try { event: Event::Move { ent, hx, heading } } => { 
+                // trace!("Message: {:?}", message);
                 writer.send(Do { event: Event::Move { ent, hx, heading }}); 
-                for q in -5..=5 {
-                    for r in max(-5, -q-5)..=min(5, -q+5) {
-                        let hxn = hx + Hx { q, r, z: hx.z };
-                        let (loc, ent) = map.find(hxn, -5);
-                        if let Some(hx) = loc {
-                            writer.send(Do { event: Event::Spawn { 
-                                ent,
-                                typ: EntityType::Decorator(DecoratorDescriptor{ index: 1, is_solid: true }), 
-                                hx,
-                            } }); 
-                        } else {
-                            let px = Vec3::from(hxn).xy();
-                            writer.send(Do { event: Event::Spawn {
-                                ent,
-                                typ: EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
-                                hx: Hx { z: terrain.get(px.x, px.y), ..hxn },
-                            } });
-                        }
-                    }
-                }
             },
             _ => {}
         }
     }
  }
+
+ pub fn try_discover(
+    mut commands: Commands,
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    mut map: ResMut<Map>,
+    terrain: Res<Terrain>,
+    query: Query<(&Hx, &EntityType)>,
+ ) {
+    for &message in reader.read() {
+        match message {
+            Try { event: Event::Discover { ent, hx } } => {
+                if let Ok((&loc, _)) = query.get(ent) {
+                    if loc.distance(&hx) > 5 { return; }
+                    let (hxn, entn) = map.find(hx, -5);
+                    if let Some(hx) = hxn {
+                        if let Ok((_, &typ)) = query.get(entn) {
+                            writer.send(Do { event: Event::Spawn { ent, typ, hx, } });
+                        } else {
+                            warn!("Invalid entity: {:?} at {:?}", entn, hx);
+                        }
+                    } else {
+                        let px = Vec3::from(hx).xy();
+                        let hx = Hx { z: terrain.get(px.x, px.y), ..hx };
+                        if map.get(hx) != Entity::PLACEHOLDER { return; }
+                        let ent = commands.spawn((
+                            hx,
+                            Offset::default(),
+                            EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
+                            Transform {
+                                translation: (hx,Offset::default()).into_screen(),
+                                ..default()}, 
+                        )).id();
+                        map.insert(hx, ent);
+                    }
+                } else {
+                    warn!("Invalid entity: {:?}", ent);
+                }
+            },
+            _ => {}
+        }
+    }
+}

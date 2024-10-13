@@ -18,8 +18,9 @@ pub struct Map {
 
 impl Lookup for Map {
     fn find(&self, hx: Hx, dist: i8) -> (Option<Hx>, Entity) {
-        for i in 0..=dist as i16 {
-            let hx = hx + Hx { z: 0+i, ..hx };
+        for i in 0..=dist.abs() {
+            let z = if dist < 0 { -i as i16 } else { i as i16 };
+            let hx = hx + Hx { z, ..default() };
             if let Some(ent) = self.map.get(&hx) { return (Some(hx), *ent); }
         }
         (None, Entity::PLACEHOLDER)
