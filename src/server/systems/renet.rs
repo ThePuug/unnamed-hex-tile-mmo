@@ -111,7 +111,7 @@ pub fn write_try(
                     Offset::default(),
                     typ,
                     Transform {
-                        translation: (hx,Offset::default()).into_screen(),
+                        translation: (hx,Offset::default()).calculate(),
                         ..default()}, 
                 )).id();
                 map.insert(hx, ent);

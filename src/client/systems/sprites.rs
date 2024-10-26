@@ -3,7 +3,10 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::{ *,
-    common::components::hx::*,
+    common::components::{
+        hx::*,
+        keybits::*,
+    },
 };
 
 pub fn update_animations(
@@ -39,15 +42,15 @@ pub fn update_animations(
 
 pub fn update_transforms(
     time: Res<Time>,
-    mut query: Query<(&Hx, &Heading, &mut Transform)>,
+    mut query: Query<(&Hx, Option<&Offset>, Option<&Heading>, Option<&KeyBits>, &mut Transform)>,
 ) {
-    for (&hx, &heading, mut transform0) in &mut query {
-        let target = (hx, Offset(Vec3::ZERO.lerp(Vec3::from(heading.0), 0.25))).into_screen();
-
-        let dist = transform0.translation.distance(target);
-        let ratio = 0_f32.max((dist - time.delta_seconds() * 100.) / dist);
-
-        let transform = transform0.translation.lerp(target,1.-ratio);
+    for (&hx, offset, heading, keybits, mut transform0) in &mut query {
+        let target = match (keybits, offset, heading) {
+            (Some(&keybits), Some(&offset), _) if keybits != KeyBits::default() => (hx, offset).calculate(),
+            (_, None, Some(&heading)) => (hx, heading.into()).calculate(),
+            _ => (hx, Offset::default()).calculate(),
+        };
+        let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
         transform0.translation = transform;
     }
 }

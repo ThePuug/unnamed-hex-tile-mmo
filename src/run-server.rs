@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use std::net::UdpSocket;
 
 use bevy::{log::LogPlugin, prelude::*};
+use bevy_easings::*;
 use bevy_renet::{
     renet::{
         transport::{ServerAuthentication, ServerConfig},
@@ -59,6 +60,7 @@ fn main() {
         TransformPlugin,
         RenetServerPlugin,
         NetcodeServerPlugin,
+        EasingsPlugin,
     ));
 
     app.add_event::<Do>();

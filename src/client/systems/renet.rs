@@ -46,7 +46,7 @@ pub fn write_do(
                             SpriteBundle {
                                 texture: texture_handles.actor.0.clone(),
                                 transform: Transform {
-                                    translation: (hx, Offset::default()).into_screen(),
+                                    translation: (hx, Offset::default()).calculate(),
                                     ..default()},
                                 sprite: Sprite {
                                     anchor: Anchor::BottomCenter,
@@ -81,7 +81,7 @@ pub fn write_do(
                                 texture: texture_handles.decorator.0.clone(),
                                 transform: Transform {
                                     scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
-                                    translation: (hx, Offset::default()).into_screen(),
+                                    translation: (hx, Offset::default()).calculate(),
                                     ..default()},
                                 sprite: Sprite {
                                     anchor: Anchor::Custom(Vec2{ x: 0., y: (48.-69.) / 138. }),
@@ -141,8 +141,7 @@ pub fn send_try(
             Try { event: Event::Input { ent, key_bits, dt } } => {
                 writer.send(Do { event: Event::Input { ent, key_bits, dt } });
                 let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt: 0 });
-                if key_bits.key_bits != key_bits_last.key_bits.key_bits
-                    || key_bits_last.dt > 1000 {
+                if key_bits.key_bits != key_bits_last.key_bits.key_bits || key_bits_last.dt > 1000 {
                     conn.send_message(DefaultChannel::ReliableOrdered, 
                         bincode::serialize(&Try { event: Event::Input { 
                             ent: *l2r.0.get_by_left(&ent).unwrap(), 

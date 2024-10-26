@@ -18,57 +18,49 @@ pub const KEYCODES_RIGHT: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::NonConve
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&mut Heading, &mut KeyBits), With<Actor>>,
+    mut query: Query<(&Heading, &mut KeyBits), With<Actor>>,
 ) {
-    if let Ok((mut heading0, mut keybits0)) = query.get_single_mut() {
+    if let Ok((&heading, mut keybits0)) = query.get_single_mut() {
         let mut key_bits = KeyBits::default();
         key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed(KEYCODES_JUMP));
 
-        let mut heading = *heading0;
         if keyboard.any_pressed([KEYCODES_UP, KEYCODES_DOWN, KEYCODES_LEFT, KEYCODES_RIGHT].concat()) {
             if keyboard.any_pressed(KEYCODES_UP) {
                 if keyboard.any_pressed(KEYCODES_LEFT) || !keyboard.any_pressed(KEYCODES_RIGHT)
                     &&(heading.0 == Hx {q:-1, r: 0, z: 0}
                     || heading.0 == Hx {q:-1, r: 1, z: 0}
-                    || heading.0 == Hx {q: 1, r:-1, z: 0}) { 
-                        heading.0 = Hx {q:-1, r: 1, z: 0}; 
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}) {
                         key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true);
                     }
-                else  { 
-                    heading.0 = Hx {q: 0, r: 1, z: 0};
+                else  {
                     key_bits.set_pressed([KB_HEADING_R], true);
                 }
             } else if keyboard.any_pressed(KEYCODES_DOWN) {
                 if keyboard.any_pressed(KEYCODES_RIGHT) || !keyboard.any_pressed(KEYCODES_LEFT)
                     &&(heading.0 == Hx {q: 1, r: 0, z: 0}
                     || heading.0 == Hx {q: 1, r:-1, z: 0}
-                    || heading.0 == Hx {q:-1, r: 1, z: 0}) { 
-                        heading.0 = Hx {q: 1, r: -1, z: 0};
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}) {
                         key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true); 
                     }
-                else { 
-                    heading.0 = Hx {q: 0, r:-1, z: 0};
+                else {
                     key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                 }
             } 
             else if keyboard.any_pressed(KEYCODES_RIGHT) { 
                 key_bits.set_pressed([KB_HEADING_Q], true);
-                heading.0 = Hx {q: 1, r: 0, z: 0}; 
             } else if keyboard.any_pressed(KEYCODES_LEFT) {
                 key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
-                heading.0 = Hx {q:-1, r: 0, z: 0}; 
             }
         }
 
-        if *heading0 != heading { *heading0 = heading; }
         if *keybits0 != key_bits { *keybits0 = key_bits; }
     }
 }
 
 pub fn update_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera: Query<(&mut Transform, &mut OrthographicProjection), (With<Actor>, Without<Hx>, Without<Offset>)>,
-    actor: Query<&Transform, (With<Actor>, With<Hx>, With<Offset>)>,
+    mut camera: Query<(&mut Transform, &mut OrthographicProjection), With<Actor>>,
+    actor: Query<&Transform, (With<Actor>, Without<OrthographicProjection>)>,
 ) {
     if let Ok(a_transform) = actor.get_single() {
         let (mut c_transform, mut projection) = camera.single_mut();

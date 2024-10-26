@@ -99,10 +99,20 @@ pub fn do_move(
 
 pub fn update_headings(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading), Changed<Heading>>,
+    mut query: Query<(Entity, &Hx, &KeyBits, &mut Heading), Changed<KeyBits>>,
 ) {
-    for (ent, &hx, &heading) in &mut query {
-        writer.send(Try { event: Event::Move { ent, hx, heading } });
+    for (ent, &hx, &key_bits, mut heading0) in &mut query {
+        let heading = Heading(if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 1, r: -1, z: 0 } }
+            else if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_R]) { Hx { q: -1, r: 1, z: 0 } }
+            else if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_NEG]) { Hx { q: -1, r: 0, z: 0 } }
+            else if key_bits.all_pressed([KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 0, r: -1, z: 0 } }
+            else if key_bits.all_pressed([KB_HEADING_Q]) { Hx { q: 1, r: 0, z: 0 } }
+            else if key_bits.all_pressed([KB_HEADING_R]) { Hx { q: 0, r: 1, z: 0 } }
+            else { heading0.0 });
+        if heading0.0 != heading.0 { 
+            *heading0 = heading;
+            writer.send(Try { event: Event::Move { ent, hx, heading } });
+        }
     }
 }
 
