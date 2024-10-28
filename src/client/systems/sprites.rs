@@ -47,7 +47,7 @@ pub fn update_transforms(
     for (&hx, offset, heading, keybits, mut transform0) in &mut query {
         let target = match (keybits, offset, heading) {
             (Some(&keybits), Some(&offset), _) if keybits != KeyBits::default() => (hx, offset).calculate(),
-            (_, None, Some(&heading)) => (hx, heading.into()).calculate(),
+            (_, _, Some(&heading)) => (hx, heading.into()).calculate(),
             _ => (hx, Offset::default()).calculate(),
         };
         let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));

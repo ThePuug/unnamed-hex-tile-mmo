@@ -32,8 +32,12 @@ pub fn do_input(
                     
                     if let Some(mut air_time) = air_time { 
                         let mut dt = dt as i16;
-                        if air_time.0 >= dt { air_time.0 -= dt; }
-                        else {
+                        if air_time.0 >= dt { 
+                            // let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
+                            offset.z = offset.z.lerp(2.4, 1.-(air_time.0 as f32 / 1000.).powf(dt as f32 / 1000.));
+                            trace!("Air time: {}, dt: {}, offset.z: {}", air_time.0, dt, offset.z);
+                            air_time.0 -= dt; 
+                        } else {
                             if air_time.0 > 0 {
                                 dt -= air_time.0;
                                 air_time.0 = 0;
