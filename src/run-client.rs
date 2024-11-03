@@ -23,8 +23,13 @@ use common::{
     message::*,
     components::{ *,
     },
-    resources::map::*,
-    systems::physics::*,
+    resources::{ *, 
+        map::*,
+    },
+    systems::{
+        input::*,
+        physics::*,
+    },
 };
 use client::{
     components::animationconfig::*,

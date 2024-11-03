@@ -25,7 +25,10 @@ use common::{
     message::*,
     components::*,
     resources::map::*,
-    systems::physics::*,
+    systems::{
+        input::*,
+        physics::*,
+    },
 };
 use server::{
     resources::{ *,
@@ -68,20 +71,25 @@ fn main() {
 
     app.add_systems(Update, (
         panic_on_error_system,
-        broadcast_do,
+        send_do,
         do_manage_connections,
         do_input,
         do_move,
-        write_try,
         try_discover,
-        try_move,
         try_input,
+        try_move,
         update_headings,
         update_offsets,
+        write_try,
+    ));
+
+    app.add_systems(FixedUpdate, (
+        generate_input,
     ));
 
     let (server, transport) = new_renet_server();
     app.init_resource::<Lobby>();
+    app.init_resource::<InputQueues>();
     app.init_resource::<Map>();
     app.init_resource::<Terrain>();
     app.insert_resource(server);

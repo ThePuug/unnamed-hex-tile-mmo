@@ -6,6 +6,7 @@ use crate::{*,
     common::{
         message::{*, Event},
         components::hx::*,
+        resources::*,
     },
     client::resources::*,
 };
@@ -34,6 +35,7 @@ pub fn write_do(
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
+    mut queue: ResMut<InputQueue>,
     texture_handles: Res<TextureHandles>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
@@ -114,6 +116,22 @@ pub fn write_do(
                     warn!("Player {} not found when Move received", ent);
                 }
             }
+            Do { event: Event::Input { ent, mut dt, .. } } => {
+                if let Some(&ent) = l2r.0.get_by_right(&ent) {
+                    while let Some(mut inp) = queue.0.pop_back() {
+                        if dt > inp.dt { dt -= inp.dt; }
+                        else { 
+                            inp.dt -= dt;
+                            queue.0.push_back(inp);
+                        }
+                    }
+                    for it in queue.0.iter().rev() {
+                        writer.send(Do { event: Event::Input { ent, key_bits: it.key_bits, dt: it.dt } });                        
+                    }
+                } else {
+                    warn!("Player {} not found when Input received", ent);
+                }
+            }
             _ => {}
         }
     }
@@ -128,30 +146,31 @@ pub fn send_try(
 ) {
     for &message in reader.read() {
         match message {
-            Try { event: Event::Move { ent, .. } } => {
-                if let Some(key_bits_last) = queue.0.pop() {
-                    conn.send_message(DefaultChannel::ReliableOrdered, 
-                        bincode::serialize(&Try { event: Event::Input {
-                            ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                            key_bits: key_bits_last.key_bits, 
-                            dt: key_bits_last.dt 
-                    }}).unwrap());
-                }
-            }
+            // Try { event: Event::Move { ent, .. } } => {
+            //     if let Some(key_bits_last) = queue.0.pop_front() {
+            //         conn.send_message(DefaultChannel::ReliableOrdered, 
+            //             bincode::serialize(&Try { event: Event::Input {
+            //                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
+            //                 key_bits: key_bits_last.key_bits, 
+            //                 dt: key_bits_last.dt 
+            //         }}).unwrap());
+            //     }
+            // }
             Try { event: Event::Input { ent, key_bits, dt } } => {
                 writer.send(Do { event: Event::Input { ent, key_bits, dt } });
-                let mut key_bits_last = queue.0.pop().unwrap_or(InputAccumulator { key_bits, dt: 0 });
-                if key_bits.key_bits != key_bits_last.key_bits.key_bits || key_bits_last.dt > 1000 {
+                let mut key_bits_last = queue.0.pop_front().unwrap_or(InputAccumulator { key_bits, dt: 0 });
+                if key_bits.key_bits != key_bits_last.key_bits.key_bits {
+                    queue.0.push_front(key_bits_last);
                     conn.send_message(DefaultChannel::ReliableOrdered, 
                         bincode::serialize(&Try { event: Event::Input { 
                             ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                            key_bits: key_bits_last.key_bits, 
-                            dt: key_bits_last.dt 
+                            key_bits, 
+                            dt: 0
                     }}).unwrap());
                     key_bits_last = InputAccumulator { key_bits, dt: 0 };
                 }
                 key_bits_last.dt += dt;
-                queue.0.push(key_bits_last);                
+                queue.0.push_front(key_bits_last);
             }
             Try { event: Event::Discover { ent, hx } } => { 
                 conn.send_message(DefaultChannel::ReliableOrdered, 

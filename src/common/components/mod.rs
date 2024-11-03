@@ -6,9 +6,6 @@ use bevy_easings::*;
 use serde::{Deserialize, Serialize};
 
 use crate::common::components::hx::*;
-pub trait IntoScreen {
-    fn into_screen(self) -> Vec3;
-}
 
 pub trait Calculate<T> {
     fn calculate(self) -> T;
