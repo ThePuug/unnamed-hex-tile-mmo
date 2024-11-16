@@ -19,7 +19,7 @@ pub fn do_input(
 ) {
     for &message in reader.read() {
         match message {
-            Do { event: Event::Input { ent, key_bits, dt } } => {
+            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
                 if let Ok((_ent, &heading, &hx0, mut offset0, air_time)) = query.get_mut(ent) {
                     let mut offset = offset0.0;
 

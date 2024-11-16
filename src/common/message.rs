@@ -12,7 +12,7 @@ use crate::{ *,
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, hx: Hx },
-    Input { ent: Entity, key_bits: KeyBits, dt: u16 },
+    Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     Move { ent: Entity, hx: Hx, heading: Heading },
     Spawn { ent: Entity, typ: EntityType, hx: Hx },
 }

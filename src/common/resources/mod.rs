@@ -4,13 +4,7 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 
-use crate::keybits::KeyBits;
-
-#[derive(Debug, Default)]
-pub struct InputAccumulator {
-    pub key_bits: KeyBits,
-    pub dt: u16,
-}
+use crate::common::message::Event;
 
 #[derive(Debug, Default, Resource)]
-pub struct InputQueue(pub VecDeque<InputAccumulator>);
+pub struct InputQueue(pub VecDeque<Event>);

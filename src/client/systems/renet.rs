@@ -116,17 +116,17 @@ pub fn write_do(
                     warn!("Player {} not found when Move received", ent);
                 }
             }
-            Do { event: Event::Input { ent, mut dt, .. } } => {
+            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
                 if let Some(&ent) = l2r.0.get_by_right(&ent) {
-                    while let Some(mut inp) = queue.0.pop_back() {
-                        if dt > inp.dt { dt -= inp.dt; }
-                        else { 
-                            inp.dt -= dt;
-                            queue.0.push_back(inp);
-                        }
-                    }
+                    queue.0.pop_back();
+                    trace!("received kb({}), dt({}), seq({}) leaving len:({})", key_bits.key_bits, dt, seq, queue.0.len());
                     for it in queue.0.iter().rev() {
-                        writer.send(Do { event: Event::Input { ent, key_bits: it.key_bits, dt: it.dt } });                        
+                        match it {
+                            Event::Input { ent: _, key_bits, dt, seq } => {
+                                writer.send(Do { event: Event::Input { ent, key_bits: *key_bits, dt: *dt, seq: *seq } });
+                            }
+                            _ => unreachable!()
+                        }
                     }
                 } else {
                     warn!("Player {} not found when Input received", ent);
@@ -146,31 +146,27 @@ pub fn send_try(
 ) {
     for &message in reader.read() {
         match message {
-            // Try { event: Event::Move { ent, .. } } => {
-            //     if let Some(key_bits_last) = queue.0.pop_front() {
-            //         conn.send_message(DefaultChannel::ReliableOrdered, 
-            //             bincode::serialize(&Try { event: Event::Input {
-            //                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
-            //                 key_bits: key_bits_last.key_bits, 
-            //                 dt: key_bits_last.dt 
-            //         }}).unwrap());
-            //     }
-            // }
-            Try { event: Event::Input { ent, key_bits, dt } } => {
-                writer.send(Do { event: Event::Input { ent, key_bits, dt } });
-                let mut key_bits_last = queue.0.pop_front().unwrap_or(InputAccumulator { key_bits, dt: 0 });
-                if key_bits.key_bits != key_bits_last.key_bits.key_bits {
-                    queue.0.push_front(key_bits_last);
-                    conn.send_message(DefaultChannel::ReliableOrdered, 
-                        bincode::serialize(&Try { event: Event::Input { 
-                            ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                            key_bits, 
-                            dt: 0
-                    }}).unwrap());
-                    key_bits_last = InputAccumulator { key_bits, dt: 0 };
-                }
-                key_bits_last.dt += dt;
-                queue.0.push_front(key_bits_last);
+            Try { event: Event::Input { ent, key_bits, dt, seq } } => {
+                writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
+                let input0 = queue.0.pop_front().unwrap_or(Event::Input { ent, key_bits, dt: 0, seq: 0 });
+                match input0 {
+                    Event::Input { ent: _, key_bits: key_bits0, dt: mut dt0, seq: mut seq0 } => {
+                        if key_bits.key_bits != key_bits0.key_bits {
+                            queue.0.push_front(input0);
+                            seq0 = seq0+1; dt0 = 0;
+                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 
+                                ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                                key_bits, 
+                                dt: dt0,
+                                seq: seq0,
+                            } }).unwrap());
+                            trace!("sent kb({}), dt({}), seq({}) making len({})", key_bits0.key_bits, dt0, seq0, queue.0.len());
+                        }
+                        dt0 += dt;
+                        queue.0.push_front(Event::Input { ent, key_bits, dt: dt0, seq: seq0 });
+                    }
+                    _ => unreachable!()
+                };
             }
             Try { event: Event::Discover { ent, hx } } => { 
                 conn.send_message(DefaultChannel::ReliableOrdered, 

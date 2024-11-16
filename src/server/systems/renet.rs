@@ -53,6 +53,7 @@ pub fn do_manage_connections(
                     typ,
                     hx, 
                 )).id();
+                queues.0.insert(ent, InputQueue::default());
                 let message = bincode::serialize(&Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
@@ -61,7 +62,6 @@ pub fn do_manage_connections(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.0.insert(*client_id, ent);
-                queues.0.insert(ent, InputQueue::default());
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
@@ -79,16 +79,19 @@ pub fn write_try(
     mut writer: EventWriter<Try>,
     mut query: Query<&mut KeyBits>,
     mut conn: ResMut<RenetServer>,
+    mut queues: ResMut<InputQueues>,
     lobby: Res<Lobby>,
 ) {
     for client_id in conn.clients_id() {
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let message = bincode::deserialize(&serialized).unwrap();
             match message {
-                Try { event: Event::Input { key_bits, .. } } => {
+                Try { event: Event::Input { key_bits, dt, seq, .. } } => {
                     if let Some(&ent) = lobby.0.get_by_left(&client_id) {
-                        let mut key_bits0 = query.get_mut(ent).unwrap();
-                        if *key_bits0 != key_bits { *key_bits0 = key_bits; }
+                        let queue = queues.0.get_mut(&ent).unwrap();
+                        queue.0.push_back(Event::Input { ent, key_bits, dt, seq });
+                        trace!("ent({}) received kb({}), dt({}), seq({}) making len({})", ent, key_bits.key_bits, dt, seq, queue.0.len());
+                        *query.get_mut(ent).unwrap() = key_bits;
                     }
                 }
                 Try { event: Event::Discover { hx, .. } } => { 
@@ -129,22 +132,28 @@ pub fn write_try(
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, 
                     bincode::serialize(&Do { event: Event::Move { ent, hx, heading }}).unwrap());
             }
-            Do { event: Event::Input { ent, key_bits, dt } } => {
-                let mut key_bits_last = queues.0.get_mut(&ent).unwrap().0
-                    .pop_front().unwrap_or(InputAccumulator { key_bits, dt: 0 });
-                if key_bits.key_bits != key_bits_last.key_bits.key_bits || key_bits_last.dt > 1000 {
-                    conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), 
-                        DefaultChannel::ReliableOrdered, 
-                            bincode::serialize(&Do { event: Event::Input { 
-                                ent,
-                                key_bits: key_bits_last.key_bits, 
-                                dt: key_bits_last.dt,
-                    }}).unwrap());
-                    trace!("Input: ent: {}, key_bits: {:?}, dt: {}", ent, key_bits_last.key_bits, key_bits_last.dt);
-                    key_bits_last = InputAccumulator { key_bits, dt: 0 };
+            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
+                let queue = queues.0.get_mut(&ent).unwrap();
+                if let Some(input0) = queue.0.pop_front() {
+                    match input0 {
+                        Event::Input { key_bits: key_bits0, dt: dt0, seq: seq0, .. } => {
+                            if seq != seq0 {
+                                conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), 
+                                    DefaultChannel::ReliableOrdered, 
+                                        bincode::serialize(&Do { event: Event::Input { 
+                                            ent,
+                                            key_bits: key_bits0, 
+                                            dt: dt0,
+                                            seq: seq0,
+                                }}).unwrap());
+                                trace!("ent({}) sent kb({}), dt({}), seq({}) making len({})", ent, key_bits0.key_bits, dt0, seq0, queue.0.len());
+                            } else {
+                                queue.0.push_front(Event::Input { ent, key_bits, dt: dt0+dt, seq });
+                            }
+                        },
+                        _ => unreachable!()
+                    };
                 }
-                key_bits_last.dt += dt;
-                queues.0.get_mut(&ent).unwrap().0.push_front(key_bits_last);
             }
             _ => {}
         }
