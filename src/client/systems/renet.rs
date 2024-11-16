@@ -151,9 +151,9 @@ pub fn send_try(
                 let input0 = queue.0.pop_front().unwrap_or(Event::Input { ent, key_bits, dt: 0, seq: 0 });
                 match input0 {
                     Event::Input { ent: _, key_bits: key_bits0, dt: mut dt0, seq: mut seq0 } => {
-                        if key_bits.key_bits != key_bits0.key_bits {
+                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 {
                             queue.0.push_front(input0);
-                            seq0 = seq0+1; dt0 = 0;
+                            seq0 = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
                                 key_bits, 
