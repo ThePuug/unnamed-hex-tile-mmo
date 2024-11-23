@@ -2,7 +2,10 @@ use bevy::prelude::*;
 
 use crate::{*,
     common::{
-        components::hx::*,
+        components::{
+            hx::*,
+            offset::*,
+        },
         message::{*, Event},
     },
 };
@@ -14,7 +17,6 @@ pub fn try_move(
     for &message in reader.read() {
         match message {
             Try { event: Event::Move { ent, hx, heading } } => { 
-                // trace!("Message: {:?}", message);
                 writer.send(Do { event: Event::Move { ent, hx, heading }}); 
             },
             _ => {}
@@ -51,7 +53,7 @@ pub fn try_move(
                             Offset::default(),
                             EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
                             Transform {
-                                translation: (hx,Offset::default()).calculate(),
+                                translation: (hx,Vec3::ZERO).calculate(),
                                 ..default()}, 
                         )).id();
                         map.insert(hx, ent);

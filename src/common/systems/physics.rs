@@ -4,68 +4,88 @@ use crate::{ *,
     common::{
         message::{*, Event},
         components::{
-            keybits::*,
+            heading::*,
             hx::*,
+            keybits::*,
+            offset::*,
         },
         resources::map::*,
     },
 };
 
+pub fn apply(
+    key_bits: KeyBits, 
+    mut dt: i16, 
+    heading: &Heading,
+    hx0: &Hx,
+    offset0: Vec3,
+    air_time0: Option<i16>,
+    map: &Map,
+) -> (Vec3, Option<i16>) {
+    let mut offset0 = offset0;
+    let mut air_time0 = air_time0;
+
+    // trace!("was offset({}), air_time({:?})", offset0, air_time0);
+
+    if air_time0.is_none() && key_bits.all_pressed([KB_JUMP]) { air_time0 = Some(500); }
+
+    let px = Vec3::from(*hx0);
+    let curr = px + offset0;
+    let curr_hx = Hx::from(curr);
+    let curr_px = Vec3::from(curr_hx);
+
+    let (floor, _) = map.find(curr_hx + Hx{ z: 1, ..default() }, -5);
+    
+    if air_time0.is_some() {
+        let air_time = &mut *air_time0.as_mut().unwrap();
+        if *air_time > 0 {
+            let mut dt = dt as i16;
+            if *air_time < dt { dt = *air_time; }
+            offset0.z = offset0.z.lerp(2.4, 1.-(*air_time as f32 / 1000.).powf(dt as f32 / 1000.));
+        }
+        if dt > *air_time { dt -= *air_time; *air_time = 0; }
+        *air_time -= dt; 
+        if *air_time < 0 {
+            let dz = dt as f32 / -100.;
+            if floor.is_none() || curr_hx.z as f32 + offset0.z + dz > floor.unwrap().z as f32 + 1. { 
+                offset0.z += dz;
+            } else {
+                offset0.z = floor.unwrap().z as f32 + 1. - curr_hx.z as f32;
+                air_time0 = None;
+            }
+        }
+    }
+    
+    let far = curr_px.xy().lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25);
+    let near = px.xy().lerp(Vec3::from(*hx0 + heading.0).xy(), 0.25);
+    let next = map.get(Hx::from(far.extend(hx0.z as f32)));
+    let target = 
+        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { far }
+        else { near };
+
+    let dist = curr.xy().distance(target);
+    let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
+    offset0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.z);
+
+    // trace!("now offset({}), air_time({:?}) after dt({})", offset0, air_time0, dt);
+    
+    (offset0, air_time0)
+}
+
 pub fn do_input(
-    mut commands: Commands,
     mut reader: EventReader<Do>,
+    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
-    mut query: Query<(Entity, &Heading, &Hx, &mut Offset, Option<&mut AirTime>)>,
 ) {
     for &message in reader.read() {
         match message {
-            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
-                if let Ok((_ent, &heading, &hx0, mut offset0, air_time)) = query.get_mut(ent) {
-                    let mut offset = offset0.0;
-
-                    let px = Vec3::from(hx0);
-                    let curr = px + offset;
-                    let curr_hx = Hx::from(curr);
-                    let curr_px = Vec3::from(curr_hx);
-
-                    let (floor, _) = map.find(curr_hx + Hx{ z: 1, ..default() }, -5);
-                    
-                    if let Some(mut air_time) = air_time { 
-                        let mut dt = dt as i16;
-                        if air_time.0 >= dt { 
-                            // let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
-                            offset.z = offset.z.lerp(2.4, 1.-(air_time.0 as f32 / 1000.).powf(dt as f32 / 1000.));
-                            trace!("Air time: {}, dt: {}, offset.z: {}", air_time.0, dt, offset.z);
-                            air_time.0 -= dt; 
-                        } else {
-                            if air_time.0 > 0 {
-                                dt -= air_time.0;
-                                air_time.0 = 0;
-                            }
-                            let dz = dt as f32 / -100.;
-                            if floor.is_none() || curr_hx.z as f32 + offset.z + dz > floor.unwrap().z as f32 + 1. { 
-                                offset.z += dz;
-                            } else {
-                                offset.z = floor.unwrap().z as f32 + 1. - curr_hx.z as f32;
-                                commands.entity(ent).remove::<AirTime>();
-                            }
-                        }
-                    }
-                    
-                    let far = curr_px.xy().lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25);
-                    let near = px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 0.25);
-                    let next = map.get(Hx::from(far.extend(hx0.z as f32)));
-                    let target = 
-                        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { far }
-                        else { near };
-
-                    let dist = curr.xy().distance(target);
-                    let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
-                    offset = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset.z);
-
-                    offset0.0 = offset;
-                }
-            }
+            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
+                trace!("do seq({}) dt({}) kb({}) ent({})", seq, dt, key_bits.key_bits, ent);
+                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
+                offset.step = offset.state;
+                air_time.step = air_time.state;
+            }, 
             _ => {}
         }
     }
@@ -81,7 +101,7 @@ pub fn do_move(
         match message {
             Do { event: Event::Move { ent, hx, heading } } => {
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                    *offset0 = Offset(Vec3::from(*hx0) + offset0.0 - Vec3::from(hx));
+                    offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
                     if *hx0 != hx { 
                         *hx0 = hx; 
                         *heading0 = heading;
@@ -120,16 +140,16 @@ pub fn update_headings(
     }
 }
 
+
 pub fn update_offsets(
-    mut commands: Commands,
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading, &Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &Hx, &Heading, &Offset, &mut AirTime), Changed<Offset>>,
 ) {
-    for (ent, &hx0, &heading, &offset) in &mut query {
+    for (ent, &hx0, &heading, &offset, mut air_time) in &mut query {
         let px = Vec3::from(hx0);
-        let hx = Hx::from(px + offset.0);
+        let hx = Hx::from(px + offset.state);
         if hx0 != hx { 
-            commands.entity(ent).insert(AirTime(0));
+            air_time.state = Some(0);
             writer.send(Try { event: Event::Move { ent, hx, heading } }); 
         }
     }

@@ -20,16 +20,14 @@ use bevy_renet::{
 use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
-    message::*,
+    message::{ *, Event },
     components::{ *,
+        keybits::*,
     },
     resources::{ *, 
         map::*,
     },
-    systems::{
-        input::*,
-        physics::*,
-    },
+    systems::physics::*,
 };
 use client::{
     components::animationconfig::*,
@@ -96,13 +94,17 @@ fn main() {
     app.add_event::<Try>();
 
     app.add_systems(Startup, setup);
+
+    app.add_systems(PreUpdate, (
+        write_do,
+    ));
+
     app.add_systems(Update, (
         panic_on_error_system,
-        generate_input,
-        write_do,
         do_input,
         do_move,
-        send_try,
+        generate_input,
+        try_input,
         update_animations,
         update_camera,
         update_headings,
@@ -111,13 +113,19 @@ fn main() {
         update_keybits,
     ));
 
-    let (client, transport) = new_renet_client();
+    app.add_systems(PostUpdate, (
+        send_try,
+    ));
 
-    app.init_resource::<EntityMap>();
-    app.init_resource::<Map>();
-    app.init_resource::<InputQueue>();
+    let (client, transport) = new_renet_client();
+    let mut queue = InputQueue::default();
+    queue.0.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
+
     app.insert_resource(client);
     app.insert_resource(transport);
+    app.insert_resource(queue);
+    app.init_resource::<EntityMap>();
+    app.init_resource::<Map>();
 
     app.run();
 }

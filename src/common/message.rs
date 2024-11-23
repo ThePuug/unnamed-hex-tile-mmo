@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ *,
     common::components::{
+        heading::*,
         hx::*,
         keybits::*,
     },

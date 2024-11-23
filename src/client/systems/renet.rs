@@ -5,7 +5,11 @@ use renet::{DefaultChannel, RenetClient};
 use crate::{*,
     common::{
         message::{*, Event},
-        components::hx::*,
+        components::{
+            heading::*,
+            hx::*,
+            offset::*,
+        },
         resources::*,
     },
     client::resources::*,
@@ -31,7 +35,8 @@ pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 
 pub fn write_do(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut do_writer: EventWriter<Do>,
+    mut try_writer: EventWriter<Try>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
@@ -48,7 +53,7 @@ pub fn write_do(
                             SpriteBundle {
                                 texture: texture_handles.actor.0.clone(),
                                 transform: Transform {
-                                    translation: (hx, Offset::default()).calculate(),
+                                    translation: (hx, Vec3::ZERO).calculate(),
                                     ..default()},
                                 sprite: Sprite {
                                     anchor: Anchor::BottomCenter,
@@ -64,11 +69,12 @@ pub fn write_do(
                                 AnimationDirection { start:4, end:7, flip:false },
                                 AnimationDirection { start:4, end:7, flip:true }],
                                 2,0),
-                            Heading::default(),
                             typ,
                             hx,
+                            Heading::default(),
                             Offset::default(),
                             KeyBits::default(),
+                            AirTime::default(),
                         )).id();
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
@@ -83,7 +89,7 @@ pub fn write_do(
                                 texture: texture_handles.decorator.0.clone(),
                                 transform: Transform {
                                     scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
-                                    translation: (hx, Offset::default()).calculate(),
+                                    translation: (hx, Vec3::ZERO).calculate(),
                                     ..default()},
                                 sprite: Sprite {
                                     anchor: Anchor::Custom(Vec2{ x: 0., y: (48.-69.) / 138. }),
@@ -103,33 +109,25 @@ pub fn write_do(
             }
             Do { event: Event::Despawn { ent } } => {
                 debug!("Player {} disconnected", ent);
-                if let Some(ent) = l2r.0.remove_by_right(&ent) {
-                    commands.entity(ent.0).despawn();
-                } else {
-                    warn!("Player {} not found when Despawn received", ent);
-                }
+                let ent = l2r.0.remove_by_right(&ent).unwrap();
+                commands.entity(ent.0).despawn();
             }
             Do { event: Event::Move { ent, hx, heading } } => {
-                if let Some(&ent) = l2r.0.get_by_right(&ent) {
-                    writer.send(Do { event: Event::Move { ent, hx, heading } });
-                } else {
-                    warn!("Player {} not found when Move received", ent);
-                }
+                let &ent = l2r.0.get_by_right(&ent).unwrap();
+                do_writer.send(Do { event: Event::Move { ent, hx, heading } });
             }
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                if let Some(&ent) = l2r.0.get_by_right(&ent) {
-                    queue.0.pop_back();
-                    trace!("received kb({}), dt({}), seq({}) leaving len:({})", key_bits.key_bits, dt, seq, queue.0.len());
-                    for it in queue.0.iter().rev() {
-                        match it {
-                            Event::Input { ent: _, key_bits, dt, seq } => {
-                                writer.send(Do { event: Event::Input { ent, key_bits: *key_bits, dt: *dt, seq: *seq } });
-                            }
-                            _ => unreachable!()
+                let &ent = l2r.0.get_by_right(&ent).unwrap();
+                queue.0.pop_back();
+                // trace!("recv seq({}) dt({}) kb({})", seq, dt, key_bits.key_bits);
+                do_writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
+                for &it in queue.0.iter().rev() {
+                    match it {
+                        Event::Input { key_bits, dt, seq, .. } => {
+                            try_writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
                         }
+                        _ => unreachable!()
                     }
-                } else {
-                    warn!("Player {} not found when Input received", ent);
                 }
             }
             _ => {}
@@ -140,30 +138,29 @@ pub fn write_do(
 pub fn send_try(
     mut conn: ResMut<RenetClient>,
     mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
     l2r: Res<EntityMap>,
     mut queue: ResMut<InputQueue>,
 ) {
     for &message in reader.read() {
         match message {
-            Try { event: Event::Input { ent, key_bits, dt, seq } } => {
-                writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
-                let input0 = queue.0.pop_front().unwrap_or(Event::Input { ent, key_bits, dt: 0, seq: 0 });
+            Try { event: Event::Input { ent, key_bits, mut dt, seq } } => {
+                if seq != 0 { continue; } // seq 0 is input this frame
+                let input0 = queue.0.pop_front().unwrap();
                 match input0 {
-                    Event::Input { ent: _, key_bits: key_bits0, dt: mut dt0, seq: mut seq0 } => {
+                    Event::Input { key_bits: key_bits0, dt: mut dt0, mut seq, .. } => {
                         if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 {
                             queue.0.push_front(input0);
-                            seq0 = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
+                            seq = if seq == 255 { 1 } else { seq + 1}; dt0 = 0;                            
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
                                 key_bits, 
                                 dt: dt0,
-                                seq: seq0,
+                                seq,
                             } }).unwrap());
-                            trace!("sent kb({}), dt({}), seq({}) making len({})", key_bits0.key_bits, dt0, seq0, queue.0.len());
                         }
-                        dt0 += dt;
-                        queue.0.push_front(Event::Input { ent, key_bits, dt: dt0, seq: seq0 });
+                        dt += dt0;
+                        // trace!(" inc seq({}) dt({}), kb({})", seq, dt, key_bits.key_bits);
+                        queue.0.push_front(Event::Input { ent, key_bits, dt, seq });
                     }
                     _ => unreachable!()
                 };

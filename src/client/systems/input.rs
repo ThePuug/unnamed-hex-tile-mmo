@@ -1,10 +1,15 @@
 use bevy::prelude::*;
 
 use crate::{*,
-    common::components::{
+    common::{
+        message::Event,
+        components::{
+            heading::*,
             hx::*,
             keybits::*,
+            offset::*,
         },
+    }
 };
 
 pub const KEYCODES_JUMP: [KeyCode; 1] = [KeyCode::Space];
@@ -64,5 +69,33 @@ pub fn update_camera(
         c_transform.translation = a_transform.translation + Vec3 { x: 0., y: 24., z: 0. };
         if keyboard.any_pressed([KeyCode::Minus]) { projection.scale *= 1.05; }
         if keyboard.any_pressed([KeyCode::Equal]) { projection.scale /= 1.05; }
+    }
+}
+
+pub fn try_input(
+    mut reader: EventReader<Try>,
+    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
+    map: Res<Map>,
+) {
+    for &message in reader.read() {
+        match message {
+            Try { event: Event::Input { ent, key_bits, dt, .. } } => {
+                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+                // if seq != 0 { trace!(" try seq({}) dt({}) kb({})", seq, dt, key_bits.key_bits); }
+                (offset.step, air_time.step) = apply(key_bits, dt as i16, &heading, &hx, offset.step, air_time.step, &map);
+            }, 
+            _ => {}
+        }
+    }
+}
+
+pub fn generate_input(
+    mut writer: EventWriter<Try>,
+    time: Res<Time>,
+    query: Query<(Entity, &KeyBits), With<Actor>>,
+) {
+    for (ent, &key_bits) in query.iter() {
+        let dt = (time.delta_seconds() * 1000.) as u16;
+        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq: 0 } });
     }
 }

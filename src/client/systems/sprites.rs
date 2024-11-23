@@ -4,8 +4,10 @@ use bevy::prelude::*;
 
 use crate::{ *,
     common::components::{
+        heading::*,
         hx::*,
         keybits::*,
+        offset::*,
     },
 };
 
@@ -42,13 +44,12 @@ pub fn update_animations(
 
 pub fn update_transforms(
     time: Res<Time>,
-    mut query: Query<(&Hx, Option<&Offset>, Option<&Heading>, Option<&KeyBits>, &mut Transform)>,
+    mut query: Query<(&Hx, &Offset, &Heading, &KeyBits, &mut Transform)>,
 ) {
-    for (&hx, offset, heading, keybits, mut transform0) in &mut query {
+    for (&hx, &offset, &heading, &keybits, mut transform0) in &mut query {
         let target = match (keybits, offset, heading) {
-            (Some(&keybits), Some(&offset), _) if keybits != KeyBits::default() => (hx, offset).calculate(),
-            (_, _, Some(&heading)) => (hx, heading.into()).calculate(),
-            _ => (hx, Offset::default()).calculate(),
+            (keybits, offset, _) if keybits != KeyBits::default() => (hx, offset.step).calculate(),
+            (_, _, heading) => (hx, heading.into()).calculate(),
         };
         let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
         transform0.translation = transform;

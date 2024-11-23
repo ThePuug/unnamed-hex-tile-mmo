@@ -4,9 +4,11 @@ use renet::ServerEvent;
 use crate::{*,
     common::{
         message::{*, Event},
-        components::{
+        components::{ *,
+            heading::*,
             hx::*,
             keybits::*,
+            offset::*,
         },
         resources::*,
     },
@@ -45,15 +47,18 @@ pub fn do_manage_connections(
                 let hx = Hx { q: 0, r: 0, z: 4 };
                 let typ = EntityType::Actor;
                 let ent = commands.spawn((
+                    Actor::default(),
                     Transform::default(),
+                    AirTime::default(),
                     KeyBits::default(),
                     Heading::default(),
                     Offset::default(),
-                    Actor::default(),
                     typ,
                     hx, 
                 )).id();
-                queues.0.insert(ent, InputQueue::default());
+                let mut queue = InputQueue::default();
+                queue.0.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
+                queues.0.insert(ent, queue);
                 let message = bincode::serialize(&Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
@@ -77,9 +82,7 @@ pub fn do_manage_connections(
 
 pub fn write_try(
     mut writer: EventWriter<Try>,
-    mut query: Query<&mut KeyBits>,
     mut conn: ResMut<RenetServer>,
-    mut queues: ResMut<InputQueues>,
     lobby: Res<Lobby>,
 ) {
     for client_id in conn.clients_id() {
@@ -88,10 +91,7 @@ pub fn write_try(
             match message {
                 Try { event: Event::Input { key_bits, dt, seq, .. } } => {
                     if let Some(&ent) = lobby.0.get_by_left(&client_id) {
-                        let queue = queues.0.get_mut(&ent).unwrap();
-                        queue.0.push_back(Event::Input { ent, key_bits, dt, seq });
-                        trace!("ent({}) received kb({}), dt({}), seq({}) making len({})", ent, key_bits.key_bits, dt, seq, queue.0.len());
-                        *query.get_mut(ent).unwrap() = key_bits;
+                        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq }});
                     }
                 }
                 Try { event: Event::Discover { hx, .. } } => { 
@@ -110,8 +110,6 @@ pub fn write_try(
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<Do>,
     mut map: ResMut<Map>,
-    mut queues: ResMut<InputQueues>,
-    lobby: Res<Lobby>,
 ) {
     for &message in reader.read() {
         match message {
@@ -121,7 +119,7 @@ pub fn write_try(
                     Offset::default(),
                     typ,
                     Transform {
-                        translation: (hx,Offset::default()).calculate(),
+                        translation: (hx,Vec3::ZERO).calculate(),
                         ..default()}, 
                 )).id();
                 map.insert(hx, ent);
@@ -131,29 +129,6 @@ pub fn write_try(
             Do { event: Event::Move { ent, hx, heading } } => {
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, 
                     bincode::serialize(&Do { event: Event::Move { ent, hx, heading }}).unwrap());
-            }
-            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                let queue = queues.0.get_mut(&ent).unwrap();
-                if let Some(input0) = queue.0.pop_front() {
-                    match input0 {
-                        Event::Input { key_bits: key_bits0, dt: dt0, seq: seq0, .. } => {
-                            if seq != seq0 {
-                                conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), 
-                                    DefaultChannel::ReliableOrdered, 
-                                        bincode::serialize(&Do { event: Event::Input { 
-                                            ent,
-                                            key_bits: key_bits0, 
-                                            dt: dt0,
-                                            seq: seq0,
-                                }}).unwrap());
-                                trace!("ent({}) sent kb({}), dt({}), seq({}) making len({})", ent, key_bits0.key_bits, dt0, seq0, queue.0.len());
-                            } else {
-                                queue.0.push_front(Event::Input { ent, key_bits, dt: dt0+dt, seq });
-                            }
-                        },
-                        _ => unreachable!()
-                    };
-                }
             }
             _ => {}
         }

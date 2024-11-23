@@ -25,10 +25,7 @@ use common::{
     message::*,
     components::*,
     resources::map::*,
-    systems::{
-        input::*,
-        physics::*,
-    },
+    systems::physics::*,
 };
 use server::{
     resources::{ *,
@@ -36,8 +33,8 @@ use server::{
     },
     systems::{
         actor::*,
-        renet::*,
         input::*,
+        renet::*,
     },
 };
 
@@ -72,8 +69,8 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         send_do,
-        do_manage_connections,
         do_input,
+        do_manage_connections,
         do_move,
         try_discover,
         try_input,
