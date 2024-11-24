@@ -94,11 +94,6 @@ pub fn write_try(
                         writer.send(Try { event: Event::Input { ent, key_bits, dt, seq }});
                     }
                 }
-                Try { event: Event::Discover { hx, .. } } => { 
-                    if let Some(&ent) = lobby.0.get_by_left(&client_id) {
-                        writer.send(Try { event: Event::Discover { ent, hx }});
-                    }
-                }
                 _ => {}
             }
         }

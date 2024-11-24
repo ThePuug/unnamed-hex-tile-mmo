@@ -51,7 +51,6 @@ pub fn update_transforms(
             (keybits, offset, _) if keybits != KeyBits::default() => (hx, offset.step).calculate(),
             (_, _, heading) => (hx, heading.into()).calculate(),
         };
-        let transform = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
-        transform0.translation = transform;
+        transform0.translation = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
     }
 }

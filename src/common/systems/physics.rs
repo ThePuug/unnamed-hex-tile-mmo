@@ -94,7 +94,6 @@ pub fn do_input(
 pub fn do_move(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
-    map: Res<Map>,
     mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
 ) {
     for &message in reader.read() {
@@ -111,7 +110,7 @@ pub fn do_move(
                     for q in -5..=5 {
                         for r in max(-5, -q-5)..=min(5, -q+5) {
                             let hx = *hx0 + Hx { q, r, ..default() };
-                            if map.find(hx, -5).0.is_none() { writer.send(Try { event: Event::Discover { ent, hx } }); }
+                            writer.send(Try { event: Event::Discover { ent, hx } }); 
                         }
                     }
                 }

@@ -165,13 +165,6 @@ pub fn send_try(
                     _ => unreachable!()
                 };
             }
-            Try { event: Event::Discover { ent, hx } } => { 
-                conn.send_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serialize(&Try { event: Event::Discover { 
-                        ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                        hx 
-                }}).unwrap());
-            }
             _ => {}
         }
     }
