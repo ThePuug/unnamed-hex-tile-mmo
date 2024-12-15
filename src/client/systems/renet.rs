@@ -35,8 +35,7 @@ pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 
 pub fn write_do(
     mut commands: Commands,
-    mut do_writer: EventWriter<Do>,
-    mut try_writer: EventWriter<Try>,
+    mut writer: EventWriter<Do>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
@@ -114,21 +113,12 @@ pub fn write_do(
             }
             Do { event: Event::Move { ent, hx, heading } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
-                do_writer.send(Do { event: Event::Move { ent, hx, heading } });
+                writer.send(Do { event: Event::Move { ent, hx, heading } });
             }
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
                 queue.0.pop_back();
-                // trace!("recv seq({}) dt({}) kb({})", seq, dt, key_bits.key_bits);
-                do_writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
-                for &it in queue.0.iter().rev() {
-                    match it {
-                        Event::Input { key_bits, dt, seq, .. } => {
-                            try_writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
-                        }
-                        _ => unreachable!()
-                    }
-                }
+                writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             _ => {}
         }
@@ -143,23 +133,20 @@ pub fn send_try(
 ) {
     for &message in reader.read() {
         match message {
-            Try { event: Event::Input { ent, key_bits, mut dt, seq } } => {
+            Try { event: Event::Input { ent, key_bits, mut dt, mut seq } } => {
                 if seq != 0 { continue; } // seq 0 is input this frame
                 let input0 = queue.0.pop_front().unwrap();
                 match input0 {
-                    Event::Input { key_bits: key_bits0, dt: mut dt0, mut seq, .. } => {
-                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 {
+                    Event::Input { key_bits: key_bits0, dt: mut dt0, seq: seq0, .. } => {
+                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 250 {
                             queue.0.push_front(input0);
-                            seq = if seq == 255 { 1 } else { seq + 1}; dt0 = 0;                            
+                            seq = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
-                                key_bits, 
-                                dt: dt0,
-                                seq,
+                                key_bits, dt: 0, seq,
                             } }).unwrap());
                         }
                         dt += dt0;
-                        // trace!(" inc seq({}) dt({}), kb({})", seq, dt, key_bits.key_bits);
                         queue.0.push_front(Event::Input { ent, key_bits, dt, seq });
                     }
                     _ => unreachable!()

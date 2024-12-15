@@ -2,7 +2,12 @@ use bevy::prelude::*;
 
 use crate::{ *,
     common::{
-        components::keybits::*,
+        components::{
+            heading::*,
+            hx::*,
+            keybits::*,
+            offset::*,
+        },
         message::{*, Event},
     },
 };
@@ -26,6 +31,22 @@ pub fn generate_input(
     }
 }
 
+pub fn do_input(
+    mut reader: EventReader<Do>,
+    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
+    map: Res<Map>,
+) {
+    for &message in reader.read() {
+        match message {
+            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
+                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
+            },
+            _ => {}
+        }
+    }
+}
+
 pub fn try_input(
     mut reader: EventReader<Try>,
     mut query: Query<&mut KeyBits>,
@@ -38,7 +59,6 @@ pub fn try_input(
             Try { event: Event::Input { ent, key_bits, seq, .. } } => {
                 let queue = queues.0.get_mut(&ent).unwrap();
                 queue.0.push_back(Event::Input { ent, key_bits, dt: 0, seq });
-                // trace!("ent({}) expect kb({}), seq({})", ent, key_bits.key_bits, seq);
                 *query.get_mut(ent).unwrap() = key_bits;
 
                 match queue.0.pop_front().unwrap() {
@@ -51,7 +71,6 @@ pub fn try_input(
                                 dt,
                                 seq,
                             }}).unwrap());
-                        // trace!("ent({}) sent kb({}), seq({}) for dt({})", ent, key_bits.key_bits, seq, dt);
                     }
                     _ => unreachable!()
                 }

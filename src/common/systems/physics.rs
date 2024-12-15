@@ -25,8 +25,6 @@ pub fn apply(
     let mut offset0 = offset0;
     let mut air_time0 = air_time0;
 
-    // trace!("was offset({}), air_time({:?})", offset0, air_time0);
-
     if air_time0.is_none() && key_bits.all_pressed([KB_JUMP]) { air_time0 = Some(500); }
 
     let px = Vec3::from(*hx0);
@@ -55,7 +53,8 @@ pub fn apply(
             }
         }
     }
-    
+
+    // TOO: update period greater than time to get from curr to far will cause state updates to lag behind on client
     let far = curr_px.xy().lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25);
     let near = px.xy().lerp(Vec3::from(*hx0 + heading.0).xy(), 0.25);
     let next = map.get(Hx::from(far.extend(hx0.z as f32)));
@@ -67,28 +66,7 @@ pub fn apply(
     let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
     offset0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.z);
 
-    // trace!("now offset({}), air_time({:?}) after dt({})", offset0, air_time0, dt);
-    
     (offset0, air_time0)
-}
-
-pub fn do_input(
-    mut reader: EventReader<Do>,
-    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
-    map: Res<Map>,
-) {
-    for &message in reader.read() {
-        match message {
-            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                trace!("do seq({}) dt({}) kb({}) ent({})", seq, dt, key_bits.key_bits, ent);
-                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
-                offset.step = offset.state;
-                air_time.step = air_time.state;
-            }, 
-            _ => {}
-        }
-    }
 }
 
 pub fn do_move(
@@ -101,6 +79,7 @@ pub fn do_move(
             Do { event: Event::Move { ent, hx, heading } } => {
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
                     offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
+                    offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
                     if *hx0 != hx { 
                         *hx0 = hx; 
                         *heading0 = heading;

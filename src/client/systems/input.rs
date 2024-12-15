@@ -72,6 +72,34 @@ pub fn update_camera(
     }
 }
 
+pub fn do_input(
+    mut reader: EventReader<Do>,
+    mut writer: EventWriter<Try>,
+    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
+    map: Res<Map>,
+    queue: Res<InputQueue>,
+) {
+    for &message in reader.read() {
+        match message {
+            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
+                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
+                offset.step = offset.state;
+                air_time.step = air_time.state;
+                for &it in queue.0.iter().rev() {
+                    match it {
+                        Event::Input { key_bits, dt, seq, .. } => {
+                            writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }, 
+            _ => {}
+        }
+    }
+}
+
 pub fn try_input(
     mut reader: EventReader<Try>,
     mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
@@ -81,7 +109,6 @@ pub fn try_input(
         match message {
             Try { event: Event::Input { ent, key_bits, dt, .. } } => {
                 let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                // if seq != 0 { trace!(" try seq({}) dt({}) kb({})", seq, dt, key_bits.key_bits); }
                 (offset.step, air_time.step) = apply(key_bits, dt as i16, &heading, &hx, offset.step, air_time.step, &map);
             }, 
             _ => {}
