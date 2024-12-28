@@ -22,6 +22,10 @@ impl KeyBits {
         keys.into_iter().any(|k| self.key_bits & k != 0)
     }
 
+    pub fn is_pressed(&self, key: u8) -> bool {
+        self.key_bits & key != 0
+    }
+
     pub fn set_pressed<T>(&mut self, keys: T, pressed: bool) 
     where T : IntoIterator<Item = u8>, {
         for k in keys.into_iter() {

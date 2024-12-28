@@ -47,9 +47,9 @@ pub fn do_manage_connections(
                 let hx = Hx { q: 0, r: 0, z: 4 };
                 let typ = EntityType::Actor;
                 let ent = commands.spawn((
+                    AirTime { state: Some(0), step: None },
                     Actor::default(),
                     Transform::default(),
-                    AirTime::default(),
                     KeyBits::default(),
                     Heading::default(),
                     Offset::default(),

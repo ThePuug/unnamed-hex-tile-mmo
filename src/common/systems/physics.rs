@@ -16,8 +16,8 @@ use crate::{ *,
 pub fn apply(
     key_bits: KeyBits, 
     mut dt: i16, 
-    heading: &Heading,
-    hx0: &Hx,
+    heading: Heading,
+    hx0: Hx,
     offset0: Vec3,
     air_time0: Option<i16>,
     map: &Map,
@@ -25,42 +25,44 @@ pub fn apply(
     let mut offset0 = offset0;
     let mut air_time0 = air_time0;
 
-    if air_time0.is_none() && key_bits.all_pressed([KB_JUMP]) { air_time0 = Some(500); }
-
-    let px = Vec3::from(*hx0);
+    let px = Vec3::from(hx0);
     let curr = px + offset0;
-    let curr_hx = Hx::from(curr);
-    let curr_px = Vec3::from(curr_hx);
 
-    let (floor, _) = map.find(curr_hx + Hx{ z: 1, ..default() }, -5);
+    let (floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -5);
+    if air_time0.is_none() && (
+        floor.is_none() || floor.is_some() && hx0.z > floor.unwrap().z+1 || key_bits.is_pressed(KB_JUMP)
+    ) { air_time0 = Some(200); }
     
-    if air_time0.is_some() {
-        let air_time = &mut *air_time0.as_mut().unwrap();
-        if *air_time > 0 {
+    if let Some(mut air_time) = air_time0 {
+        if air_time > 0 {
             let mut dt = dt as i16;
-            if *air_time < dt { dt = *air_time; }
-            offset0.z = offset0.z.lerp(2.4, 1.-(*air_time as f32 / 1000.).powf(dt as f32 / 1000.));
+            if air_time < dt { dt = air_time; }
+            offset0.z += 0_f32.lerp(air_time as f32 / 50., 1. - 2_f32.powf(-10. * dt as f32 / 1000.));
         }
-        if dt > *air_time { dt -= *air_time; *air_time = 0; }
-        *air_time -= dt; 
-        if *air_time < 0 {
+        if dt > air_time { 
+            dt -= air_time; 
+            air_time = 0; 
+        }
+        air_time -= dt;
+
+        air_time0 = Some(air_time);
+        if air_time < 0 {
             let dz = dt as f32 / -100.;
-            if floor.is_none() || curr_hx.z as f32 + offset0.z + dz > floor.unwrap().z as f32 + 1. { 
+            if floor.is_none() || hx0.z as f32 + offset0.z + dz > floor.unwrap().z as f32 + 1. { 
                 offset0.z += dz;
             } else {
-                offset0.z = floor.unwrap().z as f32 + 1. - curr_hx.z as f32;
+                offset0.z = floor.unwrap().z as f32 + 1. - hx0.z as f32; 
                 air_time0 = None;
             }
         }
     }
 
-    // TOO: update period greater than time to get from curr to far will cause state updates to lag behind on client
-    let far = curr_px.xy().lerp(Vec3::from(curr_hx + heading.0).xy(), 1.25);
-    let near = px.xy().lerp(Vec3::from(*hx0 + heading.0).xy(), 0.25);
-    let next = map.get(Hx::from(far.extend(hx0.z as f32)));
+    let there = px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 1.25);
+    let here = px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 0.25);
+    let next = map.get(Hx::from(there.extend(hx0.z as f32)));
     let target = 
-        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { far }
-        else { near };
+        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { there }
+        else { here };
 
     let dist = curr.xy().distance(target);
     let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
@@ -121,13 +123,12 @@ pub fn update_headings(
 
 pub fn update_offsets(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading, &Offset, &mut AirTime), Changed<Offset>>,
+    mut query: Query<(Entity, &Hx, &Heading, &Offset), Changed<Offset>>,
 ) {
-    for (ent, &hx0, &heading, &offset, mut air_time) in &mut query {
+    for (ent, &hx0, &heading, &offset) in &mut query {
         let px = Vec3::from(hx0);
         let hx = Hx::from(px + offset.state);
         if hx0 != hx { 
-            air_time.state = Some(0);
             writer.send(Try { event: Event::Move { ent, hx, heading } }); 
         }
     }

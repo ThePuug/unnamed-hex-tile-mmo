@@ -83,7 +83,7 @@ pub fn do_input(
         match message {
             Do { event: Event::Input { ent, key_bits, dt, .. } } => {
                 let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
+                (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
                 offset.step = offset.state;
                 air_time.step = air_time.state;
                 for &it in queue.0.iter().rev() {
@@ -109,7 +109,7 @@ pub fn try_input(
         match message {
             Try { event: Event::Input { ent, key_bits, dt, .. } } => {
                 let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.step, air_time.step) = apply(key_bits, dt as i16, &heading, &hx, offset.step, air_time.step, &map);
+                (offset.step, air_time.step) = apply(key_bits, dt as i16, heading, hx, offset.step, air_time.step, &map);
             }, 
             _ => {}
         }

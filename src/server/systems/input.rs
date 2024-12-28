@@ -40,7 +40,7 @@ pub fn do_input(
         match message {
             Do { event: Event::Input { ent, key_bits, dt, .. } } => {
                 let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.state, air_time.state) = apply(key_bits, dt as i16, &heading, &hx, offset.state, air_time.state, &map);
+                (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
             },
             _ => {}
         }

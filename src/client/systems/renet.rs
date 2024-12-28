@@ -70,10 +70,10 @@ pub fn write_do(
                                 2,0),
                             typ,
                             hx,
+                            AirTime { state: Some(0), step: None },
                             Heading::default(),
                             Offset::default(),
                             KeyBits::default(),
-                            AirTime::default(),
                         )).id();
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
