@@ -26,7 +26,6 @@ pub fn apply(
     let mut air_time0 = air_time0;
 
     let px = Vec3::from(hx0);
-    let curr = px + offset0;
 
     let (floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -5);
     if air_time0.is_none() && (
@@ -57,16 +56,18 @@ pub fn apply(
         }
     }
 
-    let there = px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 1.25);
-    let here = px.xy().lerp(Vec3::from(hx0 + heading.0).xy(), 0.25);
-    let next = map.get(Hx::from(there.extend(hx0.z as f32)));
+    let pxy = px.xy();
+    let hxy = Vec3::from(heading.0).xy();
+    let here = Vec2::ZERO.lerp(hxy, 0.25);
+    let there = Vec2::ZERO.lerp(hxy, 2.25);
+    let next = Vec2::ZERO.lerp(hxy, 1.25);
     let target = 
-        if next == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { there }
+        if map.get(Hx::from((pxy+next).extend(hx0.z as f32))) == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { there }
         else { here };
 
-    let dist = curr.xy().distance(target);
-    let ratio = 0_f32.max((dist - dt as f32 / 10.) / dist);
-    offset0 = (curr.xy().lerp(target, 1. - ratio) - px.xy()).extend(offset0.z);
+    let dist = offset0.xy().distance(target);
+    let ratio = 0_f32.max((dist - 0.1*dt as f32) / dist);
+    offset0 = offset0.xy().lerp(target, 1. - ratio).extend(offset0.z);
 
     (offset0, air_time0)
 }
@@ -82,11 +83,8 @@ pub fn do_move(
                 if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
                     offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
                     offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
-                    if *hx0 != hx { 
-                        *hx0 = hx; 
-                        *heading0 = heading;
-                    }
-                    else if *heading0 != heading { *heading0 = heading; }
+                    if *hx0 != hx { *hx0 = hx; }
+                    if *heading0 != heading { *heading0 = heading; }
 
                     for q in -5..=5 {
                         for r in max(-5, -q-5)..=min(5, -q+5) {

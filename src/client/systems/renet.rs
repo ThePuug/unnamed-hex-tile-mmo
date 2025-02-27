@@ -138,7 +138,8 @@ pub fn send_try(
                 let input0 = queue.0.pop_front().unwrap();
                 match input0 {
                     Event::Input { key_bits: key_bits0, dt: mut dt0, seq: seq0, .. } => {
-                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 250 {
+                        // the longer dt0 check is, the faster continuous motion desyncs
+                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 250 { 
                             queue.0.push_front(input0);
                             seq = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const QR_MAX: f32 = 16_777_215.;
 pub const QR_MIN: f32 = -16_777_215.;
 pub const TILE_SIZE: f32 = 24.;
-pub const ISO_SCALE: f32 = 3. / 4.;
+pub const ISO_SCALE: f32 = 2. / 4.;
 pub const TILE_SIZE_H: f32 = TILE_SIZE * 2. * ISO_SCALE;
 pub const TILE_SIZE_W: f32 = (SQRT_3 * TILE_SIZE as f64) as f32;
 pub const TILE_RISE: f32 = TILE_SIZE*ISO_SCALE*(5./6.);
