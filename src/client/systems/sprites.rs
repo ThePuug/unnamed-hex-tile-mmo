@@ -13,12 +13,13 @@ use crate::{ *,
 
 pub fn update_animations(
     time: Res<Time>,
-    mut query: Query<(&Heading, &mut Sprite, &mut AnimationConfig, &mut TextureAtlas)>,
+    mut query: Query<(&Heading, &mut Sprite, &mut AnimationConfig)>,
 ) {
-    for (heading, mut sprite, mut config, mut atlas) in &mut query {
+    for (heading, mut sprite, mut config) in &mut query {
         config.frame_timer.tick(time.delta());
         if config.frame_timer.just_finished() {
             let opt = &config.opts[config.selected];
+            let atlas = sprite.texture_atlas.as_mut().unwrap();
             if atlas.index >= opt.end || atlas.index < opt.start { 
                 atlas.index = opt.start + (atlas.index+1) % (1 + opt.end - opt.start);
             } else {
@@ -51,6 +52,6 @@ pub fn update_transforms(
             (keybits, offset, _) if keybits != KeyBits::default() => (hx, offset.step).calculate(),
             (_, _, heading) => (hx, heading.into()).calculate(),
         };
-        transform0.translation = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_seconds()));
+        transform0.translation = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_secs()));
     }
 }

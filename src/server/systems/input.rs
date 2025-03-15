@@ -19,7 +19,7 @@ pub fn generate_input(
     mut queues: ResMut<InputQueues>,
 ) {
     for ent in query.iter() {
-        let dt = (time.delta_seconds() * 1000.) as u16;
+        let dt = (time.delta_secs() * 1000.) as u16;
         let queue = queues.0.get_mut(&ent).unwrap();
         match queue.0.pop_front().unwrap() {
             Event::Input { key_bits, dt: dt0, seq, .. } => { 
@@ -65,12 +65,12 @@ pub fn try_input(
                     Event::Input { key_bits, dt, seq, .. } => {
                         conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), 
                             DefaultChannel::ReliableOrdered, 
-                            bincode::serialize(&Do { event: Event::Input { 
+                            bincode::serde::encode_to_vec(&Do { event: Event::Input { 
                                 ent,
                                 key_bits, 
                                 dt,
                                 seq,
-                            }}).unwrap());
+                            }}, bincode::config::legacy()).unwrap());
                     }
                     _ => unreachable!()
                 }

@@ -9,17 +9,11 @@ use std::net::UdpSocket;
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_easings::*;
 use bevy_renet::{
-    renet::{
-        transport::{ServerAuthentication, ServerConfig},
-        ConnectionConfig, RenetServer,
-    },
-    transport::NetcodeServerPlugin,
+    renet::{ConnectionConfig, RenetServer},
+    netcode::{NetcodeServerTransport, NetcodeTransportError, NetcodeServerPlugin},
     RenetServerPlugin,
 };
-use renet::{
-    transport::{NetcodeServerTransport, NetcodeTransportError}, 
-    DefaultChannel,
-};
+use renet::DefaultChannel;
 
 use common::{
     message::*,
@@ -60,7 +54,7 @@ fn main() {
         TransformPlugin,
         RenetServerPlugin,
         NetcodeServerPlugin,
-        EasingsPlugin,
+        EasingsPlugin::default(),
     ));
 
     app.add_event::<Do>();

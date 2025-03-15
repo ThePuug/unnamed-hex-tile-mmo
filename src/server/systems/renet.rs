@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_renet::netcode::{ServerAuthentication, ServerConfig};
 use renet::ServerEvent;
 
 use crate::{*,
@@ -59,11 +60,11 @@ pub fn do_manage_connections(
                 let mut queue = InputQueue::default();
                 queue.0.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
                 queues.0.insert(ent, queue);
-                let message = bincode::serialize(&Do { event: Event::Spawn { ent, typ, hx }}).unwrap();
+                let message = bincode::serde::encode_to_vec(&Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
                     let (&hx, &typ) = query.get(ent).unwrap();
-                    let message = bincode::serialize(&Do { event: Event::Spawn { typ, ent, hx }}).unwrap();
+                    let message = bincode::serde::encode_to_vec(&Do { event: Event::Spawn { typ, ent, hx }}, bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.0.insert(*client_id, ent);
@@ -73,7 +74,7 @@ pub fn do_manage_connections(
                 let ent = lobby.0.remove_by_left(&client_id).unwrap().1;
                 queues.0.remove(&ent);
                 commands.entity(ent).despawn();
-                let message = bincode::serialize(&Do { event: Event::Despawn { ent }}).unwrap();
+                let message = bincode::serde::encode_to_vec(&Do { event: Event::Despawn { ent }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
         }
@@ -87,7 +88,7 @@ pub fn write_try(
 ) {
     for client_id in conn.clients_id() {
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
-            let message = bincode::deserialize(&serialized).unwrap();
+            let (message, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match message {
                 Try { event: Event::Input { key_bits, dt, seq, .. } } => {
                     if let Some(&ent) = lobby.0.get_by_left(&client_id) {
@@ -119,11 +120,11 @@ pub fn write_try(
                 )).id();
                 map.insert(hx, ent);
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serialize(&Do { event: Event::Spawn { ent, typ, hx }}).unwrap());
+                    bincode::serde::encode_to_vec(&Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap());
             }
             Do { event: Event::Move { ent, hx, heading } } => {
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serialize(&Do { event: Event::Move { ent, hx, heading }}).unwrap());
+                    bincode::serde::encode_to_vec(&Do { event: Event::Move { ent, hx, heading }}, bincode::config::legacy()).unwrap());
             }
             _ => {}
         }

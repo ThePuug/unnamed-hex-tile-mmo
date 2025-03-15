@@ -10,14 +10,10 @@ use std::net::UdpSocket;
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_easings::*;
 use bevy_renet::{
-    renet::{
-        transport::ClientAuthentication,
-        ConnectionConfig,
-    },
-    transport::NetcodeClientPlugin,
+    renet::ConnectionConfig,
+    netcode::{NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError},
     RenetClientPlugin,
 };
-use renet::transport::{NetcodeClientTransport, NetcodeTransportError};
 
 use common::{
     message::{ *, Event },
@@ -55,7 +51,7 @@ fn setup(
     asset_server: Res<AssetServer>,
 ) {
     commands.spawn((
-        Camera2dBundle::default(),
+        Camera2d::default(),
         Actor
     ));
     commands.insert_resource(TextureHandles {
@@ -80,14 +76,14 @@ fn main() {
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,".to_owned()
+            filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
                     +"client=trace,"
                     ,
             custom_layer: |_| None,
         }),
         RenetClientPlugin,
         NetcodeClientPlugin,
-        EasingsPlugin,
+        EasingsPlugin::default(),
     ));
 
     app.add_event::<Do>();

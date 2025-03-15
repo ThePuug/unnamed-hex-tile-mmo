@@ -1,4 +1,5 @@
 use bevy::{prelude::*, sprite::Anchor};
+use bevy_renet::netcode::ClientAuthentication;
 use keybits::KeyBits;
 use renet::{DefaultChannel, RenetClient};
 
@@ -43,25 +44,23 @@ pub fn write_do(
     texture_handles: Res<TextureHandles>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
-        let message = bincode::deserialize(&serialized).unwrap();
+        let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
         match message {
             Do { event: Event::Spawn { ent, typ, hx } } => {
                 match typ {
                     EntityType::Actor => {
                         let loc = commands.spawn((
-                            SpriteBundle {
-                                texture: texture_handles.actor.0.clone(),
-                                transform: Transform {
-                                    translation: (hx, Vec3::ZERO).calculate(),
-                                    ..default()},
-                                sprite: Sprite {
-                                    anchor: Anchor::BottomCenter,
-                                    ..default()},
+                            Sprite {
+                                image: texture_handles.actor.0.clone(),
+                                texture_atlas: Some(TextureAtlas {
+                                    layout: texture_handles.actor.1.clone(),
+                                    index: 0,
+                                }),
+                                anchor: Anchor::BottomCenter,
                                 ..default()},
-                            TextureAtlas {
-                                layout: texture_handles.actor.1.clone(),
-                                index: 0,
-                            },
+                            Transform {
+                                translation: (hx, Vec3::ZERO).calculate(),
+                                ..default()},
                             AnimationConfig::new([
                                 AnimationDirection { start:8, end:11, flip:false },
                                 AnimationDirection { start:0, end:3, flip:false },
@@ -84,19 +83,16 @@ pub fn write_do(
                         let loc = map.remove(hx);
                         if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
                         let loc = commands.spawn((
-                            SpriteBundle {
-                                texture: texture_handles.decorator.0.clone(),
-                                transform: Transform {
-                                    scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
-                                    translation: (hx, Vec3::ZERO).calculate(),
-                                    ..default()},
-                                sprite: Sprite {
-                                    anchor: Anchor::Custom(Vec2{ x: 0., y: (48.-69.) / 138. }),
-                                    ..default()},
+                            Sprite {
+                                image: texture_handles.decorator.0.clone(),
+                                texture_atlas: Some(TextureAtlas {
+                                    layout: texture_handles.decorator.1.clone(),
+                                    index: desc.index}),
+                                anchor: Anchor::Custom(Vec2{ x: 0., y: (48.-69.) / 138. }),
                                 ..default()},
-                            TextureAtlas {
-                                layout: texture_handles.decorator.1.clone(),
-                                index: desc.index,
+                            Transform {
+                                scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
+                                translation: (hx, Vec3::ZERO).calculate(),
                                 ..default()},
                             typ,
                             hx,
@@ -139,13 +135,13 @@ pub fn send_try(
                 match input0 {
                     Event::Input { key_bits: key_bits0, dt: mut dt0, seq: seq0, .. } => {
                         // the longer dt0 check is, the faster continuous motion desyncs
-                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 250 { 
+                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 { 
                             queue.0.push_front(input0);
                             seq = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
-                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serialize(&Try { event: Event::Input { 
+                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(&Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
                                 key_bits, dt: 0, seq,
-                            } }).unwrap());
+                            } }, bincode::config::legacy()).unwrap());
                         }
                         dt += dt0;
                         queue.0.push_front(Event::Input { ent, key_bits, dt, seq });

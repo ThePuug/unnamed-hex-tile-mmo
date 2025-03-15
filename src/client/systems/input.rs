@@ -122,7 +122,7 @@ pub fn generate_input(
     query: Query<(Entity, &KeyBits), With<Actor>>,
 ) {
     for (ent, &key_bits) in query.iter() {
-        let dt = (time.delta_seconds() * 1000.) as u16;
+        let dt = (time.delta_secs() * 1000.) as u16;
         writer.send(Try { event: Event::Input { ent, key_bits, dt, seq: 0 } });
     }
 }
