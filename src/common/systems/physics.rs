@@ -1,16 +1,19 @@
 use std::cmp::{max, min};
 
-use crate::{ *,
-    common::{
-        message::{*, Event},
-        components::{
-            heading::*,
-            hx::*,
-            keybits::*,
-            offset::*,
-        },
-        resources::map::*,
-    },
+use bevy::prelude::*;
+
+use crate::common::{ 
+    components::{
+        heading::*,
+        hx::*,
+        keybits::*,
+        offset::*,
+    }, 
+    message::{Attribute, Event, *}, 
+    resources::{
+        map::*, 
+        NNTree
+    }
 };
 
 pub fn apply(
@@ -28,13 +31,14 @@ pub fn apply(
     let px = Vec3::from(hx0);
 
     let (floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -5);
-    if air_time0.is_none() && (
-        floor.is_none() || floor.is_some() && hx0.z > floor.unwrap().z+1 || key_bits.is_pressed(KB_JUMP)
-    ) { air_time0 = Some(200); }
+    if air_time0.is_none() {
+        if floor.is_none() || floor.is_some() && hx0.z > floor.unwrap().z+1 { air_time0 = Some(0); }
+        if key_bits.is_pressed(KB_JUMP) { air_time0 = Some(200); }
+    }
     
     if let Some(mut air_time) = air_time0 {
         if air_time > 0 {
-            let mut dt = dt as i16;
+            let mut dt = dt;
             if air_time < dt { dt = air_time; }
             offset0.z += 0_f32.lerp(air_time as f32 / 50., 1. - 2_f32.powf(-10. * dt as f32 / 1000.));
         }
@@ -72,38 +76,48 @@ pub fn apply(
     (offset0, air_time0)
 }
 
-pub fn do_move(
+pub fn do_incremental(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
     mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
+    mut nntree: ResMut<NNTree>,
 ) {
     for &message in reader.read() {
-        match message {
-            Do { event: Event::Move { ent, hx, heading } } => {
-                if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                    offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
-                    offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
-                    if *hx0 != hx { *hx0 = hx; }
-                    if *heading0 != heading { *heading0 = heading; }
+        if let Do { event: Event::Incremental { ent, attr } } = message {
+            if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
+                match attr {
+                    Attribute::Hx { hx } => {
+                        offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
+                        offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
 
-                    for q in -5..=5 {
-                        for r in max(-5, -q-5)..=min(5, -q+5) {
-                            let hx = *hx0 + Hx { q, r, ..default() };
-                            writer.send(Try { event: Event::Discover { ent, hx } }); 
+                        nntree.0.remove(&(*hx0).into(), ent.to_bits());
+                        nntree.0.add(&hx.into(), ent.to_bits());
+
+                        *hx0 = hx;
+                        for q in -5..=5 {
+                            for r in max(-5, -q-5)..=min(5, -q+5) {
+                                let hx = *hx0 + Hx { q, r, ..default() };
+                                writer.send(Try { event: Event::Discover { ent, hx } }); 
+                            }
                         }
+                    }
+                    Attribute::Heading { heading } => {
+                        *heading0 = heading;
+                    }
+                    Attribute::Offset { offset } => {
+                        *offset0 = offset;
                     }
                 }
             }
-            _ => {}
         }
     }
 }
 
 pub fn update_headings(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &KeyBits, &mut Heading), Changed<KeyBits>>,
+    mut query: Query<(Entity, &KeyBits, &mut Heading), Changed<KeyBits>>,
 ) {
-    for (ent, &hx, &key_bits, mut heading0) in &mut query {
+    for (ent, &key_bits, mut heading0) in &mut query {
         let heading = Heading(if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 1, r: -1, z: 0 } }
             else if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_R]) { Hx { q: -1, r: 1, z: 0 } }
             else if key_bits.all_pressed([KB_HEADING_Q, KB_HEADING_NEG]) { Hx { q: -1, r: 0, z: 0 } }
@@ -113,7 +127,8 @@ pub fn update_headings(
             else { heading0.0 });
         if heading0.0 != heading.0 { 
             *heading0 = heading;
-            writer.send(Try { event: Event::Move { ent, hx, heading } });
+            let attr = Attribute::Heading { heading };
+            writer.send(Try { event: Event::Incremental { ent, attr } });
         }
     }
 }
@@ -121,13 +136,14 @@ pub fn update_headings(
 
 pub fn update_offsets(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Heading, &Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &Hx, &Offset), Changed<Offset>>,
 ) {
-    for (ent, &hx0, &heading, &offset) in &mut query {
+    for (ent, &hx0, &offset) in &mut query {
         let px = Vec3::from(hx0);
         let hx = Hx::from(px + offset.state);
         if hx0 != hx { 
-            writer.send(Try { event: Event::Move { ent, hx, heading } }); 
+            let attr = Attribute::Hx { hx }; 
+            writer.send(Try { event: Event::Incremental { ent, attr } }); 
         }
     }
 }

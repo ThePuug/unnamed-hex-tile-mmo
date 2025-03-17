@@ -3,11 +3,14 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::{ *,
-    common::components::{
-        heading::*,
-        hx::*,
-        keybits::*,
-        offset::*,
+    common::{
+        components::{
+            heading::*,
+            hx::*,
+            keybits::*,
+            offset::*,
+        },
+        message::{*, Event},
     },
 };
 
@@ -53,5 +56,17 @@ pub fn update_transforms(
             (_, _, heading) => (hx, heading.into()).calculate(),
         };
         transform0.translation = transform0.translation.lerp(target,1.-0.01f32.powf(time.delta_secs()));
+    }
+}
+
+pub fn try_gcd(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+) {
+    for &message in reader.read() {
+        if let Try { event: Event::Gcd { ent, typ } } = message {
+            debug!("try gcd {ent} {:?}", typ);
+            writer.send(Do { event: Event::Gcd { ent, typ }});
+        }
     }
 }

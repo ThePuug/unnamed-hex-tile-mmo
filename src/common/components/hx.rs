@@ -4,6 +4,7 @@ use std::{
 };
 
 use bevy::prelude::*;
+use fixed::{types::extra::U0, FixedI16};
 use serde::{Deserialize, Serialize};
 
 pub const QR_MAX: f32 = 16_777_215.;
@@ -63,6 +64,12 @@ impl From<Hx> for Vec3 {
         let y = (ORIENTATION.0[2] * hx.q as f64 + ORIENTATION.0[3] * hx.r as f64) * ISO_SCALE as f64 * TILE_SIZE as f64;
         let z = hx.z as f64;
         Vec3 { x: x as f32, y: y as f32, z: z as f32 }
+    }
+}
+
+impl From<Hx> for [FixedI16<U0>; 4] {
+    fn from(hx: Hx) -> [FixedI16<U0>; 4] {
+        [hx.q.into(), hx.r.into(), (-hx.q-hx.r).into(), hx.z.into()]
     }
 }
 

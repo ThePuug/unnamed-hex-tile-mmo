@@ -49,7 +49,7 @@ pub fn do_manage_connections(
                 let typ = EntityType::Actor;
                 let ent = commands.spawn((
                     AirTime { state: Some(0), step: None },
-                    Actor::default(),
+                    Actor,
                     Transform::default(),
                     KeyBits::default(),
                     Heading::default(),
@@ -60,21 +60,21 @@ pub fn do_manage_connections(
                 let mut queue = InputQueue::default();
                 queue.0.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
                 queues.0.insert(ent, queue);
-                let message = bincode::serde::encode_to_vec(&Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
+                let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
                     let (&hx, &typ) = query.get(ent).unwrap();
-                    let message = bincode::serde::encode_to_vec(&Do { event: Event::Spawn { typ, ent, hx }}, bincode::config::legacy()).unwrap();
+                    let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { typ, ent, hx }}, bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.0.insert(*client_id, ent);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.0.remove_by_left(&client_id).unwrap().1;
+                let ent = lobby.0.remove_by_left(client_id).unwrap().1;
                 queues.0.remove(&ent);
                 commands.entity(ent).despawn();
-                let message = bincode::serde::encode_to_vec(&Do { event: Event::Despawn { ent }}, bincode::config::legacy()).unwrap();
+                let message = bincode::serde::encode_to_vec(Do { event: Event::Despawn { ent }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
         }
@@ -95,6 +95,11 @@ pub fn write_try(
                         writer.send(Try { event: Event::Input { ent, key_bits, dt, seq }});
                     }
                 }
+                Try { event: Event::Gcd { typ, .. } } => {
+                    if let Some(&ent) = lobby.0.get_by_left(&client_id) {
+                        writer.send(Try { event: Event::Gcd { ent, typ }});
+                    }
+                }
                 _ => {}
             }
         }
@@ -103,9 +108,12 @@ pub fn write_try(
 
  pub fn send_do(
     mut commands: Commands,
+    query: Query<&Hx>,
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<Do>,
     mut map: ResMut<Map>,
+    nntree: Res<NNTree>,
+    lobby: Res<Lobby>,
 ) {
     for &message in reader.read() {
         match message {
@@ -120,11 +128,14 @@ pub fn write_try(
                 )).id();
                 map.insert(hx, ent);
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serde::encode_to_vec(&Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap());
+                    bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap());
             }
-            Do { event: Event::Move { ent, hx, heading } } => {
-                conn.broadcast_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serde::encode_to_vec(&Do { event: Event::Move { ent, hx, heading }}, bincode::config::legacy()).unwrap());
+            Do { event: Event::Incremental { ent, attr } } => {
+                let &hx = query.get(ent).unwrap();
+                for other in nntree.0.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
+                    let message = bincode::serde::encode_to_vec(Do { event: Event::Incremental { ent, attr }}, bincode::config::legacy()).unwrap();
+                    conn.send_message(*lobby.0.get_by_right(&Entity::from_bits(other.item)).unwrap(), DefaultChannel::ReliableOrdered, message);
+                }
             }
             _ => {}
         }

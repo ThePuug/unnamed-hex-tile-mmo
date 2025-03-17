@@ -13,18 +13,17 @@ use bevy_renet::{
     netcode::{NetcodeServerTransport, NetcodeTransportError, NetcodeServerPlugin},
     RenetServerPlugin,
 };
+use kiddo::fixed::kdtree::KdTree;
 use renet::DefaultChannel;
 
 use common::{
     message::*,
     components::*,
-    resources::map::*,
+    resources::{ *, map::*},
     systems::physics::*,
 };
 use server::{
-    resources::{ *,
-        terrain::*,
-    },
+    resources::{ *, terrain::* },
     systems::{
         actor::*,
         input::*,
@@ -35,8 +34,8 @@ use server::{
 const PROTOCOL_ID: u64 = 7;
 
 fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
-    for e in renet_error.read() {
-        panic!("{}", e);
+    if let Some(e) = renet_error.read().next() {
+        panic!("{:?}", e);
     }
 }
 
@@ -63,12 +62,14 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         send_do,
+        do_gcd,
+        do_incremental,
         do_input,
         do_manage_connections,
-        do_move,
         try_discover,
+        try_gcd,
+        try_incremental,
         try_input,
-        try_move,
         update_headings,
         update_offsets,
         write_try,
@@ -79,12 +80,16 @@ fn main() {
     ));
 
     let (server, transport) = new_renet_server();
+    app.insert_resource(server);
+    app.insert_resource(transport);
+
+    let kdtree = NNTree { 0: KdTree::with_capacity(1_000_000) };
+    app.insert_resource(kdtree);
+
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
     app.init_resource::<Map>();
     app.init_resource::<Terrain>();
-    app.insert_resource(server);
-    app.insert_resource(transport);
 
     app.run();
 }

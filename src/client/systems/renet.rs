@@ -1,7 +1,6 @@
 use bevy::{prelude::*, sprite::Anchor};
 use bevy_renet::netcode::ClientAuthentication;
-use keybits::KeyBits;
-use renet::{DefaultChannel, RenetClient};
+use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{*,
     common::{
@@ -9,6 +8,7 @@ use crate::{*,
         components::{
             heading::*,
             hx::*,
+            keybits::*,
             offset::*,
         },
         resources::*,
@@ -16,7 +16,7 @@ use crate::{*,
     client::resources::*,
 };
 
-pub fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
+pub fn setup() -> (RenetClient, NetcodeClientTransport) {
     let server_addr = "127.0.0.1:5000".parse().unwrap();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -107,14 +107,18 @@ pub fn write_do(
                 let ent = l2r.0.remove_by_right(&ent).unwrap();
                 commands.entity(ent.0).despawn();
             }
-            Do { event: Event::Move { ent, hx, heading } } => {
+            Do { event: Event::Incremental { ent, attr } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
-                writer.send(Do { event: Event::Move { ent, hx, heading } });
+                writer.send(Do { event: Event::Incremental { ent, attr } });
             }
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
                 queue.0.pop_back();
                 writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
+            }
+            Do { event: Event::Gcd { ent, typ } } => {
+                let &ent = l2r.0.get_by_right(&ent).unwrap();
+                writer.send(Do { event: Event::Gcd { ent, typ } });
             }
             _ => {}
         }
@@ -138,7 +142,7 @@ pub fn send_try(
                         if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 { 
                             queue.0.push_front(input0);
                             seq = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
-                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(&Try { event: Event::Input { 
+                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
                                 key_bits, dt: 0, seq,
                             } }, bincode::config::legacy()).unwrap());
@@ -148,6 +152,12 @@ pub fn send_try(
                     }
                     _ => unreachable!()
                 };
+            }
+            Try { event: Event::Gcd { ent, typ, .. } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 
+                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                    typ,
+                } }, bincode::config::legacy()).unwrap());
             }
             _ => {}
         }

@@ -10,16 +10,13 @@ use crate::{*,
     },
 };
 
-pub fn try_move(
+pub fn try_incremental(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
  ) {
     for &message in reader.read() {
-        match message {
-            Try { event: Event::Move { ent, hx, heading } } => { 
-                writer.send(Do { event: Event::Move { ent, hx, heading }}); 
-            },
-            _ => {}
+        if let Try { event: Event::Incremental { ent, attr } } = message { 
+            writer.send(Do { event: Event::Incremental { ent, attr }}); 
         }
     }
  }
@@ -33,36 +30,30 @@ pub fn try_move(
     query: Query<(&Hx, &EntityType)>,
  ) {
     for &message in reader.read() {
-        match message {
-            Try { event: Event::Discover { ent, hx } } => {
-                if let Ok((&loc, _)) = query.get(ent) {
-                    if loc.distance(&hx) > 5 { return; }
-                    let (hxn, entn) = map.find(hx, -5);
-                    if let Some(hx) = hxn {
-                        if let Ok((_, &typ)) = query.get(entn) {
-                            writer.send(Do { event: Event::Spawn { ent, typ, hx, } });
-                        } else {
-                            warn!("Invalid entity: {:?} at {:?}", entn, hx);
-                        }
-                    } else {
-                        let px = Vec3::from(hx).xy();
-                        let hx = Hx { z: terrain.get(px.x, px.y), ..hx };
-                        if map.get(hx) != Entity::PLACEHOLDER { return; }
-                        let ent = commands.spawn((
-                            hx,
-                            Offset::default(),
-                            EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
-                            Transform {
-                                translation: (hx,Vec3::ZERO).calculate(),
-                                ..default()}, 
-                        )).id();
-                        map.insert(hx, ent);
-                    }
+        if let Try { event: Event::Discover { ent, hx } } = message {
+            let (&loc, _) = query.get(ent).unwrap();
+            if loc.distance(&hx) > 5 { return; }
+            let (hxn, entn) = map.find(hx, -5);
+            if let Some(hx) = hxn {
+                if let Ok((_, &typ)) = query.get(entn) {
+                    writer.send(Do { event: Event::Spawn { ent, typ, hx, } });
                 } else {
-                    warn!("Invalid entity: {:?}", ent);
+                    warn!("Invalid entity: {:?} at {:?}", entn, hx);
                 }
-            },
-            _ => {}
+            } else {
+                let px = Vec3::from(hx).xy();
+                let hx = Hx { z: terrain.get(px.x, px.y), ..hx };
+                if map.get(hx) != Entity::PLACEHOLDER { return; }
+                let ent = commands.spawn((
+                    hx,
+                    Offset::default(),
+                    EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
+                    Transform {
+                        translation: (hx,Vec3::ZERO).calculate(),
+                        ..default()}, 
+                )).id();
+                map.insert(hx, ent);
+            }
         }
     }
 }

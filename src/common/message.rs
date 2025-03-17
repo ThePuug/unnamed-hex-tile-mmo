@@ -2,10 +2,14 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{ *,
-    common::components::{
-        heading::*,
-        hx::*,
-        keybits::*,
+    common::{
+        components::{
+            heading::*,
+            hx::*,
+            keybits::*,
+            offset::*,
+        },
+        systems::gcd::*,
     },
 };
 
@@ -14,8 +18,16 @@ pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, hx: Hx },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
-    Move { ent: Entity, hx: Hx, heading: Heading },
+    Gcd { ent: Entity, typ: GcdType },
+    Incremental { ent: Entity, attr: Attribute },
     Spawn { ent: Entity, typ: EntityType, hx: Hx },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum Attribute {
+    Hx { hx: Hx },
+    Heading { heading: Heading },
+    Offset { offset: Offset },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]

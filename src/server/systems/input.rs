@@ -37,12 +37,9 @@ pub fn do_input(
     map: Res<Map>,
 ) {
     for &message in reader.read() {
-        match message {
-            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
-                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
-            },
-            _ => {}
+        if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
+            let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
         }
     }
 }
@@ -55,9 +52,8 @@ pub fn try_input(
     lobby: Res<Lobby>,
 ) {
     for &message in reader.read() {
-        match message {
-            Try { event: Event::Input { ent, key_bits, seq, .. } } => {
-                let queue = queues.0.get_mut(&ent).unwrap();
+        if let Try { event: Event::Input { ent, key_bits, seq, .. } } = message {
+            if let Some(queue) = queues.0.get_mut(&ent) {
                 queue.0.push_back(Event::Input { ent, key_bits, dt: 0, seq });
                 *query.get_mut(ent).unwrap() = key_bits;
 
@@ -65,7 +61,7 @@ pub fn try_input(
                     Event::Input { key_bits, dt, seq, .. } => {
                         conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), 
                             DefaultChannel::ReliableOrdered, 
-                            bincode::serde::encode_to_vec(&Do { event: Event::Input { 
+                            bincode::serde::encode_to_vec(Do { event: Event::Input { 
                                 ent,
                                 key_bits, 
                                 dt,
@@ -74,8 +70,31 @@ pub fn try_input(
                     }
                     _ => unreachable!()
                 }
+            } else {
+                warn!("no queue for {ent}");
             }
-            _ => {}
+        }
+    }
+}
+
+pub fn try_gcd(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+) {
+    for &message in reader.read() {
+        if let Try { event: Event::Gcd { ent, typ, .. } } = message {
+            debug!("try gcd {ent} {:?}", typ);
+            writer.send(Do { event: Event::Gcd { ent, typ }});
+        }
+    }
+}
+
+pub fn do_gcd(
+    mut reader: EventReader<Do>,
+) {
+    for &message in reader.read() {
+        if let Do { event: Event::Gcd { ent, typ } } = message {
+            debug!("do gcd {ent} {:?}", typ);
         }
     }
 }

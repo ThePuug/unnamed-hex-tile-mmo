@@ -9,26 +9,34 @@ use crate::{*,
             keybits::*,
             offset::*,
         },
+        systems::gcd::*,
     }
 };
 
-pub const KEYCODES_JUMP: [KeyCode; 1] = [KeyCode::Space];
-pub const KEYCODES_UP: [KeyCode; 2] = [KeyCode::ArrowUp, KeyCode::Lang3];
-pub const KEYCODES_DOWN: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::NumpadEnter];
-pub const KEYCODES_LEFT: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::Convert];
-pub const KEYCODES_RIGHT: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::NonConvert];
+pub const KEYCODE_JUMP: KeyCode = KeyCode::Numpad0;
+pub const KEYCODE_UP: KeyCode = KeyCode::ArrowUp;
+pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
+pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
+pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
+
+pub const KEYCODE_GCD1: KeyCode = KeyCode::KeyQ;
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&Heading, &mut KeyBits), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits), With<Actor>>,
+    mut writer: EventWriter<Try>,
 ) {
-    if let Ok((&heading, mut keybits0)) = query.get_single_mut() {
-        let mut key_bits = KeyBits::default();
-        key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed(KEYCODES_JUMP));
+    if let Ok((ent, &heading, mut keybits0)) = query.get_single_mut() {
+        if keyboard.just_released(KEYCODE_GCD1) {
+            writer.send(Try { event: Event::Gcd { ent, typ: GcdType::Attack} });
+        }
 
-        if keyboard.any_pressed([KEYCODES_UP, KEYCODES_DOWN, KEYCODES_LEFT, KEYCODES_RIGHT].concat()) {
-            if keyboard.any_pressed(KEYCODES_UP) {
-                if keyboard.any_pressed(KEYCODES_LEFT) || !keyboard.any_pressed(KEYCODES_RIGHT)
+        let mut key_bits = KeyBits::default();
+        key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
+
+        if keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
+            if keyboard.pressed(KEYCODE_UP) {
+                if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
                     &&(heading.0 == Hx {q:-1, r: 0, z: 0}
                     || heading.0 == Hx {q:-1, r: 1, z: 0}
                     || heading.0 == Hx {q: 1, r:-1, z: 0}) {
@@ -37,8 +45,8 @@ pub fn update_keybits(
                 else  {
                     key_bits.set_pressed([KB_HEADING_R], true);
                 }
-            } else if keyboard.any_pressed(KEYCODES_DOWN) {
-                if keyboard.any_pressed(KEYCODES_RIGHT) || !keyboard.any_pressed(KEYCODES_LEFT)
+            } else if keyboard.pressed(KEYCODE_DOWN) {
+                if keyboard.pressed(KEYCODE_RIGHT) || !keyboard.pressed(KEYCODE_LEFT)
                     &&(heading.0 == Hx {q: 1, r: 0, z: 0}
                     || heading.0 == Hx {q: 1, r:-1, z: 0}
                     || heading.0 == Hx {q:-1, r: 1, z: 0}) {
@@ -48,9 +56,9 @@ pub fn update_keybits(
                     key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                 }
             } 
-            else if keyboard.any_pressed(KEYCODES_RIGHT) { 
+            else if keyboard.pressed(KEYCODE_RIGHT) { 
                 key_bits.set_pressed([KB_HEADING_Q], true);
-            } else if keyboard.any_pressed(KEYCODES_LEFT) {
+            } else if keyboard.pressed(KEYCODE_LEFT) {
                 key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
             }
         }
@@ -80,22 +88,19 @@ pub fn do_input(
     queue: Res<InputQueue>,
 ) {
     for &message in reader.read() {
-        match message {
-            Do { event: Event::Input { ent, key_bits, dt, .. } } => {
-                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
-                offset.step = offset.state;
-                air_time.step = air_time.state;
-                for &it in queue.0.iter().rev() {
-                    match it {
-                        Event::Input { key_bits, dt, seq, .. } => {
-                            writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
-                        }
-                        _ => unreachable!()
+        if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
+            let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
+            offset.step = offset.state;
+            air_time.step = air_time.state;
+            for it in queue.0.iter().rev() {
+                match *it {
+                    Event::Input { key_bits, dt, seq, .. } => {
+                        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
                     }
+                    _ => unreachable!()
                 }
-            }, 
-            _ => {}
+            }
         }
     }
 }
@@ -106,12 +111,9 @@ pub fn try_input(
     map: Res<Map>,
 ) {
     for &message in reader.read() {
-        match message {
-            Try { event: Event::Input { ent, key_bits, dt, .. } } => {
-                let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-                (offset.step, air_time.step) = apply(key_bits, dt as i16, heading, hx, offset.step, air_time.step, &map);
-            }, 
-            _ => {}
+        if let Try { event: Event::Input { ent, key_bits, dt, .. } } = message {
+            let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.step, air_time.step) = apply(key_bits, dt as i16, heading, hx, offset.step, air_time.step, &map);
         }
     }
 }

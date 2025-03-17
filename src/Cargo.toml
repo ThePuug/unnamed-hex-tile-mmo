@@ -5,14 +5,17 @@ version = "0.1.0"
 authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 
 [dependencies]
-bevy = { version = "0.15", features = ["dynamic_linking"] }
-bevy_easings = "0.15"
+bevy = { version = "0", features = ["dynamic_linking"] }
+bevy_easings = "0"
+bevy_hanabi = { version = "0", default-features = false, features = [ "2d", "serde" ] }
 bevy_renet = "1"
-bimap = "0.6"
+bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
-log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
-noise = { version = "0.9" }
-phf = { version = "0.11", features = ["macros"] }
+fixed = "1"
+kiddo = "5"
+log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
+noise = { version = "0" }
+phf = { version = "0", features = ["macros"] }
 renet = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 
