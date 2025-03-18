@@ -129,8 +129,10 @@ pub fn write_try(
                         ..default()}, 
                 )).id();
                 map.insert(hx, ent);
-                conn.broadcast_message(DefaultChannel::ReliableOrdered, 
-                    bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap());
+                for other in nntree.0.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
+                    let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
+                    conn.send_message(*lobby.0.get_by_right(&Entity::from_bits(other.item)).unwrap(), DefaultChannel::ReliableOrdered, message);
+                }
             }
             Do { event: Event::Incremental { ent, attr } } => {
                 let &hx = query.get(ent).unwrap();
