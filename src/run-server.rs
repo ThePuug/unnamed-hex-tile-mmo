@@ -17,10 +17,11 @@ use kiddo::fixed::kdtree::KdTree;
 use renet::DefaultChannel;
 
 use common::{
-    message::*,
-    components::*,
-    resources::{ *, map::*},
-    systems::physics::*,
+    components::*, 
+    message::*, 
+    plugins::nntree, 
+    resources::map::*, 
+    systems::physics::*
 };
 use server::{
     resources::{ *, terrain::* },
@@ -73,6 +74,7 @@ fn main() {
         update_headings,
         update_offsets,
         write_try,
+        nntree::update,
     ));
 
     app.add_systems(FixedUpdate, (
@@ -83,7 +85,7 @@ fn main() {
     app.insert_resource(server);
     app.insert_resource(transport);
 
-    let kdtree = NNTree { 0: KdTree::with_capacity(1_000_000) };
+    let kdtree = nntree::NNTree(KdTree::with_capacity(1_000_000));
     app.insert_resource(kdtree);
 
     app.init_resource::<Lobby>();

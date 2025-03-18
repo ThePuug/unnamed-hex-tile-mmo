@@ -9,11 +9,8 @@ use crate::common::{
         keybits::*,
         offset::*,
     }, 
-    message::{Attribute, Event, *}, 
-    resources::{
-        map::*, 
-        NNTree
-    }
+    message::{ *, Attribute, Event }, 
+    resources::map::*
 };
 
 pub fn apply(
@@ -80,7 +77,6 @@ pub fn do_incremental(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
     mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
-    mut nntree: ResMut<NNTree>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Incremental { ent, attr } } = message {
@@ -89,9 +85,6 @@ pub fn do_incremental(
                     Attribute::Hx { hx } => {
                         offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
                         offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
-
-                        nntree.0.remove(&(*hx0).into(), ent.to_bits());
-                        nntree.0.add(&hx.into(), ent.to_bits());
 
                         *hx0 = hx;
                         for q in -5..=5 {

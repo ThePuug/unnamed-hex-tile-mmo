@@ -19,6 +19,7 @@ use bevy_renet::{
 use common::{
     message::{ *, Event },
     components::{ *, keybits::* },
+    plugins::nntree,
     resources::{ *, map::* },
     systems::physics::*
 };
@@ -112,6 +113,7 @@ fn main() {
         update_offsets,
         update_transforms,
         update_keybits,
+        nntree::update,
     ));
 
     app.add_systems(PostUpdate, (
@@ -126,7 +128,7 @@ fn main() {
     queue.0.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
     app.insert_resource(queue);
 
-    let kdtree = NNTree { 0: KdTree::with_capacity(1_000_000) };
+    let kdtree = nntree::NNTree(KdTree::with_capacity(1_000_000));
     app.insert_resource(kdtree);
 
     app.init_resource::<EffectMap>();

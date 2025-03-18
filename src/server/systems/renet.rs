@@ -5,6 +5,7 @@ use renet::ServerEvent;
 use crate::{*,
     common::{
         message::{*, Event},
+        plugins::nntree::*,
         components::{ *,
             heading::*,
             hx::*,
@@ -56,6 +57,7 @@ pub fn do_manage_connections(
                     Offset::default(),
                     typ,
                     hx, 
+                    NearestNeighbor::default(),
                 )).id();
                 let mut queue = InputQueue::default();
                 queue.0.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
