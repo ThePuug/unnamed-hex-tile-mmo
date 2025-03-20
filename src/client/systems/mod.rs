@@ -1,4 +1,4 @@
-pub mod effect;
+// pub mod effect;
 pub mod input;
 pub mod renet;
 pub mod sprites;

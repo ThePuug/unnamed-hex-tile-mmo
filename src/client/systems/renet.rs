@@ -1,19 +1,24 @@
-use bevy::{prelude::*, sprite::Anchor};
+use std::time::Duration;
+
+use bevy::{
+    color::palettes::css::*, 
+    prelude::*
+};
 use bevy_renet::netcode::ClientAuthentication;
 use ::renet::{DefaultChannel, RenetClient};
 
-use crate::{*,
+use crate::{
+    client::resources::*, 
     common::{
-        message::{*, Event},
         components::{
-            heading::*,
-            hx::*,
-            keybits::*,
-            offset::*,
-        },
-        resources::*,
-    },
-    client::resources::*,
+            heading::*, 
+            hx::*, 
+            keybits::*, 
+            offset::*
+        }, 
+        message::{Event, *}, 
+        resources::*
+    }, *
 };
 
 pub fn setup() -> (RenetClient, NetcodeClientTransport) {
@@ -34,6 +39,25 @@ pub fn setup() -> (RenetClient, NetcodeClientTransport) {
     (client, transport)
 }
 
+pub fn ready(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+    asset_server: Res<AssetServer>,
+) {
+    for (ent, mut player) in &mut query {
+        debug!("ready {ent}");
+        let (graph, animation) = AnimationGraph::from_clip(
+            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-blank.glb")));
+        let handle = graphs.add(graph);
+        let mut transitions = AnimationTransitions::new();
+        transitions.play(&mut player, animation, Duration::ZERO).repeat();
+        commands.entity(ent)
+            .insert(AnimationGraphHandle(handle))
+            .insert(transitions);
+    }
+}
+
 pub fn write_do(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
@@ -41,7 +65,7 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
     mut queue: ResMut<InputQueue>,
-    texture_handles: Res<TextureHandles>,
+    asset_server: Res<AssetServer>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -50,49 +74,46 @@ pub fn write_do(
                 match typ {
                     EntityType::Actor => {
                         let loc = commands.spawn((
-                            Sprite {
-                                image: texture_handles.actor.0.clone(),
-                                texture_atlas: Some(TextureAtlas {
-                                    layout: texture_handles.actor.1.clone(),
-                                    index: 0,
-                                }),
-                                anchor: Anchor::BottomCenter,
-                                ..default()},
+                            SceneRoot(asset_server.load(
+                                GltfAssetLabel::Scene(0).from_asset("models/actor-blank.glb"),
+                            )),
                             Transform {
-                                translation: (hx, Vec3::ZERO).calculate(),
+                                translation: hx.into(),
+                                scale: Vec3::ONE * TILE_SIZE,
                                 ..default()},
-                            AnimationConfig::new([
-                                AnimationDirection { start:8, end:11, flip:false },
-                                AnimationDirection { start:0, end:3, flip:false },
-                                AnimationDirection { start:4, end:7, flip:false },
-                                AnimationDirection { start:4, end:7, flip:true }],
-                                2,0),
                             typ,
                             hx,
                             AirTime { state: Some(0), step: None },
                             Heading::default(),
                             Offset::default(),
                             KeyBits::default(),
-                        )).id();
+                            Visibility::default(),
+                        )).with_children(|builder| {
+                            builder.spawn((PointLight { 
+                                    color: WHITE.into(),
+                                    intensity: 40_000.,
+                                    shadows_enabled: true,
+                                    ..default()},
+                                Transform::from_xyz(0., 50., 0.)
+                                    .looking_at(Vec3::ZERO, Vec3::Y),
+                                Visibility::default(),
+                            ));
+                        }).id();
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
                             commands.get_entity(loc).unwrap().insert(Actor);
                         }
                     }
-                    EntityType::Decorator(desc) => {
+                    EntityType::Decorator(_desc) => {
                         let loc = map.remove(hx);
                         if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
                         let loc = commands.spawn((
-                            Sprite {
-                                image: texture_handles.decorator.0.clone(),
-                                texture_atlas: Some(TextureAtlas {
-                                    layout: texture_handles.decorator.1.clone(),
-                                    index: desc.index}),
-                                anchor: Anchor::Custom(Vec2{ x: 0., y: (48.-69.) / 138. }),
-                                ..default()},
+                            SceneRoot(asset_server.load(
+                                GltfAssetLabel::Scene(0).from_asset("models/hex-block-stone-grey.glb"),
+                            )),
                             Transform {
-                                scale: Vec3 { x: TILE_SIZE_W / 83., y: TILE_SIZE_H / 96., z: 1. },
-                                translation: (hx, Vec3::ZERO).calculate(),
+                                translation: hx.into(),
+                                scale: Vec3::ONE * TILE_SIZE*2.,
                                 ..default()},
                             typ,
                             hx,

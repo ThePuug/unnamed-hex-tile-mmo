@@ -125,7 +125,7 @@ pub fn write_try(
                     Offset::default(),
                     typ,
                     Transform {
-                        translation: (hx,Vec3::ZERO).calculate(),
+                        translation: hx.into(),
                         ..default()}, 
                 )).id();
                 map.insert(hx, ent);

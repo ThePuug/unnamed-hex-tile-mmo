@@ -1,8 +1,10 @@
 // common/plugins/nntree.rs:
-// This plugin implements a KdTree for mapping Hx to Entity.
-// The KdTree is used for finding nearest neighbors in the physics system.
+// NNTree plugins implements Nearest neighbor lookups via an underlying KdTree
+// - adds a NNTree Resource for querying nearest neighbors given a location
+// - updates the KdTree as Entities change their locations
+// - provides a manhattan distance algorithm ("Hexhattan") for hexagonal grids using cube coordinates in first 3 dimensions
 // TODO:
-// - Generalise marker component
+// - Generalise marker component to anything that implements Into<Axis>
 // - Generalise location component to anything that implements Into<Axis>
 
 use bevy::{
@@ -19,6 +21,16 @@ use kiddo::{
 };
 
 use crate::common::components::hx::Hx;
+
+pub struct NNTreePlugin;
+
+impl Plugin for NNTreePlugin {
+    fn build(&self, app: &mut App) {
+        let kdtree = NNTree(KdTree::with_capacity(1_000_000));
+        app.insert_resource(kdtree)
+            .add_systems(Update, update);
+    }
+}
 
 #[derive(Component, Default)]
 #[component(on_add = on_add)]
@@ -50,8 +62,11 @@ pub fn update(
     }
 }
 
-pub struct Hexhattan {}
-
+// TODO: current distance functions weirdly - need to rework dist to handle
+// - players being 1 tile above the ground
+// - within(value) (et.al.) calls return distances less than value, not equal to
+#[allow(dead_code)]
+pub struct Hexhattan();
 impl<A: Axis, const K: usize> DistanceMetric<A, K> for Hexhattan {
     #[inline]
     fn dist(a: &[A; K], b: &[A; K]) -> A {
@@ -61,13 +76,12 @@ impl<A: Axis, const K: usize> DistanceMetric<A, K> for Hexhattan {
                 if a_val > b_val { a_val - b_val } 
                 else { b_val - a_val }
             });
-        let max = iter.by_ref().take(3).fold(A::ZERO, |a, b| a.max(b));
-        iter.fold(max, |a, b| a + b)
+        let max = iter.by_ref().take(3).fold(A::ZERO, |a, b| a.max(b-A::TRY_ONE.unwrap()).max(A::ZERO));
+        iter.fold(max, |a, b| a.saturating_add(b-A::TRY_ONE.unwrap()).max(a))
     }
 
     #[inline]
     fn dist1(a: A, b: A) -> A {
-        let diff: A = a.dist(b);
-        diff * diff
+        a.dist(b)
     }
 }

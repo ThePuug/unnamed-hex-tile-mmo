@@ -38,22 +38,22 @@ pub fn update_keybits(
             if keyboard.pressed(KEYCODE_UP) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
                     &&(heading.0 == Hx {q:-1, r: 0, z: 0}
-                    || heading.0 == Hx {q:-1, r: 1, z: 0}
-                    || heading.0 == Hx {q: 1, r:-1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true);
-                    }
-                else  {
-                    key_bits.set_pressed([KB_HEADING_R], true);
-                }
-            } else if keyboard.pressed(KEYCODE_DOWN) {
-                if keyboard.pressed(KEYCODE_RIGHT) || !keyboard.pressed(KEYCODE_LEFT)
-                    &&(heading.0 == Hx {q: 1, r: 0, z: 0}
-                    || heading.0 == Hx {q: 1, r:-1, z: 0}
-                    || heading.0 == Hx {q:-1, r: 1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true); 
+                    || heading.0 == Hx {q: 0, r:-1, z: 0}
+                    || heading.0 == Hx {q: 0, r: 1, z: 0}) {
+                        key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                     }
                 else {
-                    key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
+                    key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);
+                }
+            } else if keyboard.pressed(KEYCODE_DOWN) {
+                if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
+                    &&(heading.0 == Hx {q:-1, r: 0, z: 0}
+                    || heading.0 == Hx {q: 1, r:-1, z: 0}
+                    || heading.0 == Hx {q:-1, r: 1, z: 0}) {
+                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true); 
+                    }
+                else {
+                    key_bits.set_pressed([KB_HEADING_R], true);
                 }
             } 
             else if keyboard.pressed(KEYCODE_RIGHT) { 
@@ -68,15 +68,15 @@ pub fn update_keybits(
 }
 
 pub fn update_camera(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera: Query<(&mut Transform, &mut OrthographicProjection), With<Actor>>,
-    actor: Query<&Transform, (With<Actor>, Without<OrthographicProjection>)>,
+    // keyboard: Res<ButtonInput<KeyCode>>,
+    mut camera: Query<&mut Transform, With<Camera3d>>,
+    actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
 ) {
     if let Ok(a_transform) = actor.get_single() {
-        let (mut c_transform, mut projection) = camera.single_mut();
-        c_transform.translation = a_transform.translation + Vec3 { x: 0., y: 24., z: 0. };
-        if keyboard.any_pressed([KeyCode::Minus]) { projection.scale *= 1.05; }
-        if keyboard.any_pressed([KeyCode::Equal]) { projection.scale /= 1.05; }
+        let mut c_transform = camera.single_mut();
+        c_transform.translation = a_transform.translation + Vec3 { x: 0., y: 500., z: -500. };
+        // if keyboard.any_pressed([KeyCode::Minus]) { c_transform.translation.z *= 1.05; }
+        // if keyboard.any_pressed([KeyCode::Equal]) { c_transform.translation.z /= 1.05; }
     }
 }
 

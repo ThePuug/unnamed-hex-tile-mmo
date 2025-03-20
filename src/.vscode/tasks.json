@@ -7,6 +7,9 @@
 			"args": [
 				"--bin", "server"
 			],
+			// "env": {
+			// 	"RUST_BACKTRACE": "1"
+			// },
 			"problemMatcher": [
 				"$rustc"
 			],
@@ -16,6 +19,9 @@
 			"type": "cargo",
 			"command": "run",
 			"args": ["--bin", "client"],
+			// "env": {
+			// 	"RUST_BACKTRACE": "1"
+			// },
 			"problemMatcher": [
 				"$rustc"
 			],
@@ -25,6 +31,9 @@
 			"type": "cargo",
 			"command": "run",
 			"args": ["--bin", "client"],
+			// "env": {
+			// 	"RUST_BACKTRACE": "1"
+			// },
 			"problemMatcher": [
 				"$rustc"
 			],

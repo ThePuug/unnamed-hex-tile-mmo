@@ -13,7 +13,6 @@ use bevy_renet::{
     netcode::{NetcodeServerTransport, NetcodeTransportError, NetcodeServerPlugin},
     RenetServerPlugin,
 };
-use kiddo::fixed::kdtree::KdTree;
 use renet::DefaultChannel;
 
 use common::{
@@ -55,6 +54,7 @@ fn main() {
         RenetServerPlugin,
         NetcodeServerPlugin,
         EasingsPlugin::default(),
+        nntree::NNTreePlugin,
     ));
 
     app.add_event::<Do>();
@@ -74,7 +74,6 @@ fn main() {
         update_headings,
         update_offsets,
         write_try,
-        nntree::update,
     ));
 
     app.add_systems(FixedUpdate, (
@@ -84,9 +83,6 @@ fn main() {
     let (server, transport) = new_renet_server();
     app.insert_resource(server);
     app.insert_resource(transport);
-
-    let kdtree = nntree::NNTree(KdTree::with_capacity(1_000_000));
-    app.insert_resource(kdtree);
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();

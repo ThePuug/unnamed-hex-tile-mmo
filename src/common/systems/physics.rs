@@ -25,19 +25,19 @@ pub fn apply(
     let mut offset0 = offset0;
     let mut air_time0 = air_time0;
 
-    let px = Vec3::from(hx0);
+    let px0 = Vec3::from(hx0);
 
-    let (floor, _) = map.find(hx0 + Hx{ z: 1, ..default() }, -5);
+    let (floor, _) = map.find(hx0 + Hx{q:0,r:0,z:1}, -5);
     if air_time0.is_none() {
         if floor.is_none() || floor.is_some() && hx0.z > floor.unwrap().z+1 { air_time0 = Some(0); }
-        if key_bits.is_pressed(KB_JUMP) { air_time0 = Some(200); }
+        if key_bits.is_pressed(KB_JUMP) { air_time0 = Some(50); }
     }
     
     if let Some(mut air_time) = air_time0 {
         if air_time > 0 {
             let mut dt = dt;
             if air_time < dt { dt = air_time; }
-            offset0.z += 0_f32.lerp(air_time as f32 / 50., 1. - 2_f32.powf(-10. * dt as f32 / 1000.));
+            offset0.y += dt as f32;
         }
         if dt > air_time { 
             dt -= air_time; 
@@ -47,28 +47,29 @@ pub fn apply(
 
         air_time0 = Some(air_time);
         if air_time < 0 {
-            let dz = dt as f32 / -100.;
-            if floor.is_none() || hx0.z as f32 + offset0.z + dz > floor.unwrap().z as f32 + 1. { 
-                offset0.z += dz;
+            let dy = -dt as f32 / 10.;
+            if floor.is_none() || Hx::from(Vec3::from(hx0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().z+1 { 
+                offset0.y += dy;
             } else {
-                offset0.z = floor.unwrap().z as f32 + 1. - hx0.z as f32; 
+                offset0.y = Vec3::from(floor.unwrap() + Hx{q:0,r:0,z:1-hx0.z}).y; 
                 air_time0 = None;
             }
         }
     }
 
-    let pxy = px.xy();
-    let hxy = Vec3::from(heading.0).xy();
-    let here = Vec2::ZERO.lerp(hxy, 0.25);
-    let there = Vec2::ZERO.lerp(hxy, 2.25);
-    let next = Vec2::ZERO.lerp(hxy, 1.25);
+    let hpx = Vec3::from(heading.0);
+    let here = Vec3::ZERO.lerp(hpx, 0.25);
+    let there = Vec3::ZERO.lerp(hpx, 2.25);
+    let next = Vec3::ZERO.lerp(hpx, 1.25);
     let target = 
-        if map.get(Hx::from((pxy+next).extend(hx0.z as f32))) == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { there }
+        if map.get(Hx::from(px0+next)) == Entity::PLACEHOLDER 
+            && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { there }
         else { here };
 
-    let dist = offset0.xy().distance(target);
-    let ratio = 0_f32.max((dist - 0.1*dt as f32) / dist);
-    offset0 = offset0.xy().lerp(target, 1. - ratio).extend(offset0.z);
+    let dpx = offset0.distance(target);
+    let ratio = 0_f32.max((dpx - 0.1*dt as f32) / dpx);
+    let lxz = offset0.xz().lerp(target.xz(), 1. - ratio);
+    offset0 = Vec3::new(lxz.x, offset0.y, lxz.y);
 
     (offset0, air_time0)
 }

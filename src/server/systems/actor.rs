@@ -38,7 +38,7 @@ pub fn try_incremental(
                 if let Ok((_, &typ)) = query.get(entn) {
                     writer.send(Do { event: Event::Spawn { ent, typ, hx, } });
                 } else {
-                    warn!("Invalid entity: {:?} at {:?}", entn, hx);
+                    warn!("Invalid entity: {entn} at {hx:?}");
                 }
             } else {
                 let px = Vec3::from(hx).xy();
@@ -49,7 +49,7 @@ pub fn try_incremental(
                     Offset::default(),
                     EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
                     Transform {
-                        translation: (hx,Vec3::ZERO).calculate(),
+                        translation: hx.into(),
                         ..default()}, 
                 )).id();
                 map.insert(hx, ent);

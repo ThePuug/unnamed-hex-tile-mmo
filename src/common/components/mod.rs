@@ -6,12 +6,6 @@ pub mod offset;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::common::components::hx::*;
-
-pub trait Calculate<T> {
-    fn calculate(self) -> T;
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct DecoratorDescriptor {
     pub index: usize,
