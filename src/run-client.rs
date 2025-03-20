@@ -8,10 +8,11 @@ use std::time::SystemTime;
 use std::net::UdpSocket;
 
 use bevy::{
+    color::palettes::tailwind::*, 
     log::LogPlugin, 
-    prelude::*, 
+    pbr::*, 
+    prelude::* 
 };
-use bevy_hanabi::prelude::*;
 use bevy_easings::*;
 use bevy_renet::{
     renet::ConnectionConfig,
@@ -51,11 +52,25 @@ fn setup(
 ) {
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            hdr: true,
+            ..default()
+        },
         Transform::from_xyz(0., 1., -1.).looking_at(Vec3::ZERO, Vec3::Y),
         Actor
     ));
+    commands.spawn((DirectionalLight {
+            color: RED_100.into(),
+            illuminance: 600.,
+            shadows_enabled: true,
+            ..default()},
+        Transform::from_xyz(100., 100., 100.).looking_at(Vec3::ZERO, Vec3::Y),
+        CascadeShadowConfig::from(CascadeShadowConfigBuilder {
+            maximum_distance: 2_000.,
+            ..default()}),
+    ));
     commands.insert_resource(AmbientLight {
-        brightness: 150.,
+        brightness: 20.,
         ..default()
     });
 }
@@ -63,14 +78,13 @@ fn setup(
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins
-        .set(ImagePlugin::default_nearest())
         .set(AssetPlugin {
             file_path: "../assets".into(),
             ..default()
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=warn,bevy=warn,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
+            filter:  "wgpu=error,bevy=warn,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
                     +"client=trace,"
                     ,
             custom_layer: |_| None,
@@ -78,7 +92,7 @@ fn main() {
         RenetClientPlugin,
         NetcodeClientPlugin,
         EasingsPlugin::default(),
-        HanabiPlugin,
+        // HanabiPlugin,
         nntree::NNTreePlugin,
     ));
 

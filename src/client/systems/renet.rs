@@ -1,8 +1,7 @@
 use std::time::Duration;
 
 use bevy::{
-    color::palettes::css::*, 
-    prelude::*
+    color::palettes::css::*, pbr::VolumetricLight, prelude::*
 };
 use bevy_renet::netcode::ClientAuthentication;
 use ::renet::{DefaultChannel, RenetClient};
@@ -48,10 +47,10 @@ pub fn ready(
     for (ent, mut player) in &mut query {
         debug!("ready {ent}");
         let (graph, animation) = AnimationGraph::from_clip(
-            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-blank.glb")));
+            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-baby.glb")));
         let handle = graphs.add(graph);
         let mut transitions = AnimationTransitions::new();
-        transitions.play(&mut player, animation, Duration::ZERO).repeat();
+        transitions.play(&mut player, animation, Duration::ZERO).set_speed(1.5).repeat();
         commands.entity(ent)
             .insert(AnimationGraphHandle(handle))
             .insert(transitions);
@@ -75,7 +74,7 @@ pub fn write_do(
                     EntityType::Actor => {
                         let loc = commands.spawn((
                             SceneRoot(asset_server.load(
-                                GltfAssetLabel::Scene(0).from_asset("models/actor-blank.glb"),
+                                GltfAssetLabel::Scene(0).from_asset("models/actor-baby.glb"),
                             )),
                             Transform {
                                 translation: hx.into(),
@@ -89,14 +88,14 @@ pub fn write_do(
                             KeyBits::default(),
                             Visibility::default(),
                         )).with_children(|builder| {
-                            builder.spawn((PointLight { 
-                                    color: WHITE.into(),
-                                    intensity: 40_000.,
+                            builder.spawn((PointLight {
+                                    radius: 100.,
+                                    color: RED.into(),
+                                    intensity: 100_000.,
                                     shadows_enabled: true,
                                     ..default()},
-                                Transform::from_xyz(0., 50., 0.)
-                                    .looking_at(Vec3::ZERO, Vec3::Y),
-                                Visibility::default(),
+                                Transform::from_xyz(100., 100., 100.),
+                                VolumetricLight,
                             ));
                         }).id();
                         l2r.0.insert(loc, ent);
