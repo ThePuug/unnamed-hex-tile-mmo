@@ -74,9 +74,8 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
     mut buffer: ResMut<InputQueue>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    tmp: Res<Tmp>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -120,8 +119,8 @@ pub fn write_do(
                         let loc = map.remove(hx);
                         if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
                         let loc = commands.spawn((
-                            Mesh3d(meshes.add(RegularPolygon::new(TILE_SIZE, 6))),
-                            MeshMaterial3d(materials.add(Color::hsl(90., 0.3, 0.7))),
+                            Mesh3d(tmp.mesh.clone()),
+                            MeshMaterial3d(tmp.material.clone()),
                             Transform {
                                 translation: Vec3::from(hx)+Vec3::Y*TILE_RISE,
                                 rotation: Quat::from_rotation_x(-PI/2.),

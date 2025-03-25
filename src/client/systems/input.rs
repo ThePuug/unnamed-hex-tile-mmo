@@ -95,7 +95,7 @@ pub fn do_input(
         if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
             let (&hx, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
             (offset.state, air_time.state) = apply(key_bits, dt as i16, hx, heading, offset.state, air_time.state, &map);
-            offset.step = offset.step.lerp(offset.state, 1. - 0.01_f32.powf(dt as f32 / 1000.));
+            offset.step = offset.state;
             air_time.step = air_time.state;
             for &event in buffer.queue.iter().rev() { writer.send(Try { event }); }
         }

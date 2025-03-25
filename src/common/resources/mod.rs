@@ -12,3 +12,9 @@ pub struct InputQueue {
     pub accumulator_out: u16,  
     pub accumulator_in: u16,
 }
+
+#[derive(Debug, Default, Resource)]
+pub struct Tmp {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
+}

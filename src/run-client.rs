@@ -21,12 +21,13 @@ use bevy_renet::{
 
 use common::{
     components::{ *, 
+        hx::*, 
         keybits::*, 
-        offset::Offset, 
+        offset::Offset,
     }, 
-    message::{ *, Event }, 
+    message::{ Event, * }, 
     plugins::nntree, 
-    resources::{  *, 
+    resources::{ *, 
         map::*, 
     }, 
     systems::physics::*
@@ -53,6 +54,8 @@ fn panic_on_error_system(
 fn setup(
     mut commands: Commands,
     mut config_store: ResMut<GizmoConfigStore>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
         Camera3d::default(),
@@ -73,6 +76,11 @@ fn setup(
         brightness: 20.,
         ..default()
     });
+
+    let mesh = meshes.add(RegularPolygon::new(TILE_SIZE, 6));
+    let material = materials.add(Color::hsl(90., 0.3, 0.7));
+
+    commands.insert_resource(Tmp{mesh, material});
 }
 
 fn main() {
@@ -107,15 +115,18 @@ fn main() {
         write_do,
     ));
 
-    app.add_systems(Update, (
-        panic_on_error_system,
+    app.add_systems(FixedUpdate, (
         do_input,
         do_incremental,
+        ready,
+    ));
+
+    app.add_systems(Update, (
+        panic_on_error_system,
         generate_input,
         // render_do_gcd,
         try_gcd,
         try_input,
-        ready,
         update_camera,
         update_heading,
         update_transforms,

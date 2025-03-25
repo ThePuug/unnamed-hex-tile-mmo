@@ -20,7 +20,6 @@ pub fn generate_input(
     for (&ent0, buffer) in buffers.0.iter_mut() {
         let mut dt0 = (dt.delta_secs() * 1000.) as u16;
         
-        if let Some(Event::Input { dt, .. }) = buffer.queue.back() { debug!("was: {}", dt); }
         match buffer.queue.back_mut() {
             Some(Event::Input { dt, .. }) => {
                 *dt += dt0.saturating_sub(buffer.accumulator_in);
