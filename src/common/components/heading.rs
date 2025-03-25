@@ -3,13 +3,12 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::common::components::hx::*;
+use crate::common::components::{
+    hx::*,
+    keybits::*,
+};
 
-impl From<Heading> for Vec3 {
-    fn from(val: Heading) -> Self {
-        Vec3::from(val.0) * Vec3::new(0.25, 1., 0.25)
-    }
-}
+pub const HERE: Vec3 = Vec3::new(0.33, 0., 0.33);
 
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Heading(pub Hx);
@@ -25,5 +24,17 @@ impl From<Heading> for Quat {
             (0, -1) => Quat::from_rotation_y(PI*7./6.),
             _  => Quat::from_rotation_y(0.),
         }
+    }
+}
+
+impl From<KeyBits> for Heading {
+    fn from(value: KeyBits) -> Self {
+        Heading(if value.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 1, r: -1, z: 0 } }
+            else if value.all_pressed([KB_HEADING_Q, KB_HEADING_R]) { Hx { q: -1, r: 1, z: 0 } }
+            else if value.all_pressed([KB_HEADING_Q, KB_HEADING_NEG]) { Hx { q: -1, r: 0, z: 0 } }
+            else if value.all_pressed([KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 0, r: -1, z: 0 } }
+            else if value.all_pressed([KB_HEADING_Q]) { Hx { q: 1, r: 0, z: 0 } }
+            else if value.all_pressed([KB_HEADING_R]) { Hx { q: 0, r: 1, z: 0 } }
+            else { Hx::default() })
     }
 }

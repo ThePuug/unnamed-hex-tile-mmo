@@ -71,8 +71,8 @@ fn main() {
         try_gcd,
         try_incremental,
         try_input,
-        update_headings,
-        update_offsets,
+        update_heading,
+        update_hx,
         write_try,
     ));
 
@@ -83,6 +83,8 @@ fn main() {
     let (server, transport) = new_renet_server();
     app.insert_resource(server);
     app.insert_resource(transport);
+
+    app.insert_resource(Time::<Fixed>::from_seconds(0.125));
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();

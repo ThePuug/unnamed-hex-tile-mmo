@@ -7,8 +7,8 @@ use bevy::prelude::*;
 use fixed::{types::extra::U0, FixedI16};
 use serde::{Deserialize, Serialize};
 
-pub const TILE_SIZE: f32 = 24.;
-pub const TILE_RISE: f32 = 20.;
+pub const TILE_SIZE: f32 = 1.; // half-width furthest from center
+pub const TILE_RISE: f32 = TILE_SIZE * 0.8;
 // note orientation is negated to make +z move into the screen and +x move to the right
 const ORIENTATION: ([f64; 4], [f64; 4]) = (
     [-SQRT_3, -SQRT_3/2., -0., -3./2.],
@@ -86,5 +86,5 @@ fn round(q0: f64, r0: f64, z0: f64) -> Hx {
         r = -q-s;
     }
 
-    Hx { q: q as i16, r: r as i16, z: z0 as i16 }
+    Hx { q: q as i16, r: r as i16, z: z0.round() as i16 }
 }

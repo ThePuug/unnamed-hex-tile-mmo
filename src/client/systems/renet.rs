@@ -1,13 +1,17 @@
-use std::time::Duration;
-
-use bevy::{
-    color::palettes::css::*, pbr::VolumetricLight, prelude::*
+use std::{
+    f32::consts::PI, 
+    time::Duration
 };
+
+use bevy::prelude::*;
 use bevy_renet::netcode::ClientAuthentication;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    client::resources::*, 
+    client::{
+        components::*,
+        resources::*, 
+    },
     common::{
         components::{
             heading::*, 
@@ -40,19 +44,25 @@ pub fn setup() -> (RenetClient, NetcodeClientTransport) {
 
 pub fn ready(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+    mut query: Query<(Entity, &mut AnimationPlayer, &Parent), Added<AnimationPlayer>>,
+    q_prnt: Query<&Parent>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
-    for (ent, mut player) in &mut query {
-        debug!("ready {ent}");
-        let (graph, animation) = AnimationGraph::from_clip(
-            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-baby.glb")));
-        let handle = graphs.add(graph);
+    for (ent, mut player, scene) in &mut query {
+        let parent = q_prnt.get(scene.get()).unwrap().get();
+        commands.entity(parent).insert(Animator(ent));
+        debug!("bound Animator {ent} to Entity {parent}");
+        let (graph, _) = AnimationGraph::from_clips([
+            asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/actor-baby.glb")),
+            asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/actor-baby.glb")),
+            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-baby.glb"))]);
+        let handle = AnimationGraphHandle(graphs.add(graph));
         let mut transitions = AnimationTransitions::new();
-        transitions.play(&mut player, animation, Duration::ZERO).set_speed(1.5).repeat();
+        transitions.play(&mut player, 2.into(), Duration::ZERO).set_speed(1.).repeat();
+        debug!("adding transitions to {ent}");
         commands.entity(ent)
-            .insert(AnimationGraphHandle(handle))
+            .insert(handle)
             .insert(transitions);
     }
 }
@@ -63,7 +73,9 @@ pub fn write_do(
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
-    mut queue: ResMut<InputQueue>,
+    mut buffer: ResMut<InputQueue>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
@@ -87,17 +99,18 @@ pub fn write_do(
                             Offset::default(),
                             KeyBits::default(),
                             Visibility::default(),
-                        )).with_children(|builder| {
-                            builder.spawn((PointLight {
-                                    radius: 100.,
-                                    color: RED.into(),
-                                    intensity: 100_000.,
-                                    shadows_enabled: true,
+                        )).with_children(|cmds| {
+                            cmds.spawn((SpotLight { 
+                                    color: Color::WHITE.into(), 
+                                    intensity: 400_000., 
+                                    range: 20.,
+                                    shadows_enabled: true, 
+                                    inner_angle: PI / 4. * 0.85,
+                                    outer_angle: PI / 4. * 1.,
                                     ..default()},
-                                Transform::from_xyz(100., 100., 100.),
-                                VolumetricLight,
-                            ));
+                                Transform::from_xyz(0., 10., 0.).looking_at(Vec3::ZERO, Vec3::Y)));
                         }).id();
+                        debug!("Player {ent} connected");
                         l2r.0.insert(loc, ent);
                         if l2r.0.len() == 1 {
                             commands.get_entity(loc).unwrap().insert(Actor);
@@ -107,12 +120,12 @@ pub fn write_do(
                         let loc = map.remove(hx);
                         if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
                         let loc = commands.spawn((
-                            SceneRoot(asset_server.load(
-                                GltfAssetLabel::Scene(0).from_asset("models/hex-block-stone-grey.glb"),
-                            )),
+                            Mesh3d(meshes.add(RegularPolygon::new(TILE_SIZE, 6))),
+                            MeshMaterial3d(materials.add(Color::hsl(90., 0.3, 0.7))),
                             Transform {
-                                translation: hx.into(),
-                                scale: Vec3::ONE * TILE_SIZE*2.,
+                                translation: Vec3::from(hx)+Vec3::Y*TILE_RISE,
+                                rotation: Quat::from_rotation_x(-PI/2.),
+                                scale: Vec3::ONE*0.99,
                                 ..default()},
                             typ,
                             hx,
@@ -123,9 +136,9 @@ pub fn write_do(
                 }
             }
             Do { event: Event::Despawn { ent } } => {
-                debug!("Player {} disconnected", ent);
-                let ent = l2r.0.remove_by_right(&ent).unwrap();
-                commands.entity(ent.0).despawn();
+                let (ent, _) = l2r.0.remove_by_right(&ent).unwrap();
+                debug!("Player {ent} disconnected");
+                commands.entity(ent).despawn();
             }
             Do { event: Event::Incremental { ent, attr } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
@@ -133,7 +146,12 @@ pub fn write_do(
             }
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
                 let &ent = l2r.0.get_by_right(&ent).unwrap();
-                queue.0.pop_back();
+                if let Some(Event::Input { seq: seq0, dt: dt0, key_bits: key_bits0, .. }) = buffer.queue.pop_back() {
+                    assert_eq!(seq0, seq);
+                    assert_eq!(key_bits0, key_bits);
+                    if (dt0 as i16 - dt as i16).abs() >= 10 { warn!("{dt0} !~ {dt}"); }
+                    if buffer.queue.len() > 2 { warn!("long input queue, len: {}", buffer.queue.len()); }
+                } else { unreachable!(); }
                 writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
@@ -149,26 +167,30 @@ pub fn send_try(
     mut conn: ResMut<RenetClient>,
     mut reader: EventReader<Try>,
     l2r: Res<EntityMap>,
-    mut queue: ResMut<InputQueue>,
+    mut buffer: ResMut<InputQueue>,
 ) {
     for &message in reader.read() {
         match message {
             Try { event: Event::Input { ent, key_bits, mut dt, mut seq } } => {
-                if seq != 0 { continue; } // seq 0 is input this frame
-                let input0 = queue.0.pop_front().unwrap();
+                // seq 0 is input this frame which we should handle
+                // other received Input events are being replayed and should be ignored
+                if seq != 0 { continue; }
+
+                let input0 = buffer.queue.pop_front().unwrap();
                 match input0 {
                     Event::Input { key_bits: key_bits0, dt: mut dt0, seq: seq0, .. } => {
-                        // the longer dt0 check is, the faster continuous motion desyncs
+                        seq = seq0;
                         if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 { 
-                            queue.0.push_front(input0);
-                            seq = if seq0 == 255 { 1 } else { seq0 + 1}; dt0 = 0;
+                            buffer.queue.push_front(input0);
+                            seq = if seq0 == 255 { 1 } else { seq0 + 1}; 
+                            dt0 = 0;
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input { 
                                 ent: *l2r.0.get_by_left(&ent).unwrap(), 
                                 key_bits, dt: 0, seq,
-                            } }, bincode::config::legacy()).unwrap());
+                            }}, bincode::config::legacy()).unwrap());
                         }
                         dt += dt0;
-                        queue.0.push_front(Event::Input { ent, key_bits, dt, seq });
+                        buffer.queue.push_front(Event::Input { ent, key_bits, dt, seq });
                     }
                     _ => unreachable!()
                 };

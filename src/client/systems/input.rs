@@ -68,52 +68,50 @@ pub fn update_keybits(
 }
 
 pub fn update_camera(
-    // keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera: Query<&mut Transform, With<Camera3d>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut camera: Query<(&mut Transform, &mut Offset), With<Camera3d>>,
     actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
 ) {
     if let Ok(a_transform) = actor.get_single() {
-        let mut c_transform = camera.single_mut();
-        c_transform.translation = a_transform.translation + Vec3 { x: 0., y: 500., z: -500. };
-        // if keyboard.any_pressed([KeyCode::Minus]) { c_transform.translation.z *= 1.05; }
-        // if keyboard.any_pressed([KeyCode::Equal]) { c_transform.translation.z /= 1.05; }
+        if let Ok((mut c_transform, mut c_offset)) = camera.get_single_mut() {
+            const MIN: Vec3 = Vec3::new(0., 2., -2000.); 
+            const MAX: Vec3 = Vec3::new(0., 2000., -2.);
+            if keyboard.any_pressed([KeyCode::Minus]) { c_offset.state = (c_offset.state * 1.05).clamp(MIN, MAX); }
+            if keyboard.any_pressed([KeyCode::Equal]) { c_offset.state = (c_offset.state / 1.05).clamp(MIN, MAX); }
+            c_transform.translation = a_transform.translation + c_offset.state;
+            c_transform.look_at(a_transform.translation + Vec3::Y * TILE_SIZE, Vec3::Y);
+        }
     }
 }
 
 pub fn do_input(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
-    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
+    mut query: Query<(&Hx, &Heading, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
-    queue: Res<InputQueue>,
+    buffer: Res<InputQueue>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = apply(key_bits, dt as i16, heading, hx, offset.state, air_time.state, &map);
-            offset.step = offset.state;
+            let (&hx, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.state, air_time.state) = apply(key_bits, dt as i16, hx, heading, offset.state, air_time.state, &map);
+            offset.step = offset.step.lerp(offset.state, 1. - 0.01_f32.powf(dt as f32 / 1000.));
             air_time.step = air_time.state;
-            for it in queue.0.iter().rev() {
-                match *it {
-                    Event::Input { key_bits, dt, seq, .. } => {
-                        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq } });
-                    }
-                    _ => unreachable!()
-                }
-            }
+            for &event in buffer.queue.iter().rev() { writer.send(Try { event }); }
         }
     }
 }
 
 pub fn try_input(
     mut reader: EventReader<Try>,
-    mut query: Query<(&Heading, &Hx, &mut Offset, &mut AirTime)>,
+    mut query: Query<(&Hx, &Heading, &mut Offset, &mut AirTime)>,    
     map: Res<Map>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            let (&heading, &hx, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.step, air_time.step) = apply(key_bits, dt as i16, heading, hx, offset.step, air_time.step, &map);
+            if let Ok((&hx, &heading, mut offset, mut air_time)) = query.get_mut(ent) {
+                (offset.step, air_time.step) = apply(key_bits, dt as i16, hx, heading, offset.step, air_time.step, &map);
+            }
         }
     }
 }

@@ -8,7 +8,6 @@ use std::time::SystemTime;
 use std::net::UdpSocket;
 
 use bevy::{
-    color::palettes::tailwind::*, 
     log::LogPlugin, 
     pbr::*, 
     prelude::* 
@@ -21,10 +20,15 @@ use bevy_renet::{
 };
 
 use common::{
-    message::{ *, Event },
-    components::{ *, keybits::* },
-    plugins::nntree,
-    resources::{ *, map::* },
+    components::{ *, 
+        keybits::*, 
+        offset::Offset, 
+    }, 
+    message::{ *, Event }, 
+    plugins::nntree, 
+    resources::{  *, 
+        map::*, 
+    }, 
     systems::physics::*
 };
 use client::{
@@ -48,7 +52,7 @@ fn panic_on_error_system(
 
 fn setup(
     mut commands: Commands,
-    // asset_server: Res<AssetServer>,
+    mut config_store: ResMut<GizmoConfigStore>,
 ) {
     commands.spawn((
         Camera3d::default(),
@@ -56,19 +60,15 @@ fn setup(
             hdr: true,
             ..default()
         },
-        Transform::from_xyz(0., 1., -1.).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::default(),
+        Offset { state: Vec3::new(0., 10., -10.), step: Vec3::ZERO },
         Actor
     ));
-    commands.spawn((DirectionalLight {
-            color: RED_100.into(),
-            illuminance: 600.,
-            shadows_enabled: true,
-            ..default()},
-        Transform::from_xyz(100., 100., 100.).looking_at(Vec3::ZERO, Vec3::Y),
-        CascadeShadowConfig::from(CascadeShadowConfigBuilder {
-            maximum_distance: 2_000.,
-            ..default()}),
-    ));
+
+    let (_, light_config) = config_store.config_mut::<LightGizmoConfigGroup>();
+    light_config.draw_all = false;
+    light_config.color = LightGizmoColor::MatchLightColor;
+
     commands.insert_resource(AmbientLight {
         brightness: 20.,
         ..default()
@@ -117,8 +117,7 @@ fn main() {
         try_input,
         ready,
         update_camera,
-        update_headings,
-        update_offsets,
+        update_heading,
         update_transforms,
         update_keybits,
     ));
@@ -131,9 +130,9 @@ fn main() {
     app.insert_resource(client);
     app.insert_resource(transport);
     
-    let mut queue = InputQueue::default();
-    queue.0.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
-    app.insert_resource(queue);
+    let mut buffer = InputQueue::default();
+    buffer.queue.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
+    app.insert_resource(buffer);
 
     app.init_resource::<EntityMap>();
     app.init_resource::<Map>();

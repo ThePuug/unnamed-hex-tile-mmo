@@ -39,7 +39,7 @@ pub fn do_manage_connections(
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<ServerEvent>,
     mut lobby: ResMut<Lobby>,
-    mut queues: ResMut<InputQueues>,
+    mut buffers: ResMut<InputQueues>,
     query: Query<(&Hx, &EntityType)>,
 ) {
     for event in reader.read() {
@@ -59,9 +59,9 @@ pub fn do_manage_connections(
                     hx, 
                     NearestNeighbor::default(),
                 )).id();
-                let mut queue = InputQueue::default();
-                queue.0.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
-                queues.0.insert(ent, queue);
+                let mut buffer = InputQueue::default();
+                buffer.queue.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
+                buffers.0.insert(ent, buffer);
                 let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 for (_, &ent) in lobby.0.iter() {
@@ -74,7 +74,7 @@ pub fn do_manage_connections(
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
                 let ent = lobby.0.remove_by_left(client_id).unwrap().1;
-                queues.0.remove(&ent);
+                buffers.0.remove(&ent);
                 commands.entity(ent).despawn();
                 let message = bincode::serde::encode_to_vec(Do { event: Event::Despawn { ent }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
@@ -130,16 +130,30 @@ pub fn write_try(
                 )).id();
                 map.insert(hx, ent);
                 for other in nntree.0.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
-                    let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Spawn { ent, typ, hx }}, 
+                        bincode::config::legacy()).unwrap();
                     conn.send_message(*lobby.0.get_by_right(&Entity::from_bits(other.item)).unwrap(), DefaultChannel::ReliableOrdered, message);
                 }
             }
             Do { event: Event::Incremental { ent, attr } } => {
                 let &hx = query.get(ent).unwrap();
                 for other in nntree.0.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
-                    let message = bincode::serde::encode_to_vec(Do { event: Event::Incremental { ent, attr }}, bincode::config::legacy()).unwrap();
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Incremental { ent, attr }}, 
+                        bincode::config::legacy()).unwrap();
                     conn.send_message(*lobby.0.get_by_right(&Entity::from_bits(other.item)).unwrap(), DefaultChannel::ReliableOrdered, message);
                 }
+            }
+            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
+                // seq 0 is the currently accumulating input
+                // we still execute input as it accumulate every STEP, but
+                // do not confirm the input until new input is received for accumulation
+                if seq == 0 { continue; }
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Input { ent, key_bits, dt, seq }}, 
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*lobby.0.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
             }
             _ => {}
         }
