@@ -78,9 +78,10 @@ fn setup(
         brightness: 0.,
     });
 
-    commands.spawn((DirectionalLight::default(), Transform::default(), GameTime::default()));
+    commands.spawn((DirectionalLight::default(), Transform::default(), Sun::default()));
+    commands.spawn((DirectionalLight::default(), Transform::default(), Moon::default()));
 
-    let mesh = meshes.add(RegularPolygon::new(TILE_SIZE, 6));
+    let mesh = meshes.add(Extrusion::new(RegularPolygon::new(TILE_SIZE, 6),TILE_RISE));
     // let material = materials.add(Color::hsl(90., 0.3, 0.7));
     let material = materials.add(StandardMaterial {
         base_color: Color::hsl(105., 0.75, 0.1),

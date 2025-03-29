@@ -120,9 +120,9 @@ pub fn write_do(
                             Mesh3d(tmp.mesh.clone()),
                             MeshMaterial3d(tmp.material.clone()),
                             Transform {
-                                translation: Vec3::from(hx)+Vec3::Y*TILE_RISE,
+                                translation: Vec3::from(hx)+Vec3::Y*TILE_RISE/2.,
                                 rotation: Quat::from_rotation_x(-PI/2.),
-                                scale: Vec3::ONE*0.99,
+                                // scale: Vec3::ONE*0.99,
                                 ..default()},
                             typ,
                             hx,

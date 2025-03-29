@@ -118,16 +118,27 @@ pub fn try_input(
 
 pub fn update_sun(
     time: Res<Time>,
-    mut q_sun: Query<(&mut DirectionalLight, &mut Transform, &mut GameTime)>,
+    mut q_sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>,Without<Moon>)>,
+    mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
 ) {
-    let (mut light, mut transform, mut time_of_day) = q_sun.single_mut();
-    time_of_day.0 = (time.elapsed().as_millis() % 20_000) as f32 / 20_000.;
-    let time_ratio = ((time_of_day.0-0.5) * 2.5).clamp(-1.,1.);
-    light.color = Color::linear_rgb(1., 1.-time_ratio.abs(), 1.-time_ratio.abs());
-    light.illuminance = 10_000.*(1.-time_ratio.abs());
-    transform.translation.x = 10_000.*cos((0.5-time_ratio / 2.) * PI);
-    transform.translation.y = 10_000.*sin((0.5-time_ratio / 2.) * PI);
-    transform.look_at(Vec3::ZERO, Vec3::Y);
+    let game_time = (time.elapsed().as_millis() % 20_000) as f32 / 20_000.;
+
+    let (mut s_light, mut s_transform) = q_sun.single_mut();
+    let s_radians = (game_time * 2. * PI).clamp(0., 4./3.*PI);
+    let s_illuminance = 1.-cos(0.75*s_radians).powf(8.);
+    s_light.color = Color::linear_rgb(1., s_illuminance, s_illuminance);
+    s_light.illuminance = 10_000.*s_illuminance;
+    s_transform.translation.x = 1_000.*cos(0.75*s_radians);
+    s_transform.translation.y = 1_000.*sin(0.75*s_radians).powf(2.);
+    s_transform.look_at(Vec3::ZERO, Vec3::Y);
+
+    let (mut m_light, mut m_transform) = q_moon.single_mut();
+    let m_radians = (game_time * 2. * PI).clamp(4./3.*PI, 2.*PI);
+    m_light.color = Color::linear_rgb(1., 1., 1.);
+    m_light.illuminance = 100.;
+    m_transform.translation.x = 1_000.*cos(1.5*m_radians);
+    m_transform.translation.y = 1_000.*sin(1.5*m_radians).powf(2.);
+    m_transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
 pub fn generate_input(

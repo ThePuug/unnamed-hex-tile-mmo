@@ -28,4 +28,7 @@ pub struct AirTime {
 pub struct Actor;
 
 #[derive(Debug, Default, Component)]
-pub struct GameTime(pub f32);
+pub struct Sun();
+
+#[derive(Debug, Default, Component)]
+pub struct Moon();
