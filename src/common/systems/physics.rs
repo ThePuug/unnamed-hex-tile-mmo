@@ -40,7 +40,6 @@ pub fn apply(
                 air_time0 = Some(0); 
             }
             if key_bits.is_pressed(KB_JUMP) && !jumped { 
-                trace!("jump");
                 air_time0 = Some(125); 
                 jumped = true; 
             }
@@ -55,20 +54,15 @@ pub fn apply(
                 }
                 air_time -= dt;
                 air_time0 = Some(air_time);
-    
-                // trace!("ascend for {dt}ms");
                 offset0.y += dt as f32 * GRAVITY * 5.;
             } else {
                 // falling
                 air_time -= dt;
                 air_time0 = Some(air_time);
-
-                // debug!("falling for {dt}ms");
                 let dy = -dt as f32 * GRAVITY;
                 if floor.is_none() || Hx::from(Vec3::from(hx0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().z+1 { 
                     offset0.y += dy;
                 } else {
-                    debug!("landed after {:?}", air_time0);
                     offset0.y = Vec3::from(floor.unwrap() + Hx { z: 1-hx0.z, ..hx0 }).y; 
                     air_time0 = None;
                 }

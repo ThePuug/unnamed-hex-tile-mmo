@@ -26,3 +26,6 @@ pub struct AirTime {
 
 #[derive(Clone, Component, Copy, Default)] 
 pub struct Actor;
+
+#[derive(Debug, Default, Component)]
+pub struct GameTime(pub f32);

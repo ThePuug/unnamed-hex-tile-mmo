@@ -4,11 +4,12 @@
 mod common;
 mod client;
 
-use std::time::SystemTime;
+use std::{f32::consts::PI, time::SystemTime};
 use std::net::UdpSocket;
 
 use bevy::{
     log::LogPlugin, 
+    math::ops::*, 
     pbr::*, 
     prelude::* 
 };
@@ -33,12 +34,12 @@ use common::{
     systems::physics::*
 };
 use client::{
-    resources::*,
+    resources::*, 
     systems::{ *,
+        assets, 
+        input::*, 
         renet::*,
-        input::*,
-        sprites::*,
-    },
+    }
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -64,7 +65,7 @@ fn setup(
             ..default()
         },
         Transform::default(),
-        Offset { state: Vec3::new(0., 10., -10.), step: Vec3::ZERO },
+        Offset { state: Vec3::new(0., 10., -20.), step: Vec3::ZERO },
         Actor
     ));
 
@@ -73,12 +74,19 @@ fn setup(
     light_config.color = LightGizmoColor::MatchLightColor;
 
     commands.insert_resource(AmbientLight {
-        brightness: 20.,
-        ..default()
+        color: Color::WHITE,
+        brightness: 0.,
     });
 
+    commands.spawn((DirectionalLight::default(), Transform::default(), GameTime::default()));
+
     let mesh = meshes.add(RegularPolygon::new(TILE_SIZE, 6));
-    let material = materials.add(Color::hsl(90., 0.3, 0.7));
+    // let material = materials.add(Color::hsl(90., 0.3, 0.7));
+    let material = materials.add(StandardMaterial {
+        base_color: Color::hsl(105., 0.75, 0.1),
+        perceptual_roughness: 1.,
+        ..default()
+    });
 
     commands.insert_resource(Tmp{mesh, material});
 }
@@ -100,7 +108,6 @@ fn main() {
         RenetClientPlugin,
         NetcodeClientPlugin,
         EasingsPlugin::default(),
-        // HanabiPlugin,
         nntree::NNTreePlugin,
     ));
 
@@ -108,6 +115,7 @@ fn main() {
     app.add_event::<Try>();
 
     app.add_systems(Startup, (
+        assets::setup,
         setup,
     ));
 
@@ -118,18 +126,18 @@ fn main() {
     app.add_systems(FixedUpdate, (
         do_input,
         do_incremental,
+        update_sun,
         ready,
     ));
 
     app.add_systems(Update, (
         panic_on_error_system,
+        assets::try_gcd,
+        assets::update_transforms,
         generate_input,
-        // render_do_gcd,
-        try_gcd,
         try_input,
         update_camera,
         update_heading,
-        update_transforms,
         update_keybits,
     ));
 

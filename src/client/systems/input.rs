@@ -74,12 +74,12 @@ pub fn update_camera(
 ) {
     if let Ok(a_transform) = actor.get_single() {
         if let Ok((mut c_transform, mut c_offset)) = camera.get_single_mut() {
-            const MIN: Vec3 = Vec3::new(0., 2., -2000.); 
-            const MAX: Vec3 = Vec3::new(0., 2000., -2.);
+            const MIN: Vec3 = Vec3::new(0., 1.5, -3000.); 
+            const MAX: Vec3 = Vec3::new(0., 1500., -3.);
             if keyboard.any_pressed([KeyCode::Minus]) { c_offset.state = (c_offset.state * 1.05).clamp(MIN, MAX); }
             if keyboard.any_pressed([KeyCode::Equal]) { c_offset.state = (c_offset.state / 1.05).clamp(MIN, MAX); }
             c_transform.translation = a_transform.translation + c_offset.state;
-            c_transform.look_at(a_transform.translation + Vec3::Y * TILE_SIZE, Vec3::Y);
+            c_transform.look_at(a_transform.translation + Vec3::Y * TILE_SIZE * 0.75, Vec3::Y);
         }
     }
 }
@@ -116,10 +116,24 @@ pub fn try_input(
     }
 }
 
+pub fn update_sun(
+    time: Res<Time>,
+    mut q_sun: Query<(&mut DirectionalLight, &mut Transform, &mut GameTime)>,
+) {
+    let (mut light, mut transform, mut time_of_day) = q_sun.single_mut();
+    time_of_day.0 = (time.elapsed().as_millis() % 20_000) as f32 / 20_000.;
+    let time_ratio = ((time_of_day.0-0.5) * 2.5).clamp(-1.,1.);
+    light.color = Color::linear_rgb(1., 1.-time_ratio.abs(), 1.-time_ratio.abs());
+    light.illuminance = 10_000.*(1.-time_ratio.abs());
+    transform.translation.x = 10_000.*cos((0.5-time_ratio / 2.) * PI);
+    transform.translation.y = 10_000.*sin((0.5-time_ratio / 2.) * PI);
+    transform.look_at(Vec3::ZERO, Vec3::Y);
+}
+
 pub fn generate_input(
     mut writer: EventWriter<Try>,
-    time: Res<Time>,
     query: Query<(Entity, &KeyBits), With<Actor>>,
+    time: Res<Time>,
 ) {
     for (ent, &key_bits) in query.iter() {
         let dt = (time.delta_secs() * 1000.) as u16;

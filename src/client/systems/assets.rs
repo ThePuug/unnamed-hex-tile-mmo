@@ -15,6 +15,10 @@ use crate::{
     },
 };
 
+pub fn setup() {
+    
+}
+
 pub fn update_transforms(
     time: Res<Time>,
     mut query: Query<(&Hx, &Offset, &Heading, &KeyBits, &mut Transform, &Animator)>,

@@ -52,7 +52,6 @@ pub fn ready(
     for (ent, mut player, scene) in &mut query {
         let parent = q_prnt.get(scene.get()).unwrap().get();
         commands.entity(parent).insert(Animator(ent));
-        debug!("bound Animator {ent} to Entity {parent}");
         let (graph, _) = AnimationGraph::from_clips([
             asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/actor-baby.glb")),
             asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/actor-baby.glb")),
@@ -60,7 +59,6 @@ pub fn ready(
         let handle = AnimationGraphHandle(graphs.add(graph));
         let mut transitions = AnimationTransitions::new();
         transitions.play(&mut player, 2.into(), Duration::ZERO).set_speed(1.).repeat();
-        debug!("adding transitions to {ent}");
         commands.entity(ent)
             .insert(handle)
             .insert(transitions);
@@ -99,15 +97,15 @@ pub fn write_do(
                             KeyBits::default(),
                             Visibility::default(),
                         )).with_children(|cmds| {
-                            cmds.spawn((SpotLight { 
-                                    color: Color::WHITE.into(), 
-                                    intensity: 400_000., 
-                                    range: 20.,
-                                    shadows_enabled: true, 
-                                    inner_angle: PI / 4. * 0.85,
-                                    outer_angle: PI / 4. * 1.,
-                                    ..default()},
-                                Transform::from_xyz(0., 10., 0.).looking_at(Vec3::ZERO, Vec3::Y)));
+                            // cmds.spawn((SpotLight { 
+                            //         color: Color::WHITE.into(), 
+                            //         intensity: 400_000., 
+                            //         range: 20.,
+                            //         shadows_enabled: true, 
+                            //         inner_angle: PI / 4. * 0.85,
+                            //         outer_angle: PI / 4. * 1.,
+                            //         ..default()},
+                            //     Transform::from_xyz(0., 10., 0.).looking_at(Vec3::ZERO, Vec3::Y)));
                         }).id();
                         debug!("Player {ent} connected");
                         l2r.0.insert(loc, ent);
@@ -148,7 +146,7 @@ pub fn write_do(
                 if let Some(Event::Input { seq: seq0, dt: dt0, key_bits: key_bits0, .. }) = buffer.queue.pop_back() {
                     assert_eq!(seq0, seq);
                     assert_eq!(key_bits0, key_bits);
-                    if (dt0 as i16 - dt as i16).abs() >= 10 { warn!("{dt0} !~ {dt}"); }
+                    if (dt0 as i16 - dt as i16).abs() >= 100 { warn!("{dt0} !~ {dt}"); }
                     if buffer.queue.len() > 2 { warn!("long input queue, len: {}", buffer.queue.len()); }
                 } else { unreachable!(); }
                 writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
