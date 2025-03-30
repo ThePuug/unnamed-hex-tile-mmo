@@ -4,5 +4,7 @@ use bimap::BiMap;
 #[derive(Debug, Default, Resource)]
 pub struct EntityMap(pub BiMap<Entity,Entity>);
 
-// #[derive(Debug, Default, Resource)]
-// pub struct EffectMap(pub HashMap<GcdType, Handle<EffectAsset>>);
+#[derive(Debug, Default, Resource)]
+pub struct Server {
+    pub elapsed_offset: u128,
+}

@@ -72,16 +72,30 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut map: ResMut<Map>,
     mut buffer: ResMut<InputQueue>,
+    mut server: ResMut<Server>,
     asset_server: Res<AssetServer>,
     tmp: Res<Tmp>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
         match message {
+            Do { event: Event::Init { ent, dt }} => {
+                debug!("Player {ent} connected, time offset: {dt}");
+                server.elapsed_offset = dt;
+                let loc = commands.spawn(Actor).id();
+                l2r.0.insert(loc, ent);
+            }
             Do { event: Event::Spawn { ent, typ, hx } } => {
                 match typ {
                     EntityType::Actor => {
-                        let loc = commands.spawn((
+                        let mut loc = 
+                            if let Some(loc) = l2r.0.get_by_right(&ent) { commands.get_entity(*loc).unwrap() } 
+                            else { 
+                                let loc = commands.spawn_empty();
+                                l2r.0.insert(loc.id(), ent);
+                                loc
+                            };
+                        loc.insert((
                             SceneRoot(asset_server.load(
                                 GltfAssetLabel::Scene(0).from_asset("models/actor-baby.glb"),
                             )),
@@ -96,22 +110,7 @@ pub fn write_do(
                             Offset::default(),
                             KeyBits::default(),
                             Visibility::default(),
-                        )).with_children(|cmds| {
-                            // cmds.spawn((SpotLight { 
-                            //         color: Color::WHITE.into(), 
-                            //         intensity: 400_000., 
-                            //         range: 20.,
-                            //         shadows_enabled: true, 
-                            //         inner_angle: PI / 4. * 0.85,
-                            //         outer_angle: PI / 4. * 1.,
-                            //         ..default()},
-                            //     Transform::from_xyz(0., 10., 0.).looking_at(Vec3::ZERO, Vec3::Y)));
-                        }).id();
-                        debug!("Player {ent} connected");
-                        l2r.0.insert(loc, ent);
-                        if l2r.0.len() == 1 {
-                            commands.get_entity(loc).unwrap().insert(Actor);
-                        }
+                        ));
                     }
                     EntityType::Decorator(_desc) => {
                         let loc = map.remove(hx);

@@ -17,6 +17,7 @@ use crate::{ *,
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, hx: Hx },
+    Init { ent: Entity, dt: u128 },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     Gcd { ent: Entity, typ: GcdType },
     Incremental { ent: Entity, attr: Attribute },
@@ -39,4 +40,3 @@ pub struct Do {
 pub struct Try { 
     pub event: Event 
 }
-

@@ -116,28 +116,55 @@ pub fn try_input(
     }
 }
 
+// TODO: start fall on first monday, end month with summer, add drought season once per quarter
+// TODO: shift day/night cycle by 12 minutes every day
+const DAY_MS: u128 = 14400_000;         // 4 hour real time = 1 day game time
+const WEEK_MS: u128 = DAY_MS*6;         // 1 day real time = 6-day week game time
+const SEASON_MS: u128 = WEEK_MS*7;      // 1 week real time = 7-week season game time
+const YEAR_MS: u128 = SEASON_MS*4;      // ~1 month (4w) real time = 4-season year game time, 
+                                        
 pub fn update_sun(
     time: Res<Time>,
     mut q_sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>,Without<Moon>)>,
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
+    mut a_light: ResMut<AmbientLight>,
+    server: Res<Server>,
 ) {
-    let game_time = (time.elapsed().as_millis() % 20_000) as f32 / 20_000.;
+    let dt = time.elapsed().as_millis() + server.elapsed_offset;
+    let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
+    let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
+    let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 
+    // sun
     let (mut s_light, mut s_transform) = q_sun.single_mut();
-    let s_radians = (game_time * 2. * PI).clamp(0., 4./3.*PI);
-    let s_illuminance = 1.-cos(0.75*s_radians).powf(8.);
+    let mut s_rad_d = dtd * 2. * PI;
+    let s_rad_y = dty * 2. * PI;
+
+    // days are longer than nights
+    s_rad_d = s_rad_d.clamp(0., 4.*PI/3.);
+
+    let s_illuminance = 1.-cos(0.75*s_rad_d).powf(8.);
     s_light.color = Color::linear_rgb(1., s_illuminance, s_illuminance);
     s_light.illuminance = 10_000.*s_illuminance;
-    s_transform.translation.x = 1_000.*cos(0.75*s_radians);
-    s_transform.translation.y = 1_000.*sin(0.75*s_radians).powf(2.);
+    a_light.brightness = 100.*s_illuminance;
+    s_transform.translation.x = 1_000.*cos(0.75*s_rad_d);
+    s_transform.translation.y = 1_000.*sin(0.75*s_rad_d).powf(2.);
+    s_transform.translation.z = 1_000.*cos(s_rad_y);
     s_transform.look_at(Vec3::ZERO, Vec3::Y);
 
+    // moon
     let (mut m_light, mut m_transform) = q_moon.single_mut();
-    let m_radians = (game_time * 2. * PI).clamp(4./3.*PI, 2.*PI);
-    m_light.color = Color::linear_rgb(1., 1., 1.);
-    m_light.illuminance = 100.;
-    m_transform.translation.x = 1_000.*cos(1.5*m_radians);
-    m_transform.translation.y = 1_000.*sin(1.5*m_radians).powf(2.);
+    let mut m_rad_d = dtd * 2. * PI;
+    let m_rad_m = dtm * 2. * PI;
+
+    // overlap sun cycle by PI/6 to avoid no lightsource at dusk/dawn
+    if PI/6. < m_rad_d && m_rad_d < 7.*PI/6. { m_rad_d = 7.*PI/6. };
+
+    m_light.illuminance = 300.                  // max illuminance at full moon
+        *(0.1+0.9*cos(0.5*m_rad_m).powf(2.))    // phase moon through month
+        *(1.-cos(m_rad_d+5.*PI/6.).powf(8.));   // moon rise/fall
+    m_transform.translation.x = 1_000.*cos(m_rad_d+5.*PI/6.);
+    m_transform.translation.y = 1_000.*sin(m_rad_d+5.*PI/6.).powf(2.);
     m_transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 

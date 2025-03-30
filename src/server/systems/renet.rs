@@ -41,6 +41,7 @@ pub fn do_manage_connections(
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
     query: Query<(&Hx, &EntityType)>,
+    time: Res<Time>,
 ) {
     for event in reader.read() {
         match event {
@@ -62,8 +63,17 @@ pub fn do_manage_connections(
                 let mut buffer = InputQueue::default();
                 buffer.queue.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
                 buffers.0.insert(ent, buffer);
+
+                // init client
+                let dt = time.elapsed().as_millis();
+                let message = bincode::serde::encode_to_vec(Do { event: Event::Init { ent, dt }}, bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                // spawn new actor everywhere
                 let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
+
+                // spawn lobby on client
                 for (_, &ent) in lobby.0.iter() {
                     let (&hx, &typ) = query.get(ent).unwrap();
                     let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { typ, ent, hx }}, bincode::config::legacy()).unwrap();
