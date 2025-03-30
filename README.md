@@ -13,6 +13,7 @@ Currently not alot to do, but getting a base down to build on
 
 # Game features
 ## things you care about
+- sun/moon cycles
 - hexagonal movement
 - perlin noise terrain generation
 
