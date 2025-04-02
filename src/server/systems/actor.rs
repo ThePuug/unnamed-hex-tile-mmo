@@ -32,7 +32,7 @@ pub fn try_incremental(
     for &message in reader.read() {
         if let Try { event: Event::Discover { ent, hx } } = message {
             let (&loc, _) = query.get(ent).unwrap();
-            if loc.distance(&hx) > 5 { return; }
+            if loc.distance(&hx) > 25 { return; }
             let (hxn, entn) = map.find(hx, -5);
             if let Some(hx) = hxn {
                 if let Ok((_, &typ)) = query.get(entn) {

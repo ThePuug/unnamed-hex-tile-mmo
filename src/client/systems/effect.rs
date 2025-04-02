@@ -80,7 +80,7 @@ pub fn render_do_gcd(
     for &message in reader.read() {
         if let Do { event: Event::Gcd { ent, typ, .. } } = message {
             let (&hx, &heading) = query.get(ent).unwrap();
-            let pos = Vec3::from(hx + heading.0);
+            let pos = Vec3::from(hx + *heading);
             let effect = map.0.get(&typ).unwrap().clone();
 
             let it = commands.spawn(ParticleEffectBundle {

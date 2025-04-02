@@ -17,7 +17,7 @@ pub fn generate_input(
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
 ) {
-    for (&ent0, buffer) in buffers.0.iter_mut() {
+    for (&ent0, buffer) in buffers.iter_mut() {
         let mut dt0 = (dt.delta_secs() * 1000.) as u16;
         
         match buffer.queue.back_mut() {
@@ -57,7 +57,7 @@ pub fn try_input(
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Input { ent, key_bits, seq, .. } } = message {
-            if let Some(buffer) = buffers.0.get_mut(&ent) {
+            if let Some(buffer) = buffers.get_mut(&ent) {
                 // add overstep difference to the previous accumulating input
                 let dt0 = dt0.overstep().as_millis() as u16 - buffer.accumulator_in;
                 buffer.accumulator_in += dt0;

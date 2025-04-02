@@ -24,7 +24,7 @@ use common::{
 };
 use server::{
     resources::{ *, terrain::* },
-    systems::{
+    systems::{ world,
         actor::*,
         input::*,
         renet::*,
@@ -60,9 +60,20 @@ fn main() {
     app.add_event::<Do>();
     app.add_event::<Try>();
 
+    app.add_systems(Startup, (
+        world::setup,
+    ));
+
+    app.add_systems(PreUpdate, (
+        write_try,
+    ));
+
+    app.add_systems(FixedUpdate, (
+        generate_input,
+    ));
+
     app.add_systems(Update, (
         panic_on_error_system,
-        send_do,
         do_gcd,
         do_incremental,
         do_input,
@@ -73,11 +84,10 @@ fn main() {
         try_input,
         update_heading,
         update_hx,
-        write_try,
     ));
 
-    app.add_systems(FixedUpdate, (
-        generate_input,
+    app.add_systems(PostUpdate, (
+        send_do,
     ));
 
     let (server, transport) = new_renet_server();
@@ -90,6 +100,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<Map>();
     app.init_resource::<Terrain>();
+    app.init_resource::<RunTime>();
 
     app.run();
 }

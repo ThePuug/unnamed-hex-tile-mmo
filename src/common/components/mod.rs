@@ -6,13 +6,13 @@ pub mod offset;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecoratorDescriptor {
     pub index: usize,
     pub is_solid: bool,
 }
 
-#[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Component, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EntityType {
     Actor,
     Decorator(DecoratorDescriptor),

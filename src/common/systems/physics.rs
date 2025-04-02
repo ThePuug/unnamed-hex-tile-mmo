@@ -69,7 +69,7 @@ pub fn apply(
             }
         }
 
-        let hpx = Vec3::from(heading0.0);
+        let hpx = Vec3::from(*heading0);
         let npx = Vec3::from(Hx::from(px0 + offset0));
         let here = hpx * HERE;
         let there = Vec3::ZERO.lerp(hpx, 1.25);
@@ -100,9 +100,9 @@ pub fn do_incremental(
                         offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
 
                         *hx0 = hx;
-                        for q in -5..=5 {
-                            for r in max(-5, -q-5)..=min(5, -q+5) {
-                                let hx = *hx0 + Hx { q, r, ..default() };
+                        for q in -25..=25 {
+                            for r in max(-25, -q-25)..=min(25, -q+25) {
+                                let hx = *hx0 + Hx { q, r, z: 1 };
                                 writer.send(Try { event: Event::Discover { ent, hx } }); 
                             }
                         }
@@ -123,7 +123,7 @@ pub fn update_heading(
 ) {
     for (ent, &key_bits, mut heading0) in &mut query {
         let heading = if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { Heading::from(key_bits) } else { *heading0 };
-        if heading0.0 != heading.0 { 
+        if *heading0 != heading { 
             *heading0 = heading;
             let attr = Attribute::Heading { heading };
             writer.send(Try { event: Event::Incremental { ent, attr } });

@@ -8,8 +8,13 @@ use bimap::BiMap;
 
 use crate::common::resources::InputQueue;
 
-#[derive(Default, Resource)]
-pub struct Lobby(pub BiMap<ClientId, Entity>);
+#[derive(Default, Deref, DerefMut, Resource)]
+pub struct Lobby(BiMap<ClientId, Entity>);
+
+#[derive(Default, Deref, DerefMut, Resource)]
+pub struct InputQueues(HashMap<Entity, InputQueue>);
 
 #[derive(Default, Resource)]
-pub struct InputQueues(pub HashMap<Entity, InputQueue>);
+pub struct RunTime {
+    pub elapsed_offset: u128,
+}

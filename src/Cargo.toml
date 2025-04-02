@@ -11,7 +11,9 @@ bevy_hanabi = { version = "0", default-features = false, features = [ "2d", "ser
 bevy_renet = "1"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
+chrono = "0"
 fixed = "1"
+iyes_perf_ui = "0"
 kiddo = "5"
 log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
 noise = { version = "0" }

@@ -10,12 +10,18 @@ use crate::common::components::{
 
 pub const HERE: Vec3 = Vec3::new(0.33, 0., 0.33);
 
-#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Heading(pub Hx);
+#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Heading(Hx);
+
+impl Heading {
+    pub fn new(hx: Hx) -> Self {
+        Self(hx)
+    }
+}
 
 impl From<Heading> for Quat {
     fn from(value: Heading) -> Self {
-        match (value.0.q, value.0.r) {
+        match (value.q, value.r) {
             (-1, 0) => Quat::from_rotation_y(PI*9./6.),
             (-1, 1) => Quat::from_rotation_y(PI*11./6.),
             (0, 1)  => Quat::from_rotation_y(PI*1./6.),
@@ -29,7 +35,7 @@ impl From<Heading> for Quat {
 
 impl From<KeyBits> for Heading {
     fn from(value: KeyBits) -> Self {
-        Heading(if value.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 1, r: -1, z: 0 } }
+        Heading::new(if value.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 1, r: -1, z: 0 } }
             else if value.all_pressed([KB_HEADING_Q, KB_HEADING_R]) { Hx { q: -1, r: 1, z: 0 } }
             else if value.all_pressed([KB_HEADING_Q, KB_HEADING_NEG]) { Hx { q: -1, r: 0, z: 0 } }
             else if value.all_pressed([KB_HEADING_R, KB_HEADING_NEG]) { Hx { q: 0, r: -1, z: 0 } }

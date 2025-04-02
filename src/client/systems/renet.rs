@@ -1,30 +1,18 @@
-use std::{
-    f32::consts::PI, 
-    time::Duration
-};
-
 use bevy::prelude::*;
 use bevy_renet::netcode::ClientAuthentication;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    client::{
-        components::*,
-        resources::*, 
-    },
+    client::resources::*,
     common::{
-        components::{
-            heading::*, 
-            hx::*, 
-            keybits::*, 
-            offset::*
-        }, 
         message::{Event, *}, 
         resources::*
     }, *
 };
 
-pub fn setup() -> (RenetClient, NetcodeClientTransport) {
+pub fn setup(
+    mut commands: Commands,
+) {
     let server_addr = "127.0.0.1:5000".parse().unwrap();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -39,109 +27,49 @@ pub fn setup() -> (RenetClient, NetcodeClientTransport) {
     let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
     let client = RenetClient::new(ConnectionConfig::default());
 
-    (client, transport)
+    commands.insert_resource(client);
+    commands.insert_resource(transport);
 }
 
-pub fn ready(
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut AnimationPlayer, &Parent), Added<AnimationPlayer>>,
-    q_prnt: Query<&Parent>,
-    mut graphs: ResMut<Assets<AnimationGraph>>,
-    asset_server: Res<AssetServer>,
-) {
-    for (ent, mut player, scene) in &mut query {
-        let parent = q_prnt.get(scene.get()).unwrap().get();
-        commands.entity(parent).insert(Animator(ent));
-        let (graph, _) = AnimationGraph::from_clips([
-            asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/actor-baby.glb")),
-            asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/actor-baby.glb")),
-            asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-baby.glb"))]);
-        let handle = AnimationGraphHandle(graphs.add(graph));
-        let mut transitions = AnimationTransitions::new();
-        transitions.play(&mut player, 2.into(), Duration::ZERO).set_speed(1.).repeat();
-        commands.entity(ent)
-            .insert(handle)
-            .insert(transitions);
-    }
-}
-
-pub fn write_do(
+pub fn send_do(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
-    mut map: ResMut<Map>,
     mut buffer: ResMut<InputQueue>,
-    mut server: ResMut<Server>,
-    asset_server: Res<AssetServer>,
-    tmp: Res<Tmp>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
         match message {
+
+            // insert l2r for player
             Do { event: Event::Init { ent, dt }} => {
                 debug!("Player {ent} connected, time offset: {dt}");
-                server.elapsed_offset = dt;
                 let loc = commands.spawn(Actor).id();
-                l2r.0.insert(loc, ent);
+                l2r.insert(loc, ent);
+                writer.send(Do { event: Event::Init { ent: loc, dt }});
             }
+
+            // insert l2r entry when spawning an Actor
+            Do { event: Event::Spawn { ent, typ, hx } } if typ == EntityType::Actor => {
+                let ent = 
+                    if let Some(&loc) = l2r.get_by_right(&ent) { loc }
+                    else {
+                        let loc = commands.spawn_empty().id();
+                        l2r.insert(loc, ent);
+                        loc        
+                    };
+                writer.send(Do { event: Event::Spawn { ent, typ, hx }});
+            }
+
+            // just pass through the other spawn events
             Do { event: Event::Spawn { ent, typ, hx } } => {
-                match typ {
-                    EntityType::Actor => {
-                        let mut loc = 
-                            if let Some(loc) = l2r.0.get_by_right(&ent) { commands.get_entity(*loc).unwrap() } 
-                            else { 
-                                let loc = commands.spawn_empty();
-                                l2r.0.insert(loc.id(), ent);
-                                loc
-                            };
-                        loc.insert((
-                            SceneRoot(asset_server.load(
-                                GltfAssetLabel::Scene(0).from_asset("models/actor-baby.glb"),
-                            )),
-                            Transform {
-                                translation: hx.into(),
-                                scale: Vec3::ONE * TILE_SIZE,
-                                ..default()},
-                            typ,
-                            hx,
-                            AirTime { state: Some(0), step: None },
-                            Heading::default(),
-                            Offset::default(),
-                            KeyBits::default(),
-                            Visibility::default(),
-                        ));
-                    }
-                    EntityType::Decorator(_desc) => {
-                        let loc = map.remove(hx);
-                        if loc != Entity::PLACEHOLDER { commands.entity(loc).despawn(); }
-                        let loc = commands.spawn((
-                            Mesh3d(tmp.mesh.clone()),
-                            MeshMaterial3d(tmp.material.clone()),
-                            Transform {
-                                translation: Vec3::from(hx)+Vec3::Y*TILE_RISE/2.,
-                                rotation: Quat::from_rotation_x(-PI/2.),
-                                // scale: Vec3::ONE*0.99,
-                                ..default()},
-                            typ,
-                            hx,
-                            Offset::default(),
-                        )).id();
-                        map.insert(hx, loc);
-                    }
-                }
+                writer.send(Do { event: Event::Spawn { ent, typ, hx }});
             }
-            Do { event: Event::Despawn { ent } } => {
-                let (ent, _) = l2r.0.remove_by_right(&ent).unwrap();
-                debug!("Player {ent} disconnected");
-                commands.entity(ent).despawn();
-            }
-            Do { event: Event::Incremental { ent, attr } } => {
-                let &ent = l2r.0.get_by_right(&ent).unwrap();
-                writer.send(Do { event: Event::Incremental { ent, attr } });
-            }
+
+            // manage the input queue before sending the incoming Input
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                let &ent = l2r.0.get_by_right(&ent).unwrap();
+                let &ent = l2r.get_by_right(&ent).unwrap();
                 if let Some(Event::Input { seq: seq0, dt: dt0, key_bits: key_bits0, .. }) = buffer.queue.pop_back() {
                     assert_eq!(seq0, seq);
                     assert_eq!(key_bits0, key_bits);
@@ -150,8 +78,17 @@ pub fn write_do(
                 } else { unreachable!(); }
                 writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
+            Do { event: Event::Despawn { ent } } => {
+                let (ent, _) = l2r.remove_by_right(&ent).unwrap();
+                debug!("Player {ent} disconnected");
+                commands.entity(ent).despawn();
+            }
+            Do { event: Event::Incremental { ent, attr } } => {
+                let &ent = l2r.get_by_right(&ent).unwrap();
+                writer.send(Do { event: Event::Incremental { ent, attr } });
+            }
             Do { event: Event::Gcd { ent, typ } } => {
-                let &ent = l2r.0.get_by_right(&ent).unwrap();
+                let &ent = l2r.get_by_right(&ent).unwrap();
                 writer.send(Do { event: Event::Gcd { ent, typ } });
             }
             _ => {}
@@ -159,7 +96,7 @@ pub fn write_do(
     }
 }
 
-pub fn send_try(
+pub fn write_try(
     mut conn: ResMut<RenetClient>,
     mut reader: EventReader<Try>,
     l2r: Res<EntityMap>,
@@ -167,6 +104,7 @@ pub fn send_try(
 ) {
     for &message in reader.read() {
         match message {
+            // manage the queue before sending the outgoing Input
             Try { event: Event::Input { ent, key_bits, mut dt, mut seq } } => {
                 // seq 0 is input this frame which we should handle
                 // other received Input events are being replayed and should be ignored
@@ -181,7 +119,7 @@ pub fn send_try(
                             seq = if seq0 == 255 { 1 } else { seq0 + 1}; 
                             dt0 = 0;
                             conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input { 
-                                ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                                ent: *l2r.get_by_left(&ent).unwrap(), 
                                 key_bits, dt: 0, seq,
                             }}, bincode::config::legacy()).unwrap());
                         }
@@ -193,9 +131,9 @@ pub fn send_try(
             }
             Try { event: Event::Gcd { ent, typ, .. } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 
-                    ent: *l2r.0.get_by_left(&ent).unwrap(), 
+                    ent: *l2r.get_by_left(&ent).unwrap(), 
                     typ,
-                } }, bincode::config::legacy()).unwrap());
+                }}, bincode::config::legacy()).unwrap());
             }
             _ => {}
         }

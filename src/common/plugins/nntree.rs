@@ -32,33 +32,33 @@ impl Plugin for NNTreePlugin {
     }
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Deref, DerefMut)]
 #[component(on_add = on_add)]
 #[component(on_remove = on_remove)]
-pub struct NearestNeighbor(pub Hx);
+pub struct NearestNeighbor(Hx);
 
 pub fn on_add(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let &hx = world.get::<Hx>(ent).unwrap();
-    world.get_mut::<NearestNeighbor>(ent).unwrap().0 = hx;
-    world.resource_mut::<NNTree>().0.add(&hx.into(), ent.to_bits());
+    let hx = *world.get::<Hx>(ent).unwrap();
+    **world.get_mut::<NearestNeighbor>(ent).unwrap() = hx;
+    world.resource_mut::<NNTree>().add(&hx.into(), ent.to_bits());
 }
 
 pub fn on_remove(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let hx = world.get::<NearestNeighbor>(ent).unwrap().0;
-    world.resource_mut::<NNTree>().0.remove(&hx.into(), ent.to_bits());
+    let hx = **world.get::<NearestNeighbor>(ent).unwrap();
+    world.resource_mut::<NNTree>().remove(&hx.into(), ent.to_bits());
 }
 
-#[derive(Resource)]
-pub struct NNTree(pub KdTree<FixedI16<U0>, u64, 4, 8, u32>);
+#[derive(Deref, DerefMut, Resource)]
+pub struct NNTree(KdTree<FixedI16<U0>, u64, 4, 8, u32>);
 
 pub fn update(
     mut query: Query<(Entity, &Hx, &mut NearestNeighbor), Changed<Hx>>,
     mut nntree: ResMut<NNTree>,
 ) {
     for (ent, &hx, mut nn) in &mut query {
-        nntree.0.remove(&nn.0.into(), ent.to_bits());
-        nn.0 = hx;
-        nntree.0.add(&hx.into(), ent.to_bits());
+        nntree.remove(&(**nn).into(), ent.to_bits());
+        **nn = hx;
+        nntree.add(&hx.into(), ent.to_bits());
     }
 }
 
