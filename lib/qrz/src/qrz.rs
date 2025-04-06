@@ -30,22 +30,23 @@ impl Qrz {
     }
 
     pub fn normalize(&self) -> Qrz {
-        let max = [self.q, self.r, -self.q-self.r].into_iter().max_by_key(|a| a.abs()).unwrap();
+        let max = [self.q, self.r].into_iter().max_by_key(|a| a.abs()).unwrap();
         Qrz { 
             q: if max == self.q { self.q.signum() } else { 0 }, 
             r: if max == self.r { self.r.signum() } else { 0 }, 
-            z: 0 } }
+            z: 0 } 
+    }
 
     pub fn distance(&self, other: &Qrz) -> i16 {
         self.flat_distance(other) + (self.z-other.z).abs()
     }
 
     pub fn arc(&self, dir: &Qrz, radius: u8) -> Vec<Qrz> {
-        assert!(self.flat_distance(dir) == 1);
-        let start = dir.normalize() * radius as i16;
-        let idx = DIRECTIONS.iter().position(|i| *i == dir.normalize()).unwrap();
-        (1..=radius).map(|i| start + DIRECTIONS[(idx + 2) % 6] * i as i16)
-            .chain((0..=radius).map(|i| start + DIRECTIONS[(idx - 2) % 6] * i as i16))
+        let start = *dir * radius as i16;
+        let idx = DIRECTIONS.iter().position(|i| { *i == *dir}).unwrap();
+        (1..=radius).map(|i| start + DIRECTIONS[(idx + 2) % 6] * i as i16).chain(
+        (0..=radius).map(|i| start + DIRECTIONS[(idx + 4) % 6] * i as i16))
+            .map(|i| *self + i)
             .collect()
     }
 

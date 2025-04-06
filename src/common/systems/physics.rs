@@ -100,23 +100,22 @@ pub fn do_incremental(
                         offset0.state = map.convert(**loc0) + offset0.state - map.convert(qrz);
                         offset0.step = map.convert(**loc0) + offset0.step - map.convert(qrz);
 
+                        writer.send(Try { event: Event::Discover { ent, qrz } });
                         *loc0 = Loc::new(qrz);
-                        // for qrz in qrz.line_to(&(*qrz0 + **heading0 * 5)) {
-                        //     writer.send(Try { event: Event::Discover { ent, qrz } });
-                        // }
 
-                        for q in -25..=25 {
-                            for r in max(-25, -q-25)..=min(25, -q+25) {
-                                let qrz = **loc0 + Qrz { q, r, z: 1 };
-                                writer.send(Try { event: Event::Discover { ent, qrz } }); 
+                        if **heading0 != Qrz::default() {
+                            for qrz in loc0.fov(&heading0, 10) {
+                                writer.send(Try { event: Event::Discover { ent, qrz } });
                             }
                         }
                     }
                     Attribute::Heading { heading } => {
                         *heading0 = heading;
-                        // for qrz in qrz0.line_to(&(*qrz0 + **heading0 * 5)) {
-                        //     writer.send(Try { event: Event::Discover { ent, qrz } });
-                        // }
+                        if **heading0 != Qrz::default() {
+                            for qrz in loc0.fov(&heading0, 10) {
+                                writer.send(Try { event: Event::Discover { ent, qrz } });
+                            }
+                        }
                     }
                     _ => unreachable!(),
                 }

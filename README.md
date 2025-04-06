@@ -9,11 +9,10 @@
 Currently not alot to do, but getting a base down to build on
 - `<ArrowUp> <ArrowLeft> <ArrowRight> <ArrowDown>` to move
 - `<Num0>` to jump
-- `<KeyQ>` to "attack" the tile in front of you
 
 # Game features
 ## things you care about
-- sun/moon cycles
+- sun/moon/season cycles
 - hexagonal movement
 - perlin noise terrain generation
 
