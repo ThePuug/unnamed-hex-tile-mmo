@@ -1,4 +1,2 @@
-.venv/
-**/*.pyc
-**/__pycache__
-build/
+target/
+Cargo.lock

@@ -1,10 +1,10 @@
 use bevy::prelude::*;
+use qrz::Convert;
 
 use crate::{ *,
     common::{
-        components::{
+        components::{ *,
             heading::*,
-            hx::*,
             keybits::*,
             offset::*,
         },
@@ -41,7 +41,7 @@ pub fn generate_input(
                 writer.send(Do { event: Event::Input { ent, key_bits, dt: dt0, seq: 0 } });
                 break;
             }
-            writer.send(Do { event: Event::Input { ent, key_bits, dt: dt, seq: 0 } });
+            writer.send(Do { event: Event::Input { ent, key_bits, dt, seq: 0 } });
             writer.send(Do { event: Event::Input { ent, key_bits, dt: buffer.accumulator_out+dt, seq } });
             dt0 -= dt;
             buffer.accumulator_out = 0;
@@ -79,14 +79,14 @@ pub fn try_input(
 
 pub fn do_input(
     mut reader: EventReader<Do>,
-    mut query: Query<(&Hx, &Heading, &mut Offset, &mut AirTime)>,
+    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, key_bits, dt, seq, .. } } = message {
             if seq != 0 { continue; }
-            let (&hx, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = apply(key_bits, dt as i16, hx, heading, offset.state, air_time.state, &map);
+            let (&loc, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.state, air_time.state) = apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
         }
     }
 }
@@ -113,15 +113,16 @@ pub fn do_gcd(
     }
 }
 
-pub fn update_hx(
+pub fn update_qrz(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Hx, &Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
+    map: Res<Map>,
 ) {
-    for (ent, &hx0, &offset) in &mut query {
-        let px = Vec3::from(hx0);
-        let hx = Hx::from(px + offset.state);
-        if hx0 != hx { 
-            let attr = Attribute::Hx { hx }; 
+    for (ent, &qrz0, &offset) in &mut query {
+        let px = map.convert(*qrz0);
+        let qrz = map.convert(px + offset.state);
+        if *qrz0 != qrz { 
+            let attr = Attribute::Qrz { qrz }; 
             writer.send(Try { event: Event::Incremental { ent, attr } }); 
         }
     }

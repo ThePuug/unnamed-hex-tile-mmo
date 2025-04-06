@@ -1,11 +1,11 @@
 use bevy::prelude::*;
+use qrz::Qrz;
 
 use crate::{*,
     common::{
         message::Event,
         components::{
             heading::*,
-            hx::*,
             keybits::*,
             offset::*,
         },
@@ -40,9 +40,9 @@ pub fn update_keybits(
         if keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
             if keyboard.pressed(KEYCODE_UP) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(*heading == Hx {q:-1, r: 0, z: 0}
-                    || *heading == Hx {q: 0, r:-1, z: 0}
-                    || *heading == Hx {q: 0, r: 1, z: 0}) {
+                    &&(*heading == Qrz {q:-1, r:0, z:0}
+                    || *heading == Qrz {q: 0, r:-1, z: 0}
+                    || *heading == Qrz {q: 0, r: 1, z: 0}) {
                         key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                     }
                 else {
@@ -50,9 +50,9 @@ pub fn update_keybits(
                 }
             } else if keyboard.pressed(KEYCODE_DOWN) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(*heading == Hx {q:-1, r: 0, z: 0}
-                    || *heading == Hx {q: 1, r:-1, z: 0}
-                    || *heading == Hx {q:-1, r: 1, z: 0}) {
+                    &&(*heading == Qrz {q:-1, r: 0, z: 0}
+                    || *heading == Qrz {q: 1, r:-1, z: 0}
+                    || *heading == Qrz {q:-1, r: 1, z: 0}) {
                         key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true); 
                     }
                 else {
@@ -73,14 +73,14 @@ pub fn update_keybits(
 pub fn do_input(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
-    mut query: Query<(&Hx, &Heading, &mut Offset, &mut AirTime)>,
+    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
     buffer: Res<InputQueue>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            let (&hx, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = apply(key_bits, dt as i16, hx, heading, offset.state, air_time.state, &map);
+            let (&loc, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
+            (offset.state, air_time.state) = apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
             offset.step = offset.state;
             air_time.step = air_time.state;
             for &event in buffer.queue.iter().rev() { writer.send(Try { event }); }
@@ -90,13 +90,13 @@ pub fn do_input(
 
 pub fn try_input(
     mut reader: EventReader<Try>,
-    mut query: Query<(&Hx, &Heading, &mut Offset, &mut AirTime)>,    
+    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,    
     map: Res<Map>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            if let Ok((&hx, &heading, mut offset, mut air_time)) = query.get_mut(ent) {
-                (offset.step, air_time.step) = apply(key_bits, dt as i16, hx, heading, offset.step, air_time.step, &map);
+            if let Ok((&loc, &heading, mut offset, mut air_time)) = query.get_mut(ent) {
+                (offset.step, air_time.step) = apply(key_bits, dt as i16, *loc, heading, offset.step, air_time.step, &map);
             }
         }
     }

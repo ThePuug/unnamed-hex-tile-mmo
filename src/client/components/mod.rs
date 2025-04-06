@@ -12,5 +12,4 @@ impl Animator {
 #[derive(Component)]
 pub enum Info {
     Time,
-    Fps,
 }

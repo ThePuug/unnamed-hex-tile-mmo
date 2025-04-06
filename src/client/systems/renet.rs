@@ -51,7 +51,7 @@ pub fn send_do(
             }
 
             // insert l2r entry when spawning an Actor
-            Do { event: Event::Spawn { ent, typ, hx } } if typ == EntityType::Actor => {
+            Do { event: Event::Spawn { ent, typ, qrz } } if typ == EntityType::Actor => {
                 let ent = 
                     if let Some(&loc) = l2r.get_by_right(&ent) { loc }
                     else {
@@ -59,12 +59,12 @@ pub fn send_do(
                         l2r.insert(loc, ent);
                         loc        
                     };
-                writer.send(Do { event: Event::Spawn { ent, typ, hx }});
+                writer.send(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 
             // just pass through the other spawn events
-            Do { event: Event::Spawn { ent, typ, hx } } => {
-                writer.send(Do { event: Event::Spawn { ent, typ, hx }});
+            Do { event: Event::Spawn { ent, typ, qrz } } => {
+                writer.send(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 
             // manage the input queue before sending the incoming Input

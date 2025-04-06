@@ -1,0 +1,12 @@
+[package]
+name = "qrz"
+edition = "2021"
+version = "0.0.1"
+authors = ["Reed Debaets <reed.debaets@gmail.com>"]
+
+[dependencies]
+glam = "0"
+serde = { version = "1", features = ["derive"] }
+
+[lib]
+name = "qrz"

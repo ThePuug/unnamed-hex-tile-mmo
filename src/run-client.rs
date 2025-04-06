@@ -54,10 +54,6 @@ fn setup(
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins
-        .set(AssetPlugin {
-            file_path: "../assets".into(),
-            ..default()
-        })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
@@ -69,7 +65,7 @@ fn main() {
         NetcodeClientPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        FrameTimeDiagnosticsPlugin::default(),
+        FrameTimeDiagnosticsPlugin,
         EntityCountDiagnosticsPlugin,
         SystemInformationDiagnosticsPlugin,
         RenderDiagnosticsPlugin,
@@ -122,8 +118,9 @@ fn main() {
     buffer.queue.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
     app.insert_resource(buffer);
 
+    app.insert_resource(Map::new(qrz::Map::<Entity>::new(1., 0.8)));
+
     app.init_resource::<EntityMap>();
-    app.init_resource::<Map>();
     app.init_resource::<Server>();
 
     app.run();

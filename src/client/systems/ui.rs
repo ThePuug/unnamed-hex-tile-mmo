@@ -67,7 +67,6 @@ pub fn update(
                 let minute = dt % HOUR_MS / MINUTE_MS;
                 format!("{hour:02}:{minute:02} {day}.{week}.{season}") 
             }
-            _ => unreachable!()
         };
     }
 }

@@ -34,10 +34,13 @@ codegen-units = 1
 incremental = false
 debug = false
 
+[dependencies.qrz]
+path = "lib/qrz"
+
 [[bin]]
 name = "server"
-path = "run-server.rs"
+path = "src/run-server.rs"
 
 [[bin]]
 name = "client"
-path = "run-client.rs"
+path = "src/run-client.rs"

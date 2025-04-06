@@ -1,32 +1,30 @@
 use bevy::prelude::*;
+use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
-use crate::{ *,
-    common::{
-        components::{
+use crate::common::{
+        components::{ *,
             heading::*,
-            hx::*,
             keybits::*,
             offset::*,
         },
         systems::gcd::*,
-    },
-};
+    };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Event {
     Despawn { ent: Entity },
-    Discover { ent: Entity, hx: Hx },
+    Discover { ent: Entity, qrz: Qrz },
     Init { ent: Entity, dt: u128 },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     Gcd { ent: Entity, typ: GcdType },
     Incremental { ent: Entity, attr: Attribute },
-    Spawn { ent: Entity, typ: EntityType, hx: Hx },
+    Spawn { ent: Entity, typ: EntityType, qrz: Qrz },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Attribute {
-    Hx { hx: Hx },
+    Qrz { qrz: Qrz },
     Heading { heading: Heading },
     Offset { offset: Offset },
 }

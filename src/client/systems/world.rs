@@ -4,12 +4,15 @@ use bevy::{
     math::ops::*,
     prelude::*
 };
+use qrz::Convert;
+
+pub const TILE_RISE: f32 = 0.8;
+pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
     client::resources::*,
     common::{
         components::{ *,
-            hx::*,
             offset::*,
         },
         message::{*, Event},
@@ -71,9 +74,8 @@ pub fn do_spawn(
     tmp: Res<Tmp>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { hx, typ: EntityType::Decorator(DecoratorDescriptor { index, is_solid }), .. } } = message {
-            let loc = map.get(hx);
-            if loc != Entity::PLACEHOLDER {
+        if let Do { event: Event::Spawn { qrz, typ: EntityType::Decorator(DecoratorDescriptor { index, is_solid }), .. } } = message {
+            if let Some(&loc) = map.get(qrz) {
                 match query.get(loc) {
                     Ok(&EntityType::Decorator(DecoratorDescriptor { index: index0, .. })) if index0 == index => { continue; },
                     _ => (),
@@ -81,22 +83,23 @@ pub fn do_spawn(
                 commands.entity(loc).despawn();
             }
             let loc = commands.spawn((
-                hx,
+                Loc::new(qrz),
                 Mesh3d(tmp.mesh.clone()),
                 MeshMaterial3d(tmp.material.clone()),
                 Transform {
-                    translation: Vec3::from(hx)+Vec3::Y*TILE_RISE/2.,
+                    translation: map.convert(qrz)+Vec3::Y*TILE_RISE/2.,
                     rotation: Quat::from_rotation_x(-PI/2.),
                     // scale: Vec3::ONE*0.99,
                     ..default()},
                 EntityType::Decorator(DecoratorDescriptor { index, is_solid }),
                 Offset::default(),
             )).id();
-            map.insert(hx, loc);
+            map.insert(qrz, loc);
         }
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn update(
     time: Res<Time>,
     mut q_sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>,Without<Moon>)>,

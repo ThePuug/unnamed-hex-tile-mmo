@@ -1,15 +1,15 @@
 use std::cmp::{max, min};
 
 use bevy::prelude::*;
+use qrz::{Convert, Qrz};
 
 use crate::common::{ 
-    components::{
+    components::{ *,
         heading::*,
-        hx::*,
         keybits::*,
         offset::*,
     }, 
-    message::{ *, Attribute, Event }, 
+    message::{ Attribute, Event, * }, 
     resources::map::*
 };
 
@@ -18,7 +18,7 @@ const GRAVITY: f32 = 0.005;
 pub fn apply(
     key_bits: KeyBits, 
     mut dt0: i16, 
-    hx0: Hx,
+    qrz0: Qrz,
     heading0: Heading,
     offset0: Vec3,
     air_time0: Option<i16>,
@@ -32,11 +32,11 @@ pub fn apply(
         dt0-=125; 
         let mut dt = min(125+dt0, 125);
 
-        let px0 = Vec3::from(hx0);
+        let px0 = map.convert(qrz0);
 
-        let (floor, _) = map.find(hx0 + Hx{q:0,r:0,z:1}, -5);
+        let floor = map.find(qrz0 + Qrz{q:0,r:0,z:1}, -5);
         if air_time0.is_none() {
-            if floor.is_none() || Hx::from(Vec3::from(hx0) + Vec3::Y * offset0.y).z > floor.unwrap().z+1 { 
+            if floor.is_none() || map.convert(map.convert(qrz0) + Vec3::Y * offset0.y).z > floor.unwrap().0.z+1 {
                 air_time0 = Some(0); 
             }
             if key_bits.is_pressed(KB_JUMP) && !jumped { 
@@ -60,20 +60,20 @@ pub fn apply(
                 air_time -= dt;
                 air_time0 = Some(air_time);
                 let dy = -dt as f32 * GRAVITY;
-                if floor.is_none() || Hx::from(Vec3::from(hx0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().z+1 { 
+                if floor.is_none() || map.convert(map.convert(qrz0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().0.z+1 { 
                     offset0.y += dy;
                 } else {
-                    offset0.y = Vec3::from(floor.unwrap() + Hx { z: 1-hx0.z, ..hx0 }).y; 
+                    offset0.y = map.convert(floor.unwrap().0 + Qrz { z: 1-qrz0.z, ..qrz0 }).y; 
                     air_time0 = None;
                 }
             }
         }
 
-        let hpx = Vec3::from(*heading0);
-        let npx = Vec3::from(Hx::from(px0 + offset0));
+        let hpx = map.convert(*heading0);
+        let npx = map.convert(map.convert(px0 + offset0));
         let here = hpx * HERE;
         let there = Vec3::ZERO.lerp(hpx, 1.25);
-        let tpx = if map.get(Hx::from(npx+there)) == Entity::PLACEHOLDER && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) 
+        let tpx = if map.get(map.convert(npx+there)).is_none() && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) 
                 { npx + there - px0 }
             else { here };
 
@@ -89,26 +89,34 @@ pub fn apply(
 pub fn do_incremental(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
-    mut query: Query<(&mut Hx, &mut Offset, &mut Heading)>,
+    mut query: Query<(&mut Loc, &mut Offset, &mut Heading)>,
+    map: Res<Map>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Incremental { ent, attr } } = message {
-            if let Ok((mut hx0, mut offset0, mut heading0)) = query.get_mut(ent) {
+            if let Ok((mut loc0, mut offset0, mut heading0)) = query.get_mut(ent) {
                 match attr {
-                    Attribute::Hx { hx } => {
-                        offset0.state = Vec3::from(*hx0) + offset0.state - Vec3::from(hx);
-                        offset0.step = Vec3::from(*hx0) + offset0.step - Vec3::from(hx);
+                    Attribute::Qrz { qrz } => {
+                        offset0.state = map.convert(**loc0) + offset0.state - map.convert(qrz);
+                        offset0.step = map.convert(**loc0) + offset0.step - map.convert(qrz);
 
-                        *hx0 = hx;
+                        *loc0 = Loc::new(qrz);
+                        // for qrz in qrz.line_to(&(*qrz0 + **heading0 * 5)) {
+                        //     writer.send(Try { event: Event::Discover { ent, qrz } });
+                        // }
+
                         for q in -25..=25 {
                             for r in max(-25, -q-25)..=min(25, -q+25) {
-                                let hx = *hx0 + Hx { q, r, z: 1 };
-                                writer.send(Try { event: Event::Discover { ent, hx } }); 
+                                let qrz = **loc0 + Qrz { q, r, z: 1 };
+                                writer.send(Try { event: Event::Discover { ent, qrz } }); 
                             }
                         }
                     }
                     Attribute::Heading { heading } => {
                         *heading0 = heading;
+                        // for qrz in qrz0.line_to(&(*qrz0 + **heading0 * 5)) {
+                        //     writer.send(Try { event: Event::Discover { ent, qrz } });
+                        // }
                     }
                     _ => unreachable!(),
                 }

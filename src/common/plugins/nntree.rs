@@ -20,7 +20,13 @@ use kiddo::{
     traits::DistanceMetric
 };
 
-use crate::common::components::hx::Hx;
+use crate::common::components::*;
+
+impl From<Loc> for [FixedI16<U0>; 4] {
+    fn from(loc: Loc) -> [FixedI16<U0>; 4] {
+        [loc.q.into(), loc.r.into(), (-loc.q-loc.r).into(), loc.z.into()]
+    }
+}
 
 pub struct NNTreePlugin;
 
@@ -35,30 +41,30 @@ impl Plugin for NNTreePlugin {
 #[derive(Component, Default, Deref, DerefMut)]
 #[component(on_add = on_add)]
 #[component(on_remove = on_remove)]
-pub struct NearestNeighbor(Hx);
+pub struct NearestNeighbor(Loc);
 
 pub fn on_add(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let hx = *world.get::<Hx>(ent).unwrap();
-    **world.get_mut::<NearestNeighbor>(ent).unwrap() = hx;
-    world.resource_mut::<NNTree>().add(&hx.into(), ent.to_bits());
+    let loc = *world.get::<Loc>(ent).unwrap();
+    **world.get_mut::<NearestNeighbor>(ent).unwrap() = loc;
+    world.resource_mut::<NNTree>().add(&loc.into(), ent.to_bits());
 }
 
 pub fn on_remove(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let hx = **world.get::<NearestNeighbor>(ent).unwrap();
-    world.resource_mut::<NNTree>().remove(&hx.into(), ent.to_bits());
+    let qrz = **world.get::<NearestNeighbor>(ent).unwrap();
+    world.resource_mut::<NNTree>().remove(&qrz.into(), ent.to_bits());
 }
 
 #[derive(Deref, DerefMut, Resource)]
 pub struct NNTree(KdTree<FixedI16<U0>, u64, 4, 8, u32>);
 
 pub fn update(
-    mut query: Query<(Entity, &Hx, &mut NearestNeighbor), Changed<Hx>>,
+    mut query: Query<(Entity, &Loc, &mut NearestNeighbor), Changed<Loc>>,
     mut nntree: ResMut<NNTree>,
 ) {
-    for (ent, &hx, mut nn) in &mut query {
+    for (ent, &loc, mut nn) in &mut query {
         nntree.remove(&(**nn).into(), ent.to_bits());
-        **nn = hx;
-        nntree.add(&hx.into(), ent.to_bits());
+        **nn = loc;
+        nntree.add(&loc.into(), ent.to_bits());
     }
 }
 

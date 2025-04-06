@@ -4,17 +4,14 @@ use bevy::{
     prelude::*, 
     scene::SceneInstanceReady
 };
+use qrz::Convert;
 
 use crate::{
     client::components::*,
     common::{
-        components::{ *, 
-            heading::*,
-            hx::*,
-            keybits::*,
-            offset::*,
-        },
-        message::{*, Event},
+        components::{ heading::*, keybits::*, offset::*, * },
+        message::{ Event, * }, 
+        resources::map::Map,
     }
 };
 
@@ -47,12 +44,13 @@ fn ready(
 
 pub fn update(
     time: Res<Time>,
-    mut query: Query<(&Hx, &Offset, &Heading, &KeyBits, &mut Transform)>,
+    mut query: Query<(&Loc, &Offset, &Heading, &KeyBits, &mut Transform)>,
+    map: Res<Map>,
 ) {
-    for (&hx, &offset, &heading, &keybits, mut transform0) in &mut query {
+    for (&loc, &offset, &heading, &keybits, mut transform0) in &mut query {
         let target = match (keybits, offset, heading) {
-            (keybits, offset, _) if keybits != KeyBits::default() => Vec3::from(hx) + offset.step,
-            (_, _, heading) => Vec3::from(hx) + Vec3::from(*heading) * HERE,
+            (keybits, offset, _) if keybits != KeyBits::default() => map.convert(*loc) + offset.step,
+            (_, _, heading) => map.convert(*loc) + map.convert(*heading) * HERE,
         };
         
         let dpx = transform0.translation.distance(target);
@@ -71,17 +69,18 @@ pub fn do_spawn(
     mut commands: Commands,
     mut reader: EventReader<Do>,
     asset_server: Res<AssetServer>,
+    map: Res<Map>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { ent, typ: EntityType::Actor, hx } } = message {
+        if let Do { event: Event::Spawn { ent, typ: EntityType::Actor, qrz } } = message {
             commands.entity(ent).insert((
-                hx,
+                Loc::new(qrz),
                 SceneRoot(asset_server.load(
                     GltfAssetLabel::Scene(0).from_asset("models/actor-blank.glb"),
                 )),
                 Transform {
-                    translation: hx.into(),
-                    scale: Vec3::ONE * TILE_SIZE,
+                    translation: map.convert(qrz),
+                    scale: Vec3::ONE * map.radius(),
                     ..default()},
                 AirTime { state: Some(0), step: None },
                 EntityType::Actor,

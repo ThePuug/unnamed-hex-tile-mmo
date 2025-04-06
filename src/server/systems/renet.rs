@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_renet::netcode::{ServerAuthentication, ServerConfig};
+use qrz::Convert;
 use renet::ServerEvent;
 
 use crate::{*,
@@ -8,7 +9,6 @@ use crate::{*,
         plugins::nntree::*,
         components::{ *,
             heading::*,
-            hx::*,
             keybits::*,
             offset::*,
         },
@@ -34,13 +34,14 @@ pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     (server, transport)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn do_manage_connections(
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<ServerEvent>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Hx, &EntityType)>,
+    query: Query<(&Loc, &EntityType)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
 ) {
@@ -48,17 +49,15 @@ pub fn do_manage_connections(
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
-                let hx = Hx { q: 0, r: 0, z: 4 };
-                let typ = EntityType::Actor;
                 let ent = commands.spawn((
-                    AirTime { state: Some(0), step: None },
                     Actor,
+                    EntityType::Actor,
+                    Loc::from_qrz(0, 0, 4), 
+                    AirTime { state: Some(0), step: None },
                     Transform::default(),
                     KeyBits::default(),
                     Heading::default(),
                     Offset::default(),
-                    typ,
-                    hx, 
                     NearestNeighbor::default(),
                 )).id();
                 let mut buffer = InputQueue::default();
@@ -71,13 +70,13 @@ pub fn do_manage_connections(
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn new actor everywhere
-                let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, hx }}, bincode::config::legacy()).unwrap();
+                let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ: EntityType::Actor, qrz: *Loc::from_qrz(0, 0, 4) }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
 
                 // spawn lobby on client
                 for (_, &ent) in lobby.iter() {
-                    let (&hx, &typ) = query.get(ent).unwrap();
-                    let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { typ, ent, hx }}, bincode::config::legacy()).unwrap();
+                    let (&loc, &typ) = query.get(ent).unwrap();
+                    let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { typ, ent, qrz: *loc }}, bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 lobby.insert(*client_id, ent);
@@ -121,7 +120,7 @@ pub fn write_try(
 
  pub fn send_do(
     mut commands: Commands,
-    query: Query<&Hx>,
+    query: Query<&Loc>,
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<Do>,
     mut map: ResMut<Map>,
@@ -130,26 +129,26 @@ pub fn write_try(
 ) {
     for &message in reader.read() {
         match message {
-            Do { event: Event::Spawn { mut ent, typ, hx } } => {
+            Do { event: Event::Spawn { mut ent, typ, qrz } } => {
                 ent = commands.spawn((
-                    hx,
+                    Loc::new(qrz),
                     Offset::default(),
                     typ,
                     Transform {
-                        translation: hx.into(),
+                        translation: (**map).convert(qrz),
                         ..default()}, 
                 )).id();
-                map.insert(hx, ent);
-                for other in nntree.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
+                map.insert(qrz, ent);
+                for other in nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(qrz).into(), 20_i16.into()) {
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { ent, typ, hx }}, 
+                        Do { event: Event::Spawn { ent, typ, qrz }}, 
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*lobby.get_by_right(&Entity::from_bits(other.item)).unwrap(), DefaultChannel::ReliableOrdered, message);
                 }
             }
             Do { event: Event::Incremental { ent, attr } } => {
-                let &hx = query.get(ent).unwrap();
-                for other in nntree.within_unsorted_iter::<Hexhattan>(&hx.into(), 20_i16.into()) {
+                let &qrz = query.get(ent).unwrap();
+                for other in nntree.within_unsorted_iter::<Hexhattan>(&qrz.into(), 20_i16.into()) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Incremental { ent, attr }}, 
                         bincode::config::legacy()).unwrap();

@@ -16,7 +16,6 @@ use bevy_renet::{
 use renet::DefaultChannel;
 
 use common::{
-    components::*, 
     message::*, 
     plugins::nntree, 
     resources::map::*, 
@@ -83,7 +82,7 @@ fn main() {
         try_incremental,
         try_input,
         update_heading,
-        update_hx,
+        update_qrz,
     ));
 
     app.add_systems(PostUpdate, (
@@ -95,10 +94,10 @@ fn main() {
     app.insert_resource(transport);
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
+    app.insert_resource(Map::new(qrz::Map::<Entity>::new(1., 0.8)));
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
-    app.init_resource::<Map>();
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
 

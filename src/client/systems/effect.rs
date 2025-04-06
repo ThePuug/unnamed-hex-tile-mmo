@@ -8,7 +8,7 @@ use crate::{
     common::{
     components::{ 
         heading::*, 
-        hx::*,
+        qrz::*,
     },
     message::{
         Do, 
@@ -74,20 +74,20 @@ pub fn setup(
 pub fn render_do_gcd(
     mut commands: Commands,
     mut reader: EventReader<Do>,
-    query: Query<(&Hx, &Heading)>,
+    query: Query<(&Loc, &Heading)>,
     map: Res<EffectMap>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Gcd { ent, typ, .. } } = message {
-            let (&hx, &heading) = query.get(ent).unwrap();
-            let pos = Vec3::from(hx + *heading);
+            let (&loc, &heading) = query.get(ent).unwrap();
+            let pos = Vec3::from(*loc + *heading);
             let effect = map.0.get(&typ).unwrap().clone();
 
             let it = commands.spawn(ParticleEffectBundle {
                 effect: ParticleEffect::new(effect),
                 transform: Transform {
                     rotation: Quat::from(heading) * Quat::from_rotation_z(-PI/2.),
-                    translation: hx.into(),
+                    translation: map.convert(*loc),
                     scale: Vec3::ONE, 
                 },
                 ..default()
