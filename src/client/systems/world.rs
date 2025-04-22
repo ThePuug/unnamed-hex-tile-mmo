@@ -2,23 +2,22 @@ use std::f32::consts::PI;
 
 use bevy::{
     math::ops::*,
-    prelude::*
+    prelude::*, 
+    tasks::{
+        futures_lite::future, 
+        { block_on, AsyncComputeTaskPool },
+    },
 };
-use qrz::Convert;
 
 pub const TILE_RISE: f32 = 0.8;
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
-    client::resources::*,
+    client::{components::Terrain, resources::*},
     common::{
-        components::{ *,
-            offset::*,
-        },
-        message::{*, Event},
-        resources::{*, 
-            map::*
-        },
+        components::*,
+        message::{Event, *},
+        resources::map::*,
         systems::*,
     }
 };
@@ -52,7 +51,11 @@ pub fn setup(
         ..default()
     });
 
-    commands.insert_resource(Tmp{mesh, material});
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Terrain::default(),
+    ));
 }
 
 pub fn do_init(
@@ -67,36 +70,50 @@ pub fn do_init(
 }
 
 pub fn do_spawn(
-    mut commands: Commands,
-    query: Query<&EntityType>,
     mut reader: EventReader<Do>,
+    mut query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
-    tmp: Res<Tmp>,
 ) {
+    let mut terrain = query.single_mut();
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { qrz, typ: EntityType::Decorator(DecoratorDescriptor { index, is_solid }), .. } } = message {
-            if let Some(&loc) = map.get(qrz) {
-                match query.get(loc) {
-                    Ok(&EntityType::Decorator(DecoratorDescriptor { index: index0, .. })) if index0 == index => { continue; },
-                    _ => (),
-                }
-                commands.entity(loc).despawn();
+        if let Do { event: Event::Spawn { qrz, typ: EntityType::Decorator(_), .. } } = message {
+            if map.get(qrz).is_none() {
+                map.insert(qrz, Entity::PLACEHOLDER);
+                terrain.task_start_regenerate_mesh = true;
             }
-            let loc = commands.spawn((
-                Loc::new(qrz),
-                Mesh3d(tmp.mesh.clone()),
-                MeshMaterial3d(tmp.material.clone()),
-                Transform {
-                    translation: map.convert(qrz)+Vec3::Y*TILE_RISE/2.,
-                    rotation: Quat::from_rotation_x(-PI/2.),
-                    // scale: Vec3::ONE*0.99,
-                    ..default()},
-                EntityType::Decorator(DecoratorDescriptor { index, is_solid }),
-                Offset::default(),
-            )).id();
-            map.insert(qrz, loc);
         }
     }
+}
+
+pub fn async_spawn(
+    mut query: Query<&mut Terrain>,
+    map: Res<Map>,
+) {
+    let mut terrain = query.single_mut();
+    if !terrain.task_start_regenerate_mesh { return; }
+    if !terrain.task_regenerate_mesh.is_none() { return; }
+
+    let pool = AsyncComputeTaskPool::get();
+    terrain.task_start_regenerate_mesh = false;
+    let map = map.clone();
+    terrain.task_regenerate_mesh = Some(pool.spawn(async move {
+        map.regenerate_mesh()
+    }));
+}
+
+pub fn async_ready(
+    mut query: Query<(&mut Mesh3d, &mut Terrain)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let (mut mesh, mut terrain) = query.single_mut();
+    if terrain.task_regenerate_mesh.is_none() { return; }
+
+    let task = terrain.task_regenerate_mesh.as_mut();
+    let result = block_on(future::poll_once(task.unwrap()));
+    if result.is_none() { return; }
+
+    *mesh = Mesh3d(meshes.add(result.unwrap()));
+    terrain.task_regenerate_mesh = None;
 }
 
 #[allow(clippy::type_complexity)]

@@ -89,6 +89,8 @@ fn main() {
         input::update_keybits,
         input::generate_input.after(input::update_keybits),
         ui::update,
+        world::async_spawn,
+        world::async_ready,
         world::do_init,
     ));
 
@@ -122,6 +124,8 @@ fn main() {
 
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
+    app.init_resource::<SpawnQueue>();
+    app.init_resource::<MeshQueue>();
 
     app.run();
 }

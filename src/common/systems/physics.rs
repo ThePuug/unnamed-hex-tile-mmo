@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use std::cmp::min;
 
 use bevy::prelude::*;
 use qrz::{Convert, Qrz};

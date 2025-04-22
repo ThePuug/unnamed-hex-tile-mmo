@@ -52,13 +52,17 @@ pub fn send_do(
 
             // insert l2r entry when spawning an Actor
             Do { event: Event::Spawn { ent, typ, qrz } } if typ == EntityType::Actor => {
-                let ent = 
-                    if let Some(&loc) = l2r.get_by_right(&ent) { loc }
-                    else {
-                        let loc = commands.spawn_empty().id();
-                        l2r.insert(loc, ent);
-                        loc        
-                    };
+                let ent = match typ {
+                    EntityType::Actor => {
+                        if let Some(&loc) = l2r.get_by_right(&ent) { loc }
+                        else {
+                            let loc = commands.spawn_empty().id();
+                            l2r.insert(loc, ent);
+                            loc        
+                        } 
+                    },
+                    _ => { Entity::PLACEHOLDER }
+                };
                 writer.send(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 

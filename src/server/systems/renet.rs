@@ -135,7 +135,7 @@ pub fn write_try(
                     Offset::default(),
                     typ,
                     Transform {
-                        translation: (**map).convert(qrz),
+                        translation: map.convert(qrz),
                         ..default()}, 
                 )).id();
                 map.insert(qrz, ent);

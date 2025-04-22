@@ -5,6 +5,7 @@ version = "0.0.1"
 authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 
 [dependencies]
+derive_more = { version = "2", features = ["into_iterator"] }
 glam = "0"
 serde = { version = "1", features = ["derive"] }
 
