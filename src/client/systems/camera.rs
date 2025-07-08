@@ -12,10 +12,6 @@ pub fn setup(
 ) {
     commands.spawn((
         Camera3d::default(),
-        Camera {
-            hdr: true,
-            ..default()
-        },
         Transform::default(),
         Offset { state: Vec3::new(0., 10., -20.), step: Vec3::ZERO },
         Actor

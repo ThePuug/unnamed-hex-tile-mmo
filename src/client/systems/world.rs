@@ -2,7 +2,8 @@ use std::f32::consts::PI;
 
 use bevy::{
     math::ops::*,
-    prelude::*, 
+    prelude::*,
+    render::view::NoFrustumCulling, 
     tasks::{
         futures_lite::future, 
         { block_on, AsyncComputeTaskPool },
@@ -55,6 +56,7 @@ pub fn setup(
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Terrain::default(),
+        NoFrustumCulling,
     ));
 }
 

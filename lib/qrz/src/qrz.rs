@@ -2,7 +2,7 @@ use std::ops::{Add, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
-const DIRECTIONS: [Qrz; 6] = [
+pub const DIRECTIONS: [Qrz; 6] = [
         Qrz { q: -1, r: 0, z: 0 }, // west
         Qrz { q: -1, r: 1, z: 0 }, // south-west
         Qrz { q: 0, r: 1, z: 0 }, // south-east

@@ -8,7 +8,6 @@ use derive_more::*;
 
 use crate::qrz::{ self, Qrz };
 
-// note orientation is negated to make +z move into the screen and +x move to the right
 const ORIENTATION: ([f64; 4], [f64; 4]) = (
     [SQRT_3, SQRT_3/2., 0., 3./2.],
     [SQRT_3/3., -1./3., 0., 2./3.],
@@ -72,12 +71,13 @@ where T : Copy {
         let w = (self.radius as f64 * SQRT_3 / 2.) as f32;
         let h = self.radius / 2.;
         vec![
-            center + Vec3 { x: 0., y: 0., z: self.radius },
-            center + Vec3 { x: -w, y: 0., z: h },
-            center + Vec3 { x: -w, y: 0., z: -h },
-            center + Vec3 { x: 0., y: 0., z: -self.radius },
-            center + Vec3 { x: w, y: 0., z: -h },
-            center + Vec3 { x: w, y: 0., z: h },
+            center + Vec3 { x: 0., y: self.rise, z: -self.radius },
+            center + Vec3 { x: -w, y: self.rise, z: -h },
+            center + Vec3 { x: -w, y: self.rise, z: h },
+            center + Vec3 { x: 0., y: self.rise, z: self.radius },
+            center + Vec3 { x: w,  y: self.rise, z: h },
+            center + Vec3 { x: w,  y: self.rise, z: -h },
+            center + Vec3 { x: 0., y: self.rise, z: 0. },
         ]
     }
 }

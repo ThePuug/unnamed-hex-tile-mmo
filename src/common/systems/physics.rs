@@ -72,7 +72,7 @@ pub fn apply(
         let hpx = map.convert(*heading0);
         let npx = map.convert(map.convert(px0 + offset0));
         let here = hpx * HERE;
-        let there = Vec3::ZERO.lerp(hpx, 1.25);
+        let there = hpx * THERE;
         let tpx = if map.get(map.convert(npx+there)).is_none() && key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) 
                 { npx + there - px0 }
             else { here };
