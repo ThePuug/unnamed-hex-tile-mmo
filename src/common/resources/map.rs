@@ -19,6 +19,9 @@ impl Map {
         let mut norms:Vec<Vec3> = Vec::new();
         let mut last_qrz:Option<Qrz> = None;
         let mut skip_sw = false;
+        let mut west_skirt_verts: Vec<Vec3> = Vec::new();
+        let mut west_skirt_norms: Vec<Vec3> = Vec::new();
+
         self.0.clone().into_iter().for_each(|tile| {
             // next
             // 0 - 0
@@ -37,6 +40,13 @@ impl Map {
             
             let it_qrz = tile.0;
             let it_vrt = self.0.vertices(it_qrz);
+
+            if let Some(last_qrz) = last_qrz {
+                if last_qrz.q*2+last_qrz.r != it_qrz.q*2+it_qrz.r {
+                    verts.append(&mut west_skirt_verts);
+                    norms.append(&mut west_skirt_norms);
+                }
+            }
 
             let sw_qrz = self.find(it_qrz + Qrz{q:0,r:0,z:5} + qrz::DIRECTIONS[1], -10);
             let sw_vrt = 
@@ -62,10 +72,6 @@ impl Map {
                 norms.extend([ Vec3::new(0., 1., 0.); 1 ]);
                 skip_sw = true;
             }
-            last_qrz = Some(it_qrz);
-        });
-
-        self.0.clone().into_iter().for_each(|tile| {
             // next
             // 0 - 5
             // 1 - 1'
@@ -78,26 +84,21 @@ impl Map {
             // 8 (678) - 5  - 5v5v5
             // 9 (879) - 1' - 55v1'
             //10 (890) - 4  - 51'4
-            let it_qrz = tile.0;
-            let it_vrt = self.0.vertices(it_qrz);
-
             let we_qrz = self.find(it_qrz + Qrz{q:0,r:0,z:5} + qrz::DIRECTIONS[0], -10)
                 .unwrap_or((it_qrz + qrz::DIRECTIONS[0], Entity::PLACEHOLDER)).0;
             let we_vrt = self.0.vertices(we_qrz);
-
+            
             if let Some(last_qrz) = last_qrz {
                 let last_vrt = self.0.vertices(last_qrz);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
-                verts.extend([ last_vrt_underover, last_vrt_underover ]);
-                norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
+                west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
+                west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
             }
-
-            verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
-            norms.extend([ Vec3::new(0., 1., 0.); 6 ]);
-
+            west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
+            west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 6 ]);
+            
             last_qrz = Some(it_qrz);
         });
-
 
         let len = verts.clone().len() as u32;
         Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
