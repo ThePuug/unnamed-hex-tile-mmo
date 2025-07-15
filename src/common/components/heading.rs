@@ -22,13 +22,13 @@ impl Heading {
 impl From<Heading> for Quat {
     fn from(value: Heading) -> Self {
         match (value.q, value.r) {
-            (-1, 0) => Quat::from_rotation_y(PI*3./6.),   // 270° + 180° = 90°
-            (-1, 1) => Quat::from_rotation_y(PI*5./6.),   // 330° + 180° = 150°
-            (0, 1)  => Quat::from_rotation_y(PI*7./6.),   // 30° + 180° = 210°
-            (1, 0)  => Quat::from_rotation_y(PI*9./6.),   // 90° + 180° = 270°
-            (1, -1) => Quat::from_rotation_y(PI*11./6.),  // 150° + 180° = 330°
-            (0, -1) => Quat::from_rotation_y(PI*1./6.),   // 210° + 180° = 30°
-            _  => Quat::from_rotation_y(PI),              // 0° + 180° = 180°
+            (-1, 0) => Quat::from_rotation_y(PI*3./6.),
+            (-1, 1) => Quat::from_rotation_y(PI*5./6.),
+            (0, 1)  => Quat::from_rotation_y(PI*7./6.),
+            (1, 0)  => Quat::from_rotation_y(PI*9./6.),
+            (1, -1) => Quat::from_rotation_y(PI*11./6.),
+            (0, -1) => Quat::from_rotation_y(PI*1./6.),
+            _  => Quat::from_rotation_y(PI),
         }
     }
 }

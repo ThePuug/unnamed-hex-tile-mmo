@@ -40,29 +40,29 @@ pub fn update_keybits(
         if keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
             if keyboard.pressed(KEYCODE_UP) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(*heading == Qrz {q: 1, r: 0, z: 0}
+                    &&(*heading == Qrz {q:-1, r: 0, z: 0}
                     || *heading == Qrz {q: 0, r:-1, z: 0}
                     || *heading == Qrz {q: 0, r: 1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_R], true);
+                        key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                     }
                 else {
-                    key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true);
+                    key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);
                 }
             } else if keyboard.pressed(KEYCODE_DOWN) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(*heading == Qrz {q: 1, r: 0, z: 0}
+                    &&(*heading == Qrz {q:-1, r: 0, z: 0}
                     || *heading == Qrz {q: 1, r:-1, z: 0}
                     || *heading == Qrz {q:-1, r: 1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true); 
+                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true); 
                     }
                 else {
-                    key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
+                    key_bits.set_pressed([KB_HEADING_R], true);
                 }
             } 
             else if keyboard.pressed(KEYCODE_RIGHT) { 
-                key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
-            } else if keyboard.pressed(KEYCODE_LEFT) {
                 key_bits.set_pressed([KB_HEADING_Q], true);
+            } else if keyboard.pressed(KEYCODE_LEFT) {
+                key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
             }
         }
 

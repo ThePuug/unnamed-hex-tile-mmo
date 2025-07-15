@@ -72,11 +72,11 @@ where T : Copy {
         let h = self.radius / 2.;
         vec![
             center + Vec3 { x: 0., y: self.rise, z: -self.radius },
-            center + Vec3 { x: -w, y: self.rise, z: -h },
-            center + Vec3 { x: -w, y: self.rise, z: h },
-            center + Vec3 { x: 0., y: self.rise, z: self.radius },
-            center + Vec3 { x: w,  y: self.rise, z: h },
             center + Vec3 { x: w,  y: self.rise, z: -h },
+            center + Vec3 { x: w,  y: self.rise, z: h },
+            center + Vec3 { x: 0., y: self.rise, z: self.radius },
+            center + Vec3 { x: -w, y: self.rise, z: h },
+            center + Vec3 { x: -w, y: self.rise, z: -h },
             center + Vec3 { x: 0., y: self.rise, z: 0. },
         ]
     }

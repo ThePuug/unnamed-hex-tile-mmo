@@ -94,9 +94,9 @@ pub fn async_spawn(
     let mut terrain = query.single_mut();
     if !terrain.task_start_regenerate_mesh { return; }
     if !terrain.task_regenerate_mesh.is_none() { return; }
+    terrain.task_start_regenerate_mesh = false;
 
     let pool = AsyncComputeTaskPool::get();
-    terrain.task_start_regenerate_mesh = false;
     let map = map.clone();
     terrain.task_regenerate_mesh = Some(pool.spawn(async move {
         map.regenerate_mesh()
@@ -127,6 +127,7 @@ pub fn update(
     server: Res<Server>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
+    let dt = 7_200_000; // DEBUG
     let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
