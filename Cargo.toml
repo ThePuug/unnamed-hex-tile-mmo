@@ -7,7 +7,7 @@ authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 [dependencies]
 bevy = { version = "0", features = ["dynamic_linking"] }
 bevy_easings = "0"
-bevy_hanabi = { version = "0", default-features = false, features = [ "2d", "serde" ] }
+# bevy_hanabi = { version = "0", default-features = false, features = [ "3d", "serde" ] }
 bevy_renet = "1"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }

@@ -8,6 +8,7 @@ use crate::common::components::{ *,
 };
 
 pub const HERE: Vec3 = Vec3::new(0.33, 0., 0.33);
+pub const THERE: Vec3 = Vec3::new(1.25, 0., 1.25);
 
 #[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Heading(Qrz);
@@ -21,13 +22,13 @@ impl Heading {
 impl From<Heading> for Quat {
     fn from(value: Heading) -> Self {
         match (value.q, value.r) {
-            (-1, 0) => Quat::from_rotation_y(PI*9./6.),
-            (-1, 1) => Quat::from_rotation_y(PI*11./6.),
-            (0, 1)  => Quat::from_rotation_y(PI*1./6.),
-            (1, 0)  => Quat::from_rotation_y(PI*3./6.),
-            (1, -1) => Quat::from_rotation_y(PI*5./6.),
-            (0, -1) => Quat::from_rotation_y(PI*7./6.),
-            _  => Quat::from_rotation_y(0.),
+            (-1, 0) => Quat::from_rotation_y(PI*3./6.),
+            (-1, 1) => Quat::from_rotation_y(PI*5./6.),
+            (0, 1)  => Quat::from_rotation_y(PI*7./6.),
+            (1, 0)  => Quat::from_rotation_y(PI*9./6.),
+            (1, -1) => Quat::from_rotation_y(PI*11./6.),
+            (0, -1) => Quat::from_rotation_y(PI*1./6.),
+            _  => Quat::from_rotation_y(PI),
         }
     }
 }

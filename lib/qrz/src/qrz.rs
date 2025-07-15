@@ -2,9 +2,7 @@ use std::ops::{Add, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
-// q, r represent whether a 1 or not (regardless of sign)
-// if neg && r { (q,-r) } else if neg || q && r { (-q,r) }
-const DIRECTIONS: [Qrz; 6] = [
+pub const DIRECTIONS: [Qrz; 6] = [
         Qrz { q: -1, r: 0, z: 0 }, // west
         Qrz { q: -1, r: 1, z: 0 }, // south-west
         Qrz { q: 0, r: 1, z: 0 }, // south-east
@@ -13,11 +11,29 @@ const DIRECTIONS: [Qrz; 6] = [
         Qrz { q: 0, r: -1, z: 0 }, // north-west
 ];
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, Serialize)]
 pub struct Qrz {
     pub q: i16,
     pub r: i16,
     pub z: i16,
+}
+
+impl Ord for Qrz {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.into_doublewidth().cmp(&other.into_doublewidth())
+    }
+}
+impl PartialOrd for Qrz {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for Qrz {}
+impl PartialEq for Qrz {
+    fn eq(&self, other: &Self) -> bool {
+        self.q == other.q && self.r == other.r && self.z == other.z
+    }
 }
 
 impl Qrz {
@@ -41,6 +57,7 @@ impl Qrz {
         self.flat_distance(other) + (self.z-other.z).abs()
     }
 
+
     pub fn arc(&self, dir: &Qrz, radius: u8) -> Vec<Qrz> {
         let start = *dir * radius as i16;
         let idx = DIRECTIONS.iter().position(|i| { *i == *dir}).unwrap();
@@ -52,6 +69,14 @@ impl Qrz {
 
     pub fn fov(&self, dir: &Qrz, dist: u8) -> Vec<Qrz> {
         (1..=dist).map(|i| self.arc(dir, i)).flatten().collect::<Vec<Qrz>>()
+    }
+
+    pub fn into_doublewidth(&self) -> (i32,i32,i32) {
+        (
+            2 * self.q as i32 + self.r as i32,
+            self.r as i32,
+            self.z as i32
+        )
     }
 }
 
@@ -86,11 +111,8 @@ pub fn round(q0: f64, r0: f64, z0: f64) -> Qrz {
     let r_diff = (r - r0).abs();
     let s_diff = (s - s0).abs();
 
-    if q_diff > r_diff && q_diff > s_diff {
-        q = -r-s;
-    } else if r_diff > s_diff {
-        r = -q-s;
-    }
+    if q_diff > r_diff && q_diff > s_diff { q = -r-s; } 
+    else if r_diff > s_diff { r = -q-s; }
 
     Qrz { q: q as i16, r: r as i16, z: z0.round() as i16 }
-}    
+}

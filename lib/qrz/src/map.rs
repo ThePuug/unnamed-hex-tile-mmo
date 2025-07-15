@@ -1,30 +1,35 @@
-use std::{collections::HashMap, f64::consts::SQRT_3};
+use std::{
+    collections::{ BTreeMap, HashMap }, 
+    f64::consts::SQRT_3
+};
 
 use glam::Vec3;
+use derive_more::*;
 
 use crate::qrz::{ self, Qrz };
 
-// note orientation is negated to make +z move into the screen and +x move to the right
 const ORIENTATION: ([f64; 4], [f64; 4]) = (
-    [-SQRT_3, -SQRT_3/2., -0., -3./2.],
-    [-SQRT_3/3., 1./3., -0., -2./3.],
+    [SQRT_3, SQRT_3/2., 0., 3./2.],
+    [SQRT_3/3., -1./3., 0., 2./3.],
 );
 
 pub trait Convert<T,U> {
     fn convert(&self, it: T) -> U;
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, IntoIterator)]
 pub struct Map<T> {
     radius: f32,
     rise: f32,
-    locs: HashMap<Qrz, T>
+    #[into_iterator(owned)]
+    tree: BTreeMap<Qrz, T>,
+    hash: HashMap<Qrz, T>,
 }
 
 impl<T> Map<T> 
 where T : Copy {
     pub fn new(radius: f32, rise: f32) -> Self {
-        Self { radius, rise, locs: HashMap::new() }
+        Self { radius, rise, tree: BTreeMap::new(), hash: HashMap::new() }
     }
 
     pub fn radius(&self) -> f32 { self.radius }
@@ -48,15 +53,32 @@ where T : Copy {
     }
 
     pub fn get(&self, qrz: Qrz) -> Option<&T> {
-        self.locs.get(&qrz)
+        self.hash.get(&qrz)
     }
 
     pub fn insert(&mut self, qrz: Qrz, obj: T) {
-        self.locs.insert(qrz, obj);
+        self.tree.insert(qrz, obj);
+        self.hash.insert(qrz, obj);
     }
 
     pub fn remove(&mut self, qrz: Qrz) -> Option<T> {
-        self.locs.remove(&qrz)
+        self.tree.remove(&qrz);
+        self.hash.remove(&qrz)
+    }
+
+    pub fn vertices(&self, qrz: Qrz) -> Vec<Vec3> {
+        let center = self.convert(qrz);
+        let w = (self.radius as f64 * SQRT_3 / 2.) as f32;
+        let h = self.radius / 2.;
+        vec![
+            center + Vec3 { x: 0., y: self.rise, z: -self.radius },
+            center + Vec3 { x: w,  y: self.rise, z: -h },
+            center + Vec3 { x: w,  y: self.rise, z: h },
+            center + Vec3 { x: 0., y: self.rise, z: self.radius },
+            center + Vec3 { x: -w, y: self.rise, z: h },
+            center + Vec3 { x: -w, y: self.rise, z: -h },
+            center + Vec3 { x: 0., y: self.rise, z: 0. },
+        ]
     }
 }
 
