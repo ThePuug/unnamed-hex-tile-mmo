@@ -20,3 +20,4 @@ Currently not alot to do, but getting a base down to build on
 - authoritative server
 - spatial indexing using KdTree
 - isolate streaming input from input on global cooldown
+- generated mesh terrain
