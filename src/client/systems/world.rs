@@ -3,11 +3,8 @@ use std::f32::consts::PI;
 use bevy::{
     math::ops::*,
     prelude::*,
-    render::view::NoFrustumCulling, 
-    tasks::{
-        futures_lite::future, 
-        { block_on, AsyncComputeTaskPool },
-    },
+    render::primitives::Aabb, 
+    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool}
 };
 
 pub const TILE_RISE: f32 = 0.8;
@@ -31,7 +28,7 @@ pub fn setup(
     commands.insert_resource(AmbientLight {
         color: Color::WHITE,
         brightness: 10.,
-    });
+        ..default()});
 
     commands.spawn((DirectionalLight {
             shadows_enabled: true,
@@ -54,9 +51,9 @@ pub fn setup(
 
     commands.spawn((
         Mesh3d(mesh),
+        Aabb::default(),
         MeshMaterial3d(material),
         Terrain::default(),
-        NoFrustumCulling,
     ));
 }
 
@@ -76,7 +73,7 @@ pub fn do_spawn(
     mut query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
 ) {
-    let mut terrain = query.single_mut();
+    let mut terrain = query.single_mut().expect("query did not return exactly one result");
     for &message in reader.read() {
         if let Do { event: Event::Spawn { qrz, typ: EntityType::Decorator(_), .. } } = message {
             if map.get(qrz).is_none() {
@@ -91,7 +88,7 @@ pub fn async_spawn(
     mut query: Query<&mut Terrain>,
     map: Res<Map>,
 ) {
-    let mut terrain = query.single_mut();
+    let mut terrain = query.single_mut().expect("query did not return exactly one result");
     if !terrain.task_start_regenerate_mesh { return; }
     if !terrain.task_regenerate_mesh.is_none() { return; }
     terrain.task_start_regenerate_mesh = false;
@@ -104,17 +101,19 @@ pub fn async_spawn(
 }
 
 pub fn async_ready(
-    mut query: Query<(&mut Mesh3d, &mut Terrain)>,
+    mut query: Query<(&mut Mesh3d, &mut Aabb, &mut Terrain)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let (mut mesh, mut terrain) = query.single_mut();
+    let (mut mesh, mut aabb, mut terrain) = query.single_mut().expect("query did not return exactly one result");
     if terrain.task_regenerate_mesh.is_none() { return; }
 
     let task = terrain.task_regenerate_mesh.as_mut();
     let result = block_on(future::poll_once(task.unwrap()));
     if result.is_none() { return; }
 
-    *mesh = Mesh3d(meshes.add(result.unwrap()));
+    let (raw_mesh, raw_aabb) = result.unwrap();
+    *mesh = Mesh3d(meshes.add(raw_mesh.clone()));
+    *aabb = raw_aabb;
     terrain.task_regenerate_mesh = None;
 }
 
@@ -127,13 +126,13 @@ pub fn update(
     server: Res<Server>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
-    let dt = 7_200_000; // DEBUG
+    // let dt = 7_200_000; // DEBUG
     let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 
     // sun
-    let (mut s_light, mut s_transform) = q_sun.single_mut();
+    let (mut s_light, mut s_transform) = q_sun.single_mut().expect("query did not return exactly one result");
     let mut s_rad_d = dtd * 2. * PI;
     let s_rad_y = dty * 2. * PI;
 
@@ -150,7 +149,7 @@ pub fn update(
     s_transform.look_at(Vec3::ZERO, Vec3::Y);
 
     // moon
-    let (mut m_light, mut m_transform) = q_moon.single_mut();
+    let (mut m_light, mut m_transform) = q_moon.single_mut().expect("query did not return exactly one result");
     let mut m_rad_d = dtd * 2. * PI;
     let m_rad_m = dtm * 2. * PI;
 

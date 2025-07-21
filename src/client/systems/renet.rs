@@ -47,28 +47,23 @@ pub fn send_do(
                 debug!("Player {ent} connected, time offset: {dt}");
                 let loc = commands.spawn(Actor).id();
                 l2r.insert(loc, ent);
-                writer.send(Do { event: Event::Init { ent: loc, dt }});
+                writer.write(Do { event: Event::Init { ent: loc, dt }});
             }
 
             // insert l2r entry when spawning an Actor
-            Do { event: Event::Spawn { ent, typ, qrz } } if typ == EntityType::Actor => {
+            Do { event: Event::Spawn { ent, typ, qrz } } => {
                 let ent = match typ {
-                    EntityType::Actor => {
+                    EntityType::Actor(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) { loc }
                         else {
-                            let loc = commands.spawn_empty().id();
+                            let loc = commands.spawn(typ).id();
                             l2r.insert(loc, ent);
-                            loc        
+                            loc
                         } 
                     },
                     _ => { Entity::PLACEHOLDER }
                 };
-                writer.send(Do { event: Event::Spawn { ent, typ, qrz }});
-            }
-
-            // just pass through the other spawn events
-            Do { event: Event::Spawn { ent, typ, qrz } } => {
-                writer.send(Do { event: Event::Spawn { ent, typ, qrz }});
+                writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 
             // manage the input queue before sending the incoming Input
@@ -80,7 +75,7 @@ pub fn send_do(
                     if (dt0 as i16 - dt as i16).abs() >= 100 { warn!("{dt0} !~ {dt}"); }
                     if buffer.queue.len() > 2 { warn!("long input queue, len: {}", buffer.queue.len()); }
                 } else { unreachable!(); }
-                writer.send(Do { event: Event::Input { ent, key_bits, dt, seq } });
+                writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
                 let (ent, _) = l2r.remove_by_right(&ent).unwrap();
@@ -89,11 +84,11 @@ pub fn send_do(
             }
             Do { event: Event::Incremental { ent, attr } } => {
                 let &ent = l2r.get_by_right(&ent).unwrap();
-                writer.send(Do { event: Event::Incremental { ent, attr } });
+                writer.write(Do { event: Event::Incremental { ent, attr } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
                 let &ent = l2r.get_by_right(&ent).unwrap();
-                writer.send(Do { event: Event::Gcd { ent, typ } });
+                writer.write(Do { event: Event::Gcd { ent, typ } });
             }
             _ => {}
         }

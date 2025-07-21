@@ -100,12 +100,12 @@ pub fn do_incremental(
                         offset0.state = map.convert(**loc0) + offset0.state - map.convert(qrz);
                         offset0.step = map.convert(**loc0) + offset0.step - map.convert(qrz);
 
-                        writer.send(Try { event: Event::Discover { ent, qrz } });
+                        writer.write(Try { event: Event::Discover { ent, qrz } });
                         *loc0 = Loc::new(qrz);
 
                         if **heading0 != Qrz::default() {
                             for qrz in loc0.fov(&heading0, 10) {
-                                writer.send(Try { event: Event::Discover { ent, qrz } });
+                                writer.write(Try { event: Event::Discover { ent, qrz } });
                             }
                         }
                     }
@@ -113,7 +113,7 @@ pub fn do_incremental(
                         *heading0 = heading;
                         if **heading0 != Qrz::default() {
                             for qrz in loc0.fov(&heading0, 10) {
-                                writer.send(Try { event: Event::Discover { ent, qrz } });
+                                writer.write(Try { event: Event::Discover { ent, qrz } });
                             }
                         }
                     }
@@ -133,7 +133,7 @@ pub fn update_heading(
         if *heading0 != heading { 
             *heading0 = heading;
             let attr = Attribute::Heading { heading };
-            writer.send(Try { event: Event::Incremental { ent, attr } });
+            writer.write(Try { event: Event::Incremental { ent, attr } });
         }
     }
 }

@@ -11,12 +11,12 @@ use crate::{*,
 };
 
 pub fn try_incremental(
-    mut reader: EventReader<Try>,
+    mut reader: EventReader<Try>,  
     mut writer: EventWriter<Do>,
  ) {
     for &message in reader.read() {
         if let Try { event: Event::Incremental { ent, attr } } = message { 
-            writer.send(Do { event: Event::Incremental { ent, attr }}); 
+            writer.write(Do { event: Event::Incremental { ent, attr }}); 
         }
     }
  }
@@ -33,9 +33,9 @@ pub fn try_incremental(
         if let Try { event: Event::Discover { ent, qrz } } = message {
             let (&loc, _) = query.get(ent).unwrap();
             if loc.flat_distance(&qrz) > 25 { continue; }
-            if let Some((qrz, ent)) = map.find(qrz, -5) {
+            if let Some((qrz, ent)) = map.find(qrz + Qrz{q:0,r:0,z:5}, -10) {
                 if let Ok((_, &typ)) = query.get(ent) {
-                    writer.send(Do { event: Event::Spawn { ent, typ, qrz } });
+                    writer.write(Do { event: Event::Spawn { ent, typ, qrz } });
                 } else {
                     warn!("Invalid entity: {ent} at {qrz:?}");
                 }

@@ -25,9 +25,9 @@ fn ready(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
-    for child in q_child.iter_descendants(trigger.entity()) {
+    for child in q_child.iter_descendants(trigger.target()) {
         if let Ok(mut player) = query.get_mut(child) {
-            commands.entity(trigger.entity()).insert(Animator::new(child));
+            commands.entity(trigger.target()).insert(Animator::new(child));
             let (graph, _) = AnimationGraph::from_clips([
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/actor-blank.glb")),
                 asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/actor-blank.glb")),
@@ -72,18 +72,18 @@ pub fn do_spawn(
     map: Res<Map>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { ent, typ: EntityType::Actor, qrz } } = message {
+        if let Do { event: Event::Spawn { ent, typ: EntityType::Actor(desc), qrz } } = message {
             commands.entity(ent).insert((
                 Loc::new(qrz),
                 SceneRoot(asset_server.load(
                     GltfAssetLabel::Scene(0).from_asset("models/actor-blank.glb"),
                 )),
-                Transform {
+                Transform { 
                     translation: map.convert(qrz),
                     scale: Vec3::ONE * map.radius(),
                     ..default()},
                 AirTime { state: Some(0), step: None },
-                EntityType::Actor,
+                EntityType::Actor(desc),
                 Heading::default(),
                 Offset::default(),
                 KeyBits::default(),
@@ -100,7 +100,7 @@ pub fn try_gcd(
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ } } = message {
             debug!("try gcd {ent} {typ:?}");
-            writer.send(Do { event: Event::Gcd { ent, typ }});
+            writer.write(Do { event: Event::Gcd { ent, typ }});
         }
     }
 }

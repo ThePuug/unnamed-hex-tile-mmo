@@ -9,7 +9,7 @@
 
 use bevy::{
     ecs::{
-        component::ComponentId, 
+        component::HookContext, 
         world::DeferredWorld
     }, 
     prelude::*
@@ -43,15 +43,15 @@ impl Plugin for NNTreePlugin {
 #[component(on_remove = on_remove)]
 pub struct NearestNeighbor(Loc);
 
-pub fn on_add(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let loc = *world.get::<Loc>(ent).unwrap();
-    **world.get_mut::<NearestNeighbor>(ent).unwrap() = loc;
-    world.resource_mut::<NNTree>().add(&loc.into(), ent.to_bits());
+pub fn on_add(mut world: DeferredWorld, context: HookContext) {
+    let loc = *world.get::<Loc>(context.entity).unwrap();
+    **world.get_mut::<NearestNeighbor>(context.entity).unwrap() = loc;
+    world.resource_mut::<NNTree>().add(&loc.into(), context.entity.to_bits());
 }
 
-pub fn on_remove(mut world: DeferredWorld, ent: Entity, _: ComponentId) {
-    let qrz = **world.get::<NearestNeighbor>(ent).unwrap();
-    world.resource_mut::<NNTree>().remove(&qrz.into(), ent.to_bits());
+pub fn on_remove(mut world: DeferredWorld, context: HookContext) {
+    let qrz = **world.get::<NearestNeighbor>(context.entity).unwrap();
+    world.resource_mut::<NNTree>().remove(&qrz.into(), context.entity.to_bits());
 }
 
 #[derive(Deref, DerefMut, Resource)]

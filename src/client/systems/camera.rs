@@ -16,7 +16,6 @@ pub fn setup(
     commands.spawn((
         Camera3d::default(),
         Projection::from(OrthographicProjection {
-            // 6 world units per pixel of window height.
             scaling_mode: ScalingMode::FixedVertical {
                 viewport_height: 40.0,
             },
@@ -34,8 +33,8 @@ pub fn update(
     actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
 ) {
-    if let Ok(a_transform) = actor.get_single() {
-        if let Ok((c_projection, mut c_transform, c_offset)) = camera.get_single_mut() {
+    if let Ok(a_transform) = actor.single() {
+        if let Ok((c_projection, mut c_transform, c_offset)) = camera.single_mut() {
             match c_projection.into_inner() {
                 Projection::Perspective(c_perspective) => {
                     const MIN: f32 = 6_f32.to_radians();
@@ -57,6 +56,7 @@ pub fn update(
                         c_orthographic.scale = (c_orthographic.scale / 1.01).clamp(MIN, MAX);
                     }    
                 }
+                _ => {}
             }
             c_transform.translation = a_transform.translation + c_offset.state;
             c_transform.look_at(a_transform.translation + Vec3::Y * map.radius(), Vec3::Y);

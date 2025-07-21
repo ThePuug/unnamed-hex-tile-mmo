@@ -38,11 +38,11 @@ pub fn generate_input(
                 dt0 = dt.clamp(0,dt0);
                 buffer.accumulator_out += dt0;
                 buffer.queue.push_front(Event::Input { ent, key_bits, dt: dt-dt0, seq });
-                writer.send(Do { event: Event::Input { ent, key_bits, dt: dt0, seq: 0 } });
+                writer.write(Do { event: Event::Input { ent, key_bits, dt: dt0, seq: 0 } });
                 break;
             }
-            writer.send(Do { event: Event::Input { ent, key_bits, dt, seq: 0 } });
-            writer.send(Do { event: Event::Input { ent, key_bits, dt: buffer.accumulator_out+dt, seq } });
+            writer.write(Do { event: Event::Input { ent, key_bits, dt, seq: 0 } });
+            writer.write(Do { event: Event::Input { ent, key_bits, dt: buffer.accumulator_out+dt, seq } });
             dt0 -= dt;
             buffer.accumulator_out = 0;
         }
@@ -98,7 +98,7 @@ pub fn try_gcd(
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ, .. } } = message {
             debug!("try gcd {ent} {:?}", typ);
-            writer.send(Do { event: Event::Gcd { ent, typ }});
+            writer.write(Do { event: Event::Gcd { ent, typ }});
         }
     }
 }
@@ -123,7 +123,7 @@ pub fn update_qrz(
         let qrz = map.convert(px + offset.state);
         if *qrz0 != qrz { 
             let attr = Attribute::Qrz { qrz }; 
-            writer.send(Try { event: Event::Incremental { ent, attr } }); 
+            writer.write(Try { event: Event::Incremental { ent, attr } }); 
         }
     }
 }

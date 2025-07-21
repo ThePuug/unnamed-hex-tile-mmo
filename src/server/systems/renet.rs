@@ -49,9 +49,10 @@ pub fn do_manage_connections(
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
+                let typ = EntityType::Actor(ActorDescriptor::new(Origin::Starborn, Form::Humanoid, Manifestation::Physical));
                 let ent = commands.spawn((
                     Actor,
-                    EntityType::Actor,
+                    typ,
                     Loc::from_qrz(0, 0, 4), 
                     AirTime { state: Some(0), step: None },
                     Transform::default(),
@@ -70,7 +71,7 @@ pub fn do_manage_connections(
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn new actor everywhere
-                let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ: EntityType::Actor, qrz: *Loc::from_qrz(0, 0, 4) }}, bincode::config::legacy()).unwrap();
+                let message = bincode::serde::encode_to_vec(Do { event: Event::Spawn { ent, typ, qrz: *Loc::from_qrz(0, 0, 4) }}, bincode::config::legacy()).unwrap();
                 conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
 
                 // spawn lobby on client
@@ -83,7 +84,7 @@ pub fn do_manage_connections(
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.remove_by_left(client_id).unwrap().1;
+                let ent = lobby.remove_by_left(&client_id).unwrap().1;
                 buffers.remove(&ent);
                 commands.entity(ent).despawn();
                 let message = bincode::serde::encode_to_vec(Do { event: Event::Despawn { ent }}, bincode::config::legacy()).unwrap();
@@ -104,12 +105,12 @@ pub fn write_try(
             match message {
                 Try { event: Event::Input { key_bits, dt, seq, .. } } => {
                     if let Some(&ent) = lobby.get_by_left(&client_id) {
-                        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq }});
+                        writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
                     }
                 }
                 Try { event: Event::Gcd { typ, .. } } => {
                     if let Some(&ent) = lobby.get_by_left(&client_id) {
-                        writer.send(Try { event: Event::Gcd { ent, typ }});
+                        writer.write(Try { event: Event::Gcd { ent, typ }});
                     }
                 }
                 _ => {}

@@ -29,9 +29,9 @@ pub fn update_keybits(
     mut query: Query<(Entity, &Heading, &mut KeyBits), With<Actor>>,
     mut writer: EventWriter<Try>,
 ) {
-    if let Ok((ent, &heading, mut keybits0)) = query.get_single_mut() {
+    if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
         if keyboard.just_released(KEYCODE_GCD1) {
-            writer.send(Try { event: Event::Gcd { ent, typ: GcdType::Attack} });
+            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Attack} });
         }
 
         let mut key_bits = KeyBits::default();
@@ -83,7 +83,7 @@ pub fn do_input(
             (offset.state, air_time.state) = apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
             offset.step = offset.state;
             air_time.step = air_time.state;
-            for &event in buffer.queue.iter().rev() { writer.send(Try { event }); }
+            for &event in buffer.queue.iter().rev() { writer.write(Try { event }); }
         }
     }
 }
@@ -109,6 +109,6 @@ pub fn generate_input(
 ) {
     for (ent, &key_bits) in query.iter() {
         let dt = (time.delta_secs() * 1000.) as u16;
-        writer.send(Try { event: Event::Input { ent, key_bits, dt, seq: 0 } });
+        writer.write(Try { event: Event::Input { ent, key_bits, dt, seq: 0 } });
     }
 }

@@ -1,5 +1,6 @@
 use bevy::{
     prelude::*, 
+    render::primitives::Aabb, 
     tasks::Task
 };
 
@@ -19,6 +20,6 @@ pub enum Info {
 
 #[derive(Component, Default)]
 pub struct Terrain {
-    pub task_regenerate_mesh: Option<Task<Mesh>>,
+    pub task_regenerate_mesh: Option<Task<(Mesh,Aabb)>>,
     pub task_start_regenerate_mesh: bool,
 }

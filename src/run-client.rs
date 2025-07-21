@@ -65,7 +65,7 @@ fn main() {
         NetcodeClientPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        FrameTimeDiagnosticsPlugin,
+        FrameTimeDiagnosticsPlugin::default(),
         EntityCountDiagnosticsPlugin,
         SystemInformationDiagnosticsPlugin,
         RenderDiagnosticsPlugin,

@@ -1,7 +1,10 @@
 use bevy::{
     asset::RenderAssetUsages, 
     prelude::*, 
-    render::mesh::{Indices, PrimitiveTopology}
+    render::{
+        mesh::{Indices, PrimitiveTopology}, 
+        primitives::Aabb
+    },
 };
 
 use qrz::{self, Convert, Qrz};
@@ -14,15 +17,17 @@ impl Map {
         Map(map)
     }
 
-    pub fn regenerate_mesh(&self) -> Mesh {
+    pub fn regenerate_mesh(&self) -> (Mesh,Aabb) {
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
         let mut last_qrz:Option<Qrz> = None;
         let mut skip_sw = false;
         let mut west_skirt_verts: Vec<Vec3> = Vec::new();
         let mut west_skirt_norms: Vec<Vec3> = Vec::new();
+        let (mut min, mut max) = (Vec3::new(f32::MAX, f32::MAX, f32::MAX), Vec3::new(f32::MIN, f32::MIN, f32::MIN));
 
-        self.0.clone().into_iter().for_each(|tile| {
+        let map = self.0.clone();
+        map.clone().into_iter().for_each(|tile| {
             // next
             // 0 - 0
             // 1 - 5
@@ -42,9 +47,18 @@ impl Map {
             let it_vrt = self.0.vertices(it_qrz);
 
             if let Some(last_qrz) = last_qrz {
+                // if new column
                 if last_qrz.q*2+last_qrz.r != it_qrz.q*2+it_qrz.r {
+                    // add skirts
                     verts.append(&mut west_skirt_verts);
                     norms.append(&mut west_skirt_norms);
+
+                    // update bounding box
+                    let last_vrt = self.0.vertices(last_qrz);
+                    min = Vec3::min(min, it_vrt[6]);
+                    min = Vec3::min(min, last_vrt[6]);
+                    max = Vec3::max(max, it_vrt[6]);
+                    max = Vec3::max(max, last_vrt[6]);
                 }
             }
 
@@ -101,11 +115,14 @@ impl Map {
         });
 
         let len = verts.clone().len() as u32;
-        Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..len).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-            .with_inserted_indices(Indices::U32((0..len).collect()))
+        (
+            Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..len).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
+                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
+                .with_inserted_indices(Indices::U32((0..len).collect())),
+            Aabb::from_min_max(min, max),
+        )
     }
 
     pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, Entity)> { self.0.find(qrz, dist) }

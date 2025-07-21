@@ -13,9 +13,9 @@ pub fn setup(
     mut commands: Commands,
     query: Query<Entity, Added<Camera3d>>,
 ) {
-    let camera = query.single();
+    let camera = query.single().expect("query did not return exactly one result");
     commands.spawn((
-        TargetCamera(camera),
+        UiTargetCamera(camera),
         Node {
             width: Val::Percent(100.),
             height: Val::Percent(100.),
