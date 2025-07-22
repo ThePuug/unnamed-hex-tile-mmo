@@ -3,8 +3,8 @@ use iyes_perf_ui::prelude::*;
 
 use crate::{
     client::{
-        components::*,
-        resources::*,
+        components::*, 
+        resources::Server
     },
     common::systems::*,
 };

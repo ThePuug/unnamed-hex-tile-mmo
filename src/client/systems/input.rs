@@ -31,7 +31,11 @@ pub fn update_keybits(
 ) {
     if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
         if keyboard.just_released(KEYCODE_GCD1) {
-            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Attack} });
+            let typ = EntityType::Actor(ActorDescriptor::new(
+                Origin::Fauna, 
+                Form::Bestial, 
+                Manifestation::Physical));
+            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Spawn(typ)}});
         }
 
         let mut key_bits = KeyBits::default();

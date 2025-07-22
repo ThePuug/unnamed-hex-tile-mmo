@@ -4,14 +4,13 @@ use bevy::{
     tasks::Task
 };
 
-#[derive(Clone, Component, Copy, Deref)]
-pub struct Animator(Entity);
+#[derive(Clone, Component, Copy)]
+#[relationship(relationship_target = AnimatedBy)]
+pub struct Animates(pub Entity);
 
-impl Animator {
-    pub fn new(entity: Entity) -> Self {
-        Self(entity)
-    }
-}
+#[derive(Clone, Component, Copy, Deref)]
+#[relationship_target(relationship = Animates)]
+pub struct AnimatedBy(Entity);
 
 #[derive(Component)]
 pub enum Info {

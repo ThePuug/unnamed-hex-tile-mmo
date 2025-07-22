@@ -11,7 +11,10 @@ pub const TILE_RISE: f32 = 0.8;
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
-    client::{components::Terrain, resources::*},
+    client::{
+        components::Terrain, 
+        resources::Server
+    },
     common::{
         components::*,
         message::{Event, *},

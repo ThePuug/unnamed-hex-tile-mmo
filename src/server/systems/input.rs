@@ -1,15 +1,13 @@
 use bevy::prelude::*;
 use qrz::Convert;
 
-use crate::{ *,
+use crate::{ 
     common::{
-        components::{ *,
-            heading::*,
-            keybits::*,
-            offset::*,
-        },
-        message::{*, Event},
-    },
+        components::{ heading::*, keybits::*, offset::*, * }, 
+        message::{Event, *}, 
+        plugins::nntree::NearestNeighbor, 
+        systems::gcd::GcdType
+    }, *
 };
 
 pub fn generate_input(
@@ -86,29 +84,38 @@ pub fn do_input(
         if let Do { event: Event::Input { ent, key_bits, dt, seq, .. } } = message {
             if seq != 0 { continue; }
             let (&loc, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
+            (offset.state, air_time.state) = physics::apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
         }
     }
 }
 
 pub fn try_gcd(
+    mut commands: Commands,
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
+    query: Query<(&Loc, &Heading)>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ, .. } } = message {
-            debug!("try gcd {ent} {:?}", typ);
-            writer.write(Do { event: Event::Gcd { ent, typ }});
-        }
-    }
-}
-
-pub fn do_gcd(
-    mut reader: EventReader<Do>,
-) {
-    for &message in reader.read() {
-        if let Do { event: Event::Gcd { ent, typ } } = message {
-            debug!("do gcd {ent} {:?}", typ);
+            match typ {
+                GcdType::Spawn(typ) => {
+                    let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
+                    let ent = match typ {
+                        EntityType::Actor(_) => {
+                            commands.spawn((
+                                typ,
+                                Loc::new(*loc + *heading),
+                                NearestNeighbor::default(),
+                            )).id()
+                        },
+                        EntityType::Decorator(_) => {
+                            Entity::PLACEHOLDER
+                        }
+                    };
+                    writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading }});
+                }
+                _ => unreachable!()
+            }
         }
     }
 }

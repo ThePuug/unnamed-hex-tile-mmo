@@ -20,18 +20,22 @@ pub fn setup() {}
 fn ready(
     trigger: Trigger<SceneInstanceReady>,
     mut commands: Commands,
-    mut query: Query<&mut AnimationPlayer>,
+    query: Query<&EntityType>,
+    mut q_player: Query<&mut AnimationPlayer>,
     q_child: Query<&Children>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
     for child in q_child.iter_descendants(trigger.target()) {
-        if let Ok(mut player) = query.get_mut(child) {
-            commands.entity(trigger.target()).insert(Animator::new(child));
+        if let Ok(mut player) = q_player.get_mut(child) {
+            commands.entity(trigger.target()).insert(Animates(child));
+
+            let &typ = query.get(trigger.target()).expect("couldn't get entity type");
+            let asset = get_asset(typ);
             let (graph, _) = AnimationGraph::from_clips([
-                asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/actor-blank.glb")),
-                asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/actor-blank.glb")),
-                asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/actor-blank.glb"))]);
+                asset_server.load(GltfAssetLabel::Animation(0).from_asset(asset.clone())),
+                asset_server.load(GltfAssetLabel::Animation(1).from_asset(asset.clone())),
+                asset_server.load(GltfAssetLabel::Animation(2).from_asset(asset.clone()))]);
             let handle = AnimationGraphHandle(graphs.add(graph));
             let mut transitions = AnimationTransitions::new();
             transitions.play(&mut player, 2.into(), Duration::ZERO).set_speed(1.).repeat();
@@ -75,15 +79,13 @@ pub fn do_spawn(
         if let Do { event: Event::Spawn { ent, typ: EntityType::Actor(desc), qrz } } = message {
             commands.entity(ent).insert((
                 Loc::new(qrz),
-                SceneRoot(asset_server.load(
-                    GltfAssetLabel::Scene(0).from_asset("models/actor-blank.glb"),
-                )),
+                EntityType::Actor(desc),
+                SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
                 Transform { 
                     translation: map.convert(qrz),
                     scale: Vec3::ONE * map.radius(),
                     ..default()},
                 AirTime { state: Some(0), step: None },
-                EntityType::Actor(desc),
                 Heading::default(),
                 Offset::default(),
                 KeyBits::default(),
@@ -102,5 +104,22 @@ pub fn try_gcd(
             debug!("try gcd {ent} {typ:?}");
             writer.write(Do { event: Event::Gcd { ent, typ }});
         }
+    }
+}
+
+fn get_asset(typ: EntityType) -> String {
+    match typ {
+        EntityType::Actor(desc) => format!("actors/{}-{}.glb", 
+            match desc.origin {
+                Origin::Starborn => "starborn",
+                Origin::Fauna => "fauna",
+                _ => panic!("couldn't find asset for origin {:?}", desc.origin)
+            },
+            match desc.form {
+                Form::Humanoid => "humanoid",
+                Form::Bestial => "bestial",
+                _ => panic!("couldn't find asset for form {:?}", desc.form)
+            }),
+        _ => panic!("couldn't find asset for entity type {:?}", typ)
     }
 }

@@ -29,7 +29,7 @@ use common::{
     systems::physics
 };
 use client::{
-    resources::*, 
+    resources::*,
     systems::{ actor, animator, camera, input, renet, * }
 };
 

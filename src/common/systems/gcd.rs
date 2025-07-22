@@ -2,7 +2,10 @@
 use bevy::ecs::event::Event;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Event, Hash, PartialEq, Serialize)]
+use crate::common::components::EntityType;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Event, PartialEq, Serialize)]
 pub enum GcdType {
     Attack,
+    Spawn(EntityType),
 }

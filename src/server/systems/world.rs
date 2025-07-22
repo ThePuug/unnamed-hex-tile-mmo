@@ -2,9 +2,19 @@ use bevy::prelude::*;
 use chrono::{
     offset::Local, Datelike, Timelike
 };
+use qrz::*;
 
 use crate::{
-    common::systems::*, 
+    common::{
+        components::{ *, 
+            heading::Heading, 
+            keybits::KeyBits, 
+            offset::Offset, 
+        }, 
+        message::{ Event, * }, 
+        plugins::nntree::*,
+        systems::*
+    }, 
     server::resources::*
 };
 
@@ -21,4 +31,35 @@ pub fn setup(
         + days_since_monday as u128 * WEEK_MS 
         + secs_since_midnight as u128 * 1000 
         - elapsed;
+}
+
+pub fn do_spawn(
+    mut commands: Commands,
+    mut reader: EventReader<Do>,
+    mut map: ResMut<crate::Map>,
+) {
+    for &message in reader.read() {
+        if let Do { event: Event::Spawn { qrz, typ, ent } } = message {
+            match typ {
+                EntityType::Decorator(_) => {
+                    if map.get(qrz).is_none() { map.insert(qrz, ent) }
+                },
+                EntityType::Actor(_) => {
+                    commands.entity(ent).insert((
+                        Actor,
+                        typ,
+                        Loc::new(qrz), 
+                        AirTime { state: Some(0), step: None },
+                        KeyBits::default(),
+                        Heading::default(),
+                        Offset::default(),
+                        NearestNeighbor::default(),
+                        Transform {
+                            translation: map.convert(qrz),
+                            ..default()},
+                    ));
+                },
+            }
+        }
+    }
 }

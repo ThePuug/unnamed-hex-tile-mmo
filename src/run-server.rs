@@ -13,21 +13,17 @@ use bevy_renet::{
     netcode::{NetcodeServerTransport, NetcodeTransportError, NetcodeServerPlugin},
     RenetServerPlugin,
 };
-use renet::DefaultChannel;
+use ::renet::DefaultChannel;
 
 use common::{
     message::*, 
     plugins::nntree, 
     resources::map::*, 
-    systems::physics::*
+    systems::physics,
 };
 use server::{
     resources::{ *, terrain::* },
-    systems::{ world,
-        actor::*,
-        input::*,
-        renet::*,
-    },
+    systems::{ world, actor, input, renet },
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -64,32 +60,32 @@ fn main() {
     ));
 
     app.add_systems(PreUpdate, (
-        write_try,
+        renet::write_try,
     ));
 
     app.add_systems(FixedUpdate, (
-        generate_input,
+        input::generate_input,
     ));
 
     app.add_systems(Update, (
         panic_on_error_system,
-        do_gcd,
-        do_incremental,
-        do_input,
-        do_manage_connections,
-        try_discover,
-        try_gcd,
-        try_incremental,
-        try_input,
-        update_heading,
-        update_qrz,
+        actor::try_discover,
+        actor::try_incremental,
+        input::do_input,
+        input::try_gcd,
+        input::try_input,
+        input::update_qrz,
+        physics::do_incremental,
+        physics::update_heading,
+        renet::do_manage_connections,
+        world::do_spawn,
     ));
 
     app.add_systems(PostUpdate, (
-        send_do,
+        renet::send_do,
     ));
 
-    let (server, transport) = new_renet_server();
+    let (server, transport) = renet::new_renet_server();
     app.insert_resource(server);
     app.insert_resource(transport);
 

@@ -3,7 +3,7 @@ use bevy_renet::netcode::ClientAuthentication;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    client::resources::*,
+    client::resources::EntityMap, 
     common::{
         message::{Event, *}, 
         resources::*
