@@ -4,30 +4,16 @@ use qrz::{Convert, Qrz};
 use crate::{ 
     common::{
         components::{ *,
-            behaviour::*, 
             entity_type::{ *,
                 decorator::*
             }, 
             offset::*
         }, 
         message::{Event, *}, 
-        plugins::nntree::*, resources::map::Map 
+        resources::map::Map 
     },
-    server::{resources::terrain::*, *
-    }
+    server::resources::terrain::*
 };
-
-pub fn tick(
-    mut writer: EventWriter<Tick>,
-    query: Query<&Behaviour>,
-    nntree: Res<NNTree>,
-) {
-    for (it,_) in nntree.iter() {
-        let ent = Entity::from_bits(it);
-        let &behaviour = query.get(ent).expect("actor without behaviour!");
-        writer.write(Tick { ent, behaviour });
-    }
-}
 
 pub fn try_incremental(
     mut reader: EventReader<Try>,  

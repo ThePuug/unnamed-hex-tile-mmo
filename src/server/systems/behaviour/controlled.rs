@@ -1,18 +1,25 @@
 use bevy::prelude::*;
 
 use crate::{
-    common::message::{ Event, * },
-    server::{resources::InputQueues, *},
+    common::{
+        message::{ Event, * },
+        plugins::nntree::*,
+        components::behaviour::*,
+    },
+    server::resources::InputQueues,
 };
 
 pub fn tick(
-    mut reader: EventReader<Tick>,
     mut writer: EventWriter<Do>,
+    query: Query<&Behaviour>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
+    nntree: Res<NNTree>,
 ) {
-    for &message in reader.read() {
-        let Tick { ent: ent0, behaviour: Behaviour::Controlled } = message else { continue; };
+    for (it,_) in nntree.iter() {
+        let ent0 = Entity::from_bits(it);
+        let Ok(Behaviour::Controlled) = query.get(ent0) else { continue; };
+        
         let Some(buffer) = buffers.get_mut(&ent0) else { warn!("no queue for {ent0}"); continue; };
         let mut dt0 = (dt.delta_secs() * 1000.) as u16;
         

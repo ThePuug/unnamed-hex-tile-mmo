@@ -69,7 +69,6 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        actor::tick,
         behaviour::controlled::tick,
         behaviour::wander::tick.run_if(on_timer(Duration::from_millis(1000))),
     ));
