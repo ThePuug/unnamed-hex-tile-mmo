@@ -1,19 +1,20 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use crate::{*,
-    common::{
-        message::Event,
+use crate::{common::{
         components::{
+            entity_type::{ *,
+                actor::*,
+            },
             heading::*,
             keybits::*,
             offset::*,
-        },
-        systems::{
+        }, 
+        message::Event, systems::{
             gcd::*,
             physics::*,
-        },
-    },
+        }
+    }, *
 };
 
 pub const KEYCODE_JUMP: KeyCode = KeyCode::Numpad0;
@@ -31,7 +32,7 @@ pub fn update_keybits(
 ) {
     if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
         if keyboard.just_released(KEYCODE_GCD1) {
-            let typ = EntityType::Actor(ActorDescriptor::new(
+            let typ = EntityType::Actor(ActorImpl::new(
                 Origin::Fauna, 
                 Form::Bestial, 
                 Manifestation::Physical));

@@ -7,6 +7,7 @@ use qrz::*;
 use crate::{
     common::{
         components::{ *, 
+            entity_type::*,
             heading::Heading, 
             keybits::KeyBits, 
             offset::Offset, 

@@ -1,14 +1,33 @@
 use bevy::prelude::*;
 use qrz::{Convert, Qrz};
 
-use crate::{*,
+use crate::{ 
     common::{
         components::{ *,
-            offset::*,
-        },
-        message::{*, Event},
+            behaviour::*, 
+            entity_type::{ *,
+                decorator::*
+            }, 
+            offset::*
+        }, 
+        message::{Event, *}, 
+        plugins::nntree::*, resources::map::Map 
     },
+    server::{resources::terrain::*, *
+    }
 };
+
+pub fn tick(
+    mut writer: EventWriter<Tick>,
+    query: Query<&Behaviour>,
+    nntree: Res<NNTree>,
+) {
+    for (it,_) in nntree.iter() {
+        let ent = Entity::from_bits(it);
+        let &behaviour = query.get(ent).expect("actor without behaviour!");
+        writer.write(Tick { ent, behaviour });
+    }
+}
 
 pub fn try_incremental(
     mut reader: EventReader<Try>,  
@@ -46,7 +65,7 @@ pub fn try_incremental(
                 let ent = commands.spawn((
                     Loc::new(qrz),
                     Offset::default(),
-                    EntityType::Decorator(DecoratorDescriptor{ index: 3, is_solid: true }),
+                    EntityType::Decorator(DecoratorImpl{ index: 3, is_solid: true }),
                     Transform {
                         translation: map.convert(qrz),
                         ..default()}, 

@@ -16,7 +16,9 @@ use crate::{
         resources::Server
     },
     common::{
-        components::*,
+        components::{ *,
+            entity_type::*,
+        },
         message::{Event, *},
         resources::map::*,
         systems::*,

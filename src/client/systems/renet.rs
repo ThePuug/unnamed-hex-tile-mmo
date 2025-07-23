@@ -5,6 +5,7 @@ use ::renet::{DefaultChannel, RenetClient};
 use crate::{
     client::resources::EntityMap, 
     common::{
+        components::entity_type::*,
         message::{Event, *}, 
         resources::*
     }, *

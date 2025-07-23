@@ -3,49 +3,18 @@ use qrz::Convert;
 
 use crate::{ 
     common::{
-        components::{ heading::*, keybits::*, offset::*, * }, 
+        components::{ *, 
+            behaviour::*,
+            entity_type::*, 
+            heading::*, 
+            keybits::*, 
+            offset::*
+        }, 
         message::{Event, *}, 
         plugins::nntree::NearestNeighbor, 
         systems::gcd::GcdType
     }, *
 };
-
-pub fn generate_input(
-    mut writer: EventWriter<Do>,
-    mut buffers: ResMut<InputQueues>,
-    dt: Res<Time>,
-) {
-    for (&ent0, buffer) in buffers.iter_mut() {
-        let mut dt0 = (dt.delta_secs() * 1000.) as u16;
-        
-        match buffer.queue.back_mut() {
-            Some(Event::Input { dt, .. }) => {
-                *dt += dt0.saturating_sub(buffer.accumulator_in);
-                buffer.accumulator_in = 0;
-            }
-            _ => unreachable!(),
-        }
-
-        while let Some(Event::Input { ent, key_bits, dt, seq }) = buffer.queue.pop_front() {
-            if ent0 != ent {
-                error!("received input for {ent} from queue for {ent0}");
-                continue;
-            }
-
-            if buffer.queue.is_empty() || dt > dt0 {
-                dt0 = dt.clamp(0,dt0);
-                buffer.accumulator_out += dt0;
-                buffer.queue.push_front(Event::Input { ent, key_bits, dt: dt-dt0, seq });
-                writer.write(Do { event: Event::Input { ent, key_bits, dt: dt0, seq: 0 } });
-                break;
-            }
-            writer.write(Do { event: Event::Input { ent, key_bits, dt, seq: 0 } });
-            writer.write(Do { event: Event::Input { ent, key_bits, dt: buffer.accumulator_out+dt, seq } });
-            dt0 -= dt;
-            buffer.accumulator_out = 0;
-        }
-    }
-}
 
 pub fn try_input(
     mut reader: EventReader<Try>,
@@ -105,6 +74,7 @@ pub fn try_gcd(
                             commands.spawn((
                                 typ,
                                 Loc::new(*loc + *heading),
+                                Behaviour::Wander,
                                 NearestNeighbor::default(),
                             )).id()
                         },

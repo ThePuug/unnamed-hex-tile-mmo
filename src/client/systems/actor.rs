@@ -9,7 +9,14 @@ use qrz::Convert;
 use crate::{
     client::components::*,
     common::{
-        components::{ heading::*, keybits::*, offset::*, * },
+        components::{ *, 
+            entity_type::{ *,
+                actor::*,
+            },
+            heading::*, 
+            keybits::*, 
+            offset::*, 
+        },
         message::{ Event, * }, 
         resources::map::Map,
     }
@@ -101,7 +108,6 @@ pub fn try_gcd(
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ } } = message {
-            debug!("try gcd {ent} {typ:?}");
             writer.write(Do { event: Event::Gcd { ent, typ }});
         }
     }

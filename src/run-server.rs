@@ -3,10 +3,14 @@
 mod common;
 mod server;
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::net::UdpSocket;
 
-use bevy::{log::LogPlugin, prelude::*};
+use bevy::{
+    log::LogPlugin, 
+    prelude::*, 
+    time::common_conditions::on_timer
+};
 use bevy_easings::*;
 use bevy_renet::{
     renet::{ConnectionConfig, RenetServer},
@@ -21,9 +25,9 @@ use common::{
     resources::map::*, 
     systems::physics,
 };
-use server::{
+use server::{ *,
     resources::{ *, terrain::* },
-    systems::{ world, actor, input, renet },
+    systems::{ behaviour, world, actor, input, renet },
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -54,6 +58,7 @@ fn main() {
 
     app.add_event::<Do>();
     app.add_event::<Try>();
+    app.add_event::<Tick>();
 
     app.add_systems(Startup, (
         world::setup,
@@ -64,7 +69,9 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        input::generate_input,
+        actor::tick,
+        behaviour::controlled::tick,
+        behaviour::wander::tick.run_if(on_timer(Duration::from_millis(1000))),
     ));
 
     app.add_systems(Update, (

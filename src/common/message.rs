@@ -3,13 +3,14 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-        components::{ *,
-            heading::*,
-            keybits::*,
-            offset::*,
-        },
-        systems::gcd::*,
-    };
+    components::{
+        entity_type::*,
+        heading::*,
+        keybits::*,
+        offset::*,
+    },
+    systems::gcd::*,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Event {
@@ -20,6 +21,7 @@ pub enum Event {
     Gcd { ent: Entity, typ: GcdType },
     Incremental { ent: Entity, attr: Attribute },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz },
+    Tick { ent: Entity },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

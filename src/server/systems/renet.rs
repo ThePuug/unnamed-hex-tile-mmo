@@ -3,15 +3,18 @@ use bevy_renet::netcode::{ServerAuthentication, ServerConfig};
 use qrz::*;
 use ::renet::ServerEvent;
 
-use crate::{ *,
-    common::{
-        message::{ *, Event },
-        plugins::nntree::*,
+use crate::{ common::{
         components::{ *,
+            behaviour::*,
+            entity_type::{ *,
+                actor::*,
+            },
             keybits::*,
-        },
-        resources::*,
-    },
+        }, 
+        message::{ Event, * }, 
+        plugins::nntree::*, 
+        resources::*
+    }, *
 };
 
 pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
@@ -49,12 +52,16 @@ pub fn do_manage_connections(
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
-                let typ = EntityType::Actor(ActorDescriptor::new(Origin::Starborn, Form::Humanoid, Manifestation::Physical));
+                let typ = EntityType::Actor(ActorImpl::new(
+                    Origin::Starborn, 
+                    Form::Humanoid, 
+                    Manifestation::Physical));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let ent = commands.spawn((
                     typ,
                     Loc::new(qrz),
-                    NearestNeighbor::default()
+                    Behaviour::Controlled,
+                    NearestNeighbor::default(),
                 )).id();
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
 
