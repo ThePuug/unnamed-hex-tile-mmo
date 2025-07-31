@@ -1,5 +1,7 @@
+pub mod behaviour;
 pub mod gcd;
 pub mod physics;
+pub mod world;
 
 // TODO: add "leap" season once per quarter
 // TODO: shift day/night cycle by 12 minutes every day

@@ -6,11 +6,10 @@ pub const KB_HEADING_R: u8 = 1 << 1;
 pub const KB_HEADING_NEG: u8 = 1 << 2;
 pub const KB_JUMP: u8 = 1 << 3;
 
-pub const KA_11: u8 = 1 << 0;
-
 #[derive(Clone, Component, Copy, Default, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct KeyBits{
-    pub key_bits: u8
+    pub key_bits: u8,
+    #[serde(skip)] pub accumulator: u128,
 }
 
 impl KeyBits {

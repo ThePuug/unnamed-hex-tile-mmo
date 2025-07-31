@@ -12,5 +12,5 @@ use crate::common::components::entity_type::{
 #[derive(Clone, Component, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EntityType {
     Actor(ActorImpl),
-    Decorator(DecoratorImpl),
+    Decorator(Decorator),
 }

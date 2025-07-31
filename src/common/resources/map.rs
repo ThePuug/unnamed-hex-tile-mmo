@@ -9,11 +9,13 @@ use bevy::{
 
 use qrz::{self, Convert, Qrz};
 
+use crate::common::components::entity_type::*;
+
 #[derive(Clone, Resource)]
-pub struct Map(qrz::Map<Entity>);
+pub struct Map(qrz::Map<EntityType>);
 
 impl Map {
-    pub fn new(map: qrz::Map<Entity>) -> Map {
+    pub fn new(map: qrz::Map<EntityType>) -> Map {
         Map(map)
     }
 
@@ -99,7 +101,7 @@ impl Map {
             // 9 (879) - 1' - 55v1'
             //10 (890) - 4  - 51'4
             let we_qrz = self.find(it_qrz + Qrz{q:0,r:0,z:5} + qrz::DIRECTIONS[0], -10)
-                .unwrap_or((it_qrz + qrz::DIRECTIONS[0], Entity::PLACEHOLDER)).0;
+                .unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
             let we_vrt = self.0.vertices(we_qrz);
             
             if let Some(last_qrz) = last_qrz {
@@ -125,9 +127,9 @@ impl Map {
         )
     }
 
-    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, Entity)> { self.0.find(qrz, dist) }
-    pub fn get(&self, qrz: Qrz) -> Option<&Entity> { self.0.get(qrz) }
-    pub fn insert(&mut self, qrz: Qrz, obj: Entity) { self.0.insert(qrz, obj); }
+    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, EntityType)> { self.0.find(qrz, dist) }
+    pub fn get(&self, qrz: Qrz) -> Option<&EntityType> { self.0.get(qrz) }
+    pub fn insert(&mut self, qrz: Qrz, obj: EntityType) { self.0.insert(qrz, obj); }
     pub fn radius(&self) -> f32 { self.0.radius() }
 }
 

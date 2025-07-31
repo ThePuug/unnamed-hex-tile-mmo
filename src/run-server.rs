@@ -1,16 +1,11 @@
 #![feature(more_float_constants)]
+#![feature(extend_one)]
 
 mod common;
 mod server;
 
-use std::time::{Duration, SystemTime};
-use std::net::UdpSocket;
-
-use bevy::{
-    log::LogPlugin, 
-    prelude::*, 
-    time::common_conditions::on_timer
-};
+use std::{ net::UdpSocket, time::SystemTime };
+use bevy::{ log::LogPlugin, prelude::* };
 use bevy_easings::*;
 use bevy_renet::{
     renet::{ConnectionConfig, RenetServer},
@@ -19,15 +14,19 @@ use bevy_renet::{
 };
 use ::renet::DefaultChannel;
 
-use common::{
-    message::*, 
-    plugins::nntree, 
-    resources::map::*, 
-    systems::physics,
-};
-use server::{ *,
-    resources::{ *, terrain::* },
-    systems::{ behaviour, world, actor, input, renet },
+use crate::{
+    common::{
+        components::entity_type::*, 
+        message::*, 
+        plugins::nntree, 
+        resources::{map::*, *}, 
+        systems::physics
+    },
+    server::{ 
+        resources::{terrain::*, *}, 
+        systems::{actor, input, renet, world}, 
+        *
+    }
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -69,20 +68,21 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        behaviour::controlled::tick,
-        behaviour::wander::tick.run_if(on_timer(Duration::from_millis(1000))),
+        common::systems::behaviour::controlled::apply,
+        common::systems::behaviour::controlled::tick,
+        physics::update,
+        physics::update_heading,
     ));
 
     app.add_systems(Update, (
         panic_on_error_system,
         actor::try_discover,
-        actor::try_incremental,
-        input::do_input,
+        common::systems::world::try_incremental,
+        common::systems::world::do_incremental,
+        input::send_input,
         input::try_gcd,
         input::try_input,
         input::update_qrz,
-        physics::do_incremental,
-        physics::update_heading,
         renet::do_manage_connections,
         world::do_spawn,
     ));
@@ -96,7 +96,7 @@ fn main() {
     app.insert_resource(transport);
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
-    app.insert_resource(Map::new(qrz::Map::<Entity>::new(1., 0.8)));
+    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();

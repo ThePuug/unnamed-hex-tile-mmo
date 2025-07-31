@@ -30,17 +30,20 @@ pub fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 10.,
-        ..default()});
+    commands.insert_resource(
+        AmbientLight {
+            color: Color::WHITE,
+            brightness: 10.,
+            ..default()});
 
-    commands.spawn((DirectionalLight {
+    commands.spawn((
+        DirectionalLight {
             shadows_enabled: true,
             ..default()},
         Transform::default(), 
         Sun::default()));
-    commands.spawn((DirectionalLight {
+    commands.spawn((
+        DirectionalLight {
             shadows_enabled: false,
             color: Color::WHITE,
             ..default()},
@@ -51,15 +54,13 @@ pub fn setup(
     let material = materials.add(StandardMaterial {
         base_color: Color::hsl(105., 0.75, 0.1),
         perceptual_roughness: 1.,
-        ..default()
-    });
+        ..default()});
 
     commands.spawn((
         Mesh3d(mesh),
         Aabb::default(),
         MeshMaterial3d(material),
-        Terrain::default(),
-    ));
+        Terrain::default()));
 }
 
 pub fn do_init(
@@ -67,9 +68,8 @@ pub fn do_init(
     mut server: ResMut<Server>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Init { dt, .. } } = message {
-            server.elapsed_offset = dt;
-        }
+        let Do { event: Event::Init { dt, .. } } = message else { continue };
+        server.elapsed_offset = dt;
     }
 }
 
@@ -78,14 +78,12 @@ pub fn do_spawn(
     mut query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
 ) {
-    let mut terrain = query.single_mut().expect("query did not return exactly one result");
+    let mut terrain = query.single_mut().expect("no result in query");
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { qrz, typ: EntityType::Decorator(_), .. } } = message {
-            if map.get(qrz).is_none() {
-                map.insert(qrz, Entity::PLACEHOLDER);
-                terrain.task_start_regenerate_mesh = true;
-            }
-        }
+        let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
+        if map.get(qrz).is_some() { continue }
+        map.insert(qrz, EntityType::Decorator(decorator));
+        terrain.task_start_regenerate_mesh = true;
     }
 }
 
@@ -93,9 +91,9 @@ pub fn async_spawn(
     mut query: Query<&mut Terrain>,
     map: Res<Map>,
 ) {
-    let mut terrain = query.single_mut().expect("query did not return exactly one result");
-    if !terrain.task_start_regenerate_mesh { return; }
-    if !terrain.task_regenerate_mesh.is_none() { return; }
+    let mut terrain = query.single_mut().expect("no result in query");
+    if !terrain.task_start_regenerate_mesh { return }
+    if !terrain.task_regenerate_mesh.is_none() { return }
     terrain.task_start_regenerate_mesh = false;
 
     let pool = AsyncComputeTaskPool::get();
@@ -109,7 +107,7 @@ pub fn async_ready(
     mut query: Query<(&mut Mesh3d, &mut Aabb, &mut Terrain)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let (mut mesh, mut aabb, mut terrain) = query.single_mut().expect("query did not return exactly one result");
+    let (mut mesh, mut aabb, mut terrain) = query.single_mut().expect("no result in query");
     if terrain.task_regenerate_mesh.is_none() { return; }
 
     let task = terrain.task_regenerate_mesh.as_mut();
@@ -137,7 +135,7 @@ pub fn update(
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 
     // sun
-    let (mut s_light, mut s_transform) = q_sun.single_mut().expect("query did not return exactly one result");
+    let (mut s_light, mut s_transform) = q_sun.single_mut().expect("no result in q_sun");
     let mut s_rad_d = dtd * 2. * PI;
     let s_rad_y = dty * 2. * PI;
 
@@ -154,7 +152,7 @@ pub fn update(
     s_transform.look_at(Vec3::ZERO, Vec3::Y);
 
     // moon
-    let (mut m_light, mut m_transform) = q_moon.single_mut().expect("query did not return exactly one result");
+    let (mut m_light, mut m_transform) = q_moon.single_mut().expect("no result in q_moon");
     let mut m_rad_d = dtd * 2. * PI;
     let m_rad_m = dtm * 2. * PI;
 

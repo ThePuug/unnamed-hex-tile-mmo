@@ -8,12 +8,11 @@ use crate::{common::{
             },
             heading::*,
             keybits::*,
-            offset::*,
         }, 
-        message::Event, systems::{
+        message::{Component, Event}, systems::{
             gcd::*,
-            physics::*,
-        }
+        },
+        resources::*,
     }, *
 };
 
@@ -25,12 +24,18 @@ pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 
 pub const KEYCODE_GCD1: KeyCode = KeyCode::KeyQ;
 
+/// Milliseconds between periodic input sends
+pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
+
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut query: Query<(Entity, &Heading, &mut KeyBits), With<Actor>>,
     mut writer: EventWriter<Try>,
+    dt: Res<Time>,
 ) {
     if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
+        keybits0.accumulator += dt.delta().as_nanos();
+
         if keyboard.just_released(KEYCODE_GCD1) {
             let typ = EntityType::Actor(ActorImpl::new(
                 Origin::Fauna, 
@@ -39,8 +44,8 @@ pub fn update_keybits(
             writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Spawn(typ)}});
         }
 
-        let mut key_bits = KeyBits::default();
-        key_bits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
+        let mut keybits = KeyBits::default();
+        keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
 
         if keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
             if keyboard.pressed(KEYCODE_UP) {
@@ -48,72 +53,50 @@ pub fn update_keybits(
                     &&(*heading == Qrz {q:-1, r: 0, z: 0}
                     || *heading == Qrz {q: 0, r:-1, z: 0}
                     || *heading == Qrz {q: 0, r: 1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
+                        keybits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);
                     }
                 else {
-                    key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);
+                    keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);
                 }
             } else if keyboard.pressed(KEYCODE_DOWN) {
                 if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
                     &&(*heading == Qrz {q:-1, r: 0, z: 0}
                     || *heading == Qrz {q: 1, r:-1, z: 0}
                     || *heading == Qrz {q:-1, r: 1, z: 0}) {
-                        key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true); 
+                        keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true); 
                     }
                 else {
-                    key_bits.set_pressed([KB_HEADING_R], true);
+                    keybits.set_pressed([KB_HEADING_R], true);
                 }
             } 
             else if keyboard.pressed(KEYCODE_RIGHT) { 
-                key_bits.set_pressed([KB_HEADING_Q], true);
+                keybits.set_pressed([KB_HEADING_Q], true);
             } else if keyboard.pressed(KEYCODE_LEFT) {
-                key_bits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
+                keybits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);
             }
         }
 
-        if *keybits0 != key_bits { *keybits0 = key_bits; }
+        // Send input if either keybits changed or periodic interval has elapsed
+        if keybits0.key_bits != keybits.key_bits || keybits0.accumulator >= INPUT_SEND_INTERVAL_MS * 1_000_000 {
+            *keybits0 = keybits;
+            writer.write(Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }});
+        }
     }
 }
 
 pub fn do_input(
     mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,
-    map: Res<Map>,
-    buffer: Res<InputQueue>,
+    mut buffers: ResMut<InputQueues>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            let (&loc, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
-            offset.step = offset.state;
-            air_time.step = air_time.state;
-            for &event in buffer.queue.iter().rev() { writer.write(Try { event }); }
-        }
-    }
-}
-
-pub fn try_input(
-    mut reader: EventReader<Try>,
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,    
-    map: Res<Map>,
-) {
-    for &message in reader.read() {
-        if let Try { event: Event::Input { ent, key_bits, dt, .. } } = message {
-            if let Ok((&loc, &heading, mut offset, mut air_time)) = query.get_mut(ent) {
-                (offset.step, air_time.step) = apply(key_bits, dt as i16, *loc, heading, offset.step, air_time.step, &map);
-            }
-        }
-    }
-}
-
-pub fn generate_input(
-    mut writer: EventWriter<Try>,
-    query: Query<(Entity, &KeyBits), With<Actor>>,
-    time: Res<Time>,
-) {
-    for (ent, &key_bits) in query.iter() {
-        let dt = (time.delta_secs() * 1000.) as u16;
-        writer.write(Try { event: Event::Input { ent, key_bits, dt, seq: 0 } });
+        let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
+        let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
+        let Some(Event::Input { ent: ent0, key_bits: keybits0, dt: dt0, seq: seq0 }) = buffer.queue.pop_back() 
+            else { panic!("no back on buffer") };
+        assert!(ent == ent0);
+        assert!(key_bits == keybits0);
+        assert!(seq == seq0);
+        if (dt as i32 - dt0 as i32).abs() > 100 { warn!("dt: {dt} != {dt0}"); }
+        if buffer.queue.len() > 2 { warn!("buffer.queue len: {}", buffer.queue.len()); }
     }
 }

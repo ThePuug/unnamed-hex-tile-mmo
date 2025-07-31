@@ -5,8 +5,8 @@ use ::renet::{DefaultChannel, RenetClient};
 use crate::{
     client::resources::EntityMap, 
     common::{
-        components::entity_type::*,
-        message::{Event, *}, 
+        components::{behaviour::*, entity_type::*},
+        message::{Component, Event, *}, 
         resources::*
     }, *
 };
@@ -32,23 +32,25 @@ pub fn setup(
     commands.insert_resource(transport);
 }
 
-pub fn send_do(
+pub fn write_do(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
-    mut buffer: ResMut<InputQueue>,
+    mut buffers: ResMut<InputQueues>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
         match message {
 
             // insert l2r for player
-            Do { event: Event::Init { ent, dt }} => {
-                debug!("Player {ent} connected, time offset: {dt}");
-                let loc = commands.spawn(Actor).id();
-                l2r.insert(loc, ent);
-                writer.write(Do { event: Event::Init { ent: loc, dt }});
+            Do { event: Event::Init { ent: ent0, dt }} => {
+                let ent = commands.spawn((Actor,Behaviour::Controlled)).id();
+                debug!("Player {ent0} connected as {ent}, time offset: {dt}");
+                l2r.insert(ent, ent0);
+                buffers.extend_one((ent, InputQueue { 
+                    queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
+                writer.write(Do { event: Event::Init { ent, dt }});
             }
 
             // insert l2r entry when spawning an Actor
@@ -67,15 +69,8 @@ pub fn send_do(
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 
-            // manage the input queue before sending the incoming Input
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                let &ent = l2r.get_by_right(&ent).unwrap();
-                if let Some(Event::Input { seq: seq0, dt: dt0, key_bits: key_bits0, .. }) = buffer.queue.pop_back() {
-                    assert_eq!(seq0, seq);
-                    assert_eq!(key_bits0, key_bits);
-                    if (dt0 as i16 - dt as i16).abs() >= 100 { warn!("{dt0} !~ {dt}"); }
-                    if buffer.queue.len() > 2 { warn!("long input queue, len: {}", buffer.queue.len()); }
-                } else { unreachable!(); }
+                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r") };
                 writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
@@ -83,12 +78,12 @@ pub fn send_do(
                 debug!("Player {ent} disconnected");
                 commands.entity(ent).despawn();
             }
-            Do { event: Event::Incremental { ent, attr } } => {
-                let &ent = l2r.get_by_right(&ent).unwrap();
-                writer.write(Do { event: Event::Incremental { ent, attr } });
+            Do { event: Event::Incremental { ent, component } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r") };
+                writer.write(Do { event: Event::Incremental { ent, component } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
-                let &ent = l2r.get_by_right(&ent).unwrap();
+                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r")};
                 writer.write(Do { event: Event::Gcd { ent, typ } });
             }
             _ => {}
@@ -96,38 +91,18 @@ pub fn send_do(
     }
 }
 
-pub fn write_try(
+pub fn send_try(
     mut conn: ResMut<RenetClient>,
     mut reader: EventReader<Try>,
     l2r: Res<EntityMap>,
-    mut buffer: ResMut<InputQueue>,
 ) {
     for &message in reader.read() {
         match message {
-            // manage the queue before sending the outgoing Input
-            Try { event: Event::Input { ent, key_bits, mut dt, mut seq } } => {
-                // seq 0 is input this frame which we should handle
-                // other received Input events are being replayed and should be ignored
-                if seq != 0 { continue; }
-
-                let input0 = buffer.queue.pop_front().unwrap();
-                match input0 {
-                    Event::Input { key_bits: key_bits0, dt: mut dt0, seq: seq0, .. } => {
-                        seq = seq0;
-                        if key_bits.key_bits != key_bits0.key_bits || dt0 > 1000 { 
-                            buffer.queue.push_front(input0);
-                            seq = if seq0 == 255 { 1 } else { seq0 + 1}; 
-                            dt0 = 0;
-                            conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input { 
-                                ent: *l2r.get_by_left(&ent).unwrap(), 
-                                key_bits, dt: 0, seq,
-                            }}, bincode::config::legacy()).unwrap());
-                        }
-                        dt += dt0;
-                        buffer.queue.push_front(Event::Input { ent, key_bits, dt, seq });
-                    }
-                    _ => unreachable!()
-                };
+            Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental { 
+                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    component: Component::KeyBits(keybits) 
+                }}, bincode::config::legacy()).unwrap());
             }
             Try { event: Event::Gcd { ent, typ, .. } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 

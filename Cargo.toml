@@ -18,6 +18,7 @@ kiddo = "5"
 log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
 noise = { version = "0" }
 phf = { version = "0", features = ["macros"] }
+rand = "0"
 renet = { git = "https://github.com/lucaspoffo/renet.git" }
 serde = { version = "1", features = ["derive"] }
 

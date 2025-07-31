@@ -11,7 +11,7 @@ use crate::{ common::{
             },
             keybits::*,
         }, 
-        message::{ Event, * }, 
+        message::{ Component, Event, * }, 
         plugins::nntree::*, 
         resources::*
     }, *
@@ -66,9 +66,8 @@ pub fn do_manage_connections(
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
 
                 // init input buffer for client
-                let mut buffer = InputQueue::default();
-                buffer.queue.push_back(Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 });
-                buffers.insert(ent, buffer);
+                buffers.extend_one((ent, InputQueue { 
+                    queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into() }));
 
                 // init client
                 let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
@@ -111,15 +110,13 @@ pub fn write_try(
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let (message, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match message {
-                Try { event: Event::Input { key_bits, dt, seq, .. } } => {
-                    if let Some(&ent) = lobby.get_by_left(&client_id) {
-                        writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
-                    }
+                Try { event: Event::Incremental { component: Component::KeyBits(keybits), .. } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }});
                 }
                 Try { event: Event::Gcd { typ, .. } } => {
-                    if let Some(&ent) = lobby.get_by_left(&client_id) {
-                        writer.write(Try { event: Event::Gcd { ent, typ }});
-                    }
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
                 _ => {}
             }
@@ -138,34 +135,28 @@ pub fn write_try(
         match message {
             Do { event: Event::Spawn { ent, typ, qrz } } => {
                 for other in nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(qrz).into(), 20_i16.into()) {
-                    if let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Spawn { ent, typ, qrz }}, 
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
+                    let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) 
+                        else { panic!("no other in right of lobby") };
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Spawn { ent, typ, qrz }}, 
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Do { event: Event::Incremental { ent, attr } } => {
+            Do { event: Event::Incremental { ent, component } } => {
+                match component {
+                    Component::KeyBits(_) => continue,
+                    _ => {}
+                }
                 let &loc = query.get(ent).unwrap();
                 for other in nntree.within_unsorted_iter::<Hexhattan>(&loc.into(), 20_i16.into()) {
                     if let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent, attr }}, 
+                            Do { event: Event::Incremental { ent, component }}, 
                             bincode::config::legacy()).unwrap();                        
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
-            }
-            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                // seq 0 is the currently accumulating input
-                // we still execute input as it accumulate every STEP, but
-                // do not confirm the input until new input is received for accumulation
-                if seq == 0 { continue; }
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Input { ent, key_bits, dt, seq }}, 
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
             }
             _ => {}
         }

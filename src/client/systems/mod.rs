@@ -1,6 +1,5 @@
 pub mod actor;
 pub mod animator;
-pub mod behaviour;
 pub mod camera;
 // pub mod effect;
 pub mod input;

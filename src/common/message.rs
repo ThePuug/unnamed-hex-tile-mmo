@@ -3,12 +3,7 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    components::{
-        entity_type::*,
-        heading::*,
-        keybits::*,
-        offset::*,
-    },
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, * },
     systems::gcd::*,
 };
 
@@ -16,19 +11,20 @@ use crate::common::{
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
+    Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
-    Gcd { ent: Entity, typ: GcdType },
-    Incremental { ent: Entity, attr: Attribute },
+    Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz },
-    Tick { ent: Entity },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-pub enum Attribute {
-    Qrz { qrz: Qrz },
-    Heading { heading: Heading },
-    Offset { offset: Offset },
+pub enum Component {
+    Loc(Loc),
+    Heading(Heading),
+    KeyBits(KeyBits),
+    Offset(Offset),
+    Behaviour(Behaviour),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]

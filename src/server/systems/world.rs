@@ -12,8 +12,7 @@ use crate::{
             keybits::KeyBits, 
             offset::Offset, 
         }, 
-        message::{ Event, * }, 
-        plugins::nntree::*,
+        message::{ Event, * },
         systems::*
     }, 
     server::resources::*
@@ -43,18 +42,15 @@ pub fn do_spawn(
         if let Do { event: Event::Spawn { qrz, typ, ent } } = message {
             match typ {
                 EntityType::Decorator(_) => {
-                    if map.get(qrz).is_none() { map.insert(qrz, ent) }
+                    if map.get(qrz).is_none() { map.insert(qrz, typ) }
                 },
                 EntityType::Actor(_) => {
                     commands.entity(ent).insert((
                         Actor,
-                        typ,
-                        Loc::new(qrz), 
-                        AirTime { state: Some(0), step: None },
+                        AirTime { state: Some(125), step: None },
                         KeyBits::default(),
                         Heading::default(),
                         Offset::default(),
-                        NearestNeighbor::default(),
                         Transform {
                             translation: map.convert(qrz),
                             ..default()},

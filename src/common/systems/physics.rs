@@ -4,16 +4,28 @@ use bevy::prelude::*;
 use qrz::{Convert, Qrz};
 
 use crate::common::{ 
-    components::{ *,
-        heading::*,
-        keybits::*,
-        offset::*,
-    }, 
-    message::{ Attribute, Event, * }, 
-    resources::map::*
+    components::{ heading::*, keybits::*, offset::*, * }, 
+    message::{ Component, Event, * }, 
+    resources::{map::*, *},
 };
 
 const GRAVITY: f32 = 0.005;
+
+pub fn update(
+    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime), With<Physics>>,
+    map: Res<Map>,
+    buffers: Res<InputQueues>,
+) {
+    for (&ent, buffer) in buffers.iter() {
+        let Ok((&loc, &heading, mut offset0, mut airtime0)) = query.get_mut(ent) else { continue; };
+        let (mut offset, mut airtime) = (offset0.state, airtime0.state);
+        for input in buffer.queue.iter().rev() {
+            let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
+            (offset, airtime) = apply(*key_bits, *dt as i16, *loc, heading, offset, airtime, &map);
+        }
+        (offset0.step, airtime0.step) = (offset,airtime);
+    }
+}
 
 pub fn apply(
     key_bits: KeyBits, 
@@ -21,11 +33,11 @@ pub fn apply(
     qrz0: Qrz,
     heading0: Heading,
     offset0: Vec3,
-    air_time0: Option<i16>,
+    airtime0: Option<i16>,
     map: &Map,
 ) -> (Vec3, Option<i16>) {
     let mut offset0 = offset0;
-    let mut air_time0 = air_time0;
+    let mut airtime0 = airtime0;
     let mut jumped = false;
     let heading0 = if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { Heading::from(key_bits) } else { heading0 };
     while dt0 >= 0 {
@@ -34,37 +46,37 @@ pub fn apply(
 
         let px0 = map.convert(qrz0);
 
-        let floor = map.find(qrz0 + Qrz{q:0,r:0,z:1}, -5);
-        if air_time0.is_none() {
+        let floor = map.find(qrz0 + Qrz{q:0,r:0,z:5}, -10);
+        if airtime0.is_none() {
             if floor.is_none() || map.convert(map.convert(qrz0) + Vec3::Y * offset0.y).z > floor.unwrap().0.z+1 {
-                air_time0 = Some(0); 
+                airtime0 = Some(0); 
             }
             if key_bits.is_pressed(KB_JUMP) && !jumped { 
-                air_time0 = Some(125); 
+                airtime0 = Some(125); 
                 jumped = true; 
             }
         }
-        
-        if let Some(mut air_time) = air_time0 {
-            if air_time > 0 {
+            
+        if let Some(mut airtime) = airtime0 {
+            if airtime > 0 {
                 // ensure we ascend to the apex
-                if air_time < dt { 
-                    dt0 += dt-air_time;
-                    dt = air_time;
+                if airtime < dt { 
+                    dt0 += dt-airtime;
+                    dt = airtime;
                 }
-                air_time -= dt;
-                air_time0 = Some(air_time);
+                airtime -= dt;
+                airtime0 = Some(airtime);
                 offset0.y += dt as f32 * GRAVITY * 5.;
             } else {
                 // falling
-                air_time -= dt;
-                air_time0 = Some(air_time);
+                airtime -= dt;
+                airtime0 = Some(airtime);
                 let dy = -dt as f32 * GRAVITY;
                 if floor.is_none() || map.convert(map.convert(qrz0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().0.z+1 { 
                     offset0.y += dy;
                 } else {
                     offset0.y = map.convert(floor.unwrap().0 + Qrz { z: 1-qrz0.z, ..qrz0 }).y; 
-                    air_time0 = None;
+                    airtime0 = None;
                 }
             }
         }
@@ -78,50 +90,12 @@ pub fn apply(
             else { here };
 
         let dpx = offset0.distance(tpx);
-        let ratio = 0_f32.max((dpx - 0.005*dt as f32) / dpx);
+            let ratio = 0_f32.max((dpx - 0.005*dt as f32) / dpx);
         let lxz = offset0.xz().lerp(tpx.xz(), 1. - ratio);
         offset0 = Vec3::new(lxz.x, offset0.y, lxz.y);
     }
 
-    (offset0, air_time0)
-}
-
-pub fn do_incremental(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
-    mut query: Query<(&mut Loc, &mut Offset, &mut Heading)>,
-    map: Res<Map>,
-) {
-    for &message in reader.read() {
-        if let Do { event: Event::Incremental { ent, attr } } = message {
-            if let Ok((mut loc0, mut offset0, mut heading0)) = query.get_mut(ent) {
-                match attr {
-                    Attribute::Qrz { qrz } => {
-                        offset0.state = map.convert(**loc0) + offset0.state - map.convert(qrz);
-                        offset0.step = map.convert(**loc0) + offset0.step - map.convert(qrz);
-
-                        writer.write(Try { event: Event::Discover { ent, qrz } });
-                        *loc0 = Loc::new(qrz);
-
-                        if **heading0 != Qrz::default() {
-                            for qrz in loc0.fov(&heading0, 10) {
-                                writer.write(Try { event: Event::Discover { ent, qrz } });
-                            }
-                        }
-                    }
-                    Attribute::Heading { heading } => {
-                        *heading0 = heading;
-                        if **heading0 != Qrz::default() {
-                            for qrz in loc0.fov(&heading0, 10) {
-                                writer.write(Try { event: Event::Discover { ent, qrz } });
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-    }
+    (offset0, airtime0)
 }
 
 pub fn update_heading(
@@ -132,8 +106,8 @@ pub fn update_heading(
         let heading = if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { Heading::from(key_bits) } else { *heading0 };
         if *heading0 != heading { 
             *heading0 = heading;
-            let attr = Attribute::Heading { heading };
-            writer.write(Try { event: Event::Incremental { ent, attr } });
+            let component = Component::Heading(heading);
+            writer.write(Try { event: Event::Incremental { ent, component } });
         }
     }
 }

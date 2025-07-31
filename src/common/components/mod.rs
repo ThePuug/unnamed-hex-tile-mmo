@@ -30,6 +30,9 @@ pub struct AirTime {
 #[derive(Clone, Component, Copy, Default)] 
 pub struct Actor;
 
+#[derive(Clone, Component, Copy, Default)] 
+pub struct Physics;
+
 #[derive(Debug, Default, Component)]
 pub struct Sun();
 

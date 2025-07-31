@@ -1,14 +1,15 @@
 pub mod map;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 
 use crate::common::message::Event;
 
-#[derive(Debug, Default, Resource)]
+#[derive(Clone, Default, Deref, DerefMut, Resource)]
+pub struct InputQueues(HashMap<Entity, InputQueue>);
+
+#[derive(Clone, Debug, Default, Resource)]
 pub struct InputQueue {
     pub queue: VecDeque<Event>, 
-    pub accumulator_out: u16,  
-    pub accumulator_in: u16,
 }

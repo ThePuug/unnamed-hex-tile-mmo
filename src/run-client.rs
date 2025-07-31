@@ -1,5 +1,6 @@
 #![feature(let_chains)]
 #![feature(more_float_constants)]
+#![feature(extend_one)]
 
 mod common;
 mod client;
@@ -22,15 +23,15 @@ use bevy_renet::{
 use iyes_perf_ui::PerfUiPlugin;
 
 use common::{
-    components::{ keybits::*, * }, 
-    message::{ Event, * }, 
+    components::{entity_type::*, *}, 
+    message::*, 
     plugins::nntree, 
     resources::{ map::*,  * },
-    systems::physics
+    systems::physics,
 };
 use client::{
     resources::*,
-    systems::{ actor, animator, camera, input, renet, * }
+    systems::{actor, animator, camera, input, renet, *}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -85,47 +86,44 @@ fn main() {
     ));
 
     app.add_systems(PreUpdate, (
-        renet::write_try,
         input::update_keybits,
-        input::generate_input.after(input::update_keybits),
-        ui::update,
-        world::async_spawn,
-        world::async_ready,
-        world::do_init,
+        renet::write_do,
     ));
 
     app.add_systems(FixedUpdate, (
-        actor::do_spawn,
-        input::do_input,
-        physics::do_incremental,
-        world::do_spawn,
-        world::update,
+        common::systems::behaviour::controlled::apply,
+        common::systems::behaviour::controlled::tick,
+        physics::update,
+        physics::update_heading,
     ));
 
     app.add_systems(Update, (
         panic_on_error_system,
+        actor::do_spawn,
         actor::try_gcd,
         actor::update,
         animator::update,
         camera::update,
-        input::try_input,
-        physics::update_heading,
+        common::systems::world::try_incremental,
+        common::systems::world::do_incremental,
+        input::do_input,
+        ui::update,
+        world::async_spawn,
+        world::async_ready,
+        world::do_init,
+        world::do_spawn,
+        world::update,
     ));
 
     app.add_systems(PostUpdate, (
-        renet::send_do,
+        renet::send_try,
     ));
 
-    let mut buffer = InputQueue::default();
-    buffer.queue.push_front(Event::Input { ent: Entity::PLACEHOLDER, key_bits: KeyBits::default(), dt: 0, seq: 1 });
-    app.insert_resource(buffer);
+    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
 
-    app.insert_resource(Map::new(qrz::Map::<Entity>::new(1., 0.8)));
-
+    app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
-    app.init_resource::<SpawnQueue>();
-    app.init_resource::<MeshQueue>();
 
     app.run();
 }

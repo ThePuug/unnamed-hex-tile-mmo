@@ -63,7 +63,7 @@ pub fn update(
             (keybits, offset, _) if keybits != KeyBits::default() => map.convert(*loc) + offset.step,
             (_, _, heading) => map.convert(*loc) + map.convert(*heading) * HERE,
         };
-        
+
         let dpx = transform0.translation.distance(target);
         let ratio = 0_f32.max((dpx - 0.0045 * time.delta().as_millis() as f32) / dpx);
         let lpx = transform0.translation.lerp(target, 1. - ratio);
@@ -83,22 +83,23 @@ pub fn do_spawn(
     map: Res<Map>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { ent, typ: EntityType::Actor(desc), qrz } } = message {
-            commands.entity(ent).insert((
-                Loc::new(qrz),
-                EntityType::Actor(desc),
-                SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
-                Transform { 
-                    translation: map.convert(qrz),
-                    scale: Vec3::ONE * map.radius(),
-                    ..default()},
-                AirTime { state: Some(0), step: None },
-                Heading::default(),
-                Offset::default(),
-                KeyBits::default(),
-                Visibility::default(),
-            )).observe(ready);
-        }
+        let Do { event: Event::Spawn { ent, typ, qrz } } = message else { continue };
+        let EntityType::Actor(desc) = typ else { continue };
+        commands.entity(ent).insert((
+            Loc::new(qrz),
+            typ,
+            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+            Transform { 
+                translation: map.convert(qrz),
+                scale: Vec3::ONE * map.radius(),
+                ..default()},
+            AirTime { state: Some(0), step: None },
+            Heading::default(),
+            Offset::default(),
+            KeyBits::default(),
+            Visibility::default(),
+            Physics::default(),
+        )).observe(ready);
     }
 }
 

@@ -3,57 +3,36 @@ use qrz::Convert;
 
 use crate::{ 
     common::{
-        components::{ *, 
-            behaviour::*,
-            entity_type::*, 
-            heading::*, 
-            keybits::*, 
-            offset::*
-        }, 
-        message::{Event, *}, 
-        plugins::nntree::NearestNeighbor, 
-        systems::gcd::GcdType
+        components::{ behaviour::*, entity_type::*, heading::*, offset::*, * }, 
+        message::{Component, Event, *}, 
+        plugins::nntree::*, 
+        systems::gcd::*
     }, *
 };
 
 pub fn try_input(
     mut reader: EventReader<Try>,
-    mut query: Query<&mut KeyBits>,
-    mut buffers: ResMut<InputQueues>,
-    dt0: Res<Time<Fixed>>,
+    mut writer: EventWriter<Do>,
 ) {
     for &message in reader.read() {
-        if let Try { event: Event::Input { ent, key_bits, seq, .. } } = message {
-            if let Some(buffer) = buffers.get_mut(&ent) {
-                // add overstep difference to the previous accumulating input
-                let dt0 = dt0.overstep().as_millis() as u16 - buffer.accumulator_in;
-                buffer.accumulator_in += dt0;
-                match buffer.queue.back_mut() {
-                    Some(Event::Input { dt, .. }) => {
-                        *dt += dt0;
-                    }
-                    _ => unreachable!(),
-                }
-
-                *query.get_mut(ent).unwrap() = key_bits;
-                buffer.queue.push_back(Event::Input { ent, key_bits, dt: 0, seq });
-            } else {
-                warn!("no queue for {ent}");
-            }
-        }
+        let Try { event } = message;
+        let Event::Input { .. } = event else { continue };
+        writer.write(Do { event });
     }
 }
 
-pub fn do_input(
-    mut reader: EventReader<Do>,
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,
-    map: Res<Map>,
+pub fn send_input(
+    lobby: Res<Lobby>,
+    mut conn: ResMut<RenetServer>,
+    mut buffers: ResMut<InputQueues>,
 ) {
-    for &message in reader.read() {
-        if let Do { event: Event::Input { ent, key_bits, dt, seq, .. } } = message {
-            if seq != 0 { continue; }
-            let (&loc, &heading, mut offset, mut air_time) = query.get_mut(ent).unwrap();
-            (offset.state, air_time.state) = physics::apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
+    for (ent, buffer) in buffers.iter_mut() {
+        while buffer.queue.len() > 1 {
+            let event = buffer.queue.pop_back().unwrap();
+            let message = bincode::serde::encode_to_vec(
+                Do { event }, 
+                bincode::config::legacy()).unwrap();
+            conn.send_message(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
         }
     }
 }
@@ -71,10 +50,11 @@ pub fn try_gcd(
                     let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
                     let ent = match typ {
                         EntityType::Actor(_) => {
+                            let qrz = *loc + *heading;
                             commands.spawn((
                                 typ,
-                                Loc::new(*loc + *heading),
-                                Behaviour::Wander,
+                                Loc::new(qrz),
+                                Behaviour::Wander(Wander { qrz }),
                                 NearestNeighbor::default(),
                             )).id()
                         },
@@ -95,12 +75,12 @@ pub fn update_qrz(
     mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
     map: Res<Map>,
 ) {
-    for (ent, &qrz0, &offset) in &mut query {
-        let px = map.convert(*qrz0);
+    for (ent, &loc0, &offset) in &mut query {
+        let px = map.convert(*loc0);
         let qrz = map.convert(px + offset.state);
-        if *qrz0 != qrz { 
-            let attr = Attribute::Qrz { qrz }; 
-            writer.write(Try { event: Event::Incremental { ent, attr } }); 
+        if *loc0 != qrz { 
+            let component = Component::Loc(Loc::new(qrz));
+            writer.write(Try { event: Event::Incremental { ent, component } }); 
         }
     }
 }
