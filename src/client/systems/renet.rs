@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_renet::netcode::ClientAuthentication;
+use qrz::Qrz;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
@@ -34,7 +35,8 @@ pub fn setup(
 
 pub fn write_do(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut do_writer: EventWriter<Do>,
+    mut try_writer: EventWriter<Try>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
@@ -50,7 +52,7 @@ pub fn write_do(
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue { 
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
-                writer.write(Do { event: Event::Init { ent, dt }});
+                do_writer.write(Do { event: Event::Init { ent, dt }});
             }
 
             // insert l2r entry when spawning an Actor
@@ -66,12 +68,15 @@ pub fn write_do(
                     },
                     _ => { Entity::PLACEHOLDER }
                 };
-                writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
+                do_writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
             }
 
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r") };
-                writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
+                let Some(&ent) = l2r.get_by_right(&ent) else { 
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                    continue
+                 };
+                do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
                 let (ent, _) = l2r.remove_by_right(&ent).unwrap();
@@ -79,12 +84,18 @@ pub fn write_do(
                 commands.entity(ent).despawn();
             }
             Do { event: Event::Incremental { ent, component } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r") };
-                writer.write(Do { event: Event::Incremental { ent, component } });
+                let Some(&ent) = l2r.get_by_right(&ent) else { 
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::Incremental { ent, component } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { panic!("no {ent} in l2r")};
-                writer.write(Do { event: Event::Gcd { ent, typ } });
+                let Some(&ent) = l2r.get_by_right(&ent) else { 
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::Gcd { ent, typ } });
             }
             _ => {}
         }
@@ -108,6 +119,11 @@ pub fn send_try(
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 
                     ent: *l2r.get_by_left(&ent).unwrap(), 
                     typ,
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Try { event: Event::Spawn { ent, typ, qrz } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn { 
+                    ent, typ, qrz
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

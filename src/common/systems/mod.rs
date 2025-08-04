@@ -1,3 +1,4 @@
+pub mod actor;
 pub mod behaviour;
 pub mod gcd;
 pub mod physics;

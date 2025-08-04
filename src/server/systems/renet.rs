@@ -118,6 +118,9 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
+                Try { event: Event::Spawn { ent, .. } } => {
+                    writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                }
                 _ => {}
             }
         }
@@ -135,8 +138,7 @@ pub fn write_try(
         match message {
             Do { event: Event::Spawn { ent, typ, qrz } } => {
                 for other in nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(qrz).into(), 20_i16.into()) {
-                    let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) 
-                        else { panic!("no other in right of lobby") };
+                    let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) else { continue; };
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { ent, typ, qrz }}, 
                         bincode::config::legacy()).unwrap();

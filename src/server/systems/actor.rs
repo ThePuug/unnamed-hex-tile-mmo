@@ -3,12 +3,11 @@ use qrz::{Convert, Qrz};
 
 use crate::{ 
     common::{
-        components::{ *,
-            entity_type::{ *,
-                decorator::*
-            },
+        components::{ 
+            entity_type::{ decorator::*, *}, 
+            offset::Offset, *
         }, 
-        message::{Event, *}, 
+        message::{Component, Event, *}, 
         resources::map::Map 
     },
     server::resources::terrain::*
@@ -34,6 +33,21 @@ use crate::{
                 map.insert(qrz, typ);
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz } });
             }
+        }
+    }
+}
+
+pub fn update(
+    mut writer: EventWriter<Try>,
+    mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
+    map: Res<Map>,
+) {
+    for (ent, &loc0, &offset) in &mut query {
+        let px = map.convert(*loc0);
+        let qrz = map.convert(px + offset.state);
+        if *loc0 != qrz { 
+            let component = Component::Loc(Loc::new(qrz));
+            writer.write(Try { event: Event::Incremental { ent, component } }); 
         }
     }
 }

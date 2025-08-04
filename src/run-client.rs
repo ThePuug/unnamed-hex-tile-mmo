@@ -94,7 +94,7 @@ fn main() {
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
         physics::update,
-        physics::update_heading,
+        common::systems::actor::update,
     ));
 
     app.add_systems(Update, (

@@ -1,10 +1,9 @@
 use bevy::prelude::*;
-use qrz::Convert;
 
 use crate::{ 
     common::{
-        components::{ behaviour::*, entity_type::*, heading::*, offset::*, * }, 
-        message::{Component, Event, *}, 
+        components::{ behaviour::*, entity_type::*, heading::*, * }, 
+        message::{Event, *}, 
         plugins::nntree::*, 
         systems::gcd::*
     }, *
@@ -58,29 +57,12 @@ pub fn try_gcd(
                                 NearestNeighbor::default(),
                             )).id()
                         },
-                        EntityType::Decorator(_) => {
-                            Entity::PLACEHOLDER
-                        }
+                        _ => Entity::PLACEHOLDER,
                     };
                     writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading }});
                 }
                 _ => unreachable!()
             }
-        }
-    }
-}
-
-pub fn update_qrz(
-    mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
-    map: Res<Map>,
-) {
-    for (ent, &loc0, &offset) in &mut query {
-        let px = map.convert(*loc0);
-        let qrz = map.convert(px + offset.state);
-        if *loc0 != qrz { 
-            let component = Component::Loc(Loc::new(qrz));
-            writer.write(Try { event: Event::Incremental { ent, component } }); 
         }
     }
 }

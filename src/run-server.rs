@@ -4,8 +4,8 @@
 mod common;
 mod server;
 
-use std::{ net::UdpSocket, time::SystemTime };
-use bevy::{ log::LogPlugin, prelude::* };
+use std::{ net::UdpSocket, time::* };
+use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
 use bevy_easings::*;
 use bevy_renet::{
     renet::{ConnectionConfig, RenetServer},
@@ -70,21 +70,24 @@ fn main() {
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
+        server::systems::behaviour::follow::tick.run_if(on_timer(Duration::from_millis(1000))),
+        server::systems::behaviour::follow::apply, //.run_if(on_timer(Duration::from_millis(125))),
         physics::update,
-        physics::update_heading,
+        common::systems::actor::update,
     ));
 
     app.add_systems(Update, (
         panic_on_error_system,
         actor::try_discover,
+        actor::update,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
         input::send_input,
         input::try_gcd,
         input::try_input,
-        input::update_qrz,
         renet::do_manage_connections,
         world::do_spawn,
+        world::try_spawn,
     ));
 
     app.add_systems(PostUpdate, (

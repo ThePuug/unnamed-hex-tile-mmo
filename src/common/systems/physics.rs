@@ -5,7 +5,7 @@ use qrz::{Convert, Qrz};
 
 use crate::common::{ 
     components::{ heading::*, keybits::*, offset::*, * }, 
-    message::{ Component, Event, * }, 
+    message::Event,
     resources::{map::*, *},
 };
 
@@ -96,18 +96,4 @@ pub fn apply(
     }
 
     (offset0, airtime0)
-}
-
-pub fn update_heading(
-    mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &KeyBits, &mut Heading), Changed<KeyBits>>,
-) {
-    for (ent, &key_bits, mut heading0) in &mut query {
-        let heading = if key_bits.any_pressed([KB_HEADING_Q, KB_HEADING_R]) { Heading::from(key_bits) } else { *heading0 };
-        if *heading0 != heading { 
-            *heading0 = heading;
-            let component = Component::Heading(heading);
-            writer.write(Try { event: Event::Incremental { ent, component } });
-        }
-    }
 }

@@ -33,6 +33,18 @@ pub fn setup(
         - elapsed;
 }
 
+pub fn try_spawn(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    query: Query<(&Loc, &EntityType)>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::Spawn { ent, .. }} = message else { continue };
+        let Ok((loc, typ)) = query.get(*ent) else { continue; };
+        writer.write(Do { event: Event::Spawn { ent: *ent, typ: *typ, qrz: **loc }});
+    }
+}
+
 pub fn do_spawn(
     mut commands: Commands,
     mut reader: EventReader<Do>,
@@ -56,6 +68,7 @@ pub fn do_spawn(
                             ..default()},
                     ));
                 },
+                _ => {}
             }
         }
     }
