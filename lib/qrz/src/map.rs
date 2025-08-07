@@ -80,6 +80,15 @@ where T : Copy {
             center + Vec3 { x: 0., y: self.rise, z: 0. },
         ]
     }
+
+    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz,T)> {
+        let mut neighbors = Vec::new();
+        for check in qrz.neighbors() {
+            let Some(neighbor) = self.find(check + Qrz::Z, -2) else { continue };
+            neighbors.extend_one(neighbor);
+        }
+        neighbors
+    }
 }
 
 impl<T> Convert<Vec3,Qrz> for Map<T> {

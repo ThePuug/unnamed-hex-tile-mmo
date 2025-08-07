@@ -37,6 +37,10 @@ impl PartialEq for Qrz {
 }
 
 impl Qrz {
+    pub const Q: Qrz = Qrz{q:1,r:0,z:0};
+    pub const R: Qrz = Qrz{q:0,r:1,z:0};
+    pub const Z: Qrz = Qrz{q:0,r:0,z:1};
+
     pub fn flat_distance(&self, other: &Qrz) -> i16 {
         *[
             (self.q - other.q).abs(),
@@ -69,6 +73,17 @@ impl Qrz {
 
     pub fn fov(&self, dir: &Qrz, dist: u8) -> Vec<Qrz> {
         (1..=dist).map(|i| self.arc(dir, i)).flatten().collect::<Vec<Qrz>>()
+    }
+
+    pub fn neighbors(&self) -> Vec<Qrz> {
+        vec![
+            *self + Qrz { q: -1, r: 0, z: 0 }, // west
+            *self + Qrz { q: -1, r: 1, z: 0 }, // south-west
+            *self + Qrz { q: 0, r: 1, z: 0 }, // south-east
+            *self + Qrz { q: 1, r: 0, z: 0 }, // east
+            *self + Qrz { q: 1, r: -1, z: 0 }, // north-east
+            *self + Qrz { q: 0, r: -1, z: 0 }, // north-west
+        ]
     }
 
     pub fn into_doublewidth(&self) -> (i32,i32,i32) {

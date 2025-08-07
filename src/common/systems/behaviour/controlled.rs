@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::common::{
-        components::{behaviour::*, heading::*, offset::*, *}, 
+        components::{behaviour::*, heading::*, keybits::*, offset::*, *}, 
         message::{Component, Event, *}, 
         resources::{map::*, *}, 
         systems::physics,
@@ -45,15 +45,17 @@ pub fn tick(
 
 pub fn apply(
     mut reader: EventReader<Do>,
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime)>,
+    mut query: Query<(&Loc, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
-            let Ok((&loc, &heading, mut offset, mut air_time)) = query.get_mut(ent)
+            let Ok((&loc, mut offset, mut airtime)) = query.get_mut(ent)
                 // disconnect by client could remove entity while message in transit
                 else { warn!("no {ent} in query"); continue; };
-            (offset.state, air_time.state) = physics::apply(key_bits, dt as i16, *loc, heading, offset.state, air_time.state, &map);
+            let dest = Loc::new(*Heading::from(key_bits) + *loc);
+            if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
+            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, &map);
         }
     }
 }

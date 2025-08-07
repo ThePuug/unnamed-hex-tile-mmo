@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::common::components::heading::*;
+
 pub const KB_HEADING_Q: u8 = 1 << 0;
 pub const KB_HEADING_R: u8 = 1 << 1;
 pub const KB_HEADING_NEG: u8 = 1 << 2;
@@ -33,5 +35,23 @@ impl KeyBits {
             if pressed { self.key_bits |= k; }
             else { self.key_bits &= !k; }
         }
+    }
+}
+
+impl From<Heading> for KeyBits {
+    fn from(value: Heading) -> Self {
+        if value == default() { return KeyBits::default(); }
+        let value_s = -value.q-value.r;
+        let (q_r, r_s, s_q) = (value.q-value.r, value.r-value_s, value_s-value.q);
+        let Some(&dir) = [q_r.abs(), r_s.abs(), s_q.abs()].iter().max() else { panic!("no max") };
+        KeyBits { key_bits: match dir {
+            dir if dir == q_r => KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG,
+            dir if dir == r_s => KB_HEADING_R,
+            dir if dir == s_q => KB_HEADING_Q | KB_HEADING_NEG,
+            dir if dir == -q_r => KB_HEADING_Q | KB_HEADING_R,
+            dir if dir == -r_s => KB_HEADING_R | KB_HEADING_NEG,
+            dir if dir == -s_q => KB_HEADING_Q,
+            _ => unreachable!(),
+        }, accumulator: 0 }
     }
 }

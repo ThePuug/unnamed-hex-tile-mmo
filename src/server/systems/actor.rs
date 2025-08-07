@@ -8,7 +8,8 @@ use crate::{
             offset::Offset, *
         }, 
         message::{Component, Event, *}, 
-        resources::map::Map 
+        plugins::nntree::*, 
+        resources::map::* 
     },
     server::resources::terrain::*
 };
@@ -41,12 +42,16 @@ pub fn update(
     mut writer: EventWriter<Try>,
     mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
     map: Res<Map>,
+    nntree: Res<NNTree>,
 ) {
     for (ent, &loc0, &offset) in &mut query {
         let px = map.convert(*loc0);
         let qrz = map.convert(px + offset.state);
-        if *loc0 != qrz { 
-            let component = Component::Loc(Loc::new(qrz));
+        if *loc0 != qrz {
+            let loc = Loc::new(qrz);
+            let count = nntree.within_unsorted_iter::<Hexhattan>(&loc.into(), 1_i16.into()).count();
+            if count >= 7 { warn!("tried to move loc to full tile"); continue }
+            let component = Component::Loc(loc);
             writer.write(Try { event: Event::Incremental { ent, component } }); 
         }
     }

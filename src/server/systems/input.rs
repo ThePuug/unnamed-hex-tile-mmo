@@ -53,7 +53,7 @@ pub fn try_gcd(
                             commands.spawn((
                                 typ,
                                 Loc::new(qrz),
-                                Behaviour::Wander(Wander { qrz }),
+                                Behaviour::Pathfind(Pathfind { dest: qrz, path: default() }),
                                 NearestNeighbor::default(),
                             )).id()
                         },

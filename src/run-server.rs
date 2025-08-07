@@ -70,8 +70,8 @@ fn main() {
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
-        server::systems::behaviour::follow::tick.run_if(on_timer(Duration::from_millis(1000))),
-        server::systems::behaviour::follow::apply, //.run_if(on_timer(Duration::from_millis(125))),
+        server::systems::behaviour::pathfind::tick.run_if(on_timer(Duration::from_millis(1000))),
+        server::systems::behaviour::pathfind::apply, //.run_if(on_timer(Duration::from_millis(125))),
         physics::update,
         common::systems::actor::update,
     ));

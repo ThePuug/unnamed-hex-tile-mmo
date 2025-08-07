@@ -131,6 +131,7 @@ impl Map {
     pub fn get(&self, qrz: Qrz) -> Option<&EntityType> { self.0.get(qrz) }
     pub fn insert(&mut self, qrz: Qrz, obj: EntityType) { self.0.insert(qrz, obj); }
     pub fn radius(&self) -> f32 { self.0.radius() }
+    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> { self.0.neighbors(qrz) }
 }
 
 impl Convert<Qrz, Vec3> for Map {
