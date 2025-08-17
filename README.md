@@ -8,6 +8,7 @@
 # Play
 Currently not alot to do, but getting a base down to build on
 - `<ArrowUp> <ArrowLeft> <ArrowRight> <ArrowDown>` to move
+- `<KeyQ>` to spawn a curious dog
 - `<Num0>` to jump
 
 # Game features
@@ -21,3 +22,4 @@ Currently not alot to do, but getting a base down to build on
 - spatial indexing using KdTree
 - isolate streaming input from input on global cooldown
 - generated mesh terrain
+- pathfinding behaviour using A* algorithm

@@ -11,8 +11,9 @@ use crate::common::{
         offset::*, 
         * 
     }, 
-    message::Event,
-    resources::{map::*, *},
+    message::Event, 
+    plugins::nntree::*, 
+    resources::{map::*, *}
 };
 
 const GRAVITY: f32 = 0.005;
@@ -21,6 +22,7 @@ pub fn update(
     mut query: Query<(&Loc, &mut Offset, &mut AirTime), With<Physics>>,
     map: Res<Map>,
     buffers: Res<InputQueues>,
+    nntree: Res<NNTree>,
 ) {
     for (&ent, buffer) in buffers.iter() {
         let Ok((&loc, mut offset0, mut airtime0)) = query.get_mut(ent) else { continue; };
@@ -29,7 +31,7 @@ pub fn update(
             let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
             let dest = Loc::new(*Heading::from(*key_bits) + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.is_none() { airtime = Some(125); }
-            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, &map);
+            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, &map, &nntree);
         }
         (offset0.step, airtime0.step) = (offset,airtime);
     }
@@ -42,6 +44,7 @@ pub fn apply(
     offset0: Vec3,
     airtime0: Option<i16>,
     map: &Map,
+    nntree: &NNTree,
 ) -> (Vec3, Option<i16>) {
     let mut offset0 = offset0;
     let mut airtime0 = airtime0;
@@ -94,7 +97,7 @@ pub fn apply(
         let is_solid = match map.get(next_hx) {
             Some(EntityType::Decorator(Decorator{is_solid, .. })) => *is_solid,
             _ => false
-        };
+        } || nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(next_hx).into(), 1_i16.into()).count() >= 7;
         let target_px = if is_solid { rel_px * HERE } else { rel_px * THERE };
 
         let delta_px = offset0.distance(target_px);

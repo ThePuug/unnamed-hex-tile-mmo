@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::common::{
         components::{behaviour::*, heading::*, keybits::*, offset::*, *}, 
         message::{Component, Event, *}, 
+        plugins::nntree::*, 
         resources::{map::*, *}, 
         systems::physics,
     };
@@ -47,6 +48,7 @@ pub fn apply(
     mut reader: EventReader<Do>,
     mut query: Query<(&Loc, &mut Offset, &mut AirTime)>,
     map: Res<Map>,
+    nntree: Res<NNTree>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
@@ -55,7 +57,7 @@ pub fn apply(
                 else { warn!("no {ent} in query"); continue; };
             let dest = Loc::new(*Heading::from(key_bits) + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
-            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, &map);
+            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, &map, &nntree);
         }
     }
 }

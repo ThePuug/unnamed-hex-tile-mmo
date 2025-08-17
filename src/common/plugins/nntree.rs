@@ -22,9 +22,9 @@ use kiddo::{
 
 use crate::common::components::*;
 
-impl From<Loc> for [FixedI16<U0>; 4] {
-    fn from(loc: Loc) -> [FixedI16<U0>; 4] {
-        [loc.q.into(), loc.r.into(), (-loc.q-loc.r).into(), loc.z.into()]
+impl From<Loc> for [FixedI16<U0>; 3] {
+    fn from(loc: Loc) -> [FixedI16<U0>; 3] {
+        [loc.q.into(), loc.r.into(), loc.z.into()]
     }
 }
 
@@ -34,7 +34,8 @@ impl Plugin for NNTreePlugin {
     fn build(&self, app: &mut App) {
         let kdtree = NNTree(KdTree::with_capacity(1_000_000));
         app.insert_resource(kdtree)
-            .add_systems(Update, update);
+            // .add_systems(Update, update)
+        ;
     }
 }
 
@@ -43,30 +44,30 @@ impl Plugin for NNTreePlugin {
 #[component(on_remove = on_remove)]
 pub struct NearestNeighbor(Loc);
 
-pub fn on_add(mut world: DeferredWorld, context: HookContext) {
+fn on_add(mut world: DeferredWorld, context: HookContext) {
     let loc = *world.get::<Loc>(context.entity).unwrap();
     **world.get_mut::<NearestNeighbor>(context.entity).unwrap() = loc;
     world.resource_mut::<NNTree>().add(&loc.into(), context.entity.to_bits());
 }
 
-pub fn on_remove(mut world: DeferredWorld, context: HookContext) {
+fn on_remove(mut world: DeferredWorld, context: HookContext) {
     let qrz = **world.get::<NearestNeighbor>(context.entity).unwrap();
     world.resource_mut::<NNTree>().remove(&qrz.into(), context.entity.to_bits());
 }
 
 #[derive(Deref, DerefMut, Resource)]
-pub struct NNTree(KdTree<FixedI16<U0>, u64, 4, 8, u32>);
+pub struct NNTree(KdTree<FixedI16<U0>, u64, 3, 8, u32>);
 
-pub fn update(
-    mut query: Query<(Entity, &Loc, &mut NearestNeighbor), Changed<Loc>>,
-    mut nntree: ResMut<NNTree>,
-) {
-    for (ent, &loc, mut nn) in &mut query {
-        nntree.remove(&(**nn).into(), ent.to_bits());
-        **nn = loc;
-        nntree.add(&loc.into(), ent.to_bits());
-    }
-}
+// pub fn update(
+//     mut query: Query<(Entity, &Loc, &mut NearestNeighbor), Changed<Loc>>,
+//     mut nntree: ResMut<NNTree>,
+// ) {
+//     for (ent, &loc, mut nn) in &mut query {
+//         nntree.remove(&(**nn).into(), ent.to_bits());
+//         **nn = loc;
+//         nntree.add(&loc.into(), ent.to_bits());
+//     }
+// }
 
 // TODO: current distance functions weirdly - need to rework dist to handle
 // - players being 1 tile above the ground

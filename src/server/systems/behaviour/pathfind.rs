@@ -4,7 +4,7 @@ use qrz::Qrz;
 use rand::seq::IteratorRandom;
 
 use crate::common::{
-    components::{ behaviour::*, entity_type::*, offset::*, * },
+    components::{ behaviour::*, entity_type::*, heading::Heading, keybits::KeyBits, offset::*, * },
     message::{Component, Event, * },
     plugins::nntree::*, 
     resources::map::*, 
@@ -53,23 +53,30 @@ pub fn tick(
 }
 
 pub fn apply(
-    // mut writer: EventWriter<Do>,
-    mut query: Query<(&mut Behaviour, &Loc, &mut Offset, &mut AirTime)>,
+    mut writer: EventWriter<Do>,
+    mut query: Query<(Entity, &mut Behaviour, &Loc, &mut Heading, &mut Offset, &mut AirTime)>,
     dt: Res<Time>,
     map: Res<Map>,
+    nntree: Res<NNTree>,
 ) {
-    for (mut behaviour, &loc, mut offset0, mut airtime0) in &mut query {
+    for (ent, mut behaviour, &loc, mut heading0, mut offset0, mut airtime0) in &mut query {
         let Behaviour::Pathfind(mut pathfind) = *behaviour else { continue; };
         if pathfind.path.is_empty() { continue; }
         let &qrz = pathfind.path.last().expect("no last in path");
-        if *loc - Qrz::Z == qrz { 
+        let here = *loc - Qrz::Z;
+        if here == qrz { 
             pathfind.path.pop(); 
             *behaviour = Behaviour::Pathfind(pathfind);
         }
 
         let Some(&dest) = pathfind.path.last() else { continue };
+        let heading = Heading::from(KeyBits::from(Heading::new(dest - here)));
+        if heading != *heading0 {
+            *heading0 = heading;
+            writer.write(Do { event: Event::Incremental { ent, component: Component::Heading(heading) }});
+        }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
-        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, &map);
+        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
     }
 }

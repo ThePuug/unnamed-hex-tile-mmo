@@ -40,17 +40,22 @@ use crate::{
 
 pub fn update(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &Loc, &Offset, &mut NearestNeighbor), Changed<Offset>>,
+    mut nntree: ResMut<NNTree>,
     map: Res<Map>,
-    nntree: Res<NNTree>,
 ) {
-    for (ent, &loc0, &offset) in &mut query {
+    for (ent, &loc0, &offset, mut nn) in &mut query {
         let px = map.convert(*loc0);
         let qrz = map.convert(px + offset.state);
         if *loc0 != qrz {
             let loc = Loc::new(qrz);
             let count = nntree.within_unsorted_iter::<Hexhattan>(&loc.into(), 1_i16.into()).count();
-            if count >= 7 { warn!("tried to move loc to full tile"); continue }
+            if count >= 7 { continue }
+
+            nntree.remove(&(**nn).into(), ent.to_bits());
+            **nn = loc;
+            nntree.add(&loc.into(), ent.to_bits());
+
             let component = Component::Loc(loc);
             writer.write(Try { event: Event::Incremental { ent, component } }); 
         }
