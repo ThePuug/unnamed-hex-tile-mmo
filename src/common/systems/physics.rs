@@ -92,12 +92,13 @@ pub fn apply(
         let heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));   // direction towards destination tile
         let next_hx = step_hx + *heading;                                   // next tile towards destination
 
-        // check whether next tile is solid or not
-        // set target px HERE when next tile is solid, otherwise THERE
+        // check whether next tile is solid, full or neither
         let is_solid = match map.get(next_hx) {
             Some(EntityType::Decorator(Decorator{is_solid, .. })) => *is_solid,
-            _ => false
-        } || nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(next_hx).into(), 1_i16.into()).count() >= 7;
+            _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= 7
+        };
+
+        // set target px HERE when next tile is solid, otherwise THERE
         let target_px = if is_solid { rel_px * HERE } else { rel_px * THERE };
 
         let delta_px = offset0.distance(target_px);

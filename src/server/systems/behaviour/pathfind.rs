@@ -13,19 +13,18 @@ use crate::common::{
 
 pub fn tick(
     mut writer: EventWriter<Do>,
-    mut query: Query<(&Loc, &mut Behaviour)>,
+    mut query: Query<(&Loc, &NearestNeighbor, &mut Behaviour)>,
     q_other: Query<(&Loc, &EntityType)>,
     nntree: Res<NNTree>,
     map: Res<Map>,
 ) {
-    for (it,_) in nntree.iter() {
-        let ent = Entity::from_bits(it);
-        let Ok((&loc, mut behaviour)) = query.get_mut(ent) else { continue };
+    for it in nntree.iter() {
+        let Ok((&loc, &nn, mut behaviour)) = query.get_mut(it.ent) else { continue };
         let Behaviour::Pathfind(Pathfind { dest: dest0, mut path }) = *behaviour else { continue };
 
-        let others = nntree.within_unsorted::<Hexhattan>(&loc.into(), 20_i16.into());
-        let Some(other) = others.iter().filter(|it| it.item != ent.to_bits()).choose(&mut rand::thread_rng()) else { continue };
-        let Ok((&o_loc, &o_typ)) = q_other.get(Entity::from_bits(other.item)) else { continue };
+        let others = nntree.locate_within_distance(loc, 20*20);
+        let Some(other) = others.filter(|it| **it != nn).choose(&mut rand::rng()) else { continue };
+        let Ok((&o_loc, &o_typ)) = q_other.get(other.ent) else { continue };
         let EntityType::Actor(_) = o_typ else { continue };
         
         let Some((dest,_)) = map.find(*o_loc,-2) else { continue };
@@ -48,7 +47,7 @@ pub fn tick(
         for &it in full_path.iter().skip(1).take(20).rev() { path.push(it); }
 
         *behaviour = Behaviour::Pathfind(Pathfind { dest, path });
-        writer.write(Do { event: Event::Incremental { ent, component: Component::Behaviour(*behaviour) }});
+        writer.write(Do { event: Event::Incremental { ent: it.ent, component: Component::Behaviour(*behaviour) }});
     }
 }
 

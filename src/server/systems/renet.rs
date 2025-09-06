@@ -57,12 +57,13 @@ pub fn do_manage_connections(
                     Form::Humanoid, 
                     Manifestation::Physical));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
+                let loc = Loc::new(qrz);
                 let ent = commands.spawn((
                     typ,
-                    Loc::new(qrz),
+                    loc,
                     Behaviour::Controlled,
-                    NearestNeighbor::default(),
                 )).id();
+                commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
 
                 // init input buffer for client
@@ -77,11 +78,10 @@ pub fn do_manage_connections(
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn nearby actors
-                for other in nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(qrz).into(), 20_i16.into()) {
-                    let ent = Entity::from_bits(other.item);
-                    let (&loc, &typ) = query.get(ent).unwrap();
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    let (&loc, &typ) = query.get(other.ent).unwrap();
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { typ, ent, qrz: *loc }}, 
+                        Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc }}, 
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
@@ -137,8 +137,8 @@ pub fn write_try(
     for &message in reader.read() {
         match message {
             Do { event: Event::Spawn { ent, typ, qrz } } => {
-                for other in nntree.within_unsorted_iter::<Hexhattan>(&Loc::new(qrz).into(), 20_i16.into()) {
-                    let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) else { continue; };
+                for other in nntree.locate_within_distance(Loc::new(qrz), 20*20) {
+                    let Some(client_id) = lobby.get_by_right(&other.ent) else { continue; };
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { ent, typ, qrz }}, 
                         bincode::config::legacy()).unwrap();
@@ -151,8 +151,8 @@ pub fn write_try(
                     _ => {}
                 }
                 let &loc = query.get(ent).unwrap();
-                for other in nntree.within_unsorted_iter::<Hexhattan>(&loc.into(), 20_i16.into()) {
-                    if let Some(client_id) = lobby.get_by_right(&Entity::from_bits(other.item)) {
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Incremental { ent, component }}, 
                             bincode::config::legacy()).unwrap();                        

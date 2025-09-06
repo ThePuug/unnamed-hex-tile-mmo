@@ -50,12 +50,14 @@ pub fn try_gcd(
                     let ent = match typ {
                         EntityType::Actor(_) => {
                             let qrz = *loc + *heading;
-                            commands.spawn((
+                            let loc = Loc::new(qrz);
+                            let ent = commands.spawn((
                                 typ,
-                                Loc::new(qrz),
+                                loc,
                                 Behaviour::Pathfind(Pathfind { dest: qrz, path: default() }),
-                                NearestNeighbor::default(),
-                            )).id()
+                            )).id();
+                            commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
+                            ent
                         },
                         _ => Entity::PLACEHOLDER,
                     };

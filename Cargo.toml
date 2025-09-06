@@ -8,19 +8,20 @@ authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 bevy = { version = "0", features = ["dynamic_linking"] }
 bevy_easings = "0"
 # bevy_hanabi = { version = "0", default-features = false, features = [ "3d", "serde" ] }
-bevy_renet = { git = "https://github.com/lucaspoffo/renet.git" }
+bevy_renet = "2"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"
-fixed = "1"
+# fixed = "1"
 iyes_perf_ui = "0"
-kiddo = "5"
+# kiddo = "5"
 log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
 noise = { version = "0" }
 pathfinding = "4"
 phf = { version = "0", features = ["macros"] }
 rand = "0"
-renet = { git = "https://github.com/lucaspoffo/renet.git" }
+renet = "1"
+rstar = "0"
 serde = { version = "1", features = ["derive"] }
 tinyvec = { version = "1", features = ["serde"]}
 

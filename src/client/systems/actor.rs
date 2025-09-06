@@ -9,16 +9,13 @@ use qrz::Convert;
 use crate::{
     client::components::*,
     common::{
-        components::{ *, 
-            entity_type::{ *,
-                actor::*,
-            },
-            heading::*, 
-            keybits::*, 
-            offset::*, 
-        },
+        components::{ 
+            entity_type::{ actor::*, * }, 
+            heading::*, keybits::*, offset::*, * 
+        }, 
         message::{ Event, * }, 
-        resources::map::Map,
+        plugins::nntree::NearestNeighbor, 
+        resources::map::Map
     }
 };
 
@@ -85,8 +82,9 @@ pub fn do_spawn(
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz } } = message else { continue };
         let EntityType::Actor(desc) = typ else { continue };
+        let loc = Loc::new(qrz);
         commands.entity(ent).insert((
-            Loc::new(qrz),
+            loc,
             typ,
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
             Transform { 
@@ -94,6 +92,7 @@ pub fn do_spawn(
                 scale: Vec3::ONE * map.radius(),
                 ..default()},
             AirTime { state: Some(0), step: None },
+            NearestNeighbor::new(ent, loc),
             Heading::default(),
             Offset::default(),
             KeyBits::default(),

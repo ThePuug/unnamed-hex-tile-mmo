@@ -10,7 +10,7 @@ Currently not alot to do, but getting a base down to build on
 - `<ArrowUp> <ArrowLeft> <ArrowRight> <ArrowDown>` to move
 - `<KeyQ>` to spawn a curious dog
 - `<Num0>` to jump
-
+ 
 # Game features
 ## things you care about
 - sun/moon/season cycles

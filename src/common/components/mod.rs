@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Serialize)]
+#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Loc(Qrz);
 
 impl Loc {
