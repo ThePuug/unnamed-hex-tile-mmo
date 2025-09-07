@@ -19,7 +19,7 @@ Currently not alot to do, but getting a base down to build on
 
 ## things i care about
 - authoritative server
-- spatial indexing using KdTree
+- rstar backed spatial index
 - isolate streaming input from input on global cooldown
 - generated mesh terrain
 - pathfinding behaviour using A* algorithm

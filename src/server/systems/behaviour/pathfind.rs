@@ -1,36 +1,76 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*, 
+    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool}
+};
 use pathfinding::prelude::*;
 use qrz::Qrz;
 use rand::seq::IteratorRandom;
+use tinyvec::ArrayVec;
 
-use crate::common::{
-    components::{ behaviour::*, entity_type::*, heading::Heading, keybits::KeyBits, offset::*, * },
-    message::{Component, Event, * },
-    plugins::nntree::*, 
-    resources::map::*, 
-    systems::physics,
+use crate::{
+    common::{
+        components::{ behaviour::*, entity_type::*, heading::Heading, keybits::KeyBits, offset::*, * },
+        message::{Component, Event, * },
+        plugins::nntree::*, 
+        resources::map::*, 
+        systems::physics,
+    }, 
+    server::resources::AsyncTasks
 };
 
 pub fn tick(
-    mut writer: EventWriter<Do>,
-    mut query: Query<(&Loc, &NearestNeighbor, &mut Behaviour)>,
+    query: Query<(Entity, &Loc, &NearestNeighbor, &Behaviour)>,
     q_other: Query<(&Loc, &EntityType)>,
-    nntree: Res<NNTree>,
     map: Res<Map>,
+    nntree: Res<NNTree>,
+    mut tasks: ResMut<AsyncTasks>,
 ) {
-    for it in nntree.iter() {
-        let Ok((&loc, &nn, mut behaviour)) = query.get_mut(it.ent) else { continue };
-        let Behaviour::Pathfind(Pathfind { dest: dest0, mut path }) = *behaviour else { continue };
+    if !tasks.task_behaviour_pathfind.is_none() { return }
+
+    let mut paths = Vec::new();
+    for (ent, &loc, &nn, &behaviour) in query.iter() {
+        let Behaviour::Pathfind(Pathfind { .. }) = behaviour else { continue };
 
         let others = nntree.locate_within_distance(loc, 20*20);
         let Some(other) = others.filter(|it| **it != nn).choose(&mut rand::rng()) else { continue };
         let Ok((&o_loc, &o_typ)) = q_other.get(other.ent) else { continue };
         let EntityType::Actor(_) = o_typ else { continue };
         
-        let Some((dest,_)) = map.find(*o_loc,-2) else { continue };
-        let Some((start,_)) = map.find(*loc,-2) else { continue };
+        paths.extend_one((ent,*loc,*o_loc));
+    }
 
-        if dest == dest0 { continue; }
+    let pool = AsyncComputeTaskPool::get();
+    let map = map.clone();
+    tasks.task_behaviour_pathfind = Some(pool.spawn(async move {
+        async_tick(&paths, &map)
+    }));
+}
+
+pub fn async_ready(
+    mut writer: EventWriter<Do>,
+    mut tasks: ResMut<AsyncTasks>,
+) {
+    if tasks.task_behaviour_pathfind.is_none() { return; }
+
+    let task = tasks.task_behaviour_pathfind.as_mut();
+    let result = block_on(future::poll_once(task.unwrap()));
+    if result.is_none() { return; }
+
+    let events = result.unwrap();
+    for &event in events.iter() { writer.write(event); }
+    tasks.task_behaviour_pathfind = None;
+}
+
+fn async_tick(
+    paths: &Vec<(Entity,Qrz,Qrz)>,
+    map: &Map,
+) -> Vec<Do> {
+    let mut ret = Vec::new();
+    for &(ent,start,dest) in paths.iter() {
+        let Some((dest,_)) = map.find(dest,-2) else { continue };
+        let Some((start,_)) = map.find(start,-2) else { continue };
+
+        // if dest == dest0 { continue; }
 
         let (full_path, _) = astar(
                 &start,
@@ -42,13 +82,12 @@ pub fn tick(
                 |&l| l == dest
             ).unwrap_or_default();
 
+        let mut pathfind = Pathfind { dest, path: ArrayVec::new() };
         // push the first 20 steps of the path not including current location
-        path.clear();
-        for &it in full_path.iter().skip(1).take(20).rev() { path.push(it); }
-
-        *behaviour = Behaviour::Pathfind(Pathfind { dest, path });
-        writer.write(Do { event: Event::Incremental { ent: it.ent, component: Component::Behaviour(*behaviour) }});
+        for &it in full_path.iter().skip(1).take(20).rev() { pathfind.path.push(it); }
+        ret.extend_one(Do { event: Event::Incremental { ent, component: Component::Behaviour(Behaviour::Pathfind(pathfind)) }});
     }
+    ret
 }
 
 pub fn apply(

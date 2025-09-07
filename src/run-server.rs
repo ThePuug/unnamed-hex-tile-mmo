@@ -71,7 +71,8 @@ fn main() {
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
         server::systems::behaviour::pathfind::tick.run_if(on_timer(Duration::from_millis(1000))),
-        server::systems::behaviour::pathfind::apply, //.run_if(on_timer(Duration::from_millis(125))),
+        server::systems::behaviour::pathfind::async_ready,
+        server::systems::behaviour::pathfind::apply,
         physics::update,
         common::systems::actor::update,
     ));
@@ -105,6 +106,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
+    app.init_resource::<AsyncTasks>();
 
     app.run();
 }
