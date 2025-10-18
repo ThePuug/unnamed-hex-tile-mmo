@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod animator;
 pub mod camera;
+pub mod debug_grid;
 // pub mod effect;
 pub mod input;
 pub mod renet;

@@ -10,12 +10,14 @@ Currently not alot to do, but getting a base down to build on
 - `<ArrowUp> <ArrowLeft> <ArrowRight> <ArrowDown>` to move
 - `<KeyQ>` to spawn a curious dog
 - `<Num0>` to jump
+- `<KeyG>` to toggle debug grid overlay
  
 # Game features
 ## things you care about
 - sun/moon/season cycles
 - hexagonal movement
 - perlin noise terrain generation
+- organic terrain slopes (tiles slope toward neighbors at different elevations)
 
 ## things i care about
 - authoritative server

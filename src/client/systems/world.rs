@@ -129,7 +129,6 @@ pub fn update(
     server: Res<Server>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
-    // let dt = 7_200_000; // DEBUG
     let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
