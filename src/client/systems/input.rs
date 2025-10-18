@@ -90,9 +90,15 @@ pub fn do_input(
 ) {
     for &message in reader.read() {
         let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
-        let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
+        let Some(buffer) = buffers.get_mut(&ent) else { 
+            warn!("no {ent} in buffers"); 
+            continue 
+        };
         let Some(Event::Input { ent: ent0, key_bits: keybits0, dt: dt0, seq: seq0 }) = buffer.queue.pop_back() 
-            else { panic!("no back on buffer") };
+            else { 
+                warn!("no back on buffer for {ent} (seq {seq})");
+                continue 
+            };
         assert!(ent == ent0);
         assert!(key_bits == keybits0);
         assert!(seq == seq0);
