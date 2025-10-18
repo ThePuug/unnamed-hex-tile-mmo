@@ -4,5 +4,6 @@ pub mod camera;
 // pub mod effect;
 pub mod input;
 pub mod renet;
+pub mod target_cursor;
 pub mod ui;
 pub mod world;

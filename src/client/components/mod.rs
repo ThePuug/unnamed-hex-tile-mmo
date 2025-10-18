@@ -22,3 +22,6 @@ pub struct Terrain {
     pub task_regenerate_mesh: Option<Task<(Mesh,Aabb)>>,
     pub task_start_regenerate_mesh: bool,
 }
+
+#[derive(Component, Default)]
+pub struct TargetCursor;

@@ -31,7 +31,7 @@ use common::{
 };
 use client::{
     resources::*,
-    systems::{actor, animator, camera, input, renet, *}
+    systems::{actor, animator, camera, input, renet, target_cursor, *}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -81,6 +81,7 @@ fn main() {
         actor::setup,
         camera::setup,
         renet::setup,
+        target_cursor::setup,
         ui::setup.after(camera::setup),
         world::setup,
     ));
@@ -107,6 +108,7 @@ fn main() {
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
         input::do_input,
+        target_cursor::update,
         ui::update,
         world::async_spawn,
         world::async_ready,
