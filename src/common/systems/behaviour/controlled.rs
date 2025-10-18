@@ -11,7 +11,7 @@ use crate::common::{
 pub fn tick(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
-    query: Query<(Entity, &Behaviour)>,
+    query: Query<&Behaviour>,
     dt: Res<Time>,
     mut buffers: ResMut<InputQueues>,
 ) {
@@ -28,24 +28,32 @@ pub fn tick(
         };
         let Event::Input { seq: seq0, .. } = input0 else { panic!("not input") };
         let input = Event::Input { ent, key_bits: keybits, dt: 0, seq: seq0.wrapping_add(1) };
-        buffer.queue.push_front(input); 
+        buffer.queue.push_front(input);
+        buffers.mark_non_empty(ent);
         writer.write(Try { event: input });
     }
 
-    for (ent, &behaviour) in query {
+    // Only iterate over entities with non-empty queues instead of all controlled entities
+    let entities_to_process: Vec<Entity> = buffers.non_empty_entities().copied().collect();
+    
+    for ent in entities_to_process {
+        // Verify entity still has Controlled behaviour
+        let Ok(&behaviour) = query.get(ent) else { continue };
         let Behaviour::Controlled = behaviour else { continue; };
 
         let Some(buffer) = buffers.get_mut(&ent) 
             // disconnect by client could remove buffer while message in transit
             else { continue };
         let Some(input0) = buffer.queue.pop_front() else { 
-            // Silently skip if queue is empty - will recover when new input arrives
+            // Queue became empty between collection and processing
+            buffers.mark_empty_if_needed(ent);
             continue 
         };
         let Event::Input { key_bits: keybits0, dt: dt0, seq: seq0, .. } = input0 else { panic!("not input") };
 
         let dt0 = dt0 + dt;
         buffer.queue.push_front(Event::Input { ent, key_bits: keybits0, dt: dt0, seq: seq0 });
+        // Queue still has items, keep it marked as non-empty
         writer.write(Try { event: Event::Input { ent, key_bits: keybits0, dt, seq: seq0 }});
     }
 }

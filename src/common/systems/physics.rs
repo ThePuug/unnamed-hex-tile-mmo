@@ -24,7 +24,10 @@ pub fn update(
     buffers: Res<InputQueues>,
     nntree: Res<NNTree>,
 ) {
-    for (&ent, buffer) in buffers.iter() {
+    for (ent, buffer) in buffers.iter() {
+        // Skip if queue is empty - no physics to apply
+        if buffer.queue.is_empty() { continue; }
+        
         let Ok((&loc, mut offset0, mut airtime0)) = query.get_mut(ent) else { continue; };
         let (mut offset, mut airtime) = (offset0.state, airtime0.state);
         for input in buffer.queue.iter().rev() {
@@ -98,9 +101,27 @@ pub fn apply(
         
         // Check if trying to walk UP a cliff (elevation diff > 1 going upward)
         // Allow walking off cliffs (downward) - player will fall
+        // Now also considers player's current vertical position to allow jumping up small cliffs
         let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
             let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
-            elevation_diff > 1  // Block only upward cliffs, allow walking off edges
+            
+            if elevation_diff > 1 {
+                // Only allow traversal if player is jumping AND high enough
+                if airtime0.is_some() {
+                    // Calculate actual world Y positions
+                    let current_y = map.convert(*loc0).y + offset0.y;
+                    let target_floor_y = map.convert(next_floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
+                    
+                    // Block if player's current Y position cannot reach the target floor
+                    // Allow a small threshold (0.5 units) for ledge grabbing
+                    current_y + 0.5 < target_floor_y
+                } else {
+                    // On ground - block all cliff traversal
+                    true
+                }
+            } else {
+                false  // Not a cliff or downward - allow movement
+            }
         } else {
             false  // Can't determine elevation, allow movement
         };

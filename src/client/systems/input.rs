@@ -103,5 +103,7 @@ pub fn do_input(
         assert!(seq == seq0);
         if (dt as i32 - dt0 as i32).abs() > 100 { warn!("dt: {dt} != {dt0}"); }
         if buffer.queue.len() > 2 { warn!("buffer.queue len: {}", buffer.queue.len()); }
+        // Update tracking after pop
+        buffers.mark_empty_if_needed(ent);
     }
 }
