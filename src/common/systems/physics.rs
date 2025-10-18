@@ -93,28 +93,32 @@ pub fn apply(
         let heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));   // direction towards destination tile
         let next_hx = step_hx + *heading;                                   // next tile towards destination
 
-        // check whether next tile is solid, or if there's a walkable floor nearby
-        // First check the exact tile
+        // Search for next floor tile
+        let next_floor = map.find(next_hx + Qrz::Z*30, -60);
+        
+        // Check if trying to walk UP a cliff (elevation diff > 1 going upward)
+        // Allow walking off cliffs (downward) - player will fall
+        let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
+            let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
+            elevation_diff > 1  // Block only upward cliffs, allow walking off edges
+        } else {
+            false  // Can't determine elevation, allow movement
+        };
+        
+        // Check if next tile has a solid obstacle
         let exact_is_solid = match map.get(next_hx) {
             Some(EntityType::Decorator(Decorator{is_solid, .. })) => *is_solid,
             _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= 7
         };
         
-        // If exact tile is solid, check for a valid floor within 1 tile rise (up or down)
-        // This allows smooth walking on slopes
-        let is_blocked = if exact_is_solid {
-            // Search for a valid floor tile within stepping distance
-            let has_nearby_floor = map.find(next_hx + Qrz::Z*30, -60)
-                .map(|(floor_qrz, _)| {
-                    // Allow movement if floor is within 1 tile rise of current position
-                    (floor_qrz.z - loc0.z).abs() <= 1
-                })
-                .unwrap_or(false);
-            
-            !has_nearby_floor  // Block only if no nearby floor exists
+        let is_blocked_by_solid = if exact_is_solid {
+            // If solid, check if there's a valid floor nearby
+            next_floor.is_none()
         } else {
-            false  // Not solid, allow movement
+            false
         };
+        
+        let is_blocked = is_cliff_transition || is_blocked_by_solid;
 
         // set target px HERE when blocked, otherwise THERE
         let target_px = if is_blocked { rel_px * HERE } else { rel_px * THERE };
