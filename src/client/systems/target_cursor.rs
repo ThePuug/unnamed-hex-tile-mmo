@@ -14,7 +14,7 @@ use crate::{
     }
 };
 
-use super::world::{TILE_RISE, TILE_SIZE};
+use super::world::TILE_SIZE;
 
 pub fn setup(
     mut commands: Commands,
@@ -47,7 +47,7 @@ pub fn update(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if let Ok((mut mesh_handle, mut cursor_transform)) = cursor_query.single_mut() {
-        if let Ok((loc, heading)) = player_query.get_single() {
+        if let Ok((loc, heading)) = player_query.single() {
             // Calculate the hex direction from the player's heading
             let target_direction = **loc + **heading;
             

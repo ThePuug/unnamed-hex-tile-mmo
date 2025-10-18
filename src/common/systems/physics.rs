@@ -54,7 +54,10 @@ pub fn apply(
         dt0-=125; 
         let mut dt = min(125+dt0, 125);
 
-        let floor = map.find(*loc0 + Qrz::Z*5, -10);
+        let px0 = map.convert(*loc0);                                       // current px of loc
+        let step_hx = map.convert(px0 + offset0);                           // current offset from loc
+        let floor = map.find(step_hx + Qrz::Z*5, -10);
+        
         if airtime0.is_none() {
             if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * offset0.y).z > floor.unwrap().0.z+1 {
                 airtime0 = Some(0); 
@@ -85,26 +88,55 @@ pub fn apply(
             }
         }
 
-        let px0 = map.convert(*loc0);                                       // current px of loc
-        let step_hx = map.convert(px0 + offset0);                           // current offset from loc
         let rel_px = map.convert(*dest)-px0;                                // destination px relative to current px
         let rel_hx = map.convert(rel_px);                                   // destination tile relative to loc
         let heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));   // direction towards destination tile
         let next_hx = step_hx + *heading;                                   // next tile towards destination
 
-        // check whether next tile is solid, full or neither
-        let is_solid = match map.get(next_hx) {
+        // check whether next tile is solid, or if there's a walkable floor nearby
+        // First check the exact tile
+        let exact_is_solid = match map.get(next_hx) {
             Some(EntityType::Decorator(Decorator{is_solid, .. })) => *is_solid,
             _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= 7
         };
+        
+        // If exact tile is solid, check for a valid floor within 1 tile rise (up or down)
+        // This allows smooth walking on slopes
+        let is_blocked = if exact_is_solid {
+            // Search for a valid floor tile within stepping distance
+            let has_nearby_floor = map.find(next_hx + Qrz::Z*5, -10)
+                .map(|(floor_qrz, _)| {
+                    // Allow movement if floor is within 1 tile rise of current position
+                    (floor_qrz.z - loc0.z).abs() <= 1
+                })
+                .unwrap_or(false);
+            
+            !has_nearby_floor  // Block only if no nearby floor exists
+        } else {
+            false  // Not solid, allow movement
+        };
 
-        // set target px HERE when next tile is solid, otherwise THERE
-        let target_px = if is_solid { rel_px * HERE } else { rel_px * THERE };
+        // set target px HERE when blocked, otherwise THERE
+        let target_px = if is_blocked { rel_px * HERE } else { rel_px * THERE };
 
         let delta_px = offset0.distance(target_px);
         let ratio = 0_f32.max((delta_px - 0.005*dt as f32) / delta_px);
         let lerp_xz = offset0.xz().lerp(target_px.xz(), 1. - ratio);
         offset0 = Vec3::new(lerp_xz.x, offset0.y, lerp_xz.y);
+        
+        // When on ground, smoothly adjust Y to match terrain height
+        if airtime0.is_none() {
+            // Recalculate floor based on new horizontal position
+            let current_hx = map.convert(px0 + offset0);
+            let current_floor = map.find(current_hx + Qrz::Z*5, -10);
+            
+            if let Some((floor_qrz, _)) = current_floor {
+                let target_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
+                // Smoothly lerp Y position toward terrain height
+                let y_lerp_speed = 0.3; // Adjust this for faster/slower slope climbing
+                offset0.y = offset0.y * (1.0 - y_lerp_speed) + target_y * y_lerp_speed;
+            }
+        }
     }
 
     (offset0, airtime0)
