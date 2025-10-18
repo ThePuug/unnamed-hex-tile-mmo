@@ -9,9 +9,9 @@ use crate::common::components::entity_type::{
     decorator::*,
 };
 
-#[derive(Clone, Component, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EntityType {
-    Unset,
+    #[default] Unset,
     Actor(ActorImpl),
     Decorator(Decorator),
 }

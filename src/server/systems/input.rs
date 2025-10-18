@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_behave::prelude::*;
 
 use crate::{ 
     common::{
@@ -6,7 +7,8 @@ use crate::{
         message::{Event, *}, 
         plugins::nntree::*, 
         systems::gcd::*
-    }, *
+    }, 
+    server::systems::behaviour::*, *
 };
 
 pub fn try_input(
@@ -54,7 +56,20 @@ pub fn try_gcd(
                             let ent = commands.spawn((
                                 typ,
                                 loc,
-                                Behaviour::Pathfind(Pathfind { dest: qrz, path: default() }),
+                                children![(
+                                    Name::new("curious behaviour"),
+                                    BehaveTree::new(behave! {
+                                        Behave::Forever => {
+                                            Behave::Sequence => {
+                                                Behave::spawn_named(
+                                                    "find something interesting", 
+                                                    FindSomethingInterestingWithin { dist: 20 }),
+                                                Behave::spawn_named(
+                                                    "path to target", 
+                                                    PathTo::default()),
+                                                Behave::Wait(5.),
+                                    }}})
+                                )],
                             )).id();
                             commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                             ent

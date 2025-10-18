@@ -6,6 +6,7 @@ mod server;
 
 use std::{ net::UdpSocket, time::* };
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
+use bevy_behave::prelude::*;
 use bevy_easings::*;
 use bevy_renet::{
     renet::{ConnectionConfig, RenetServer},
@@ -53,6 +54,7 @@ fn main() {
         NetcodeServerPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
+        BehavePlugin::default(),
     ));
 
     app.add_event::<Do>();
@@ -70,9 +72,9 @@ fn main() {
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
-        server::systems::behaviour::pathfind::tick.run_if(on_timer(Duration::from_millis(1000))),
-        server::systems::behaviour::pathfind::async_ready,
-        server::systems::behaviour::pathfind::apply,
+        server::systems::behaviour::find_something_interesting_within,
+        server::systems::behaviour::pathto::tick, //.run_if(on_timer(Duration::from_millis(1000))),
+        server::systems::behaviour::pathto::apply,
         physics::update,
         common::systems::actor::update,
     ));
@@ -106,7 +108,6 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
-    app.init_resource::<AsyncTasks>();
 
     app.run();
 }
