@@ -20,10 +20,16 @@ impl Map {
     }
 
     /// Generate vertices for a hex tile with slopes toward neighbors
-    /// Each edge adjusts by 0.5 * rise, but vertices on multiple edges take the max adjustment
-    pub fn vertices_with_slopes(&self, qrz: Qrz) -> Vec<Vec3> {
+    /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
+    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz) -> (Vec<Vec3>, Vec<[f32; 4]>) {
         let mut verts = self.0.vertices(qrz);
         let rise = self.0.rise();
+        
+        // Default grass color (dark greenish to match original terrain)
+        let grass_color = [0.04, 0.09, 0.04, 1.0];
+        // Stone cliff color (lighter gray-brown for contrast)
+        let cliff_color = [0.35, 0.32, 0.28, 1.0];
+        let mut colors = vec![grass_color; 6];
         
         // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
@@ -39,12 +45,13 @@ impl Map {
         ];
 
         // Process each edge independently based on its neighbor
+        // Do neighbor search once and use for both slopes and cliff detection
         for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
             let neighbor_qrz = qrz + *direction;
             
             // Try to find the neighbor tile across this edge (search both up and down)
-            let found_neighbor = self.find(neighbor_qrz, -10)
-                .or_else(|| self.find(neighbor_qrz, 10));
+            let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
+                .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
             
             if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                 // Calculate elevation difference
@@ -65,6 +72,14 @@ impl Map {
                     vertex_adjustments[v1].push(adjustment);
                     vertex_adjustments[v2].push(adjustment);
                 }
+                
+                // Check if this is a cliff edge (any elevation step in either direction)
+                // Mark as cliff if elevation difference is greater than 1 level
+                if elevation_diff.abs() > 1 {
+                    let (v1, v2) = direction_to_vertices[dir_idx];
+                    colors[v1] = cliff_color;
+                    colors[v2] = cliff_color;
+                }
             }
         }
 
@@ -78,22 +93,29 @@ impl Map {
             }
         }
 
-        verts
+        (verts, colors)
+    }
+    
+    /// Legacy method for backward compatibility
+    pub fn vertices_with_slopes(&self, qrz: Qrz) -> Vec<Vec3> {
+        self.vertices_and_colors_with_slopes(qrz).0
     }
 
     pub fn regenerate_mesh(&self) -> (Mesh,Aabb) {
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
+        let mut colors:Vec<[f32; 4]> = Vec::new();
         let mut last_qrz:Option<Qrz> = None;
         let mut skip_sw = false;
         let mut west_skirt_verts: Vec<Vec3> = Vec::new();
         let mut west_skirt_norms: Vec<Vec3> = Vec::new();
+        let mut west_skirt_colors: Vec<[f32; 4]> = Vec::new();
         let (mut min, mut max) = (Vec3::new(f32::MAX, f32::MAX, f32::MAX), Vec3::new(f32::MIN, f32::MIN, f32::MIN));
 
         let map = self.0.clone();
         map.clone().into_iter().for_each(|tile| {
             let it_qrz = tile.0;
-            let it_vrt = self.vertices_with_slopes(it_qrz);
+            let (it_vrt, it_col) = self.vertices_and_colors_with_slopes(it_qrz);
 
             if let Some(last_qrz) = last_qrz {
                 // if new column
@@ -101,6 +123,7 @@ impl Map {
                     // add skirts
                     verts.append(&mut west_skirt_verts);
                     norms.append(&mut west_skirt_norms);
+                    colors.append(&mut west_skirt_colors);
 
                     // update bounding box
                     let last_vrt = self.vertices_with_slopes(last_qrz);
@@ -111,36 +134,40 @@ impl Map {
                 }
             }
 
-            let sw_result = self.find(it_qrz + Qrz{q:0,r:0,z:5} + qrz::DIRECTIONS[1], -10);
-            let sw_vrt = sw_result.map(|(qrz, _)| self.vertices_with_slopes(qrz));
+            let sw_result = self.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[1], -60);
+            let sw_data = sw_result.map(|(qrz, _)| self.vertices_and_colors_with_slopes(qrz));
 
             if skip_sw {
-                let last_vrt = self.vertices_with_slopes(last_qrz.unwrap());
+                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz.unwrap());
                 let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
                 verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
                 norms.extend([ Vec3::new(0., 1., 0.); 4 ]);
+                colors.extend([ last_col[3], last_col[3], it_col[0], it_col[0] ]);
                 skip_sw = false;
             }
             
             verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
             norms.extend([ Vec3::new(0., 1., 0.); 5 ]);
+            colors.extend([ it_col[0], it_col[5], [0.04, 0.09, 0.04, 1.0], it_col[4], it_col[3] ]);
 
-            if let Some(sw_vrt) = sw_vrt {
+            if let Some((sw_vrt, sw_col)) = sw_data {
                 verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
                 norms.extend([ Vec3::new(0., 1., 0.); 5 ]);
+                colors.extend([ sw_col[0], sw_col[1], [0.04, 0.09, 0.04, 1.0], sw_col[2], sw_col[3] ]);
             } else {
                 verts.extend([ it_vrt[3] ]); 
                 norms.extend([ Vec3::new(0., 1., 0.); 1 ]);
+                colors.extend([ it_col[3] ]);
                 skip_sw = true;
             }
 
-            let we_result = self.find(it_qrz + Qrz{q:0,r:0,z:5} + qrz::DIRECTIONS[0], -10);
+            let we_result = self.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[0], -60);
             let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
             // Only use sloped vertices if the tile actually exists in the map
-            let mut we_vrt = if we_result.is_some() {
-                self.vertices_with_slopes(we_qrz)
+            let (mut we_vrt, we_col) = if we_result.is_some() {
+                self.vertices_and_colors_with_slopes(we_qrz)
             } else {
-                self.0.vertices(we_qrz)
+                (self.0.vertices(we_qrz), vec![[0.04, 0.09, 0.04, 1.0]; 6])
             };
             
             // If west neighbor is fake, match its East edge vertices to current tile's West edge
@@ -150,13 +177,15 @@ impl Map {
             }
             
             if let Some(last_qrz) = last_qrz {
-                let last_vrt = self.vertices_with_slopes(last_qrz);
+                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
                 west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
                 west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
+                west_skirt_colors.extend([ last_col[4], last_col[4] ]);
             }
             west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
             west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 6 ]);
+            west_skirt_colors.extend([ it_col[5], we_col[1], it_col[4], we_col[2], it_col[4], it_col[4] ]);
             
             last_qrz = Some(it_qrz);
         });
@@ -167,6 +196,7 @@ impl Map {
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..len).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
                 .with_inserted_indices(Indices::U32((0..len).collect())),
             Aabb::from_min_max(min, max),
         )

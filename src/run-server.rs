@@ -91,6 +91,7 @@ fn main() {
         renet::do_manage_connections,
         world::do_spawn,
         world::try_spawn,
+        server::systems::diagnostics::check_duplicate_tiles,
     ));
 
     app.add_systems(PostUpdate, (
@@ -108,6 +109,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
+    app.init_resource::<server::systems::diagnostics::TerrainTracker>();
 
     app.run();
 }

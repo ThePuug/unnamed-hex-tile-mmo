@@ -1,6 +1,7 @@
 use bevy::{
     prelude::*,
     pbr::NotShadowCaster,
+    render::primitives::Aabb,
 };
 
 use crate::{
@@ -35,24 +36,25 @@ pub fn setup(
         Mesh3d(cursor_mesh),
         MeshMaterial3d(cursor_material),
         Transform::from_xyz(0.0, 0.0, 0.0),
+        Aabb::default(),
         NotShadowCaster,
         TargetCursor,
     ));
 }
 
 pub fn update(
-    mut cursor_query: Query<(&mut Mesh3d, &mut Transform), With<TargetCursor>>,
+    mut cursor_query: Query<(&mut Mesh3d, &mut Transform, &mut Aabb), With<TargetCursor>>,
     player_query: Query<(&Loc, &Heading), (With<Actor>, Or<(Changed<Loc>, Changed<Heading>)>)>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    if let Ok((mut mesh_handle, mut cursor_transform)) = cursor_query.single_mut() {
+    if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
         if let Ok((loc, heading)) = player_query.single() {
             // Calculate the hex direction from the player's heading
             let target_direction = **loc + **heading;
             
             // Find the actual terrain tile in that direction, searching vertically
-            if let Some((actual_tile, _)) = map.find(target_direction, -5) {
+            if let Some((actual_tile, _)) = map.find(target_direction, -60) {
                 // Get the sloped vertices for this tile
                 let sloped_verts = map.vertices_with_slopes(actual_tile);
                 
@@ -61,14 +63,24 @@ pub fn update(
                 let mut normals = Vec::new();
                 let mut indices = Vec::new();
                 
+                // Track min/max for AABB
+                let mut min = Vec3::splat(f32::MAX);
+                let mut max = Vec3::splat(f32::MIN);
+                
                 // Add the 6 perimeter vertices + center, slightly above terrain
                 for i in 0..6 {
                     let v = sloped_verts[i];
-                    positions.push([v.x, v.y + 0.01, v.z]);
+                    let pos = Vec3::new(v.x, v.y + 0.01, v.z);
+                    positions.push([pos.x, pos.y, pos.z]);
+                    min = min.min(pos);
+                    max = max.max(pos);
                 }
                 // Center vertex
                 let center = sloped_verts[6];
-                positions.push([center.x, center.y + 0.01, center.z]);
+                let center_pos = Vec3::new(center.x, center.y + 0.01, center.z);
+                positions.push([center_pos.x, center_pos.y, center_pos.z]);
+                min = min.min(center_pos);
+                max = max.max(center_pos);
                 
                 // Add normals (all pointing up)
                 for _ in 0..7 {
@@ -92,6 +104,9 @@ pub fn update(
                 
                 // Replace the mesh
                 mesh_handle.0 = meshes.add(new_mesh);
+                
+                // Update AABB to prevent culling when far from origin
+                *aabb = Aabb::from_min_max(min, max);
                 
                 // Position at origin since vertices are in world space
                 cursor_transform.translation = Vec3::ZERO;

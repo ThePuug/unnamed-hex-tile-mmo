@@ -96,7 +96,6 @@ pub fn do_input(
         };
         let Some(Event::Input { ent: ent0, key_bits: keybits0, dt: dt0, seq: seq0 }) = buffer.queue.pop_back() 
             else { 
-                warn!("no back on buffer for {ent} (seq {seq})");
                 continue 
             };
         assert!(ent == ent0);

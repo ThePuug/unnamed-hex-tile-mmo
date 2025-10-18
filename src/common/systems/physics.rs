@@ -56,7 +56,7 @@ pub fn apply(
 
         let px0 = map.convert(*loc0);                                       // current px of loc
         let step_hx = map.convert(px0 + offset0);                           // current offset from loc
-        let floor = map.find(step_hx + Qrz::Z*5, -10);
+        let floor = map.find(step_hx + Qrz::Z*30, -60);
         
         if airtime0.is_none() {
             if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * offset0.y).z > floor.unwrap().0.z+1 {
@@ -104,7 +104,7 @@ pub fn apply(
         // This allows smooth walking on slopes
         let is_blocked = if exact_is_solid {
             // Search for a valid floor tile within stepping distance
-            let has_nearby_floor = map.find(next_hx + Qrz::Z*5, -10)
+            let has_nearby_floor = map.find(next_hx + Qrz::Z*30, -60)
                 .map(|(floor_qrz, _)| {
                     // Allow movement if floor is within 1 tile rise of current position
                     (floor_qrz.z - loc0.z).abs() <= 1
@@ -128,7 +128,7 @@ pub fn apply(
         if airtime0.is_none() {
             // Recalculate floor based on new horizontal position
             let current_hx = map.convert(px0 + offset0);
-            let current_floor = map.find(current_hx + Qrz::Z*5, -10);
+            let current_floor = map.find(current_hx + Qrz::Z*30, -60);
             
             if let Some((floor_qrz, _)) = current_floor {
                 let target_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;

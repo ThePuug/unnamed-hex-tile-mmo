@@ -39,6 +39,8 @@ pub fn setup(
     commands.spawn((
         DirectionalLight {
             shadows_enabled: true,
+            shadow_depth_bias: 0.02,
+            shadow_normal_bias: 0.6,
             ..default()},
         Transform::default(), 
         Sun::default()));
@@ -52,7 +54,7 @@ pub fn setup(
 
     let mesh = meshes.add(Extrusion::new(RegularPolygon::new(TILE_SIZE, 6),TILE_RISE));
     let material = materials.add(StandardMaterial {
-        base_color: Color::hsl(105., 0.75, 0.1),
+        base_color: Color::WHITE, // Use white to let vertex colors show through
         perceptual_roughness: 1.,
         ..default()});
 
@@ -79,11 +81,24 @@ pub fn do_spawn(
     mut map: ResMut<Map>,
 ) {
     let mut terrain = query.single_mut().expect("no result in query");
+    let mut tiles_added = 0;
+    
     for &message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
         if map.get(qrz).is_some() { continue }
         map.insert(qrz, EntityType::Decorator(decorator));
-        terrain.task_start_regenerate_mesh = true;
+        tiles_added += 1;
+    }
+    
+    if tiles_added > 0 {
+        terrain.tiles_since_last_regen += tiles_added;
+        
+        // Only regenerate mesh every 50 tiles for performance
+        // Also regenerate if mesh hasn't been generated yet
+        if terrain.tiles_since_last_regen >= 50 || terrain.last_tile_count == 0 {
+            terrain.task_start_regenerate_mesh = true;
+            terrain.tiles_since_last_regen = 0;
+        }
     }
 }
 
@@ -106,6 +121,7 @@ pub fn async_spawn(
 pub fn async_ready(
     mut query: Query<(&mut Mesh3d, &mut Aabb, &mut Terrain)>,
     mut meshes: ResMut<Assets<Mesh>>,
+    map: Res<Map>,
 ) {
     let (mut mesh, mut aabb, mut terrain) = query.single_mut().expect("no result in query");
     if terrain.task_regenerate_mesh.is_none() { return; }
@@ -118,6 +134,9 @@ pub fn async_ready(
     *mesh = Mesh3d(meshes.add(raw_mesh.clone()));
     *aabb = raw_aabb;
     terrain.task_regenerate_mesh = None;
+    
+    // Track tile count for initial mesh generation check
+    terrain.last_tile_count = map.iter_tiles().count();
 }
 
 #[allow(clippy::type_complexity)]
@@ -129,6 +148,7 @@ pub fn update(
     server: Res<Server>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
+    // Daylight cycle enabled
     let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
@@ -144,7 +164,10 @@ pub fn update(
     let s_illuminance = 1.-cos(0.75*s_rad_d + 3.*PI/4.).powf(16.);
     s_light.color = Color::linear_rgb(1., s_illuminance, s_illuminance);
     s_light.illuminance = 10_000.*s_illuminance;
-    a_light.brightness = 100.*s_illuminance;
+    // Greatly increased ambient light to soften shadows during day (800 vs 100)
+    a_light.brightness = 800.*s_illuminance;
+    // Add sky-like blue tint to ambient light during day
+    a_light.color = Color::linear_rgb(0.7 + 0.3*s_illuminance, 0.8 + 0.2*s_illuminance, 1.0);
     s_transform.translation.x = 1_000.*cos(0.75*s_rad_d + 3.*PI/4.);
     s_transform.translation.y = 1_000.*sin(0.75*s_rad_d + 3.*PI/4.).powf(2.);
     s_transform.translation.z = 1_000.*cos(s_rad_y);

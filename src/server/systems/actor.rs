@@ -24,7 +24,7 @@ use crate::{
         if let Try { event: Event::Discover { ent, qrz } } = message {
             let (&loc, _) = query.get(ent).unwrap();
             if loc.flat_distance(&qrz) > 25 { continue; }
-            if let Some((qrz, typ)) = map.find(qrz + Qrz{q:0,r:0,z:5}, -10) {
+            if let Some((qrz, typ)) = map.find(qrz + Qrz{q:0,r:0,z:30}, -60) {
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz } }); 
             } else {
                 let px = map.convert(qrz).xy();

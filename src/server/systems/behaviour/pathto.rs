@@ -24,8 +24,8 @@ pub fn tick(
         let Ok((&loc, &target)) = q_target.get(ctx.target_entity()) else { continue };
         let Ok(&o_loc) = q_other.get(*target) else { continue };
 
-        let Some((dest,_)) = map.find(*o_loc,-2) else { continue };
-        let Some((start,_)) = map.find(*loc,-2) else { continue };
+        let Some((dest,_)) = map.find(*o_loc,-60) else { continue };
+        let Some((start,_)) = map.find(*loc,-60) else { continue };
 
         if dest == path_to.dest { continue; }
 
