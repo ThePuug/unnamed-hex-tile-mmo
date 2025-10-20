@@ -21,7 +21,6 @@ pub enum Info {
 pub struct Terrain {
     pub task_regenerate_mesh: Option<Task<(Mesh,Aabb)>>,
     pub task_start_regenerate_mesh: bool,
-    pub tiles_since_last_regen: usize,
     pub last_tile_count: usize,
 }
 

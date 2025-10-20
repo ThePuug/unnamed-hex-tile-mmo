@@ -40,7 +40,6 @@ pub fn toggle_slopes(
         // Force mesh regeneration
         if let Ok(mut terrain) = terrain_query.single_mut() {
             terrain.task_start_regenerate_mesh = true;
-            terrain.tiles_since_last_regen = 0;
         }
         
         // Trigger map change detection to force grid regeneration

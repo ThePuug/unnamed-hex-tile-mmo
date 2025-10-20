@@ -81,24 +81,19 @@ pub fn do_spawn(
     mut map: ResMut<Map>,
 ) {
     let mut terrain = query.single_mut().expect("no result in query");
-    let mut tiles_added = 0;
+    let mut tiles_added = false;
     
     for &message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
         if map.get(qrz).is_some() { continue }
         map.insert(qrz, EntityType::Decorator(decorator));
-        tiles_added += 1;
+        tiles_added = true;
     }
     
-    if tiles_added > 0 {
-        terrain.tiles_since_last_regen += tiles_added;
-        
-        // Only regenerate mesh every 50 tiles for performance
-        // Also regenerate if mesh hasn't been generated yet
-        if terrain.tiles_since_last_regen >= 50 || terrain.last_tile_count == 0 {
-            terrain.task_start_regenerate_mesh = true;
-            terrain.tiles_since_last_regen = 0;
-        }
+    // Trigger mesh regeneration whenever new tiles are added
+    // Background task system prevents concurrent regenerations
+    if tiles_added {
+        terrain.task_start_regenerate_mesh = true;
     }
 }
 
