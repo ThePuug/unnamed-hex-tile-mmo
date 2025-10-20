@@ -105,6 +105,7 @@ pub fn do_spawn(
 pub fn async_spawn(
     mut query: Query<&mut Terrain>,
     map: Res<Map>,
+    slopes_enabled: Res<crate::client::systems::debug_toggles::SlopeRenderingEnabled>,
 ) {
     let mut terrain = query.single_mut().expect("no result in query");
     if !terrain.task_start_regenerate_mesh { return }
@@ -113,8 +114,9 @@ pub fn async_spawn(
 
     let pool = AsyncComputeTaskPool::get();
     let map = map.clone();
+    let apply_slopes = slopes_enabled.0;
     terrain.task_regenerate_mesh = Some(pool.spawn(async move {
-        map.regenerate_mesh()
+        map.regenerate_mesh(apply_slopes)
     }));
 }
 
@@ -146,10 +148,15 @@ pub fn update(
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
     mut a_light: ResMut<AmbientLight>,
     server: Res<Server>,
+    fixed_lighting: Res<crate::client::systems::debug_toggles::FixedLightingEnabled>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
-    // Daylight cycle enabled
-    let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
+    // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
+    let dtd = if fixed_lighting.0 {
+        0.375 // 9 hours / 24 hours = 0.375
+    } else {
+        (dt % DAY_MS) as f32 / DAY_MS as f32
+    };
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 

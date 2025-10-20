@@ -157,8 +157,8 @@ pub fn apply(
             
             if let Some((floor_qrz, _)) = current_floor {
                 let target_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
-                // Smoothly lerp Y position toward terrain height
-                let y_lerp_speed = 0.3; // Adjust this for faster/slower slope climbing
+                // Nearly instant Y position adjustment for snappy terrain following
+                let y_lerp_speed = 0.95; // Very fast slope climbing
                 offset0.y = offset0.y * (1.0 - y_lerp_speed) + target_y * y_lerp_speed;
             }
         }

@@ -21,7 +21,8 @@ impl Map {
 
     /// Generate vertices for a hex tile with slopes toward neighbors
     /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
-    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz) -> (Vec<Vec3>, Vec<[f32; 4]>) {
+    /// If apply_slopes is false, vertices remain flat at their natural height
+    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
         let mut verts = self.0.vertices(qrz);
         let rise = self.0.rise();
         
@@ -33,6 +34,8 @@ impl Map {
         
         // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
+        // Track which vertices touch upward cliff edges (should not slope up)
+        let mut vertex_touches_upward_cliff: [bool; 6] = [false; 6];
         
         // Map of direction index to the two vertices on that edge
         let direction_to_vertices = [
@@ -57,11 +60,21 @@ impl Map {
                 // Calculate elevation difference
                 let elevation_diff = actual_neighbor_qrz.z - qrz.z;
                 
-                // Adjust by 0.5 * rise to meet neighbor halfway
-                let adjustment = if elevation_diff > 0 {
-                    rise * 0.5  // Neighbor is higher, slope up
+                // Check if this is a cliff edge (elevation difference > 1)
+                let is_cliff = elevation_diff.abs() > 1;
+                
+                // Slope calculation:
+                // - Allow downward slopes at cliffs (creates natural drop-offs)
+                // - Prevent upward slopes at cliffs (will be filtered later)
+                // - Allow all slopes at gradual transitions
+                let adjustment = if is_cliff && elevation_diff > 1 {
+                    0.0  // Upward cliff: no slope (will be enforced by vertex filter)
+                } else if is_cliff && elevation_diff < -1 {
+                    rise * -0.5  // Downward cliff: allow slope down
+                } else if elevation_diff > 0 {
+                    rise * 0.5  // Gradual up: slope up
                 } else if elevation_diff < 0 {
-                    rise * -0.5  // Neighbor is lower, slope down
+                    rise * -0.5  // Gradual down: slope down
                 } else {
                     0.0  // Same level, no slope
                 };
@@ -73,23 +86,44 @@ impl Map {
                     vertex_adjustments[v2].push(adjustment);
                 }
                 
-                // Check if this is a cliff edge (any elevation step in either direction)
-                // Mark as cliff if elevation difference is greater than 1 level
-                if elevation_diff.abs() > 1 {
+                // Mark cliff edges with different coloring
+                // Only track upward cliffs for slope prevention
+                if is_cliff {
                     let (v1, v2) = direction_to_vertices[dir_idx];
                     colors[v1] = cliff_color;
                     colors[v2] = cliff_color;
+                    
+                    // Only mark vertices on upward cliffs (neighbor is higher)
+                    // Allow downward cliffs to slope naturally
+                    if elevation_diff > 1 {
+                        vertex_touches_upward_cliff[v1] = true;
+                        vertex_touches_upward_cliff[v2] = true;
+                    }
                 }
             }
         }
 
         // Apply the maximum absolute adjustment to each vertex
-        for (i, adjustments) in vertex_adjustments.iter().enumerate() {
-            if !adjustments.is_empty() {
-                let max_adj = adjustments.iter()
-                    .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-                    .copied().unwrap();
-                verts[i].y += max_adj;
+        // Vertices touching upward cliffs can't slope up, but can slope down
+        if apply_slopes {
+            for (i, adjustments) in vertex_adjustments.iter().enumerate() {
+                if adjustments.is_empty() {
+                    continue;
+                }
+                
+                // If vertex touches an upward cliff, filter out positive (upward) adjustments
+                let filtered_adjustments: Vec<f32> = if vertex_touches_upward_cliff[i] {
+                    adjustments.iter().copied().filter(|&adj| adj <= 0.0).collect()
+                } else {
+                    adjustments.clone()
+                };
+                
+                if !filtered_adjustments.is_empty() {
+                    let max_adj = filtered_adjustments.iter()
+                        .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+                        .copied().unwrap();
+                    verts[i].y += max_adj;
+                }
             }
         }
 
@@ -97,11 +131,11 @@ impl Map {
     }
     
     /// Legacy method for backward compatibility
-    pub fn vertices_with_slopes(&self, qrz: Qrz) -> Vec<Vec3> {
-        self.vertices_and_colors_with_slopes(qrz).0
+    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
+        self.vertices_and_colors_with_slopes(qrz, apply_slopes).0
     }
 
-    pub fn regenerate_mesh(&self) -> (Mesh,Aabb) {
+    pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
         let mut colors:Vec<[f32; 4]> = Vec::new();
@@ -115,7 +149,7 @@ impl Map {
         let map = self.0.clone();
         map.clone().into_iter().for_each(|tile| {
             let it_qrz = tile.0;
-            let (it_vrt, it_col) = self.vertices_and_colors_with_slopes(it_qrz);
+            let (it_vrt, it_col) = self.vertices_and_colors_with_slopes(it_qrz, apply_slopes);
 
             if let Some(last_qrz) = last_qrz {
                 // if new column
@@ -126,7 +160,7 @@ impl Map {
                     colors.append(&mut west_skirt_colors);
 
                     // update bounding box
-                    let last_vrt = self.vertices_with_slopes(last_qrz);
+                    let last_vrt = self.vertices_with_slopes(last_qrz, apply_slopes);
                     min = Vec3::min(min, it_vrt[6]);
                     min = Vec3::min(min, last_vrt[6]);
                     max = Vec3::max(max, it_vrt[6]);
@@ -135,10 +169,10 @@ impl Map {
             }
 
             let sw_result = self.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[1], -60);
-            let sw_data = sw_result.map(|(qrz, _)| self.vertices_and_colors_with_slopes(qrz));
+            let sw_data = sw_result.map(|(qrz, _)| self.vertices_and_colors_with_slopes(qrz, apply_slopes));
 
             if skip_sw {
-                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz.unwrap());
+                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz.unwrap(), apply_slopes);
                 let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
                 verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
                 norms.extend([ Vec3::new(0., 1., 0.); 4 ]);
@@ -165,7 +199,7 @@ impl Map {
             let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
             // Only use sloped vertices if the tile actually exists in the map
             let (mut we_vrt, we_col) = if we_result.is_some() {
-                self.vertices_and_colors_with_slopes(we_qrz)
+                self.vertices_and_colors_with_slopes(we_qrz, apply_slopes)
             } else {
                 (self.0.vertices(we_qrz), vec![[0.04, 0.09, 0.04, 1.0]; 6])
             };
@@ -177,7 +211,7 @@ impl Map {
             }
             
             if let Some(last_qrz) = last_qrz {
-                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz);
+                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz, apply_slopes);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
                 west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
                 west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);

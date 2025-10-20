@@ -44,8 +44,9 @@ pub fn setup(
 
 pub fn update(
     mut cursor_query: Query<(&mut Mesh3d, &mut Transform, &mut Aabb), With<TargetCursor>>,
-    player_query: Query<(&Loc, &Heading), (With<Actor>, Or<(Changed<Loc>, Changed<Heading>)>)>,
+    player_query: Query<(&Loc, &Heading), With<Actor>>,
     map: Res<Map>,
+    slopes_enabled: Res<crate::client::systems::debug_toggles::SlopeRenderingEnabled>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
@@ -55,8 +56,8 @@ pub fn update(
             
             // Find the actual terrain tile in that direction, searching vertically
             if let Some((actual_tile, _)) = map.find(target_direction, -60) {
-                // Get the sloped vertices for this tile
-                let sloped_verts = map.vertices_with_slopes(actual_tile);
+                // Get the vertices for this tile (respecting slope toggle)
+                let sloped_verts = map.vertices_with_slopes(actual_tile, slopes_enabled.0);
                 
                 // Create a filled hex mesh matching the sloped terrain
                 let mut positions = Vec::new();

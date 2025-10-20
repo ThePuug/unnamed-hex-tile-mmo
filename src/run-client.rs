@@ -31,7 +31,7 @@ use common::{
 };
 use client::{
     resources::*,
-    systems::{actor, animator, camera, debug_grid, input, renet, target_cursor, *}
+    systems::{actor, animator, camera, debug_grid, debug_toggles, input, renet, target_cursor, *}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -110,6 +110,8 @@ fn main() {
         common::systems::world::do_incremental,
         debug_grid::toggle_grid,
         debug_grid::update_grid,
+        debug_toggles::toggle_slopes,
+        debug_toggles::toggle_fixed_lighting,
         input::do_input,
         target_cursor::update,
         ui::update,
@@ -129,6 +131,9 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
     app.init_resource::<debug_grid::GridVisible>();
+    app.init_resource::<debug_grid::GridNeedsRegen>();
+    app.init_resource::<debug_toggles::SlopeRenderingEnabled>();
+    app.init_resource::<debug_toggles::FixedLightingEnabled>();
     app.init_resource::<Server>();
 
     app.run();

@@ -8,16 +8,17 @@ use bevy::{
     },
 };
 
-use crate::{
-    client::components::Terrain,
-    common::resources::map::Map,
-};
+use crate::common::resources::map::Map;
 
 #[derive(Resource, Default)]
 pub struct GridVisible(pub bool);
 
 #[derive(Component)]
 pub struct DebugGridMesh;
+
+/// Resource to track if grid needs regeneration
+#[derive(Resource, Default)]
+pub struct GridNeedsRegen(pub bool);
 
 /// Setup grid mesh entity
 pub fn setup(
@@ -55,13 +56,14 @@ pub fn setup(
     ));
 }
 
-/// Toggle grid visibility with 'G' key
+/// Toggle grid visibility with 'J' key
 pub fn toggle_grid(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut grid_visible: ResMut<GridVisible>,
+    mut grid_needs_regen: ResMut<GridNeedsRegen>,
     mut query: Query<&mut Visibility, With<DebugGridMesh>>,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyG) {
+    if keyboard.just_pressed(KeyCode::KeyJ) {
         grid_visible.0 = !grid_visible.0;
         
         if let Ok(mut visibility) = query.single_mut() {
@@ -72,22 +74,31 @@ pub fn toggle_grid(
             };
         }
         
+        // Force regeneration when toggling on
+        if grid_visible.0 {
+            grid_needs_regen.0 = true;
+        }
+        
         info!("Grid {}", if grid_visible.0 { "enabled" } else { "disabled" });
     }
 }
 
-/// Update grid mesh when terrain changes
+/// Update grid mesh when map changes (new tiles discovered)
 pub fn update_grid(
-    terrain_query: Query<&Terrain, Changed<Terrain>>,
     mut grid_query: Query<(&mut Mesh3d, &mut Aabb), With<DebugGridMesh>>,
     map: Res<Map>,
     grid_visible: Res<GridVisible>,
+    mut grid_needs_regen: ResMut<GridNeedsRegen>,
+    slopes_enabled: Res<crate::client::systems::debug_toggles::SlopeRenderingEnabled>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    // Only update if terrain changed or grid is visible
-    if terrain_query.is_empty() || !grid_visible.0 {
+    // Only update if (map changed OR forced regen) and grid is visible
+    if (!map.is_changed() && !grid_needs_regen.0) || !grid_visible.0 {
         return;
     }
+    
+    // Clear the forced regen flag
+    grid_needs_regen.0 = false;
     
     let Ok((mut grid_mesh_handle, mut aabb)) = grid_query.single_mut() else { return };
     
@@ -97,7 +108,7 @@ pub fn update_grid(
     let mut max = Vec3::splat(f32::MIN);
     
     for (qrz, _) in map.iter_tiles() {
-        let verts = map.vertices_with_slopes(qrz);
+        let verts = map.vertices_with_slopes(qrz, slopes_enabled.0);
         
         // Add the 6 edges of each hex tile (each edge = 2 vertices)
         for i in 0..6 {
