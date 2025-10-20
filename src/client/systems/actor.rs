@@ -4,18 +4,19 @@ use bevy::{
     prelude::*, 
     scene::SceneInstanceReady
 };
-use qrz::Convert;
+use qrz::{Convert, Qrz};
 
 use crate::{
     client::components::*,
     common::{
         components::{ 
+            behaviour::*,
             entity_type::{ actor::*, * }, 
             heading::*, keybits::*, offset::*, * 
         }, 
         message::{ Event, * }, 
         plugins::nntree::NearestNeighbor, 
-        resources::map::Map
+        resources::{map::Map, *}
     }
 };
 
@@ -52,13 +53,24 @@ fn ready(
 
 pub fn update(
     time: Res<Time>,
-    mut query: Query<(&Loc, &Offset, &Heading, &KeyBits, &mut Transform)>,
+    mut query: Query<(Entity, &Loc, &Offset, &Heading, &KeyBits, &mut Transform)>,
     map: Res<Map>,
+    buffers: Res<InputQueues>,
 ) {
-    for (&loc, &offset, &heading, &keybits, mut transform0) in &mut query {
-        let target = match (keybits, offset, heading) {
-            (keybits, offset, _) if keybits != KeyBits::default() => map.convert(*loc) + offset.step,
-            (_, _, heading) => map.convert(*loc) + map.convert(*heading) * HERE,
+    for (entity, &loc, &offset, &heading, &keybits, mut transform0) in &mut query {
+        // Only local player (with input buffer) uses offset.step for physics movement
+        let is_local_player = buffers.get(&entity).is_some();
+        
+        let target = match (is_local_player, offset, heading) {
+            // Local player actively moving: use physics position
+            (true, offset, _) if offset.step.length_squared() > 0.01 => map.convert(*loc) + offset.step,
+            // Player has a heading set: position them in that triangle of the hex
+            (_, _, heading) if *heading != Qrz::default() => {
+                let dir = map.convert(*loc + *heading) - map.convert(*loc);
+                map.convert(*loc) + dir * HERE
+            },
+            // Default: center of tile
+            _ => map.convert(*loc),
         };
 
         let dpx = transform0.translation.distance(target);
@@ -86,6 +98,7 @@ pub fn do_spawn(
         commands.entity(ent).insert((
             loc,
             typ,
+            Behaviour::Controlled,  // Remote players are controlled by network updates
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
             Transform { 
                 translation: map.convert(qrz),

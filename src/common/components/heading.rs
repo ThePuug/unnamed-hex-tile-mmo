@@ -7,8 +7,8 @@ use crate::common::components::{ *,
     keybits::*,
 };
 
-pub const HERE: Vec3 = Vec3::new(0.33, 0., 0.33);
-pub const THERE: Vec3 = Vec3::new(1.33, 0., 1.33);
+pub const HERE: f32 = 0.33;
+pub const THERE: f32 = 1.33;
 
 #[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Heading(Qrz);

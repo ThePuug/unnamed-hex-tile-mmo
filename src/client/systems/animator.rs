@@ -1,24 +1,35 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use qrz::Convert;
+use qrz::{Convert, Qrz};
 
 use crate::{client::components::*,
     common::{
         components::{ heading::*, keybits::*, offset::*, * }, 
-        resources::map::Map
+        resources::{map::Map, *}
     }
 };
 
 pub fn update(
-    query: Query<(&Loc, &Offset, &Heading, &KeyBits, &Transform, &AirTime, &Animates)>,
+    query: Query<(Entity, &Loc, &Offset, &Heading, &KeyBits, &Transform, &AirTime, &Animates)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     map: Res<Map>,
+    buffers: Res<InputQueues>,
 ) {
-    for (&loc, &offset, &heading, &keybits, &transform, &airtime, &animates) in &query {
-        let target = match (keybits, offset, heading) {
-            (keybits, offset, _) if keybits != KeyBits::default() => map.convert(*loc) + offset.step,
-            (_, _, heading) => map.convert(*loc) + map.convert(*heading) * HERE,
+    for (entity, &loc, &offset, &heading, &keybits, &transform, &airtime, &animates) in &query {
+        // Only local player (with input buffer) uses offset.step for physics movement
+        let is_local_player = buffers.get(&entity).is_some();
+        
+        let target = match (is_local_player, offset, heading) {
+            // Local player actively moving: use physics position
+            (true, offset, _) if offset.step.length_squared() > 0.01 => map.convert(*loc) + offset.step,
+            // Player has a heading set: position them in that triangle of the hex
+            (_, _, heading) if *heading != Qrz::default() => {
+                let dir = map.convert(*loc + *heading) - map.convert(*loc);
+                map.convert(*loc) + dir * HERE
+            },
+            // Default: center of tile
+            _ => map.convert(*loc),
         };
 
         let (mut player, mut transitions) = q_anim.get_mut(animates.0).unwrap();
