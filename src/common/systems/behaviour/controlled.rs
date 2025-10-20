@@ -22,10 +22,7 @@ pub fn tick(
         let Some(buffer) = buffers.get_mut(&ent) 
             // disconnect by client could remove buffer while message in transit
             else { continue };
-        let Some(input0) = buffer.queue.front() else { 
-            // Silently skip if queue is empty - will recover when new input arrives
-            continue 
-        };
+        let Some(input0) = buffer.queue.front() else { panic!("no front on buffer") };
         let Event::Input { seq: seq0, .. } = input0 else { panic!("not input") };
         let input = Event::Input { ent, key_bits: keybits, dt: 0, seq: seq0.wrapping_add(1) };
         buffer.queue.push_front(input);
@@ -44,11 +41,7 @@ pub fn tick(
         let Some(buffer) = buffers.get_mut(&ent) 
             // disconnect by client could remove buffer while message in transit
             else { continue };
-        let Some(input0) = buffer.queue.pop_front() else { 
-            // Queue became empty between collection and processing
-            buffers.mark_empty_if_needed(ent);
-            continue 
-        };
+        let Some(input0) = buffer.queue.pop_front() else { panic!("no front on buffer") };
         let Event::Input { key_bits: keybits0, dt: dt0, seq: seq0, .. } = input0 else { panic!("not input") };
 
         let dt0 = dt0 + dt;

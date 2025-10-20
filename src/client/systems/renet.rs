@@ -79,7 +79,10 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
-                let (ent, _) = l2r.remove_by_right(&ent).unwrap();
+                let Some((ent, _)) = l2r.remove_by_right(&ent) else {
+                    // Entity not in our map - likely another client disconnecting
+                    continue
+                };
                 debug!("Player {ent} disconnected");
                 commands.entity(ent).despawn();
             }
@@ -125,7 +128,7 @@ pub fn send_try(
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn { 
                     ent, typ, qrz
                 }}, bincode::config::legacy()).unwrap());
-            }
+            } 
             _ => {}
         }
     }

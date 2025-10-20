@@ -90,14 +90,27 @@ pub fn do_input(
 ) {
     for &message in reader.read() {
         let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
-        let Some(buffer) = buffers.get_mut(&ent) else { 
-            warn!("no {ent} in buffers"); 
-            continue 
+        let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
+        
+        // Must always keep at least one accumulating input, never pop the last one
+        if buffer.queue.len() <= 1 {
+            warn!("Received confirmation for seq {seq} but queue only has {} items - skipping to preserve accumulating input", buffer.queue.len());
+            continue;
+        }
+        
+        // Check if the confirmation matches the back of the queue
+        let Some(Event::Input { seq: seq_back, .. }) = buffer.queue.back() else {
+            unreachable!("queue should have at least 2 elements here");
         };
+        
+        if *seq_back != seq {
+            // Confirmation doesn't match back of queue yet - controlled::tick hasn't processed it
+            // Skip this confirmation for now, it will be processed in a future frame
+            continue;
+        }
+        
         let Some(Event::Input { ent: ent0, key_bits: keybits0, dt: dt0, seq: seq0 }) = buffer.queue.pop_back() 
-            else { 
-                continue 
-            };
+            else { unreachable!() };
         assert!(ent == ent0);
         assert!(key_bits == keybits0);
         assert!(seq == seq0);
