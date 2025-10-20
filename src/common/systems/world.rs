@@ -37,7 +37,9 @@ pub fn do_incremental(
                 let Some(mut loc0) = o_loc else { continue; };
                 let Some(mut offset0) = o_offset else { continue; };
 
-                offset0.state = map.convert(**loc0) + offset0.state - map.convert(*loc);
+                let adjustment = map.convert(**loc0) + offset0.state - map.convert(*loc);
+                offset0.state = adjustment;
+                offset0.step = adjustment;
                 *loc0 = loc;
 
                 writer.write(Try { event: Event::Discover { ent, qrz: *loc } });
