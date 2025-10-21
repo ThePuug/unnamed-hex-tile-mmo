@@ -1,9 +1,8 @@
 use bevy::prelude::*;
-use iyes_perf_ui::prelude::*;
 
 use crate::{
     client::{
-        components::*, 
+        components::*,
         resources::Server
     },
     common::systems::*,
@@ -34,8 +33,6 @@ pub fn setup(
             Info::Time,
         ));
     });
-
-    commands.spawn(PerfUiDefaultEntries::default());
 }
 
 pub fn update(

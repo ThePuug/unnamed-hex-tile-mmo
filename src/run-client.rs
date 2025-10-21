@@ -9,10 +9,8 @@ use std::time::SystemTime;
 use std::net::UdpSocket;
 
 use bevy::{
-    diagnostic::*,
-    log::LogPlugin, 
+    log::LogPlugin,
     prelude::*,
-    render::diagnostic::*,
 };
 use bevy_easings::*;
 use bevy_renet::{
@@ -20,7 +18,6 @@ use bevy_renet::{
     netcode::*,
     *,
 };
-use iyes_perf_ui::PerfUiPlugin;
 
 use common::{
     components::{entity_type::*, *}, 
@@ -30,8 +27,9 @@ use common::{
     systems::physics,
 };
 use client::{
+    plugins::diagnostics::DiagnosticsPlugin,
     resources::*,
-    systems::{actor, animator, camera, debug_grid, debug_toggles, input, renet, target_cursor, *}
+    systems::{actor, animator, camera, input, renet, target_cursor, *}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -66,11 +64,7 @@ fn main() {
         NetcodeClientPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        FrameTimeDiagnosticsPlugin::default(),
-        EntityCountDiagnosticsPlugin,
-        SystemInformationDiagnosticsPlugin,
-        RenderDiagnosticsPlugin,
-        PerfUiPlugin
+        DiagnosticsPlugin,
     ));
 
     app.add_event::<Do>();
@@ -80,7 +74,6 @@ fn main() {
         setup,
         actor::setup,
         camera::setup,
-        debug_grid::setup,
         renet::setup,
         target_cursor::setup,
         ui::setup.after(camera::setup),
@@ -108,10 +101,6 @@ fn main() {
         camera::update,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
-        debug_grid::toggle_grid,
-        debug_grid::update_grid,
-        debug_toggles::toggle_slopes,
-        debug_toggles::toggle_fixed_lighting,
         input::do_input,
         target_cursor::update,
         ui::update,
@@ -130,10 +119,6 @@ fn main() {
 
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
-    app.init_resource::<debug_grid::GridVisible>();
-    app.init_resource::<debug_grid::GridNeedsRegen>();
-    app.init_resource::<debug_toggles::SlopeRenderingEnabled>();
-    app.init_resource::<debug_toggles::FixedLightingEnabled>();
     app.init_resource::<Server>();
 
     app.run();

@@ -5,7 +5,10 @@ use bevy::{
 };
 
 use crate::{
-    client::components::TargetCursor,
+    client::{
+        components::TargetCursor,
+        plugins::diagnostics::DiagnosticsState,
+    },
     common::{
         components::{
             heading::Heading,
@@ -46,7 +49,7 @@ pub fn update(
     mut cursor_query: Query<(&mut Mesh3d, &mut Transform, &mut Aabb), With<TargetCursor>>,
     player_query: Query<(&Loc, &Heading), With<Actor>>,
     map: Res<Map>,
-    slopes_enabled: Res<crate::client::systems::debug_toggles::SlopeRenderingEnabled>,
+    diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
@@ -57,7 +60,7 @@ pub fn update(
             // Find the actual terrain tile in that direction, searching vertically
             if let Some((actual_tile, _)) = map.find(target_direction, -60) {
                 // Get the vertices for this tile (respecting slope toggle)
-                let sloped_verts = map.vertices_with_slopes(actual_tile, slopes_enabled.0);
+                let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
                 
                 // Create a filled hex mesh matching the sloped terrain
                 let mut positions = Vec::new();

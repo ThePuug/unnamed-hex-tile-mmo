@@ -12,7 +12,8 @@ pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
     client::{
-        components::Terrain, 
+        components::Terrain,
+        plugins::diagnostics::DiagnosticsState,
         resources::Server
     },
     common::{
@@ -100,7 +101,7 @@ pub fn do_spawn(
 pub fn async_spawn(
     mut query: Query<&mut Terrain>,
     map: Res<Map>,
-    slopes_enabled: Res<crate::client::systems::debug_toggles::SlopeRenderingEnabled>,
+    diagnostics_state: Res<DiagnosticsState>,
 ) {
     let mut terrain = query.single_mut().expect("no result in query");
     if !terrain.task_start_regenerate_mesh { return }
@@ -109,7 +110,7 @@ pub fn async_spawn(
 
     let pool = AsyncComputeTaskPool::get();
     let map = map.clone();
-    let apply_slopes = slopes_enabled.0;
+    let apply_slopes = diagnostics_state.slope_rendering_enabled;
     terrain.task_regenerate_mesh = Some(pool.spawn(async move {
         map.regenerate_mesh(apply_slopes)
     }));
@@ -143,11 +144,11 @@ pub fn update(
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
     mut a_light: ResMut<AmbientLight>,
     server: Res<Server>,
-    fixed_lighting: Res<crate::client::systems::debug_toggles::FixedLightingEnabled>,
+    diagnostics_state: Res<DiagnosticsState>,
 ) {
     let dt = time.elapsed().as_millis() + server.elapsed_offset;
     // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
-    let dtd = if fixed_lighting.0 {
+    let dtd = if diagnostics_state.fixed_lighting_enabled {
         0.375 // 9 hours / 24 hours = 0.375
     } else {
         (dt % DAY_MS) as f32 / DAY_MS as f32
