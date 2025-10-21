@@ -5,7 +5,8 @@
       "Read(//c/**)",
       "Bash(cargo tree:*)",
       "Bash(cargo doc:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []

@@ -129,11 +129,6 @@ impl Map {
 
         (verts, colors)
     }
-    
-    /// Legacy method for backward compatibility
-    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
-        self.vertices_and_colors_with_slopes(qrz, apply_slopes).0
-    }
 
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
         let mut verts:Vec<Vec3> = Vec::new();
@@ -160,7 +155,7 @@ impl Map {
                     colors.append(&mut west_skirt_colors);
 
                     // update bounding box
-                    let last_vrt = self.vertices_with_slopes(last_qrz, apply_slopes);
+                    let (last_vrt, _) = self.vertices_and_colors_with_slopes(last_qrz, apply_slopes);
                     min = Vec3::min(min, it_vrt[6]);
                     min = Vec3::min(min, last_vrt[6]);
                     max = Vec3::max(max, it_vrt[6]);
