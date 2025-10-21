@@ -29,7 +29,7 @@ use common::{
 use client::{
     plugins::diagnostics::DiagnosticsPlugin,
     resources::*,
-    systems::{actor, animator, camera, input, renet, target_cursor, *}
+    systems::{actor, animator, camera, input, renet, target_cursor, world, ui}
 };
 
 const PROTOCOL_ID: u64 = 7;

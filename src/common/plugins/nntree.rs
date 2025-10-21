@@ -52,6 +52,14 @@ fn on_remove(mut world: DeferredWorld, context: HookContext) {
 #[derive(Deref, DerefMut, Resource)]
 pub struct NNTree(RTree<NearestNeighbor, DefaultParams>);
 
+impl NNTree {
+    /// Create an empty NNTree for testing purposes
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        NNTree(RTree::new())
+    }
+}
+
 pub fn update(
     mut query: Query<(&Loc, &mut NearestNeighbor), Changed<Loc>>,
     mut nntree: ResMut<NNTree>,

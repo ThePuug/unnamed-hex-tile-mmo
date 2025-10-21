@@ -23,9 +23,9 @@ use crate::{
         resources::{map::*, *}, 
         systems::physics
     },
-    server::{ 
-        resources::{terrain::*, *}, 
-        systems::{actor, input, renet, world}, 
+    server::{
+        resources::{terrain::*, *},
+        systems::{actor, input, renet, world},
         *
     }
 };
