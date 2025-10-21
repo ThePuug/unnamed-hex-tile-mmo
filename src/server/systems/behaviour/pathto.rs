@@ -52,13 +52,13 @@ pub fn tick(
 pub fn apply(
     mut commands: Commands,
     mut query: Query<(&mut PathTo, &BehaveCtx)>,
-    mut q_target: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, &Target)>,
+    mut q_target: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>, &Target)>,
     dt: Res<Time>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
     for (mut path_to, &ctx) in &mut query {
-        let Ok((&loc, mut heading0, mut offset0, mut airtime0, &_target)) = q_target.get_mut(ctx.target_entity()) else { unreachable!() };
+        let Ok((&loc, mut heading0, mut offset0, mut airtime0, attrs, &_target)) = q_target.get_mut(ctx.target_entity()) else { unreachable!() };
         if path_to.path.is_empty() { commands.trigger(ctx.success()) }
 
         let Some(&qrz) = path_to.path.last() else { continue; };
@@ -69,7 +69,8 @@ pub fn apply(
         let heading = Heading::from(KeyBits::from(Heading::new(dest - here)));
         if heading != *heading0 { *heading0 = heading; }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
-        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, &map, &nntree);
+        let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
+        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
     }
 }

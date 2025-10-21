@@ -6,4 +6,5 @@ use crate::common::components::*;
 pub struct Offset{
     pub state: Vec3,
     pub step: Vec3,
+    pub prev_step: Vec3,
 }

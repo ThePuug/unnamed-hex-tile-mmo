@@ -4,7 +4,7 @@ use bevy::{
     prelude::*, 
     scene::SceneInstanceReady
 };
-use qrz::{Convert, Qrz};
+use qrz::Convert;
 
 use crate::{
     client::components::*,
@@ -16,7 +16,7 @@ use crate::{
         }, 
         message::{ Event, * }, 
         plugins::nntree::NearestNeighbor, 
-        resources::{map::Map, *}
+        resources::map::Map
     }
 };
 
@@ -52,36 +52,23 @@ fn ready(
 }
 
 pub fn update(
-    time: Res<Time>,
-    mut query: Query<(Entity, &Loc, &Offset, &Heading, &KeyBits, &mut Transform)>,
+    fixed_time: Res<Time<Fixed>>,
+    mut query: Query<(&Loc, &Offset, &Heading, &mut Transform)>,
     map: Res<Map>,
-    buffers: Res<InputQueues>,
 ) {
-    for (entity, &loc, &offset, &heading, &keybits, mut transform0) in &mut query {
-        // Only local player (with input buffer) uses offset.step for physics movement
-        let is_local_player = buffers.get(&entity).is_some();
-        
-        let target = match (is_local_player, offset, heading) {
-            // Local player actively moving: use physics position
-            (true, offset, _) if offset.step.length_squared() > 0.01 => map.convert(*loc) + offset.step,
-            // Player has a heading set: position them in that triangle of the hex
-            (_, _, heading) if *heading != Qrz::default() => {
-                let dir = map.convert(*loc + *heading) - map.convert(*loc);
-                map.convert(*loc) + dir * HERE
-            },
-            // Default: center of tile
-            _ => map.convert(*loc),
-        };
+    for (&loc, offset, &heading, mut transform0) in &mut query {
+        // Interpolate between FixedUpdate ticks using overstep fraction
+        // overstep_fraction: 0.0 = just ran FixedUpdate, 1.0 = about to run FixedUpdate
+        let overstep_fraction = fixed_time.overstep_fraction();
 
-        let dpx = transform0.translation.distance(target);
-        let ratio = 0_f32.max((dpx - 0.0045 * time.delta().as_millis() as f32) / dpx);
-        let lpx = transform0.translation.lerp(target, 1. - ratio);
+        let prev_pos = map.convert(*loc) + offset.prev_step;
+        let curr_pos = map.convert(*loc) + offset.step;
+
+        // Interpolate between previous and current physics positions
+        let lpx = prev_pos.lerp(curr_pos, overstep_fraction);
+
         transform0.translation = lpx;
         transform0.rotation = heading.into();
-
-        // if we are getting too far away, apply some correction
-        let dist = transform0.translation.distance_squared(target);
-        if dist > 1. { transform0.translation = transform0.translation.lerp(target,1.-0.5f32.powf(time.delta_secs())); }
     }
 }
 
@@ -100,7 +87,7 @@ pub fn do_spawn(
             typ,
             Behaviour::Controlled,  // Remote players are controlled by network updates
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
-            Transform { 
+            Transform {
                 translation: map.convert(qrz),
                 scale: Vec3::ONE * map.radius(),
                 ..default()},

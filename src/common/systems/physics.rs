@@ -149,7 +149,7 @@ const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
 const MAX_ENTITIES_PER_TILE: usize = 7;
 
 pub fn update(
-    mut query: Query<(&Loc, &mut Offset, &mut AirTime), With<Physics>>,
+    mut query: Query<(&Loc, &mut Offset, &mut AirTime, Option<&ActorAttributes>), With<Physics>>,
     map: Res<Map>,
     buffers: Res<InputQueues>,
     nntree: Res<NNTree>,
@@ -157,25 +157,28 @@ pub fn update(
     for (ent, buffer) in buffers.iter() {
         // Skip if queue is empty - no physics to apply
         if buffer.queue.is_empty() { continue; }
-        
-        let Ok((&loc, mut offset0, mut airtime0)) = query.get_mut(ent) else { continue; };
+
+        let Ok((&loc, mut offset0, mut airtime0, attrs)) = query.get_mut(ent) else { continue; };
+        let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(MOVEMENT_SPEED);
         let (mut offset, mut airtime) = (offset0.state, airtime0.state);
         for input in buffer.queue.iter().rev() {
             let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
             let dest = Loc::new(*Heading::from(*key_bits) + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.is_none() { airtime = Some(JUMP_DURATION_MS); }
-            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, &map, &nntree);
+            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, movement_speed, &map, &nntree);
         }
+        offset0.prev_step = offset0.step;
         (offset0.step, airtime0.step) = (offset,airtime);
     }
 }
 
 pub fn apply(
     dest: Loc,
-    mut dt0: i16, 
+    mut dt0: i16,
     loc0: Loc,
     offset0: Vec3,
     airtime0: Option<i16>,
+    movement_speed: f32,
     map: &Map,
     nntree: &NNTree,
 ) -> (Vec3, Option<i16>) {
@@ -275,21 +278,20 @@ pub fn apply(
         let target_px = if is_blocked { rel_px * HERE } else { rel_px * THERE };
 
         let delta_px = offset0.distance(target_px);
-        let ratio = 0_f32.max((delta_px - MOVEMENT_SPEED * dt as f32) / delta_px);
+        let ratio = 0_f32.max((delta_px - movement_speed * dt as f32) / delta_px);
         let lerp_xz = offset0.xz().lerp(target_px.xz(), 1. - ratio);
         offset0 = Vec3::new(lerp_xz.x, offset0.y, lerp_xz.y);
         
-        // When on ground, smoothly adjust Y to match terrain height
-        if airtime0.is_none() {
-            // Recalculate floor based on new horizontal position
-            let current_hx = map.convert(px0 + offset0);
-            let current_floor = map.find(current_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
-            
-            if let Some((floor_qrz, _)) = current_floor {
-                let target_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
-                // Nearly instant Y position adjustment for snappy terrain following
-                offset0.y = offset0.y * (1.0 - SLOPE_FOLLOW_SPEED) + target_y * SLOPE_FOLLOW_SPEED;
-            }
+        // IMPORTANT: Always clamp Y position to at least terrain height + 1.
+        // This prevents entities from ever clipping below the terrain surface.
+        // DO NOT REVERT - this is intentional behavior for both grounded and airborne entities.
+        let current_hx = map.convert(px0 + offset0);
+        let current_floor = map.find(current_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+
+        if let Some((floor_qrz, _)) = current_floor {
+            let terrain_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
+            // Always enforce minimum height above terrain (no interpolation, direct clamp)
+            offset0.y = offset0.y.max(terrain_y);
         }
     }
 
@@ -391,6 +393,7 @@ mod tests {
             loc,      // current loc
             initial_offset,
             airtime,
+            MOVEMENT_SPEED,
             &map,
             &nntree,
         );
@@ -462,6 +465,7 @@ mod tests {
             loc,
             initial_offset,
             airtime,
+            MOVEMENT_SPEED,
             &map,
             &nntree,
         );
@@ -532,7 +536,7 @@ mod tests {
 
         // At apex (airtime = 0)
         let (offset_apex, airtime_apex) = apply(
-            loc, 125, loc, initial_offset, Some(0), &map, &nntree
+            loc, 125, loc, initial_offset, Some(0), MOVEMENT_SPEED, &map, &nntree
         );
 
         // Should now be falling (negative airtime)
@@ -562,7 +566,7 @@ mod tests {
 
         // Simulate movement
         let (final_offset, _) = apply(
-            dest, 125, loc, initial_offset, None, &map, &nntree
+            dest, 125, loc, initial_offset, None, MOVEMENT_SPEED, &map, &nntree
         );
 
         // Movement should have occurred (non-zero offset)
@@ -590,7 +594,7 @@ mod tests {
 
         // Dest = current loc (not moving)
         let (final_offset, _) = apply(
-            loc, 125, loc, initial_offset, None, &map, &nntree
+            loc, 125, loc, initial_offset, None, MOVEMENT_SPEED, &map, &nntree
         );
 
         // Should stay at (0, 0, 0) or very close
@@ -609,7 +613,7 @@ mod tests {
 
         // Move northeast: Qrz(1, 0, -1)
         let dest_ne = Loc::new(Qrz { q: 1, r: 0, z: -1 });
-        let (offset_ne, _) = apply(dest_ne, 125, loc, Vec3::ZERO, None, &map, &nntree);
+        let (offset_ne, _) = apply(dest_ne, 125, loc, Vec3::ZERO, None, MOVEMENT_SPEED, &map, &nntree);
 
         // Should move in positive X direction
         assert!(
@@ -648,7 +652,7 @@ mod tests {
         for initial_airtime in [-500, -100, 0, 50, 125, 200] {
             let (_, final_airtime) = apply(
                 loc, 125, loc, Vec3::new(0.0, 10.0, 0.0),
-                Some(initial_airtime), &map, &nntree
+                Some(initial_airtime), MOVEMENT_SPEED, &map, &nntree
             );
 
             if let Some(final_air) = final_airtime {
@@ -675,6 +679,7 @@ mod tests {
             loc,
             initial_offset,
             None,
+            MOVEMENT_SPEED,
             &map,
             &nntree,
         );
@@ -701,11 +706,11 @@ mod tests {
         let airtime = Some(50);
 
         let (offset1, airtime1) = apply(
-            loc, 125, loc, initial_offset, airtime, &map, &nntree
+            loc, 125, loc, initial_offset, airtime, MOVEMENT_SPEED, &map, &nntree
         );
 
         let (offset2, airtime2) = apply(
-            loc, 125, loc, initial_offset, airtime, &map, &nntree
+            loc, 125, loc, initial_offset, airtime, MOVEMENT_SPEED, &map, &nntree
         );
 
         assert_eq!(offset1, offset2, "Physics should be deterministic");

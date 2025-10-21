@@ -22,7 +22,7 @@ pub fn setup(
             ..OrthographicProjection::default_3d()
         }),
         Transform::default(),
-        Offset { state: Vec3::new(0., 30., 40.), step: Vec3::ZERO },
+        Offset { state: Vec3::new(0., 30., 40.), ..default() },
         Actor
     ));
 }

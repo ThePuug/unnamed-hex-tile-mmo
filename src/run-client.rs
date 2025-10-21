@@ -88,8 +88,8 @@ fn main() {
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
+        common::systems::behaviour::controlled::interpolate_remote,
         physics::update,
-        common::systems::actor::update,
     ));
 
     app.add_systems(Update, (

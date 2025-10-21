@@ -27,10 +27,30 @@ pub struct AirTime {
     pub step: Option<i16>,
 }
 
-#[derive(Clone, Component, Copy, Default)] 
+#[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
-#[derive(Clone, Component, Copy, Default)] 
+/// Attributes for actor entities that affect gameplay mechanics
+#[derive(Clone, Component, Copy, Debug)]
+pub struct ActorAttributes {
+    /// Movement speed in world units per millisecond
+    /// Default: 0.005 (matches physics MOVEMENT_SPEED constant)
+    pub movement_speed: f32,
+    // Future attributes can be added here:
+    // pub jump_height: f32,
+    // pub max_health: f32,
+    // pub stamina: f32,
+}
+
+impl Default for ActorAttributes {
+    fn default() -> Self {
+        Self {
+            movement_speed: 0.005, // Default physics movement speed
+        }
+    }
+}
+
+#[derive(Clone, Component, Copy, Default)]
 pub struct Physics;
 
 #[derive(Debug, Default, Component)]
