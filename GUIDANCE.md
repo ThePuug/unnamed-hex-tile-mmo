@@ -29,9 +29,14 @@ This approach:
 
 ### Rule 2: Update GUIDANCE.md After Confirmed Solutions
 
-**When the user confirms a solution should be accepted, update this GUIDANCE.md file immediately.**
+**ONLY update this GUIDANCE.md file AFTER the user explicitly confirms the solution is acceptable and working.**
 
-Add only the **minimum necessary** to prevent future misunderstandings:
+Do NOT update GUIDANCE.md:
+- Before the user has tested and approved the fix
+- Based on tests passing alone - real-world testing is required
+- Until the user explicitly says the code change is acceptable
+
+When the user confirms acceptance, add only the **minimum necessary** to prevent future misunderstandings:
 - Critical architectural concepts that were misunderstood
 - Key pitfalls that led to bugs
 - Essential debugging context for similar issues
@@ -43,7 +48,7 @@ Add only the **minimum necessary** to prevent future misunderstandings:
 
 Keep guidance **concise and essential** - this is a reference for avoiding mistakes, not comprehensive documentation.
 
-**IMPORTANT**: You have permission to update GUIDANCE.md immediately when the user confirms the code change is accepted. Do NOT attempt to commit the changes yourself - only update the file.
+**IMPORTANT**: You have permission to update GUIDANCE.md only when the user confirms the code change is accepted. Do NOT attempt to commit the changes yourself - only update the file.
 
 ## Table of Contents
 - [Development Workflow Rules](#development-workflow-rules)
@@ -327,7 +332,8 @@ This ensures smooth visual transitions without stuttering.
    - Check: `buffers.get(&entity).is_some()` to distinguish
 
 3. **Forget to preserve world-space positions during Loc updates**
-   - Always convert to world space, then back to new tile's local space
+   - Always convert ALL offset fields (`state`, `step`, `prev_step`) to world space, then back to new tile's local space
+   - Skipping `state` causes falling/teleporting bugs
 
 4. **Run interpolation in FixedUpdate**
    - Rendering interpolation must run every frame (Update schedule)
@@ -344,11 +350,10 @@ This ensures smooth visual transitions without stuttering.
    - Network latency causes 1-3 input difference (normal)
    - Client confirmation handler searches entire queue, not just back
 
-8. **Apply heading positioning in physics/input systems**
-   - Heading-based positioning is a **rendering-only** adjustment
-   - Applied in `client/systems/actor.rs::update()` during final position calculation
-   - Only affects stationary players (not pressing movement keys)
-   - Physics and input systems should continue to work with `offset.step` as normal
+8. **Apply heading positioning in rendering system**
+   - Heading-based positioning is a **physics concern** (affects tile boundary crossing timing)
+   - Handled in `physics::apply()` - when stationary with heading, walk toward heading position
+   - Rendering should just interpolate physics positions without special heading logic
 
 9. **Check offset magnitude to detect stationary players**
    - Stationary = check `KeyBits`, NOT `offset.step` magnitude

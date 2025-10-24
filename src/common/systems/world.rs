@@ -38,25 +38,16 @@ pub fn do_incremental(
                 let Some(mut loc0) = o_loc else { continue; };
                 let Some(mut offset0) = o_offset else { continue; };
 
-                let is_local = buffers.get(&ent).is_some();
-
                 // Both local and remote: preserve world-space positions for smooth visual transitions
-                // Convert prev_step and step to world positions
+                // Convert all offset fields to world positions, then re-express in new tile's coordinate system
+                let state_world = map.convert(**loc0) + offset0.state;
                 let prev_world = map.convert(**loc0) + offset0.prev_step;
                 let step_world = map.convert(**loc0) + offset0.step;
 
-                // Express prev_step and step in the new tile's coordinate system
-                offset0.prev_step = prev_world - map.convert(*loc);
-                offset0.step = step_world - map.convert(*loc);
-
-                if is_local {
-                    // Local player: calculate the adjustment for the confirmed state
-                    let adjustment = map.convert(**loc0) + offset0.state - map.convert(*loc);
-                    offset0.state = adjustment;
-                } else {
-                    // Remote player: aim for center of their Loc
-                    offset0.state = Vec3::ZERO;
-                }
+                let new_tile_center = map.convert(*loc);
+                offset0.state = state_world - new_tile_center;
+                offset0.prev_step = prev_world - new_tile_center;
+                offset0.step = step_world - new_tile_center;
 
                 *loc0 = loc;
 

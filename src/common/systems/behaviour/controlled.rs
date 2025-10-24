@@ -57,19 +57,19 @@ pub fn tick(
 
 pub fn apply(
     mut reader: EventReader<Do>,
-    mut query: Query<(&Loc, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
+    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
-            let Ok((&loc, mut offset, mut airtime, attrs)) = query.get_mut(ent)
+            let Ok((&loc, &heading, mut offset, mut airtime, attrs)) = query.get_mut(ent)
                 // disconnect by client could remove entity while message in transit
                 else { continue };
             let dest = Loc::new(*Heading::from(key_bits) + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
             let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
-            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, &map, &nntree);
+            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, heading, &map, &nntree);
         }
     }
 }

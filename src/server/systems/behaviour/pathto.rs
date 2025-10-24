@@ -70,7 +70,7 @@ pub fn apply(
         if heading != *heading0 { *heading0 = heading; }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
         let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
-        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, &map, &nntree);
+        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
     }
 }

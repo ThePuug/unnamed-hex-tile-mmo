@@ -65,25 +65,8 @@ pub fn update(
         let curr_pos = map.convert(*loc) + offset.step;
 
         // Interpolate between previous and current physics positions
-        let lpx = prev_pos.lerp(curr_pos, overstep_fraction);
-
-        // Apply heading-based positioning for stationary players
-        // When a player is not actively pressing movement keys but has a heading,
-        // position them in the triangle of the hex corresponding to their heading direction.
-        // This ensures players "stand" in a specific part of their hex tile based on facing direction.
-        // IMPORTANT: Check KeyBits (not offset magnitude) to prevent stuttering during movement.
-        let is_stationary = keybits.key_bits & (KB_HEADING_Q | KB_HEADING_R) == 0;
-        let final_pos = if is_stationary && *heading != Qrz::default() {
-            let tile_center = map.convert(*loc);
-            let heading_neighbor = map.convert(*loc + *heading);
-            let direction = heading_neighbor - tile_center;
-            // Position at HERE (0.33) distance toward the heading direction
-            // Preserve the Y coordinate from the interpolated physics position
-            let heading_pos_xz = tile_center + direction * HERE;
-            Vec3::new(heading_pos_xz.x, lpx.y, heading_pos_xz.z)
-        } else {
-            lpx
-        };
+        // Physics handles heading-based positioning, so just render what physics calculates
+        let final_pos = prev_pos.lerp(curr_pos, overstep_fraction);
 
         transform0.translation = final_pos;
         transform0.rotation = heading.into();
