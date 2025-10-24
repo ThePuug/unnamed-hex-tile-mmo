@@ -31,6 +31,10 @@ pub fn send_input(
     
     for ent in entities_to_send {
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
+
+        // Queue invariant: all queues must have at least 1 input
+        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
+
         while buffer.queue.len() > 1 {
             let event = buffer.queue.pop_back().unwrap();
             let message = bincode::serde::encode_to_vec(
@@ -38,7 +42,9 @@ pub fn send_input(
                 bincode::config::legacy()).unwrap();
             conn.send_message(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
         }
-        // Queue always has exactly 1 input remaining (the accumulating one)
+
+        // Queue invariant maintained: exactly 1 input remaining (the accumulating one)
+        assert_eq!(buffer.queue.len(), 1, "Queue must have exactly 1 input after sending confirmations");
     }
 }
 

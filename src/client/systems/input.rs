@@ -94,55 +94,168 @@ pub fn do_input(
         let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
         let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
 
-        if buffer.queue.is_empty() {
-            warn!("Received confirmation for seq {seq} but queue is empty");
-            continue;
+        // Maintain invariant: all queues always have at least 1 input
+        // Never remove the last input (the accumulating one)
+        if buffer.queue.len() <= 1 {
+            panic!("Queue invariant violation: attempted to remove last input (seq {seq}). Queue must always have at least 1 input.");
         }
 
-        // Due to network latency and periodic updates, client and server queues may temporarily
-        // have different lengths. The server sends confirmations from the back (oldest first).
-        // We should accept confirmations as long as they're reasonably close to our back.
+        // Server sends confirmations in order from back (oldest first)
+        // Simply pop from back
+        let removed = buffer.queue.pop_back().expect("queue should have at least 2 inputs");
+        let Event::Input { ent: ent0, key_bits: kb0, dt: dt0, seq: seq0 } = removed else { panic!("not input") };
 
-        // Find the input in our queue - it should be near the back
-        let mut found_at = None;
-        for (idx, input) in buffer.queue.iter().enumerate().rev() {
-            if let Event::Input { seq: input_seq, .. } = input {
-                if *input_seq == seq {
-                    found_at = Some(idx);
-                    break;
-                }
-            }
-        }
+        // Verify the confirmation matches what we expected
+        assert!(ent == ent0, "Entity mismatch");
+        assert!(seq == seq0, "Seq mismatch: expected {seq0}, got {seq}");
 
-        let Some(idx) = found_at else {
-            // Input not found - likely already confirmed or queue desync
-            let back_seq = buffer.queue.back().and_then(|e|
-                if let Event::Input { seq, .. } = e { Some(*seq) } else { None });
-            warn!("Received confirmation for seq {seq} but not found in queue (back: {:?}, len: {})",
-                back_seq, buffer.queue.len());
-            continue;
-        };
-
-        // Remove the confirmed input
-        let removed = buffer.queue.remove(idx).unwrap();
-        let Event::Input { ent: ent0, key_bits: kb0, dt: dt0, seq: seq0 } = removed else { unreachable!() };
-
-        assert!(ent == ent0);
-        assert!(seq == seq0);
-
-        // Verify key_bits match - if not, we have a serious desync
-        if kb0 != key_bits {
-            warn!("Confirmed seq {seq} but key_bits mismatch: client={:?}, server={:?}", kb0, key_bits);
+        if key_bits != kb0 {
+            warn!("KeyBits mismatch for seq {seq}: client={:?}, server={:?}", kb0, key_bits);
         }
 
         // dt mismatch is expected due to client-side prediction
-        if (dt as i32 - dt0 as i32).abs() > 100 {
+        if (dt as i32 - dt0 as i32).abs() > 109 {
             warn!("dt mismatch for seq {seq}: server={dt}, client={dt0}");
         }
 
         // Warn if queue is getting too long (indicates confirmations not keeping up)
         if buffer.queue.len() > 5 {
             warn!("Input queue length: {} (confirmations lagging)", buffer.queue.len());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Queue invariant violation: attempted to remove last input")]
+    fn test_do_input_removing_last_input_panics() {
+        let mut app = App::new();
+        app.add_event::<Do>();
+        app.insert_resource(InputQueues::default());
+        app.add_systems(Update, do_input);
+
+        let entity = app.world_mut().spawn_empty().id();
+
+        // Create a queue with exactly 1 input
+        let mut queue = InputQueue::default();
+        queue.queue.push_back(Event::Input {
+            ent: entity,
+            key_bits: KeyBits::default(),
+            dt: 0,
+            seq: 0,
+        });
+
+        app.world_mut().resource_mut::<InputQueues>().insert(entity, queue);
+
+        // Server sends confirmation for that single input
+        app.world_mut().send_event(Do {
+            event: Event::Input {
+                ent: entity,
+                key_bits: KeyBits::default(),
+                dt: 100,
+                seq: 0,
+            }
+        });
+
+        // This should panic because we're trying to remove the last input
+        app.update();
+    }
+
+    #[test]
+    fn test_do_input_removes_confirmed_input_when_multiple_exist() {
+        let mut app = App::new();
+        app.add_event::<Do>();
+        app.insert_resource(InputQueues::default());
+        app.add_systems(Update, do_input);
+
+        let entity = app.world_mut().spawn_empty().id();
+
+        // Create a queue with 3 inputs
+        // Front (newest): seq 2, Middle: seq 1, Back (oldest): seq 0
+        let mut queue = InputQueue::default();
+        for seq in 0..3 {
+            queue.queue.push_front(Event::Input {
+                ent: entity,
+                key_bits: KeyBits::default(),
+                dt: 0,
+                seq,
+            });
+        }
+
+        app.world_mut().resource_mut::<InputQueues>().insert(entity, queue);
+
+        // Server confirms seq 0 (oldest, at back)
+        app.world_mut().send_event(Do {
+            event: Event::Input {
+                ent: entity,
+                key_bits: KeyBits::default(),
+                dt: 100,
+                seq: 0,
+            }
+        });
+
+        // Should NOT panic
+        app.update();
+
+        // Queue should now have 2 inputs remaining
+        let buffers = app.world().resource::<InputQueues>();
+        let buffer = buffers.get(&entity).unwrap();
+        assert_eq!(buffer.queue.len(), 2);
+
+        // Verify the correct input was removed (seq 0 is gone)
+        if let Some(Event::Input { seq, .. }) = buffer.queue.back() {
+            assert_eq!(*seq, 1, "Oldest remaining input should be seq 1");
+        } else {
+            panic!("Expected Input event in queue");
+        }
+    }
+
+    #[test]
+    fn test_do_input_maintains_invariant_with_multiple_confirmations() {
+        let mut app = App::new();
+        app.add_event::<Do>();
+        app.insert_resource(InputQueues::default());
+        app.add_systems(Update, do_input);
+
+        let entity = app.world_mut().spawn_empty().id();
+
+        // Create a queue with 3 inputs
+        // Front (newest): seq 2, Middle: seq 1, Back (oldest): seq 0
+        let mut queue = InputQueue::default();
+        for seq in 0..3 {
+            queue.queue.push_front(Event::Input {
+                ent: entity,
+                key_bits: KeyBits::default(),
+                dt: 0,
+                seq,
+            });
+        }
+
+        app.world_mut().resource_mut::<InputQueues>().insert(entity, queue);
+
+        // Process two confirmations (seq 0 and 1)
+        for seq in 0..2 {
+            app.world_mut().send_event(Do {
+                event: Event::Input {
+                    ent: entity,
+                    key_bits: KeyBits::default(),
+                    dt: 100,
+                    seq,
+                }
+            });
+            app.update();
+        }
+
+        // Queue should have exactly 1 input remaining (seq 2)
+        let buffers = app.world().resource::<InputQueues>();
+        let buffer = buffers.get(&entity).unwrap();
+        assert_eq!(buffer.queue.len(), 1, "Should maintain invariant: exactly 1 input remains");
+
+        if let Some(Event::Input { seq, .. }) = buffer.queue.back() {
+            assert_eq!(*seq, 2, "Remaining input should be seq 2");
         }
     }
 }

@@ -21,9 +21,14 @@ impl InputQueues {
     }
     
     pub fn insert(&mut self, ent: Entity, queue: InputQueue) {
+        // Queue invariant: all queues must have at least 1 input when inserted
+        assert!(
+            !queue.queue.is_empty(),
+            "Queue invariant violation: attempted to insert empty queue for entity {ent}"
+        );
         self.queues.insert(ent, queue);
     }
-    
+
     pub fn extend_one(&mut self, (ent, queue): (Entity, InputQueue)) {
         self.insert(ent, queue);
     }
@@ -45,9 +50,83 @@ impl InputQueues {
     pub fn entities(&self) -> impl Iterator<Item = &Entity> {
         self.queues.keys()
     }
+
+    #[cfg(test)]
+    pub fn insert_for_test(&mut self, ent: Entity, queue: InputQueue) {
+        // Test helper: bypasses invariant check to allow testing panic conditions
+        self.queues.insert(ent, queue);
+    }
 }
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct InputQueue {
-    pub queue: VecDeque<Event>, 
+    pub queue: VecDeque<Event>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::components::keybits::KeyBits;
+
+    #[test]
+    #[should_panic(expected = "Queue invariant violation: attempted to insert empty queue")]
+    fn test_insert_empty_queue_panics() {
+        let mut buffers = InputQueues::default();
+        let entity = Entity::from_raw(1);
+        let empty_queue = InputQueue::default(); // Empty queue
+
+        // This should panic due to invariant violation
+        buffers.insert(entity, empty_queue);
+    }
+
+    #[test]
+    #[should_panic(expected = "Queue invariant violation: attempted to insert empty queue")]
+    fn test_extend_one_empty_queue_panics() {
+        let mut buffers = InputQueues::default();
+        let entity = Entity::from_raw(1);
+        let empty_queue = InputQueue::default(); // Empty queue
+
+        // This should panic due to invariant violation
+        buffers.extend_one((entity, empty_queue));
+    }
+
+    #[test]
+    fn test_insert_non_empty_queue_succeeds() {
+        let mut buffers = InputQueues::default();
+        let entity = Entity::from_raw(1);
+        let mut queue = InputQueue::default();
+        queue.queue.push_back(Event::Input {
+            ent: entity,
+            key_bits: KeyBits::default(),
+            dt: 0,
+            seq: 0,
+        });
+
+        // This should NOT panic
+        buffers.insert(entity, queue);
+
+        // Verify the queue was inserted
+        assert!(buffers.get(&entity).is_some());
+        assert_eq!(buffers.get(&entity).unwrap().queue.len(), 1);
+    }
+
+    #[test]
+    fn test_extend_one_non_empty_queue_succeeds() {
+        let mut buffers = InputQueues::default();
+        let entity = Entity::from_raw(1);
+        let mut queue = InputQueue::default();
+        queue.queue.push_back(Event::Input {
+            ent: entity,
+            key_bits: KeyBits::default(),
+            dt: 0,
+            seq: 0,
+        });
+
+        // This should NOT panic
+        buffers.extend_one((entity, queue));
+
+        // Verify the queue was inserted
+        assert!(buffers.get(&entity).is_some());
+        assert_eq!(buffers.get(&entity).unwrap().queue.len(), 1);
+    }
 }

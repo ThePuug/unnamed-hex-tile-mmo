@@ -65,8 +65,8 @@ pub fn update(
     nntree: Res<NNTree>,
 ) {
     for (ent, buffer) in buffers.iter() {
-        // Skip if queue is empty - no physics to apply
-        if buffer.queue.is_empty() { continue; }
+        // Queue invariant: all queues must have at least 1 input
+        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
 
         let Ok((&loc, &heading, mut offset0, mut airtime0, attrs)) = query.get_mut(ent) else { continue; };
         let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(MOVEMENT_SPEED);

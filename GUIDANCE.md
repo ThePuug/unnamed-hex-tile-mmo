@@ -363,6 +363,11 @@ When `Component::Loc` update received (tile boundary crossing):
    - The front input accumulates time until confirmed
    - Queues only removed on disconnect - never become empty during normal operation
 
+12. **Use pop/push when modifying queue front**
+   - Use `front_mut()` to modify in-place, NOT `pop_front()` then `push_front()`
+   - Pop-then-push creates race condition where queue is temporarily empty
+   - Violates invariant and causes "no front on buffer" panics
+
 ### ✅ DO:
 1. **Use shared code paths when possible**
    - Both local and remote players should share common logic where appropriate
