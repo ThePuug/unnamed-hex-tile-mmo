@@ -40,32 +40,22 @@ pub fn do_incremental(
 
                 let is_local = buffers.get(&ent).is_some();
 
+                // Both local and remote: preserve world-space positions for smooth visual transitions
+                // Convert prev_step and step to world positions
+                let prev_world = map.convert(**loc0) + offset0.prev_step;
+                let step_world = map.convert(**loc0) + offset0.step;
+
+                // Express prev_step and step in the new tile's coordinate system
+                offset0.prev_step = prev_world - map.convert(*loc);
+                offset0.step = step_world - map.convert(*loc);
+
                 if is_local {
-                    // Local player: crossing tile boundaries, preserve world-space positions
-                    // for smooth interpolation across the boundary
-
-                    // Convert prev_step and step to world positions
-                    let prev_world = map.convert(**loc0) + offset0.prev_step;
-                    let step_world = map.convert(**loc0) + offset0.step;
-
-                    // Calculate the adjustment for the confirmed state
+                    // Local player: calculate the adjustment for the confirmed state
                     let adjustment = map.convert(**loc0) + offset0.state - map.convert(*loc);
-
-                    // Express prev_step and step in the new tile's coordinate system
-                    offset0.prev_step = prev_world - map.convert(*loc);
-                    offset0.step = step_world - map.convert(*loc);
                     offset0.state = adjustment;
                 } else {
-                    // Remote player: received Loc update from server
-                    // Set step to the offset from old position to new Loc, then interpolate toward zero
-
-                    // Calculate where the remote player currently is in world space
-                    let current_world_pos = map.convert(**loc0) + offset0.step;
-
-                    // Set step to be the offset from the new Loc to that world position
-                    offset0.prev_step = offset0.step;
-                    offset0.step = current_world_pos - map.convert(*loc);
-                    offset0.state = Vec3::ZERO; // Remote players aim for center of their Loc
+                    // Remote player: aim for center of their Loc
+                    offset0.state = Vec3::ZERO;
                 }
 
                 *loc0 = loc;

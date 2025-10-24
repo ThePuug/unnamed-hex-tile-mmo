@@ -77,6 +77,8 @@ pub fn update_keybits(
         }
 
         // Send input if either keybits changed or periodic interval has elapsed
+        // Periodic updates prevent dt overflow but won't create duplicate inputs
+        // because controlled::tick will skip if key_bits haven't changed
         if keybits0.key_bits != keybits.key_bits || keybits0.accumulator >= INPUT_SEND_INTERVAL_MS * 1_000_000 {
             *keybits0 = keybits;
             writer.write(Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }});
@@ -91,43 +93,58 @@ pub fn do_input(
     for &message in reader.read() {
         let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
         let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
-        
-        // Check if the confirmation matches the back of the queue
-        let Some(Event::Input { seq: seq_back, key_bits: keybits_back, .. }) = buffer.queue.back() else {
-            // Queue is empty - this shouldn't happen as we always maintain at least one input
+
+        if buffer.queue.is_empty() {
             warn!("Received confirmation for seq {seq} but queue is empty");
             continue;
-        };
-        
-        if *seq_back != seq {
-            // Confirmation doesn't match back of queue - might be out of order or queue is behind
-            warn!("Received confirmation for seq {seq} but queue back is seq {seq_back} - skipping");
-            continue;
         }
-        
-        // Verify key_bits match before doing anything
-        if *keybits_back != key_bits {
-            warn!("Received confirmation for seq {seq} but key_bits mismatch: expected {:?}, got {:?}", keybits_back, key_bits);
-            continue;
-        }
-        
-        // If this is the last input in queue, don't pop it - just acknowledge it was confirmed
-        if buffer.queue.len() <= 1 {
-            // Server confirmed the accumulating input, but we haven't created the next one yet
-            // Just log for now - the input is already in the queue and being accumulated
-            if (dt as i32).abs() > 100 { 
-                warn!("dt mismatch on accumulating input seq {seq}: server={dt}, client=accumulating"); 
+
+        // Due to network latency and periodic updates, client and server queues may temporarily
+        // have different lengths. The server sends confirmations from the back (oldest first).
+        // We should accept confirmations as long as they're reasonably close to our back.
+
+        // Find the input in our queue - it should be near the back
+        let mut found_at = None;
+        for (idx, input) in buffer.queue.iter().enumerate().rev() {
+            if let Event::Input { seq: input_seq, .. } = input {
+                if *input_seq == seq {
+                    found_at = Some(idx);
+                    break;
+                }
             }
-            continue;
         }
-        
-        // Normal case: pop the confirmed input
-        let Some(Event::Input { ent: ent0, key_bits: keybits0, dt: dt0, seq: seq0 }) = buffer.queue.pop_back() 
-            else { unreachable!() };
+
+        let Some(idx) = found_at else {
+            // Input not found - likely already confirmed or queue desync
+            let back_seq = buffer.queue.back().and_then(|e|
+                if let Event::Input { seq, .. } = e { Some(*seq) } else { None });
+            warn!("Received confirmation for seq {seq} but not found in queue (back: {:?}, len: {})",
+                back_seq, buffer.queue.len());
+            continue;
+        };
+
+        // Remove the confirmed input
+        let removed = buffer.queue.remove(idx).unwrap();
+        let Event::Input { ent: ent0, key_bits: kb0, dt: dt0, seq: seq0 } = removed else { unreachable!() };
+
         assert!(ent == ent0);
         assert!(seq == seq0);
-        if (dt as i32 - dt0 as i32).abs() > 100 { warn!("dt: {dt} != {dt0}"); }
-        if buffer.queue.len() > 2 { warn!("buffer.queue len: {}", buffer.queue.len()); }
+
+        // Verify key_bits match - if not, we have a serious desync
+        if kb0 != key_bits {
+            warn!("Confirmed seq {seq} but key_bits mismatch: client={:?}, server={:?}", kb0, key_bits);
+        }
+
+        // dt mismatch is expected due to client-side prediction
+        if (dt as i32 - dt0 as i32).abs() > 100 {
+            warn!("dt mismatch for seq {seq}: server={dt}, client={dt0}");
+        }
+
+        // Warn if queue is getting too long (indicates confirmations not keeping up)
+        if buffer.queue.len() > 5 {
+            warn!("Input queue length: {} (confirmations lagging)", buffer.queue.len());
+        }
+
         buffers.mark_empty_if_needed(ent);
     }
 }
