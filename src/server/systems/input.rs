@@ -27,19 +27,18 @@ pub fn send_input(
     mut conn: ResMut<RenetServer>,
     mut buffers: ResMut<InputQueues>,
 ) {
-    let entities_to_send: Vec<Entity> = buffers.non_empty_entities().copied().collect();
+    let entities_to_send: Vec<Entity> = buffers.entities().copied().collect();
     
     for ent in entities_to_send {
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
         while buffer.queue.len() > 1 {
             let event = buffer.queue.pop_back().unwrap();
             let message = bincode::serde::encode_to_vec(
-                Do { event }, 
+                Do { event },
                 bincode::config::legacy()).unwrap();
             conn.send_message(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
         }
-        // Update tracking after pops
-        buffers.mark_empty_if_needed(ent);
+        // Queue always has exactly 1 input remaining (the accumulating one)
     }
 }
 

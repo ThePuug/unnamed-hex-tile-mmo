@@ -1,6 +1,6 @@
 pub mod map;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 
@@ -9,8 +9,6 @@ use crate::common::message::Event;
 #[derive(Clone, Default, Resource)]
 pub struct InputQueues {
     queues: HashMap<Entity, InputQueue>,
-    /// Tracks entities with non-empty queues to avoid iterating over all entities
-    non_empty: HashSet<Entity>,
 }
 
 impl InputQueues {
@@ -23,9 +21,6 @@ impl InputQueues {
     }
     
     pub fn insert(&mut self, ent: Entity, queue: InputQueue) {
-        if !queue.queue.is_empty() {
-            self.non_empty.insert(ent);
-        }
         self.queues.insert(ent, queue);
     }
     
@@ -34,7 +29,6 @@ impl InputQueues {
     }
     
     pub fn remove(&mut self, ent: &Entity) -> Option<InputQueue> {
-        self.non_empty.remove(ent);
         self.queues.remove(ent)
     }
     
@@ -45,28 +39,11 @@ impl InputQueues {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut InputQueue)> {
         self.queues.iter_mut().map(|(&k, v)| (k, v))
     }
-    
-    /// Returns iterator over entities that have non-empty queues
-    pub fn non_empty_entities(&self) -> impl Iterator<Item = &Entity> {
-        self.non_empty.iter()
-    }
-    
-    /// Mark queue as non-empty when items are added
-    pub fn mark_non_empty(&mut self, ent: Entity) {
-        if let Some(queue) = self.queues.get(&ent) {
-            if !queue.queue.is_empty() {
-                self.non_empty.insert(ent);
-            }
-        }
-    }
-    
-    /// Mark queue as empty when items are removed
-    pub fn mark_empty_if_needed(&mut self, ent: Entity) {
-        if let Some(queue) = self.queues.get(&ent) {
-            if queue.queue.is_empty() {
-                self.non_empty.remove(&ent);
-            }
-        }
+
+    /// Returns iterator over all entities with queues
+    /// Note: All queues always have at least 1 input (the accumulating one)
+    pub fn entities(&self) -> impl Iterator<Item = &Entity> {
+        self.queues.keys()
     }
 }
 

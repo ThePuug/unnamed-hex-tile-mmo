@@ -144,7 +144,5 @@ pub fn do_input(
         if buffer.queue.len() > 5 {
             warn!("Input queue length: {} (confirmations lagging)", buffer.queue.len());
         }
-
-        buffers.mark_empty_if_needed(ent);
     }
 }

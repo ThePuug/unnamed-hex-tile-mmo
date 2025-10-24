@@ -38,22 +38,48 @@ pub fn do_incremental(
                 let Some(mut loc0) = o_loc else { continue; };
                 let Some(mut offset0) = o_offset else { continue; };
 
-                // Both local and remote: preserve world-space positions for smooth visual transitions
-                // Convert all offset fields to world positions, then re-express in new tile's coordinate system
-                let state_world = map.convert(**loc0) + offset0.state;
-                let prev_world = map.convert(**loc0) + offset0.prev_step;
-                let step_world = map.convert(**loc0) + offset0.step;
+                // Check if this is a local player (has input buffer) or remote player
+                let is_local = buffers.get(&ent).is_some();
 
-                let new_tile_center = map.convert(*loc);
-                offset0.state = state_world - new_tile_center;
-                offset0.prev_step = prev_world - new_tile_center;
-                offset0.step = step_world - new_tile_center;
+                if is_local {
+                    // Local player: preserve world-space positions for smooth visual transitions
+                    // Convert all offset fields to world positions, then re-express in new tile's coordinate system
+                    let state_world = map.convert(**loc0) + offset0.state;
+                    let prev_world = map.convert(**loc0) + offset0.prev_step;
+                    let step_world = map.convert(**loc0) + offset0.step;
+
+                    let new_tile_center = map.convert(*loc);
+                    offset0.state = state_world - new_tile_center;
+                    offset0.prev_step = prev_world - new_tile_center;
+                    offset0.step = step_world - new_tile_center;
+                } else {
+                    // Remote player: preserve only visual positions for smooth transitions
+                    // State should be the heading-based position for remote players
+                    let prev_world = map.convert(**loc0) + offset0.prev_step;
+                    let step_world = map.convert(**loc0) + offset0.step;
+
+                    let new_tile_center = map.convert(*loc);
+
+                    // Calculate heading-based target position
+                    let Some(ref heading0) = o_heading else { panic!("no heading for remote player") };
+                    let target_offset = if ***heading0 != default() {
+                        let heading_neighbor_world = map.convert(*loc + ***heading0);
+                        let direction = heading_neighbor_world - new_tile_center;
+                        (direction * HERE).xz()
+                    } else {
+                        Vec2::ZERO
+                    };
+
+                    offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
+                    offset0.prev_step = prev_world - new_tile_center;
+                    offset0.step = step_world - new_tile_center;
+                }
 
                 *loc0 = loc;
 
                 writer.write(Try { event: Event::Discover { ent, qrz: *loc } });
-                let Some(heading0) = o_heading else { panic!("no heading") };
-                if **heading0 != default() {
+                let Some(ref heading0) = o_heading else { panic!("no heading") };
+                if ***heading0 != default() {
                     for qrz in loc0.fov(&heading0, 10) {
                         writer.write(Try { event: Event::Discover { ent, qrz } });
                     }
@@ -64,7 +90,26 @@ pub fn do_incremental(
 
                 *heading0 = heading;
 
-                let Some(loc0) = o_loc else { panic!("no loc") };
+                // Update offset.state for remote players when heading changes
+                let is_local = buffers.get(&ent).is_some();
+                if !is_local {
+                    if let Some(mut offset0) = o_offset {
+                        let Some(ref loc0) = o_loc else { panic!("no loc") };
+                        let tile_center = map.convert(***loc0);
+
+                        let target_offset = if *heading != default() {
+                            let heading_neighbor_world = map.convert(***loc0 + *heading);
+                            let direction = heading_neighbor_world - tile_center;
+                            (direction * HERE).xz()
+                        } else {
+                            Vec2::ZERO
+                        };
+
+                        offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
+                    }
+                }
+
+                let Some(ref loc0) = o_loc else { panic!("no loc") };
                 if **heading0 != default() {
                     for qrz in loc0.fov(&heading0, 10) {
                         writer.write(Try { event: Event::Discover { ent, qrz } });

@@ -29,12 +29,11 @@ pub fn tick(
         // This ensures dt doesn't overflow and inputs get confirmed regularly
         let input = Event::Input { ent, key_bits: keybits, dt: 0, seq: seq0.wrapping_add(1) };
         buffer.queue.push_front(input);
-        buffers.mark_non_empty(ent);
         writer.write(Try { event: input });
     }
 
-    // Only iterate over entities with non-empty queues instead of all controlled entities
-    let entities_to_process: Vec<Entity> = buffers.non_empty_entities().copied().collect();
+    // Only iterate over entities with queues (all queues always have at least 1 input)
+    let entities_to_process: Vec<Entity> = buffers.entities().copied().collect();
     
     for ent in entities_to_process {
         // Verify entity still has Controlled behaviour

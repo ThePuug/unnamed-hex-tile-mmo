@@ -95,7 +95,9 @@ pub struct Offset {
 **`state`** (Server Authority):
 - Updated **only** when server sends corrections or confirmations
 - For **local player**: Represents server's confirmed position; adjusted when crossing tile boundaries
-- For **remote players**: Always `Vec3::ZERO` (center of their Loc tile)
+- For **remote players**: Heading-based position (at `HERE` distance from tile center in heading direction)
+  - Updated when `Component::Loc` or `Component::Heading` received
+  - Calculated in `world.rs::do_incremental()`
 - Physics system updates this for local players based on input prediction
 
 **`step`** (Visual Position):
@@ -146,11 +148,16 @@ Where:
 
 ### Remote Player Movement Flow
 
-1. **Server Update**: Server sends `Loc` updates when remote players move
-2. **Interpolation** (`common/systems/behaviour/controlled.rs::interpolate_remote()`):
-   - Runs every frame
-   - Smoothly moves `step` toward `state` (Vec3::ZERO)
-3. **Rendering**: Same interpolation as local player
+1. **Server Update**: Server sends `Component::Loc` and `Component::Heading` updates when remote players move
+   - Does NOT send `Event::Input` to other clients (only to owning client as confirmations)
+2. **State Calculation** (`common/systems/world.rs::do_incremental()`):
+   - When `Component::Loc` received: Sets `offset.state` to heading-based position
+   - When `Component::Heading` received: Recalculates `offset.state` for new heading direction
+   - `offset.state` = heading position (at `HERE` distance from tile center in heading direction)
+3. **Interpolation** (`common/systems/behaviour/controlled.rs::interpolate_remote()`):
+   - Runs every frame in FixedUpdate
+   - Smoothly moves `step` toward `state` at constant speed (movement_speed)
+4. **Rendering**: Same interpolation as local player
 
 ---
 
@@ -195,15 +202,10 @@ pub struct InputQueue {
 - Key_bits must match or serious desync occurred
 - Queue length > 5 indicates confirmation lag
 
-### Prediction Process
-
-1. Client sends `Event::Incremental{KeyBits}` to server
-2. Client's `controlled::tick` creates `Event::Input`, adds to queue front
-3. Client immediately simulates input locally (optimistic)
-4. Server receives same `Event::Incremental`, creates matching `Event::Input`
-5. Server's `send_input` pops from back, sends confirmation with `seq`
-6. Client's `do_input` finds matching `seq`, removes from queue
-7. If server disagrees (rare), client gradually corrects toward server state
+**Queue Invariant:**
+- **All queues always contain at least 1 input** (the accumulating one at front)
+- Server's `send_input` only pops while `len > 1`, preserving the accumulating input
+- Queues only removed when player disconnects
 
 ---
 
@@ -271,7 +273,7 @@ pub struct InputQueue {
 
 **`InputQueues`**: Manages prediction queues
 - Maps `Entity` → `InputQueue`
-- Tracks which entities have non-empty queues for performance
+- All active controlled entities always have at least 1 input in queue
 
 **`EntityMap`** (client only): Maps remote entity IDs to local entity IDs
 - Server uses different entity IDs than client
@@ -304,20 +306,9 @@ pub struct InputQueue {
 
 ### Important: Loc Update Handling
 
-When a `Component::Loc` update is received (tile boundary crossing):
-
-**MUST preserve world-space positions** for both local and remote players:
-```rust
-// Convert to world space
-let prev_world = map.convert(**loc0) + offset0.prev_step;
-let step_world = map.convert(**loc0) + offset0.step;
-
-// Re-express in new tile's coordinate system
-offset0.prev_step = prev_world - map.convert(*loc);
-offset0.step = step_world - map.convert(*loc);
-```
-
-This ensures smooth visual transitions without stuttering.
+When `Component::Loc` update received (tile boundary crossing):
+- **Local players**: Preserve ALL offset fields in world space, then re-express in new tile coordinates
+- **Remote players**: Preserve visual fields (`step`, `prev_step`) in world space; recalculate `state` from heading
 
 ---
 
@@ -332,11 +323,13 @@ This ensures smooth visual transitions without stuttering.
    - Check: `buffers.get(&entity).is_some()` to distinguish
 
 3. **Forget to preserve world-space positions during Loc updates**
-   - Always convert ALL offset fields (`state`, `step`, `prev_step`) to world space, then back to new tile's local space
-   - Skipping `state` causes falling/teleporting bugs
+   - Local players: Convert ALL offset fields (`state`, `step`, `prev_step`) to world space, then back
+   - Remote players: Only convert visual fields (`step`, `prev_step`); recalculate `state` from heading
+   - Skipping proper handling causes falling/teleporting bugs
 
-4. **Run interpolation in FixedUpdate**
-   - Rendering interpolation must run every frame (Update schedule)
+4. **Run rendering interpolation in FixedUpdate**
+   - Actor rendering interpolation (`actor::update`) must run every frame in Update schedule
+   - Remote player interpolation (`interpolate_remote`) runs in FixedUpdate
 
 5. **Modify rendering positions in FixedUpdate**
    - Physics modifies `state` and `step` in FixedUpdate
@@ -359,6 +352,16 @@ This ensures smooth visual transitions without stuttering.
    - Stationary = check `KeyBits`, NOT `offset.step` magnitude
    - Offset is physics *result*, KeyBits is player *intent*
    - Checking offset causes stuttering (small offset while keys pressed)
+
+10. **Set remote player `offset.state` to tile center (Vec3::ZERO)**
+   - Remote players must interpolate toward heading-based position, NOT tile center
+   - `offset.state` must be recalculated from heading when `Component::Loc` or `Component::Heading` updates arrive
+   - Incorrectly setting to zero causes remote players to stand at tile center instead of heading triangle
+
+11. **Track "empty" input queues**
+   - All active controlled entities always have at least 1 input in their queue
+   - The front input accumulates time until confirmed
+   - Queues only removed on disconnect - never become empty during normal operation
 
 ### ✅ DO:
 1. **Use shared code paths when possible**
@@ -395,40 +398,6 @@ const SLOPE_FOLLOW_SPEED: f32 = 0.95;          // Terrain following speed
 const LEDGE_GRAB_THRESHOLD: f32 = 0.0;         // Disabled
 const MAX_ENTITIES_PER_TILE: usize = 7;        // Collision limit
 ```
-
----
-
-## Debugging Tips
-
-### Visual Stuttering Issues
-- Check if `step` and `prev_step` are being preserved during Loc updates
-- Verify world-space calculations are correct
-- Check that interpolation is running every frame, not in FixedUpdate
-
-### Position Desync Issues
-- Check server confirmation is arriving
-- Verify input sequence numbers match
-- Look for `state` vs `step` confusion
-
-### Movement Not Working
-- Check if entity has `Physics` component
-- Verify input is being captured and sent to server
-- Check if entity has input buffer in `InputQueues`
-
-### Remote Players Not Moving Smoothly
-- Verify `interpolate_remote()` is running
-- Check that remote players don't have input buffers
-- Ensure `state` is being set to `Vec3::ZERO`
-
-### Players Standing at Center Instead of Heading Triangle
-- Verify `actor::update()` runs in Update schedule
-- Check heading is set (not `Qrz::default()`)
-- Stationary detection must use KeyBits, not offset magnitude
-
-### Movement Stuttering
-- Cause: Checking `offset.step` magnitude instead of `KeyBits` for stationary detection
-- Fix: Use `keybits.key_bits & (KB_HEADING_Q | KB_HEADING_R) == 0`
-- Always use physics position when movement keys pressed
 
 ---
 
