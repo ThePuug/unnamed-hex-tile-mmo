@@ -2,7 +2,51 @@
 
 This document provides critical architectural information for understanding the unnamed-hex-tile-mmo codebase. Read this before making changes to avoid common misunderstandings.
 
+## Development Workflow Rules
+
+### Rule 1: Test-Driven Development (TDD)
+
+**ALWAYS write a failing unit test before making code changes.**
+
+When implementing fixes or new features:
+1. **First**: Write a unit test that captures the expected behavior
+2. **Second**: Verify the test fails (demonstrating the bug or missing feature)
+3. **Third**: Implement the fix/feature
+4. **Fourth**: Verify the test passes
+5. **Fifth**: Run the full test suite to ensure no regressions
+
+This approach:
+- Documents the expected behavior in code
+- Prevents regressions
+- Makes the intent of changes clear
+- Catches misunderstandings early
+
+**Example**:
+- Write test that captures expected behavior
+- Verify test fails (proves bug exists)
+- Implement fix
+- Verify test passes and no regressions
+
+### Rule 2: Update GUIDANCE.md After Confirmed Solutions
+
+**When the user confirms a solution should be accepted, update this GUIDANCE.md file immediately.**
+
+Add only the **minimum necessary** to prevent future misunderstandings:
+- Critical architectural concepts that were misunderstood
+- Key pitfalls that led to bugs
+- Essential debugging context for similar issues
+
+**Do NOT add:**
+- Exhaustive implementation details (code is self-documenting)
+- Redundant explanations already clear from code
+- Historical minutiae or verbose examples
+
+Keep guidance **concise and essential** - this is a reference for avoiding mistakes, not comprehensive documentation.
+
+**IMPORTANT**: You have permission to update GUIDANCE.md immediately when the user confirms the code change is accepted. Do NOT attempt to commit the changes yourself - only update the file.
+
 ## Table of Contents
+- [Development Workflow Rules](#development-workflow-rules)
 - [Core Architecture](#core-architecture)
 - [Position & Movement System](#position--movement-system)
 - [Client-Side Prediction](#client-side-prediction)
@@ -93,6 +137,7 @@ Where:
 5. **Rendering Interpolation** (`client/systems/actor.rs`):
    - Runs every frame (not fixed timestep)
    - Interpolates between `prev_step` and `step` using `overstep_fraction`
+   - **Heading-based positioning**: When player is stationary (horizontal offset < 0.01) with a heading set, positions them in the triangle of their hex corresponding to heading direction (at `HERE` distance from center)
 
 ### Remote Player Movement Flow
 
@@ -204,6 +249,8 @@ pub struct InputQueue {
 
 **`Heading`**: Direction entity is facing
 - Used for FOV calculation and animation
+- **Also used for positioning**: Stationary players are positioned in the triangle of their hex tile corresponding to their heading direction
+- Position calculation: `tile_center + (direction_to_heading_neighbor * HERE)` where `HERE = 0.33`
 
 **`AirTime`**: Jump/fall state
 - `None` = grounded
@@ -247,7 +294,7 @@ pub struct InputQueue {
 1. `renet::do_manage_connections` - Handle network events
 2. `world::do_incremental` - Process component updates from server
 3. `input::do_input` - Process input confirmations
-4. `actor::update` - Interpolate actor positions for rendering
+4. `actor::update` - Interpolate actor positions for rendering, apply heading-based positioning
 5. `camera::update` - Update camera position
 
 ### Important: Loc Update Handling
@@ -297,6 +344,17 @@ This ensures smooth visual transitions without stuttering.
    - Network latency causes 1-3 input difference (normal)
    - Client confirmation handler searches entire queue, not just back
 
+8. **Apply heading positioning in physics/input systems**
+   - Heading-based positioning is a **rendering-only** adjustment
+   - Applied in `client/systems/actor.rs::update()` during final position calculation
+   - Only affects stationary players (not pressing movement keys)
+   - Physics and input systems should continue to work with `offset.step` as normal
+
+9. **Check offset magnitude to detect stationary players**
+   - Stationary = check `KeyBits`, NOT `offset.step` magnitude
+   - Offset is physics *result*, KeyBits is player *intent*
+   - Checking offset causes stuttering (small offset while keys pressed)
+
 ### ✅ DO:
 1. **Use shared code paths when possible**
    - Both local and remote players should share common logic where appropriate
@@ -310,6 +368,11 @@ This ensures smooth visual transitions without stuttering.
 4. **Use proper schedules**
    - FixedUpdate: Physics, gameplay logic
    - Update: Rendering, interpolation, network I/O
+
+5. **Write tests before implementing fixes**
+   - See [Development Workflow Rules](#development-workflow-rules)
+   - Tests document expected behavior and prevent regressions
+   - Place tests in appropriate module with `#[cfg(test)]` annotation
 
 ---
 
@@ -351,6 +414,16 @@ const MAX_ENTITIES_PER_TILE: usize = 7;        // Collision limit
 - Verify `interpolate_remote()` is running
 - Check that remote players don't have input buffers
 - Ensure `state` is being set to `Vec3::ZERO`
+
+### Players Standing at Center Instead of Heading Triangle
+- Verify `actor::update()` runs in Update schedule
+- Check heading is set (not `Qrz::default()`)
+- Stationary detection must use KeyBits, not offset magnitude
+
+### Movement Stuttering
+- Cause: Checking `offset.step` magnitude instead of `KeyBits` for stationary detection
+- Fix: Use `keybits.key_bits & (KB_HEADING_Q | KB_HEADING_R) == 0`
+- Always use physics position when movement keys pressed
 
 ---
 

@@ -318,7 +318,7 @@ mod tests {
     fn spawn_physics_entity(app: &mut App, qrz: Qrz, offset: Vec3) -> Entity {
         app.world_mut().spawn((
             Loc::new(qrz),
-            Offset { state: offset, step: offset },
+            Offset { state: offset, step: offset, prev_step: offset },
             AirTime { state: None, step: None },
             Physics,
         )).id()
