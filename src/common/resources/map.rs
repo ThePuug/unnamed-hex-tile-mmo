@@ -22,12 +22,36 @@ impl Map {
     /// Generate vertices for a hex tile with slopes toward neighbors
     /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
     /// If apply_slopes is false, vertices remain flat at their natural height
+    /// Calculate height-based color tint for a given elevation
+    fn height_color_tint(&self, elevation: i16) -> [f32; 4] {
+        // Base grass color (dark greenish)
+        let base_color = [0.04, 0.09, 0.04];
+
+        // Apply elevation-based tinting
+        // Lower elevations (valleys): darker, more saturated green
+        // Higher elevations (peaks): lighter, with hints of brown/gray (suggesting rocky terrain)
+        let elevation_factor = (elevation as f32) / 15.0; // Normalize to roughly 0-1 range
+
+        // Darker at low elevations, lighter at high elevations
+        let brightness_mult = 1.0 + (elevation_factor * 2.0).clamp(0.0, 2.0);
+
+        // At high elevations, add brown/gray tint (reduce green, add red)
+        let high_elevation_tint = elevation_factor.clamp(0.0, 1.0);
+
+        [
+            (base_color[0] * brightness_mult + high_elevation_tint * 0.15).clamp(0.0, 1.0), // Red increases with height
+            (base_color[1] * brightness_mult * (1.0 - high_elevation_tint * 0.3)).clamp(0.0, 1.0), // Green slightly decreases
+            (base_color[2] * brightness_mult).clamp(0.0, 1.0), // Blue stays similar
+            1.0, // Alpha
+        ]
+    }
+
     pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
         let mut verts = self.0.vertices(qrz);
         let rise = self.0.rise();
-        
-        // Default grass color (dark greenish to match original terrain)
-        let grass_color = [0.04, 0.09, 0.04, 1.0];
+
+        // Use height-based color instead of fixed grass color
+        let grass_color = self.height_color_tint(qrz.z);
         // Stone cliff color (lighter gray-brown for contrast)
         let cliff_color = [0.35, 0.32, 0.28, 1.0];
         let mut colors = vec![grass_color; 6];
@@ -249,9 +273,12 @@ impl Map {
             let norm_3 = self.calculate_vertex_normal(it_qrz, 3, &it_vrt, apply_slopes);
             let center_normal = Vec3::new(0., 1., 0.); // Center can stay up
 
+            // Use height-based color for center vertex
+            let it_center_color = self.height_color_tint(it_qrz.z);
+
             verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
             norms.extend([ norm_0, norm_5, center_normal, norm_4, norm_3 ]);
-            colors.extend([ it_col[0], it_col[5], [0.04, 0.09, 0.04, 1.0], it_col[4], it_col[3] ]);
+            colors.extend([ it_col[0], it_col[5], it_center_color, it_col[4], it_col[3] ]);
 
             if let Some((sw_vrt, sw_col)) = sw_data {
                 // Calculate normals for southwest neighbor
@@ -261,10 +288,11 @@ impl Map {
                 let sw_norm_2 = self.calculate_vertex_normal(sw_qrz, 2, &sw_vrt, apply_slopes);
                 let sw_norm_3 = self.calculate_vertex_normal(sw_qrz, 3, &sw_vrt, apply_slopes);
                 let sw_center = Vec3::new(0., 1., 0.);
+                let sw_center_color = self.height_color_tint(sw_qrz.z);
 
                 verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
                 norms.extend([ sw_norm_0, sw_norm_1, sw_center, sw_norm_2, sw_norm_3 ]);
-                colors.extend([ sw_col[0], sw_col[1], [0.04, 0.09, 0.04, 1.0], sw_col[2], sw_col[3] ]);
+                colors.extend([ sw_col[0], sw_col[1], sw_center_color, sw_col[2], sw_col[3] ]);
             } else {
                 verts.extend([ it_vrt[3] ]);
                 norms.extend([ norm_3 ]);
@@ -278,7 +306,9 @@ impl Map {
             let (mut we_vrt, we_col) = if we_result.is_some() {
                 self.vertices_and_colors_with_slopes(we_qrz, apply_slopes)
             } else {
-                (self.0.vertices(we_qrz), vec![[0.04, 0.09, 0.04, 1.0]; 6])
+                // For fake west neighbor, use height-based color
+                let fake_we_color = self.height_color_tint(we_qrz.z);
+                (self.0.vertices(we_qrz), vec![fake_we_color; 6])
             };
             
             // If west neighbor is fake, match its East edge vertices to current tile's West edge
@@ -440,5 +470,58 @@ mod tests {
             "Expected Z component of normal to be small on flat terrain, but got {}",
             shared_vertex_normal.z
         );
+    }
+
+    #[test]
+    fn test_height_based_color_gradients() {
+        // Create a map with tiles at different elevations
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let low_tile = Qrz { q: 0, r: 0, z: 0 };   // Sea level
+        let mid_tile = Qrz { q: 1, r: 0, z: 5 };   // Mid elevation
+        let high_tile = Qrz { q: 2, r: 0, z: 10 }; // High elevation
+
+        qrz_map.insert(low_tile, EntityType::Decorator(default()));
+        qrz_map.insert(mid_tile, EntityType::Decorator(default()));
+        qrz_map.insert(high_tile, EntityType::Decorator(default()));
+
+        let map = Map::new(qrz_map);
+        let (mesh, _aabb) = map.regenerate_mesh(true);
+
+        // Get colors from the mesh
+        let color_attr = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+            .expect("Mesh should have colors");
+
+        let colors = match color_attr {
+            bevy::render::mesh::VertexAttributeValues::Float32x4(colors) => colors,
+            _ => panic!("Expected Float32x4 color attribute"),
+        };
+
+        // Find colors for each tile's center vertex (we know the mesh structure from regenerate_mesh)
+        // The colors should vary based on elevation
+
+        // At least some colors should differ based on elevation
+        // We expect lower tiles to be darker and higher tiles to be lighter (or have different hues)
+        let unique_colors: std::collections::HashSet<String> = colors.iter()
+            .filter(|c| {
+                // Filter out cliff colors (gray-brown) to focus on grass colors
+                !((c[0] - 0.35).abs() < 0.01 && (c[1] - 0.32).abs() < 0.01)
+            })
+            .map(|c| format!("{:.3},{:.3},{:.3}", c[0], c[1], c[2]))
+            .collect();
+
+        assert!(
+            unique_colors.len() > 1,
+            "Expected multiple different colors based on elevation, but found only {} unique grass colors. \
+             Colors should vary with height.",
+            unique_colors.len()
+        );
+
+        // All colors should be valid (components between 0 and 1)
+        for color in colors {
+            assert!(color[0] >= 0.0 && color[0] <= 1.0, "Red component out of range: {}", color[0]);
+            assert!(color[1] >= 0.0 && color[1] <= 1.0, "Green component out of range: {}", color[1]);
+            assert!(color[2] >= 0.0 && color[2] <= 1.0, "Blue component out of range: {}", color[2]);
+            assert!(color[3] >= 0.0 && color[3] <= 1.0, "Alpha component out of range: {}", color[3]);
+        }
     }
 }
