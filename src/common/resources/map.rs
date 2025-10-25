@@ -130,6 +130,72 @@ impl Map {
         (verts, colors)
     }
 
+    /// Calculate smooth normal for a vertex by averaging face normals of adjacent triangles
+    /// This version considers neighboring hexes for truly smooth lighting
+    fn calculate_vertex_normal(&self, qrz: Qrz, vertex_idx: usize, verts: &[Vec3], apply_slopes: bool) -> Vec3 {
+        let center = verts[6]; // Center vertex
+        let vertex = verts[vertex_idx];
+
+        // Accumulate normals from all adjacent triangles
+        let mut normal_sum = Vec3::ZERO;
+        let mut count = 0;
+
+        // Get the two adjacent vertices within this hex
+        let prev_idx = if vertex_idx == 0 { 5 } else { vertex_idx - 1 };
+        let next_idx = if vertex_idx == 5 { 0 } else { vertex_idx + 1 };
+        let prev_vertex = verts[prev_idx];
+        let next_vertex = verts[next_idx];
+
+        // Triangle 1: center -> next -> vertex (clockwise from above)
+        let edge1 = next_vertex - center;
+        let edge2 = vertex - center;
+        let normal1 = edge1.cross(edge2).normalize_or_zero();
+        if normal1.length_squared() > 0.001 {
+            normal_sum += normal1;
+            count += 1;
+        }
+
+        // Triangle 2: center -> vertex -> prev (clockwise from above)
+        let edge3 = vertex - center;
+        let edge4 = prev_vertex - center;
+        let normal2 = edge3.cross(edge4).normalize_or_zero();
+        if normal2.length_squared() > 0.001 {
+            normal_sum += normal2;
+            count += 1;
+        }
+
+        // Also consider the neighbor hex that shares this vertex
+        // Each vertex corresponds to a direction (0=North, 1=NE, 2=SE, 3=South, 4=SW, 5=NW)
+        let neighbor_direction = qrz::DIRECTIONS[vertex_idx];
+        let neighbor_qrz_search = qrz + neighbor_direction + Qrz{q:0,r:0,z:30};
+
+        if let Some((neighbor_qrz, _)) = self.find(neighbor_qrz_search, -60) {
+            let (neighbor_verts, _) = self.vertices_and_colors_with_slopes(neighbor_qrz, apply_slopes);
+            let neighbor_center = neighbor_verts[6];
+
+            // The vertex is shared between hexes, so we need to find corresponding vertices
+            // in the neighbor to form triangles
+            let opposite_vertex_idx = (vertex_idx + 3) % 6; // Opposite side of neighbor hex
+            let neighbor_next_idx = if opposite_vertex_idx == 5 { 0 } else { opposite_vertex_idx + 1 };
+
+            // Triangle from neighbor: neighbor_center -> neighbor_adjacent -> vertex (clockwise from above)
+            let edge5 = neighbor_verts[neighbor_next_idx] - neighbor_center;
+            let edge6 = vertex - neighbor_center;
+            let normal3 = edge5.cross(edge6).normalize_or_zero();
+            if normal3.length_squared() > 0.001 {
+                normal_sum += normal3;
+                count += 1;
+            }
+        }
+
+        // Average all the normals
+        if count > 0 {
+            (normal_sum / count as f32).normalize_or_zero()
+        } else {
+            Vec3::new(0., 1., 0.) // Default to up if calculation failed
+        }
+    }
+
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
@@ -170,22 +236,38 @@ impl Map {
                 let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz.unwrap(), apply_slopes);
                 let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
                 verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
+                // For transition vertices, use simple up normal
                 norms.extend([ Vec3::new(0., 1., 0.); 4 ]);
                 colors.extend([ last_col[3], last_col[3], it_col[0], it_col[0] ]);
                 skip_sw = false;
             }
-            
+
+            // Calculate smooth normals for the hex vertices
+            let norm_0 = self.calculate_vertex_normal(it_qrz, 0, &it_vrt, apply_slopes);
+            let norm_5 = self.calculate_vertex_normal(it_qrz, 5, &it_vrt, apply_slopes);
+            let norm_4 = self.calculate_vertex_normal(it_qrz, 4, &it_vrt, apply_slopes);
+            let norm_3 = self.calculate_vertex_normal(it_qrz, 3, &it_vrt, apply_slopes);
+            let center_normal = Vec3::new(0., 1., 0.); // Center can stay up
+
             verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
-            norms.extend([ Vec3::new(0., 1., 0.); 5 ]);
+            norms.extend([ norm_0, norm_5, center_normal, norm_4, norm_3 ]);
             colors.extend([ it_col[0], it_col[5], [0.04, 0.09, 0.04, 1.0], it_col[4], it_col[3] ]);
 
             if let Some((sw_vrt, sw_col)) = sw_data {
+                // Calculate normals for southwest neighbor
+                let sw_qrz = sw_result.unwrap().0;
+                let sw_norm_0 = self.calculate_vertex_normal(sw_qrz, 0, &sw_vrt, apply_slopes);
+                let sw_norm_1 = self.calculate_vertex_normal(sw_qrz, 1, &sw_vrt, apply_slopes);
+                let sw_norm_2 = self.calculate_vertex_normal(sw_qrz, 2, &sw_vrt, apply_slopes);
+                let sw_norm_3 = self.calculate_vertex_normal(sw_qrz, 3, &sw_vrt, apply_slopes);
+                let sw_center = Vec3::new(0., 1., 0.);
+
                 verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
-                norms.extend([ Vec3::new(0., 1., 0.); 5 ]);
+                norms.extend([ sw_norm_0, sw_norm_1, sw_center, sw_norm_2, sw_norm_3 ]);
                 colors.extend([ sw_col[0], sw_col[1], [0.04, 0.09, 0.04, 1.0], sw_col[2], sw_col[3] ]);
             } else {
-                verts.extend([ it_vrt[3] ]); 
-                norms.extend([ Vec3::new(0., 1., 0.); 1 ]);
+                verts.extend([ it_vrt[3] ]);
+                norms.extend([ norm_3 ]);
                 colors.extend([ it_col[3] ]);
                 skip_sw = true;
             }
@@ -205,6 +287,18 @@ impl Map {
                 we_vrt[2].y = it_vrt[4].y;  // SE of west neighbor = SW of current tile
             }
             
+            // Calculate normals for west neighbor (if it exists)
+            let we_norm_1 = if we_result.is_some() {
+                self.calculate_vertex_normal(we_qrz, 1, &we_vrt, apply_slopes)
+            } else {
+                Vec3::new(0., 1., 0.)
+            };
+            let we_norm_2 = if we_result.is_some() {
+                self.calculate_vertex_normal(we_qrz, 2, &we_vrt, apply_slopes)
+            } else {
+                Vec3::new(0., 1., 0.)
+            };
+
             if let Some(last_qrz) = last_qrz {
                 let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz, apply_slopes);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
@@ -213,7 +307,7 @@ impl Map {
                 west_skirt_colors.extend([ last_col[4], last_col[4] ]);
             }
             west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
-            west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 6 ]);
+            west_skirt_norms.extend([ norm_5, we_norm_1, norm_4, we_norm_2, norm_4, norm_4 ]);
             west_skirt_colors.extend([ it_col[5], we_col[1], it_col[4], we_col[2], it_col[4], it_col[4] ]);
             
             last_qrz = Some(it_qrz);
@@ -250,5 +344,101 @@ impl Convert<Qrz, Vec3> for Map {
 impl Convert<Vec3, Qrz> for Map {
     fn convert(&self, it: Vec3) -> Qrz {
         self.0.convert(it)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qrz::Qrz;
+
+    #[test]
+    fn test_smooth_vertex_normals_on_slope() {
+        // Create a simple 2-tile map with elevation difference
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let lower_tile = Qrz { q: 0, r: 0, z: 0 };
+        let upper_tile = Qrz { q: 1, r: 0, z: 2 }; // 2 levels higher (cliff)
+
+        qrz_map.insert(lower_tile, EntityType::Decorator(default()));
+        qrz_map.insert(upper_tile, EntityType::Decorator(default()));
+
+        let map = Map::new(qrz_map);
+        let (mesh, _aabb) = map.regenerate_mesh(true);
+
+        // Get normals from the mesh
+        let normals = mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+            .expect("Mesh should have normals")
+            .as_float3()
+            .expect("Normals should be Vec3");
+
+        // At least some normals should NOT be straight up [0, 1, 0]
+        // On a slope, normals should tilt to reflect the terrain angle
+        let all_straight_up = normals.iter().all(|&n| {
+            (n[0] - 0.0).abs() < 0.001 && (n[1] - 1.0).abs() < 0.001 && (n[2] - 0.0).abs() < 0.001
+        });
+
+        assert!(
+            !all_straight_up,
+            "Expected some normals to be tilted on sloped terrain, but all were [0, 1, 0]"
+        );
+
+        // All normals should be normalized (length ~= 1.0)
+        for normal in normals {
+            let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+            assert!(
+                (length - 1.0).abs() < 0.01,
+                "Normal {:?} should be normalized, but has length {}",
+                normal,
+                length
+            );
+        }
+    }
+
+    #[test]
+    fn test_normals_consider_neighboring_hexes() {
+        // Create two adjacent flat hexes at same elevation
+        // If normals only consider the current hex, they'll be tilted toward/away from neighbors
+        // If normals consider neighbors too, they should point straight up (smooth flat plane)
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let hex1 = Qrz { q: 0, r: 0, z: 0 };
+        let hex2 = Qrz { q: 1, r: 0, z: 0 }; // Adjacent hex at same elevation
+
+        qrz_map.insert(hex1, EntityType::Decorator(default()));
+        qrz_map.insert(hex2, EntityType::Decorator(default()));
+
+        let map = Map::new(qrz_map);
+
+        // Get vertices for hex1 to understand its structure
+        let (hex1_verts, _) = map.vertices_and_colors_with_slopes(hex1, true);
+
+        // Calculate normal for the vertex that's shared between hex1 and hex2
+        // Vertex 1 (NE) of hex1 points toward hex2 (which is to the East, direction index 3)
+        // Actually, hex2 is at direction index 3 (East), so vertices 1 and 2 are shared
+        let shared_vertex_normal = map.calculate_vertex_normal(hex1, 1, &hex1_verts, true);
+
+        // On a flat plane with neighbors, the normal should point straight up
+        // If we only considered the current hex's triangles, it would be tilted
+        // This tests that we're considering the neighboring hex's triangles too
+
+        // The Y component should dominate (close to 1.0)
+        assert!(
+            shared_vertex_normal.y > 0.95,
+            "Expected shared vertex normal to point mostly upward (Y > 0.95) on flat adjacent hexes, \
+             but got normal: {:?} with Y = {}. This suggests normals aren't considering neighboring hexes.",
+            shared_vertex_normal,
+            shared_vertex_normal.y
+        );
+
+        // X and Z should be very small
+        assert!(
+            shared_vertex_normal.x.abs() < 0.3,
+            "Expected X component of normal to be small on flat terrain, but got {}",
+            shared_vertex_normal.x
+        );
+        assert!(
+            shared_vertex_normal.z.abs() < 0.3,
+            "Expected Z component of normal to be small on flat terrain, but got {}",
+            shared_vertex_normal.z
+        );
     }
 }
