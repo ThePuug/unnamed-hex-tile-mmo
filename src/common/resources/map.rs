@@ -55,7 +55,11 @@ impl Map {
         // Stone cliff color (lighter gray-brown for contrast)
         let cliff_color = [0.35, 0.32, 0.28, 1.0];
         let mut colors = vec![grass_color; 6];
-        
+
+        // Calculate ambient occlusion for each vertex
+        // Vertices surrounded by higher neighbors should be darkened
+        let mut ao_factors = [1.0f32; 6]; // 1.0 = no darkening, lower values = darker
+
         // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
         // Track which vertices touch upward cliff edges (should not slope up)
@@ -83,7 +87,16 @@ impl Map {
             if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                 // Calculate elevation difference
                 let elevation_diff = actual_neighbor_qrz.z - qrz.z;
-                
+
+                // Ambient occlusion: darken vertices next to higher neighbors
+                if elevation_diff > 0 {
+                    let (v1, v2) = direction_to_vertices[dir_idx];
+                    // Darken based on height difference (more height = more darkening)
+                    let ao_amount = (elevation_diff as f32 / 10.0).min(0.3); // Max 30% darkening per neighbor
+                    ao_factors[v1] *= 1.0 - ao_amount;
+                    ao_factors[v2] *= 1.0 - ao_amount;
+                }
+
                 // Check if this is a cliff edge (elevation difference > 1)
                 let is_cliff = elevation_diff.abs() > 1;
                 
@@ -149,6 +162,14 @@ impl Map {
                     verts[i].y += max_adj;
                 }
             }
+        }
+
+        // Apply ambient occlusion to all vertex colors
+        for i in 0..6 {
+            colors[i][0] *= ao_factors[i];
+            colors[i][1] *= ao_factors[i];
+            colors[i][2] *= ao_factors[i];
+            // Alpha stays at 1.0
         }
 
         (verts, colors)
@@ -523,5 +544,54 @@ mod tests {
             assert!(color[2] >= 0.0 && color[2] <= 1.0, "Blue component out of range: {}", color[2]);
             assert!(color[3] >= 0.0 && color[3] <= 1.0, "Alpha component out of range: {}", color[3]);
         }
+    }
+
+    #[test]
+    fn test_ambient_occlusion_darkens_enclosed_vertices() {
+        // Test: Compare a vertex with one higher neighbor vs two higher neighbors
+        // Both should get cliff colors, but the one with two neighbors should be darker (more AO)
+
+        // Setup 1: Tile with one higher neighbor
+        let mut map1 = qrz::Map::new(1.0, 0.8);
+        let tile1 = Qrz { q: 0, r: 0, z: 0 };
+        let neighbor1 = tile1 + qrz::DIRECTIONS[0] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the west
+
+        map1.insert(tile1, EntityType::Decorator(default()));
+        map1.insert(neighbor1, EntityType::Decorator(default()));
+        let map_one_neighbor = Map::new(map1);
+        let (_, colors_one) = map_one_neighbor.vertices_and_colors_with_slopes(tile1, true);
+
+        // Setup 2: Tile with two higher neighbors (same tile, but add another higher neighbor)
+        let mut map2 = qrz::Map::new(1.0, 0.8);
+        let tile2 = Qrz { q: 0, r: 0, z: 0 };
+        let neighbor2a = tile2 + qrz::DIRECTIONS[0] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the west
+        let neighbor2b = tile2 + qrz::DIRECTIONS[5] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the northwest
+
+        map2.insert(tile2, EntityType::Decorator(default()));
+        map2.insert(neighbor2a, EntityType::Decorator(default()));
+        map2.insert(neighbor2b, EntityType::Decorator(default()));
+        let map_two_neighbors = Map::new(map2);
+        let (_, colors_two) = map_two_neighbors.vertices_and_colors_with_slopes(tile2, true);
+
+        // Vertex 5 is shared by both higher neighbors (at the corner)
+        // It should be darker in the two-neighbor case due to cumulative AO
+        let brightness_one = colors_one[5][0] + colors_one[5][1] + colors_one[5][2];
+        let brightness_two = colors_two[5][0] + colors_two[5][1] + colors_two[5][2];
+
+        assert!(
+            brightness_two < brightness_one,
+            "Expected vertex with two higher neighbors to be darker due to cumulative AO, \
+             but two-neighbor brightness ({}) >= one-neighbor brightness ({})",
+            brightness_two,
+            brightness_one
+        );
+
+        // The darkening should be moderate (not completely black)
+        assert!(
+            brightness_two > brightness_one * 0.3,
+            "AO darkening should be subtle, but two-neighbor vertex is too dark: {} vs one-neighbor {}",
+            brightness_two,
+            brightness_one
+        );
     }
 }
