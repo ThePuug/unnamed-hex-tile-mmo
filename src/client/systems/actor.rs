@@ -116,17 +116,36 @@ pub fn try_gcd(
 
 fn get_asset(typ: EntityType) -> String {
     match typ {
-        EntityType::Actor(desc) => format!("actors/{}-{}.glb",
-            match desc.origin {
-                Origin::Starborn => "starborn",
-                Origin::Fauna => "fauna",
-                _ => panic!("couldn't find asset for origin {:?}", desc.origin)
-            },
-            match desc.form {
-                Form::Humanoid => "humanoid",
-                Form::Bestial => "bestial",
-                _ => panic!("couldn't find asset for form {:?}", desc.form)
-            }),
+        EntityType::Actor(desc) => {
+            let origin_str = match desc.origin {
+                Origin::Natureborn => "natureborn",
+                Origin::Synthetic => "synthetic",
+                Origin::Dreamborn => "dreamborn",
+                Origin::Voidborn => "voidborn",
+                Origin::Mythic => "mythic",
+                Origin::Dimensional => "dimensional",
+                Origin::Indiscernible => "indiscernible",
+            };
+            let approach_str = match desc.approach {
+                Approach::Direct => "direct",
+                Approach::Distant => "distant",
+                Approach::Ambushing => "ambushing",
+                Approach::Patient => "patient",
+                Approach::Binding => "binding",
+                Approach::Evasive => "evasive",
+                Approach::Overwhelming => "overwhelming",
+            };
+            let resilience_str = match desc.resilience {
+                Resilience::Vital => "vital",
+                Resilience::Mental => "mental",
+                Resilience::Hardened => "hardened",
+                Resilience::Shielded => "shielded",
+                Resilience::Blessed => "blessed",
+                Resilience::Primal => "primal",
+                Resilience::Eternal => "eternal",
+            };
+            format!("actors/{}-{}-{}.glb", origin_str, approach_str, resilience_str)
+        },
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }
 }

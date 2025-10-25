@@ -53,9 +53,9 @@ pub fn do_manage_connections(
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
-                    Origin::Starborn, 
-                    Form::Humanoid, 
-                    Manifestation::Physical));
+                    Origin::Natureborn,
+                    Approach::Direct,
+                    Resilience::Vital));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
                 let ent = commands.spawn((

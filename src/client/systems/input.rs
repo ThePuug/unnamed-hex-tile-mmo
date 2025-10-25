@@ -40,9 +40,9 @@ pub fn update_keybits(
 
         if keyboard.just_released(KEYCODE_GCD1) {
             let typ = EntityType::Actor(ActorImpl::new(
-                Origin::Fauna, 
-                Form::Bestial, 
-                Manifestation::Physical));
+                Origin::Natureborn,
+                Approach::Direct,
+                Resilience::Primal));
             writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Spawn(typ)}});
         }
 
