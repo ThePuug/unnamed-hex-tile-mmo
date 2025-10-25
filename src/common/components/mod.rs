@@ -3,6 +3,7 @@ pub mod entity_type;
 pub mod heading;
 pub mod keybits;
 pub mod offset;
+pub mod spawner;
 
 use bevy::prelude::*;
 use qrz::Qrz;

@@ -39,11 +39,17 @@ pub fn update_keybits(
         keybits0.accumulator += delta_ns;
 
         if keyboard.just_released(KEYCODE_GCD1) {
-            let typ = EntityType::Actor(ActorImpl::new(
-                Origin::Natureborn,
-                Approach::Direct,
-                Resilience::Primal));
-            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::Spawn(typ)}});
+            use crate::common::components::spawner::*;
+            let spawner = Spawner::new(
+                NpcTemplate::Dog,
+                3,   // max_count: spawn up to 3 dogs
+                5,   // spawn_radius: 5 tiles from spawner
+                20,  // player_activation_range: only spawn when player within 20 tiles
+                10,  // leash_distance: pull back NPCs if they wander beyond 10 tiles
+                30,  // despawn_distance: despawn all NPCs when all players beyond 30 tiles
+                5000, // respawn_timer_ms: 5 seconds between spawn attempts
+            );
+            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner)}});
         }
 
         let mut keybits = KeyBits::default();

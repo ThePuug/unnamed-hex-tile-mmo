@@ -72,10 +72,10 @@ pub fn try_gcd(
                                         Behave::Forever => {
                                             Behave::Sequence => {
                                                 Behave::spawn_named(
-                                                    "find something interesting", 
+                                                    "find something interesting",
                                                     FindSomethingInterestingWithin { dist: 20 }),
                                                 Behave::spawn_named(
-                                                    "path to target", 
+                                                    "path to target",
                                                     PathTo::default()),
                                                 Behave::Wait(5.),
                                     }}})
@@ -87,6 +87,21 @@ pub fn try_gcd(
                         _ => Entity::PLACEHOLDER,
                     };
                     writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading }});
+                }
+                GcdType::PlaceSpawner(spawner) => {
+                    use crate::common::components::spawner::*;
+                    let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
+                    let qrz = *loc + *heading;
+                    let spawn_loc = Loc::new(qrz);
+
+                    // Create the spawner entity
+                    commands.spawn((
+                        spawner,
+                        spawn_loc,
+                        Name::new(format!("Spawner {:?}", spawner.npc_template)),
+                    ));
+
+                    info!("Placed {:?} spawner at {:?}", spawner.npc_template, qrz);
                 }
                 _ => unreachable!()
             }

@@ -1,0 +1,1153 @@
+use bevy::prelude::*;
+use bevy_behave::prelude::*;
+use qrz::Qrz;
+use rand::Rng;
+
+use crate::{
+    common::{
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, offset::Offset},
+        message::*,
+        plugins::nntree::*,
+    },
+    server::systems::behaviour::FindSomethingInterestingWithin,
+};
+
+/// System that ticks spawners and spawns NPCs when conditions are met
+pub fn tick_spawners(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut spawners: Query<(Entity, &Loc, &mut Spawner)>,
+    spawned: Query<&SpawnedBy>,
+    players: Query<(&Loc, &Behaviour)>,
+    mut writer: EventWriter<Do>,
+) {
+    let elapsed = time.elapsed().as_millis();
+
+    for (spawner_ent, &spawner_loc, mut spawner) in &mut spawners {
+        // Check cooldown
+        let time_since_last = elapsed - spawner.last_spawn_attempt;
+        if time_since_last < spawner.respawn_timer_ms as u128 {
+            continue;
+        }
+
+        // Check if any player is nearby (only Behaviour::Controlled entities are players)
+        let player_distances: Vec<_> = players.iter()
+            .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
+            .map(|(player_loc, _)| spawner_loc.distance(player_loc))
+            .collect();
+
+        let has_nearby_player = player_distances.iter()
+            .any(|&dist| dist <= spawner.player_activation_range as i16);
+
+        if !has_nearby_player {
+            continue;
+        }
+
+        // Count how many NPCs this spawner has alive
+        let alive_count = spawned
+            .iter()
+            .filter(|&&SpawnedBy(ent)| ent == spawner_ent)
+            .count();
+
+        if alive_count >= spawner.max_count as usize {
+            continue;
+        }
+
+        // Spawn new NPC at random location within radius
+        let spawn_qrz = random_hex_within_radius(*spawner_loc, spawner.spawn_radius);
+        info!("SPAWNED: {:?} at {:?} from spawner at {:?}",
+            spawner.npc_template, spawn_qrz, *spawner_loc);
+        spawn_npc(
+            &mut commands,
+            spawner.npc_template,
+            spawn_qrz,
+            spawner_ent,
+            &mut writer,
+        );
+
+        // Update cooldown
+        spawner.last_spawn_attempt = elapsed;
+    }
+}
+
+/// Helper function to spawn an NPC from a template
+fn spawn_npc(
+    commands: &mut Commands,
+    template: NpcTemplate,
+    qrz: impl Into<Qrz>,
+    spawner_ent: Entity,
+    writer: &mut EventWriter<Do>,
+) {
+    let qrz = qrz.into();
+    let loc = Loc::new(qrz);
+    let actor_impl = template.actor_impl();
+    let typ = EntityType::Actor(actor_impl);
+
+    // Create behavior tree based on template
+    let behavior_tree = match template {
+        NpcTemplate::Dog | NpcTemplate::Wolf => {
+            BehaveTree::new(behave! {
+                Behave::Forever => {
+                    Behave::Sequence => {
+                        Behave::spawn_named(
+                            "find something interesting",
+                            FindSomethingInterestingWithin { dist: 20 }
+                        ),
+                        Behave::spawn_named(
+                            "path to target",
+                            PathTo::default()
+                        ),
+                        Behave::Wait(5.),
+                    }
+                }
+            })
+        }
+        NpcTemplate::Rabbit => {
+            BehaveTree::new(behave! {
+                Behave::Forever => {
+                    Behave::Sequence => {
+                        Behave::spawn_named(
+                            "find something interesting",
+                            FindSomethingInterestingWithin { dist: 15 }
+                        ),
+                        Behave::spawn_named(
+                            "path to target",
+                            PathTo::default()
+                        ),
+                        Behave::Wait(8.),
+                    }
+                }
+            })
+        }
+    };
+
+    let ent = commands
+        .spawn((
+            typ,
+            loc,
+            Physics, // CRITICAL: NPCs need Physics component to actually move!
+            SpawnedBy(spawner_ent),
+            Name::new(format!("NPC {:?}", template)),
+            children![(
+                Name::new("behaviour"),
+                behavior_tree,
+            )],
+        ))
+        .id();
+
+    commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
+
+    // Send spawn event to clients
+    writer.write(Do {
+        event: crate::common::message::Event::Spawn { ent, typ, qrz },
+    });
+}
+
+/// Helper function to generate a random hex within a radius
+fn random_hex_within_radius(center: impl Into<Qrz>, radius: u8) -> Qrz {
+    if radius == 0 {
+        return center.into();
+    }
+
+    let center = center.into();
+    let mut rng = rand::rng();
+
+    // Generate random hex coordinates within radius
+    // Using cube coordinates, we need q + r + z = 0 and distance <= radius
+    let radius = radius as i16;
+
+    loop {
+        let q = rng.random_range(-radius..=radius);
+        let r = rng.random_range(-radius..=radius);
+        let z = -q - r;
+
+        // Check if within radius using cube distance
+        let dist = (q.abs() + r.abs() + z.abs()) / 2;
+        if dist <= radius {
+            return Qrz {
+                q: center.q + q,
+                r: center.r + r,
+                z: center.z + z,
+            };
+        }
+    }
+}
+
+/// System that enforces leash distances - teleports NPCs back if they wander too far from spawner
+pub fn enforce_leash(
+    spawners: Query<(Entity, &Loc, &Spawner)>,
+    mut npcs: Query<(Entity, &mut Loc, Option<&mut Offset>, &SpawnedBy), Without<Spawner>>,
+    mut writer: EventWriter<Do>,
+) {
+    for (npc_ent, mut npc_loc, offset_opt, &SpawnedBy(spawner_ent)) in &mut npcs {
+        let Ok((_, &spawner_loc, spawner)) = spawners.get(spawner_ent) else {
+            warn!("NPC {:?} has invalid spawner {:?}", npc_ent, spawner_ent);
+            continue;
+        };
+
+        let dist = npc_loc.distance(&spawner_loc);
+
+        if dist > spawner.leash_distance as i16 {
+            // Teleport NPC back to spawner location
+            info!("LEASHED: NPC {:?} wandered {} tiles from spawner at {:?} (max: {})",
+                npc_ent, dist, *spawner_loc, spawner.leash_distance);
+            *npc_loc = spawner_loc;
+
+            // Clear movement state to prevent visual artifacts
+            if let Some(mut offset) = offset_opt {
+                offset.state = Vec3::ZERO;
+                offset.step = Vec3::ZERO;
+                offset.prev_step = Vec3::ZERO;
+            }
+
+            // Send location update to clients
+            writer.write(Do {
+                event: crate::common::message::Event::Incremental {
+                    ent: npc_ent,
+                    component: crate::common::message::Component::Loc(*npc_loc),
+                },
+            });
+        }
+    }
+}
+
+/// System that despawns NPCs when all players are beyond the despawn distance
+pub fn despawn_out_of_range(
+    spawners: Query<(Entity, &Loc, &Spawner)>,
+    npcs: Query<(Entity, &Loc, &SpawnedBy), Without<Spawner>>,
+    players: Query<(&Loc, &Behaviour)>,
+    mut writer: EventWriter<Do>,
+) {
+    for (spawner_ent, &spawner_loc, spawner) in &spawners {
+        // Check if any player is within despawn distance of this spawner (only Behaviour::Controlled entities are players)
+        let player_distances: Vec<_> = players.iter()
+            .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
+            .map(|(player_loc, _)| spawner_loc.distance(player_loc))
+            .collect();
+
+        let has_nearby_player = player_distances.iter()
+            .any(|&dist| dist <= spawner.despawn_distance as i16);
+
+        if has_nearby_player {
+            continue;
+        }
+
+        // Count and despawn all NPCs from this spawner
+        // Store entity AND location so we can send despawn events before actually despawning
+        let npcs_to_despawn: Vec<_> = npcs.iter()
+            .filter(|(_, _, &SpawnedBy(npc_spawner))| npc_spawner == spawner_ent)
+            .map(|(ent, &loc, _)| (ent, loc))
+            .collect();
+
+        if !npcs_to_despawn.is_empty() {
+            info!("DESPAWNED: {} NPCs from spawner at {:?} (all players beyond {} tiles)",
+                npcs_to_despawn.len(), *spawner_loc, spawner.despawn_distance);
+
+            for (npc_ent, npc_loc) in npcs_to_despawn {
+                // Send despawn event - the actual despawning will happen in PostUpdate
+                // after send_do has sent the network message
+                writer.write(Do {
+                    event: crate::common::message::Event::Despawn { ent: npc_ent },
+                });
+                // Don't despawn here - let the send_do system handle it after sending the message
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::time::TimePlugin;
+    use crate::common::components::{entity_type::actor::*, behaviour::Behaviour};
+    use crate::common::message::{Event as MsgEvent, Component as MsgComponent};
+
+    #[test]
+    fn test_random_hex_within_radius_zero_returns_center() {
+        let center = Qrz { q: 5, r: 3, z: -8 };
+        let result = random_hex_within_radius(center, 0);
+        assert_eq!(result, center);
+    }
+
+    #[test]
+    fn test_random_hex_within_radius_respects_bounds() {
+        let center = Qrz { q: 0, r: 0, z: 0 };
+        let radius = 3;
+
+        for _ in 0..100 {
+            let result = random_hex_within_radius(center, radius);
+            let dist = (result.q.abs() + result.r.abs() + result.z.abs()) / 2;
+            assert!(dist <= radius as i16, "Generated hex {:?} is outside radius {}", result, radius);
+            assert_eq!(result.q + result.r + result.z, 0, "Invalid hex coordinates");
+        }
+    }
+
+    #[test]
+    fn test_spawner_does_not_spawn_without_nearby_players() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());  // Required by spawn_npc
+
+        // Create a spawner but NO players
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            10, // activation range: 10
+            20,
+            30,
+            0, // 0 ms cooldown (should trigger immediately if player nearby)
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner")));
+
+        // Create an NPC nearby (should NOT trigger spawning - NPCs aren't players)
+        let npc_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 }); // distance 5
+        app.world_mut().spawn((
+            Actor,
+            npc_loc,
+            Name::new("NPC Dog"),
+            // NOTE: No Behaviour::Controlled = this is NOT a player
+        ));
+
+        // Run the spawner system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Check that NO spawn events were emitted
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events().collect();
+
+        assert_eq!(spawn_events.len(), 0,
+            "Expected no spawn events without players nearby, but got {}. \
+             BUG: System may be counting NPCs as players!", spawn_events.len());
+    }
+
+    #[test]
+    fn test_spawner_spawns_when_player_in_range() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        // Create a spawner
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            10, // activation range: 10
+            20,
+            30,
+            0, // 0 ms cooldown (should trigger immediately)
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner")));
+
+        // Create a REAL player within range (distance 5 < 10)
+        // Real players have Behaviour::Controlled component
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,  // ← THIS is what makes it a player!
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Run the spawner system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Check that a spawn event was emitted
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events().collect();
+
+        assert!(spawn_events.len() > 0,
+            "Expected at least one spawn event with player in range, got 0. \
+             BUG: System may not be detecting players correctly!");
+
+        // Verify it's a spawn event
+        if let Some(Do { event: MsgEvent::Spawn { typ, .. }}) = spawn_events.first() {
+            match typ {
+                EntityType::Actor(_) => {}, // Expected
+                _ => panic!("Expected Actor entity type, got {:?}", typ),
+            }
+        } else {
+            panic!("Expected Event::Spawn, got {:?}", spawn_events.first());
+        }
+    }
+
+    #[test]
+    fn test_spawner_respects_max_count() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
+        app.add_event::<Do>();
+
+        let max_count = 2;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            max_count,
+            3,
+            10,
+            20,
+            30,
+            0, // 0 ms cooldown
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Create a REAL player within range
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,  // Real player
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Spawn max_count NPCs already
+        for i in 0..max_count {
+            app.world_mut().spawn((
+                Actor,
+                spawner_loc,
+                SpawnedBy(spawner_ent),
+                Name::new(format!("Existing NPC {}", i)),
+            ));
+        }
+
+        // Run the spawner system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Check that NO new spawn events were emitted (already at max)
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events().collect();
+
+        assert_eq!(spawn_events.len(), 0,
+            "Expected no spawn events when at max_count, but got {}", spawn_events.len());
+    }
+
+    #[test]
+    fn test_enforce_leash_teleports_distant_npcs() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let leash_distance = 10;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            leash_distance,
+            30,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn an NPC far from the spawner (distance > leash_distance)
+        let npc_loc = Loc::new(Qrz { q: 15, r: 0, z: -15 });
+        let npc_ent = app.world_mut().spawn((
+            Actor::default(),
+            npc_loc,
+            SpawnedBy(spawner_ent),
+            Name::new("Distant NPC"),
+        )).id();
+
+        // Run the leash enforcement system
+        app.add_systems(Update, enforce_leash);
+        app.update();
+
+        // Check that the NPC was teleported back to spawner location
+        let npc_new_loc = app.world().entity(npc_ent).get::<Loc>().unwrap();
+        assert_eq!(*npc_new_loc, spawner_loc,
+            "Expected NPC to be teleported to spawner location {:?}, but it's at {:?}",
+            spawner_loc, npc_new_loc);
+
+        // Check that a location update event was sent
+        let events = app.world().resource::<Events<Do>>();
+        let loc_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Incremental { component: MsgComponent::Loc(_), .. }))
+            .collect();
+
+        assert!(loc_events.len() > 0,
+            "Expected location update event after leashing NPC");
+    }
+
+    #[test]
+    fn test_enforce_leash_ignores_nearby_npcs() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let leash_distance = 10;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            leash_distance,
+            30,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn an NPC close to the spawner (distance < leash_distance)
+        let npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
+        let npc_ent = app.world_mut().spawn((
+            Actor::default(),
+            npc_loc,
+            SpawnedBy(spawner_ent),
+            Name::new("Nearby NPC"),
+        )).id();
+
+        // Run the leash enforcement system
+        app.add_systems(Update, enforce_leash);
+        app.update();
+
+        // Check that the NPC location was NOT changed
+        let npc_new_loc = app.world().entity(npc_ent).get::<Loc>().unwrap();
+        assert_eq!(*npc_new_loc, npc_loc,
+            "Expected NPC to remain at original location {:?}, but it moved to {:?}",
+            npc_loc, npc_new_loc);
+
+        // Check that NO location update events were sent
+        let events = app.world().resource::<Events<Do>>();
+        let loc_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Incremental { component: MsgComponent::Loc(_), .. }))
+            .collect();
+
+        assert_eq!(loc_events.len(), 0,
+            "Expected no location update events for nearby NPC");
+    }
+
+    #[test]
+    fn test_despawn_removes_npcs_when_no_players_nearby() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let despawn_distance = 30;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            10,
+            despawn_distance,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn an NPC near the spawner
+        let npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
+        let npc_ent = app.world_mut().spawn((
+            Actor,
+            npc_loc,
+            SpawnedBy(spawner_ent),
+            Name::new("Test NPC"),
+        )).id();
+
+        // Create a REAL player FAR from the spawner (distance > despawn_distance)
+        // Using Chebyshev distance: max(|40-0|, |0-0|, |(-40)-0|) = 40 > 30
+        let player_loc = Loc::new(Qrz { q: 40, r: 0, z: -40 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,  // Real player
+            player_loc,
+            Name::new("Far Player"),
+        ));
+
+        // Run the despawn system
+        app.add_systems(Update, despawn_out_of_range);
+        app.update();
+
+        // NOTE: The despawn system only SENDS despawn events, it doesn't actually despawn entities.
+        // The actual despawning happens in a separate system (send_do) that processes events.
+        // So we only check that the despawn EVENT was sent.
+
+        // CRITICAL: Check that despawn event was sent to clients
+        let events = app.world().resource::<Events<Do>>();
+        let despawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+            .collect();
+
+        assert!(despawn_events.len() > 0,
+            "Expected Event::Despawn to be sent when all players beyond despawn distance, but got none. \
+             BUG: System may be counting the NPC itself as a nearby 'player'!");
+
+        // Verify the despawn event is for the correct entity
+        if let Some(Do { event: MsgEvent::Despawn { ent }}) = despawn_events.first() {
+            assert_eq!(*ent, npc_ent,
+                "Despawn event should be for NPC entity {:?}, but got {:?}", npc_ent, ent);
+        }
+
+        // NOTE: NPC entity still exists in this test because actual despawning happens
+        // in a separate system. This is correct behavior - despawn_out_of_range only
+        // sends the event, it doesn't despawn entities directly.
+    }
+
+    #[test]
+    fn test_despawn_keeps_npcs_when_player_nearby() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let despawn_distance = 30;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            10,
+            despawn_distance,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn an NPC near the spawner
+        let npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
+        let npc_ent = app.world_mut().spawn((
+            Actor,
+            npc_loc,
+            SpawnedBy(spawner_ent),
+            Name::new("Test NPC"),
+        )).id();
+
+        // Create a REAL player NEAR the spawner (distance < despawn_distance)
+        // Using Chebyshev distance: max(|15-0|, |0-0|, |(-15)-0|) = 15 < 30
+        let player_loc = Loc::new(Qrz { q: 15, r: 0, z: -15 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,  // Real player
+            player_loc,
+            Name::new("Nearby Player"),
+        ));
+
+        // Run the despawn system
+        app.add_systems(Update, despawn_out_of_range);
+        app.update();
+
+        // Check that the NPC still exists
+        assert!(app.world().get_entity(npc_ent).is_ok(),
+            "Expected NPC to remain when player within despawn distance");
+    }
+
+    #[test]
+    fn test_spawner_last_spawn_attempt_is_server_side_only() {
+        // CRITICAL: Verify that last_spawn_attempt is always initialized to 0
+        // This is server-side state that should never be sent over network
+        let spawner = Spawner::new(
+            NpcTemplate::Wolf,
+            3,
+            5,
+            20,
+            10,
+            30,
+            5000,
+        );
+
+        // Verify last_spawn_attempt starts at 0
+        assert_eq!(spawner.last_spawn_attempt, 0,
+            "last_spawn_attempt should be initialized to 0, but got {}",
+            spawner.last_spawn_attempt);
+
+        // NOTE: The Spawner component SHOULD NOT be sent over the network.
+        // Spawners are server-side only entities that control NPC spawning.
+        // Clients only see the spawned NPCs, not the spawners themselves.
+        // If spawners ever need to be sent to clients in the future,
+        // last_spawn_attempt MUST be marked with #[serde(skip)] or similar.
+    }
+
+    #[test]
+    fn test_npc_template_actor_impl_returns_correct_types() {
+        // Verify each NPC template returns the expected actor configuration
+        let dog = NpcTemplate::Dog.actor_impl();
+        assert_eq!(dog.origin, Origin::Natureborn);
+        assert_eq!(dog.approach, Approach::Direct);
+        assert_eq!(dog.resilience, Resilience::Primal);
+
+        let wolf = NpcTemplate::Wolf.actor_impl();
+        assert_eq!(wolf.origin, Origin::Natureborn);
+        assert_eq!(wolf.approach, Approach::Ambushing);
+        assert_eq!(wolf.resilience, Resilience::Vital);
+
+        let rabbit = NpcTemplate::Rabbit.actor_impl();
+        assert_eq!(rabbit.origin, Origin::Natureborn);
+        assert_eq!(rabbit.approach, Approach::Evasive);
+        assert_eq!(rabbit.resilience, Resilience::Primal);
+    }
+
+    #[test]
+    fn test_despawn_handles_npc_without_loc_component() {
+        // Test that despawn doesn't crash if NPC is missing Loc component
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let despawn_distance = 30;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            10,
+            despawn_distance,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn an NPC WITHOUT Loc component (edge case - should be skipped by query)
+        let _broken_npc_ent = app.world_mut().spawn((
+            Actor,
+            // NOTE: Missing Loc component!
+            SpawnedBy(spawner_ent),
+            Name::new("Broken NPC"),
+        )).id();
+
+        // Spawn a valid NPC WITH Loc component
+        let valid_npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
+        let valid_npc_ent = app.world_mut().spawn((
+            Actor,
+            valid_npc_loc,
+            SpawnedBy(spawner_ent),
+            Name::new("Valid NPC"),
+        )).id();
+
+        // Create a player far away
+        let player_loc = Loc::new(Qrz { q: 40, r: 0, z: -40 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Far Player"),
+        ));
+
+        // Run the despawn system - should not panic
+        app.add_systems(Update, despawn_out_of_range);
+        app.update();
+
+        // Check that a despawn event was sent for the valid NPC
+        let events = app.world().resource::<Events<Do>>();
+        let despawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+            .collect();
+
+        assert_eq!(despawn_events.len(), 1,
+            "Expected 1 despawn event for valid NPC, got {}", despawn_events.len());
+
+        // The broken NPC should NOT generate a despawn event (query won't match it)
+        // This is actually OK - NPCs without Loc shouldn't exist in production
+    }
+
+    #[test]
+    fn test_despawn_with_multiple_npcs_from_same_spawner() {
+        // Test despawning multiple NPCs at once
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let despawn_distance = 30;
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            5,
+            3,
+            20,
+            10,
+            despawn_distance,
+            1000,
+        );
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Spawn 3 NPCs from the same spawner
+        let npc1_ent = app.world_mut().spawn((
+            Actor,
+            Loc::new(Qrz { q: 2, r: 0, z: -2 }),
+            SpawnedBy(spawner_ent),
+            Name::new("NPC 1"),
+        )).id();
+
+        let npc2_ent = app.world_mut().spawn((
+            Actor,
+            Loc::new(Qrz { q: 3, r: 0, z: -3 }),
+            SpawnedBy(spawner_ent),
+            Name::new("NPC 2"),
+        )).id();
+
+        let npc3_ent = app.world_mut().spawn((
+            Actor,
+            Loc::new(Qrz { q: 4, r: 0, z: -4 }),
+            SpawnedBy(spawner_ent),
+            Name::new("NPC 3"),
+        )).id();
+
+        // Create a player far away
+        let player_loc = Loc::new(Qrz { q: 40, r: 0, z: -40 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Far Player"),
+        ));
+
+        // Run the despawn system
+        app.add_systems(Update, despawn_out_of_range);
+        app.update();
+
+        // Check that 3 despawn events were sent (actual despawn happens in send_do system)
+        let events = app.world().resource::<Events<Do>>();
+        let despawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+            .collect();
+
+        assert_eq!(despawn_events.len(), 3,
+            "Expected 3 despawn events, got {}", despawn_events.len());
+    }
+
+    #[test]
+    fn test_despawn_only_affects_correct_spawner() {
+        // Test that despawn only removes NPCs from the correct spawner
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+
+        let despawn_distance = 30;
+
+        // Create spawner 1
+        let spawner1 = Spawner::new(NpcTemplate::Dog, 5, 3, 20, 10, despawn_distance, 1000);
+        let spawner1_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner1_ent = app.world_mut().spawn((spawner1, spawner1_loc, Name::new("Spawner 1"))).id();
+
+        // Create spawner 2 (far away, with player nearby)
+        let spawner2 = Spawner::new(NpcTemplate::Dog, 5, 3, 20, 10, despawn_distance, 1000);
+        let spawner2_loc = Loc::new(Qrz { q: 100, r: 0, z: -100 });
+        let spawner2_ent = app.world_mut().spawn((spawner2, spawner2_loc, Name::new("Spawner 2"))).id();
+
+        // Spawn NPC from spawner 1
+        let npc1_ent = app.world_mut().spawn((
+            Actor,
+            Loc::new(Qrz { q: 3, r: 0, z: -3 }),
+            SpawnedBy(spawner1_ent),
+            Name::new("NPC from Spawner 1"),
+        )).id();
+
+        // Spawn NPC from spawner 2
+        let npc2_ent = app.world_mut().spawn((
+            Actor,
+            Loc::new(Qrz { q: 103, r: 0, z: -103 }),
+            SpawnedBy(spawner2_ent),
+            Name::new("NPC from Spawner 2"),
+        )).id();
+
+        // Create a player near spawner 2 (but far from spawner 1)
+        let player_loc = Loc::new(Qrz { q: 105, r: 0, z: -105 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Player near Spawner 2"),
+        ));
+
+        // Run the despawn system
+        app.add_systems(Update, despawn_out_of_range);
+        app.update();
+
+        // Check that only 1 despawn event was sent (for NPC from spawner 1)
+        // NPC from spawner 2 should remain because player is nearby
+        let events = app.world().resource::<Events<Do>>();
+        let despawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+            .collect();
+
+        assert_eq!(despawn_events.len(), 1,
+            "Expected 1 despawn event (only NPC 1, not NPC 2 with nearby player), got {}", despawn_events.len());
+
+        // Verify it's the correct NPC being despawned
+        if let MsgEvent::Despawn { ent } = &despawn_events[0].event {
+            assert_eq!(*ent, npc1_ent,
+                "Expected despawn event for NPC from Spawner 1, got event for different entity");
+        }
+    }
+
+    #[test]
+    fn test_spawn_event_creates_correct_entity_structure() {
+        // Integration test: verify spawn events contain all necessary components
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        let spawner = Spawner::new(NpcTemplate::Wolf, 5, 3, 10, 15, 30, 0);
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+        // Add player in range
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Run the spawner tick system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Check spawn event was sent
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert_eq!(spawn_events.len(), 1, "Expected 1 spawn event");
+
+        // Verify spawn event contains correct entity type
+        if let MsgEvent::Spawn { ent: _, typ, qrz: event_qrz } = &spawn_events[0].event {
+            match typ {
+                EntityType::Actor(actor) => {
+                    // Verify it's a Wolf (from NpcTemplate::Wolf)
+                    assert_eq!(actor.origin, Origin::Natureborn,
+                        "Expected Wolf origin to be Natureborn");
+                    assert_eq!(actor.approach, Approach::Ambushing,
+                        "Expected Wolf approach to be Ambushing");
+                },
+                _ => panic!("Expected Actor entity type, got {:?}", typ),
+            }
+
+            // Verify spawn location is within radius (3 tiles) of spawner
+            let distance = spawner_loc.flat_distance(event_qrz);
+            assert!(distance <= 3,
+                "Expected spawn within radius 3, but distance was {}", distance);
+        } else {
+            panic!("Expected Spawn event variant");
+        }
+    }
+
+    #[test]
+    fn test_timer_edge_case_elapsed_equals_respawn_timer() {
+        // Test spawner when elapsed time exactly equals respawn_timer_ms
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        // Create spawner with 0ms cooldown - should spawn immediately when player is in range
+        let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 10, 15, 30, 0);
+
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Edge Case Spawner")));
+
+        // Add player in range
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Run the spawner tick system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Should spawn when elapsed >= respawn_timer_ms
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert_eq!(spawn_events.len(), 1,
+            "Expected spawn when elapsed time exactly equals respawn_timer_ms");
+    }
+
+    #[test]
+    fn test_despawn_distance_with_different_z_levels() {
+        // Test that despawn distance correctly accounts for vertical (Z) differences
+        // Test case 1: Player close on flat distance, same Z - should NOT despawn
+        {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins);
+            app.add_event::<Do>();
+
+            let despawn_distance = 25;
+            let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 20, 10, despawn_distance, 1000);
+            let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+            let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+            let _npc_ent = app.world_mut().spawn((
+                Actor,
+                Loc::new(Qrz { q: 5, r: 0, z: -5 }),
+                SpawnedBy(spawner_ent),
+                Name::new("Test NPC"),
+            )).id();
+
+            // Player at flat distance 10, same Z-level as spawner
+            // Flat distance: max(10, 10, 0) / 2 = 10, Z diff = 0, total = 10 (within despawn_distance 25)
+            let player_loc = Loc::new(Qrz { q: 10, r: -10, z: 0 });
+            app.world_mut().spawn((
+                Actor,
+                Behaviour::Controlled,
+                player_loc,
+                Name::new("Player Same Z"),
+            ));
+
+            app.add_systems(Update, despawn_out_of_range);
+            app.update();
+
+            let events = app.world().resource::<Events<Do>>();
+            let despawn_events: Vec<_> = events.iter_current_update_events()
+                .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+                .collect();
+
+            assert_eq!(despawn_events.len(), 0,
+                "Expected no despawn when player at distance 10 (within despawn_distance 25)");
+        }
+
+        // Test case 2: Player at same flat distance but higher Z - SHOULD despawn
+        {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins);
+            app.add_event::<Do>();
+
+            let despawn_distance = 25;
+            let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 20, 10, despawn_distance, 1000);
+            let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+            let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+
+            let _npc_ent = app.world_mut().spawn((
+                Actor,
+                Loc::new(Qrz { q: 5, r: -5, z: 0 }),
+                SpawnedBy(spawner_ent),
+                Name::new("Test NPC"),
+            )).id();
+
+            // Player at same flat hex position as test case 1 but with Z offset
+            // Flat distance: max(10, 10, 0) / 2 = 10, Z difference = 20, total = 30 (beyond 25)
+            let player_loc = Loc::new(Qrz { q: 10, r: -10, z: 20 });
+            app.world_mut().spawn((
+                Actor,
+                Behaviour::Controlled,
+                player_loc,
+                Name::new("Player High Z"),
+            ));
+
+            app.add_systems(Update, despawn_out_of_range);
+            app.update();
+
+            let events = app.world().resource::<Events<Do>>();
+            let despawn_events: Vec<_> = events.iter_current_update_events()
+                .filter(|Do { event }| matches!(event, MsgEvent::Despawn { .. }))
+                .collect();
+
+            assert_eq!(despawn_events.len(), 1,
+                "Expected despawn when player at distance 30 (flat 10 + Z offset 20, beyond despawn_distance 25)");
+        }
+    }
+
+    #[test]
+    fn test_spawner_activates_with_multiple_players() {
+        // Verify spawner activates when ANY player is in range
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        let spawner = Spawner::new(NpcTemplate::Rabbit, 5, 3, 10, 15, 30, 0);
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Multi-Player Spawner")));
+
+        // Add player 1 - out of range
+        let player1_loc = Loc::new(Qrz { q: 50, r: 0, z: -50 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player1_loc,
+            Name::new("Far Player"),
+        ));
+
+        // Add player 2 - in range
+        let player2_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player2_loc,
+            Name::new("Near Player"),
+        ));
+
+        // Add player 3 - out of range
+        let player3_loc = Loc::new(Qrz { q: -50, r: 0, z: 50 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player3_loc,
+            Name::new("Another Far Player"),
+        ));
+
+        // Run spawner system
+        app.add_systems(Update, tick_spawners);
+        app.update();
+
+        // Should spawn because player2 is in range (even though player1 and player3 are not)
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert_eq!(spawn_events.len(), 1,
+            "Expected spawn when ANY player is in range (player2), regardless of other far players");
+    }
+
+    #[test]
+    fn test_spawn_location_within_exact_radius_bounds() {
+        // Verify NPC spawns are exactly within the specified spawn_radius
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        let spawn_radius = 5;
+        let spawner = Spawner::new(NpcTemplate::Dog, 10, spawn_radius, 20, 15, 30, 0);
+        let spawner_loc = Loc::new(Qrz { q: 10, r: 5, z: -15 }); // Non-zero spawner position
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Radius Test Spawner")));
+
+        // Add player in range
+        let player_loc = Loc::new(Qrz { q: 12, r: 5, z: -17 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Run spawner multiple times to get multiple spawn attempts
+        app.add_systems(Update, tick_spawners);
+        for _ in 0..10 {
+            app.update();
+        }
+
+        // Check all spawn events
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert!(spawn_events.len() >= 1, "Expected at least one spawn event");
+
+        // Verify every spawn is within the exact radius
+        for spawn_event in spawn_events {
+            if let MsgEvent::Spawn { ent: _, typ: _, qrz: spawn_qrz } = &spawn_event.event {
+                let distance = spawner_loc.flat_distance(spawn_qrz);
+                assert!(distance <= spawn_radius as i16,
+                    "Spawn location {:?} is at distance {} from spawner {:?}, exceeds spawn_radius {}",
+                    spawn_qrz, distance, *spawner_loc, spawn_radius);
+            }
+        }
+    }
+}

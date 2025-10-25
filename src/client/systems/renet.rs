@@ -80,10 +80,9 @@ pub fn write_do(
             }
             Do { event: Event::Despawn { ent } } => {
                 let Some((ent, _)) = l2r.remove_by_right(&ent) else {
-                    // Entity not in our map - likely another client disconnecting
+                    // Entity not in our map - likely another client disconnecting or already despawned
                     continue
                 };
-                debug!("Player {ent} disconnected");
                 commands.entity(ent).despawn();
             }
             Do { event: Event::Incremental { ent, component } } => {

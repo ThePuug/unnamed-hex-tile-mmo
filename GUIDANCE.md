@@ -424,6 +424,37 @@ cargo test behaviour     # Behaviour system tests
 
 ---
 
+## Spawner System
+
+### Player Detection
+
+**`Behaviour` is an enum, not a marker component:**
+- Query `With<Behaviour>` matches ALL behavior variants (`Unset`, `Controlled`, etc.)
+- **Correct**: Filter specifically for `Behaviour::Controlled` to detect only actual players
+- **Wrong**: Using `With<Behaviour>` alone - will match NPCs with behavior trees
+
+```rust
+// Correct player detection
+players: Query<(&Loc, &Behaviour)>,
+// ... then filter:
+.filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
+```
+
+### Leash System - Teleporting NPCs
+
+When teleporting NPCs (e.g., leash enforcement), **must clear movement state:**
+- Clear `Offset` component fields (`state`, `step`, `prev_step`) to prevent visual artifacts
+- Without clearing: NPC appears visually offset after teleport
+- Add `Option<&mut Offset>` to query and reset to `Vec3::ZERO`
+
+### Boundary Semantics
+
+Use `>` not `>=` for distance checks when "beyond distance" is intended:
+- `dist > leash_distance` = leashed when BEYOND boundary
+- `dist >= leash_distance` = leashed AT boundary (unexpected)
+
+---
+
 ## Additional Resources
 
 - See inline documentation in `common/systems/physics.rs` for detailed physics implementation

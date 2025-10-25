@@ -17,15 +17,15 @@ use ::renet::DefaultChannel;
 
 use crate::{
     common::{
-        components::entity_type::*, 
-        message::*, 
-        plugins::nntree, 
-        resources::{map::*, *}, 
+        components::entity_type::*,
+        message::*,
+        plugins::nntree,
+        resources::{map::*, *},
         systems::physics
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, input, renet, world},
+        systems::{actor, input, renet, spawner, world},
         *
     }
 };
@@ -89,6 +89,9 @@ fn main() {
         input::try_gcd,
         input::try_input,
         renet::do_manage_connections,
+        spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
+        spawner::enforce_leash.run_if(on_timer(Duration::from_secs(2))),
+        spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
         world::do_spawn,
         world::try_spawn,
         server::systems::diagnostics::check_duplicate_tiles,
