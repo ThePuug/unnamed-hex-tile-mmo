@@ -368,6 +368,13 @@ When `Component::Loc` update received (tile boundary crossing):
    - Pop-then-push creates race condition where queue is temporarily empty
    - Violates invariant and causes "no front on buffer" panics
 
+13. **Ensure controlled::tick runs after update_keybits in same schedule**
+   - Client's `controlled::tick` MUST run in Update schedule (not FixedUpdate)
+   - MUST use `.after(update_keybits)` ordering to ensure KeyBits events are processed before confirmations
+   - Race condition: If tick runs in FixedUpdate (every 15ms), KeyBits events may sit unprocessed while confirmations arrive and drain the queue
+   - With localhost (zero latency), confirmations arrive instantly - queue can drain to zero before tick processes KeyBits
+   - Correct order: `update_keybits` → `controlled::tick` → `do_input` (all in Update schedule)
+
 ### ✅ DO:
 1. **Use shared code paths when possible**
    - Both local and remote players should share common logic where appropriate

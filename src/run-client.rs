@@ -81,13 +81,11 @@ fn main() {
     ));
 
     app.add_systems(PreUpdate, (
-        input::update_keybits,
         renet::write_do,
     ));
 
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
-        common::systems::behaviour::controlled::tick,
         common::systems::behaviour::controlled::interpolate_remote,
         physics::update,
     ));
@@ -101,7 +99,10 @@ fn main() {
         camera::update,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
-        input::do_input,
+        // Ensure proper ordering: update_keybits -> tick -> do_input
+        input::update_keybits,
+        common::systems::behaviour::controlled::tick.after(input::update_keybits),
+        input::do_input.after(common::systems::behaviour::controlled::tick),
         target_cursor::update,
         ui::update,
         world::async_spawn,

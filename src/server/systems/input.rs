@@ -28,7 +28,7 @@ pub fn send_input(
     mut buffers: ResMut<InputQueues>,
 ) {
     let entities_to_send: Vec<Entity> = buffers.entities().copied().collect();
-    
+
     for ent in entities_to_send {
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
 

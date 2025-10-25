@@ -34,7 +34,9 @@ pub fn update_keybits(
     dt: Res<Time>,
 ) {
     if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
-        keybits0.accumulator += dt.delta().as_nanos();
+        let elapsed = dt.elapsed().as_millis();
+        let delta_ns = dt.delta().as_nanos();
+        keybits0.accumulator += delta_ns;
 
         if keyboard.just_released(KEYCODE_GCD1) {
             let typ = EntityType::Actor(ActorImpl::new(

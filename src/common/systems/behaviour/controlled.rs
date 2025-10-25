@@ -12,10 +12,10 @@ pub fn tick(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
     query: Query<&Behaviour>,
-    dt: Res<Time>,
+    time: Res<Time>,
     mut buffers: ResMut<InputQueues>,
 ) {
-    let dt = dt.delta().as_millis() as u16;
+    let dt = time.delta().as_millis() as u16;
 
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }} = message else { continue };
@@ -47,6 +47,8 @@ pub fn tick(
         let Some(buffer) = buffers.get_mut(&ent)
             // disconnect by client could remove buffer while message in transit
             else { continue };
+
+        let queue_len = buffer.queue.len();
 
         // Queue invariant: all queues must have at least 1 input
         // Access front input without removing it to maintain invariant
