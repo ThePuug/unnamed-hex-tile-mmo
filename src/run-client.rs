@@ -29,7 +29,7 @@ use common::{
 use client::{
     plugins::diagnostics::DiagnosticsPlugin,
     resources::*,
-    systems::{actor, animator, camera, input, renet, target_cursor, world, ui}
+    systems::{actor, animator, camera, input, renet, spawner_viz, target_cursor, world, ui}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -99,12 +99,21 @@ fn main() {
         camera::update,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
+    ));
+
+    app.add_systems(Update, (
         // Ensure proper ordering: update_keybits -> tick -> do_input
         input::update_keybits,
         common::systems::behaviour::controlled::tick.after(input::update_keybits),
         input::do_input.after(common::systems::behaviour::controlled::tick),
+        spawner_viz::visualize_spawners,
+        spawner_viz::toggle_spawner_viz,
+        spawner_viz::cleanup_despawned_spawner_viz,
         target_cursor::update,
         ui::update,
+    ));
+
+    app.add_systems(Update, (
         world::async_spawn,
         world::async_ready,
         world::do_init,
@@ -121,6 +130,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
+    app.init_resource::<spawner_viz::SpawnerVizState>();
 
     app.run();
 }

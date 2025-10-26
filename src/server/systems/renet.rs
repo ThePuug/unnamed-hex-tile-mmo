@@ -129,7 +129,6 @@ pub fn write_try(
 
  pub fn send_do(
     query: Query<&Loc>,
-    mut commands: Commands,
     mut conn: ResMut<RenetServer>,
     mut reader: EventReader<Do>,
     nntree: Res<NNTree>,
@@ -164,9 +163,9 @@ pub fn write_try(
             }
             Do { event: Event::Despawn { ent } } => {
                 // Send despawn event to players who might have this entity rendered
-                // Use a large radius (50 tiles) to catch players who are moving away
+                // Use a large radius (70 tiles) to ensure despawns reach all players within despawn_distance (60) with buffer
                 if let Ok(&loc) = query.get(ent) {
-                    let nearby_players: Vec<_> = nntree.locate_within_distance(loc, 50*50)
+                    let nearby_players: Vec<_> = nntree.locate_within_distance(loc, 70*70)
                         .filter_map(|other| lobby.get_by_right(&other.ent).map(|id| (*id, other.ent)))
                         .collect();
 
@@ -176,12 +175,23 @@ pub fn write_try(
                             bincode::config::legacy()).unwrap();
                         conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
                     }
-
-                    // Now despawn the entity after sending the network message
-                    commands.entity(ent).despawn();
+                    // Note: Actual despawning happens in cleanup_despawned system (PostUpdate)
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// System that actually despawns entities after network messages have been sent
+/// This runs in PostUpdate after send_do to avoid race conditions
+pub fn cleanup_despawned(
+    mut commands: Commands,
+    mut reader: EventReader<Do>,
+) {
+    for &message in reader.read() {
+        if let Do { event: Event::Despawn { ent } } = message {
+            commands.entity(ent).despawn();
         }
     }
 }
@@ -222,19 +232,20 @@ mod tests {
             event: Event::Despawn { ent },
         });
 
-        // Run send_do system
+        // Run send_do and cleanup systems
         app.add_systems(Update, send_do);
+        app.add_systems(PostUpdate, cleanup_despawned);
         app.update();
 
         // Verify entity was despawned
         assert!(app.world().get_entity(ent).is_err(),
-            "Entity with Loc should be despawned by send_do");
+            "Entity with Loc should be despawned by cleanup_despawned");
     }
 
     #[test]
-    fn test_send_do_fails_to_despawn_entity_without_loc() {
-        // CRITICAL BUG TEST: Entities without Loc component are NOT despawned!
-        // This test documents the current broken behavior
+    fn test_cleanup_despawns_entity_without_loc() {
+        // Test that cleanup_despawned handles entities without Loc component
+        // (send_do can't broadcast without Loc, but cleanup should still despawn)
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
@@ -253,13 +264,14 @@ mod tests {
             event: Event::Despawn { ent },
         });
 
-        // Run send_do system
+        // Run send_do and cleanup systems
         app.add_systems(Update, send_do);
+        app.add_systems(PostUpdate, cleanup_despawned);
         app.update();
 
-        // BUG: Entity still exists because send_do checks query.get(ent) for Loc
-        assert!(app.world().get_entity(ent).is_ok(),
-            "BUG: Entity without Loc is NOT despawned! This is the current broken behavior.");
+        // Entity should be despawned by cleanup_despawned even without Loc
+        assert!(app.world().get_entity(ent).is_err(),
+            "Entity without Loc should still be despawned by cleanup_despawned");
     }
 
     #[test]
@@ -288,6 +300,7 @@ mod tests {
 
         // Should not panic
         app.add_systems(Update, send_do);
+        app.add_systems(PostUpdate, cleanup_despawned);
         app.update();
 
         // Entity should remain despawned (no resurrection)
@@ -297,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_send_do_despawn_sends_to_nearby_players_only() {
-        // Test that despawn events are only sent to players within 50-tile radius
+        // Test that despawn events are only sent to players within 70-tile radius
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
@@ -313,7 +326,7 @@ mod tests {
             Name::new("NPC to Despawn"),
         )).id();
 
-        // Create nearby player (within 50 tiles)
+        // Create nearby player (within 70 tiles)
         let near_player_loc = Loc::new(Qrz { q: 10, r: -10, z: 0 });
         let _near_player = app.world_mut().spawn((
             Actor,
@@ -322,7 +335,7 @@ mod tests {
             Name::new("Near Player"),
         )).id();
 
-        // Create far player (beyond 50 tiles)
+        // Create far player (beyond 70 tiles)
         let far_player_loc = Loc::new(Qrz { q: 100, r: -100, z: 0 });
         let _far_player = app.world_mut().spawn((
             Actor,
@@ -336,15 +349,16 @@ mod tests {
             event: Event::Despawn { ent: npc_ent },
         });
 
-        // Run send_do system
+        // Run send_do and cleanup systems
         app.add_systems(Update, send_do);
+        app.add_systems(PostUpdate, cleanup_despawned);
         app.update();
 
         // Verify NPC was despawned
         assert!(app.world().get_entity(npc_ent).is_err(),
-            "NPC should be despawned regardless of player proximity");
+            "NPC should be despawned by cleanup_despawned");
 
         // Note: We can't easily verify network messages without mocking RenetServer,
-        // but the code should only send to nearby players within 50-tile radius
+        // but the code should only send to nearby players within 70-tile radius
     }
 }

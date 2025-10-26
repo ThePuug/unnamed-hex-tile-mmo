@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, ecs::hierarchy::ChildOf};
 use bevy_behave::prelude::*;
 use qrz::Qrz;
 use rand::Rng;
@@ -8,6 +8,7 @@ use crate::{
         components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, offset::Offset},
         message::*,
         plugins::nntree::*,
+        resources::map::Map,
     },
     server::systems::behaviour::FindSomethingInterestingWithin,
 };
@@ -17,9 +18,10 @@ pub fn tick_spawners(
     mut commands: Commands,
     time: Res<Time>,
     mut spawners: Query<(Entity, &Loc, &mut Spawner)>,
-    spawned: Query<&SpawnedBy>,
+    spawned: Query<&ChildOf>,
     players: Query<(&Loc, &Behaviour)>,
     mut writer: EventWriter<Do>,
+    map: Res<Map>,
 ) {
     let elapsed = time.elapsed().as_millis();
 
@@ -46,7 +48,7 @@ pub fn tick_spawners(
         // Count how many NPCs this spawner has alive
         let alive_count = spawned
             .iter()
-            .filter(|&&SpawnedBy(ent)| ent == spawner_ent)
+            .filter(|child_of| child_of.parent() == spawner_ent)
             .count();
 
         if alive_count >= spawner.max_count as usize {
@@ -63,6 +65,7 @@ pub fn tick_spawners(
             spawn_qrz,
             spawner_ent,
             &mut writer,
+            &map,
         );
 
         // Update cooldown
@@ -77,9 +80,15 @@ fn spawn_npc(
     qrz: impl Into<Qrz>,
     spawner_ent: Entity,
     writer: &mut EventWriter<Do>,
+    map: &Map,
 ) {
     let qrz = qrz.into();
-    let loc = Loc::new(qrz);
+    // Use map.find to get terrain elevation so NPC spawns on top of terrain
+    let Some((terrain_qrz, _entity_type)) = map.find(qrz, -60) else {
+        warn!("Failed to find terrain for spawn location {:?}, skipping spawn", qrz);
+        return;
+    };
+    let loc = Loc::new(terrain_qrz);
     let actor_impl = template.actor_impl();
     let typ = EntityType::Actor(actor_impl);
 
@@ -126,7 +135,7 @@ fn spawn_npc(
             typ,
             loc,
             Physics, // CRITICAL: NPCs need Physics component to actually move!
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new(format!("NPC {:?}", template)),
             children![(
                 Name::new("behaviour"),
@@ -214,7 +223,7 @@ pub fn enforce_leash(
 /// System that despawns NPCs when all players are beyond the despawn distance
 pub fn despawn_out_of_range(
     spawners: Query<(Entity, &Loc, &Spawner)>,
-    npcs: Query<(Entity, &Loc, &SpawnedBy), Without<Spawner>>,
+    npcs: Query<(Entity, &Loc, &ChildOf), Without<Spawner>>,
     players: Query<(&Loc, &Behaviour)>,
     mut writer: EventWriter<Do>,
 ) {
@@ -235,7 +244,7 @@ pub fn despawn_out_of_range(
         // Count and despawn all NPCs from this spawner
         // Store entity AND location so we can send despawn events before actually despawning
         let npcs_to_despawn: Vec<_> = npcs.iter()
-            .filter(|(_, _, &SpawnedBy(npc_spawner))| npc_spawner == spawner_ent)
+            .filter(|(_, _, child_of)| child_of.parent() == spawner_ent)
             .map(|(ent, &loc, _)| (ent, loc))
             .collect();
 
@@ -410,7 +419,7 @@ mod tests {
             app.world_mut().spawn((
                 Actor,
                 spawner_loc,
-                SpawnedBy(spawner_ent),
+                ChildOf(spawner_ent),
                 Name::new(format!("Existing NPC {}", i)),
             ));
         }
@@ -451,7 +460,7 @@ mod tests {
         let npc_ent = app.world_mut().spawn((
             Actor::default(),
             npc_loc,
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Distant NPC"),
         )).id();
 
@@ -499,7 +508,7 @@ mod tests {
         let npc_ent = app.world_mut().spawn((
             Actor::default(),
             npc_loc,
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Nearby NPC"),
         )).id();
 
@@ -547,7 +556,7 @@ mod tests {
         let npc_ent = app.world_mut().spawn((
             Actor,
             npc_loc,
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Test NPC"),
         )).id();
 
@@ -614,7 +623,7 @@ mod tests {
         let npc_ent = app.world_mut().spawn((
             Actor,
             npc_loc,
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Test NPC"),
         )).id();
 
@@ -706,7 +715,7 @@ mod tests {
         let _broken_npc_ent = app.world_mut().spawn((
             Actor,
             // NOTE: Missing Loc component!
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Broken NPC"),
         )).id();
 
@@ -715,7 +724,7 @@ mod tests {
         let valid_npc_ent = app.world_mut().spawn((
             Actor,
             valid_npc_loc,
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("Valid NPC"),
         )).id();
 
@@ -769,21 +778,21 @@ mod tests {
         let npc1_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 2, r: 0, z: -2 }),
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("NPC 1"),
         )).id();
 
         let npc2_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 3, r: 0, z: -3 }),
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("NPC 2"),
         )).id();
 
         let npc3_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 4, r: 0, z: -4 }),
-            SpawnedBy(spawner_ent),
+            ChildOf(spawner_ent),
             Name::new("NPC 3"),
         )).id();
 
@@ -984,7 +993,7 @@ mod tests {
             let _npc_ent = app.world_mut().spawn((
                 Actor,
                 Loc::new(Qrz { q: 5, r: 0, z: -5 }),
-                SpawnedBy(spawner_ent),
+                ChildOf(spawner_ent),
                 Name::new("Test NPC"),
             )).id();
 
@@ -1024,7 +1033,7 @@ mod tests {
             let _npc_ent = app.world_mut().spawn((
                 Actor,
                 Loc::new(Qrz { q: 5, r: -5, z: 0 }),
-                SpawnedBy(spawner_ent),
+                ChildOf(spawner_ent),
                 Name::new("Test NPC"),
             )).id();
 

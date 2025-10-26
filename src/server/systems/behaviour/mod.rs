@@ -5,7 +5,7 @@ use bevy_behave::prelude::*;
 use rand::seq::IteratorRandom;
 
 use crate::common::{
-    components::{entity_type::EntityType, *}, 
+    components::{entity_type::EntityType, *},
     plugins::nntree::*
 };
 

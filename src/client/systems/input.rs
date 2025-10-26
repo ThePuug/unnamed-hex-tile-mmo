@@ -42,12 +42,12 @@ pub fn update_keybits(
             use crate::common::components::spawner::*;
             let spawner = Spawner::new(
                 NpcTemplate::Dog,
-                3,   // max_count: spawn up to 3 dogs
-                5,   // spawn_radius: 5 tiles from spawner
-                20,  // player_activation_range: only spawn when player within 20 tiles
-                10,  // leash_distance: pull back NPCs if they wander beyond 10 tiles
-                30,  // despawn_distance: despawn all NPCs when all players beyond 30 tiles
-                5000, // respawn_timer_ms: 5 seconds between spawn attempts
+                3,   // max_count
+                5,   // spawn_radius
+                40,  // player_activation_range
+                30,  // leash_distance
+                60,  // despawn_distance
+                5000, // respawn_timer_ms
             );
             writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner)}});
         }

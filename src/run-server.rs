@@ -90,7 +90,6 @@ fn main() {
         input::try_input,
         renet::do_manage_connections,
         spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
-        spawner::enforce_leash.run_if(on_timer(Duration::from_secs(2))),
         spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
         world::do_spawn,
         world::try_spawn,
@@ -99,6 +98,7 @@ fn main() {
 
     app.add_systems(PostUpdate, (
         renet::send_do,
+        renet::cleanup_despawned.after(renet::send_do),
     ));
 
     let (server, transport) = renet::new_renet_server();

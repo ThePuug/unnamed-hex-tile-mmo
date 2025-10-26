@@ -32,7 +32,10 @@ pub fn do_incremental(
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
-        let (o_loc, o_offset, o_heading, o_keybits, o_behaviour) = query.get_mut(ent).unwrap();
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour)) = query.get_mut(ent) else {
+            // Entity might have been despawned - skip this update
+            continue;
+        };
         match component {
             Component::Loc(loc) => {
                 let Some(mut loc0) = o_loc else { continue; };
