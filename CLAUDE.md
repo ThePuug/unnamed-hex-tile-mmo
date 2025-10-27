@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Role Adoption
+
+**You must adopt a role for each session.** The default role is **DEVELOPER** unless explicitly instructed otherwise.
+
+- **Default**: DEVELOPER role (see `ROLES/DEVELOPER.md`)
+- **Alternative roles**: DEBUGGER (see `ROLES/DEBUGGER.md`), and others as defined
+- **Switching roles**: User can request role changes at any time (e.g., "switch to DEBUGGER role")
+- **Role refresh**: Periodically re-read your current role document to maintain context and ensure adherence to role principles, especially during long sessions or when transitioning between different types of tasks
+
+**At the start of each session, read and adopt the DEVELOPER role by default.**
+
 ## Commands
 
 ```bash

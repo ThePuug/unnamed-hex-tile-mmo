@@ -80,14 +80,22 @@ fn main() {
         world::setup,
     ));
 
-    app.add_systems(PreUpdate, (
-        renet::write_do,
+
+    app.add_systems(FixedPreUpdate, (
+        // Ensure proper ordering: update_keybits -> tick -> do_input
+        input::update_keybits,
     ));
 
     app.add_systems(FixedUpdate, (
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::interpolate_remote,
+        common::systems::behaviour::controlled::tick,
+        input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
+    ));
+
+    app.add_systems(PreUpdate, (
+        renet::write_do,
     ));
 
     app.add_systems(Update, (
@@ -102,10 +110,6 @@ fn main() {
     ));
 
     app.add_systems(Update, (
-        // Ensure proper ordering: update_keybits -> tick -> do_input
-        input::update_keybits,
-        common::systems::behaviour::controlled::tick.after(input::update_keybits),
-        input::do_input.after(common::systems::behaviour::controlled::tick),
         spawner_viz::visualize_spawners,
         spawner_viz::toggle_spawner_viz,
         spawner_viz::cleanup_despawned_spawner_viz,
