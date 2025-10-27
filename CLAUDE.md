@@ -44,4 +44,4 @@ cargo test actor
 
 ## Internal Libraries
 
-**qrz** (`lib/qrz/`): Custom hexagonal coordinate system library. Provides `Qrz` coordinates, `Map` conversion utilities, and hex grid math.
+**qrz** (`lib/qrz/`): Custom hexagonal coordinate system library. Provides `Qrz` coordinates, `Map` conversion utilities, and hex grid math. See `lib/qrz/GUIDANCE.md` for detailed documentation.

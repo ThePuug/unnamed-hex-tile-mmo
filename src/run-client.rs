@@ -64,6 +64,7 @@ fn main() {
         NetcodeClientPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
+        common::plugins::controlled::ControlledPlugin,
         DiagnosticsPlugin,
     ));
 
@@ -87,9 +88,6 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        common::systems::behaviour::controlled::apply,
-        common::systems::behaviour::controlled::interpolate_remote,
-        common::systems::behaviour::controlled::tick,
         input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
     ));
