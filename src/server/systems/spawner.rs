@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo, PathLimit}, offset::Offset},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
@@ -220,17 +220,16 @@ pub fn despawn_out_of_range(
         }
 
         // Count and despawn all NPCs from this spawner
-        // Store entity AND location so we can send despawn events before actually despawning
         let npcs_to_despawn: Vec<_> = npcs.iter()
             .filter(|(_, _, child_of)| child_of.parent() == spawner_ent)
-            .map(|(ent, &loc, _)| (ent, loc))
+            .map(|(ent, _, _)| ent)
             .collect();
 
         if !npcs_to_despawn.is_empty() {
             info!("DESPAWNED: {} NPCs from spawner at {:?} (all players beyond {} tiles)",
                 npcs_to_despawn.len(), *spawner_loc, spawner.despawn_distance);
 
-            for (npc_ent, npc_loc) in npcs_to_despawn {
+            for npc_ent in npcs_to_despawn {
                 // Send despawn event - the actual despawning will happen in PostUpdate
                 // after send_do has sent the network message
                 writer.write(Do {
@@ -245,9 +244,22 @@ pub fn despawn_out_of_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::time::TimePlugin;
-    use crate::common::components::{entity_type::actor::*, behaviour::Behaviour};
-    use crate::common::message::{Event as MsgEvent, Component as MsgComponent};
+    use crate::common::components::{entity_type::{actor::*, decorator::Decorator}, behaviour::Behaviour};
+    use crate::common::message::Event as MsgEvent;
+
+    /// Helper function to create a map with terrain tiles for testing
+    fn create_test_map() -> Map {
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        for q in -20..=20 {
+            for r in -20..=20 {
+                let z: i16 = -q - r;
+                if z.abs() <= 20 { // Keep within reasonable Z range
+                    qrz_map.insert(Qrz { q, r, z }, EntityType::Decorator(Decorator { index: 3, is_solid: true }));
+                }
+            }
+        }
+        Map::new(qrz_map)
+    }
 
     #[test]
     fn test_random_hex_within_radius_zero_returns_center() {
@@ -275,8 +287,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));  // Required by spawn_npc
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));  // Required by spawn_npc
+        app.insert_resource(create_test_map());
 
         // Create a spawner but NO players
         let spawner = Spawner::new(
@@ -319,7 +330,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
+        app.insert_resource(create_test_map());
 
         // Create a spawner
         let spawner = Spawner::new(
@@ -352,6 +363,12 @@ mod tests {
         let events = app.world().resource::<Events<Do>>();
         let spawn_events: Vec<_> = events.iter_current_update_events().collect();
 
+        // Debug: Let's check why spawning didn't happen
+        if spawn_events.len() == 0 {
+            let elapsed = app.world().resource::<Time>().elapsed().as_millis();
+            eprintln!("DEBUG: elapsed = {}, expected spawn but got none", elapsed);
+        }
+
         assert!(spawn_events.len() > 0,
             "Expected at least one spawn event with player in range, got 0. \
              BUG: System may not be detecting players correctly!");
@@ -372,6 +389,8 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
         app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(create_test_map());
 
         let max_count = 2;
         let spawner = Spawner::new(
@@ -606,7 +625,7 @@ mod tests {
 
         // Spawn a valid NPC WITH Loc component
         let valid_npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
-        let valid_npc_ent = app.world_mut().spawn((
+        let _valid_npc_ent = app.world_mut().spawn((
             Actor,
             valid_npc_loc,
             ChildOf(spawner_ent),
@@ -660,21 +679,21 @@ mod tests {
         let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
 
         // Spawn 3 NPCs from the same spawner
-        let npc1_ent = app.world_mut().spawn((
+        let _npc1_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 2, r: 0, z: -2 }),
             ChildOf(spawner_ent),
             Name::new("NPC 1"),
         )).id();
 
-        let npc2_ent = app.world_mut().spawn((
+        let _npc2_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 3, r: 0, z: -3 }),
             ChildOf(spawner_ent),
             Name::new("NPC 2"),
         )).id();
 
-        let npc3_ent = app.world_mut().spawn((
+        let _npc3_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 4, r: 0, z: -4 }),
             ChildOf(spawner_ent),
@@ -727,15 +746,15 @@ mod tests {
         let npc1_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 3, r: 0, z: -3 }),
-            SpawnedBy(spawner1_ent),
+            ChildOf(spawner1_ent),
             Name::new("NPC from Spawner 1"),
         )).id();
 
         // Spawn NPC from spawner 2
-        let npc2_ent = app.world_mut().spawn((
+        let _npc2_ent = app.world_mut().spawn((
             Actor,
             Loc::new(Qrz { q: 103, r: 0, z: -103 }),
-            SpawnedBy(spawner2_ent),
+            ChildOf(spawner2_ent),
             Name::new("NPC from Spawner 2"),
         )).id();
 
@@ -776,11 +795,11 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
+        app.insert_resource(create_test_map());
 
         let spawner = Spawner::new(NpcTemplate::Wolf, 5, 3, 10, 15, 30, 0);
         let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
+        let _spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
 
         // Add player in range
         let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
@@ -832,7 +851,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
+        app.insert_resource(create_test_map());
 
         // Create spawner with 0ms cooldown - should spawn immediately when player is in range
         let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 10, 15, 30, 0);
@@ -954,7 +973,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
+        app.insert_resource(create_test_map());
 
         let spawner = Spawner::new(NpcTemplate::Rabbit, 5, 3, 10, 15, 30, 0);
         let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
@@ -1008,7 +1027,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
-        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
+        app.insert_resource(create_test_map());
 
         let spawn_radius = 5;
         let spawner = Spawner::new(NpcTemplate::Dog, 10, spawn_radius, 20, 15, 30, 0);

@@ -5,18 +5,18 @@ use qrz::{Convert, Qrz};
 
 use crate::{client::components::*,
     common::{
-        components::{ heading::*, keybits::*, offset::*, * }, 
+        components::{ heading::*, offset::*, * },
         resources::{map::Map, *}
     }
 };
 
 pub fn update(
-    query: Query<(Entity, &Loc, &Offset, &Heading, &KeyBits, &Transform, &AirTime, &Animates)>,
+    query: Query<(Entity, &Loc, &Offset, &Heading, &Transform, &AirTime, &Animates)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     map: Res<Map>,
     buffers: Res<InputQueues>,
 ) {
-    for (entity, &loc, &offset, &heading, &keybits, &transform, &airtime, &animates) in &query {
+    for (entity, &loc, &offset, &heading, &transform, &airtime, &animates) in &query {
         // Only local player (with input buffer) uses offset.step for physics movement
         let is_local_player = buffers.get(&entity).is_some();
         

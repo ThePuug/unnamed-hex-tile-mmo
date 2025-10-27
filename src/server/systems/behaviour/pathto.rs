@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn pathlimit_by_limits_path_length() {
         // Test that PathLimit::By(5) only paths 5 tiles
-        let origin = Qrz { q: 0, r: 0, z: 0 };
+        let _origin = Qrz { q: 0, r: 0, z: 0 };
         let target = Qrz { q: 10, r: 0, z: -10 }; // 10 tiles away
 
         let path_to = PathTo {

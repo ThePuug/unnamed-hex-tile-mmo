@@ -39,10 +39,6 @@ impl Spawner {
     }
 }
 
-/// Tracks which spawner created this NPC
-#[derive(Component, Clone, Copy, Debug)]
-pub struct SpawnedBy(pub Entity);
-
 /// NPC templates defining what type of creatures can be spawned
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum NpcTemplate {

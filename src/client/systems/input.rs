@@ -3,9 +3,6 @@ use qrz::Qrz;
 
 use crate::{common::{
         components::{
-            entity_type::{ *,
-                actor::*,
-            },
             heading::*,
             keybits::*,
         }, 
@@ -34,7 +31,6 @@ pub fn update_keybits(
     dt: Res<Time>,
 ) {
     if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
-        let elapsed = dt.elapsed().as_millis();
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 

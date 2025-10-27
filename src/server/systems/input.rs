@@ -96,7 +96,6 @@ pub fn try_gcd(
                     writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading }});
                 }
                 GcdType::PlaceSpawner(spawner) => {
-                    use crate::common::components::spawner::*;
                     let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
                     let qrz = *loc + *heading;
                     let spawn_loc = Loc::new(qrz);

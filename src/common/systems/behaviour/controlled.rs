@@ -48,8 +48,6 @@ pub fn tick(
             // disconnect by client could remove buffer while message in transit
             else { continue };
 
-        let queue_len = buffer.queue.len();
-
         // Queue invariant: all queues must have at least 1 input
         // Access front input without removing it to maintain invariant
         let Some(input0) = buffer.queue.front_mut() else {
@@ -126,7 +124,6 @@ pub fn interpolate_remote(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::components::*;
 
     #[test]
     fn test_tick_maintains_queue_invariant_during_update() {

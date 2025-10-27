@@ -4,7 +4,7 @@ use bevy::{
     prelude::*,
     scene::SceneInstanceReady
 };
-use qrz::{Convert, Qrz};
+use qrz::Convert;
 
 use crate::{
     client::components::*,
@@ -53,10 +53,10 @@ fn ready(
 
 pub fn update(
     fixed_time: Res<Time<Fixed>>,
-    mut query: Query<(&Loc, &Offset, &Heading, &KeyBits, &mut Transform)>,
+    mut query: Query<(&Loc, &Offset, &Heading, &mut Transform)>,
     map: Res<Map>,
 ) {
-    for (&loc, offset, &heading, &keybits, mut transform0) in &mut query {
+    for (&loc, offset, &heading, mut transform0) in &mut query {
         // Interpolate between FixedUpdate ticks using overstep fraction
         // overstep_fraction: 0.0 = just ran FixedUpdate, 1.0 = about to run FixedUpdate
         let overstep_fraction = fixed_time.overstep_fraction();
@@ -267,7 +267,7 @@ mod tests {
             prev_step: Vec3::ZERO,
         };
 
-        let heading = Heading::default(); // No heading
+        let _heading = Heading::default(); // No heading
 
         let tile_center = map.convert(*loc);
         let expected_position = tile_center;

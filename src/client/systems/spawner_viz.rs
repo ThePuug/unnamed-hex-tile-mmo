@@ -37,7 +37,6 @@ impl Default for SpawnerVizState {
 pub fn visualize_spawners(
     mut commands: Commands,
     state: Res<SpawnerVizState>,
-    keyboard: Res<ButtonInput<KeyCode>>,
     mut try_reader: EventReader<Try>,
     player_query: Query<(&Loc, &Heading), With<Actor>>,
     existing_viz_query: Query<(Entity, &SpawnerVisualization)>,
