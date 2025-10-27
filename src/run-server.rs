@@ -73,6 +73,7 @@ fn main() {
         common::systems::behaviour::controlled::apply,
         common::systems::behaviour::controlled::tick,
         server::systems::behaviour::find_something_interesting_within,
+        server::systems::behaviour::nearby,
         server::systems::behaviour::pathto::tick, //.run_if(on_timer(Duration::from_millis(1000))),
         server::systems::behaviour::pathto::apply,
         physics::update,

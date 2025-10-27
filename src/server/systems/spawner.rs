@@ -5,12 +5,12 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, offset::Offset},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo, PathLimit}, offset::Offset},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
     },
-    server::systems::behaviour::FindSomethingInterestingWithin,
+    server::systems::behaviour::{FindSomethingInterestingWithin, Nearby, NearbyOrigin},
 };
 
 /// System that ticks spawners and spawns NPCs when conditions are met
@@ -103,7 +103,15 @@ fn spawn_npc(
                             FindSomethingInterestingWithin { dist: 20 }
                         ),
                         Behave::spawn_named(
-                            "path to target",
+                            "set dest near target",
+                            Nearby {
+                                min: 1,
+                                max: 3,
+                                origin: NearbyOrigin::Target,
+                            }
+                        ),
+                        Behave::spawn_named(
+                            "path to dest",
                             PathTo::default()
                         ),
                         Behave::Wait(5.),
@@ -120,7 +128,15 @@ fn spawn_npc(
                             FindSomethingInterestingWithin { dist: 15 }
                         ),
                         Behave::spawn_named(
-                            "path to target",
+                            "set dest to target",
+                            Nearby {
+                                min: 0,
+                                max: 0,
+                                origin: NearbyOrigin::Target,
+                            }
+                        ),
+                        Behave::spawn_named(
+                            "path to dest",
                             PathTo::default()
                         ),
                         Behave::Wait(8.),
@@ -178,44 +194,6 @@ fn random_hex_within_radius(center: impl Into<Qrz>, radius: u8) -> Qrz {
                 r: center.r + r,
                 z: center.z + z,
             };
-        }
-    }
-}
-
-/// System that enforces leash distances - teleports NPCs back if they wander too far from spawner
-pub fn enforce_leash(
-    spawners: Query<(Entity, &Loc, &Spawner)>,
-    mut npcs: Query<(Entity, &mut Loc, Option<&mut Offset>, &SpawnedBy), Without<Spawner>>,
-    mut writer: EventWriter<Do>,
-) {
-    for (npc_ent, mut npc_loc, offset_opt, &SpawnedBy(spawner_ent)) in &mut npcs {
-        let Ok((_, &spawner_loc, spawner)) = spawners.get(spawner_ent) else {
-            warn!("NPC {:?} has invalid spawner {:?}", npc_ent, spawner_ent);
-            continue;
-        };
-
-        let dist = npc_loc.distance(&spawner_loc);
-
-        if dist > spawner.leash_distance as i16 {
-            // Teleport NPC back to spawner location
-            info!("LEASHED: NPC {:?} wandered {} tiles from spawner at {:?} (max: {})",
-                npc_ent, dist, *spawner_loc, spawner.leash_distance);
-            *npc_loc = spawner_loc;
-
-            // Clear movement state to prevent visual artifacts
-            if let Some(mut offset) = offset_opt {
-                offset.state = Vec3::ZERO;
-                offset.step = Vec3::ZERO;
-                offset.prev_step = Vec3::ZERO;
-            }
-
-            // Send location update to clients
-            writer.write(Do {
-                event: crate::common::message::Event::Incremental {
-                    ent: npc_ent,
-                    component: crate::common::message::Component::Loc(*npc_loc),
-                },
-            });
         }
     }
 }
@@ -296,7 +274,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
         app.add_event::<Do>();
-        app.insert_resource(NNTree::new_for_test());  // Required by spawn_npc
+        app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));  // Required by spawn_npc
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));  // Required by spawn_npc
 
         // Create a spawner but NO players
         let spawner = Spawner::new(
@@ -339,6 +319,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
 
         // Create a spawner
         let spawner = Spawner::new(
@@ -434,102 +415,6 @@ mod tests {
 
         assert_eq!(spawn_events.len(), 0,
             "Expected no spawn events when at max_count, but got {}", spawn_events.len());
-    }
-
-    #[test]
-    fn test_enforce_leash_teleports_distant_npcs() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-
-        let leash_distance = 10;
-        let spawner = Spawner::new(
-            NpcTemplate::Dog,
-            5,
-            3,
-            20,
-            leash_distance,
-            30,
-            1000,
-        );
-        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
-
-        // Spawn an NPC far from the spawner (distance > leash_distance)
-        let npc_loc = Loc::new(Qrz { q: 15, r: 0, z: -15 });
-        let npc_ent = app.world_mut().spawn((
-            Actor::default(),
-            npc_loc,
-            ChildOf(spawner_ent),
-            Name::new("Distant NPC"),
-        )).id();
-
-        // Run the leash enforcement system
-        app.add_systems(Update, enforce_leash);
-        app.update();
-
-        // Check that the NPC was teleported back to spawner location
-        let npc_new_loc = app.world().entity(npc_ent).get::<Loc>().unwrap();
-        assert_eq!(*npc_new_loc, spawner_loc,
-            "Expected NPC to be teleported to spawner location {:?}, but it's at {:?}",
-            spawner_loc, npc_new_loc);
-
-        // Check that a location update event was sent
-        let events = app.world().resource::<Events<Do>>();
-        let loc_events: Vec<_> = events.iter_current_update_events()
-            .filter(|Do { event }| matches!(event, MsgEvent::Incremental { component: MsgComponent::Loc(_), .. }))
-            .collect();
-
-        assert!(loc_events.len() > 0,
-            "Expected location update event after leashing NPC");
-    }
-
-    #[test]
-    fn test_enforce_leash_ignores_nearby_npcs() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-
-        let leash_distance = 10;
-        let spawner = Spawner::new(
-            NpcTemplate::Dog,
-            5,
-            3,
-            20,
-            leash_distance,
-            30,
-            1000,
-        );
-        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let spawner_ent = app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner"))).id();
-
-        // Spawn an NPC close to the spawner (distance < leash_distance)
-        let npc_loc = Loc::new(Qrz { q: 3, r: 0, z: -3 });
-        let npc_ent = app.world_mut().spawn((
-            Actor::default(),
-            npc_loc,
-            ChildOf(spawner_ent),
-            Name::new("Nearby NPC"),
-        )).id();
-
-        // Run the leash enforcement system
-        app.add_systems(Update, enforce_leash);
-        app.update();
-
-        // Check that the NPC location was NOT changed
-        let npc_new_loc = app.world().entity(npc_ent).get::<Loc>().unwrap();
-        assert_eq!(*npc_new_loc, npc_loc,
-            "Expected NPC to remain at original location {:?}, but it moved to {:?}",
-            npc_loc, npc_new_loc);
-
-        // Check that NO location update events were sent
-        let events = app.world().resource::<Events<Do>>();
-        let loc_events: Vec<_> = events.iter_current_update_events()
-            .filter(|Do { event }| matches!(event, MsgEvent::Incremental { component: MsgComponent::Loc(_), .. }))
-            .collect();
-
-        assert_eq!(loc_events.len(), 0,
-            "Expected no location update events for nearby NPC");
     }
 
     #[test]
@@ -891,6 +776,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
 
         let spawner = Spawner::new(NpcTemplate::Wolf, 5, 3, 10, 15, 30, 0);
         let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
@@ -946,6 +832,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
 
         // Create spawner with 0ms cooldown - should spawn immediately when player is in range
         let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 10, 15, 30, 0);
@@ -1067,6 +954,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
 
         let spawner = Spawner::new(NpcTemplate::Rabbit, 5, 3, 10, 15, 30, 0);
         let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
@@ -1120,6 +1008,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         app.add_event::<Do>();
         app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(Map::new(qrz::Map::new(1.0, 0.8)));
 
         let spawn_radius = 5;
         let spawner = Spawner::new(NpcTemplate::Dog, 10, spawn_radius, 20, 15, 30, 0);

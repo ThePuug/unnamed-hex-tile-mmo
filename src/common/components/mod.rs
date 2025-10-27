@@ -22,6 +22,10 @@ impl Loc {
     }
 }
 
+/// Destination for pathfinding - the Qrz location an entity is trying to reach
+#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Dest(pub Qrz);
+
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct AirTime {
     pub state: Option<i16>,

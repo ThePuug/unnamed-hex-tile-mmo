@@ -27,7 +27,29 @@ This approach:
 - Implement fix
 - Verify test passes and no regressions
 
-### Rule 2: Update GUIDANCE.md After Confirmed Solutions
+### Rule 2: Re-Read GUIDANCE.md Periodically
+
+**ALWAYS re-read GUIDANCE.md periodically during extended work sessions to prevent forgetting critical rules.**
+
+During multi-step tasks or conversations spanning multiple exchanges:
+1. **Re-read GUIDANCE.md every 5-10 exchanges** or when switching to a different area of the codebase
+2. **Re-read before making significant architectural changes** to ensure you haven't forgotten key constraints
+3. **Re-read when encountering unexpected behavior** - the guidance may contain relevant context
+4. **Re-read after completing a major subtask** before moving to the next one
+
+This ensures you maintain awareness of:
+- Critical architectural patterns (Offset fields, input queues, etc.)
+- Common pitfalls to avoid
+- TDD workflow requirements
+- System execution order constraints
+
+**Why This Matters:**
+- Extended conversations can cause earlier context to fade
+- Re-reading takes seconds but prevents hours of debugging
+- Many bugs arise from forgetting documented constraints
+- Guidance contains hard-won lessons from past mistakes
+
+### Rule 3: Update GUIDANCE.md After Confirmed Solutions
 
 **ONLY update this GUIDANCE.md file AFTER the user explicitly confirms the solution is acceptable and working.**
 

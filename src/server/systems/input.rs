@@ -75,7 +75,14 @@ pub fn try_gcd(
                                                     "find something interesting",
                                                     FindSomethingInterestingWithin { dist: 20 }),
                                                 Behave::spawn_named(
-                                                    "path to target",
+                                                    "set dest near target",
+                                                    Nearby {
+                                                        min: 1,
+                                                        max: 3,
+                                                        origin: NearbyOrigin::Target,
+                                                    }),
+                                                Behave::spawn_named(
+                                                    "path to dest",
                                                     PathTo::default()),
                                                 Behave::Wait(5.),
                                     }}})

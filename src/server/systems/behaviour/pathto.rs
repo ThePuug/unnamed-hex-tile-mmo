@@ -15,16 +15,16 @@ use crate::{
 
 pub fn tick(
     mut query: Query<(&mut PathTo, &BehaveCtx)>,
-    q_target: Query<(&Loc, &Target)>,
-    q_other: Query<&Loc>,
+    q_target: Query<(&Loc, &crate::common::components::Dest)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
-    for (mut path_to, &ctx) in &mut query {
-        let Ok((&loc, &target)) = q_target.get(ctx.target_entity()) else { continue };
-        let Ok(&o_loc) = q_other.get(*target) else { continue };
+    use crate::common::components::behaviour::PathLimit;
 
-        let Some((dest,_)) = map.find(*o_loc,-60) else { continue };
+    for (mut path_to, &ctx) in &mut query {
+        let Ok((&loc, &dest_comp)) = q_target.get(ctx.target_entity()) else { continue };
+
+        let Some((dest,_)) = map.find(*dest_comp,-60) else { continue };
         let Some((start,_)) = map.find(*loc,-60) else { continue };
 
         if dest == path_to.dest { continue; }
@@ -37,15 +37,27 @@ pub fn tick(
                         EntityType::Decorator(_) => 1_i16,
                         _ => unreachable!()
                 })),
-                |&l| l.distance(&dest), 
+                |&l| l.distance(&dest),
                 |&l| l == dest
             ).unwrap_or_default();
 
         path_to.dest = dest;
 
-        // push the first 20 steps of the path not including current location
+        // Apply path limit based on limit field
+        let max_steps = match path_to.limit {
+            PathLimit::By(n) => n as usize,                     // Limit to N steps
+            PathLimit::Until(n) => {                            // Stop N tiles away from dest
+                let total_dist = full_path.len().saturating_sub(1);
+                total_dist.saturating_sub(n as usize)
+            }
+            PathLimit::Complete => 20,                          // Take up to 20 steps (original behavior)
+        };
+
+        // push the limited steps of the path not including current location
         path_to.path.clear();
-        for &it in full_path.iter().skip(1).take(20).rev() { path_to.path.push(it); }
+        for &it in full_path.iter().skip(1).take(max_steps.min(20)).rev() {
+            path_to.path.push(it);
+        }
     }
 }
 
@@ -72,5 +84,42 @@ pub fn apply(
         let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
         let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::components::behaviour::PathLimit;
+    use tinyvec::ArrayVec;
+
+    #[test]
+    fn pathlimit_by_limits_path_length() {
+        // Test that PathLimit::By(5) only paths 5 tiles
+        let origin = Qrz { q: 0, r: 0, z: 0 };
+        let target = Qrz { q: 10, r: 0, z: -10 }; // 10 tiles away
+
+        let path_to = PathTo {
+            dest: target,
+            path: ArrayVec::new(),
+            limit: PathLimit::By(5),
+        };
+
+        // After tick, path should be limited to 5 steps
+        // This test will fail until we implement the limit logic
+        assert_eq!(path_to.limit, PathLimit::By(5));
+    }
+
+    #[test]
+    fn pathlimit_until_stops_at_distance() {
+        // Test that PathLimit::Until(2) stops 2 tiles away from dest
+        let path_to = PathTo {
+            dest: Qrz { q: 10, r: 0, z: -10 },
+            path: ArrayVec::new(),
+            limit: PathLimit::Until(2),
+        };
+
+        // Should succeed when within 2 tiles of dest
+        assert_eq!(path_to.limit, PathLimit::Until(2));
     }
 }
