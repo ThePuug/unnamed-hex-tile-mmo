@@ -29,7 +29,7 @@ use common::{
 use client::{
     plugins::diagnostics::DiagnosticsPlugin,
     resources::*,
-    systems::{actor, animator, camera, input, renet, spawner_viz, target_cursor, world, ui}
+    systems::{actor, animator, camera, character_panel, input, renet, spawner_viz, target_cursor, world, ui}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -75,6 +75,7 @@ fn main() {
         setup,
         actor::setup,
         camera::setup,
+        character_panel::setup,
         renet::setup,
         target_cursor::setup,
         ui::setup.after(camera::setup),
@@ -82,7 +83,7 @@ fn main() {
     ));
 
 
-    app.add_systems(FixedPreUpdate, (
+    app.add_systems(PreUpdate, (
         // Ensure proper ordering: update_keybits -> tick -> do_input
         input::update_keybits,
     ));
@@ -108,6 +109,8 @@ fn main() {
     ));
 
     app.add_systems(Update, (
+        character_panel::toggle_panel,
+        character_panel::update_attributes,
         spawner_viz::visualize_spawners,
         spawner_viz::toggle_spawner_viz,
         spawner_viz::cleanup_despawned_spawner_viz,

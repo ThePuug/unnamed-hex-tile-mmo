@@ -80,7 +80,7 @@ pub fn do_spawn(
     map: Res<Map>,
 ) {
     for &message in reader.read() {
-        let Do { event: Event::Spawn { ent, typ, qrz } } = message else { continue };
+        let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
         let EntityType::Actor(desc) = typ else { continue };
         let loc = Loc::new(qrz);
         commands.entity(ent).insert((
@@ -99,6 +99,7 @@ pub fn do_spawn(
             KeyBits::default(),
             Visibility::default(),
             Physics::default(),
+            attrs.unwrap_or_default(),
         )).observe(ready);
     }
 }

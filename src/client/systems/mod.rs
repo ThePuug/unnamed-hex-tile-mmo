@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod animator;
 pub mod camera;
+pub mod character_panel;
 // pub mod effect;
 pub mod input;
 pub mod renet;

@@ -43,7 +43,7 @@ pub fn do_manage_connections(
     mut writer: EventWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
@@ -58,13 +58,25 @@ pub fn do_manage_connections(
                     Resilience::Vital));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
+                let attrs = ActorAttributes {
+                    might_grace_axis: -10,
+                    might_grace_spectrum: 45,
+                    might_grace_shift: -45,
+                    vitality_focus_axis: -10,
+                    vitality_focus_spectrum: 45,
+                    vitality_focus_shift: 0,
+                    instinct_presence_axis: -10,
+                    instinct_presence_spectrum: 45,
+                    instinct_presence_shift: 45,
+                };
                 let ent = commands.spawn((
                     typ,
                     loc,
                     Behaviour::Controlled,
+                    attrs,
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
-                writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
+                writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue { 
@@ -79,9 +91,9 @@ pub fn do_manage_connections(
 
                 // spawn nearby actors
                 for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ) = query.get(other.ent).unwrap();
+                    let (&loc, &typ, attrs) = query.get(other.ent).unwrap();
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc }}, 
+                        Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
@@ -119,7 +131,7 @@ pub fn write_try(
                     writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
                 Try { event: Event::Spawn { ent, .. } } => {
-                    writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                    writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
                 _ => {}
             }
@@ -136,11 +148,11 @@ pub fn write_try(
 ) {
     for &message in reader.read() {
         match message {
-            Do { event: Event::Spawn { ent, typ, qrz } } => {
+            Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
                 for other in nntree.locate_within_distance(Loc::new(qrz), 20*20) {
                     let Some(client_id) = lobby.get_by_right(&other.ent) else { continue; };
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { ent, typ, qrz }}, 
+                        Do { event: Event::Spawn { ent, typ, qrz, attrs }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }

@@ -25,13 +25,13 @@ use crate::{
             let (&loc, _) = query.get(ent).unwrap();
             if loc.flat_distance(&qrz) > 25 { continue; }
             if let Some((qrz, typ)) = map.find(qrz + Qrz{q:0,r:0,z:30}, -60) {
-                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz } }); 
+                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             } else {
                 let px = map.convert(qrz).xy();
                 let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(px.x, px.y)};
                 let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
                 map.insert(qrz, typ);
-                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz } });
+                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             }
         }
     }

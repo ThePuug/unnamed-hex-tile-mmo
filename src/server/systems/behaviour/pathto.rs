@@ -81,7 +81,7 @@ pub fn apply(
         let heading = Heading::from(KeyBits::from(Heading::new(dest - here)));
         if heading != *heading0 { *heading0 = heading; }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
-        let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
+        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
         let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
     }

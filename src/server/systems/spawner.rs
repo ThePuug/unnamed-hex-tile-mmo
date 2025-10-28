@@ -146,6 +146,17 @@ fn spawn_npc(
         }
     };
 
+    let attrs = ActorAttributes {
+        might_grace_axis: -20,
+        might_grace_spectrum: 10,
+        might_grace_shift: -5,
+        vitality_focus_axis: -10,
+        vitality_focus_spectrum: 15,
+        vitality_focus_shift: -15,
+        instinct_presence_axis: 0,
+        instinct_presence_spectrum: 20,
+        instinct_presence_shift: 5,
+    };
     let ent = commands
         .spawn((
             typ,
@@ -153,6 +164,7 @@ fn spawn_npc(
             Physics, // CRITICAL: NPCs need Physics component to actually move!
             ChildOf(spawner_ent),
             Name::new(format!("NPC {:?}", template)),
+            attrs,
             children![(
                 Name::new("behaviour"),
                 behavior_tree,
@@ -164,7 +176,7 @@ fn spawn_npc(
 
     // Send spawn event to clients
     writer.write(Do {
-        event: crate::common::message::Event::Spawn { ent, typ, qrz },
+        event: crate::common::message::Event::Spawn { ent, typ, qrz, attrs: Some(attrs) },
     });
 }
 
@@ -823,7 +835,7 @@ mod tests {
         assert_eq!(spawn_events.len(), 1, "Expected 1 spawn event");
 
         // Verify spawn event contains correct entity type
-        if let MsgEvent::Spawn { ent: _, typ, qrz: event_qrz } = &spawn_events[0].event {
+        if let MsgEvent::Spawn { ent: _, typ, qrz: event_qrz, .. } = &spawn_events[0].event {
             match typ {
                 EntityType::Actor(actor) => {
                     // Verify it's a Wolf (from NpcTemplate::Wolf)
@@ -1059,7 +1071,7 @@ mod tests {
 
         // Verify every spawn is within the exact radius
         for spawn_event in spawn_events {
-            if let MsgEvent::Spawn { ent: _, typ: _, qrz: spawn_qrz } = &spawn_event.event {
+            if let MsgEvent::Spawn { ent: _, typ: _, qrz: spawn_qrz, .. } = &spawn_event.event {
                 let distance = spawner_loc.flat_distance(spawn_qrz);
                 assert!(distance <= spawn_radius as i16,
                     "Spawn location {:?} is at distance {} from spawner {:?}, exceeds spawn_radius {}",

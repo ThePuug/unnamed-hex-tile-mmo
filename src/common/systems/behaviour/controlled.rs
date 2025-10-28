@@ -78,7 +78,7 @@ pub fn apply(
                 else { continue };
             let dest = Loc::new(*Heading::from(key_bits) + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
-            let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
+            let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
             (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, heading, &map, &nntree);
         }
     }
@@ -100,7 +100,7 @@ pub fn interpolate_remote(
             continue;
         }
 
-        let movement_speed = attrs.map(|a| a.movement_speed).unwrap_or(0.005);
+        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
         // Move step toward state (zero for remote players) at movement_speed
         offset.prev_step = offset.step;

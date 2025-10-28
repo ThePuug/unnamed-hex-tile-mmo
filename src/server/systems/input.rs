@@ -93,7 +93,7 @@ pub fn try_gcd(
                         },
                         _ => Entity::PLACEHOLDER,
                     };
-                    writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading }});
+                    writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading, attrs: None }});
                 }
                 GcdType::PlaceSpawner(spawner) => {
                     let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));

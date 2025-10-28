@@ -15,7 +15,7 @@ pub enum Event {
     Init { ent: Entity, dt: u128 },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     Incremental { ent: Entity, component: Component },
-    Spawn { ent: Entity, typ: EntityType, qrz: Qrz },
+    Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

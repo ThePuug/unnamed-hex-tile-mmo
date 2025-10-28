@@ -36,12 +36,12 @@ pub fn setup(
 pub fn try_spawn(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
-    query: Query<(&Loc, &EntityType)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
-        let Ok((loc, typ)) = query.get(*ent) else { continue; };
-        writer.write(Do { event: Event::Spawn { ent: *ent, typ: *typ, qrz: **loc }});
+        let Ok((loc, typ, attrs)) = query.get(*ent) else { continue; };
+        writer.write(Do { event: Event::Spawn { ent: *ent, typ: *typ, qrz: **loc, attrs: attrs.copied() }});
     }
 }
 
@@ -51,7 +51,7 @@ pub fn do_spawn(
     mut map: ResMut<crate::Map>,
 ) {
     for &message in reader.read() {
-        if let Do { event: Event::Spawn { qrz, typ, ent } } = message {
+        if let Do { event: Event::Spawn { qrz, typ, ent, .. } } = message {
             match typ {
                 EntityType::Decorator(_) => {
                     if map.get(qrz).is_none() { map.insert(qrz, typ) }

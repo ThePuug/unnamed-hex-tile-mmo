@@ -56,7 +56,7 @@ pub fn write_do(
             }
 
             // insert l2r entry when spawning an Actor
-            Do { event: Event::Spawn { ent, typ, qrz } } => {
+            Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
                 let ent = match typ {
                     EntityType::Actor(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) { loc }
@@ -64,16 +64,16 @@ pub fn write_do(
                             let loc = commands.spawn(typ).id();
                             l2r.insert(loc, ent);
                             loc
-                        } 
+                        }
                     },
                     _ => { Entity::PLACEHOLDER }
                 };
-                do_writer.write(Do { event: Event::Spawn { ent, typ, qrz }});
+                do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
             }
 
             Do { event: Event::Input { ent, key_bits, dt, seq } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { 
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                  };
                 do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
@@ -86,15 +86,15 @@ pub fn write_do(
                 commands.entity(ent).despawn();
             }
             Do { event: Event::Incremental { ent, component } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { 
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
                 do_writer.write(Do { event: Event::Incremental { ent, component } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { 
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default() }});
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
@@ -123,9 +123,9 @@ pub fn send_try(
                     typ,
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::Spawn { ent, typ, qrz } } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn { 
-                    ent, typ, qrz
+            Try { event: Event::Spawn { ent, typ, qrz, attrs } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
+                    ent, typ, qrz, attrs
                 }}, bincode::config::legacy()).unwrap());
             } 
             _ => {}
