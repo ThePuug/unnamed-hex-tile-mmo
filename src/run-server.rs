@@ -78,6 +78,7 @@ fn main() {
 
     app.add_systems(Update, (
         panic_on_error_system,
+        actor::do_incremental,
         actor::try_discover,
         actor::update,
         common::systems::world::try_incremental,

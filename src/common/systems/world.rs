@@ -20,7 +20,6 @@ pub fn try_incremental(
 
 pub fn do_incremental(
     mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
     mut query: Query<(
         Option<&mut Loc>,
         Option<&mut Offset>,
@@ -79,14 +78,6 @@ pub fn do_incremental(
                 }
 
                 *loc0 = loc;
-
-                writer.write(Try { event: Event::Discover { ent, qrz: *loc } });
-                let Some(ref heading0) = o_heading else { panic!("no heading") };
-                if ***heading0 != default() {
-                    for qrz in loc0.fov(&heading0, 10) {
-                        writer.write(Try { event: Event::Discover { ent, qrz } });
-                    }
-                }
             }
             Component::Heading(heading) => {
                 let Some(mut heading0) = o_heading else { continue; };
@@ -109,13 +100,6 @@ pub fn do_incremental(
                         };
 
                         offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
-                    }
-                }
-
-                let Some(ref loc0) = o_loc else { panic!("no loc") };
-                if **heading0 != default() {
-                    for qrz in loc0.fov(&heading0, 10) {
-                        writer.write(Try { event: Event::Discover { ent, qrz } });
                     }
                 }
             }
