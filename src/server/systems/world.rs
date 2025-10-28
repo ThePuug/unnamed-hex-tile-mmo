@@ -38,10 +38,10 @@ pub fn try_spawn(
     mut writer: EventWriter<Do>,
     query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
 ) {
-    for message in reader.read() {
+    for &message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
-        let Ok((loc, typ, attrs)) = query.get(*ent) else { continue; };
-        writer.write(Do { event: Event::Spawn { ent: *ent, typ: *typ, qrz: **loc, attrs: attrs.copied() }});
+        let Ok((loc, typ, attrs)) = query.get(ent) else { continue; };
+        writer.write(Do { event: Event::Spawn { ent, typ: *typ, qrz: **loc, attrs: attrs.copied() }});
     }
 }
 

@@ -4,15 +4,16 @@ use qrz::*;
 use ::renet::ServerEvent;
 
 use crate::{ common::{
+        chunk::PlayerDiscoveryState,
         components::{ *,
             behaviour::*,
             entity_type::{ *,
                 actor::*,
             },
             keybits::*,
-        }, 
-        message::{ Component, Event, * }, 
-        plugins::nntree::*, 
+        },
+        message::{ Component, Event, * },
+        plugins::nntree::*,
         resources::*
     }, *
 };
@@ -74,6 +75,7 @@ pub fn do_manage_connections(
                     loc,
                     Behaviour::Controlled,
                     attrs,
+                    PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
@@ -188,6 +190,15 @@ pub fn write_try(
                         conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
                     }
                     // Note: Actual despawning happens in cleanup_despawned system (PostUpdate)
+                }
+            }
+            Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
+                // Send chunk data directly to the specific player
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::ChunkData { ent, chunk_id, tiles }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             _ => {}

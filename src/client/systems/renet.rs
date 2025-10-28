@@ -4,10 +4,10 @@ use qrz::Qrz;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    client::resources::EntityMap, 
+    client::resources::{EntityMap, LoadedChunks},
     common::{
         components::{behaviour::*, entity_type::*},
-        message::{Component, Event, *}, 
+        message::{Component, Event, *},
         resources::*
     }, *
 };
@@ -40,6 +40,7 @@ pub fn write_do(
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -98,6 +99,18 @@ pub fn write_do(
                     continue
                 };
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
+            }
+            Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
+                // Unpack chunk into individual tile spawns with chunk marker
+                let tile_count = tiles.len();
+                for (qrz, typ) in tiles {
+                    // Emit spawn events for world system to process
+                    do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
+                }
+
+                // Track that we received this chunk
+                loaded_chunks.insert(chunk_id);
+                debug!("Player {:?} received chunk {:?} with {} tiles", ent, chunk_id, tile_count);
             }
             _ => {}
         }

@@ -58,6 +58,8 @@ impl Plugin for DiagnosticsPlugin {
                 toggles::toggle_slope_rendering,
                 toggles::toggle_fixed_lighting,
                 perf_ui::toggle_performance_ui,
+                // Performance tracking systems
+                perf_ui::update_terrain_tile_counter,
                 // Mesh update systems
                 grid::update_grid_mesh,
             ),

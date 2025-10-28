@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 use serde::{Deserialize, Serialize};
+use tinyvec::ArrayVec;
 
 use crate::common::{
+    chunk::ChunkId,
     components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, * },
     systems::gcd::*,
 };
@@ -11,6 +13,14 @@ use crate::common::{
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
+    /// Server-side only: request to discover a chunk
+    DiscoverChunk { ent: Entity, chunk_id: ChunkId },
+    /// Server → Client: chunk data containing up to 256 tiles
+    ChunkData {
+        ent: Entity,
+        chunk_id: ChunkId,
+        tiles: ArrayVec<[(Qrz, EntityType); 256]>,
+    },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
@@ -29,10 +39,10 @@ pub enum Component {
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
 pub struct Do {
-    pub event: Event 
+    pub event: Event
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
-pub struct Try { 
-    pub event: Event 
+pub struct Try {
+    pub event: Event
 }

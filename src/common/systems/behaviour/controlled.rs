@@ -32,7 +32,7 @@ pub fn tick(
         // Always create a new input, even for periodic updates
         // This ensures dt doesn't overflow and inputs get confirmed regularly
         let input = Event::Input { ent, key_bits: keybits, dt: 0, seq: seq0.wrapping_add(1) };
-        buffer.queue.push_front(input);
+        buffer.queue.push_front(input.clone());
         writer.write(Try { event: input });
     }
 

@@ -14,10 +14,12 @@ use crate::{
     client::{
         components::Terrain,
         plugins::diagnostics::DiagnosticsState,
-        resources::Server
+        resources::{LoadedChunks, Server}
     },
     common::{
+        chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
         components::{ *,
+            behaviour::Behaviour,
             entity_type::*,
         },
         message::{Event, *},
@@ -190,4 +192,57 @@ pub fn update(
     m_transform.translation.x = 1_000.*cos(m_rad_d+3.*PI/2.);
     m_transform.translation.y = 1_000.*sin(m_rad_d+3.*PI/2.).powf(2.);
     m_transform.look_at(Vec3::ZERO, Vec3::Y);
+}
+
+/// Evict chunks that are outside the player's FOV radius
+/// This prevents unlimited memory growth as the player explores
+pub fn evict_distant_chunks(
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    mut map: ResMut<Map>,
+    mut terrain: Query<&mut Terrain>,
+    player_query: Query<&Loc, With<Behaviour>>,
+) {
+    // Only evict if we have a player
+    let Ok(player_loc) = player_query.single() else {return };
+
+    // Calculate which chunks should be active
+    let player_chunk = loc_to_chunk(**player_loc);
+    let active_chunks: std::collections::HashSet<_> = calculate_visible_chunks(player_chunk, FOV_CHUNK_RADIUS)
+        .into_iter()
+        .collect();
+
+    // Find chunks to evict
+    let evictable = loaded_chunks.get_evictable(&active_chunks);
+    if evictable.is_empty() {
+        return;
+    }
+
+    // Remove all tiles belonging to evicted chunks from the map
+    let mut removed_count = 0;
+    let tiles_to_remove: Vec<_> = map.iter_tiles()
+        .filter_map(|(qrz, _typ)| {
+            let tile_chunk = loc_to_chunk(qrz);
+            if evictable.contains(&tile_chunk) {
+                Some(qrz)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for qrz in tiles_to_remove {
+        map.remove(qrz);
+        removed_count += 1;
+    }
+
+    // Trigger mesh regeneration if tiles were removed
+    if removed_count > 0 {
+        if let Ok(mut terrain) = terrain.single_mut() {
+            terrain.task_start_regenerate_mesh = true;
+        }
+
+        // Remove evicted chunks from tracking
+        loaded_chunks.evict(&evictable);
+        debug!("Evicted {} chunks, removed {} tiles from map", evictable.len(), removed_count);
+    }
 }

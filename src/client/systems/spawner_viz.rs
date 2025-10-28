@@ -49,7 +49,7 @@ pub fn visualize_spawners(
     }
 
     // Listen for spawner placement events
-    for &message in try_reader.read() {
+    for message in try_reader.read().cloned() {
         let Try { event: Event::Gcd { typ: GcdType::PlaceSpawner(_), .. } } = message else { continue };
 
         // Get player location and heading to calculate spawner position
