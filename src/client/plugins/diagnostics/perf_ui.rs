@@ -1,8 +1,10 @@
 use bevy::prelude::*;
+use bevy::ecs::system::lifetimeless::SRes;
 use iyes_perf_ui::prelude::*;
+use iyes_perf_ui::entry::PerfUiEntry;
+use iyes_perf_ui::utils::next_sort_key;
 
 use super::config::{DiagnosticsConfig, DiagnosticsState};
-use crate::common::components::{behaviour::Behaviour, entity_type::EntityType};
 
 // ============================================================================
 // Components
@@ -12,11 +14,54 @@ use crate::common::components::{behaviour::Behaviour, entity_type::EntityType};
 ///
 /// Used to identify the performance overlay for visibility toggling.
 #[derive(Component)]
-pub struct PerfUiRoot;
+pub struct PerfUiRootMarker;
 
-/// Marker for custom terrain tile counter text
-#[derive(Component)]
-pub struct TerrainTileCounter;
+/// Custom perf UI entry that displays terrain tile count
+#[derive(Component, Debug, Clone)]
+#[require(PerfUiRoot)]
+pub struct PerfUiTerrainTiles {
+    /// Custom label. If empty (default), the default label will be used.
+    pub label: String,
+    /// Sort Key (control where the entry will appear in the Perf UI).
+    pub sort_key: i32,
+}
+
+impl Default for PerfUiTerrainTiles {
+    fn default() -> Self {
+        Self {
+            label: String::from("Terrain Tiles"),
+            sort_key: next_sort_key(),
+        }
+    }
+}
+
+impl PerfUiEntry for PerfUiTerrainTiles {
+    type SystemParam = SRes<crate::common::resources::map::Map>;
+    type Value = usize;
+
+    fn label(&self) -> &str {
+        if self.label.is_empty() {
+            "Terrain Tiles"
+        } else {
+            &self.label
+        }
+    }
+
+    fn sort_key(&self) -> i32 {
+        self.sort_key
+    }
+
+    fn update_value(
+        &self,
+        param: &mut <Self::SystemParam as bevy::ecs::system::SystemParam>::Item<'_, '_>,
+    ) -> Option<Self::Value> {
+        Some(param.len())
+    }
+
+    fn format_value(&self, value: &Self::Value) -> String {
+        format!("{}", value)
+    }
+}
 
 // ============================================================================
 // Systems
@@ -30,50 +75,18 @@ pub fn setup_performance_ui(
     mut commands: Commands,
     state: Res<DiagnosticsState>,
 ) {
-    // Spawn the iyes_perf_ui root
+    // Spawn the iyes_perf_ui root with default entries and our custom terrain tiles entry
     commands.spawn((
-        PerfUiRoot,
+        PerfUiRootMarker,
+        PerfUiRoot::default(),
         PerfUiDefaultEntries::default(),
+        PerfUiTerrainTiles::default(),
         if state.perf_ui_visible {
             Visibility::Visible
         } else {
             Visibility::Hidden
         },
     ));
-
-    // Spawn a custom terrain tile counter as a separate text overlay
-    commands.spawn((
-        TerrainTileCounter,
-        Text::new("Terrain Tiles: 0"),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(10.0),
-            ..default()
-        },
-        TextFont {
-            font_size: 16.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.0, 1.0, 0.0)),
-        if state.perf_ui_visible {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        },
-    ));
-}
-
-/// Updates the terrain tile counter text
-pub fn update_terrain_tile_counter(
-    map: Res<crate::common::resources::map::Map>,
-    mut counter_query: Query<&mut Text, With<TerrainTileCounter>>,
-) {
-    let tile_count = map.len();
-
-    if let Ok(mut text) = counter_query.single_mut() {
-        **text = format!("Terrain Tiles: {}", tile_count);
-    }
 }
 
 /// Toggles performance UI visibility when the perf UI toggle key is pressed
@@ -84,23 +97,12 @@ pub fn toggle_performance_ui(
     keyboard: Res<ButtonInput<KeyCode>>,
     config: Res<DiagnosticsConfig>,
     mut state: ResMut<DiagnosticsState>,
-    mut perf_ui_query: Query<&mut Visibility, With<PerfUiRoot>>,
-    mut counter_query: Query<&mut Visibility, (With<TerrainTileCounter>, Without<PerfUiRoot>)>,
+    mut perf_ui_query: Query<&mut Visibility, With<PerfUiRootMarker>>,
 ) {
     if keyboard.just_pressed(config.perf_ui_toggle_key) {
         state.perf_ui_visible = !state.perf_ui_visible;
 
-        // Toggle iyes_perf_ui
         if let Ok(mut visibility) = perf_ui_query.single_mut() {
-            *visibility = if state.perf_ui_visible {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
-        }
-
-        // Toggle terrain tile counter
-        if let Ok(mut visibility) = counter_query.single_mut() {
             *visibility = if state.perf_ui_visible {
                 Visibility::Visible
             } else {
