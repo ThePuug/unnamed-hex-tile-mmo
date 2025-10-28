@@ -58,6 +58,7 @@ Detailed plugin docs in `GUIDANCE/`. Consult when working on plugin-specific fun
 - **`GUIDANCE/BehaviourPlugin.md`**: AI behaviors, pathfinding, target selection
 - **`GUIDANCE/NNTreePlugin.md`**: Spatial queries, proximity detection
 - **`GUIDANCE/DiagnosticsPlugin.md`**: Debug tools, performance monitoring
+- **`GUIDANCE/UiPlugin.md`**: Game UI elements (character panel, HUD, target cursor)
 
 ---
 

@@ -27,9 +27,12 @@ use common::{
     systems::physics,
 };
 use client::{
-    plugins::diagnostics::DiagnosticsPlugin,
+    plugins::{
+        diagnostics::DiagnosticsPlugin,
+        ui::UiPlugin,
+    },
     resources::*,
-    systems::{actor, animator, camera, character_panel, input, renet, spawner_viz, target_cursor, world, ui}
+    systems::{actor, animator, camera, input, renet, spawner_viz, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -66,6 +69,7 @@ fn main() {
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
         DiagnosticsPlugin,
+        UiPlugin,
     ));
 
     app.add_event::<Do>();
@@ -75,10 +79,7 @@ fn main() {
         setup,
         actor::setup,
         camera::setup,
-        character_panel::setup,
         renet::setup,
-        target_cursor::setup,
-        ui::setup.after(camera::setup),
         world::setup,
     ));
 
@@ -109,13 +110,9 @@ fn main() {
     ));
 
     app.add_systems(Update, (
-        character_panel::toggle_panel,
-        character_panel::update_attributes,
         spawner_viz::visualize_spawners,
         spawner_viz::toggle_spawner_viz,
         spawner_viz::cleanup_despawned_spawner_viz,
-        target_cursor::update,
-        ui::update,
     ));
 
     app.add_systems(Update, (

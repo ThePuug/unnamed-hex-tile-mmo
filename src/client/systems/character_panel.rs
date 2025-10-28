@@ -36,20 +36,41 @@ pub enum AttributeBar {
 #[derive(Component)]
 pub struct SpectrumRange;
 
-/// Marker for the axis position indicator
+/// Marker for the axis position indicator (yellow bar - draggable)
 #[derive(Component)]
-pub struct AxisMarker;
+pub enum AxisMarker {
+    MightGrace,
+    VitalityFocus,
+    InstinctPresence,
+}
 
-/// Resource to track character panel visibility
+/// Resource to track character panel visibility and drag state
 #[derive(Resource, Default)]
 pub struct CharacterPanelState {
     pub visible: bool,
+    pub dragging: Option<DragState>,
+}
+
+/// Tracks which attribute is being dragged
+#[derive(Clone, Copy)]
+pub struct DragState {
+    pub attribute: AttributeType,
+    pub bar_entity: Entity,
+    pub initial_mouse_x: f32,
+    pub initial_shift: i8,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AttributeType {
+    MightGrace,
+    VitalityFocus,
+    InstinctPresence,
 }
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
 macro_rules! create_attribute_section {
-    ($parent:expr, $left_name:expr, $right_name:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr) => {
+    ($parent:expr, $left_name:expr, $right_name:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr) => {
         $parent
         .spawn((
             Node {
@@ -132,6 +153,7 @@ macro_rules! create_attribute_section {
                         position_type: PositionType::Relative,
                         ..default()
                     },
+                    Interaction::default(),
                 )).with_children(|bar_container| {
                     // Background track (full range -120 to +120)
                     bar_container.spawn((
@@ -171,9 +193,9 @@ macro_rules! create_attribute_section {
                         BorderRadius::all(Val::Px(3.)),
                     ));
 
-                    // Axis bar - shows current available range (will be updated dynamically)
+                    // Axis bar - shows current available range (draggable)
                     bar_container.spawn((
-                        AxisMarker,
+                        $axis_marker,
                         Node {
                             width: Val::Px(0.),  // Will be set dynamically
                             height: Val::Percent(100.),
@@ -183,6 +205,7 @@ macro_rules! create_attribute_section {
                         },
                         BackgroundColor(Color::srgba(1.0, 0.8, 0.0, 0.6)),
                         BorderRadius::all(Val::Px(2.)),
+                        Interaction::default(),
                     ));
                 });
 
@@ -237,13 +260,13 @@ pub fn setup(
             ));
 
             // MIGHT ↔ GRACE section
-            create_attribute_section!(parent, "MIGHT", "GRACE", AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace);
+            create_attribute_section!(parent, "MIGHT", "GRACE", AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace);
 
             // VITALITY ↔ FOCUS section
-            create_attribute_section!(parent, "VITALITY", "FOCUS", AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus);
+            create_attribute_section!(parent, "VITALITY", "FOCUS", AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus);
 
             // INSTINCT ↔ PRESENCE section
-            create_attribute_section!(parent, "INSTINCT", "PRESENCE", AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence);
+            create_attribute_section!(parent, "INSTINCT", "PRESENCE", AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence);
         });
 }
 
@@ -266,6 +289,100 @@ pub fn toggle_panel(
     }
 }
 
+/// Handle mouse drag to adjust shift values
+pub fn handle_shift_drag(
+    mut state: ResMut<CharacterPanelState>,
+    mut player_query: Query<&mut ActorAttributes, With<Actor>>,
+    bar_query: Query<(Entity, &AttributeBar, &Interaction, &GlobalTransform, &Node)>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+) {
+    if !state.visible {
+        return;
+    }
+
+    let Ok(mut attrs) = player_query.single_mut() else {
+        return;
+    };
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    // Start drag on mouse press over any attribute bar
+    if buttons.just_pressed(MouseButton::Left) {
+        for (bar_entity, bar_type, interaction, _transform, _node) in &bar_query {
+            if *interaction == Interaction::Hovered || *interaction == Interaction::Pressed {
+                let attr_type = match bar_type {
+                    AttributeBar::MightGrace => AttributeType::MightGrace,
+                    AttributeBar::VitalityFocus => AttributeType::VitalityFocus,
+                    AttributeBar::InstinctPresence => AttributeType::InstinctPresence,
+                };
+
+                // Get the current shift value for this attribute
+                let current_shift = match attr_type {
+                    AttributeType::MightGrace => attrs.might_grace_shift,
+                    AttributeType::VitalityFocus => attrs.vitality_focus_shift,
+                    AttributeType::InstinctPresence => attrs.instinct_presence_shift,
+                };
+
+                state.dragging = Some(DragState {
+                    attribute: attr_type,
+                    bar_entity,
+                    initial_mouse_x: cursor_pos.x,
+                    initial_shift: current_shift,
+                });
+                break;
+            }
+        }
+    }
+
+    // Handle dragging
+    if let Some(drag_state) = state.dragging {
+        if buttons.pressed(MouseButton::Left) {
+            // Get the bar's width to calculate pixels per unit
+            if let Ok((_entity, _bar_type, _interaction, _bar_transform, bar_node)) = bar_query.get(drag_state.bar_entity) {
+                let bar_width = if let Val::Px(w) = bar_node.width { w } else { 250.0 };
+
+                // Calculate mouse delta in pixels
+                let mouse_delta_pixels = cursor_pos.x - drag_state.initial_mouse_x;
+
+                // Convert pixel delta to attribute units
+                // Bar width (250px) represents 240 attribute units (-120 to +120)
+                let pixels_per_unit = bar_width / 240.0;
+                let delta_units = mouse_delta_pixels / pixels_per_unit;
+
+                // Calculate new shift based on initial shift + delta
+                let new_shift_f32 = drag_state.initial_shift as f32 + delta_units;
+
+                // Update the appropriate shift value based on attribute type
+                match drag_state.attribute {
+                    AttributeType::MightGrace => {
+                        let spectrum = attrs.might_grace_spectrum as i8;
+                        attrs.might_grace_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                    }
+                    AttributeType::VitalityFocus => {
+                        let spectrum = attrs.vitality_focus_spectrum as i8;
+                        attrs.vitality_focus_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                    }
+                    AttributeType::InstinctPresence => {
+                        let spectrum = attrs.instinct_presence_spectrum as i8;
+                        attrs.instinct_presence_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                    }
+                }
+            }
+        }
+    }
+
+    // Stop dragging on mouse release
+    if buttons.just_released(MouseButton::Left) {
+        state.dragging = None;
+    }
+}
+
 /// Update attribute text and bar visuals when panel is visible
 pub fn update_attributes(
     state: Res<CharacterPanelState>,
@@ -274,7 +391,7 @@ pub fn update_attributes(
     current_query: Query<(Entity, &AttributeCurrent)>,
     bar_query: Query<(Entity, &AttributeBar)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
-    mut axis_query: Query<&mut Node, (With<AxisMarker>, Without<SpectrumRange>)>,
+    mut axis_query: Query<(&AxisMarker, &mut Node), Without<SpectrumRange>>,
     mut text_query: Query<&mut Text>,
     children: Query<&Children>,
 ) {
@@ -363,7 +480,7 @@ pub fn update_attributes(
                     update_reach_display(&mut node, left_reach, right_reach);
                 }
                 // Update axis bar (yellow bar - shows current available values)
-                if let Ok(mut node) = axis_query.get_mut(child) {
+                if let Ok((_, mut node)) = axis_query.get_mut(child) {
                     update_axis_bar(&mut node, left_current, right_current);
                 }
             }
