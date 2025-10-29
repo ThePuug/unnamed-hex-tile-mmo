@@ -17,7 +17,8 @@ pub struct StaminaBar;
 pub struct ManaBar;
 
 /// Setup resource bars in the player HUD
-/// Creates health, stamina, and mana bars in the bottom-left corner
+/// Creates health, stamina, and mana bars in bottom-center position
+/// Positioned at midpoint between player and bottom of screen for combat-critical info
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, Added<Camera3d>>,
@@ -28,38 +29,26 @@ pub fn setup(
         UiTargetCamera(camera),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(20.),
-            left: Val::Px(20.),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(5.),
+            width: Val::Percent(100.),
+            height: Val::Percent(100.),
+            bottom: Val::Px(0.),
+            left: Val::Px(0.),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::FlexEnd,
+            padding: UiRect::bottom(Val::Percent(12.5)),  // Halfway between bottom and player
             ..default()
         },
     ))
     .with_children(|parent| {
-        // Health bar (Red)
         parent.spawn((
             Node {
-                width: Val::Px(200.),
-                height: Val::Px(20.),
-                border: UiRect::all(Val::Px(2.)),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(10.),
                 ..default()
             },
-            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                Node {
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.8, 0.2, 0.2)), // Red
-                HealthBar,
-            ));
-        });
-
-        // Stamina bar (Yellow)
+    .with_children(|parent| {
+        // Stamina bar (Yellow) - left position
         parent.spawn((
             Node {
                 width: Val::Px(200.),
@@ -79,6 +68,29 @@ pub fn setup(
                 },
                 BackgroundColor(Color::srgb(0.9, 0.9, 0.2)), // Yellow
                 StaminaBar,
+            ));
+        });
+
+        // Health bar (Red) - center position
+        parent.spawn((
+            Node {
+                width: Val::Px(200.),
+                height: Val::Px(20.),
+                border: UiRect::all(Val::Px(2.)),
+                ..default()
+            },
+            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Node {
+                    width: Val::Percent(100.),
+                    height: Val::Percent(100.),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.8, 0.2, 0.2)), // Red
+                HealthBar,
             ));
         });
 
@@ -104,6 +116,7 @@ pub fn setup(
                 ManaBar,
             ));
         });
+    });
     });
 }
 
