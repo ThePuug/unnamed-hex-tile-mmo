@@ -11,10 +11,12 @@ use crate::{ common::{
                 actor::*,
             },
             keybits::*,
+            resources::*,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
-        resources::*
+        resources::*,
+        systems::resources as resource_calcs,
     }, *
 };
 
@@ -44,7 +46,7 @@ pub fn do_manage_connections(
     mut writer: EventWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
@@ -70,15 +72,56 @@ pub fn do_manage_connections(
                     instinct_presence_spectrum: 45,
                     instinct_presence_shift: 45,
                 };
+                // Calculate initial resources from attributes
+                let max_health = attrs.max_health();
+                let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
+                let max_mana = resource_calcs::calculate_max_mana(&attrs);
+                let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attrs);
+                let mana_regen = resource_calcs::calculate_mana_regen_rate(&attrs);
+
+                let health = Health {
+                    state: max_health,
+                    step: max_health,
+                    max: max_health,
+                };
+                let stamina = Stamina {
+                    state: max_stamina,
+                    step: max_stamina,
+                    max: max_stamina,
+                    regen_rate: stamina_regen,
+                    last_update: time.elapsed(),
+                };
+                let mana = Mana {
+                    state: max_mana,
+                    step: max_mana,
+                    max: max_mana,
+                    regen_rate: mana_regen,
+                    last_update: time.elapsed(),
+                };
+                let combat_state = CombatState {
+                    in_combat: false,
+                    last_action: time.elapsed(),
+                };
+
                 let ent = commands.spawn((
                     typ,
                     loc,
                     Behaviour::Controlled,
                     attrs,
+                    health,
+                    stamina,
+                    mana,
+                    combat_state,
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
+
+                // Send initial resource states to client
+                writer.write(Do { event: Event::Health { ent, current: health.state, max: health.max }});
+                writer.write(Do { event: Event::Stamina { ent, current: stamina.state, max: stamina.max, regen_rate: stamina.regen_rate }});
+                writer.write(Do { event: Event::Mana { ent, current: mana.state, max: mana.max, regen_rate: mana.regen_rate }});
+                writer.write(Do { event: Event::CombatState { ent, in_combat: combat_state.in_combat }});
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue { 
@@ -93,11 +136,37 @@ pub fn do_manage_connections(
 
                 // spawn nearby actors
                 for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ, attrs) = query.get(other.ent).unwrap();
+                    let (&loc, &typ, attrs, health, stamina, mana, combat_state) = query.get(other.ent).unwrap();
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                    // Send resource states if entity has them
+                    if let Some(h) = health {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Health { ent: other.ent, current: h.state, max: h.max }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(s) = stamina {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Stamina { ent: other.ent, current: s.state, max: s.max, regen_rate: s.regen_rate }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(m) = mana {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Mana { ent: other.ent, current: m.state, max: m.max, regen_rate: m.regen_rate }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(cs) = combat_state {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::CombatState { ent: other.ent, in_combat: cs.in_combat }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
                 }
                 lobby.insert(*client_id, ent);
             }

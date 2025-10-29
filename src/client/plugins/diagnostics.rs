@@ -74,6 +74,7 @@ impl Plugin for DiagnosticsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::grid::HexGridOverlay;
     use crate::common::resources::map::Map;
 
     #[test]

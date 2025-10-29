@@ -6,7 +6,7 @@ use ::renet::{DefaultChannel, RenetClient};
 use crate::{
     client::resources::{EntityMap, LoadedChunks},
     common::{
-        components::{behaviour::*, entity_type::*},
+        components::{behaviour::*, entity_type::*, resources::*},
         message::{Component, Event, *},
         resources::*
     }, *
@@ -109,6 +109,51 @@ pub fn write_do(
 
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
+            }
+            Do { event: Event::Health { ent, current, max } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    // Entity not in our map yet - may arrive before spawn, ignore for now
+                    continue
+                };
+                // Insert or update Health component
+                commands.entity(ent).insert(Health {
+                    state: current,
+                    step: current,
+                    max,
+                });
+            }
+            Do { event: Event::Stamina { ent, current, max, regen_rate } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    continue
+                };
+                commands.entity(ent).insert(Stamina {
+                    state: current,
+                    step: current,
+                    max,
+                    regen_rate,
+                    last_update: std::time::Duration::ZERO, // Client will sync on next update
+                });
+            }
+            Do { event: Event::Mana { ent, current, max, regen_rate } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    continue
+                };
+                commands.entity(ent).insert(Mana {
+                    state: current,
+                    step: current,
+                    max,
+                    regen_rate,
+                    last_update: std::time::Duration::ZERO,
+                });
+            }
+            Do { event: Event::CombatState { ent, in_combat } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    continue
+                };
+                commands.entity(ent).insert(CombatState {
+                    in_combat,
+                    last_action: std::time::Duration::ZERO,
+                });
             }
             _ => {}
         }

@@ -5,10 +5,11 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, resources::*},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
+        systems::resources as resource_calcs,
     },
     server::systems::behaviour::{FindSomethingInterestingWithin, Nearby, NearbyOrigin},
 };
@@ -66,6 +67,7 @@ pub fn tick_spawners(
             spawner_ent,
             &mut writer,
             &map,
+            &time,
         );
 
         // Update cooldown
@@ -81,6 +83,7 @@ fn spawn_npc(
     spawner_ent: Entity,
     writer: &mut EventWriter<Do>,
     map: &Map,
+    time: &Time,
 ) {
     let qrz = qrz.into();
     // Use map.find to get terrain elevation so NPC spawns on top of terrain
@@ -157,6 +160,38 @@ fn spawn_npc(
         instinct_presence_spectrum: 20,
         instinct_presence_shift: 5,
     };
+
+    // Calculate initial resources from attributes
+    let max_health = attrs.max_health();
+    let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
+    let max_mana = resource_calcs::calculate_max_mana(&attrs);
+    let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attrs);
+    let mana_regen = resource_calcs::calculate_mana_regen_rate(&attrs);
+
+    let health = Health {
+        state: max_health,
+        step: max_health,
+        max: max_health,
+    };
+    let stamina = Stamina {
+        state: max_stamina,
+        step: max_stamina,
+        max: max_stamina,
+        regen_rate: stamina_regen,
+        last_update: time.elapsed(),
+    };
+    let mana = Mana {
+        state: max_mana,
+        step: max_mana,
+        max: max_mana,
+        regen_rate: mana_regen,
+        last_update: time.elapsed(),
+    };
+    let combat_state = CombatState {
+        in_combat: false,
+        last_action: time.elapsed(),
+    };
+
     let ent = commands
         .spawn((
             typ,
@@ -165,6 +200,10 @@ fn spawn_npc(
             ChildOf(spawner_ent),
             Name::new(format!("NPC {:?}", template)),
             attrs,
+            health,
+            stamina,
+            mana,
+            combat_state,
             children![(
                 Name::new("behaviour"),
                 behavior_tree,
@@ -178,6 +217,12 @@ fn spawn_npc(
     writer.write(Do {
         event: crate::common::message::Event::Spawn { ent, typ, qrz, attrs: Some(attrs) },
     });
+
+    // Send initial resource states to clients
+    writer.write(Do { event: crate::common::message::Event::Health { ent, current: health.state, max: health.max }});
+    writer.write(Do { event: crate::common::message::Event::Stamina { ent, current: stamina.state, max: stamina.max, regen_rate: stamina.regen_rate }});
+    writer.write(Do { event: crate::common::message::Event::Mana { ent, current: mana.state, max: mana.max, regen_rate: mana.regen_rate }});
+    writer.write(Do { event: crate::common::message::Event::CombatState { ent, in_combat: combat_state.in_combat }});
 }
 
 /// Helper function to generate a random hex within a radius
