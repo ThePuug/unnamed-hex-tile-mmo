@@ -1,4 +1,5 @@
-use crate::common::components::ActorAttributes;
+use bevy::prelude::*;
+use crate::common::components::{ActorAttributes, resources::*};
 
 /// Calculate maximum stamina from actor attributes
 /// Formula: 100 + (might * 0.5) + (vitality * 0.3)
@@ -44,6 +45,32 @@ pub fn calculate_resistance(attrs: &ActorAttributes, base_resistance: f32) -> f3
     let focus = attrs.focus() as f32;
     let resistance = base_resistance + (focus / 200.0);
     resistance.min(0.75)
+}
+
+/// Regenerate stamina and mana for all entities with resources
+/// Runs in FixedUpdate schedule (125ms ticks)
+/// Does NOT regenerate health (per spec - healing abilities only)
+pub fn regenerate_resources(
+    mut query: Query<(&mut Stamina, &mut Mana)>,
+    time: Res<Time>,
+) {
+    let current_time = time.elapsed();
+
+    for (mut stamina, mut mana) in &mut query {
+        // Calculate time since last update (in seconds)
+        let dt_stamina = (current_time - stamina.last_update).as_secs_f32();
+        let dt_mana = (current_time - mana.last_update).as_secs_f32();
+
+        // Regenerate stamina
+        stamina.state = (stamina.state + stamina.regen_rate * dt_stamina).min(stamina.max);
+        stamina.step = stamina.state; // Sync step with state for remote entities
+        stamina.last_update = current_time;
+
+        // Regenerate mana
+        mana.state = (mana.state + mana.regen_rate * dt_mana).min(mana.max);
+        mana.step = mana.state;
+        mana.last_update = current_time;
+    }
 }
 
 #[cfg(test)]

@@ -82,6 +82,7 @@ pub fn do_spawn(
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
         let EntityType::Actor(desc) = typ else { continue };
+        info!("CLIENT: Received Actor spawn event for {:?} at {:?}, type: {:?}", ent, qrz, desc);
         let loc = Loc::new(qrz);
         commands.entity(ent).insert((
             loc,

@@ -211,6 +211,7 @@ pub fn update(
         let px = map.convert(*loc0);
         let qrz = map.convert(px + offset.state);
         if *loc0 != qrz {
+            info!("Actor {:?} crossing tile boundary: {:?} -> {:?}", ent, *loc0, qrz);
             let loc = Loc::new(qrz);
             let component = Component::Loc(loc);
             writer.write(Try { event: Event::Incremental { ent, component } });

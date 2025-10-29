@@ -50,7 +50,10 @@ pub fn find_something_interesting_within(
     nntree: Res<NNTree>,
 ) {
     for (&behaviour, &ctx) in &mut query {
-        let Ok((&loc, &nn)) = q_target.get(ctx.target_entity()) else { continue };
+        let Ok((&loc, &nn)) = q_target.get(ctx.target_entity()) else {
+            debug!("FindSomethingInteresting: target entity {:?} missing Loc or NearestNeighbor", ctx.target_entity());
+            continue
+        };
         let dist = behaviour.dist as i16;
         let others = nntree.locate_within_distance(loc, dist*dist).map(
             |it| q_other.get(it.ent).expect("missing other entity")
@@ -58,7 +61,11 @@ pub fn find_something_interesting_within(
         let Some((o_ent,_,_)) = others.filter(|it| {
             let &(_,_,&o_nn) = it;
             o_nn != nn
-        }).choose(&mut rand::rng()) else { continue };
+        }).choose(&mut rand::rng()) else {
+            debug!("FindSomethingInteresting: No interesting targets found for {:?} within {} distance", ctx.target_entity(), behaviour.dist);
+            continue
+        };
+        info!("FindSomethingInteresting: {:?} found target {:?}", ctx.target_entity(), o_ent);
         commands.entity(ctx.target_entity()).insert(Target::new(o_ent));
         commands.trigger(ctx.success());
     }
