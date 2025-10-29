@@ -97,3 +97,27 @@ impl Default for CombatState {
         }
     }
 }
+
+/// Respawn timer for dead players
+/// Tracks time until respawn at origin (0,0,4)
+#[derive(Clone, Component, Copy, Debug)]
+pub struct RespawnTimer {
+    /// Time when death occurred
+    pub death_time: Duration,
+
+    /// How long to wait before respawn (5 seconds)
+    pub respawn_delay: Duration,
+}
+
+impl RespawnTimer {
+    pub fn new(death_time: Duration) -> Self {
+        Self {
+            death_time,
+            respawn_delay: Duration::from_secs(5),
+        }
+    }
+
+    pub fn should_respawn(&self, current_time: Duration) -> bool {
+        current_time.saturating_sub(self.death_time) >= self.respawn_delay
+    }
+}

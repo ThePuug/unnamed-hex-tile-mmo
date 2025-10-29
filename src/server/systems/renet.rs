@@ -66,7 +66,7 @@ pub fn do_manage_connections(
                     might_grace_spectrum: 45,
                     might_grace_shift: -45,
                     vitality_focus_axis: -10,
-                    vitality_focus_spectrum: 45,
+                    vitality_focus_spectrum: 10,
                     vitality_focus_shift: 0,
                     instinct_presence_axis: -10,
                     instinct_presence_spectrum: 45,

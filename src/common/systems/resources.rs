@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, resources::*},
-    message::{Event, *},
+    components::{ActorAttributes, Loc, resources::*},
+    message::{Component as MessageComponent, Event, *},
 };
 
 /// Calculate maximum stamina from actor attributes
@@ -92,14 +92,73 @@ pub fn check_death(
     }
 }
 
+/// Process respawn timers and respawn players at origin after 5 seconds
+/// Runs on server only
+pub fn process_respawn(
+    mut commands: Commands,
+    mut writer: EventWriter<Do>,
+    time: Res<Time>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &crate::common::components::ActorAttributes)>,
+) {
+    use qrz::Qrz;
+
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, attrs) in &mut query {
+        if timer.should_respawn(time.elapsed()) {
+            // Teleport to origin
+            let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
+            *loc = Loc::new(spawn_qrz);
+
+            // Restore resources to full
+            health.state = health.max;
+            health.step = health.max;
+            stamina.state = stamina.max;
+            stamina.step = stamina.max;
+            mana.state = mana.max;
+            mana.step = mana.max;
+
+            // Remove respawn timer
+            commands.entity(ent).remove::<RespawnTimer>();
+
+            // Broadcast location update
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: MessageComponent::Loc(*loc),
+                },
+            });
+
+            // Broadcast resource updates
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: MessageComponent::Health(*health),
+                },
+            });
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: MessageComponent::Stamina(*stamina),
+                },
+            });
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: MessageComponent::Mana(*mana),
+                },
+            });
+        }
+    }
+}
+
 /// Handle death events for players and NPCs
 /// Runs on server only
 /// For NPCs: despawn immediately
-/// For players: respawn after 5 seconds at hub (future: implement respawn timer)
+/// For players: add respawn timer (5 seconds), will respawn at origin (0,0,4)
 pub fn handle_death(
     mut commands: Commands,
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
+    time: Res<Time>,
     mut query: Query<(Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
 ) {
     for &Try { event } in reader.read() {
@@ -122,16 +181,10 @@ pub fn handle_death(
             };
 
             if is_player {
-                // TODO Phase 5+: Implement respawn timer and hub respawn
-                // For now, just despawn players immediately like NPCs
-                info!("Player {ent:?} died - despawning (respawn timer not yet implemented)");
-                commands.entity(ent).despawn();
-                writer.write(Do {
-                    event: Event::Despawn { ent },
-                });
+                // Player death: add respawn timer (5 seconds)
+                commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
             } else {
                 // NPC death: despawn immediately
-                info!("NPC {ent:?} died - despawning");
                 commands.entity(ent).despawn();
                 writer.write(Do {
                     event: Event::Despawn { ent },

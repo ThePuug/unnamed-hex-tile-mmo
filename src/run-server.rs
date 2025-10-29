@@ -98,7 +98,8 @@ fn main() {
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         server::systems::diagnostics::check_duplicate_tiles,
         common::systems::resources::check_death,   // Check for HP <= 0, emit Death events
-        common::systems::resources::handle_death,  // Handle Death events, despawn entities
+        common::systems::resources::handle_death,  // Handle Death events, add respawn timer
+        common::systems::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
 
     app.add_systems(PostUpdate, (
