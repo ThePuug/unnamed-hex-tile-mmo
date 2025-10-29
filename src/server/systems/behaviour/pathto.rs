@@ -75,7 +75,6 @@ pub fn apply(
             continue;
         };
         if path_to.path.is_empty() {
-            debug!("PathTo apply: {:?} reached destination", ctx.target_entity());
             commands.trigger(ctx.success());
             continue;
         }
@@ -87,21 +86,12 @@ pub fn apply(
         let Some(&dest) = path_to.path.last() else { continue };
 
         let dt_ms = dt.delta().as_millis() as i16;
-        info!("PathTo apply: {:?} moving to {:?}, dt={}, path_len={}, loc={:?}",
-              ctx.target_entity(), dest, dt_ms, path_to.path.len(), *loc);
-
         let heading = Heading::from(KeyBits::from(Heading::new(dest - here)));
         if heading != *heading0 { *heading0 = heading; }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-        let old_offset = offset0.state;
         let (offset, airtime) = physics::apply(Loc::new(dest), dt_ms, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
-
-        if offset != old_offset {
-            info!("PathTo apply: {:?} offset changed from {:?} to {:?}", ctx.target_entity(), old_offset, offset);
-        }
-
         (offset0.state, airtime0.state) = (offset,airtime);
     }
 }

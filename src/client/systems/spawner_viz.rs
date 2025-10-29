@@ -57,9 +57,6 @@ pub fn visualize_spawners(
         let spawner_qrz = *player_loc + *player_heading;
         let spawner_loc = Loc::new(spawner_qrz);
 
-        info!("Placing spawner: player_loc={:?}, heading={:?}, spawner_loc={:?}",
-              *player_loc, *player_heading, spawner_qrz);
-
         // Check if we already have a marker at this location
         let already_exists = existing_viz_query.iter().any(|(_, viz)| viz.location == spawner_loc);
         if already_exists {
@@ -88,8 +85,6 @@ pub fn visualize_spawners(
             SpawnerVisualization { location: spawner_loc },
             Name::new("Spawner Visualization"),
         ));
-
-        info!("Created spawner visualization at {:?}", spawner_loc);
     }
 }
 

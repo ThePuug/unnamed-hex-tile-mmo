@@ -135,10 +135,8 @@ pub fn do_manage_connections(
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn nearby actors
-                info!("Sending nearby actors to new client {}", client_id);
                 for other in nntree.locate_within_distance(loc, 20*20) {
                     let (&loc, &typ, attrs, health, stamina, mana, combat_state) = query.get(other.ent).unwrap();
-                    info!("  Sending actor {:?} at {:?}, type: {:?}", other.ent, loc, typ);
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
                         bincode::config::legacy()).unwrap();

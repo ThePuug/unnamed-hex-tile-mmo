@@ -62,10 +62,8 @@ pub fn find_something_interesting_within(
             let &(_,_,&o_nn) = it;
             o_nn != nn
         }).choose(&mut rand::rng()) else {
-            debug!("FindSomethingInteresting: No interesting targets found for {:?} within {} distance", ctx.target_entity(), behaviour.dist);
             continue
         };
-        info!("FindSomethingInteresting: {:?} found target {:?}", ctx.target_entity(), o_ent);
         commands.entity(ctx.target_entity()).insert(Target::new(o_ent));
         commands.trigger(ctx.success());
     }

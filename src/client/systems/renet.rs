@@ -49,7 +49,6 @@ pub fn write_do(
             // insert l2r for player
             Do { event: Event::Init { ent: ent0, dt }} => {
                 let ent = commands.spawn((Actor,Behaviour::Controlled)).id();
-                debug!("Player {ent0} connected as {ent}, time offset: {dt}");
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue { 
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));

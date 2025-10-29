@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{character_panel, target_cursor, ui};
+use crate::client::systems::{character_panel, resource_bars, target_cursor, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -21,6 +21,7 @@ impl Plugin for UiPlugin {
             (
                 ui::setup.after(crate::client::systems::camera::setup),
                 character_panel::setup,
+                resource_bars::setup.after(crate::client::systems::camera::setup),
                 target_cursor::setup,
             ),
         );
@@ -33,6 +34,7 @@ impl Plugin for UiPlugin {
                 character_panel::toggle_panel,
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
+                resource_bars::update,
                 target_cursor::update,
             ),
         );

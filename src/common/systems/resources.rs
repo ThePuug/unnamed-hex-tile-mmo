@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use crate::common::components::{ActorAttributes, resources::*};
+use crate::common::{
+    components::{ActorAttributes, resources::*},
+    message::{Event, *},
+};
 
 /// Calculate maximum stamina from actor attributes
 /// Formula: 100 + (might * 0.5) + (vitality * 0.3)
@@ -70,6 +73,71 @@ pub fn regenerate_resources(
         mana.state = (mana.state + mana.regen_rate * dt_mana).min(mana.max);
         mana.step = mana.state;
         mana.last_update = current_time;
+    }
+}
+
+/// Check for entities with health <= 0 and emit death events
+/// Runs on server only, after damage application systems
+/// Emits Try::Death events for the death handler to process
+pub fn check_death(
+    mut writer: EventWriter<Try>,
+    query: Query<(Entity, &Health)>,
+) {
+    for (ent, health) in &query {
+        if health.state <= 0.0 {
+            writer.write(Try {
+                event: Event::Death { ent },
+            });
+        }
+    }
+}
+
+/// Handle death events for players and NPCs
+/// Runs on server only
+/// For NPCs: despawn immediately
+/// For players: respawn after 5 seconds at hub (future: implement respawn timer)
+pub fn handle_death(
+    mut commands: Commands,
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    mut query: Query<(Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
+) {
+    for &Try { event } in reader.read() {
+        if let Event::Death { ent } = event {
+            // Check if this is a player or NPC and set resources to 0
+            let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(ent) {
+                // Set resources to 0 to prevent "zombie" state
+                health.state = 0.0;
+                health.step = 0.0;
+                stamina.state = 0.0;
+                stamina.step = 0.0;
+                mana.state = 0.0;
+                mana.step = 0.0;
+
+                behaviour
+                    .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if is_player {
+                // TODO Phase 5+: Implement respawn timer and hub respawn
+                // For now, just despawn players immediately like NPCs
+                info!("Player {ent:?} died - despawning (respawn timer not yet implemented)");
+                commands.entity(ent).despawn();
+                writer.write(Do {
+                    event: Event::Despawn { ent },
+                });
+            } else {
+                // NPC death: despawn immediately
+                info!("NPC {ent:?} died - despawning");
+                commands.entity(ent).despawn();
+                writer.write(Do {
+                    event: Event::Despawn { ent },
+                });
+            }
+        }
     }
 }
 

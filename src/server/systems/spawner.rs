@@ -58,8 +58,6 @@ pub fn tick_spawners(
 
         // Spawn new NPC at random location within radius
         let spawn_qrz = random_hex_within_radius(*spawner_loc, spawner.spawn_radius);
-        info!("SPAWNED: {:?} at {:?} from spawner at {:?}",
-            spawner.npc_template, spawn_qrz, *spawner_loc);
         spawn_npc(
             &mut commands,
             spawner.npc_template,
@@ -283,9 +281,6 @@ pub fn despawn_out_of_range(
             .collect();
 
         if !npcs_to_despawn.is_empty() {
-            info!("DESPAWNED: {} NPCs from spawner at {:?} (all players beyond {} tiles)",
-                npcs_to_despawn.len(), *spawner_loc, spawner.despawn_distance);
-
             for npc_ent in npcs_to_despawn {
                 // Send despawn event - the actual despawning will happen in PostUpdate
                 // after send_do has sent the network message
@@ -420,11 +415,6 @@ mod tests {
         let events = app.world().resource::<Events<Do>>();
         let spawn_events: Vec<_> = events.iter_current_update_events().collect();
 
-        // Debug: Let's check why spawning didn't happen
-        if spawn_events.len() == 0 {
-            let elapsed = app.world().resource::<Time>().elapsed().as_millis();
-            eprintln!("DEBUG: elapsed = {}, expected spawn but got none", elapsed);
-        }
 
         assert!(spawn_events.len() > 0,
             "Expected at least one spawn event with player in range, got 0. \

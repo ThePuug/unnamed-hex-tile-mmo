@@ -106,8 +106,6 @@ pub fn try_gcd(
                         spawn_loc,
                         Name::new(format!("Spawner {:?}", spawner.npc_template)),
                     ));
-
-                    info!("Placed {:?} spawner at {:?}", spawner.npc_template, qrz);
                 }
                 _ => unreachable!()
             }
