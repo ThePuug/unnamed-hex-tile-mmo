@@ -182,6 +182,9 @@ All tests passing. The regen rate is configurable per-entity."
 - **Commented-out code** - Remove it; git has the history
 - **Magic numbers** - Use named constants
 - **God objects** - Keep components and systems focused
+- **Memory-based reviews** - Working from recollection instead of reading actual files
+- **Specification worship** - ADRs guide, but implementation details are developer discretion
+- **Premature architecture enforcement** - Let code evolve, don't rigidly enforce upfront designs
 
 ## When to Switch Roles
 

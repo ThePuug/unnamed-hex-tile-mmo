@@ -255,6 +255,20 @@ pub struct InputQueue {
 9. **Pop/push queue front**: Use `front_mut()` to avoid temporary empty queue
 10. **Run `controlled::tick` in FixedUpdate**: Must be Update, `.after(update_keybits)`
 
+### Performance Patterns
+
+**Prefer `retain()` over collect-filter-remove**:
+```rust
+// Bad: 3 allocations (HashSet, Vec, loop removes)
+let kept: HashSet<_> = calculate_kept().collect();
+let to_remove: Vec<_> = set.iter().filter(|x| !kept.contains(x)).collect();
+for x in to_remove { set.remove(x); }
+
+// Good: 1 allocation (HashSet only)
+let kept: HashSet<_> = calculate_kept().collect();
+set.retain(|x| kept.contains(x));
+```
+
 ### Player Detection
 `Behaviour` is enum, not marker. Filter for `Behaviour::Controlled` specifically, not `With<Behaviour>`.
 

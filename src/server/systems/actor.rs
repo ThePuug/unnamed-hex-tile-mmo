@@ -71,20 +71,13 @@ pub fn do_incremental(
         }
 
         // Client evicts chunks outside FOV_CHUNK_RADIUS + 1 buffer
-        // Remove those from seen_chunks so they can be re-sent if player returns
+        // Mirror client's eviction logic: retain only chunks the client would keep
         let client_kept_chunks: std::collections::HashSet<_> =
             calculate_visible_chunks(new_chunk, FOV_CHUNK_RADIUS + 1)
             .into_iter()
             .collect();
 
-        let evicted_chunks: Vec<_> = player_state.seen_chunks.iter()
-            .filter(|chunk_id| !client_kept_chunks.contains(chunk_id))
-            .copied()
-            .collect();
-
-        for chunk_id in &evicted_chunks {
-            player_state.seen_chunks.remove(chunk_id);
-        }
+        player_state.seen_chunks.retain(|chunk_id| client_kept_chunks.contains(chunk_id));
 
         // Calculate visible chunks based on FOV (what client can see)
         let visible_chunks = calculate_visible_chunks(new_chunk, FOV_CHUNK_RADIUS);
@@ -161,6 +154,10 @@ pub fn try_discover_chunk(
             };
 
             // Insert tiles into server's map for physics collision detection
+            // Design note: Server's map is authoritative persistent terrain state.
+            // The chunk cache is only for network optimization (avoid regenerating same chunks).
+            // When cache evicts a chunk, tiles remain in map so NPCs can still walk on them.
+            // The is_none() check makes this idempotent (cache hit or miss both work).
             for &(qrz, typ) in &chunk.tiles {
                 if map.get(qrz).is_none() {
                     map.insert(qrz, typ);
