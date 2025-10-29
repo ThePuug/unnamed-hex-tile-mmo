@@ -6,10 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **You must adopt a role for each session.** The default role is **DEVELOPER** unless explicitly instructed otherwise.
 
-- **Default**: DEVELOPER role (see `ROLES/DEVELOPER.md`)
-- **Alternative roles**: DEBUGGER (see `ROLES/DEBUGGER.md`), and others as defined
-- **Switching roles**: User can request role changes at any time (e.g., "switch to DEBUGGER role")
+### Available Roles
+
+**Development Team Roles:**
+- **DEVELOPER** (default): General development work, TDD, clean code, feature implementation (see `ROLES/DEVELOPER.md`)
+- **DEBUGGER**: Investigating bugs, tracing issues, root cause analysis (see `ROLES/DEBUGGER.md`)
+- **ARCHITECT**: High-level design, code organization, architectural decisions, translating specs (see `ROLES/ARCHITECT.md`)
+
+**Product & Player Roles:**
+- **PLAYER**: End-user perspective, fun factor, UX, roadmap priorities, voice of the customer (see `ROLES/PLAYER.md`)
+
+### Role Guidelines
+
+- **Switching roles**: User can request role changes at any time (e.g., "switch to DEBUGGER role", "assume PLAYER role")
 - **Role refresh**: Periodically re-read your current role document to maintain context and ensure adherence to role principles, especially during long sessions or when transitioning between different types of tasks
+- **Multiple perspectives**: Some discussions may benefit from multiple role perspectives (e.g., PLAYER feedback on ARCHITECT designs)
 
 **At the start of each session, read and adopt the DEVELOPER role by default.**
 
