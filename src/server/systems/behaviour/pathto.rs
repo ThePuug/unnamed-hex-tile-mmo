@@ -70,19 +70,28 @@ pub fn apply(
     nntree: Res<NNTree>,
 ) {
     for (mut path_to, &ctx) in &mut query {
-        let Ok((&loc, mut heading0, mut offset0, mut airtime0, attrs, &_target)) = q_target.get_mut(ctx.target_entity()) else { unreachable!() };
-        if path_to.path.is_empty() { commands.trigger(ctx.success()) }
+        let Ok((&loc, mut heading0, mut offset0, mut airtime0, attrs, &_target)) = q_target.get_mut(ctx.target_entity()) else {
+            debug!("PathTo apply: target entity {:?} missing required components", ctx.target_entity());
+            continue;
+        };
+        if path_to.path.is_empty() {
+            commands.trigger(ctx.success());
+            continue;
+        }
 
         let Some(&qrz) = path_to.path.last() else { continue; };
         let here = *loc - Qrz::Z;
         if here == qrz { path_to.path.pop(); }
 
         let Some(&dest) = path_to.path.last() else { continue };
+
+        let dt_ms = dt.delta().as_millis() as i16;
         let heading = Heading::from(KeyBits::from(Heading::new(dest - here)));
         if heading != *heading0 { *heading0 = heading; }
         if loc.z <= dest.z && airtime0.state.is_none() { airtime0.state = Some(125); }
         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-        let (offset, airtime) = physics::apply(Loc::new(dest), dt.delta().as_millis() as i16, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
+
+        let (offset, airtime) = physics::apply(Loc::new(dest), dt_ms, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
         (offset0.state, airtime0.state) = (offset,airtime);
     }
 }

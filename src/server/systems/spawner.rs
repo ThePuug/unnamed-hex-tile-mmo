@@ -5,10 +5,11 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, resources::*},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
+        systems::resources as resource_calcs,
     },
     server::systems::behaviour::{FindSomethingInterestingWithin, Nearby, NearbyOrigin},
 };
@@ -57,8 +58,6 @@ pub fn tick_spawners(
 
         // Spawn new NPC at random location within radius
         let spawn_qrz = random_hex_within_radius(*spawner_loc, spawner.spawn_radius);
-        info!("SPAWNED: {:?} at {:?} from spawner at {:?}",
-            spawner.npc_template, spawn_qrz, *spawner_loc);
         spawn_npc(
             &mut commands,
             spawner.npc_template,
@@ -66,6 +65,7 @@ pub fn tick_spawners(
             spawner_ent,
             &mut writer,
             &map,
+            &time,
         );
 
         // Update cooldown
@@ -81,6 +81,7 @@ fn spawn_npc(
     spawner_ent: Entity,
     writer: &mut EventWriter<Do>,
     map: &Map,
+    time: &Time,
 ) {
     let qrz = qrz.into();
     // Use map.find to get terrain elevation so NPC spawns on top of terrain
@@ -157,6 +158,38 @@ fn spawn_npc(
         instinct_presence_spectrum: 20,
         instinct_presence_shift: 5,
     };
+
+    // Calculate initial resources from attributes
+    let max_health = attrs.max_health();
+    let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
+    let max_mana = resource_calcs::calculate_max_mana(&attrs);
+    let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attrs);
+    let mana_regen = resource_calcs::calculate_mana_regen_rate(&attrs);
+
+    let health = Health {
+        state: max_health,
+        step: max_health,
+        max: max_health,
+    };
+    let stamina = Stamina {
+        state: max_stamina,
+        step: max_stamina,
+        max: max_stamina,
+        regen_rate: stamina_regen,
+        last_update: time.elapsed(),
+    };
+    let mana = Mana {
+        state: max_mana,
+        step: max_mana,
+        max: max_mana,
+        regen_rate: mana_regen,
+        last_update: time.elapsed(),
+    };
+    let combat_state = CombatState {
+        in_combat: false,
+        last_action: time.elapsed(),
+    };
+
     let ent = commands
         .spawn((
             typ,
@@ -165,6 +198,10 @@ fn spawn_npc(
             ChildOf(spawner_ent),
             Name::new(format!("NPC {:?}", template)),
             attrs,
+            health,
+            stamina,
+            mana,
+            combat_state,
             children![(
                 Name::new("behaviour"),
                 behavior_tree,
@@ -178,6 +215,12 @@ fn spawn_npc(
     writer.write(Do {
         event: crate::common::message::Event::Spawn { ent, typ, qrz, attrs: Some(attrs) },
     });
+
+    // Send initial resource states to clients via Incremental
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Health(health) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Stamina(stamina) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Mana(mana) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::CombatState(combat_state) }});
 }
 
 /// Helper function to generate a random hex within a radius
@@ -238,9 +281,6 @@ pub fn despawn_out_of_range(
             .collect();
 
         if !npcs_to_despawn.is_empty() {
-            info!("DESPAWNED: {} NPCs from spawner at {:?} (all players beyond {} tiles)",
-                npcs_to_despawn.len(), *spawner_loc, spawner.despawn_distance);
-
             for npc_ent in npcs_to_despawn {
                 // Send despawn event - the actual despawning will happen in PostUpdate
                 // after send_do has sent the network message
@@ -375,11 +415,6 @@ mod tests {
         let events = app.world().resource::<Events<Do>>();
         let spawn_events: Vec<_> = events.iter_current_update_events().collect();
 
-        // Debug: Let's check why spawning didn't happen
-        if spawn_events.len() == 0 {
-            let elapsed = app.world().resource::<Time>().elapsed().as_millis();
-            eprintln!("DEBUG: elapsed = {}, expected spawn but got none", elapsed);
-        }
 
         assert!(spawn_events.len() > 0,
             "Expected at least one spawn event with player in range, got 0. \

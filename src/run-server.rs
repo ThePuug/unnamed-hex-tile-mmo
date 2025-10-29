@@ -75,6 +75,8 @@ fn main() {
     app.add_systems(FixedUpdate, (
         physics::update,
         common::systems::actor::update,
+        common::systems::resources::regenerate_resources,
+        common::systems::combat_state::update_combat_state,
     ));
 
     app.add_systems(Update, (
@@ -95,6 +97,9 @@ fn main() {
         actor::try_discover_chunk,  // New chunk-based discovery
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         server::systems::diagnostics::check_duplicate_tiles,
+        common::systems::resources::check_death,   // Check for HP <= 0, emit Death events
+        common::systems::resources::handle_death,  // Handle Death events, add respawn timer
+        common::systems::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
 
     app.add_systems(PostUpdate, (

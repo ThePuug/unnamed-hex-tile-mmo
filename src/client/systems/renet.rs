@@ -44,14 +44,23 @@ pub fn write_do(
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+
         match message {
 
             // insert l2r for player
             Do { event: Event::Init { ent: ent0, dt }} => {
-                let ent = commands.spawn((Actor,Behaviour::Controlled)).id();
-                debug!("Player {ent0} connected as {ent}, time offset: {dt}");
+
+                // Initialize with placeholder resources so Incremental events can update them
+                use crate::common::components::resources::*;
+                use std::time::Duration;
+                let health = Health { state: 1.0, step: 1.0, max: 1.0 };
+                let stamina = Stamina { state: 1.0, step: 1.0, max: 1.0, regen_rate: 10.0, last_update: Duration::ZERO };
+                let mana = Mana { state: 1.0, step: 1.0, max: 1.0, regen_rate: 8.0, last_update: Duration::ZERO };
+                let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
+
+                let ent = commands.spawn((Actor, Behaviour::Controlled, health, stamina, mana, combat_state)).id();
                 l2r.insert(ent, ent0);
-                buffers.extend_one((ent, InputQueue { 
+                buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
                 do_writer.write(Do { event: Event::Init { ent, dt }});
             }

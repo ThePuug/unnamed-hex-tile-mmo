@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::common::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, * },
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, resources::*, * },
     systems::gcd::*,
 };
 
@@ -26,15 +26,21 @@ pub enum Event {
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
+    /// Entity died (Try event - server-internal only)
+    Death { ent: Entity },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Component {
-    Loc(Loc),
+    Behaviour(Behaviour),
+    CombatState(CombatState),
+    Health(Health),
     Heading(Heading),
     KeyBits(KeyBits),
+    Loc(Loc),
+    Mana(Mana),
     Offset(Offset),
-    Behaviour(Behaviour),
+    Stamina(Stamina),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]

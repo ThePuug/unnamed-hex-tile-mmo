@@ -93,6 +93,7 @@ fn main() {
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
+        common::systems::resources::regenerate_resources,
     ));
 
     app.add_systems(PreUpdate, (

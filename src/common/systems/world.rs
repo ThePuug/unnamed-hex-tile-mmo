@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use qrz::Convert;
 
 use crate::common::{
-    components::{behaviour::*, heading::*, keybits::*, offset::*, *}, 
-    message::{Component, Event, *}, 
+    components::{behaviour::*, heading::*, keybits::*, offset::*, resources::*, *},
+    message::{Component, Event, *},
     resources::map::*
 };
 
@@ -25,13 +25,17 @@ pub fn do_incremental(
         Option<&mut Offset>,
         Option<&mut Heading>,
         Option<&mut KeyBits>,
-        Option<&mut Behaviour>)>,
+        Option<&mut Behaviour>,
+        Option<&mut Health>,
+        Option<&mut Stamina>,
+        Option<&mut Mana>,
+        Option<&mut CombatState>)>,
     map: Res<Map>,
     buffers: Res<crate::common::resources::InputQueues>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state)) = query.get_mut(ent) else {
             // Entity might have been despawned - skip this update
             continue;
         };
@@ -110,6 +114,26 @@ pub fn do_incremental(
             Component::KeyBits(keybits) => {
                 let Some(mut keybits0) = o_keybits else { continue; };
                 *keybits0 = keybits;
+            }
+            Component::Health(health) => {
+                let Some(mut health0) = o_health else {
+                    warn!("Received Health update for entity {:?} but entity has no Health component", ent);
+                    continue;
+                };
+                info!("Applying Health update to entity {:?}: {}/{}", ent, health.state, health.max);
+                *health0 = health;
+            }
+            Component::Stamina(stamina) => {
+                let Some(mut stamina0) = o_stamina else { continue; };
+                *stamina0 = stamina;
+            }
+            Component::Mana(mana) => {
+                let Some(mut mana0) = o_mana else { continue; };
+                *mana0 = mana;
+            }
+            Component::CombatState(combat_state) => {
+                let Some(mut combat_state0) = o_combat_state else { continue; };
+                *combat_state0 = combat_state;
             }
             _ => {}
         }

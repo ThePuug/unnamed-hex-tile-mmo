@@ -11,10 +11,12 @@ use crate::{ common::{
                 actor::*,
             },
             keybits::*,
+            resources::*,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
-        resources::*
+        resources::*,
+        systems::resources as resource_calcs,
     }, *
 };
 
@@ -44,7 +46,7 @@ pub fn do_manage_connections(
     mut writer: EventWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
@@ -64,40 +66,121 @@ pub fn do_manage_connections(
                     might_grace_spectrum: 45,
                     might_grace_shift: -45,
                     vitality_focus_axis: -10,
-                    vitality_focus_spectrum: 45,
+                    vitality_focus_spectrum: 10,
                     vitality_focus_shift: 0,
                     instinct_presence_axis: -10,
                     instinct_presence_spectrum: 45,
                     instinct_presence_shift: 45,
                 };
+                // Calculate initial resources from attributes
+                let max_health = attrs.max_health();
+                let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
+                let max_mana = resource_calcs::calculate_max_mana(&attrs);
+                let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attrs);
+                let mana_regen = resource_calcs::calculate_mana_regen_rate(&attrs);
+
+                let health = Health {
+                    state: max_health,
+                    step: max_health,
+                    max: max_health,
+                };
+                let stamina = Stamina {
+                    state: max_stamina,
+                    step: max_stamina,
+                    max: max_stamina,
+                    regen_rate: stamina_regen,
+                    last_update: time.elapsed(),
+                };
+                let mana = Mana {
+                    state: max_mana,
+                    step: max_mana,
+                    max: max_mana,
+                    regen_rate: mana_regen,
+                    last_update: time.elapsed(),
+                };
+                let combat_state = CombatState {
+                    in_combat: false,
+                    last_action: time.elapsed(),
+                };
+
                 let ent = commands.spawn((
                     typ,
                     loc,
                     Behaviour::Controlled,
                     attrs,
+                    health,
+                    stamina,
+                    mana,
+                    combat_state,
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
 
                 // init input buffer for client
-                buffers.extend_one((ent, InputQueue { 
+                buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into() }));
 
                 // init client
                 let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
                 let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Init { ent, dt }}, 
+                    Do { event: Event::Init { ent, dt }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                // Send initial resource states directly to connecting client
+                // Can't use event writer here because send_do relies on NNTree proximity,
+                // and this entity isn't in NNTree yet
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Health(health) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Stamina(stamina) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Mana(mana) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::CombatState(combat_state) }},
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn nearby actors
                 for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ, attrs) = query.get(other.ent).unwrap();
+                    let (&loc, &typ, attrs, health, stamina, mana, combat_state) = query.get(other.ent).unwrap();
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                    // Send resource states if entity has them
+                    if let Some(h) = health {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Health(*h) }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(s) = stamina {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Stamina(*s) }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(m) = mana {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Mana(*m) }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(cs) = combat_state {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::CombatState(*cs) }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
                 }
                 lobby.insert(*client_id, ent);
             }
