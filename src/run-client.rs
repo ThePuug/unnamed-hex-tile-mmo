@@ -137,7 +137,10 @@ fn main() {
     app.init_resource::<spawner_viz::SpawnerVizState>();
 
     // Add chunk eviction system (runs periodically to cleanup distant chunks)
-    app.add_systems(Update, world::evict_distant_chunks.run_if(on_timer(Duration::from_secs(2))));
+    // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction
+    // Server mirrors client eviction logic in do_incremental to track which chunks
+    // the client has evicted, allowing them to be re-sent when player returns
+    app.add_systems(Update, world::evict_distant_chunks.run_if(on_timer(Duration::from_secs(5))));
 
     app.run();
 }

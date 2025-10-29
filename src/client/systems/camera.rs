@@ -48,13 +48,13 @@ pub fn update(
                 }
                 Projection::Orthographic(c_orthographic) => {
                     const MIN: f32 = 0.08;
-                    const MAX: f32 = 1.;
+                    const MAX: f32 = 2.0;  // Increased max zoom out to see chunk loading better
                     if keyboard.any_pressed([KeyCode::Minus]) {
                         c_orthographic.scale = (c_orthographic.scale * 1.01).clamp(MIN, MAX);
                     }
                     if keyboard.any_pressed([KeyCode::Equal]) {
                         c_orthographic.scale = (c_orthographic.scale / 1.01).clamp(MIN, MAX);
-                    }    
+                    }
                 }
                 _ => {}
             }

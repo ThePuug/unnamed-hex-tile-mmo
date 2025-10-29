@@ -205,9 +205,9 @@ pub fn evict_distant_chunks(
     // Only evict if we have a player
     let Ok(player_loc) = player_query.single() else {return };
 
-    // Calculate which chunks should be active
+    // Calculate which chunks should be kept (FOV + 1 buffer to prevent flickering)
     let player_chunk = loc_to_chunk(**player_loc);
-    let active_chunks: std::collections::HashSet<_> = calculate_visible_chunks(player_chunk, FOV_CHUNK_RADIUS)
+    let active_chunks: std::collections::HashSet<_> = calculate_visible_chunks(player_chunk, FOV_CHUNK_RADIUS + 1)
         .into_iter()
         .collect();
 
@@ -218,7 +218,6 @@ pub fn evict_distant_chunks(
     }
 
     // Remove all tiles belonging to evicted chunks from the map
-    let mut removed_count = 0;
     let tiles_to_remove: Vec<_> = map.iter_tiles()
         .filter_map(|(qrz, _typ)| {
             let tile_chunk = loc_to_chunk(qrz);
@@ -230,19 +229,15 @@ pub fn evict_distant_chunks(
         })
         .collect();
 
-    for qrz in tiles_to_remove {
-        map.remove(qrz);
-        removed_count += 1;
-    }
+    if !tiles_to_remove.is_empty() {
+        for qrz in &tiles_to_remove {
+            map.remove(*qrz);
+        }
 
-    // Trigger mesh regeneration if tiles were removed
-    if removed_count > 0 {
+        // Trigger mesh regeneration
         if let Ok(mut terrain) = terrain.single_mut() {
             terrain.task_start_regenerate_mesh = true;
         }
-
-        // Remove evicted chunks from tracking
         loaded_chunks.evict(&evictable);
-        debug!("Evicted {} chunks, removed {} tiles from map", evictable.len(), removed_count);
     }
 }

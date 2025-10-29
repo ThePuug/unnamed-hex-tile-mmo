@@ -65,12 +65,28 @@ pub fn do_incremental(
 
         let new_chunk = loc_to_chunk(*loc);
 
-        // Skip if still in same chunk (15/16 movements stay within chunk)
+        // Skip if still in same chunk (most movements stay within chunk)
         if player_state.last_chunk == Some(new_chunk) {
             continue;
         }
 
-        // Calculate visible chunks based on FOV
+        // Client evicts chunks outside FOV_CHUNK_RADIUS + 1 buffer
+        // Remove those from seen_chunks so they can be re-sent if player returns
+        let client_kept_chunks: std::collections::HashSet<_> =
+            calculate_visible_chunks(new_chunk, FOV_CHUNK_RADIUS + 1)
+            .into_iter()
+            .collect();
+
+        let evicted_chunks: Vec<_> = player_state.seen_chunks.iter()
+            .filter(|chunk_id| !client_kept_chunks.contains(chunk_id))
+            .copied()
+            .collect();
+
+        for chunk_id in &evicted_chunks {
+            player_state.seen_chunks.remove(chunk_id);
+        }
+
+        // Calculate visible chunks based on FOV (what client can see)
         let visible_chunks = calculate_visible_chunks(new_chunk, FOV_CHUNK_RADIUS);
 
         for chunk_id in visible_chunks {
@@ -301,9 +317,9 @@ mod tests {
             .collect();
 
         assert_eq!(chunk_data_events.len(), 25, "Should send 25 ChunkData events");
-        // Each chunk should have up to 256 tiles (16x16)
+        // Each chunk should have up to 64 tiles (8x8)
         for (_chunk_id, tile_count) in &chunk_data_events {
-            assert!(*tile_count <= 256, "Chunk should have at most 256 tiles");
+            assert!(*tile_count <= 64, "Chunk should have at most 64 tiles");
         }
     }
 

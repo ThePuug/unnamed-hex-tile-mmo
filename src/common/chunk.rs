@@ -9,8 +9,8 @@ use std::num::NonZeroUsize;
 
 use crate::common::components::entity_type::*;
 
-/// Chunk size in tiles (16x16 = 256 tiles per chunk)
-pub const CHUNK_SIZE: i16 = 16;
+/// Chunk size in tiles (8x8 = 64 tiles per chunk, smaller for easier visual debugging)
+pub const CHUNK_SIZE: i16 = 8;
 
 /// Field of view distance in chunks (FOV distance 10 ≈ 2 chunk radius)
 pub const FOV_CHUNK_RADIUS: u8 = 2;
@@ -25,15 +25,15 @@ impl ChunkId {
     }
 }
 
-/// A chunk of terrain containing up to 256 tiles
+/// A chunk of terrain containing up to 64 tiles (8x8)
 #[derive(Clone, Debug)]
 pub struct TerrainChunk {
-    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 256]>,
+    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 64]>,
     pub generated_at: Instant,
 }
 
 impl TerrainChunk {
-    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 256]>) -> Self {
+    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 64]>) -> Self {
         Self {
             tiles,
             generated_at: Instant::now(),
@@ -125,14 +125,14 @@ mod tests {
         // Tile (0,0) is in chunk (0,0)
         assert_eq!(loc_to_chunk(Qrz { q: 0, r: 0, z: 0 }), ChunkId(0, 0));
 
-        // Tile (15,15) is in chunk (0,0)
-        assert_eq!(loc_to_chunk(Qrz { q: 15, r: 15, z: 0 }), ChunkId(0, 0));
+        // Tile (7,7) is in chunk (0,0) - now 8x8 chunks
+        assert_eq!(loc_to_chunk(Qrz { q: 7, r: 7, z: 0 }), ChunkId(0, 0));
 
-        // Tile (16,16) is in chunk (1,1)
-        assert_eq!(loc_to_chunk(Qrz { q: 16, r: 16, z: 0 }), ChunkId(1, 1));
+        // Tile (8,8) is in chunk (1,1) - now 8x8 chunks
+        assert_eq!(loc_to_chunk(Qrz { q: 8, r: 8, z: 0 }), ChunkId(1, 1));
 
-        // Tile (31,0) is in chunk (1,0)
-        assert_eq!(loc_to_chunk(Qrz { q: 31, r: 0, z: 0 }), ChunkId(1, 0));
+        // Tile (15,0) is in chunk (1,0) - now 8x8 chunks
+        assert_eq!(loc_to_chunk(Qrz { q: 15, r: 0, z: 0 }), ChunkId(1, 0));
     }
 
     #[test]
@@ -140,11 +140,11 @@ mod tests {
         // Tile (-1,-1) is in chunk (-1,-1)
         assert_eq!(loc_to_chunk(Qrz { q: -1, r: -1, z: 0 }), ChunkId(-1, -1));
 
-        // Tile (-16,-16) is in chunk (-1,-1)
-        assert_eq!(loc_to_chunk(Qrz { q: -16, r: -16, z: 0 }), ChunkId(-1, -1));
+        // Tile (-8,-8) is in chunk (-1,-1) - now 8x8 chunks
+        assert_eq!(loc_to_chunk(Qrz { q: -8, r: -8, z: 0 }), ChunkId(-1, -1));
 
-        // Tile (-17,-17) is in chunk (-2,-2)
-        assert_eq!(loc_to_chunk(Qrz { q: -17, r: -17, z: 0 }), ChunkId(-2, -2));
+        // Tile (-9,-9) is in chunk (-2,-2) - now 8x8 chunks
+        assert_eq!(loc_to_chunk(Qrz { q: -9, r: -9, z: 0 }), ChunkId(-2, -2));
     }
 
     #[test]
@@ -153,25 +153,25 @@ mod tests {
         assert_eq!(chunk_to_tile(ChunkId(0, 0), 0, 0).q, 0);
         assert_eq!(chunk_to_tile(ChunkId(0, 0), 0, 0).r, 0);
 
-        // Chunk (0,0) offset (15,15) = tile (15,15)
-        assert_eq!(chunk_to_tile(ChunkId(0, 0), 15, 15).q, 15);
-        assert_eq!(chunk_to_tile(ChunkId(0, 0), 15, 15).r, 15);
+        // Chunk (0,0) offset (7,7) = tile (7,7) - now 8x8 chunks
+        assert_eq!(chunk_to_tile(ChunkId(0, 0), 7, 7).q, 7);
+        assert_eq!(chunk_to_tile(ChunkId(0, 0), 7, 7).r, 7);
 
-        // Chunk (1,1) offset (0,0) = tile (16,16)
-        assert_eq!(chunk_to_tile(ChunkId(1, 1), 0, 0).q, 16);
-        assert_eq!(chunk_to_tile(ChunkId(1, 1), 0, 0).r, 16);
+        // Chunk (1,1) offset (0,0) = tile (8,8) - now 8x8 chunks
+        assert_eq!(chunk_to_tile(ChunkId(1, 1), 0, 0).q, 8);
+        assert_eq!(chunk_to_tile(ChunkId(1, 1), 0, 0).r, 8);
 
-        // Chunk (-1,-1) offset (0,0) = tile (-16,-16)
-        assert_eq!(chunk_to_tile(ChunkId(-1, -1), 0, 0).q, -16);
-        assert_eq!(chunk_to_tile(ChunkId(-1, -1), 0, 0).r, -16);
+        // Chunk (-1,-1) offset (0,0) = tile (-8,-8) - now 8x8 chunks
+        assert_eq!(chunk_to_tile(ChunkId(-1, -1), 0, 0).q, -8);
+        assert_eq!(chunk_to_tile(ChunkId(-1, -1), 0, 0).r, -8);
     }
 
     #[test]
     fn test_chunk_to_tile_round_trip() {
         // For any chunk and offset, converting back should give the same chunk
         let chunk = ChunkId(5, -3);
-        for offset_q in 0..16 {
-            for offset_r in 0..16 {
+        for offset_q in 0..8 {  // Now 8x8 chunks
+            for offset_r in 0..8 {  // Now 8x8 chunks
                 let tile = chunk_to_tile(chunk, offset_q, offset_r);
                 let recovered_chunk = loc_to_chunk(tile);
                 assert_eq!(recovered_chunk, chunk,

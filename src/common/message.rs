@@ -15,11 +15,11 @@ pub enum Event {
     Discover { ent: Entity, qrz: Qrz },
     /// Server-side only: request to discover a chunk
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
-    /// Server → Client: chunk data containing up to 256 tiles
+    /// Server → Client: chunk data containing up to 64 tiles (8x8)
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
-        tiles: ArrayVec<[(Qrz, EntityType); 256]>,
+        tiles: ArrayVec<[(Qrz, EntityType); 64]>,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },

@@ -101,8 +101,7 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
             }
             Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
-                // Unpack chunk into individual tile spawns with chunk marker
-                let tile_count = tiles.len();
+                // Unpack chunk into individual tile spawns
                 for (qrz, typ) in tiles {
                     // Emit spawn events for world system to process
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
@@ -110,7 +109,6 @@ pub fn write_do(
 
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
-                debug!("Player {:?} received chunk {:?} with {} tiles", ent, chunk_id, tile_count);
             }
             _ => {}
         }
