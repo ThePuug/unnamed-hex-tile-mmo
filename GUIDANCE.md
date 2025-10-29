@@ -24,6 +24,7 @@ Critical architectural information for the unnamed-hex-tile-mmo codebase.
 
 ## Table of Contents
 - [Core Architecture](#core-architecture)
+- [Game Design Specifications](#game-design-specifications)
 - [Plugin Documentation](#plugin-documentation)
 - [Internal Libraries](#internal-libraries)
 - [Chunk-Based Terrain System](#chunk-based-terrain-system)
@@ -48,6 +49,30 @@ Client-server MMO built with Bevy ECS:
 - `src/common/`: Shared code
 - `src/client/`: Client-only (rendering, input, networking)
 - `src/server/`: Server-only (AI, terrain, connections)
+
+---
+
+## Game Design Specifications
+
+High-level game design documents in `docs/spec/`. These define game systems (both existing and planned). Consult when designing, implementing, or understanding major features.
+
+- **`docs/spec/triumvirate.md`**: Actor classification system (Origin, Approach, Resilience) with signature skills *(partial implementation)*
+- **`docs/spec/attribute-system.md`**: Attribute pairs (Might/Grace, Vitality/Focus, Instinct/Presence), Axis/Spectrum progression *(planned)*
+- **`docs/spec/hub-system.md`**: Settlement growth, influence radius, encroachment, urban cores, hub merging *(planned)*
+- **`docs/spec/siege-system.md`**: Siege mechanics based on encroachment (enemy strength) vs anger (wave size) *(planned)*
+- **`docs/spec/haven-system.md`**: Permanent starter havens for bootstrapping new settlements *(planned)*
+
+**Purpose:**
+- Authoritative reference for game mechanics (what the system should do)
+- Living documentation that evolves with implementation
+- Context for understanding design intent and relationships between systems
+- Guide for future feature development
+
+**Evolution:**
+- Specs are **living documents** - updated as features are implemented and refined
+- New specs added as systems are designed
+- Implementation may reveal better approaches - update specs accordingly
+- Specs capture design intent, implementation captures technical reality
 
 ---
 

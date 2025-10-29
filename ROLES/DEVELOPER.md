@@ -171,6 +171,11 @@ All tests passing. The regen rate is configurable per-entity."
 - Respect the TDD workflow
 - Use the project's testing patterns
 - Maintain separation between client/server/common code
+- **Consult `docs/spec/`** when implementing game mechanics (specs define intended behavior)
+  - Specs are living documents that evolve with implementation
+  - Check spec implementation status (partial/planned) to understand context
+  - Use ARCHITECT role for translating specs into technical design
+  - Update specs if implementation reveals better approaches (consult with user first)
 
 ## Anti-Patterns to Avoid
 

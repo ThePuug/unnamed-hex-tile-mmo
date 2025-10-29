@@ -306,6 +306,47 @@ Store ADRs in `docs/adr/` directory for future reference.
 - What tradeoffs were accepted
 - When to revisit the decision
 
+### Game Design Specifications
+
+The `docs/spec/` directory contains high-level game design documents that describe game systems (both existing and planned):
+
+**Purpose:**
+- Define what game systems should do (authoritative game mechanics reference)
+- Provide context for architectural decisions
+- Ensure technical design aligns with game design goals
+- Living documentation that evolves with the codebase
+
+**Architect's Role with Specs:**
+1. **Translation**: Convert game design concepts into technical architecture
+2. **Validation**: Identify technical constraints or impossibilities early
+3. **Integration Planning**: Ensure specs fit within existing architecture
+4. **Refinement**: Suggest design adjustments based on technical realities
+5. **Phasing**: Break large specs into implementable increments
+6. **Maintenance**: Update specs as implementation reveals better approaches
+
+**When Working with Specs:**
+- Read relevant specs before designing major features
+- Identify technical challenges and propose solutions
+- Create ADRs for significant architectural decisions
+- **Update specs when implementation diverges from design** (specs should reflect reality)
+- **Add new specs for new systems** as they're designed
+- Keep specs synchronized with implementation reality
+- Treat specs as living documents, not immutable requirements
+
+**Spec Evolution Guidelines:**
+- Specs should document **design intent**, not implementation details
+- When implementation reveals better mechanics, update the spec
+- Add implementation status markers (e.g., "partial implementation", "planned")
+- Capture "why" decisions were made, not just "what" the system does
+- Keep specs high-level - detailed implementation belongs in code/GUIDANCE
+
+**Current Specs:**
+- **Triumvirate System** - Actor classification (Origin/Approach/Resilience) with signature skills *(partial)*
+- **Attribute System** - Sliding scale attributes (Axis/Spectrum progression) *(planned)*
+- **Hub System** - Settlement growth, influence, encroachment mechanics *(planned)*
+- **Siege System** - Combat pressure based on encroachment vs anger *(planned)*
+- **Haven System** - Starter settlements for bootstrapping *(planned)*
+
 ## When to Use ARCHITECT Role
 
 - Designing new major features or subsystems
@@ -316,6 +357,7 @@ Store ADRs in `docs/adr/` directory for future reference.
 - Planning system-wide changes
 - Onboarding new patterns or practices
 - Conducting code audits or health assessments
+- Translating game design specs into technical architecture
 
 ## When to Switch Roles
 
