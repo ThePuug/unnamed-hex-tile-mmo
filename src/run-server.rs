@@ -74,7 +74,9 @@ fn main() {
 
     app.add_systems(FixedUpdate, (
         physics::update,
+        common::systems::actor::update,
         common::systems::resources::regenerate_resources,
+        common::systems::combat_state::update_combat_state,
     ));
 
     app.add_systems(Update, (
