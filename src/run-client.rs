@@ -5,12 +5,13 @@
 mod common;
 mod client;
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::net::UdpSocket;
 
 use bevy::{
     log::LogPlugin,
     prelude::*,
+    time::common_conditions::on_timer,
 };
 use bevy_easings::*;
 use bevy_renet::{
@@ -132,7 +133,14 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
+    app.init_resource::<LoadedChunks>();
     app.init_resource::<spawner_viz::SpawnerVizState>();
+
+    // Add chunk eviction system (runs periodically to cleanup distant chunks)
+    // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction
+    // Server mirrors client eviction logic in do_incremental to track which chunks
+    // the client has evicted, allowing them to be re-sent when player returns
+    app.add_systems(Update, world::evict_distant_chunks.run_if(on_timer(Duration::from_secs(5))));
 
     app.run();
 }

@@ -9,11 +9,10 @@ use bevy::{
     prelude::*,
     render::diagnostic::*,
 };
-use iyes_perf_ui::PerfUiPlugin;
+use iyes_perf_ui::{PerfUiPlugin, PerfUiAppExt};
 
 // Re-export public types for external use
 pub use config::{DiagnosticsConfig, DiagnosticsState};
-pub use grid::HexGridOverlay;
 
 /// Plugin that consolidates all debug and diagnostic features
 ///
@@ -35,6 +34,9 @@ impl Plugin for DiagnosticsPlugin {
             RenderDiagnosticsPlugin,
             PerfUiPlugin,
         ));
+
+        // Register custom perf UI entry type
+        app.add_perf_ui_simple_entry::<perf_ui::PerfUiTerrainTiles>();
 
         // Initialize shared diagnostic resources
         app.init_resource::<DiagnosticsState>();

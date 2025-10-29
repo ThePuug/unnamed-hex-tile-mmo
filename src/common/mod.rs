@@ -1,3 +1,4 @@
+pub mod chunk;
 pub mod components;
 pub mod message;
 pub mod plugins;

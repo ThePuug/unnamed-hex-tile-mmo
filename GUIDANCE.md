@@ -26,6 +26,7 @@ Critical architectural information for the unnamed-hex-tile-mmo codebase.
 - [Core Architecture](#core-architecture)
 - [Plugin Documentation](#plugin-documentation)
 - [Internal Libraries](#internal-libraries)
+- [Chunk-Based Terrain System](#chunk-based-terrain-system)
 - [Position & Movement System](#position--movement-system)
 - [Client-Side Prediction](#client-side-prediction)
 - [Network Events](#network-events)
@@ -65,6 +66,59 @@ Detailed plugin docs in `GUIDANCE/`. Consult when working on plugin-specific fun
 ## Internal Libraries
 
 - **`lib/qrz/GUIDANCE.md`**: Hex coordinates, world position conversion, grid math
+
+---
+
+## Chunk-Based Terrain System
+
+### Overview
+
+Terrain is loaded dynamically in **8×8 tile chunks** to support infinite world exploration without memory issues.
+
+**Constants** (`common/chunk.rs`):
+- `CHUNK_SIZE: i16 = 8` - 8×8 tiles per chunk (64 tiles)
+- `FOV_CHUNK_RADIUS: u8 = 2` - Chunks visible to player (5×5 = 25 chunks)
+
+### Server-Side Discovery
+
+**Flow:**
+1. Player spawns → server discovers initial 25 chunks around spawn location
+2. Player crosses chunk boundary → server discovers new chunks in FOV
+3. Server maintains `PlayerDiscoveryState.seen_chunks` to track sent chunks
+
+**Server-Side Eviction Tracking** (`server/systems/actor.rs::do_incremental`):
+- Server mirrors client eviction logic (FOV_CHUNK_RADIUS + 1 buffer)
+- When player moves, calculate which chunks client would evict
+- Remove evicted chunks from `seen_chunks` so they can be re-sent
+- **No additional network messages required** - inferred from player position
+
+### Client-Side Management
+
+**Eviction** (`client/systems/world.rs::evict_distant_chunks`):
+- Runs every 5 seconds
+- Keeps chunks at `FOV_CHUNK_RADIUS + 1` (3 chunk radius = 49 chunks)
+- Evicts chunks outside buffer (prevents memory growth)
+- Triggers mesh regeneration after eviction
+
+**Reception** (`client/systems/renet.rs`):
+- `Event::ChunkData` contains 64 tiles (Qrz + EntityType)
+- Unpacked into individual `Event::Spawn` events
+- Tracked in `LoadedChunks` resource
+
+**Memory Bounds:**
+- Visible: 25 chunks × 64 tiles = 1,600 tiles
+- Buffered: 49 chunks × 64 tiles = 3,136 tiles max
+
+### Key Invariant
+
+**Server and client eviction logic MUST match exactly:**
+- Both use `FOV_CHUNK_RADIUS + 1` for buffer
+- Server infers eviction from player position
+- Mismatch causes missing chunks or over-sending
+
+### Camera Zoom
+
+Max zoom out increased to 2.0x (`client/systems/camera.rs`) to observe chunk loading with smaller chunk sizes.
 
 ---
 
@@ -200,6 +254,20 @@ pub struct InputQueue {
 8. **Set remote `state` to Vec3::ZERO**: Must be heading-based position
 9. **Pop/push queue front**: Use `front_mut()` to avoid temporary empty queue
 10. **Run `controlled::tick` in FixedUpdate**: Must be Update, `.after(update_keybits)`
+
+### Performance Patterns
+
+**Prefer `retain()` over collect-filter-remove**:
+```rust
+// Bad: 3 allocations (HashSet, Vec, loop removes)
+let kept: HashSet<_> = calculate_kept().collect();
+let to_remove: Vec<_> = set.iter().filter(|x| !kept.contains(x)).collect();
+for x in to_remove { set.remove(x); }
+
+// Good: 1 allocation (HashSet only)
+let kept: HashSet<_> = calculate_kept().collect();
+set.retain(|x| kept.contains(x));
+```
 
 ### Player Detection
 `Behaviour` is enum, not marker. Filter for `Behaviour::Controlled` specifically, not `With<Behaviour>`.

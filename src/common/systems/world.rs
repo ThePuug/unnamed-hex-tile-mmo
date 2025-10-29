@@ -8,12 +8,12 @@ use crate::common::{
 };
 
 pub fn try_incremental(
-    mut reader: EventReader<Try>,  
+    mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
 ) {
     for &message in reader.read() {
-        if let Try { event: Event::Incremental { ent, component } } = message { 
-            writer.write(Do { event: Event::Incremental { ent, component }}); 
+        if let Try { event: Event::Incremental { ent, component } } = message {
+            writer.write(Do { event: Event::Incremental { ent, component }});
         }
     }
 }

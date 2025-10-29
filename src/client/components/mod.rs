@@ -1,8 +1,10 @@
 use bevy::{
-    prelude::*, 
-    render::primitives::Aabb, 
+    prelude::*,
+    render::primitives::Aabb,
     tasks::Task
 };
+
+use crate::common::chunk::ChunkId;
 
 #[derive(Clone, Component, Copy)]
 #[relationship(relationship_target = AnimatedBy)]
@@ -26,3 +28,7 @@ pub struct Terrain {
 
 #[derive(Component, Default)]
 pub struct TargetCursor;
+
+/// Marks a tile entity as belonging to a specific chunk
+#[derive(Component, Copy, Clone, Debug)]
+pub struct ChunkMember(pub ChunkId);

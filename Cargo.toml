@@ -14,6 +14,7 @@ bincode = { version = "2", default-features = false, features = ["std", "serde"]
 chrono = "0"
 iyes_perf_ui = "0"
 log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
+lru = "0"
 noise = { version = "0" }
 pathfinding = "4"
 phf = { version = "0", features = ["macros"] }

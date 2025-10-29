@@ -17,6 +17,7 @@ use ::renet::DefaultChannel;
 
 use crate::{
     common::{
+        chunk::WorldDiscoveryCache,
         components::entity_type::*,
         message::*,
         plugins::nntree,
@@ -79,7 +80,6 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         actor::do_incremental,
-        actor::try_discover,
         actor::update,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
@@ -91,6 +91,9 @@ fn main() {
         spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
         world::do_spawn,
         world::try_spawn,
+        actor::do_spawn_discover,   // Discover initial chunks after spawn
+        actor::try_discover_chunk,  // New chunk-based discovery
+        actor::try_discover,        // Legacy tile discovery (for compatibility)
         server::systems::diagnostics::check_duplicate_tiles,
     ));
 
@@ -110,6 +113,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
+    app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<server::systems::diagnostics::TerrainTracker>();
 
     app.run();

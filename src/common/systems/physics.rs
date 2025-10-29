@@ -116,7 +116,7 @@ pub fn apply(
         if let Some(mut airtime) = airtime0 {
             if airtime > 0 {
                 // ensure we ascend to the apex
-                if airtime < dt { 
+                if airtime < dt {
                     dt0 += dt-airtime;
                     dt = airtime;
                 }
@@ -128,10 +128,10 @@ pub fn apply(
                 airtime -= dt;
                 airtime0 = Some(airtime);
                 let dy = -dt as f32 * GRAVITY;
-                if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().0.z+1 { 
+                if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().0.z+1 {
                     offset0.y += dy;
                 } else {
-                    offset0.y = map.convert(floor.unwrap().0 + Qrz { z: 1-loc0.z, ..*loc0 }).y; 
+                    offset0.y = map.convert(floor.unwrap().0 + Qrz { z: 1-loc0.z, ..*loc0 }).y;
                     airtime0 = None;
                 }
             }

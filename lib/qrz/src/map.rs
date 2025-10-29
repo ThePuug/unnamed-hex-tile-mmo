@@ -124,6 +124,10 @@ where T : Copy {
         self.hash.remove(&qrz)
     }
 
+    pub fn len(&self) -> usize {
+        self.hash.len()
+    }
+
     pub fn vertices(&self, qrz: Qrz) -> Vec<Vec3> {
         let center = self.convert(qrz);
         let w = (self.radius as f64 * SQRT_3 / 2.) as f32;
