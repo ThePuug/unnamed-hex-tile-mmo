@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::common::{
     components::{*, behaviour::*, resources::*},
-    message::{Event, *},
+    message::{Component as MessageComponent, Event, *},
     plugins::nntree::*,
 };
 
@@ -50,11 +50,12 @@ pub fn update_combat_state(
         // Exit combat: timeout elapsed AND no hostiles nearby
         combat_state.in_combat = false;
 
-        // Broadcast combat state change to clients
+        // Broadcast combat state change to clients via Incremental
+        combat_state.in_combat = false;
         writer.write(Do {
-            event: Event::CombatState {
+            event: Event::Incremental {
                 ent,
-                in_combat: false,
+                component: MessageComponent::CombatState(*combat_state),
             },
         });
     }
@@ -122,9 +123,9 @@ pub fn enter_combat(
     // Only broadcast if state changed
     if !was_in_combat {
         writer.write(Do {
-            event: Event::CombatState {
+            event: Event::Incremental {
                 ent,
-                in_combat: true,
+                component: MessageComponent::CombatState(*combat_state),
             },
         });
     }

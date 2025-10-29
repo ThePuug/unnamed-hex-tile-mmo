@@ -117,20 +117,34 @@ pub fn do_manage_connections(
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
 
-                // Send initial resource states to client
-                writer.write(Do { event: Event::Health { ent, current: health.state, max: health.max }});
-                writer.write(Do { event: Event::Stamina { ent, current: stamina.state, max: stamina.max, regen_rate: stamina.regen_rate }});
-                writer.write(Do { event: Event::Mana { ent, current: mana.state, max: mana.max, regen_rate: mana.regen_rate }});
-                writer.write(Do { event: Event::CombatState { ent, in_combat: combat_state.in_combat }});
-
                 // init input buffer for client
-                buffers.extend_one((ent, InputQueue { 
+                buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into() }));
 
                 // init client
                 let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
                 let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Init { ent, dt }}, 
+                    Do { event: Event::Init { ent, dt }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                // Send initial resource states directly to connecting client
+                // Can't use event writer here because send_do relies on NNTree proximity,
+                // and this entity isn't in NNTree yet
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Health(health) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Stamina(stamina) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::Mana(mana) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::CombatState(combat_state) }},
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
@@ -145,25 +159,25 @@ pub fn do_manage_connections(
                     // Send resource states if entity has them
                     if let Some(h) = health {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Health { ent: other.ent, current: h.state, max: h.max }},
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Health(*h) }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                     if let Some(s) = stamina {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Stamina { ent: other.ent, current: s.state, max: s.max, regen_rate: s.regen_rate }},
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Stamina(*s) }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                     if let Some(m) = mana {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Mana { ent: other.ent, current: m.state, max: m.max, regen_rate: m.regen_rate }},
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::Mana(*m) }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                     if let Some(cs) = combat_state {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::CombatState { ent: other.ent, in_combat: cs.in_combat }},
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::CombatState(*cs) }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }

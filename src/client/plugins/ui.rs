@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{character_panel, resource_bars, target_cursor, ui};
+use crate::client::systems::{character_panel, debug_resources, resource_bars, target_cursor, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -36,6 +36,7 @@ impl Plugin for UiPlugin {
                 character_panel::update_attributes,
                 resource_bars::update,
                 target_cursor::update,
+                debug_resources::debug_drain_resources, // DEBUG: Remove after testing
             ),
         );
     }

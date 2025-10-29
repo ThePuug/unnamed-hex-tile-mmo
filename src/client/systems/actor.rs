@@ -9,10 +9,10 @@ use qrz::Convert;
 use crate::{
     client::components::*,
     common::{
-        components::{ 
+        components::{
             behaviour::*,
-            entity_type::{ actor::*, * }, 
-            heading::*, keybits::*, offset::*, * 
+            entity_type::{ actor::*, * },
+            heading::*, keybits::*, offset::*, resources::*, * 
         }, 
         message::{ Event, * }, 
         plugins::nntree::NearestNeighbor, 
@@ -83,6 +83,10 @@ pub fn do_spawn(
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
         let EntityType::Actor(desc) = typ else { continue };
         let loc = Loc::new(qrz);
+
+        // Note: Resource components (Health, Stamina, Mana, CombatState) are already on the entity
+        // from Init event and have been updated by Incremental events. Don't re-insert them here!
+
         commands.entity(ent).insert((
             loc,
             typ,
@@ -100,7 +104,8 @@ pub fn do_spawn(
             Visibility::default(),
             Physics::default(),
             attrs.unwrap_or_default(),
-        )).observe(ready);
+        ))
+        .observe(ready);
     }
 }
 

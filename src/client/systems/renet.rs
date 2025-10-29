@@ -6,7 +6,7 @@ use ::renet::{DefaultChannel, RenetClient};
 use crate::{
     client::resources::{EntityMap, LoadedChunks},
     common::{
-        components::{behaviour::*, entity_type::*, resources::*},
+        components::{behaviour::*, entity_type::*},
         message::{Component, Event, *},
         resources::*
     }, *
@@ -44,13 +44,23 @@ pub fn write_do(
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+
         match message {
 
             // insert l2r for player
             Do { event: Event::Init { ent: ent0, dt }} => {
-                let ent = commands.spawn((Actor,Behaviour::Controlled)).id();
+
+                // Initialize with placeholder resources so Incremental events can update them
+                use crate::common::components::resources::*;
+                use std::time::Duration;
+                let health = Health { state: 1.0, step: 1.0, max: 1.0 };
+                let stamina = Stamina { state: 1.0, step: 1.0, max: 1.0, regen_rate: 10.0, last_update: Duration::ZERO };
+                let mana = Mana { state: 1.0, step: 1.0, max: 1.0, regen_rate: 8.0, last_update: Duration::ZERO };
+                let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
+
+                let ent = commands.spawn((Actor, Behaviour::Controlled, health, stamina, mana, combat_state)).id();
                 l2r.insert(ent, ent0);
-                buffers.extend_one((ent, InputQueue { 
+                buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
                 do_writer.write(Do { event: Event::Init { ent, dt }});
             }
@@ -108,51 +118,6 @@ pub fn write_do(
 
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
-            }
-            Do { event: Event::Health { ent, current, max } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    // Entity not in our map yet - may arrive before spawn, ignore for now
-                    continue
-                };
-                // Insert or update Health component
-                commands.entity(ent).insert(Health {
-                    state: current,
-                    step: current,
-                    max,
-                });
-            }
-            Do { event: Event::Stamina { ent, current, max, regen_rate } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    continue
-                };
-                commands.entity(ent).insert(Stamina {
-                    state: current,
-                    step: current,
-                    max,
-                    regen_rate,
-                    last_update: std::time::Duration::ZERO, // Client will sync on next update
-                });
-            }
-            Do { event: Event::Mana { ent, current, max, regen_rate } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    continue
-                };
-                commands.entity(ent).insert(Mana {
-                    state: current,
-                    step: current,
-                    max,
-                    regen_rate,
-                    last_update: std::time::Duration::ZERO,
-                });
-            }
-            Do { event: Event::CombatState { ent, in_combat } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    continue
-                };
-                commands.entity(ent).insert(CombatState {
-                    in_combat,
-                    last_action: std::time::Duration::ZERO,
-                });
             }
             _ => {}
         }

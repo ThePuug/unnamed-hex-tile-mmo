@@ -216,11 +216,11 @@ fn spawn_npc(
         event: crate::common::message::Event::Spawn { ent, typ, qrz, attrs: Some(attrs) },
     });
 
-    // Send initial resource states to clients
-    writer.write(Do { event: crate::common::message::Event::Health { ent, current: health.state, max: health.max }});
-    writer.write(Do { event: crate::common::message::Event::Stamina { ent, current: stamina.state, max: stamina.max, regen_rate: stamina.regen_rate }});
-    writer.write(Do { event: crate::common::message::Event::Mana { ent, current: mana.state, max: mana.max, regen_rate: mana.regen_rate }});
-    writer.write(Do { event: crate::common::message::Event::CombatState { ent, in_combat: combat_state.in_combat }});
+    // Send initial resource states to clients via Incremental
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Health(health) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Stamina(stamina) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::Mana(mana) }});
+    writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::CombatState(combat_state) }});
 }
 
 /// Helper function to generate a random hex within a radius
