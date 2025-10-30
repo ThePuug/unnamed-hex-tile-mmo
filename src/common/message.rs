@@ -45,6 +45,7 @@ pub enum Event {
 /// Types of abilities that can be used
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityType {
+    BasicAttack,
     Dodge,
 }
 

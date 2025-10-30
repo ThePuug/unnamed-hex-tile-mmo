@@ -226,6 +226,10 @@ pub fn write_try(
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
+                Try { event: Event::UseAbility { ent: _, ability } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::UseAbility { ent, ability }});
+                }
                 _ => {}
             }
         }
@@ -288,6 +292,63 @@ pub fn write_try(
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::ChunkData { ent, chunk_id, tiles }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+            }
+            Do { event: Event::InsertThreat { ent, threat } } => {
+                // Send threat insertion to nearby players
+                let Ok(&loc) = query.get(ent) else { continue; };
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::InsertThreat { ent, threat }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                }
+            }
+            Do { event: Event::ApplyDamage { ent, damage, source } } => {
+                // Send damage application to nearby players
+                let Ok(&loc) = query.get(ent) else { continue; };
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::ApplyDamage { ent, damage, source }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                }
+            }
+            Do { event: Event::ClearQueue { ent, clear_type } } => {
+                // Send queue clear to nearby players
+                let Ok(&loc) = query.get(ent) else { continue; };
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::ClearQueue { ent, clear_type }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                }
+            }
+            Do { event: Event::Gcd { ent, typ } } => {
+                // Send GCD to nearby players
+                let Ok(&loc) = query.get(ent) else { continue; };
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Gcd { ent, typ }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                }
+            }
+            Do { event: Event::AbilityFailed { ent, reason } } => {
+                // Send ability failure only to the caster
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::AbilityFailed { ent, reason }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }

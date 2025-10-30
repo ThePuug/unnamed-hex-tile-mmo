@@ -219,6 +219,7 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 ///
 /// # Arguments
 ///
+/// * `caster_ent` - Entity of the caster (to skip self)
 /// * `caster_loc` - Location of the caster
 /// * `caster_heading` - Heading direction of the caster
 /// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
@@ -229,6 +230,7 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 ///
 /// `Some(Entity)` if a valid target is found, `None` otherwise
 pub fn select_target<F>(
+    caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
     tier_lock: Option<RangeTier>,
@@ -250,8 +252,8 @@ where
         let ent = nn.ent;
         let target_loc = nn.loc;
 
-        // Skip self
-        if target_loc == caster_loc {
+        // Skip self (by entity, not location - multiple entities can be on same tile!)
+        if ent == caster_ent {
             continue;
         }
 
@@ -608,10 +610,13 @@ mod tests {
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
+        // Spawn caster
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+
         // Spawn target directly ahead (east)
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| {
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
         });
 
@@ -620,12 +625,13 @@ mod tests {
 
     #[test]
     fn test_select_target_no_targets() {
-        let (world, nntree) = setup_test_world();
+        let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| {
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
         });
 
@@ -642,7 +648,8 @@ mod tests {
         // Spawn target behind (west)
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
 
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| {
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
         });
 
@@ -661,7 +668,8 @@ mod tests {
         let nearest = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Near
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Mid
 
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| {
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
         });
 
@@ -681,7 +689,8 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: -1, z: 0 })); // Northeast
 
         // Query removed
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -701,7 +710,8 @@ mod tests {
         let actor = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Actor further away
 
         // Query removed
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         assert_eq!(
             result, Some(actor),
@@ -721,7 +731,8 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
 
         // Query removed
-        let result = select_target(caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         assert_eq!(
             result, Some(close_target),
@@ -742,7 +753,8 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
 
         // Query removed
-        let result = select_target(caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         assert_eq!(
             result, Some(mid_target),
@@ -761,7 +773,8 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
 
         // Query removed
-        let result = select_target(caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         assert_eq!(
             result, None,
@@ -782,7 +795,8 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 0, r: -1, z: 0 })); // Northwest (330°) - outside cone
 
         // Query removed
-        let result = select_target(caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
 
         // Should select one of the targets within the cone (ne_target or se_target)
         assert!(

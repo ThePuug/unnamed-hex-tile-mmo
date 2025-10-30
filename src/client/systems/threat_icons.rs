@@ -63,6 +63,7 @@ pub fn update(
     // Use Actor marker to identify the local player (only one entity has it)
     player_query: Query<(Entity, &ReactionQueue), With<crate::common::components::Actor>>,
     time: Res<Time>,
+    server: Res<crate::client::resources::Server>,
 ) {
     let Ok(container) = container_query.single() else {
         warn!("ThreatIconContainer not found");
@@ -75,7 +76,10 @@ pub fn update(
         return;
     };
 
-    let now = time.elapsed();
+    // Use game world time (synced from server Init event)
+    // Threats use game world time, same as day/night cycle
+    let now_ms = server.current_time(time.elapsed().as_millis());
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Get current icon count
     let current_icons: Vec<_> = icon_query.iter().collect();
@@ -171,6 +175,12 @@ pub fn update(
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
+
+            // Debug logging to understand timer behavior
+            trace!(
+                "Timer ring {}: now={:?}, inserted_at={:?}, elapsed={:?}, duration={:?}, progress={:.2}, width will be {:.1}%",
+                ring.index, now, threat.inserted_at, elapsed, threat.timer_duration, progress, 100.0 * (1.0 - progress)
+            );
 
             // Update the timer ring's arc (simulated by width - proper arc would need custom rendering)
             // For now, we'll just update opacity to show time remaining

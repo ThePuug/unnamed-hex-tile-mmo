@@ -34,21 +34,12 @@ pub fn update_keybits(
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 
-        if keyboard.just_released(KEYCODE_GCD1) {
-            use crate::common::components::spawner::*;
-            let spawner = Spawner::new(
-                NpcTemplate::Dog,
-                3,   // max_count
-                5,   // spawn_radius
-                40,  // player_activation_range
-                30,  // leash_distance
-                60,  // despawn_distance
-                5000, // respawn_timer_ms
-            );
-            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner)}});
+        // BasicAttack ability (Q key) - Send as Try event to server for validation
+        if keyboard.just_pressed(KEYCODE_GCD1) {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::BasicAttack }});
         }
 
-        // Dodge ability - Send as Try event to server for validation
+        // Dodge ability (Space key) - Send as Try event to server for validation
         if keyboard.just_pressed(KEYCODE_DODGE) {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
         }

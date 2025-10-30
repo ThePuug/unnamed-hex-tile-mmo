@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{reaction_queue::*, resources::*, ActorAttributes},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::combat::queue as queue_utils,
+    plugins::nntree::*,
+    systems::{combat::queue as queue_utils, targeting::*},
 };
 
 /// Helper function to deal damage to an entity
@@ -17,11 +18,14 @@ pub fn deal_damage(
     queue_opt: Option<&mut ReactionQueue>,
     attrs_opt: Option<&ActorAttributes>,
     time: &Time,
+    runtime: &crate::server::resources::RunTime,
     writer: &mut EventWriter<Do>,
 ) {
     // If target has reaction queue, insert threat
     if let (Some(queue), Some(attrs)) = (queue_opt, attrs_opt) {
-        let now = time.elapsed();
+        // Use game world time (server uptime + offset) for consistent time base
+        let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
+        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         let timer_duration = queue_utils::calculate_timer_duration(attrs);
 
         let threat = QueuedThreat {
@@ -116,15 +120,105 @@ pub fn resolve_threat(
 /// Server system to validate and process ability usage
 /// Handles UseAbility events from clients
 pub fn handle_use_ability(
+    mut commands: Commands,
     mut reader: EventReader<Try>,
-    mut query: Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes)>,
+    // Use ParamSet to avoid query conflicts - all ReactionQueue access must be in ParamSet
+    mut param_set: ParamSet<(
+        // Query 0: For BasicAttack - get caster's Loc/Heading
+        Query<(&Loc, &Heading)>,
+        // Query 1: For BasicAttack - get target's ReactionQueue/Attributes
+        Query<(Option<&mut ReactionQueue>, Option<&ActorAttributes>)>,
+        // Query 2: For Dodge - get caster's ReactionQueue/Stamina
+        Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes)>,
+    )>,
+    entity_query: Query<(&EntityType, &Loc)>,
+    nntree: Res<NNTree>,
+    time: Res<Time>,
+    runtime: Res<crate::server::resources::RunTime>,
     mut writer: EventWriter<Do>,
 ) {
     for event in reader.read() {
         if let GameEvent::UseAbility { ent, ability } = event.event {
             match ability {
+                AbilityType::BasicAttack => {
+                    info!("Server: Received BasicAttack from {:?}", ent);
+
+                    // Get caster's location and heading from Query 0
+                    let (caster_loc, caster_heading) = if let Ok(data) = param_set.p0().get(ent) {
+                        info!("Server: Caster {:?} at {:?} facing {:?}", ent, data.0, data.1);
+                        (*data.0, *data.1)
+                    } else {
+                        warn!("Server: Could not get location/heading for {:?}", ent);
+                        continue;
+                    };
+
+                    // Debug: Log nearby entities
+                    let nearby: Vec<_> = nntree.locate_within_distance(caster_loc, 20 * 20).collect();
+                    info!("Server: Found {} nearby entities", nearby.len());
+                    for nn in &nearby {
+                        if let Ok((entity_type, _)) = entity_query.get(nn.ent) {
+                            info!("  - Entity {:?} at {:?} is {:?}", nn.ent, nn.loc, entity_type);
+                        }
+                    }
+
+                    // Use targeting system to select target
+                    let target_opt = select_target(
+                        ent, // caster entity
+                        caster_loc,
+                        caster_heading,
+                        None, // No tier lock in MVP
+                        &nntree,
+                        |target_ent| entity_query.get(target_ent).ok().map(|(et, _)| *et),
+                    );
+
+                    info!("Server: select_target returned {:?}", target_opt);
+
+                    if let Some(target_ent) = target_opt {
+                        // Get target's queue and attributes from Query 1 (in ParamSet)
+                        if let Ok((mut queue_opt, attrs_opt)) = param_set.p1().get_mut(target_ent) {
+                            // BasicAttack: 20 base physical damage (no stamina cost)
+                            let base_damage = 20.0;
+
+                            info!(
+                                "Server: {:?} used BasicAttack on {:?} for {} damage",
+                                ent, target_ent, base_damage
+                            );
+
+                            // Deal damage using combat system
+                            deal_damage(
+                                &mut commands,
+                                target_ent,
+                                ent, // source
+                                base_damage,
+                                DamageType::Physical,
+                                queue_opt.as_deref_mut(),
+                                attrs_opt.as_deref(),
+                                &time,
+                                &runtime,
+                                &mut writer,
+                            );
+
+                            // Broadcast GCD event (BasicAttack triggers Attack GCD)
+                            writer.write(Do {
+                                event: GameEvent::Gcd {
+                                    ent,
+                                    typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                                },
+                            });
+                        }
+                    } else {
+                        // No valid target in facing cone
+                        writer.write(Do {
+                            event: GameEvent::AbilityFailed {
+                                ent,
+                                reason: AbilityFailReason::NoTargets,
+                            },
+                        });
+                    }
+                }
                 AbilityType::Dodge => {
-                    if let Ok((mut queue, mut stamina, _attrs)) = query.get_mut(ent) {
+                    // Get caster's queue and stamina from Query 2
+                    if let Ok((mut queue, mut stamina, _attrs)) = param_set.p2().get_mut(ent) {
                         // Calculate dodge cost (15% of max stamina)
                         let dodge_cost = stamina.max * 0.15;
 
