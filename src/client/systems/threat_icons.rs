@@ -60,7 +60,8 @@ pub fn update(
     mut commands: Commands,
     container_query: Query<Entity, With<ThreatIconContainer>>,
     icon_query: Query<(Entity, &ThreatIcon)>,
-    mut ring_query: Query<(Entity, &ThreatTimerRing, &mut Node)>,
+    mut ring_query: Query<(Entity, &ThreatTimerRing, &mut Node), Without<ThreatIcon>>,
+    icon_with_children: Query<&Children, With<ThreatIcon>>,
     // Use Actor marker to identify the local player (only one entity has it)
     player_query: Query<(Entity, &ReactionQueue), With<crate::common::components::Actor>>,
     time: Res<Time>,
@@ -80,30 +81,90 @@ pub fn update(
 
     // Get current icon count
     let current_icons: Vec<_> = icon_query.iter().collect();
-    let target_count = queue.threats.len();
+    // Show ALL capacity slots (filled + empty ghost slots)
+    let target_count = queue.capacity;
+
+    // Check if we need to rebuild the UI (capacity changed or icons mismatched)
+    let needs_rebuild = current_icons.len() != target_count;
 
     // Debug logging
-    if target_count > 0 && current_icons.len() != target_count {
+    if needs_rebuild {
         info!(
-            "Threat UI update: current_icons={}, target_count={}, capacity={}",
+            "Threat UI rebuild: current_icons={}, target_count={}, filled={}, capacity={}",
             current_icons.len(),
             target_count,
+            queue.threats.len(),
             queue.capacity
         );
     }
 
-    // Despawn excess icons
-    for (entity, icon) in &current_icons {
-        if icon.index >= target_count {
-            info!("Despawning excess icon at index {}", icon.index);
-            commands.entity(*entity).despawn_recursive();
+    if needs_rebuild {
+        // Despawn all existing icons and respawn with correct filled/empty state
+        // This ensures timer rings are properly managed (only on filled slots)
+        for (entity, _icon) in &current_icons {
+            commands.entity(*entity).despawn();
         }
-    }
 
-    // Spawn missing icons
-    for index in current_icons.len()..target_count {
-        info!("Spawning new icon at index {}", index);
-        spawn_threat_icon(&mut commands, container, index, queue.capacity);
+        // Spawn all capacity slots (filled + empty)
+        for index in 0..target_count {
+            let is_filled = index < queue.threats.len();
+            spawn_threat_icon(&mut commands, container, index, queue.capacity, is_filled);
+        }
+    } else {
+        // Just update colors for filled/empty state transitions
+        // And manage timer rings (spawn for filled, despawn for empty)
+        for (entity, icon) in &current_icons {
+            let is_filled = icon.index < queue.threats.len();
+
+            // Update colors
+            if is_filled {
+                commands.entity(*entity).insert((
+                    BorderColor(Color::srgb(0.8, 0.2, 0.2)),
+                    BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
+                ));
+            } else {
+                commands.entity(*entity).insert((
+                    BorderColor(Color::srgba(0.4, 0.4, 0.4, 0.3)),
+                    BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.3)),
+                ));
+            }
+
+            // Manage timer ring child
+            let has_timer_ring = icon_with_children.get(*entity)
+                .ok()
+                .and_then(|children| {
+                    children.iter().any(|child| ring_query.get(child).is_ok())
+                        .then_some(())
+                })
+                .is_some();
+
+            if is_filled && !has_timer_ring {
+                // Need to spawn timer ring
+                commands.entity(*entity).with_children(|parent| {
+                    parent.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            width: Val::Percent(100.),
+                            height: Val::Percent(100.),
+                            border: UiRect::all(Val::Px(2.)),
+                            ..default()
+                        },
+                        BorderColor(Color::srgba(1.0, 0.8, 0.0, 0.8)),
+                        BackgroundColor(Color::NONE),
+                        ThreatTimerRing { index: icon.index },
+                    ));
+                });
+            } else if !is_filled && has_timer_ring {
+                // Need to despawn timer ring
+                if let Ok(children) = icon_with_children.get(*entity) {
+                    for child in children.iter() {
+                        if ring_query.get(child).is_ok() {
+                            commands.entity(child).despawn();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Update timer rings
@@ -123,16 +184,27 @@ pub fn update(
 }
 
 /// Spawn a single threat icon at the specified index
+/// `is_filled` determines if this slot contains a threat (opaque) or is empty (ghost/transparent)
 fn spawn_threat_icon(
     commands: &mut Commands,
     container: Entity,
     index: usize,
     capacity: usize,
+    is_filled: bool,
 ) {
     // Calculate horizontal position in a line (centered)
     let total_width = (capacity as f32 * ICON_SIZE) + ((capacity - 1) as f32 * ICON_SPACING);
     let start_x = -total_width / 2.0;
     let x_offset = start_x + (index as f32 * (ICON_SIZE + ICON_SPACING));
+
+    // Visual appearance: filled slots are opaque red, empty slots are transparent grey
+    let (border_color, background_color) = if is_filled {
+        // Filled slot: bright red, opaque
+        (Color::srgb(0.8, 0.2, 0.2), Color::srgb(0.3, 0.1, 0.1))
+    } else {
+        // Empty/ghost slot: grey, transparent (30% opacity)
+        (Color::srgba(0.4, 0.4, 0.4, 0.3), Color::srgba(0.2, 0.2, 0.2, 0.3))
+    };
 
     commands.entity(container).with_children(|parent| {
         // Threat icon background
@@ -153,24 +225,26 @@ fn spawn_threat_icon(
                 border: UiRect::all(Val::Px(3.)),
                 ..default()
             },
-            BorderColor(Color::srgb(0.8, 0.2, 0.2)), // Red border
-            BackgroundColor(Color::srgb(0.3, 0.1, 0.1)), // Dark red background
+            BorderColor(border_color),
+            BackgroundColor(background_color),
             ThreatIcon { index },
         ))
         .with_children(|parent| {
-            // Timer ring (overlays the icon)
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    border: UiRect::all(Val::Px(2.)),
-                    ..default()
-                },
-                BorderColor(Color::srgba(1.0, 0.8, 0.0, 0.8)), // Yellow/orange timer ring
-                BackgroundColor(Color::NONE),
-                ThreatTimerRing { index },
-            ));
+            // Timer ring (only visible for filled slots)
+            if is_filled {
+                parent.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.),
+                        height: Val::Percent(100.),
+                        border: UiRect::all(Val::Px(2.)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgba(1.0, 0.8, 0.0, 0.8)), // Yellow/orange timer ring
+                    BackgroundColor(Color::NONE),
+                    ThreatTimerRing { index },
+                ));
+            }
         });
     });
 }
