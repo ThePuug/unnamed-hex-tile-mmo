@@ -49,10 +49,6 @@ pub fn deal_damage(
 
         // If queue overflowed, immediately resolve the overflow threat
         if let Some(overflow_threat) = overflow {
-            info!(
-                "Queue overflow for {:?}: immediately resolving threat of {} damage from {:?}",
-                target, overflow_threat.damage, overflow_threat.source
-            );
             // Emit ResolveThreat event for the overflow
             commands.trigger_targets(
                 Try {
@@ -64,13 +60,6 @@ pub fn deal_damage(
                 target,
             );
         }
-    } else {
-        // No reaction queue - apply damage immediately
-        info!(
-            "No reaction queue for {:?}: immediate damage {} from {:?}",
-            target, damage, source
-        );
-        // In MVP, just log - Phase 4 will apply actual damage
     }
 }
 
@@ -91,11 +80,6 @@ pub fn resolve_threat(
             // Apply damage to health
             health.state = (health.state - damage_to_apply).max(0.0);
             health.step = health.state; // Snap step to state for immediate feedback
-
-            info!(
-                "Resolved threat for {:?}: {} damage from {:?}, health now {}/{}",
-                ent, damage_to_apply, threat.source, health.state, health.max
-            );
 
             // Broadcast damage event to clients
             writer.write(Do {
@@ -141,25 +125,12 @@ pub fn handle_use_ability(
         if let GameEvent::UseAbility { ent, ability } = event.event {
             match ability {
                 AbilityType::BasicAttack => {
-                    info!("Server: Received BasicAttack from {:?}", ent);
-
                     // Get caster's location and heading from Query 0
                     let (caster_loc, caster_heading) = if let Ok(data) = param_set.p0().get(ent) {
-                        info!("Server: Caster {:?} at {:?} facing {:?}", ent, data.0, data.1);
                         (*data.0, *data.1)
                     } else {
-                        warn!("Server: Could not get location/heading for {:?}", ent);
                         continue;
                     };
-
-                    // Debug: Log nearby entities
-                    let nearby: Vec<_> = nntree.locate_within_distance(caster_loc, 20 * 20).collect();
-                    info!("Server: Found {} nearby entities", nearby.len());
-                    for nn in &nearby {
-                        if let Ok((entity_type, _)) = entity_query.get(nn.ent) {
-                            info!("  - Entity {:?} at {:?} is {:?}", nn.ent, nn.loc, entity_type);
-                        }
-                    }
 
                     // Use targeting system to select target
                     let target_opt = select_target(
@@ -171,18 +142,11 @@ pub fn handle_use_ability(
                         |target_ent| entity_query.get(target_ent).ok().map(|(et, _)| *et),
                     );
 
-                    info!("Server: select_target returned {:?}", target_opt);
-
                     if let Some(target_ent) = target_opt {
                         // Get target's queue and attributes from Query 1 (in ParamSet)
                         if let Ok((mut queue_opt, attrs_opt)) = param_set.p1().get_mut(target_ent) {
                             // BasicAttack: 20 base physical damage (no stamina cost)
                             let base_damage = 20.0;
-
-                            info!(
-                                "Server: {:?} used BasicAttack on {:?} for {} damage",
-                                ent, target_ent, base_damage
-                            );
 
                             // Deal damage using combat system
                             deal_damage(
@@ -257,15 +221,7 @@ pub fn handle_use_ability(
                         stamina.step = stamina.state;
 
                         // Clear queue
-                        let cleared = queue_utils::clear_threats(&mut queue, ClearType::All);
-
-                        info!(
-                            "Server: {:?} dodged {} threats, stamina: {}/{}",
-                            ent,
-                            cleared.len(),
-                            stamina.state,
-                            stamina.max
-                        );
+                        queue_utils::clear_threats(&mut queue, ClearType::All);
 
                         // Broadcast clear queue event
                         writer.write(Do {

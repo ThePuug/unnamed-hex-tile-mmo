@@ -41,8 +41,12 @@ pub fn do_incremental(
         };
         match component {
             Component::Loc(loc) => {
-                let Some(mut loc0) = o_loc else { continue; };
-                let Some(mut offset0) = o_offset else { continue; };
+                let Some(mut loc0) = o_loc else {
+                    continue;
+                };
+                let Some(mut offset0) = o_offset else {
+                    continue;
+                };
 
                 // Check if this is a local player (has input buffer) or remote player
                 let is_local = buffers.get(&ent).is_some();
@@ -117,7 +121,6 @@ pub fn do_incremental(
             }
             Component::Health(health) => {
                 let Some(mut health0) = o_health else {
-                    warn!("Received Health update for entity {:?} but entity has no Health component", ent);
                     continue;
                 };
                 *health0 = health;

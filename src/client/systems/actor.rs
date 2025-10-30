@@ -84,7 +84,9 @@ pub fn do_spawn(
 ) {
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
-        let EntityType::Actor(desc) = typ else { continue };
+        let EntityType::Actor(desc) = typ else {
+            continue
+        };
         let loc = Loc::new(qrz);
 
         // Note: Resource components (Health, Stamina, Mana, CombatState) are already on the entity

@@ -14,7 +14,7 @@ use crate::{
             resources as resource_calcs,
         },
     },
-    server::systems::behaviour::{FindSomethingInterestingWithin, Nearby, NearbyOrigin},
+    server::systems::behaviour::{AttackTarget, FindSomethingInterestingWithin, Nearby, NearbyOrigin},
 };
 
 /// System that ticks spawners and spawns NPCs when conditions are met
@@ -110,7 +110,7 @@ fn spawn_npc(
                             "set dest near target",
                             Nearby {
                                 min: 1,
-                                max: 3,
+                                max: 1,  // Get close to target (1 tile away)
                                 origin: NearbyOrigin::Target,
                             }
                         ),
@@ -118,7 +118,11 @@ fn spawn_npc(
                             "path to dest",
                             PathTo::default()
                         ),
-                        Behave::Wait(5.),
+                        Behave::spawn_named(
+                            "attack target",
+                            AttackTarget
+                        ),
+                        Behave::Wait(2.),  // 2 second cooldown between attacks
                     }
                 }
             })

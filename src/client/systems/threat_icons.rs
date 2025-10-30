@@ -89,17 +89,6 @@ pub fn update(
     // Check if we need to rebuild the UI (capacity changed or icons mismatched)
     let needs_rebuild = current_icons.len() != target_count;
 
-    // Debug logging
-    if needs_rebuild {
-        info!(
-            "Threat UI rebuild: current_icons={}, target_count={}, filled={}, capacity={}",
-            current_icons.len(),
-            target_count,
-            queue.threats.len(),
-            queue.capacity
-        );
-    }
-
     if needs_rebuild {
         // Despawn all existing icons and respawn with correct filled/empty state
         // This ensures timer rings are properly managed (only on filled slots)
@@ -179,12 +168,6 @@ pub fn update(
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
-
-            // Debug logging to understand timer behavior
-            trace!(
-                "Timer ring {}: now={:?}, inserted_at={:?}, elapsed={:?}, duration={:?}, progress={:.2}, width will be {:.1}%",
-                ring.index, now, threat.inserted_at, elapsed, threat.timer_duration, progress, 100.0 * (1.0 - progress)
-            );
 
             // Update the timer ring's arc (simulated by width - proper arc would need custom rendering)
             // For now, we'll just update opacity to show time remaining

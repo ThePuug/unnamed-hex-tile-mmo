@@ -64,17 +64,26 @@ pub fn tick(
 pub fn apply(
     mut commands: Commands,
     mut query: Query<(&mut PathTo, &BehaveCtx)>,
-    mut q_target: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>, &Target)>,
+    mut q_target: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>, &Target, &crate::common::components::Dest)>,
     dt: Res<Time>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
     for (mut path_to, &ctx) in &mut query {
-        let Ok((&loc, mut heading0, mut offset0, mut airtime0, attrs, &_target)) = q_target.get_mut(ctx.target_entity()) else {
-            debug!("PathTo apply: target entity {:?} missing required components", ctx.target_entity());
+        let Ok((&loc, mut heading0, mut offset0, mut airtime0, attrs, &_target, &dest_comp)) = q_target.get_mut(ctx.target_entity()) else {
             continue;
         };
+
+        // Check if path is empty
         if path_to.path.is_empty() {
+            // If Dest has changed but tick hasn't run yet, wait for next frame
+            let Some((dest_qrz, _)) = map.find(*dest_comp, -60) else { continue };
+
+            if dest_qrz != path_to.dest {
+                continue;  // Wait for tick to generate path
+            }
+
+            // Path is empty and tick already processed this dest - we're done
             commands.trigger(ctx.success());
             continue;
         }

@@ -25,19 +25,9 @@ pub fn handle_insert_threat(
                     existing.inserted_at.as_millis().abs_diff(threat.inserted_at.as_millis()) < 50
                 });
 
-                if is_duplicate {
-                    info!(
-                        "Client: Skipped duplicate threat for {:?}: {} damage from {:?} (already predicted)",
-                        ent, threat.damage, threat.source
-                    );
-                } else {
+                if !is_duplicate {
                     // Insert threat into client's visual queue
                     queue.threats.push_back(threat);
-
-                    info!(
-                        "Client: Inserted threat for {:?}: {} damage from {:?}",
-                        ent, threat.damage, threat.source
-                    );
                 }
             }
         }
@@ -57,22 +47,13 @@ pub fn handle_apply_damage(
             if let Ok(mut health) = health_query.get_mut(ent) {
                 health.state = (health.state - damage).max(0.0);
                 health.step = health.state;
-
-                info!(
-                    "Client: Applied {} damage to {:?} from {:?}, health now {}/{}",
-                    damage, ent, source, health.state, health.max
-                );
             }
 
             // Remove the resolved threat from the queue
             // Match by source - the oldest threat from this source
             if let Ok(mut queue) = queue_query.get_mut(ent) {
                 if let Some(pos) = queue.threats.iter().position(|t| t.source == source) {
-                    let removed_threat = queue.threats.remove(pos).unwrap();
-                    info!(
-                        "Client: Removed resolved threat from {:?}'s queue: {} damage from {:?}",
-                        ent, removed_threat.damage, removed_threat.source
-                    );
+                    queue.threats.remove(pos);
                 }
             }
         }
@@ -122,11 +103,6 @@ pub fn predict_basic_attack(
 
                     // Insert predicted threat (client sees it immediately)
                     queue_utils::insert_threat(&mut queue, predicted_threat, now);
-
-                    info!(
-                        "Client: Predicted BasicAttack threat for {:?}: {} damage from {:?}",
-                        target_ent, predicted_threat.damage, ent
-                    );
                 }
             }
         }
@@ -170,13 +146,7 @@ pub fn handle_clear_queue(
         if let GameEvent::ClearQueue { ent, clear_type } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
                 // Clear threats using message ClearType directly
-                let cleared = queue_utils::clear_threats(&mut queue, clear_type);
-
-                info!(
-                    "Client: Server confirmed clear queue for {:?}: {} threats cleared",
-                    ent,
-                    cleared.len()
-                );
+                queue_utils::clear_threats(&mut queue, clear_type);
             }
         }
     }

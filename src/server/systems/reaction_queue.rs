@@ -35,11 +35,6 @@ pub fn process_expired_threats(
             }) {
                 queue.threats.remove(pos);
 
-                info!(
-                    "Threat expired for entity {:?}: {} damage from {:?}",
-                    ent, expired_threat.damage, expired_threat.source
-                );
-
                 // Broadcast ClearQueue event to clients so they remove the threat from UI
                 writer.write(Do {
                     event: GameEvent::ClearQueue {
