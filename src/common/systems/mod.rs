@@ -3,6 +3,7 @@ pub mod behaviour;
 pub mod combat_state;
 pub mod gcd;
 pub mod physics;
+pub mod reaction_queue;
 pub mod resources;
 pub mod world;
 

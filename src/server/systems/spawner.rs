@@ -5,11 +5,14 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, resources::*},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, reaction_queue::*, resources::*},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
-        systems::resources as resource_calcs,
+        systems::{
+            reaction_queue as queue_calcs,
+            resources as resource_calcs,
+        },
     },
     server::systems::behaviour::{FindSomethingInterestingWithin, Nearby, NearbyOrigin},
 };
@@ -189,6 +192,9 @@ fn spawn_npc(
         in_combat: false,
         last_action: time.elapsed(),
     };
+    // Initialize reaction queue with capacity based on Focus attribute
+    let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs);
+    let reaction_queue = ReactionQueue::new(queue_capacity);
 
     let ent = commands
         .spawn((
@@ -202,6 +208,7 @@ fn spawn_npc(
             stamina,
             mana,
             combat_state,
+            reaction_queue,
             children![(
                 Name::new("behaviour"),
                 behavior_tree,

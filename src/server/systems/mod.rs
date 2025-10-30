@@ -2,6 +2,7 @@ pub mod actor;
 pub mod behaviour;
 pub mod diagnostics;
 pub mod input;
+pub mod reaction_queue;
 pub mod renet;
 pub mod spawner;
 pub mod world;

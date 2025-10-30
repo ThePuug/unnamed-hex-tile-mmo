@@ -11,12 +11,16 @@ use crate::{ common::{
                 actor::*,
             },
             keybits::*,
+            reaction_queue::*,
             resources::*,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
         resources::*,
-        systems::resources as resource_calcs,
+        systems::{
+            reaction_queue as queue_calcs,
+            resources as resource_calcs,
+        },
     }, *
 };
 
@@ -102,6 +106,9 @@ pub fn do_manage_connections(
                     in_combat: false,
                     last_action: time.elapsed(),
                 };
+                // Initialize reaction queue with capacity based on Focus attribute
+                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs);
+                let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 let ent = commands.spawn((
                     typ,
@@ -112,6 +119,7 @@ pub fn do_manage_connections(
                     stamina,
                     mana,
                     combat_state,
+                    reaction_queue,
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));

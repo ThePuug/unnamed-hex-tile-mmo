@@ -26,7 +26,7 @@ use crate::{
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, input, renet, spawner, world},
+        systems::{actor, input, reaction_queue, renet, spawner, world},
         *
     }
 };
@@ -77,6 +77,7 @@ fn main() {
         common::systems::actor::update,
         common::systems::resources::regenerate_resources,
         common::systems::combat_state::update_combat_state,
+        reaction_queue::process_expired_threats,
     ));
 
     app.add_systems(Update, (
