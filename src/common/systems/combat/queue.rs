@@ -1,51 +1,38 @@
 use crate::common::components::reaction_queue::{DamageType, QueuedThreat, ReactionQueue};
 use crate::common::components::ActorAttributes;
+use crate::common::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
 
-/// Clear types for reaction abilities
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ClearType {
-    /// Clear all threats (Dodge)
-    All,
-    /// Clear first N threats (Counter, Parry)
-    First(usize),
-    /// Clear threats by damage type (Ward for magic)
-    ByType(DamageType),
-}
-
 /// Calculate queue capacity based on Focus attribute
 /// Formula: base_capacity + floor(focus / 33.0)
-/// - Focus = -100: 1 slot (base=1, bonus=0 due to clamp)
 /// - Focus = 0: 1 slot (base=1, bonus=0)
 /// - Focus = 33: 2 slots (base=1, bonus=1)
-/// - Focus = 66: 2 slots (base=1, bonus=2)
-/// - Focus = 100: 4 slots (base=1, bonus=3)
+/// - Focus = 66: 3 slots (base=1, bonus=2)
+/// - Focus = 99: 4 slots (base=1, bonus=3)
+/// - Focus = 150: 5 slots (base=1, bonus=4)
 pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
-    // Use focus() which returns u8 (0-100)
-    // For negative focus values, we need the raw axis value
-    // Per ADR: Use the axis value directly to handle -100 to 100 range
-    let focus = attrs.vitality_focus_axis as i16 + attrs.vitality_focus_shift as i16;
-    let focus = focus.clamp(-100, 100) as i16;
+    // Use focus() which returns u8 (0-150 range)
+    let focus = attrs.focus() as usize;
 
     let base_capacity = 1;
-    let bonus = (focus / 33).max(0);
-    (base_capacity + bonus as usize).min(10) // Cap at 10 for sanity
+    let bonus = focus / 33;
+    (base_capacity + bonus).min(10) // Cap at 10 for sanity
 }
 
 /// Calculate timer duration based on Instinct attribute
 /// Formula: base_window * (1.0 + instinct / 200.0)
-/// - Instinct = -100: 0.5s (base * 0.5)
 /// - Instinct = 0: 1.0s (base * 1.0)
+/// - Instinct = 50: 1.25s (base * 1.25)
 /// - Instinct = 100: 1.5s (base * 1.5)
+/// - Instinct = 150: 1.75s (base * 1.75)
 /// Minimum 250ms to prevent instant resolution
 pub fn calculate_timer_duration(attrs: &ActorAttributes) -> Duration {
-    // Use the axis value to handle -100 to 100 range
-    let instinct = attrs.instinct_presence_axis as i16 + attrs.instinct_presence_shift as i16;
-    let instinct = instinct.clamp(-100, 100) as f32;
+    // Use instinct() which returns u8 (0-150 range)
+    let instinct = attrs.instinct() as f32;
 
     let base_window = 1.0;
-    let multiplier = 1.0 + (instinct / 200.0); // -100: 0.5x, 0: 1.0x, 100: 1.5x
+    let multiplier = 1.0 + (instinct / 200.0); // 0: 1.0x, 100: 1.5x, 150: 1.75x
     let duration_secs = base_window * multiplier;
 
     Duration::from_secs_f32(duration_secs).max(Duration::from_millis(250))
@@ -118,75 +105,63 @@ mod tests {
 
     // Helper to create test attributes
     fn create_test_attrs(focus_axis: i8, instinct_axis: i8) -> ActorAttributes {
-        ActorAttributes {
-            might_grace_axis: 0,
-            might_grace_spectrum: 0,
-            might_grace_shift: 0,
-            vitality_focus_axis: focus_axis,
-            vitality_focus_spectrum: 0,
-            vitality_focus_shift: 0,
-            instinct_presence_axis: instinct_axis,
-            instinct_presence_spectrum: 0,
-            instinct_presence_shift: 0,
-        }
+        ActorAttributes::new(
+            0, 0, 0,          // might_grace: axis, spectrum, shift
+            focus_axis, 0, 0, // vitality_focus: axis, spectrum, shift
+            instinct_axis, 0, 0, // instinct_presence: axis, spectrum, shift
+        )
     }
 
     #[test]
-    fn test_calculate_queue_capacity_negative_focus() {
-        // Focus = -100 should give 1 slot (base=1, bonus=0)
+    fn test_calculate_queue_capacity_zero_focus() {
+        // Focus = 0 (axis on vitality side) should give 1 slot (base=1, bonus=0)
         let attrs = create_test_attrs(-100, 0);
         assert_eq!(calculate_queue_capacity(&attrs), 1);
     }
 
     #[test]
-    fn test_calculate_queue_capacity_zero_focus() {
-        // Focus = 0 should give 1 slot (base=1, bonus=0)
-        let attrs = create_test_attrs(0, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 1);
+    fn test_calculate_queue_capacity_low_focus() {
+        // Focus = 33 (axis = 33 on focus side) should give 2 slots (base=1, bonus=1)
+        let attrs = create_test_attrs(33, 0);
+        assert_eq!(calculate_queue_capacity(&attrs), 2);
     }
 
     #[test]
-    fn test_calculate_queue_capacity_positive_focus() {
-        // Focus = 33 should give 2 slots (base=1, bonus=1)
-        let attrs = create_test_attrs(33, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 2);
-
-        // Focus = 66 should give 3 slots (base=1, bonus=2)
+    fn test_calculate_queue_capacity_mid_focus() {
+        // Focus = 66 (axis = 66 on focus side) should give 3 slots (base=1, bonus=2)
         let attrs = create_test_attrs(66, 0);
         assert_eq!(calculate_queue_capacity(&attrs), 3);
+    }
 
-        // Focus = 100 should give 4 slots (base=1, bonus=3)
+    #[test]
+    fn test_calculate_queue_capacity_high_focus() {
+        // Focus = 100 (axis = 100 on focus side) should give 4 slots (base=1, bonus=3)
         let attrs = create_test_attrs(100, 0);
         assert_eq!(calculate_queue_capacity(&attrs), 4);
     }
 
     #[test]
-    fn test_calculate_timer_duration_negative_instinct() {
-        // Instinct = -100 should give 0.5s
-        let attrs = create_test_attrs(0, -100);
-        let duration = calculate_timer_duration(&attrs);
-        assert_eq!(duration, Duration::from_millis(500));
-    }
-
-    #[test]
     fn test_calculate_timer_duration_zero_instinct() {
-        // Instinct = 0 should give 1.0s
-        let attrs = create_test_attrs(0, 0);
+        // Instinct = 0 (axis on presence side) should give 1.0s
+        let attrs = create_test_attrs(0, 100);
         let duration = calculate_timer_duration(&attrs);
         assert_eq!(duration, Duration::from_secs(1));
     }
 
     #[test]
-    fn test_calculate_timer_duration_positive_instinct() {
-        // Instinct = 100 should give 1.5s
-        let attrs = create_test_attrs(0, 100);
-        let duration = calculate_timer_duration(&attrs);
-        assert_eq!(duration, Duration::from_millis(1500));
-
-        // Instinct = 50 should give 1.25s
-        let attrs = create_test_attrs(0, 50);
+    fn test_calculate_timer_duration_mid_instinct() {
+        // Instinct = 50 (axis = -50 on instinct side) should give 1.25s
+        let attrs = create_test_attrs(0, -50);
         let duration = calculate_timer_duration(&attrs);
         assert_eq!(duration, Duration::from_millis(1250));
+    }
+
+    #[test]
+    fn test_calculate_timer_duration_high_instinct() {
+        // Instinct = 100 (axis = -100 on instinct side) should give 1.5s
+        let attrs = create_test_attrs(0, -100);
+        let duration = calculate_timer_duration(&attrs);
+        assert_eq!(duration, Duration::from_millis(1500));
     }
 
     #[test]

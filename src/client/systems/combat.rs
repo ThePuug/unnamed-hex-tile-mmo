@@ -107,13 +107,8 @@ pub fn handle_clear_queue(
     for event in reader.read() {
         if let GameEvent::ClearQueue { ent, clear_type } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
-                // Convert message ClearType to queue_utils ClearType
-                let queue_clear_type = match clear_type {
-                    ClearType::All => crate::common::systems::combat::queue::ClearType::All,
-                    ClearType::First(n) => crate::common::systems::combat::queue::ClearType::First(n),
-                    ClearType::ByType(dt) => crate::common::systems::combat::queue::ClearType::ByType(dt),
-                };
-                let cleared = queue_utils::clear_threats(&mut queue, queue_clear_type);
+                // Clear threats using message ClearType directly
+                let cleared = queue_utils::clear_threats(&mut queue, clear_type);
 
                 info!(
                     "Client: Server confirmed clear queue for {:?}: {} threats cleared",

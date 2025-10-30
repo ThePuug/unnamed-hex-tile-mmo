@@ -162,9 +162,8 @@ pub fn handle_use_ability(
                         stamina.state -= dodge_cost;
                         stamina.step = stamina.state;
 
-                        // Clear queue (convert message ClearType to queue_utils ClearType)
-                        let queue_clear_type = crate::common::systems::combat::queue::ClearType::All;
-                        let cleared = queue_utils::clear_threats(&mut queue, queue_clear_type);
+                        // Clear queue
+                        let cleared = queue_utils::clear_threats(&mut queue, ClearType::All);
 
                         info!(
                             "Server: {:?} dodged {} threats, stamina: {}/{}",

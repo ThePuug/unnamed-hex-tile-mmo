@@ -204,17 +204,11 @@ mod tests {
         vitality_focus: (i8, u8, i8),
         instinct_presence: (i8, u8, i8),
     ) -> ActorAttributes {
-        ActorAttributes {
-            might_grace_axis: might_grace.0,
-            might_grace_spectrum: might_grace.1,
-            might_grace_shift: might_grace.2,
-            vitality_focus_axis: vitality_focus.0,
-            vitality_focus_spectrum: vitality_focus.1,
-            vitality_focus_shift: vitality_focus.2,
-            instinct_presence_axis: instinct_presence.0,
-            instinct_presence_spectrum: instinct_presence.1,
-            instinct_presence_shift: instinct_presence.2,
-        }
+        ActorAttributes::new(
+            might_grace.0, might_grace.1, might_grace.2,
+            vitality_focus.0, vitality_focus.1, vitality_focus.2,
+            instinct_presence.0, instinct_presence.1, instinct_presence.2,
+        )
     }
 
     #[test]
