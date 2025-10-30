@@ -3,6 +3,7 @@ pub mod entity_type;
 pub mod heading;
 pub mod keybits;
 pub mod offset;
+pub mod reaction_queue;
 pub mod resources;
 pub mod spawner;
 
@@ -59,6 +60,31 @@ pub struct ActorAttributes {
 }
 
 impl ActorAttributes {
+    /// Create new ActorAttributes with raw axis, spectrum, and shift values
+    pub fn new(
+        might_grace_axis: i8,
+        might_grace_spectrum: u8,
+        might_grace_shift: i8,
+        vitality_focus_axis: i8,
+        vitality_focus_spectrum: u8,
+        vitality_focus_shift: i8,
+        instinct_presence_axis: i8,
+        instinct_presence_spectrum: u8,
+        instinct_presence_shift: i8,
+    ) -> Self {
+        Self {
+            might_grace_axis,
+            might_grace_spectrum,
+            might_grace_shift,
+            vitality_focus_axis,
+            vitality_focus_spectrum,
+            vitality_focus_shift,
+            instinct_presence_axis,
+            instinct_presence_spectrum,
+            instinct_presence_shift,
+        }
+    }
+
     // === Private: Get current position (axis + shift) ===
 
     fn might_grace(&self) -> i8 {

@@ -12,11 +12,14 @@ use crate::{
         components::{
             behaviour::*,
             entity_type::{ actor::*, * },
-            heading::*, keybits::*, offset::*, resources::*, * 
-        }, 
-        message::{ Event, * }, 
-        plugins::nntree::NearestNeighbor, 
-        resources::map::Map
+            heading::*, keybits::*, offset::*,
+            reaction_queue::ReactionQueue,
+            *
+        },
+        message::{ Event, * },
+        plugins::nntree::NearestNeighbor,
+        resources::map::Map,
+        systems::combat::queue as queue_calcs,
     }
 };
 
@@ -87,6 +90,11 @@ pub fn do_spawn(
         // Note: Resource components (Health, Stamina, Mana, CombatState) are already on the entity
         // from Init event and have been updated by Incremental events. Don't re-insert them here!
 
+        // Initialize reaction queue with capacity based on Focus attribute
+        let attrs_val = attrs.unwrap_or_default();
+        let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
+        let reaction_queue = ReactionQueue::new(queue_capacity);
+
         commands.entity(ent).insert((
             loc,
             typ,
@@ -103,7 +111,8 @@ pub fn do_spawn(
             KeyBits::default(),
             Visibility::default(),
             Physics::default(),
-            attrs.unwrap_or_default(),
+            attrs_val,
+            reaction_queue,
         ))
         .observe(ready);
     }

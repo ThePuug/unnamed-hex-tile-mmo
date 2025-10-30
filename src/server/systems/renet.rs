@@ -11,12 +11,16 @@ use crate::{ common::{
                 actor::*,
             },
             keybits::*,
+            reaction_queue::*,
             resources::*,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
         resources::*,
-        systems::resources as resource_calcs,
+        systems::combat::{
+            queue as queue_calcs,
+            resources as resource_calcs,
+        },
     }, *
 };
 
@@ -61,17 +65,17 @@ pub fn do_manage_connections(
                     Resilience::Vital));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                let attrs = ActorAttributes {
-                    might_grace_axis: -10,
-                    might_grace_spectrum: 45,
-                    might_grace_shift: -45,
-                    vitality_focus_axis: -10,
-                    vitality_focus_spectrum: 10,
-                    vitality_focus_shift: 0,
-                    instinct_presence_axis: -10,
-                    instinct_presence_spectrum: 45,
-                    instinct_presence_shift: 45,
-                };
+                // UAT Testing: Start at Focus threshold (2/3 queue slots boundary)
+                // vitality_focus_axis = 33, spectrum = 33 allows shift to test boundary
+                // Focus = axis + shift: starting at 33, shift down/up to cross 66 threshold
+                // With shift -33: Focus = 0 (1 slot)
+                // With shift 0: Focus = 33 (2 slots)
+                // With shift +33: Focus = 66 (3 slots) ← crosses threshold here!
+                let attrs = ActorAttributes::new(
+                    -10, 45, -45,  // might_grace
+                    33, 33, 0,     // vitality_focus
+                    -10, 45, 45,   // instinct_presence
+                );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
                 let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
@@ -102,6 +106,9 @@ pub fn do_manage_connections(
                     in_combat: false,
                     last_action: time.elapsed(),
                 };
+                // Initialize reaction queue with capacity based on Focus attribute
+                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs);
+                let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 let ent = commands.spawn((
                     typ,
@@ -112,6 +119,7 @@ pub fn do_manage_connections(
                     stamina,
                     mana,
                     combat_state,
+                    reaction_queue,
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));

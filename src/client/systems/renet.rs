@@ -109,7 +109,7 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
             }
-            Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
+            Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
                 // Unpack chunk into individual tile spawns
                 for (qrz, typ) in tiles {
                     // Emit spawn events for world system to process
@@ -118,6 +118,38 @@ pub fn write_do(
 
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
+            }
+            Do { event: Event::InsertThreat { ent, threat } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                // Forward to Do writer for systems to handle
+                do_writer.write(Do { event: Event::InsertThreat { ent, threat } });
+            }
+            Do { event: Event::ApplyDamage { ent, damage, source } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                // Map source entity too
+                let source = l2r.get_by_right(&source).copied().unwrap_or(source);
+                // Forward to Do writer for systems to handle
+                do_writer.write(Do { event: Event::ApplyDamage { ent, damage, source } });
+            }
+            Do { event: Event::ClearQueue { ent, clear_type } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::ClearQueue { ent, clear_type } });
+            }
+            Do { event: Event::AbilityFailed { ent, reason } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
             }
             _ => {}
         }
@@ -147,7 +179,13 @@ pub fn send_try(
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
                     ent, typ, qrz, attrs
                 }}, bincode::config::legacy()).unwrap());
-            } 
+            }
+            Try { event: Event::UseAbility { ent, ability } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    ability
+                }}, bincode::config::legacy()).unwrap());
+            }
             _ => {}
         }
     }

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{character_panel, debug_resources, resource_bars, target_cursor, ui};
+use crate::client::systems::{character_panel, debug_resources, resource_bars, target_cursor, threat_icons, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -7,6 +7,7 @@ use crate::client::systems::{character_panel, debug_resources, resource_bars, ta
 /// - Character panel (C key) for viewing and adjusting attributes
 /// - HUD elements (time display, etc.)
 /// - Target cursor (red hex showing where player is looking)
+/// - Threat icons (circular display around player showing queued threats)
 /// - Other game UI elements as they are added
 pub struct UiPlugin;
 
@@ -22,6 +23,7 @@ impl Plugin for UiPlugin {
                 ui::setup.after(crate::client::systems::camera::setup),
                 character_panel::setup,
                 resource_bars::setup.after(crate::client::systems::camera::setup),
+                threat_icons::setup.after(crate::client::systems::camera::setup),
                 target_cursor::setup,
             ),
         );
@@ -35,8 +37,11 @@ impl Plugin for UiPlugin {
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
                 resource_bars::update,
+                threat_icons::update,
+                threat_icons::animate_clear,
                 target_cursor::update,
                 debug_resources::debug_drain_resources, // DEBUG: Remove after testing
+                debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
             ),
         );
     }

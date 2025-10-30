@@ -5,8 +5,8 @@ use tinyvec::ArrayVec;
 
 use crate::common::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, resources::*, * },
-    systems::gcd::*,
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, reaction_queue::*, resources::*, * },
+    systems::combat::gcd::*,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -28,6 +28,45 @@ pub enum Event {
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
     Death { ent: Entity },
+    /// Server → Client: Insert threat into reaction queue
+    InsertThreat { ent: Entity, threat: QueuedThreat },
+    /// Server → Client: Apply damage to entity (threat resolved)
+    ApplyDamage { ent: Entity, damage: f32, source: Entity },
+    /// Server-internal: Resolve a threat (apply damage with modifiers)
+    ResolveThreat { ent: Entity, threat: QueuedThreat },
+    /// Client → Server: Use an ability (Try event)
+    UseAbility { ent: Entity, ability: AbilityType },
+    /// Server → Client: Ability usage failed
+    AbilityFailed { ent: Entity, reason: AbilityFailReason },
+    /// Server → Client: Clear threats from queue
+    ClearQueue { ent: Entity, clear_type: ClearType },
+}
+
+/// Types of abilities that can be used
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum AbilityType {
+    Dodge,
+}
+
+/// Reasons why an ability usage might fail
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum AbilityFailReason {
+    InsufficientStamina,
+    InsufficientMana,
+    NoTargets,
+    OnCooldown,
+    InvalidTarget,
+}
+
+/// Types of queue clears for reaction abilities
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ClearType {
+    /// Clear all threats (Dodge)
+    All,
+    /// Clear first N threats (Counter, Parry - future)
+    First(usize),
+    /// Clear threats by damage type (Ward - future)
+    ByType(DamageType),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

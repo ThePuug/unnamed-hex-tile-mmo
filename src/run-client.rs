@@ -33,7 +33,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, animator, camera, input, renet, spawner_viz, world}
+    systems::{actor, animator, camera, combat, input, renet, spawner_viz, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -93,7 +93,7 @@ fn main() {
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
-        common::systems::resources::regenerate_resources,
+        common::systems::combat::resources::regenerate_resources,
     ));
 
     app.add_systems(PreUpdate, (
@@ -107,6 +107,11 @@ fn main() {
         actor::update,
         animator::update,
         camera::update,
+        combat::predict_dodge,
+        combat::handle_insert_threat,
+        combat::handle_apply_damage,
+        combat::handle_clear_queue,
+        combat::handle_ability_failed,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
     ));
