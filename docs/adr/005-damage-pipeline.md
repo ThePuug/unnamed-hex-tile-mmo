@@ -12,7 +12,9 @@ This ADR integrates the previous combat ADRs into a complete damage pipeline:
 
 - **ADR-002:** Provides Health/Stamina/Mana resources, attribute-based armor/resistance
 - **ADR-003:** Provides ReactionQueue for threat queueing and timer management
-- **ADR-004:** Provides ability system for damage generation (BasicAttack, future abilities)
+- **ADR-004:** Provides directional targeting and ability system for damage generation (BasicAttack targets indicated hostile, future abilities)
+
+**Note:** ADR-004 has been updated to use **directional targeting** (heading-based automatic target selection). The damage pipeline is agnostic to targeting method - it receives damage events from abilities regardless of whether targets were selected via mouse clicks or directional facing. All examples below reference directional targeting (e.g., "indicated target" instead of "clicked hex").
 
 ### Damage Flow Requirements
 
@@ -1023,7 +1025,7 @@ let mitigation = match damage_type {
 
 - **ADR-002:** Combat Foundation (Health, passive modifiers, death handling)
 - **ADR-003:** Reaction Queue System (threat insertion, timer expiry, resolution)
-- **ADR-004:** Ability System and Targeting (damage generation, ability effects)
+- **ADR-004:** Ability System and Directional Targeting (heading-based target selection, damage generation, ability effects)
 
 ## Decision Makers
 
@@ -1033,4 +1035,4 @@ let mitigation = match damage_type {
 
 ## Date
 
-2025-10-29
+2025-10-30 (Updated to reference ADR-004 directional targeting integration)

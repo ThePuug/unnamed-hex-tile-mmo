@@ -1,4 +1,4 @@
-# ADR-004: Ability System and Targeting
+# ADR-004: Ability System and Directional Targeting
 
 ## Status
 
@@ -8,138 +8,482 @@ Proposed
 
 ### Combat System Requirements
 
-From `docs/spec/combat-system.md`, abilities must support:
+From `docs/spec/combat-system.md`, the combat system is **directional** - no clicking or cursor required:
 
-1. **Hex-Based Targeting:**
-   - Single hex (click target)
-   - Line pattern (N hexes in line from caster)
-   - Radius pattern (all hexes within distance R)
-   - Adjacent (hexes directly adjacent to caster)
+**Core Design Philosophy:**
+> **"Directional combat"** - Face your enemies, position matters, no cursor required. Movement updates heading, heading determines targets.
 
-2. **Execution Patterns:**
-   - **Instant:** Resolve immediately on cast (melee attacks)
-   - **Projectile:** Visible projectile travels, hit on impact
-   - **Ground Effect:** Telegraph appears, damage after delay
-   - **Unavoidable:** Bypass reaction queue entirely
+1. **Heading System:**
+   - Movement with arrow keys automatically updates heading (facing direction)
+   - Heading persists after movement stops
+   - Heading determines character rotation AND position on hex
+   - Facing cone: 60° (one hex-face direction)
 
-3. **Triumvirate Integration:**
-   - Abilities tied to Approach/Resilience (signature skills)
-   - Direct → Charge, Distant → Volley, Ambushing → Trap, etc.
-   - Each build has 2 Approach + 2 Resilience abilities
+2. **Automatic Target Selection:**
+   - Default: Nearest hostile in facing direction (within 60° cone)
+   - Geometric tiebreaker: closest to exact facing angle
+   - No clicking required - just face enemies and press ability key
 
-4. **Resource Costs:**
-   - Stamina for physical abilities
-   - Mana for magic abilities
-   - No cooldowns (except 0.5s GCD for reactions)
+3. **Tier Lock System:**
+   - **Tier 1 (Close)**: 1-2 hexes
+   - **Tier 2 (Mid)**: 3-6 hexes
+   - **Tier 3 (Far)**: 7+ hexes
+   - Press 1/2/3 to lock to range tier
+   - Tier lock drops after 1 ability use
+   - TAB to cycle through targets in current tier
+
+4. **Target Indicators:**
+   - Red indicator: One hostile target (current tier + facing)
+   - Green indicator: Nearest ally in facing direction
+   - Visual feedback: tier badges, lock markers, range highlights
+
+5. **Ability Patterns:**
+   - **Single Target**: Hits indicated target
+   - **Self Target**: Affects caster (Dodge, buffs) - no targeting
+   - **Line Pattern**: N hexes in facing direction
+   - **Radius Pattern**: Area around you or target
+   - **Point-Blank AOE**: Area centered on you
+
+6. **Execution Patterns:**
+   - **Instant**: Resolves immediately (Basic Attack)
+   - **Projectile**: Travels to target hex, dodgeable (Volley)
+   - **Ground Effect**: Telegraph + delay (Eruption, Trap)
+   - **Unavoidable**: Bypass reaction queue (rare, expensive)
+
+7. **Keyboard Controls:**
+   - Arrow keys: Movement (updates heading automatically)
+   - Q/W/E/R: Ability slots
+   - 1/2/3: Tier lock (close/mid/far)
+   - TAB: Cycle targets in tier
+   - ESC: Clear manual targeting
 
 ### Current Codebase State
 
-**GCD System Exists:** `common/systems/gcd.rs` has `GcdType` enum and basic structure
+**Heading System**: Exists in `common/components/heading.rs` - 6 cardinal directions (NE, E, SE, SW, W, NW)
 
-**Triumvirate Complete:** `ActorImpl` in `common/components/entity_type/actor.rs` has Origin, Approach, Resilience
+**GCD System**: `common/systems/gcd.rs` - GcdType enum and cooldown tracking
 
-**No Ability System:** No ability definitions, no targeting system, no casting flow
+**Triumvirate**: `ActorImpl` in `common/components/entity_type/actor.rs` - Approach/Resilience enums
+
+**Movement**: `controlled.rs` - Client-side prediction for movement with input queue
+
+**No Targeting System**: No directional targeting, no tier lock, no target indicators
 
 ### Architectural Challenges
 
-#### Challenge 1: Ability Data Structure
+#### Challenge 1: Heading Integration
 
-**Problem:** How to define abilities (data-driven vs code-driven)?
-
-**Options:**
-- **Hardcoded Rust structs:** Fast, type-safe, requires recompile for changes
-- **Data files (JSON/RON):** Flexible, moddable, slower parsing, less type safety
-- **Hybrid:** Core abilities hardcoded, later support data-driven abilities
+**Problem:** Movement updates heading, but abilities need to query heading for targeting.
 
 **Considerations:**
-- MVP needs ~5 abilities (Basic Attack, Dodge, maybe 2 more)
-- Balance tuning requires frequent cost/damage changes
-- Future: 50+ abilities across all Triumvirate combinations
+- Heading component already exists (6 directions: NE, E, SE, SW, W, NW)
+- Movement systems in `controlled.rs` already update heading
+- Abilities need to convert heading → facing cone (60° arc)
+- Heading determines both rotation AND position on hex (visual facing)
 
-#### Challenge 2: Targeting Validation
+**Design Question:** How to convert 6-direction heading into 60° facing cone for targeting?
+- Each heading corresponds to one hex-face (60°)
+- Heading::NE = facing 30° (northeast)
+- Cone extends ±30° from heading angle
+- Use angular math to check if target within cone
 
-**Problem:** Client and server must agree on valid targets.
+#### Challenge 2: Automatic Target Selection Algorithm
 
-- Client shows targeting indicator (which hexes will be hit)
-- Server validates target location (in range, line-of-sight, entity present)
-- Latency: Entity may move between client cast and server validation
+**Problem:** Find "nearest hostile in facing direction" efficiently.
 
-**Validation concerns:**
-- Range check (caster to target distance <= max_range)
-- Line-of-sight (no obstacles blocking path)
-- Entity occupancy (entity at target hex when ability resolves)
-- Targeting patterns match (client highlights same hexes server hits)
+**Algorithm:**
+1. Query all hostiles within max range (use NNTree spatial index)
+2. Filter to entities within 60° facing cone (angular check)
+3. Select nearest by distance (hex distance)
+4. If tie: Select closest to exact heading angle (geometric tiebreaker)
 
-#### Challenge 3: Projectile System
+**Performance Considerations:**
+- NNTree query fast (spatial index)
+- Angular filtering cheap (dot product or angle comparison)
+- Runs every frame for local player (UI indicator updates)
+- Runs on ability use for all entities (validation)
 
-**Problem:** How to represent traveling projectiles (physics vs discrete)?
+**Tier Lock Modification:**
+- If tier locked: Filter to entities within tier range FIRST
+- Then apply facing cone filter
+- Then nearest selection
+
+#### Challenge 3: Tier Lock State Management
+
+**Problem:** Track tier lock per entity, drop after 1 ability use.
 
 **Options:**
-- **Physics-based:** Entities with velocity, collision detection (complex, smooth)
-- **Discrete hex jumps:** Projectile teleports hex-by-hex (simple, janky)
-- **Interpolated path:** Calculate path on cast, interpolate position (middle ground)
+- **Component:** `TierLock { tier: Option<RangeTier>, expires_on_next_ability: bool }`
+- **Resource:** Global HashMap<Entity, TierLock> (simpler, no component bloat)
+- **Event-driven:** Set lock on key press, clear on ability use
 
 **Considerations:**
-- Projectiles provide visual warning (see arrow coming)
-- Travel time allows dodging by moving off targeted hex
-- Must handle projectile despawn (hit target, max range, obstacle)
+- Tier lock is transient (drops after 1 ability)
+- Only applies to player (NPCs use default targeting)
+- Client-side only (server doesn't need tier lock state)
 
-#### Challenge 4: Telegraph System
+**Decision:** Client-side component `TierLock`, cleared by ability usage system
 
-**Problem:** Ground indicators before damage (visual + timing).
+#### Challenge 4: TAB Cycling State
 
-- Server decides when to telegraph (0.5-2s before damage)
-- Client renders ground effect (red hexes, expanding ring, etc.)
-- Server triggers damage after delay (fixed duration)
-- Entities can move off telegraphed hexes (dodging by positioning)
+**Problem:** TAB cycles through valid targets, lock persists until ESC or target invalid.
 
-**Timing concerns:**
-- Telegraph duration must match between client/server
-- Latency may cause visual mismatch (client sees telegraph, server hasn't started)
-- Multiple telegraphs overlapping (visual clarity)
+**State:**
+- `TargetingOverride { locked_target: Entity, tier: RangeTier }`
+- Press TAB: increment to next target in valid list
+- Press ESC: clear override, return to automatic
+- Target dies or moves out of range: clear override
 
-#### Challenge 5: Ability → Triumvirate Mapping
+**Cycle Logic:**
+1. Get valid targets in current tier + facing cone
+2. Find index of current locked target
+3. Increment index (wrap around to 0)
+4. Lock to new target
 
-**Problem:** How to grant abilities based on Approach/Resilience?
+#### Challenge 5: Target Indicator Rendering
 
-- Each `ActorImpl` has `Approach` and `Resilience` enums
-- Each combo should grant 2-4 signature abilities
-- Players may not have all abilities at once (progression system future)
+**Problem:** Show red hostile / green ally indicators that update smoothly.
 
-**Mapping options:**
-- **Component per ability:** `HasCharge`, `HasDodge` (explicit, queryable)
-- **Ability list component:** `AvailableAbilities(Vec<AbilityType>)` (flexible)
-- **Derive from ActorImpl:** Calculate abilities on-demand from Approach/Resilience (no storage)
+**Visual Design:**
+- Red indicator: Outline or ground marker on hostile target
+- Green indicator: Same for ally target
+- Tier badge: Small "1", "2", "3" icon when tier locked
+- Range highlight: Show valid hexes in tier when no targets (tier lock active but empty)
+
+**Update Frequency:**
+- Run every frame for local player (smooth indicator movement)
+- Recalculate on:
+  - Movement (heading changes)
+  - Tier lock change (1/2/3 pressed)
+  - TAB press (manual cycle)
+  - Entities move (targets shift in/out of cone)
 
 ### MVP Requirements
 
 From combat spec MVP:
 
 **Player Abilities:**
-- Basic Attack (instant, adjacent hex, 0 cost, physical damage)
-- Dodge (clear queue, 30 stamina, 0.5s GCD)
+- **Basic Attack** (Q key): Instant, adjacent hex (close tier), hits indicated hostile target
+- **Dodge** (E key): Self-target, clears queue, no targeting required
 
 **Enemy Abilities:**
-- Wild Dog: Basic melee attack (instant, adjacent, 15 damage, 2s cooldown)
+- Wild Dog: Basic melee attack (auto-targets nearest player in facing direction)
 
 **Targeting:**
-- Single hex targeting only (for Basic Attack)
-- No projectiles (instant abilities)
-- No telegraphs (no ground effects yet)
+- Automatic targeting (nearest in direction)
+- Default tier (no tier lock initially)
+- Red hostile indicator shows current target
+- Face Wild Dog with arrow keys, press Q to attack
 
 **Scope Simplifications:**
-- No Triumvirate ability grants yet (hardcode Basic Attack + Dodge for all)
-- No complex targeting patterns (line, radius, adjacent)
-- No projectile physics
-- No ability progression/unlocking
+- No tier lock in MVP (add in Phase 2)
+- No TAB cycling (automatic targeting sufficient)
+- No complex patterns (Line, Radius, Adjacent) - Single and SelfTarget only
+- No projectiles (instant abilities only)
 
 ## Decision
 
-We will implement a **hybrid ability system with hardcoded core abilities and extensible targeting patterns**, prioritizing MVP simplicity while designing for future complexity.
+We will implement a **directional targeting system with automatic target selection based on heading and proximity**, prioritizing MVP simplicity while designing for tier lock and TAB cycling extensions.
 
 ### Core Architectural Principles
 
-#### 1. Ability Definitions as Rust Enums
+#### 1. Heading-Based Targeting
+
+**Heading as Foundation:**
+- All targeting derives from `Heading` component (already exists)
+- Heading updated by movement systems (`controlled.rs`)
+- Heading determines 60° facing cone for target selection
+- No manual "turn in place" command (movement only)
+
+**Facing Cone Calculation:**
+
+```rust
+pub fn is_in_facing_cone(
+    caster_heading: Heading,
+    caster_loc: Loc,
+    target_loc: Loc,
+) -> bool {
+    let heading_angle = caster_heading.to_angle();  // NE=30°, E=90°, SE=150°, etc.
+    let target_angle = (target_loc - caster_loc).angle();  // Angle from caster to target
+
+    let delta = (target_angle - heading_angle).abs();
+    let delta_normalized = if delta > 180.0 { 360.0 - delta } else { delta };
+
+    delta_normalized <= 30.0  // 60° cone = ±30° from heading
+}
+```
+
+**Heading → Angle Mapping:**
+- Heading::NE → 30° (northeast)
+- Heading::E → 90° (east)
+- Heading::SE → 150° (southeast)
+- Heading::SW → 210° (southwest)
+- Heading::W → 270° (west)
+- Heading::NW → 330° (northwest)
+
+#### 2. Automatic Target Selection
+
+**Target Selection Module:** `common/systems/targeting.rs`
+
+Functions used by both client and server:
+
+```rust
+pub fn select_target(
+    caster_loc: Loc,
+    caster_heading: Heading,
+    tier_lock: Option<RangeTier>,
+    nntree: &NNTree,
+    entity_query: &Query<(&EntityType, &Loc)>,
+) -> Option<Entity>;
+
+pub enum RangeTier {
+    Close,   // 1-2 hexes
+    Mid,     // 3-6 hexes
+    Far,     // 7+ hexes
+}
+
+pub fn get_range_tier(distance: u32) -> RangeTier {
+    match distance {
+        1..=2 => RangeTier::Close,
+        3..=6 => RangeTier::Mid,
+        _ => RangeTier::Far,
+    }
+}
+```
+
+**`select_target` Algorithm:**
+
+```rust
+pub fn select_target(
+    caster_loc: Loc,
+    caster_heading: Heading,
+    tier_lock: Option<RangeTier>,
+    nntree: &NNTree,
+    entity_query: &Query<(&EntityType, &Loc)>,
+) -> Option<Entity> {
+    // 1. Query entities within max range (20 hexes for MVP)
+    let nearby = nntree.locate_within_distance(caster_loc, 20);
+
+    // 2. Filter to hostiles in facing cone
+    let mut candidates: Vec<(Entity, Loc, u32)> = Vec::new();
+    for ent in nearby {
+        let Ok((entity_type, loc)) = entity_query.get(ent) else { continue };
+
+        // Filter to actors (NPCs and players)
+        if !matches!(entity_type, EntityType::Actor(_)) { continue };
+
+        // Check facing cone (60°)
+        if !is_in_facing_cone(caster_heading, caster_loc, *loc) { continue };
+
+        let distance = caster_loc.distance(*loc);
+
+        // Apply tier filter if locked
+        if let Some(tier) = tier_lock {
+            if get_range_tier(distance) != tier { continue };
+        }
+
+        candidates.push((ent, *loc, distance));
+    }
+
+    // 3. Select nearest (distance)
+    if candidates.is_empty() { return None; }
+
+    candidates.sort_by_key(|(_, _, dist)| *dist);
+    let nearest_distance = candidates[0].2;
+
+    // 4. Geometric tiebreaker: If multiple at same distance, pick most "in front"
+    let tied: Vec<_> = candidates.iter()
+        .filter(|(_, _, dist)| *dist == nearest_distance)
+        .collect();
+
+    if tied.len() == 1 {
+        return Some(tied[0].0);
+    }
+
+    // Calculate angle delta from exact heading for tiebreaker
+    let heading_angle = caster_heading.to_angle();
+    let mut best_target = tied[0].0;
+    let mut smallest_delta = f32::MAX;
+
+    for (ent, loc, _) in tied {
+        let target_angle = (*loc - caster_loc).angle();
+        let delta = (target_angle - heading_angle).abs();
+        let delta_normalized = if delta > 180.0 { 360.0 - delta } else { delta };
+
+        if delta_normalized < smallest_delta {
+            smallest_delta = delta_normalized;
+            best_target = *ent;
+        }
+    }
+
+    Some(best_target)
+}
+```
+
+**Benefits:**
+- Deterministic (same inputs → same target)
+- Client and server use identical logic (no desync)
+- Geometric tiebreaker prevents arbitrary selection
+- Extensible (add tier lock, faction filtering)
+
+---
+
+#### 3. Client-Side Tier Lock Management
+
+**Component:** `client/components/tier_lock.rs`
+
+```rust
+#[derive(Component)]
+pub struct TierLock {
+    pub locked_tier: Option<RangeTier>,
+    pub clear_on_next_ability: bool,
+}
+```
+
+**System:** `client/systems/targeting::handle_tier_lock_input`
+
+```rust
+pub fn handle_tier_lock_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut TierLock, With<Controlled>>,  // Local player only
+) {
+    let Ok(mut tier_lock) = query.get_single_mut() else { return };
+
+    if keyboard.just_pressed(KeyCode::Digit1) {
+        tier_lock.locked_tier = Some(RangeTier::Close);
+        tier_lock.clear_on_next_ability = true;
+    } else if keyboard.just_pressed(KeyCode::Digit2) {
+        tier_lock.locked_tier = Some(RangeTier::Mid);
+        tier_lock.clear_on_next_ability = true;
+    } else if keyboard.just_pressed(KeyCode::Digit3) {
+        tier_lock.locked_tier = Some(RangeTier::Far);
+        tier_lock.clear_on_next_ability = true;
+    }
+}
+```
+
+**Clearing Logic:**
+
+```rust
+// In ability usage system
+pub fn clear_tier_lock_on_ability_use(
+    mut query: Query<&mut TierLock, With<Controlled>>,
+) {
+    let Ok(mut tier_lock) = query.get_single_mut() else { return };
+
+    if tier_lock.clear_on_next_ability {
+        tier_lock.locked_tier = None;
+        tier_lock.clear_on_next_ability = false;
+    }
+}
+```
+
+**Why Client-Only:**
+- Tier lock is input assistance (doesn't affect game logic)
+- Server doesn't care which tier was locked (just validates final target)
+- Reduces network traffic (no tier lock sync needed)
+
+---
+
+#### 4. Target Indicator Rendering (Client-Side)
+
+**System:** `client/systems/targeting_ui::render_target_indicators`
+
+**Rendering Approach:**
+- Query local player's heading, location, tier lock
+- Call `select_target` to get current hostile/ally targets
+- Spawn/update indicator entities (ground markers or outlines)
+- Update every frame for smooth movement
+
+**Visual Components:**
+
+```rust
+#[derive(Component)]
+pub struct TargetIndicator {
+    pub indicator_type: IndicatorType,  // Hostile or Ally
+}
+
+pub enum IndicatorType {
+    Hostile,  // Red
+    Ally,     // Green
+}
+```
+
+**Rendering Logic:**
+
+```rust
+pub fn render_target_indicators(
+    mut commands: Commands,
+    local_player: Query<(&Loc, &Heading, &TierLock), With<Controlled>>,
+    nntree: Res<NNTree>,
+    entities: Query<(&EntityType, &Loc)>,
+    mut indicators: Query<(Entity, &mut Transform, &TargetIndicator)>,
+) {
+    let Ok((loc, heading, tier_lock)) = local_player.get_single() else { return };
+
+    // Select hostile target
+    let hostile_target = select_target(
+        *loc,
+        *heading,
+        tier_lock.locked_tier,
+        &nntree,
+        &entities,
+    );
+
+    // Select ally target (similar logic, filter to allies)
+    let ally_target = select_ally_target(*loc, *heading, &nntree, &entities);
+
+    // Update or spawn hostile indicator
+    if let Some(target_ent) = hostile_target {
+        let target_loc = entities.get(target_ent).unwrap().1;
+
+        // Find existing indicator or spawn new
+        let mut found = false;
+        for (_, mut transform, indicator) in &mut indicators {
+            if matches!(indicator.indicator_type, IndicatorType::Hostile) {
+                transform.translation = target_loc.to_world_pos();  // Update position
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            commands.spawn((
+                SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::rgb(1.0, 0.0, 0.0),  // Red
+                        custom_size: Some(Vec2::new(1.5, 1.5)),  // Hex outline size
+                        ..default()
+                    },
+                    transform: Transform::from_translation(target_loc.to_world_pos()),
+                    ..default()
+                },
+                TargetIndicator {
+                    indicator_type: IndicatorType::Hostile,
+                },
+            ));
+        }
+    } else {
+        // No target: hide hostile indicator
+        for (ent, _, indicator) in &indicators {
+            if matches!(indicator.indicator_type, IndicatorType::Hostile) {
+                commands.entity(ent).despawn();
+            }
+        }
+    }
+
+    // Similar logic for ally indicator...
+}
+```
+
+**Visual Feedback Enhancements (Future):**
+- Tier badge: Small "1"/"2"/"3" icon on indicator when tier locked
+- Range highlight: Highlight valid hexes in tier when no targets (visual feedback that tier lock active but no enemies in range)
+- Lock marker: Additional border when TAB manual lock active
+
+---
+
+#### 5. Ability Definitions (Hardcoded Enums)
 
 **Ability Data Structure:**
 
@@ -172,18 +516,19 @@ pub enum AbilityCost {
 }
 
 pub enum TargetingPattern {
-    Single { max_range: u8 },
-    Line { length: u8 },
-    Radius { range: u8, radius: u8 },
-    Adjacent,
-    SelfTarget,  // Dodge, Ward (no targeting required)
+    SingleTarget,     // Hits indicated target (red or green indicator)
+    SelfTarget,       // No targeting, affects caster only
+    LineFacing { length: u8 },     // N hexes in facing direction (future)
+    RadiusSelf { radius: u8 },     // Area around caster (future)
+    RadiusTarget { radius: u8 },   // Area around indicated target (future)
+    AdjacentFacing,   // Hexes in front arc (future)
 }
 
 pub enum ExecutionType {
     Instant,
-    Projectile { speed: f32, lifetime: Duration },
-    GroundEffect { delay: Duration },
-    Unavoidable,
+    Projectile { speed: f32, lifetime: Duration },  // Future
+    GroundEffect { delay: Duration },  // Future
+    Unavoidable,  // Future
 }
 
 pub enum AbilityEffect {
@@ -192,12 +537,6 @@ pub enum AbilityEffect {
     // Future: Heal, Buff, Debuff, Knockback, etc.
 }
 ```
-
-**Rationale:**
-- **Hardcoded for MVP:** Fast, type-safe, easy to refactor
-- **Enum-driven:** Match expressions exhaustive (compiler enforces handling)
-- **Extensible:** Add new ability types without breaking existing code
-- **Future data-driven:** Can load from JSON/RON later, deserialize into enums
 
 **Ability Registry:** `common/systems/abilities.rs`
 
@@ -208,7 +547,7 @@ pub fn get_ability_definition(ability_type: AbilityType) -> AbilityDefinition {
             ability_type: AbilityType::BasicAttack,
             cost: AbilityCost::None,
             gcd_type: GcdType::Attack,
-            targeting: TargetingPattern::Single { max_range: 1 },
+            targeting: TargetingPattern::SingleTarget,  // Hits indicated hostile
             execution: ExecutionType::Instant,
             effects: vec![
                 AbilityEffect::Damage {
@@ -221,7 +560,7 @@ pub fn get_ability_definition(ability_type: AbilityType) -> AbilityDefinition {
             ability_type: AbilityType::Dodge,
             cost: AbilityCost::Stamina(30.0),
             gcd_type: GcdType::Reaction,
-            targeting: TargetingPattern::SelfTarget,
+            targeting: TargetingPattern::SelfTarget,  // No targeting required
             execution: ExecutionType::Instant,
             effects: vec![
                 AbilityEffect::ClearQueue {
@@ -234,85 +573,30 @@ pub fn get_ability_definition(ability_type: AbilityType) -> AbilityDefinition {
 }
 ```
 
-**Benefits:**
-- Single source of truth for ability data
-- Easy to tune balance (change `amount: 20.0` → `amount: 25.0`)
-- Type system prevents invalid abilities (can't have projectile with SelfTarget)
-
 ---
 
-#### 2. Shared Targeting Validation in `common/`
-
-**Targeting Module:** `common/systems/targeting.rs`
-
-Functions used by both client and server:
-
-```rust
-pub fn get_targeted_hexes(
-    caster_loc: Loc,
-    target_loc: Loc,
-    pattern: &TargetingPattern,
-    map: &Map,
-) -> Vec<Qrz>;
-
-pub fn is_valid_target(
-    caster_loc: Loc,
-    target_loc: Loc,
-    pattern: &TargetingPattern,
-    map: &Map,
-) -> bool;
-
-pub fn get_entities_at_hexes(
-    hexes: &[Qrz],
-    nntree: &NNTree,
-) -> Vec<Entity>;
-```
-
-**`get_targeted_hexes` logic:**
-- `Single { max_range }`: Return [target_loc] if distance <= max_range
-- `Line { length }`: Return hexes in line from caster toward target (up to length)
-- `Radius { range, radius }`: Return all hexes within radius of target (if target in range)
-- `Adjacent`: Return 6 hexes adjacent to caster (qrz neighbors)
-- `SelfTarget`: Return [caster_loc]
-
-**`is_valid_target` checks:**
-- Distance <= max_range
-- Line-of-sight clear (no solid decorators blocking path) - future
-- Target hex is valid terrain (exists in map, not void)
-
-**`get_entities_at_hexes` query:**
-- Use NNTree to find entities at exact Loc (distance == 0)
-- Filter to EntityType::Actor (only actors can be hit)
-- Return list of entities (may be multiple in AOE)
-
-**Benefits:**
-- Client and server use identical targeting logic (no desync)
-- Easy to test (pure functions, no ECS queries in validation)
-- Extensible (add new patterns without rewriting validation)
-
----
-
-#### 3. Client-Predicted Ability Usage
+#### 6. Client-Predicted Ability Usage
 
 **Prediction Flow:**
 
 1. **Client initiates:**
-   - Player presses attack key (e.g., Left Click on target hex)
-   - Client validates targeting (is_valid_target)
+   - Player presses ability key (Q for Basic Attack, E for Dodge)
+   - Client queries current target indicator (hostile or ally)
+   - Client validates targeting (target exists, in range)
    - Client predicts ability effects:
      - Spend resource (stamina/mana step -= cost)
      - Apply effects optimistically (damage prediction in ADR-005)
-   - Client sends `Try::UseAbility { ent, ability_type, target_loc }`
+   - Client sends `Try::UseAbility { ent, ability_type, target: Option<Entity> }`
 
 2. **Server validates:**
    - Check resource cost available
-   - Check GCD not active (from ADR-002 GCD system)
-   - Check targeting valid (is_valid_target with server's map/entity state)
+   - Check GCD not active
+   - Check target valid (exists, in range, in facing cone - server recalculates target)
    - If valid: spend resource, execute ability, emit confirmations
    - If invalid: emit `Do::AbilityFailed { ent, ability_type, reason }`
 
 3. **Server broadcasts:**
-   - `Do::AbilityUsed { ent, ability_type, target_loc }`
+   - `Do::AbilityUsed { ent, ability_type, target: Option<Entity> }`
    - `Do::Stamina/Mana { ent, current, max }` (updated resource)
    - `Do::Gcd { ent, typ, duration }`
    - Ability effects (damage, queue clear, etc. - separate events)
@@ -322,180 +606,215 @@ pub fn get_entities_at_hexes(
    - Remote players: play ability animation, apply effects
    - If rollback: `Do::AbilityFailed` → undo predicted changes
 
-**Rationale:**
-- Instant feedback for local player (critical for combat feel)
-- Server authority prevents cheating (range hacks, cost bypassing)
-- Remote players see confirmed abilities only (no prediction needed)
-
----
-
-#### 4. Instant Ability Execution (MVP)
-
-**Server System:** `server/systems/abilities::execute_ability`
-
-**Processes:** `Try::UseAbility` events
-
-**Flow for BasicAttack:**
-```
-1. Get ability definition (BasicAttack)
-2. Validate targeting (target hex in range 1)
-3. Get entities at target hex (NNTree query)
-4. For each entity:
-   - Calculate damage (base * (1 + might/100))
-   - Insert into ReactionQueue (ADR-003)
-   - Emit Do::InsertThreat { ent: target, threat }
-5. Emit Do::AbilityUsed { ent: caster, ability_type, target_loc }
-6. Apply GCD (0.5s for Attack)
-```
-
-**Flow for Dodge:**
-```
-1. Get ability definition (Dodge)
-2. Validate: queue not empty, stamina >= 30
-3. Clear queue (ADR-003 clear_threats function)
-4. Spend stamina
-5. Emit Do::ClearQueue { ent, clear_type: All }
-6. Emit Do::Stamina { ent, current, max }
-7. Apply GCD (0.5s for Reaction)
-```
-
-**Client Response:**
-- Receive `Do::AbilityUsed` → play attack animation
-- Receive `Do::InsertThreat` → insert into target's visual queue (if visible)
-- Receive `Do::ClearQueue` → clear local queue (already done if predicted)
-
-**Benefits:**
-- Instant abilities simple to implement (no projectile/telegraph complexity)
-- Validates MVP combat loop (attack → queue → reaction)
-- Foundation for projectile/ground effect abilities (Phase 2)
-
----
-
-#### 5. GCD Integration
-
-**GCD Types (from spec):**
-- `Attack`: 0.5s (Basic Attack, offensive abilities)
-- `Reaction`: 0.5s (Dodge, Counter, Ward)
-- Other types future (Spawn, PlaceSpawner already defined in gcd.rs)
-
-**GCD Component:** Already exists in `common/systems/gcd.rs`
-
-**Integration Points:**
-1. Server checks GCD before executing ability (validation)
-2. Server applies GCD after successful ability use
-3. Client displays GCD indicator (dimmed ability icons)
-4. GCD duration from ability definition
-
-**Shared GCD vs Per-Ability Cooldowns:**
-- MVP: All reactions share 0.5s GCD (prevents spamming Dodge)
-- Offensive abilities share separate 0.5s GCD
-- Future: Individual ability cooldowns (Charge: 5s, Fireball: 3s)
-
-**GCD System Enhancement:**
-```rust
-// Already exists, extend with ability validation
-pub fn is_gcd_active(ent: Entity, gcd_type: GcdType, gcd_resource: &Res<Gcd>) -> bool;
-pub fn apply_gcd(ent: Entity, gcd_type: GcdType, duration: Duration, gcd_resource: &mut ResMut<Gcd>);
-```
-
----
-
-#### 6. Ability Availability (Triumvirate Mapping)
-
-**MVP Approach: Universal Abilities**
-
-All actors have Basic Attack and Dodge (no Triumvirate filtering):
+**Example: BasicAttack Flow**
 
 ```rust
-// Simple check for MVP
-pub fn has_ability(entity: Entity, ability_type: AbilityType) -> bool {
-    match ability_type {
-        AbilityType::BasicAttack => true,  // Everyone has basic attack
-        AbilityType::Dodge => true,        // Everyone has dodge
-        _ => false,  // Future abilities require Triumvirate check
+// Client: Player presses Q
+pub fn handle_ability_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut local_player: Query<(&Loc, &Heading, &TierLock, &mut Stamina), With<Controlled>>,
+    nntree: Res<NNTree>,
+    entities: Query<(&EntityType, &Loc)>,
+    mut writer: EventWriter<Try>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyQ) { return; }
+
+    let Ok((loc, heading, tier_lock, mut stamina)) = local_player.get_single_mut() else { return };
+
+    // Select target using same logic as server
+    let target = select_target(*loc, *heading, tier_lock.locked_tier, &nntree, &entities);
+
+    let Some(target_ent) = target else {
+        // No target: show error message, don't send
+        return;
+    };
+
+    // Validate range (BasicAttack range = 1, adjacent only)
+    let target_loc = entities.get(target_ent).unwrap().1;
+    let distance = loc.distance(*target_loc);
+    if distance > 1 {
+        // Out of range: show error
+        return;
+    }
+
+    // Client predicts: No resource cost for BasicAttack, but we'd predict stamina spend here if needed
+
+    // Send ability use
+    writer.write(Try {
+        event: Event::UseAbility {
+            ent: local_player_ent,  // Need to store this somewhere
+            ability_type: AbilityType::BasicAttack,
+            target: Some(target_ent),
+        },
+    });
+
+    // Clear tier lock if active
+    // (handled by separate system)
+}
+```
+
+**Server Validation:**
+
+```rust
+// Server: Process Try::UseAbility
+pub fn execute_ability(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    query: Query<(&Loc, &Heading, &Stamina, &Mana, &Gcd)>,
+    nntree: Res<NNTree>,
+    entities: Query<(&EntityType, &Loc)>,
+) {
+    for Try { event: Event::UseAbility { ent, ability_type, target } } in reader.read() {
+        let Ok((loc, heading, stamina, mana, gcd)) = query.get(*ent) else { continue };
+
+        let def = get_ability_definition(*ability_type);
+
+        // Validate resource cost
+        match def.cost {
+            AbilityCost::Stamina(cost) if stamina.state < cost => {
+                writer.write(Do {
+                    event: Event::AbilityFailed {
+                        ent: *ent,
+                        ability_type: *ability_type,
+                        reason: "Not enough stamina".to_string(),
+                    },
+                });
+                continue;
+            },
+            _ => {},
+        }
+
+        // Validate GCD
+        if is_gcd_active(*ent, def.gcd_type, gcd) {
+            writer.write(Do {
+                event: Event::AbilityFailed {
+                    ent: *ent,
+                    ability_type: *ability_type,
+                    reason: "Ability on cooldown".to_string(),
+                },
+            });
+            continue;
+        }
+
+        // Validate targeting
+        match def.targeting {
+            TargetingPattern::SingleTarget => {
+                // Recalculate target server-side (don't trust client's target)
+                let server_target = select_target(*loc, *heading, None, &nntree, &entities);
+
+                // Accept client's target if it matches server's selection
+                // (allows for some latency tolerance)
+                let final_target = if Some(server_target) == *target || server_target.is_some() {
+                    server_target
+                } else {
+                    // Client's target doesn't match server's calculation
+                    writer.write(Do {
+                        event: Event::AbilityFailed {
+                            ent: *ent,
+                            ability_type: *ability_type,
+                            reason: "Invalid target".to_string(),
+                        },
+                    });
+                    continue;
+                };
+
+                let Some(target_ent) = final_target else {
+                    writer.write(Do {
+                        event: Event::AbilityFailed {
+                            ent: *ent,
+                            ability_type: *ability_type,
+                            reason: "No target in range".to_string(),
+                        },
+                    });
+                    continue;
+                };
+
+                // Execute ability effects
+                for effect in &def.effects {
+                    match effect {
+                        AbilityEffect::Damage { amount, damage_type } => {
+                            writer.write(Try {
+                                event: Event::DealDamage {
+                                    source: *ent,
+                                    target: target_ent,
+                                    base_damage: *amount,
+                                    damage_type: *damage_type,
+                                },
+                            });
+                        },
+                        _ => {},
+                    }
+                }
+
+                // Broadcast success
+                writer.write(Do {
+                    event: Event::AbilityUsed {
+                        ent: *ent,
+                        ability_type: *ability_type,
+                        target: Some(target_ent),
+                    },
+                });
+
+                // Apply GCD
+                apply_gcd(*ent, def.gcd_type, Duration::from_millis(500));
+            },
+
+            TargetingPattern::SelfTarget => {
+                // No targeting validation needed (Dodge, buffs, etc.)
+                for effect in &def.effects {
+                    match effect {
+                        AbilityEffect::ClearQueue { clear_type } => {
+                            // Clear queue (ADR-003 logic)
+                            writer.write(Do {
+                                event: Event::ClearQueue {
+                                    ent: *ent,
+                                    clear_type: *clear_type,
+                                },
+                            });
+                        },
+                        _ => {},
+                    }
+                }
+
+                // Spend resource
+                if let AbilityCost::Stamina(cost) = def.cost {
+                    stamina.state -= cost;
+                    writer.write(Do {
+                        event: Event::Stamina {
+                            ent: *ent,
+                            current: stamina.state,
+                            max: stamina.max,
+                            regen_rate: stamina.regen_rate,
+                        },
+                    });
+                }
+
+                // Broadcast success
+                writer.write(Do {
+                    event: Event::AbilityUsed {
+                        ent: *ent,
+                        ability_type: *ability_type,
+                        target: None,
+                    },
+                });
+
+                // Apply GCD
+                apply_gcd(*ent, def.gcd_type, Duration::from_millis(500));
+            },
+
+            _ => {
+                // Future: Line, Radius, Adjacent patterns
+            },
+        }
     }
 }
 ```
 
-**Future: Triumvirate-Based Grants**
-
-Query `ActorImpl` for Approach/Resilience:
-
-```rust
-pub fn get_available_abilities(actor_impl: &ActorImpl) -> Vec<AbilityType> {
-    let mut abilities = vec![AbilityType::BasicAttack];  // Everyone
-
-    // Approach abilities (2 per Approach)
-    match actor_impl.approach {
-        Approach::Direct => {
-            abilities.push(AbilityType::Charge);
-            abilities.push(AbilityType::Slam);
-        },
-        Approach::Distant => {
-            abilities.push(AbilityType::Volley);
-            abilities.push(AbilityType::Snipe);
-        },
-        // ... other Approaches
-    }
-
-    // Resilience abilities (2 per Resilience)
-    match actor_impl.resilience {
-        Resilience::Vital => {
-            abilities.push(AbilityType::Endure);
-            abilities.push(AbilityType::Regenerate);
-        },
-        Resilience::Shielded => {
-            abilities.push(AbilityType::Ward);
-            abilities.push(AbilityType::Fortify);
-        },
-        // ... other Resiliences
-    }
-
-    abilities
-}
-```
-
-**Component:** `AvailableAbilities(Vec<AbilityType>)` (optional, cache results)
-
-**Benefits:**
-- MVP defers complexity (all have same abilities)
-- Future integration clear (just implement get_available_abilities)
-- UI can query available abilities for hotbar display
-
 ---
 
-#### 7. Targeting UI (Client-Side)
+#### 7. Network Message Structure
 
-**Targeting Indicator System:** `client/systems/targeting_ui.rs`
-
-**Functionality:**
-- Hover over hex → highlight hex (white outline)
-- Ability selected → show range indicator (circle around player)
-- Valid target → green highlight
-- Invalid target → red highlight
-- Click → send UseAbility with target_loc
-
-**Visual Feedback:**
-- Range circle: Shader ring at max_range distance from player
-- Hex highlight: Overlay sprite on hex
-- Targeting line: Line from player to target (for Line pattern abilities)
-
-**Update Logic:**
-- Run in `Update` schedule (every frame)
-- Raycast from camera to world (mouse position → hex coordinate)
-- Validate targeting with `is_valid_target` function
-- Update highlight color (green/red) and position
-
-**MVP Simplification:**
-- Only Single targeting (no line/radius/adjacent indicators yet)
-- Basic Attack range 1 (adjacent hexes only)
-- Simple hover highlight (no fancy visuals)
-
----
-
-#### 8. Network Message Structure
-
-**New Event Types (add to `common/message.rs`):**
+**Updated Event Types (add to `common/message.rs`):**
 
 ```rust
 pub enum Event {
@@ -505,14 +824,14 @@ pub enum Event {
     UseAbility {
         ent: Entity,
         ability_type: AbilityType,
-        target_loc: Loc,  // Target hex (None for SelfTarget abilities)
+        target: Option<Entity>,  // Some for SingleTarget, None for SelfTarget
     },
 
     /// Server → Client: Ability successfully used (Do event)
     AbilityUsed {
         ent: Entity,
         ability_type: AbilityType,
-        target_loc: Loc,
+        target: Option<Entity>,
     },
 
     /// Server → Client: Ability usage failed (Do event)
@@ -524,14 +843,36 @@ pub enum Event {
 }
 ```
 
-**Event Classification:**
-- **Try events:** `UseAbility`
-- **Do events:** `AbilityUsed`, `AbilityFailed`
+**Key Change from Old ADR-004:**
+- `target: Option<Entity>` instead of `target_loc: Loc`
+- Targeting is entity-based (hit the indicated target), not hex-based
+- Server recalculates target using heading + facing cone (validates client's selection)
 
-**Message Size:**
-- `UseAbility`: ~20 bytes (entity + enum + loc)
-- `AbilityUsed`: ~20 bytes
-- Combat scenario: 10 abilities/sec = 200 bytes/sec (negligible)
+---
+
+#### 8. MVP Scope and Simplifications
+
+**MVP Includes:**
+- Heading system (already exists, integrate with targeting)
+- Automatic target selection (nearest in facing direction)
+- Target indicator (red hostile, basic visual)
+- BasicAttack (hits indicated target)
+- Dodge (self-target, no indicator needed)
+- Keyboard controls (Q for attack, E for dodge)
+
+**MVP Excludes (Phase 2):**
+- Tier lock system (1/2/3 keys) - defer to Phase 2
+- TAB cycling - defer to Phase 2
+- Green ally indicator - defer to Phase 2
+- Complex patterns (Line, Radius, Adjacent)
+- Projectiles (instant abilities only)
+- Visual polish (tier badges, range highlights)
+
+**Simplification Rationale:**
+- MVP validates directional combat core (heading → target selection → ability execution)
+- Wild Dog provides sufficient test (melee attacks on nearest player)
+- Single automatic targeting simpler than tier lock + TAB
+- Phase 2 adds tier lock once automatic targeting proven
 
 ---
 
@@ -539,296 +880,298 @@ pub enum Event {
 
 ### Positive
 
-#### 1. Simple MVP, Extensible Design
+#### 1. Keyboard-Only, No Cursor Required
 
-- Hardcoded abilities easy to implement (no parsing, no files)
-- Enum-driven extensible (add abilities by adding enum variants)
-- Future data-driven support (deserialize JSON → enums)
+- Fully playable without mouse (accessibility win)
+- Faster combat flow (no click targeting delay)
+- Controller-friendly (easy to port to gamepad)
+- Matches spec design philosophy ("no cursor required")
 
-#### 2. Shared Targeting Logic
+#### 2. Directional Combat Depth
 
-- Client and server use identical validation (no desync)
-- Easy to test (pure functions, no ECS dependencies)
-- Targeting patterns reusable (Single, Line, Radius, Adjacent)
+- Positioning matters (face enemies to attack)
+- Heading creates tactical decisions (turn to engage)
+- Flanking gameplay (enemies harder to target if behind)
+- Geometric tiebreaker rewards precise positioning
 
-#### 3. Instant Feedback
+#### 3. Automatic Targeting Reduces Input Burden
 
-- Client prediction for ability usage (local player sees immediate effects)
-- Rollbacks rare (targeting validated client-side before sending)
-- Remote players see confirmed abilities (no visual jank)
+- No need to click every attack (just face and press Q)
+- Default targeting handles 90% of cases (nearest hostile)
+- Tier lock and TAB for edge cases (future)
+- Lowers skill floor, maintains skill ceiling
 
-#### 4. Triumvirate Integration Path
+#### 4. Heading System Reuse
 
-- MVP: Universal abilities (no filtering)
-- Future: `get_available_abilities` derives from ActorImpl
-- No breaking changes (additive feature)
+- Existing `Heading` component (`NE, E, SE, SW, W, NW`)
+- Movement systems already update heading
+- No new infrastructure needed
+- Seamless integration with controlled movement
 
-#### 5. GCD System Reused
+#### 5. Shared Targeting Logic
 
-- Existing `gcd.rs` infrastructure (no new system needed)
-- Prevents ability spam (0.5s GCD for all reactions)
-- Extensible for per-ability cooldowns (future)
+- Client and server use `select_target` function (no desync)
+- Pure function, easy to test
+- Deterministic (same inputs → same output)
+- Extensible (add tier lock, faction filters)
 
 ### Negative
 
-#### 1. Hardcoded Ability Data
+#### 1. No Mouse Targeting Flexibility
 
-- Balance changes require recompile (edit Rust code, rebuild)
-- No runtime modding (abilities baked into binary)
-- More verbose than data files (each ability = full definition struct)
-
-**Mitigation:**
-- MVP: Accept recompile overhead (few abilities, fast build times)
-- Future: Migrate to data-driven (JSON/RON) once ability count grows (50+)
-- Hybrid: Core abilities hardcoded, modded abilities loaded
-
-#### 2. Targeting Validation Overhead
-
-- Server validates every ability usage (CPU cost per ability)
-- Range checks, line-of-sight, entity queries (NNTree)
-- 100 players using abilities = 100 validations/sec
+- Can't manually select specific target (must face it)
+- Geometric tiebreaker may not match player intent (edge cases)
+- TAB cycling needed for manual override (deferred to Phase 2)
+- Some players may prefer click-targeting (design tradeoff)
 
 **Mitigation:**
-- Validation functions lightweight (distance checks are cheap)
-- NNTree queries optimized (spatial index)
-- GCD rate-limits ability usage (max 2/sec per player)
+- Phase 2 adds TAB cycling for manual control
+- Tier lock helps with "caster wants backline" scenario
+- Playtesting will validate automatic targeting sufficiency
 
-#### 3. No Projectile System in MVP
+#### 2. Heading Discretization (6 Directions)
 
-- Defers projectile physics/interpolation (complex)
-- Instant-only abilities feel less varied (no travel time dynamics)
-- May discover projectile issues late (Phase 2)
-
-**Mitigation:**
-- MVP validates instant ability flow (foundation for projectiles)
-- Projectile system designed in this ADR (clear implementation path)
-- Instant abilities sufficient for Wild Dog combat testing
-
-#### 4. Client Prediction Rollback Complexity
-
-- Ability prediction harder than resource prediction (multi-effect)
-- Rollback may require undoing damage, queue changes, animations
-- Visual jank if rollback frequent (ability "cancelled" mid-animation)
+- Only 6 headings (60° each), not continuous 360°
+- Facing cone always 60° (can't narrow/widen)
+- Some targets may fall between heading boundaries
+- Movement required to change heading (no turn-in-place)
 
 **Mitigation:**
-- Client-side validation reduces rollback frequency (validate before predict)
-- Show "predicted" visual state (dimmed effects, tentative animations)
-- MVP: Dodge rollback simple (queue restore handled in ADR-003)
+- Hex grid naturally discrete (6 directions align with hex faces)
+- Tiebreaker handles boundary cases (closest to heading angle)
+- Design intent: movement-based combat (turn by moving)
 
-#### 5. Triumvirate Mapping Deferred
+#### 3. Target Indicator Update Frequency
 
-- MVP: All actors have same abilities (no build diversity)
-- Cannot test Approach/Resilience gameplay until Phase 2
-- Risk: Triumvirate system may not fit ability design
+- Runs every frame for local player (potential overhead)
+- Recalculates `select_target` each frame (spatial query + filtering)
+- 100 entities in combat = 100 indicator updates/sec
 
 **Mitigation:**
-- Triumvirate signature skills already defined in spec (design validated)
-- `get_available_abilities` clear path to implementation
-- MVP focuses on combat mechanics, Phase 2 adds diversity
+- NNTree queries fast (spatial index optimized)
+- Facing cone filter cheap (angular comparison)
+- Only local player updates every frame (remote entities don't need indicators)
+- Optimize if profiling shows issue (dirty flag, reduce update rate)
+
+#### 4. Server Target Recalculation Mismatch
+
+- Client selects target, sends to server
+- Server recalculates target (may differ due to latency)
+- If mismatch: ability fails with "Invalid target"
+- Frustrating if frequent (entity moved between client/server)
+
+**Mitigation:**
+- Tolerance: Server accepts client's target if "close enough"
+- Small latency window (100-200ms typical)
+- Rare for stationary targets (Wild Dog)
+- Visual feedback ("Invalid target" message, retry)
+
+#### 5. Tier Lock Deferred to Phase 2
+
+- MVP lacks tier lock (no 1/2/3 keys)
+- Can't manually select far target if close target exists
+- Limits tactical options (caster can't target backline easily)
+
+**Mitigation:**
+- MVP combat simple (Wild Dog melee only, no backline)
+- Phase 2 adds tier lock before complex encounters
+- Automatic targeting sufficient for single-enemy MVP
 
 ### Neutral
 
-#### 1. Targeting UI Complexity
+#### 1. Heading Component Already Exists
 
-- Hover highlights, range indicators, line drawing (client-side only)
-- Not architecturally critical (UX polish)
-- MVP: Simple highlight, Phase 2: fancy visuals
+- No new component needed (reuse existing)
+- Movement systems already update heading
+- Targeting just queries heading for cone calculation
+- Risk: Heading may need modification for other features
 
-#### 2. Ability Effect Enum Extensibility
+#### 2. Target Indicator Visual Design TBD
 
-- Current: Damage, ClearQueue
-- Future: Heal, Buff, Debuff, Knockback, Teleport, Summon
-- Risk: Enum grows large (many variants)
+- MVP uses simple red outline/ground marker
+- Visual polish deferred (tier badges, lock markers)
+- May need iteration based on playtest feedback
+- Not architecturally critical (client-side only)
 
-**Consideration:** May need trait-based approach later (plugin pattern)
+#### 3. TAB Cycling Complexity Deferred
 
-#### 3. GCD Shared vs Per-Ability
+- Adds state management (TargetingOverride component)
+- Cycle logic non-trivial (wrap-around, invalidation)
+- MVP avoids this complexity (automatic only)
+- Phase 2 implementation clear (designed in this ADR)
 
-- MVP: Shared GCD (all reactions 0.5s)
-- Future: Per-ability cooldowns (Charge: 5s, Fireball: 3s)
-- Design supports both (gcd_type in definition)
+---
 
 ## Implementation Phases
 
-### Phase 1: Ability Definition System (Foundation)
+### Phase 1: Heading to Facing Cone Conversion (Foundation)
 
-**Goal:** Define ability data structures and registry
+**Goal:** Convert 6-direction heading into 60° facing cone for targeting
 
 **Tasks:**
-1. Create `common/components/ability.rs`:
-   - `AbilityType` enum (BasicAttack, Dodge)
-   - `AbilityDefinition` struct
-   - `AbilityCost`, `TargetingPattern`, `ExecutionType`, `AbilityEffect` enums
+1. Create `common/systems/targeting.rs`:
+   - `Heading::to_angle() -> f32` (NE=30°, E=90°, etc.)
+   - `is_in_facing_cone(heading, caster_loc, target_loc) -> bool`
+   - Add tests: Heading::E (90°), target at 80° → true (within ±30°), target at 140° → false
 
-2. Create `common/systems/abilities.rs`:
-   - `get_ability_definition(AbilityType) -> AbilityDefinition`
-   - Implement BasicAttack and Dodge definitions
-
-3. Add tests:
-   - Get BasicAttack definition → verify cost, targeting, effects
-   - Get Dodge definition → verify cost, clear_type
+2. Unit tests for angle calculations:
+   - Heading::NE (30°) with target at 10° → true
+   - Heading::E (90°) with target at 150° → false
+   - Boundary cases: exactly 60° apart → true, 61° → false
 
 **Success Criteria:**
-- Ability definitions compile and serialize
-- Tests pass for BasicAttack and Dodge
+- All heading-to-angle conversions correct (6 directions)
+- Facing cone detection accurate (within 60° arc)
+- Tests pass for all 6 headings and various target angles
 
 **Duration:** 1 day
 
 ---
 
-### Phase 2: Targeting Validation System
+### Phase 2: Automatic Target Selection System
 
-**Goal:** Shared targeting logic for client and server
-
-**Tasks:**
-1. Create `common/systems/targeting.rs`:
-   - `get_targeted_hexes(caster_loc, target_loc, pattern, map) -> Vec<Qrz>`
-   - `is_valid_target(caster_loc, target_loc, pattern, map) -> bool`
-   - `get_entities_at_hexes(hexes, nntree) -> Vec<Entity>`
-
-2. Implement targeting patterns:
-   - `Single { max_range }`: Return [target] if distance <= range
-   - `SelfTarget`: Return [caster]
-   - (Future: Line, Radius, Adjacent)
-
-3. Add tests:
-   - Single targeting range 1: adjacent hex valid, distant hex invalid
-   - SelfTarget: always returns caster location
-   - get_entities_at_hexes: finds entities at exact Loc
-
-**Success Criteria:**
-- Targeting validation accurate (range checks correct)
-- Client and server use same functions (no duplication)
-
-**Duration:** 1-2 days
-
----
-
-### Phase 3: Server-Side Ability Execution
-
-**Goal:** Server processes UseAbility events
+**Goal:** Implement `select_target` function with geometric tiebreaker
 
 **Tasks:**
-1. Create `server/systems/abilities::execute_ability`:
-   - Run in Update schedule
-   - Process `Try::UseAbility` events
-   - Validate: resource cost, GCD, targeting
-   - Execute ability effects (damage, queue clear)
-   - Emit `Do::AbilityUsed` or `Do::AbilityFailed`
+1. Extend `common/systems/targeting.rs`:
+   - `select_target(loc, heading, tier_lock, nntree, query) -> Option<Entity>`
+   - `get_range_tier(distance) -> RangeTier` (close 1-2, mid 3-6, far 7+)
 
-2. Implement BasicAttack execution:
-   - Get ability definition
-   - Validate target in range 1 (adjacent)
-   - Get entities at target hex (NNTree query)
-   - Calculate damage (base * (1 + might/100))
-   - Insert into ReactionQueue (ADR-003)
-   - Emit `Do::InsertThreat` for each target
+2. Algorithm implementation:
+   - Query nearby entities (NNTree within 20 hexes)
+   - Filter to actors in facing cone
+   - Apply tier filter if locked
+   - Select nearest by distance
+   - Geometric tiebreaker: closest to exact heading angle
 
-3. Implement Dodge execution:
-   - Validate: queue not empty, stamina >= 30
-   - Clear queue (call ADR-003 clear_threats)
-   - Spend stamina
-   - Emit `Do::ClearQueue` and `Do::Stamina`
-
-4. GCD integration:
-   - Check GCD before execution (use existing gcd.rs)
-   - Apply GCD after successful execution
+3. Unit tests:
+   - Caster facing E, entities at (1, 0) and (0, 1) → select (1, 0) (east-most)
+   - Caster facing E, entities at (1, 0) distance 1 and (2, 0) distance 2 → select (1, 0) (nearest)
+   - Tier lock close, entities at distance 1 and 5 → select distance 1 only
 
 **Success Criteria:**
-- Player uses BasicAttack → damage inserted into Wild Dog's queue
-- Player uses Dodge → queue clears, stamina spent
-- Insufficient stamina → ability fails with error message
-
-**Duration:** 2-3 days
-
----
-
-### Phase 4: Client-Side Ability Prediction
-
-**Goal:** Client predicts ability effects for local player
-
-**Tasks:**
-1. Create `client/systems/abilities::predict_ability_usage`:
-   - Run in Update schedule (before sending Try::UseAbility)
-   - Validate targeting client-side (is_valid_target)
-   - Predict resource spend (stamina.step -= cost)
-   - Predict effects (damage prediction in ADR-005, queue clear)
-   - Send `Try::UseAbility { ent, ability_type, target_loc }`
-
-2. Implement input handling:
-   - Bind attack key (Left Click or specific key)
-   - Raycast mouse to hex (camera → world position)
-   - Select ability (BasicAttack or Dodge)
-   - Trigger prediction on key press
-
-3. Rollback handling:
-   - Receive `Do::AbilityFailed` → undo predicted changes
-   - Restore stamina (snap to server's value)
-   - Show error message ("Not enough stamina", "Out of range")
-
-**Success Criteria:**
-- Local player presses attack → instant feedback (stamina decreases)
-- Server confirms → no visual change (prediction correct)
-- Server denies → stamina snaps back, error message shown
+- Target selection deterministic (same inputs → same target)
+- Geometric tiebreaker resolves equidistant targets correctly
+- Tier lock filters correctly (close/mid/far)
 
 **Duration:** 2 days
 
 ---
 
-### Phase 5: Client-Side Ability Response (Remote Players)
+### Phase 3: Client-Side Target Indicator Rendering
 
-**Goal:** Client renders remote players' abilities
-
-**Tasks:**
-1. Create `client/systems/abilities::handle_ability_used`:
-   - Run in Update schedule
-   - Process `Do::AbilityUsed` events
-   - Play ability animation (attack swing, dodge roll)
-   - Apply visual effects (damage numbers, queue changes)
-
-2. Animation system:
-   - BasicAttack: Play attack animation on caster
-   - Dodge: Play roll/dash animation
-   - (Future: Projectile spawning, ground effect visuals)
-
-3. Remote player flow:
-   - Receive `Do::AbilityUsed { ent, ability_type, target_loc }`
-   - Query entity for Transform
-   - Play animation at entity's position
-   - Receive `Do::InsertThreat` → insert into target's visual queue
-
-**Success Criteria:**
-- Remote player attacks → animation plays, damage appears in queue
-- Remote player dodges → animation plays, queue clears
-
-**Duration:** 2 days
-
----
-
-### Phase 6: Targeting UI (Hover Highlight)
-
-**Goal:** Client shows targeting indicator
+**Goal:** Show red indicator on current hostile target
 
 **Tasks:**
 1. Create `client/systems/targeting_ui.rs`:
-   - Run in Update schedule (every frame)
-   - Raycast mouse to hex (camera → world)
-   - Show hover highlight (white outline on hex)
-   - Validate targeting (green = valid, red = invalid)
+   - `render_target_indicators` system (runs in Update)
+   - Query local player's Loc, Heading
+   - Call `select_target` to get hostile target
+   - Spawn/update indicator entity (red sprite at target's position)
 
-2. Range indicator:
-   - BasicAttack: Show circle around player (range 1)
-   - Update on ability selection (future: multi-ability hotbar)
+2. Visual component:
+   - Red outline around target (SpriteBundle with red color)
+   - Ground marker (circle or hex highlight)
+   - Follow target position (update every frame)
 
-3. Click handling:
-   - Left click on valid target → trigger ability prediction
-   - Right click → cancel targeting
+3. Indicator lifecycle:
+   - Spawn when target exists
+   - Update position when target moves or selection changes
+   - Despawn when no target (out of range, facing changes)
 
 **Success Criteria:**
-- Hover over hex → hex highlights
-- Valid target (adjacent) → green highlight
-- Invalid target (too far) → red highlight
-- Click → ability executes (if valid)
+- Red indicator visible on nearest hostile in facing direction
+- Indicator updates smoothly as player moves/rotates
+- Indicator disappears when no valid targets
+
+**Duration:** 2 days
+
+---
+
+### Phase 4: Ability Execution with Directional Targeting
+
+**Goal:** BasicAttack and Dodge integrate with targeting system
+
+**Tasks:**
+1. Update `common/systems/abilities.rs`:
+   - Add `TargetingPattern::SingleTarget` (uses indicated target)
+   - Add `TargetingPattern::SelfTarget` (no targeting)
+
+2. Create `client/systems/abilities::handle_ability_input`:
+   - Q key: Use BasicAttack
+   - E key: Use Dodge
+   - Query current target indicator (red hostile)
+   - Validate range (BasicAttack = adjacent only)
+   - Send `Try::UseAbility { ent, ability_type, target }`
+
+3. Update `server/systems/abilities::execute_ability`:
+   - Recalculate target server-side using `select_target`
+   - Validate client's target matches server's (with tolerance)
+   - Execute ability effects if valid
+   - Emit `Do::AbilityFailed` if invalid
+
+**Success Criteria:**
+- Player faces Wild Dog, presses Q → BasicAttack hits Dog
+- Player presses E → Dodge clears queue (no targeting)
+- Player faces away from Dog, presses Q → "No target" error
+- Dog attacks player (server uses `select_target` for AI)
+
+**Duration:** 3 days
+
+---
+
+### Phase 5: Client Prediction for Abilities
+
+**Goal:** Client predicts ability usage for local player
+
+**Tasks:**
+1. Create `client/systems/abilities::predict_ability_usage`:
+   - Predict resource spend (stamina for Dodge)
+   - Predict effects (queue clear, damage - ADR-005)
+   - Update UI immediately (stamina bar, queue)
+
+2. Rollback handling:
+   - Receive `Do::AbilityFailed` → undo predictions
+   - Restore stamina (snap to server's value)
+   - Show error message
+
+3. Confirmation handling:
+   - Receive `Do::AbilityUsed` → prediction correct (no change)
+   - Update GCD UI (dim ability icons)
+
+**Success Criteria:**
+- Local player presses E → stamina drops instantly (predicted)
+- Server confirms → no visual snap (prediction correct)
+- Server denies → stamina restores, error message shown
+
+**Duration:** 2 days
+
+---
+
+### Phase 6: Enemy AI Directional Targeting
+
+**Goal:** Wild Dog uses directional targeting to attack player
+
+**Tasks:**
+1. Update `server/systems/ai/wild_dog.rs`:
+   - Query Dog's Loc, Heading
+   - Use `select_target` to find nearest player in facing direction
+   - If target in range 1 (adjacent): attack
+   - If target farther: pathfind toward target, update heading to face target
+
+2. Heading updates during movement:
+   - When Dog moves toward player, update heading to face movement direction
+   - Heading updates naturally from movement (same as player)
+
+3. Attack pattern:
+   - Dog faces player, attacks every 2 seconds
+   - Uses `Try::UseAbility { ent, ability_type: BasicAttack, target: player }`
+   - Server executes BasicAttack, inserts threat into player's queue
+
+**Success Criteria:**
+- Wild Dog faces player and attacks (hits player)
+- Dog turns to track player movement (heading updates)
+- Dog attacks insert threats into player's reaction queue
 
 **Duration:** 2 days
 
@@ -838,118 +1181,124 @@ pub enum Event {
 
 ### Functional Tests
 
-- **Ability Definition:** Get BasicAttack → verify cost=0, range=1, damage=20, type=Physical
-- **Targeting Validation:** Caster at (0,0), target at (1,0) → valid (range 1), target at (2,0) → invalid
-- **Ability Execution:** Player uses BasicAttack on Wild Dog → damage inserted into Dog's queue
-- **Resource Cost:** Player uses Dodge with 30 stamina → cost applied, ability succeeds; with 20 stamina → ability fails
-- **GCD Enforcement:** Player uses Dodge, immediately tries Dodge again → second fails (GCD active)
+- **Heading Conversion:** Heading::E → 90°, Heading::NW → 330° (all 6 directions correct)
+- **Facing Cone:** Heading::E, target at 80° → in cone, target at 150° → out of cone
+- **Target Selection:** Caster facing E, entities at (1,0) and (0,1) → select (1,0) (geometric tiebreaker)
+- **Tier Lock:** Lock to close tier, entities at distance 1 and 5 → select distance 1 only
+- **BasicAttack:** Player faces Dog, presses Q → Dog takes damage (threat queued)
+- **Dodge:** Player presses E → queue clears, stamina spent
 
 ### Network Tests
 
-- **Ability Sync:** Client sends UseAbility, server executes within 100ms (measure latency)
-- **Prediction Rollback:** Client predicts ability, server denies → rollback within 1 frame
-- **Remote Ability:** Remote player uses BasicAttack → local client sees animation within 200ms
+- **Target Sync:** Client selects target, server recalculates, match within tolerance (latency < 200ms)
+- **Prediction:** Client predicts ability, server confirms within 100ms
+- **Rollback:** Server denies ability, client rolls back within 1 frame
 
 ### Performance Tests
 
-- **Targeting Validation:** 1000 targeting validations/sec → < 1ms total CPU time
-- **Ability Execution:** 100 players using abilities simultaneously → server processes within 16ms (60fps)
+- **Indicator Update:** 60fps maintained with indicator updating every frame
+- **Target Selection:** 100 entities, `select_target` runs < 1ms
+- **AI Targeting:** 100 Wild Dogs targeting players, CPU < 5% (single core)
 
 ### UX Tests
 
-- **Targeting Clarity:** Player can clearly see valid vs invalid targets (green/red)
+- **Targeting Clarity:** Player understands which enemy will be hit (red indicator obvious)
 - **Ability Responsiveness:** Ability executes within 16ms of key press (local player)
-- **Feedback:** Player understands why ability failed (error message clear)
+- **Directional Feel:** Positioning matters, facing enemies rewarded
+
+---
 
 ## Open Questions
 
 ### Design Questions
 
-1. **Ability Keybinds?**
-   - Left Click for BasicAttack (standard attack)?
-   - Spacebar for Dodge?
-   - Number keys (1-6) for future abilities?
-   - MVP: Left Click attack, Spacebar dodge, configurable later
+1. **Heading Continuous vs Discrete?**
+   - Current: 6 discrete headings (60° each)
+   - Alternative: 360° continuous (more precision, more complexity)
+   - MVP: Discrete (matches hex grid, simpler)
 
-2. **Targeting Confirmation?**
-   - Click-to-confirm (select target, confirm with click)?
-   - Instant-cast (click = cast immediately)?
-   - MVP: Instant-cast (faster, more responsive)
+2. **Target Indicator Visibility?**
+   - Always visible (even no targets)?
+   - Only when targets exist (cleaner)?
+   - MVP: Only when targets exist
 
-3. **Range Indicator Visual?**
-   - Circle outline around player (shader ring)?
-   - Tile highlights (all hexes in range highlighted)?
-   - MVP: Simple circle outline (less visual clutter)
+3. **Tier Lock Drops on Ability vs Manual Clear?**
+   - Spec: Drops after 1 ability use (single-use lock)
+   - Alternative: Persists until ESC pressed
+   - MVP: Follow spec (drops after 1 ability)
 
 ### Technical Questions
 
-1. **Ability Definition Storage?**
-   - Hardcoded in `get_ability_definition` function? (MVP)
-   - Static HashMap? (faster lookup)
-   - Lazy_static or OnceCell? (cleaner)
-   - MVP: Simple match expression (fast enough for <10 abilities)
+1. **Heading Storage: Component or Computed?**
+   - Current: Component (exists in codebase)
+   - Alternative: Compute from last movement direction (stateless)
+   - MVP: Component (already exists, use as-is)
 
-2. **Targeting Validation Frequency?**
-   - Every frame (smooth hover highlight)?
-   - On mouse move only (event-driven)?
-   - MVP: Every frame (simple, no event system needed)
+2. **Target Indicator: Entity or UI Overlay?**
+   - Entity: Spawn sprite entity at target position (world-space)
+   - UI Overlay: Project target to screen-space, draw UI (screen-space)
+   - MVP: Entity (simpler, reuses existing sprite systems)
 
-3. **Animation System Integration?**
-   - Use existing Bevy animation system? (complex setup)
-   - Simple sprite swap? (2-3 frames, easy)
-   - MVP: Sprite swap or placeholder (animation not critical)
+3. **Server Target Tolerance?**
+   - How much mismatch acceptable between client/server target selection?
+   - Option: Accept client's target if within 1 hex of server's target
+   - MVP: Strict match (must be same entity), relax if issues arise
+
+---
 
 ## Future Enhancements (Out of Scope)
 
-### Phase 2+ Extensions
+### Phase 2 Extensions
 
-- **Complex Targeting Patterns:** Line (Volley), Radius (Eruption), Adjacent (Cleave)
-- **Projectile System:** Entities with velocity, collision, lifetime, visual trail
-- **Telegraph System:** Ground indicators before damage (delay, visual warning)
-- **Unavoidable Attacks:** Bypass queue, instant damage, rare/expensive
-- **Triumvirate Ability Grants:** Derive available abilities from ActorImpl (Approach/Resilience)
-- **Ability Unlocks:** Progression system (level up, learn abilities)
-- **Ability Upgrades:** Enhanced versions (Charge II, Dodge+)
+- **Tier Lock System:** 1/2/3 keys lock to range tiers, drops after 1 ability
+- **TAB Cycling:** Cycle through valid targets in tier, persist until ESC
+- **Green Ally Indicator:** Show nearest ally for friendly abilities
+- **Visual Polish:** Tier badges, lock markers, range highlights
+- **Complex Patterns:** Line, Radius, Adjacent targeting
+- **Projectile System:** Traveling projectiles with visual arcs
 
 ### Optimization
 
-- **Ability Data Loading:** JSON/RON files for modding (data-driven)
-- **Targeting Caching:** Cache valid targets for frame (avoid repeated checks)
-- **Animation Pooling:** Reuse animation entities (object pooling)
+- **Target Selection Caching:** Cache valid targets for frame, update on movement
+- **Indicator Dirty Flag:** Only update indicator when target changes (not every frame)
+- **Spatial Event System:** Trigger target updates on entity movement (event-driven, not polling)
 
 ### Advanced Features
 
-- **Combo System:** Chain abilities (BasicAttack → Charge for bonus)
-- **Channeled Abilities:** Hold key to charge power (release to cast)
-- **Ability Interrupts:** Damage interrupts casting (stagger system)
-- **Ability Queuing:** Queue next ability during GCD (execute on GCD end)
+- **Facing Requirement Abilities:** Some abilities only work if target in front (back-stab immunity)
+- **Flanking Bonuses:** Extra damage if attacking from behind (target's heading opposite)
+- **Cone Width Modifiers:** Abilities that widen/narrow facing cone (focused vs wide attack)
+
+---
 
 ## References
 
 ### Specifications
 
-- **Combat System:** `docs/spec/combat-system.md` (targeting types, execution patterns, MVP abilities)
+- **Combat System:** `docs/spec/combat-system.md` (directional combat, heading, tier lock, target indicators, MVP abilities)
 - **Triumvirate System:** `docs/spec/triumvirate.md` (signature skill mapping)
 
 ### Codebase
 
+- **Heading Component:** `src/common/components/heading.rs` (6 directions: NE, E, SE, SW, W, NW)
+- **Movement Systems:** `src/client/systems/controlled.rs` (movement updates heading)
 - **GCD System:** `src/common/systems/gcd.rs` (GcdType enum, cooldown tracking)
-- **Triumvirate Components:** `src/common/components/entity_type/actor.rs` (ActorImpl, Approach, Resilience)
 - **NNTree:** `src/common/plugins/nntree.rs` (spatial queries for entity detection)
-- **Client Prediction:** `GUIDANCE/ControlledPlugin.md` (prediction patterns)
 
 ### Related ADRs
 
-- **ADR-002:** Combat Foundation (resource costs, GCD infrastructure)
+- **ADR-002:** Combat Foundation (resources, GCD infrastructure)
 - **ADR-003:** Reaction Queue System (ClearQueue effects, Dodge ability)
-- **(Future) ADR-005:** Damage Pipeline (damage calculation, InsertThreat event)
+- **ADR-005:** Damage Pipeline (damage generation, InsertThreat event)
+
+---
 
 ## Decision Makers
 
 - ARCHITECT role evaluation
-- Game design requirements: `docs/spec/combat-system.md`
-- Existing GCD and Triumvirate systems
+- Game design requirements: `docs/spec/combat-system.md` (directional combat design)
+- Existing Heading and movement systems integration
 
 ## Date
 
-2025-10-29
+2025-10-30 (Updated from 2025-10-29 to reflect directional combat system)
