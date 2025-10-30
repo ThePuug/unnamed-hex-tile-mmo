@@ -14,7 +14,7 @@ use crate::{
             entity_type::{ actor::*, * },
             heading::*, keybits::*, offset::*,
             reaction_queue::ReactionQueue,
-            resources::*, *
+            *
         },
         message::{ Event, * },
         plugins::nntree::NearestNeighbor,

@@ -102,7 +102,7 @@ pub fn process_respawn(
 ) {
     use qrz::Qrz;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, attrs) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, _attrs) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };

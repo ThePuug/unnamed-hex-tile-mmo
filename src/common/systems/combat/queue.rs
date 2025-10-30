@@ -1,8 +1,11 @@
-use crate::common::components::reaction_queue::{DamageType, QueuedThreat, ReactionQueue};
+use crate::common::components::reaction_queue::{QueuedThreat, ReactionQueue};
 use crate::common::components::ActorAttributes;
 use crate::common::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
+
+#[cfg(test)]
+use crate::common::components::reaction_queue::DamageType;
 
 /// Calculate queue capacity based on Focus attribute
 /// Formula: base_capacity + floor(focus / 33.0)

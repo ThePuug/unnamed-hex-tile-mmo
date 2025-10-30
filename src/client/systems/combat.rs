@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, resources::*, ActorAttributes},
-    message::{AbilityType, ClearType, Do, Try, Event as GameEvent},
+    message::{AbilityType, Do, Try, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
 
@@ -69,14 +69,14 @@ pub fn predict_dodge(
 ) {
     for event in try_reader.read() {
         if let GameEvent::UseAbility { ent, ability: AbilityType::Dodge } = event.event {
-            if let Ok((mut queue, mut stamina, attrs)) = query.get_mut(ent) {
+            if let Ok((mut queue, mut stamina, _attrs)) = query.get_mut(ent) {
                 // Calculate dodge cost (15% of max stamina as per ADR)
                 let dodge_cost = stamina.max * 0.15;
 
                 // Check if we have enough stamina
                 if stamina.state >= dodge_cost && !queue.is_empty() {
                     // Optimistically clear queue
-                    let cleared_count = queue.threats.len();
+                    let _cleared_count = queue.threats.len();
                     queue.threats.clear();
 
                     // Consume stamina

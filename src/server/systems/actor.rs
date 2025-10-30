@@ -52,7 +52,7 @@ pub fn do_incremental(
     mut reader: EventReader<Do>,
     mut writer: EventWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
-    query: Query<(&Loc, &Heading)>,
+    _query: Query<(&Loc, &Heading)>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };

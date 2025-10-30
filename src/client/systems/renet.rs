@@ -109,7 +109,7 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
             }
-            Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
+            Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
                 // Unpack chunk into individual tile spawns
                 for (qrz, typ) in tiles {
                     // Emit spawn events for world system to process

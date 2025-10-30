@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
-use crate::{
-    common::components::{behaviour::Behaviour, reaction_queue::*},
-};
+use crate::common::components::reaction_queue::*;
 
 /// Marker component to track which player the UI is for
 #[derive(Component)]
@@ -66,7 +64,7 @@ pub fn update(
     player_query: Query<(Entity, &ReactionQueue), With<crate::common::components::Actor>>,
     time: Res<Time>,
 ) {
-    let Ok(container) = container_query.get_single() else {
+    let Ok(container) = container_query.single() else {
         warn!("ThreatIconContainer not found");
         return;
     };
@@ -272,7 +270,7 @@ pub fn animate_clear(
         if let GameEvent::ClearQueue { .. } = event.event {
             // Flash effect - despawn all icons (they'll respawn on next update if needed)
             for entity in &icon_query {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
             // TODO: Add proper flash/fade animation using bevy_easings
         }
