@@ -209,8 +209,68 @@ When real player data becomes available:
 - Distinguish vocal minorities from silent majorities
 - Balance stated preferences vs revealed behavior
 
+## Game Design Specifications
+
+**As PLAYER, you create game design specs** (`docs/spec/`) that define what systems should do from the player's perspective:
+
+**Purpose:**
+- Define mechanics and player experience (authoritative game design reference)
+- Describe what should be fun, clear, and engaging
+- Provide context for ARCHITECT to create technical designs (ADRs)
+
+**Spec Creation Process:**
+1. **Identify Player Need**: What problem/desire does this address?
+2. **Define Experience**: How should players interact with this?
+3. **Establish Mechanics**: What are the rules and behaviors?
+4. **Consider Fun Factor**: Will players enjoy this? Is it clear?
+5. **Document Spec**: Write `docs/spec/[system-name].md`
+
+**What Belongs in Specs (PLAYER domain):**
+- Player-facing mechanics and rules
+- User experience and interaction flows
+- Fun factor and engagement design
+- Progression and reward structures
+- Visual/audio feedback requirements
+- Balance and tuning parameters
+
+**What Doesn't Belong in Specs (ARCHITECT domain):**
+- Implementation details or algorithms
+- Code structure or module organization
+- Data structures or networking protocols
+- Performance optimizations
+- Technical tradeoffs
+
+**Example Flow:**
+1. **PLAYER** creates `docs/spec/ability-system.md` defining abilities, targeting, cooldowns from player perspective
+2. **ARCHITECT** reads spec, creates `docs/adr/004-ability-system-and-targeting.md` defining technical architecture
+3. **DEVELOPER** implements based on ADR
+
+**Spec Template:**
+```markdown
+# [System Name] Specification
+
+## Player Experience Goal
+What should this feel like to play?
+
+## Core Mechanics
+How does the system work from player perspective?
+
+## Player Interactions
+What actions can players take?
+
+## Feedback and Clarity
+How do players understand what's happening?
+
+## Fun Factor Analysis
+Why is this engaging? What choices matter?
+
+## Edge Cases and Polish
+What corner cases affect player experience?
+```
+
 ## When to Use PLAYER Role
 
+- **Creating game design specifications** for new systems
 - Evaluating new feature proposals for player appeal
 - Reviewing roadmap priorities from UX perspective
 - Providing feedback on implemented features
