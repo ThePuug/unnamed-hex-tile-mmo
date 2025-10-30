@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, ActorAttributes},
+    message::{Try, Event as GameEvent},
     systems::reaction_queue as queue_utils,
 };
 
@@ -8,6 +9,7 @@ use crate::common::{
 /// Runs in FixedUpdate schedule (125ms ticks)
 /// Checks all entities with ReactionQueue and removes expired threats
 pub fn process_expired_threats(
+    mut commands: Commands,
     time: Res<Time>,
     mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes)>,
 ) {
@@ -21,7 +23,7 @@ pub fn process_expired_threats(
             continue;
         }
 
-        // Remove expired threats from the queue
+        // Remove expired threats from the queue and emit ResolveThreat events
         for expired_threat in &expired {
             // Find and remove the threat by matching inserted_at (unique identifier)
             if let Some(pos) = queue.threats.iter().position(|t| {
@@ -29,11 +31,20 @@ pub fn process_expired_threats(
             }) {
                 queue.threats.remove(pos);
 
-                // For Phase 2, just log the expiry
-                // In Phase 3-4, we'll emit Try::ResolveThreat events here
                 info!(
                     "Threat expired for entity {:?}: {} damage from {:?}",
                     ent, expired_threat.damage, expired_threat.source
+                );
+
+                // Emit ResolveThreat event to trigger damage application
+                commands.trigger_targets(
+                    Try {
+                        event: GameEvent::ResolveThreat {
+                            ent,
+                            threat: *expired_threat,
+                        },
+                    },
+                    ent,
                 );
             }
         }

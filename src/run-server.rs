@@ -26,7 +26,7 @@ use crate::{
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, input, reaction_queue, renet, spawner, world},
+        systems::{actor, combat, input, reaction_queue, renet, spawner, world},
         *
     }
 };
@@ -64,6 +64,9 @@ fn main() {
     app.add_event::<Try>();
     app.add_event::<Tick>();
 
+    // Add observers for triggered events
+    app.add_observer(combat::resolve_threat);
+
     app.add_systems(Startup, (
         world::setup,
     ));
@@ -84,6 +87,7 @@ fn main() {
         panic_on_error_system,
         actor::do_incremental,
         actor::update,
+        combat::handle_use_ability,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
         input::send_input,
@@ -94,6 +98,9 @@ fn main() {
         spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
         world::do_spawn,
         world::try_spawn,
+    ));
+
+    app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
         actor::try_discover_chunk,  // New chunk-based discovery
         actor::try_discover,        // Legacy tile discovery (for compatibility)

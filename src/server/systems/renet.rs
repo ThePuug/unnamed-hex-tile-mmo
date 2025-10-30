@@ -69,8 +69,14 @@ pub fn do_manage_connections(
                     might_grace_axis: -10,
                     might_grace_spectrum: 45,
                     might_grace_shift: -45,
-                    vitality_focus_axis: -10,
-                    vitality_focus_spectrum: 10,
+                    // UAT Testing: Start at Focus threshold (2/3 queue slots boundary)
+                    // vitality_focus_axis = 33, spectrum = 33 allows shift to test boundary
+                    // Focus = axis + shift: starting at 33, shift down/up to cross 66 threshold
+                    // With shift -33: Focus = 0 (1 slot)
+                    // With shift 0: Focus = 33 (2 slots)
+                    // With shift +33: Focus = 66 (3 slots) ← crosses threshold here!
+                    vitality_focus_axis: 33,
+                    vitality_focus_spectrum: 33,
                     vitality_focus_shift: 0,
                     instinct_presence_axis: -10,
                     instinct_presence_spectrum: 45,

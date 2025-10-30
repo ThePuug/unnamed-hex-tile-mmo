@@ -12,7 +12,7 @@ pub enum DamageType {
 
 /// A single threat in the reaction queue
 /// Represents incoming damage that has not yet been applied
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueuedThreat {
     /// The entity that caused this threat (attacker)
     pub source: Entity,

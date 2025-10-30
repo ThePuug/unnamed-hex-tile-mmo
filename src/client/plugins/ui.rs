@@ -37,6 +37,7 @@ impl Plugin for UiPlugin {
                 resource_bars::update,
                 target_cursor::update,
                 debug_resources::debug_drain_resources, // DEBUG: Remove after testing
+                debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
             ),
         );
     }

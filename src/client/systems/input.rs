@@ -5,9 +5,13 @@ use crate::{common::{
         components::{
             heading::*,
             keybits::*,
-        }, 
-        message::{Component, Event}, systems::{
+            reaction_queue::*,
+            resources::*,
+        },
+        message::{AbilityType, ClearType, Component, Event},
+        systems::{
             gcd::*,
+            reaction_queue as queue_utils,
         },
         resources::*,
     }, *
@@ -20,6 +24,7 @@ pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 
 pub const KEYCODE_GCD1: KeyCode = KeyCode::KeyQ;
+pub const KEYCODE_DODGE: KeyCode = KeyCode::Space;
 
 /// Milliseconds between periodic input sends
 pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
@@ -46,6 +51,11 @@ pub fn update_keybits(
                 5000, // respawn_timer_ms
             );
             writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner)}});
+        }
+
+        // Dodge ability - Send as Try event to server for validation
+        if keyboard.just_pressed(KEYCODE_DODGE) {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
         }
 
         let mut keybits = KeyBits::default();
