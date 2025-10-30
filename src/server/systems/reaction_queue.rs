@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, ActorAttributes},
     message::{Try, Event as GameEvent},
-    systems::reaction_queue as queue_utils,
+    systems::combat::queue as queue_utils,
 };
 
 /// Server system to process expired threats in reaction queues

@@ -19,7 +19,7 @@ use crate::{
         message::{ Event, * },
         plugins::nntree::NearestNeighbor,
         resources::map::Map,
-        systems::reaction_queue as queue_calcs,
+        systems::combat::queue as queue_calcs,
     }
 };
 

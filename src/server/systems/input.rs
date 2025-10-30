@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use bevy_behave::prelude::*;
 
-use crate::{ 
+use crate::{
     common::{
-        components::{ behaviour::*, entity_type::*, heading::*, * }, 
-        message::{Event, *}, 
-        plugins::nntree::*, 
-        systems::gcd::*
-    }, 
+        components::{ behaviour::*, entity_type::*, heading::*, * },
+        message::{Event, *},
+        plugins::nntree::*,
+        systems::combat::gcd::*
+    },
     server::systems::behaviour::*, *
 };
 

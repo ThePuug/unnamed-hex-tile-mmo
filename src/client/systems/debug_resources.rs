@@ -7,7 +7,7 @@ use crate::common::components::{
     reaction_queue::{ReactionQueue, QueuedThreat, DamageType},
     ActorAttributes,
 };
-use crate::common::systems::reaction_queue::{insert_threat, calculate_timer_duration};
+use crate::common::systems::combat::queue::{insert_threat, calculate_timer_duration};
 
 /// Debug system to test reaction queue and resource bars
 /// Press keys to test different behaviors:

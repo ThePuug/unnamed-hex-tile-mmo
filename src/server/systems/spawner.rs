@@ -9,8 +9,8 @@ use crate::{
         message::*,
         plugins::nntree::*,
         resources::map::Map,
-        systems::{
-            reaction_queue as queue_calcs,
+        systems::combat::{
+            queue as queue_calcs,
             resources as resource_calcs,
         },
     },

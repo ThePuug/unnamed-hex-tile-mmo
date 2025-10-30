@@ -6,7 +6,7 @@ use tinyvec::ArrayVec;
 use crate::common::{
     chunk::ChunkId,
     components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, reaction_queue::*, resources::*, * },
-    systems::gcd::*,
+    systems::combat::gcd::*,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

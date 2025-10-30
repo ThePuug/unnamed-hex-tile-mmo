@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, resources::*, ActorAttributes},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::reaction_queue as queue_utils,
+    systems::combat::queue as queue_utils,
 };
 
 /// Helper function to deal damage to an entity
@@ -163,7 +163,7 @@ pub fn handle_use_ability(
                         stamina.step = stamina.state;
 
                         // Clear queue (convert message ClearType to queue_utils ClearType)
-                        let queue_clear_type = crate::common::systems::reaction_queue::ClearType::All;
+                        let queue_clear_type = crate::common::systems::combat::queue::ClearType::All;
                         let cleared = queue_utils::clear_threats(&mut queue, queue_clear_type);
 
                         info!(

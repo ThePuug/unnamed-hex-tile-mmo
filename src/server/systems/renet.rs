@@ -17,8 +17,8 @@ use crate::{ common::{
         message::{ Component, Event, * },
         plugins::nntree::*,
         resources::*,
-        systems::{
-            reaction_queue as queue_calcs,
+        systems::combat::{
+            queue as queue_calcs,
             resources as resource_calcs,
         },
     }, *

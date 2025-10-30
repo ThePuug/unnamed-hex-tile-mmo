@@ -9,9 +9,9 @@ use crate::{common::{
             resources::*,
         },
         message::{AbilityType, ClearType, Component, Event},
-        systems::{
+        systems::combat::{
             gcd::*,
-            reaction_queue as queue_utils,
+            queue as queue_utils,
         },
         resources::*,
     }, *

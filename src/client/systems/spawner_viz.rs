@@ -6,7 +6,7 @@ use bevy::{
 use crate::common::{
     components::{Loc, heading::Heading, Actor},
     message::{Try, Event},
-    systems::gcd::GcdType,
+    systems::combat::gcd::GcdType,
     resources::map::Map,
 };
 use qrz::Convert;

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, resources::*, ActorAttributes},
     message::{AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::reaction_queue as queue_utils,
+    systems::combat::queue as queue_utils,
 };
 
 /// Client system to handle InsertThreat events
@@ -109,9 +109,9 @@ pub fn handle_clear_queue(
             if let Ok(mut queue) = query.get_mut(ent) {
                 // Convert message ClearType to queue_utils ClearType
                 let queue_clear_type = match clear_type {
-                    ClearType::All => crate::common::systems::reaction_queue::ClearType::All,
-                    ClearType::First(n) => crate::common::systems::reaction_queue::ClearType::First(n),
-                    ClearType::ByType(dt) => crate::common::systems::reaction_queue::ClearType::ByType(dt),
+                    ClearType::All => crate::common::systems::combat::queue::ClearType::All,
+                    ClearType::First(n) => crate::common::systems::combat::queue::ClearType::First(n),
+                    ClearType::ByType(dt) => crate::common::systems::combat::queue::ClearType::ByType(dt),
                 };
                 let cleared = queue_utils::clear_threats(&mut queue, queue_clear_type);
 
