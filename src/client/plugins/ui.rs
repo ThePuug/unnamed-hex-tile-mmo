@@ -37,11 +37,18 @@ impl Plugin for UiPlugin {
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
                 resource_bars::update,
-                threat_icons::update,
-                threat_icons::animate_clear,
                 target_indicator::update,
                 debug_resources::debug_drain_resources, // DEBUG: Remove after testing
                 debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
+            ),
+        );
+
+        // Threat icon systems can run in parallel - no ordering needed
+        app.add_systems(
+            Update,
+            (
+                threat_icons::update,
+                threat_icons::animate_clear,
             ),
         );
     }

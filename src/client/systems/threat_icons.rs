@@ -112,6 +112,10 @@ pub fn update(
             let is_filled = index < queue.threats.len();
             spawn_threat_icon(&mut commands, container, index, queue.capacity, is_filled);
         }
+
+        // Return early - new icons will be updated next frame
+        // This prevents trying to update despawned entities
+        return;
     } else {
         // Just update colors for filled/empty state transitions
         // And manage timer rings (spawn for filled, despawn for empty)
@@ -270,19 +274,17 @@ fn calculate_icon_angle(index: usize, capacity: usize) -> f32 {
 /// Handle clearing animations when threats are removed
 /// Shows a flash/fade effect when player dodges
 pub fn animate_clear(
-    mut commands: Commands,
-    icon_query: Query<Entity, With<ThreatIcon>>,
+    mut _commands: Commands,
+    _icon_query: Query<Entity, With<ThreatIcon>>,
     mut clear_reader: EventReader<crate::common::message::Do>,
 ) {
     use crate::common::message::Event as GameEvent;
 
     for event in clear_reader.read() {
         if let GameEvent::ClearQueue { .. } = event.event {
-            // Flash effect - despawn all icons (they'll respawn on next update if needed)
-            for entity in &icon_query {
-                commands.entity(entity).despawn();
-            }
             // TODO: Add proper flash/fade animation using bevy_easings
+            // For now, do nothing - the update system will handle the visual change
+            // by detecting the queue change and updating icon colors
         }
     }
 }

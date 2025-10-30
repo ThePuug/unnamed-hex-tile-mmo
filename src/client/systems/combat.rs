@@ -1,12 +1,15 @@
 use bevy::prelude::*;
+use std::time::Duration;
 use crate::common::{
-    components::{reaction_queue::*, resources::*, ActorAttributes},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, ActorAttributes, Loc},
     message::{AbilityType, Do, Try, Event as GameEvent},
-    systems::combat::queue as queue_utils,
+    plugins::nntree::NNTree,
+    systems::{combat::queue as queue_utils, targeting::*},
 };
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
+/// Skips duplicates if already predicted
 pub fn handle_insert_threat(
     mut reader: EventReader<Do>,
     mut query: Query<&mut ReactionQueue>,
@@ -14,13 +17,28 @@ pub fn handle_insert_threat(
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
-                // Insert threat into client's visual queue
-                queue.threats.push_back(threat);
+                // Check if this threat was already predicted (deduplication)
+                // Match by source and very close inserted_at timestamp (within 50ms tolerance)
+                let is_duplicate = queue.threats.iter().any(|existing| {
+                    existing.source == threat.source &&
+                    existing.damage == threat.damage &&
+                    existing.inserted_at.as_millis().abs_diff(threat.inserted_at.as_millis()) < 50
+                });
 
-                info!(
-                    "Client: Inserted threat for {:?}: {} damage from {:?}",
-                    ent, threat.damage, threat.source
-                );
+                if is_duplicate {
+                    info!(
+                        "Client: Skipped duplicate threat for {:?}: {} damage from {:?} (already predicted)",
+                        ent, threat.damage, threat.source
+                    );
+                } else {
+                    // Insert threat into client's visual queue
+                    queue.threats.push_back(threat);
+
+                    info!(
+                        "Client: Inserted threat for {:?}: {} damage from {:?}",
+                        ent, threat.damage, threat.source
+                    );
+                }
             }
         }
     }
@@ -54,6 +72,60 @@ pub fn handle_apply_damage(
                     info!(
                         "Client: Removed resolved threat from {:?}'s queue: {} damage from {:?}",
                         ent, removed_threat.damage, removed_threat.source
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Client system to predict BasicAttack ability usage
+/// Optimistically inserts threat into target's queue before server confirmation
+pub fn predict_basic_attack(
+    mut try_reader: EventReader<Try>,
+    player_query: Query<(&Loc, &Heading), With<crate::common::components::Actor>>,
+    mut target_query: Query<(Option<&mut ReactionQueue>, Option<&ActorAttributes>)>,
+    entity_query: Query<(&EntityType, &Loc)>,
+    nntree: Res<NNTree>,
+    server: Res<crate::client::resources::Server>,
+    time: Res<Time>,
+) {
+    for event in try_reader.read() {
+        if let GameEvent::UseAbility { ent, ability: AbilityType::BasicAttack } = event.event {
+            // Get player's location and heading
+            let Ok((player_loc, player_heading)) = player_query.get(ent) else { continue; };
+
+            // Find target using same logic as server
+            let target_opt = select_target(
+                ent,
+                *player_loc,
+                *player_heading,
+                None, // No tier lock in MVP
+                &nntree,
+                |target_ent| entity_query.get(target_ent).ok().map(|(et, _)| *et),
+            );
+
+            if let Some(target_ent) = target_opt {
+                // Predict threat insertion (immediate UI feedback)
+                if let Ok((Some(mut queue), Some(attrs))) = target_query.get_mut(target_ent) {
+                    let now_ms = server.current_time(time.elapsed().as_millis());
+                    let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+                    let timer_duration = queue_utils::calculate_timer_duration(attrs);
+
+                    let predicted_threat = QueuedThreat {
+                        source: ent,
+                        damage: 20.0,
+                        damage_type: DamageType::Physical,
+                        inserted_at: now,
+                        timer_duration,
+                    };
+
+                    // Insert predicted threat (client sees it immediately)
+                    queue_utils::insert_threat(&mut queue, predicted_threat, now);
+
+                    info!(
+                        "Client: Predicted BasicAttack threat for {:?}: {} damage from {:?}",
+                        target_ent, predicted_threat.damage, ent
                     );
                 }
             }
