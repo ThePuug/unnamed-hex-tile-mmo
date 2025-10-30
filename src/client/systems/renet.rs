@@ -69,7 +69,9 @@ pub fn write_do(
             Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
                 let ent = match typ {
                     EntityType::Actor(_) => {
-                        if let Some(&loc) = l2r.get_by_right(&ent) { loc }
+                        if let Some(&loc) = l2r.get_by_right(&ent) {
+                            loc
+                        }
                         else {
                             let loc = commands.spawn(typ).id();
                             l2r.insert(loc, ent);

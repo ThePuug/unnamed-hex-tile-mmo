@@ -107,6 +107,7 @@ fn main() {
         actor::update,
         animator::update,
         camera::update,
+        combat::predict_basic_attack,
         combat::predict_dodge,
         combat::handle_insert_threat,
         combat::handle_apply_damage,

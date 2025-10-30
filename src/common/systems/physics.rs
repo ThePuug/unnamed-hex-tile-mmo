@@ -84,6 +84,30 @@ pub fn update(
     }
 }
 
+/// Updates Loc for entities that have crossed tile boundaries
+/// This handles NPCs and other non-player entities that don't have InputQueues
+pub fn update_tile_crossings(
+    mut query: Query<(Entity, &mut Loc, &Offset), With<Physics>>,
+    map: Res<Map>,
+    buffers: Res<InputQueues>,
+) {
+    for (ent, mut loc, offset) in &mut query {
+        // Skip entities with input queues (handled by main physics::update)
+        if buffers.get(&ent).is_some() {
+            continue;
+        }
+
+        // Calculate world position and check if it's on a different tile
+        let world_pos = map.convert(**loc) + offset.state;
+        let new_tile = map.convert(world_pos);
+
+        if new_tile != **loc {
+            debug!("NPC {:?} crossed tile boundary: {:?} -> {:?}", ent, **loc, new_tile);
+            *loc = Loc::new(new_tile);
+        }
+    }
+}
+
 pub fn apply(
     dest: Loc,
     mut dt0: i16,

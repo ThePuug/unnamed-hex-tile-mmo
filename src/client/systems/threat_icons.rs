@@ -63,6 +63,7 @@ pub fn update(
     // Use Actor marker to identify the local player (only one entity has it)
     player_query: Query<(Entity, &ReactionQueue), With<crate::common::components::Actor>>,
     time: Res<Time>,
+    server: Res<crate::client::resources::Server>,
 ) {
     let Ok(container) = container_query.single() else {
         warn!("ThreatIconContainer not found");
@@ -75,7 +76,10 @@ pub fn update(
         return;
     };
 
-    let now = time.elapsed();
+    // Use game world time (synced from server Init event)
+    // Threats use game world time, same as day/night cycle
+    let now_ms = server.current_time(time.elapsed().as_millis());
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Get current icon count
     let current_icons: Vec<_> = icon_query.iter().collect();
@@ -84,17 +88,6 @@ pub fn update(
 
     // Check if we need to rebuild the UI (capacity changed or icons mismatched)
     let needs_rebuild = current_icons.len() != target_count;
-
-    // Debug logging
-    if needs_rebuild {
-        info!(
-            "Threat UI rebuild: current_icons={}, target_count={}, filled={}, capacity={}",
-            current_icons.len(),
-            target_count,
-            queue.threats.len(),
-            queue.capacity
-        );
-    }
 
     if needs_rebuild {
         // Despawn all existing icons and respawn with correct filled/empty state
@@ -108,6 +101,10 @@ pub fn update(
             let is_filled = index < queue.threats.len();
             spawn_threat_icon(&mut commands, container, index, queue.capacity, is_filled);
         }
+
+        // Return early - new icons will be updated next frame
+        // This prevents trying to update despawned entities
+        return;
     } else {
         // Just update colors for filled/empty state transitions
         // And manage timer rings (spawn for filled, despawn for empty)
@@ -260,19 +257,17 @@ fn calculate_icon_angle(index: usize, capacity: usize) -> f32 {
 /// Handle clearing animations when threats are removed
 /// Shows a flash/fade effect when player dodges
 pub fn animate_clear(
-    mut commands: Commands,
-    icon_query: Query<Entity, With<ThreatIcon>>,
+    mut _commands: Commands,
+    _icon_query: Query<Entity, With<ThreatIcon>>,
     mut clear_reader: EventReader<crate::common::message::Do>,
 ) {
     use crate::common::message::Event as GameEvent;
 
     for event in clear_reader.read() {
         if let GameEvent::ClearQueue { .. } = event.event {
-            // Flash effect - despawn all icons (they'll respawn on next update if needed)
-            for entity in &icon_query {
-                commands.entity(entity).despawn();
-            }
             // TODO: Add proper flash/fade animation using bevy_easings
+            // For now, do nothing - the update system will handle the visual change
+            // by detecting the queue change and updating icon colors
         }
     }
 }

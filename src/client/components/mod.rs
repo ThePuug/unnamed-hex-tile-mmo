@@ -26,8 +26,11 @@ pub struct Terrain {
     pub last_tile_count: usize,
 }
 
-#[derive(Component, Default)]
-pub struct TargetCursor;
+/// Target indicator component for showing which entity will be targeted
+#[derive(Component)]
+pub struct TargetIndicator {
+    pub indicator_type: crate::client::systems::target_indicator::IndicatorType,
+}
 
 /// Marks a tile entity as belonging to a specific chunk
 #[derive(Component, Copy, Clone, Debug)]

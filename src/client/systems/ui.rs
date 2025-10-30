@@ -43,7 +43,7 @@ pub fn update(
     for (mut span, info) in &mut query { 
         **span = match info {
             Info::Time => {
-                let dt = time.elapsed().as_millis() + server.elapsed_offset;
+                let dt = server.current_time(time.elapsed().as_millis());
                 let season = match dt % YEAR_MS / SEASON_MS {
                     0 => "Thaw",
                     1 => "Blaze",

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::common::{
     components::{reaction_queue::*, ActorAttributes},
-    message::{Try, Event as GameEvent},
+    message::{Try, Do, ClearType, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
 
@@ -11,9 +11,13 @@ use crate::common::{
 pub fn process_expired_threats(
     mut commands: Commands,
     time: Res<Time>,
+    runtime: Res<crate::server::resources::RunTime>,
     mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes)>,
+    mut writer: EventWriter<Do>,
 ) {
-    let now = time.elapsed();
+    // Use game world time (same as threat timestamps)
+    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     for (ent, mut queue, _attrs) in &mut query {
         // Check which threats have expired
@@ -31,10 +35,13 @@ pub fn process_expired_threats(
             }) {
                 queue.threats.remove(pos);
 
-                info!(
-                    "Threat expired for entity {:?}: {} damage from {:?}",
-                    ent, expired_threat.damage, expired_threat.source
-                );
+                // Broadcast ClearQueue event to clients so they remove the threat from UI
+                writer.write(Do {
+                    event: GameEvent::ClearQueue {
+                        ent,
+                        clear_type: ClearType::First(1),
+                    },
+                });
 
                 // Emit ResolveThreat event to trigger damage application
                 commands.trigger_targets(

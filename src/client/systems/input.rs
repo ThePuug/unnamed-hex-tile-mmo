@@ -5,6 +5,7 @@ use crate::{common::{
         components::{
             heading::*,
             keybits::*,
+            spawner::*,
         },
         message::{AbilityType, Component, Event},
         systems::combat::gcd::*,
@@ -20,6 +21,7 @@ pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 
 pub const KEYCODE_GCD1: KeyCode = KeyCode::KeyQ;
 pub const KEYCODE_DODGE: KeyCode = KeyCode::Space;
+pub const KEYCODE_PLACE_SPAWNER: KeyCode = KeyCode::KeyP;
 
 /// Milliseconds between periodic input sends
 pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
@@ -34,23 +36,29 @@ pub fn update_keybits(
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 
-        if keyboard.just_released(KEYCODE_GCD1) {
-            use crate::common::components::spawner::*;
-            let spawner = Spawner::new(
-                NpcTemplate::Dog,
-                3,   // max_count
-                5,   // spawn_radius
-                40,  // player_activation_range
-                30,  // leash_distance
-                60,  // despawn_distance
-                5000, // respawn_timer_ms
-            );
-            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner)}});
+        // BasicAttack ability (Q key) - Send as Try event to server for validation
+        if keyboard.just_pressed(KEYCODE_GCD1) {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::BasicAttack }});
         }
 
-        // Dodge ability - Send as Try event to server for validation
+        // Dodge ability (Space key) - Send as Try event to server for validation
         if keyboard.just_pressed(KEYCODE_DODGE) {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
+        }
+
+        // Place spawner (P key) - Debug utility to spawn NPCs
+        if keyboard.just_pressed(KEYCODE_PLACE_SPAWNER) {
+            let spawner = Spawner {
+                npc_template: NpcTemplate::Dog,
+                max_count: 3,
+                spawn_radius: 2,
+                player_activation_range: 20,
+                leash_distance: 30,
+                despawn_distance: 50,
+                respawn_timer_ms: 5000,
+                last_spawn_attempt: 0,
+            };
+            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner) }});
         }
 
         let mut keybits = KeyBits::default();

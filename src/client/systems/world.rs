@@ -71,10 +71,15 @@ pub fn setup(
 pub fn do_init(
     mut reader: EventReader<Do>,
     mut server: ResMut<Server>,
+    time: Res<Time>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Init { dt, .. } } = message else { continue };
-        server.elapsed_offset = dt;
+        let client_now = time.elapsed().as_millis();
+        server.server_time_at_init = dt;
+        server.client_time_at_init = client_now;
+        info!("Time sync initialized: server_time_at_init={:.3}s, client_time_at_init={:.3}s",
+            dt as f64 / 1000.0, client_now as f64 / 1000.0);
     }
 }
 
@@ -148,7 +153,7 @@ pub fn update(
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
 ) {
-    let dt = time.elapsed().as_millis() + server.elapsed_offset;
+    let dt = server.current_time(time.elapsed().as_millis());
     // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
     let dtd = if diagnostics_state.fixed_lighting_enabled {
         0.375 // 9 hours / 24 hours = 0.375

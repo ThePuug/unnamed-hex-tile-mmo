@@ -9,7 +9,19 @@ pub struct EntityMap(BiMap<Entity,Entity>);
 
 #[derive(Debug, Default, Resource)]
 pub struct Server {
-    pub elapsed_offset: u128,
+    /// Server's game world time when Init event was received
+    pub server_time_at_init: u128,
+    /// Client's elapsed time when Init event was received
+    pub client_time_at_init: u128,
+}
+
+impl Server {
+    /// Calculate the current game world time (used for both threats and day/night)
+    /// Game world time = server_time_at_init + (client_now - client_at_init)
+    pub fn current_time(&self, client_now: u128) -> u128 {
+        let time_since_init = client_now.saturating_sub(self.client_time_at_init);
+        self.server_time_at_init.saturating_add(time_since_init)
+    }
 }
 
 /// Tracks which chunks have been received on the client

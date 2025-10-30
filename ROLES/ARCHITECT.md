@@ -218,42 +218,54 @@ What becomes easier or harder?
 - What alternatives were considered
 - What tradeoffs were accepted
 
-### Game Design Specifications
+### Game Design Specifications and ADRs
 
-The `docs/spec/` directory contains high-level game design documents (both existing and planned systems):
+**Two-Stage Design Process:**
 
-**Purpose:**
-- Define what game systems should do (authoritative mechanics reference)
-- Provide context for architectural decisions
-- Living documentation that evolves with codebase
+1. **PLAYER Role** → Creates **Specs** (`docs/spec/`) - Game design from player perspective
+2. **ARCHITECT Role** → Creates **ADRs** (`docs/adr/`) - Technical architecture decisions
+
+**Specs vs ADRs:**
+
+| Aspect | Specs (PLAYER creates) | ADRs (ARCHITECT creates) |
+|--------|------------------------|--------------------------|
+| **Focus** | Player experience, mechanics, fun | Technical structure, implementation |
+| **Audience** | Designers, players, anyone | Developers, technical team |
+| **Questions** | "What should players do?" "Is it fun?" | "How do we build this?" "What patterns?" |
+| **Content** | Rules, interactions, feedback, balance | Modules, data structures, algorithms |
+| **Location** | `docs/spec/[system].md` | `docs/adr/NNN-[decision].md` |
 
 **Architect's Role with Specs:**
-1. **Translation**: Convert game design concepts into technical architecture
-2. **Validation**: Identify technical constraints or impossibilities early
-3. **Integration Planning**: Ensure specs fit within existing architecture
-4. **Refinement**: Suggest design adjustments based on technical realities
-5. **Phasing**: Break large specs into implementable increments
-6. **Maintenance**: Update specs as implementation reveals better approaches
+1. **Read Specs First**: Understand player experience goals before designing architecture
+2. **Translate to ADRs**: Convert game design concepts into technical architecture decisions
+3. **Identify Constraints**: Surface technical limitations or impossibilities early
+4. **Collaborate with PLAYER**: Suggest design adjustments based on technical realities
+5. **Phase Implementation**: Break large specs into implementable increments
+
+**Workflow Example:**
+```
+PLAYER writes: docs/spec/ability-system.md
+  ↓ (defines targeting, cooldowns, player interactions)
+ARCHITECT reads spec, writes: docs/adr/004-ability-system-and-targeting.md
+  ↓ (defines component structure, event system, validation)
+DEVELOPER implements based on ADR
+```
 
 **When Working with Specs:**
-- Read relevant specs before designing major features
-- Create ADRs for significant architectural decisions
-- **Update specs when implementation diverges from design**
-- **Add new specs for new systems** as they're designed
-- Treat specs as living documents, not immutable requirements
+- **Read relevant specs** before creating ADRs for new features
+- **Create ADRs** to document technical decisions (never put tech details in specs)
+- **Collaborate with PLAYER** if spec needs technical refinement
+- Keep specs and ADRs separate - different concerns, different audiences
 
-**Spec Evolution Guidelines:**
-- Document **design intent**, not implementation details
-- Update when implementation reveals better mechanics
-- Add implementation status markers (e.g., "partial", "planned")
-- Keep specs high-level - detailed implementation belongs in code/GUIDANCE
+**DO NOT:**
+- ❌ Add implementation details to specs (that's what ADRs are for)
+- ❌ Create specs yourself (switch to PLAYER role for that)
+- ❌ Skip reading specs when designing (you'll miss player experience goals)
 
-**Current Specs:**
-- **Triumvirate System** - Actor classification (Origin/Approach/Resilience) *(partial)*
-- **Attribute System** - Sliding scale attributes (Axis/Spectrum) *(planned)*
-- **Hub System** - Settlement growth, influence, encroachment *(planned)*
-- **Siege System** - Combat pressure (encroachment vs anger) *(planned)*
-- **Haven System** - Starter settlements *(planned)*
+**Current Specs → ADRs:**
+- **Triumvirate System** (spec) → ADR-001 Actor Classification *(partial)*
+- **Combat/Damage** (spec) → ADR-002 Combat Foundation *(accepted)*
+- **Ability System** (spec needed) → ADR-004 Ability System *(proposed)*
 
 ## Code Organization Checklist
 
