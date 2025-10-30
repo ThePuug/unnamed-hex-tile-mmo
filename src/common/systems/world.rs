@@ -120,7 +120,6 @@ pub fn do_incremental(
                     warn!("Received Health update for entity {:?} but entity has no Health component", ent);
                     continue;
                 };
-                info!("Applying Health update to entity {:?}: {}/{}", ent, health.state, health.max);
                 *health0 = health;
             }
             Component::Stamina(stamina) => {

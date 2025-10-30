@@ -38,18 +38,8 @@ pub fn debug_drain_resources(
 
             if let Some(overflow_threat) = overflow {
                 // Queue was full, apply overflow damage immediately
-                println!("🔴 QUEUE FULL! Overflow threat applied immediately: {} damage", overflow_threat.damage);
                 health.step = (health.step - overflow_threat.damage).max(0.0);
                 health.state = health.step;
-            } else {
-                println!(
-                    "⚔️  THREAT QUEUED! {} damage will apply in {:.2}s. Queue: {}/{} | Health: {:.1}",
-                    threat.damage,
-                    timer_duration.as_secs_f32(),
-                    queue.len(),
-                    queue.capacity,
-                    health.state
-                );
             }
         }
 
@@ -93,7 +83,6 @@ pub fn debug_process_expired_threats(
             if let Some(threat) = queue.threats.remove(*idx) {
                 health.step = (health.step - threat.damage).max(0.0);
                 health.state = health.step;
-                println!("💥 THREAT EXPIRED! Applied {} damage. Health: {:.1}", threat.damage, health.state);
             }
         }
 

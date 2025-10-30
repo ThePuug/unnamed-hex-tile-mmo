@@ -82,16 +82,6 @@ pub fn predict_dodge(
                     // Consume stamina
                     stamina.state -= dodge_cost;
                     stamina.step = stamina.state;
-
-                    info!(
-                        "Client: Predicted Dodge for {:?}, cleared {} threats, stamina: {}/{}",
-                        ent, cleared_count, stamina.state, stamina.max
-                    );
-                } else {
-                    warn!(
-                        "Client: Cannot dodge - insufficient stamina ({}/{}) or empty queue",
-                        stamina.state, stamina.max
-                    );
                 }
             }
         }

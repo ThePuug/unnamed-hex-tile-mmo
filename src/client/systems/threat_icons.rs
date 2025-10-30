@@ -124,8 +124,8 @@ pub fn update(
                 ));
             } else {
                 commands.entity(*entity).insert((
-                    BorderColor(Color::srgba(0.4, 0.4, 0.4, 0.3)),
-                    BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.3)),
+                    BorderColor(Color::srgba(0.6, 0.3, 0.1, 0.5)),
+                    BackgroundColor(Color::srgba(0.15, 0.1, 0.05, 0.5)),
                 ));
             }
 
@@ -197,13 +197,14 @@ fn spawn_threat_icon(
     let start_x = -total_width / 2.0;
     let x_offset = start_x + (index as f32 * (ICON_SIZE + ICON_SPACING));
 
-    // Visual appearance: filled slots are opaque red, empty slots are transparent grey
+    // Visual appearance: filled slots are opaque red, empty slots are dimmer red/orange
     let (border_color, background_color) = if is_filled {
         // Filled slot: bright red, opaque
         (Color::srgb(0.8, 0.2, 0.2), Color::srgb(0.3, 0.1, 0.1))
     } else {
-        // Empty/ghost slot: grey, transparent (30% opacity)
-        (Color::srgba(0.4, 0.4, 0.4, 0.3), Color::srgba(0.2, 0.2, 0.2, 0.3))
+        // Empty/ghost slot: dim red/orange border with darker background (50% opacity)
+        // Subtle orange tint makes them stand out while looking "inactive"
+        (Color::srgba(0.6, 0.3, 0.1, 0.5), Color::srgba(0.15, 0.1, 0.05, 0.5))
     };
 
     commands.entity(container).with_children(|parent| {
