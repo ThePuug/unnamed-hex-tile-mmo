@@ -2,6 +2,7 @@ pub mod actor;
 pub mod behaviour;
 pub mod combat;
 pub mod physics;
+pub mod targeting;
 pub mod world;
 
 // TODO: add "leap" season once per quarter
