@@ -6,12 +6,26 @@
 - `cargo run --bin client`
 
 # Play
-Currently not alot to do, but getting a base down to build on
-- `<ArrowUp> <ArrowLeft> <ArrowRight> <ArrowDown>` to move
-- `<KeyQ>` to spawn a curious dog
-- `<Num0>` to jump
-- `<KeyG>` to toggle debug grid overlay
- 
+
+**Early Prototype** - Experience the core tactical combat system in development.
+
+## What You Can Do Now
+- **Explore** - Traverse procedurally generated hexagonal terrain with organic slopes and dynamic day/night cycles
+- **Combat** - Face hostile creatures using directional keyboard combat (no mouse required)
+- **React** - Experience the unique threat queue system - incoming attacks give you time to respond before damage lands
+- **Experiment** - Test abilities, observe critical hits, see mutual destruction in action
+
+## Controls
+- Arrow keys - Move through the hex grid
+- Number keys - Activate abilities (combat system in progress)
+- G - Toggle hex grid visualization
+- Q - Spawn test entities
+
+## What to Expect
+This is a combat-focused prototype. You'll fight enemies, take damage, die, and respawn. The core tactical reaction system is playable - everything else is coming soon.
+
+**Focus:** The combat should feel deliberate and strategic, not twitchy. You're testing whether having a window to react to incoming damage feels engaging.
+
 # Game features
 ## things you care about
 - client-side prediction (movement feels instant, zero perceived lag)
