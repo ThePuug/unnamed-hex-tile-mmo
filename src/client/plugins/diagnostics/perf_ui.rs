@@ -4,7 +4,7 @@ use iyes_perf_ui::prelude::*;
 use iyes_perf_ui::entry::PerfUiEntry;
 use iyes_perf_ui::utils::next_sort_key;
 
-use super::config::{DiagnosticsConfig, DiagnosticsState};
+use super::config::DiagnosticsState;
 
 // ============================================================================
 // Components
@@ -91,15 +91,18 @@ pub fn setup_performance_ui(
 
 /// Toggles performance UI visibility when the perf UI toggle key is pressed
 ///
+/// NOTE: This function is deprecated and only used by legacy tests.
+/// Performance UI toggle is now handled by the developer console.
+///
 /// Updates both the DiagnosticsState resource and the visibility component
 /// of the performance UI entity.
 pub fn toggle_performance_ui(
     keyboard: Res<ButtonInput<KeyCode>>,
-    config: Res<DiagnosticsConfig>,
     mut state: ResMut<DiagnosticsState>,
     mut perf_ui_query: Query<&mut Visibility, With<PerfUiRootMarker>>,
 ) {
-    if keyboard.just_pressed(config.perf_ui_toggle_key) {
+    // Hardcoded key for legacy test compatibility
+    if keyboard.just_pressed(KeyCode::F3) {
         state.perf_ui_visible = !state.perf_ui_visible;
 
         if let Ok(mut visibility) = perf_ui_query.single_mut() {

@@ -1,7 +1,7 @@
 // This file now serves as a module root, with submodules containing the implementation
 mod config;
-mod grid;
-mod perf_ui;
+pub mod grid;
+pub mod perf_ui;
 mod toggles;
 
 use bevy::{
@@ -12,7 +12,7 @@ use bevy::{
 use iyes_perf_ui::{PerfUiPlugin, PerfUiAppExt};
 
 // Re-export public types for external use
-pub use config::{DiagnosticsConfig, DiagnosticsState};
+pub use config::DiagnosticsState;
 
 /// Plugin that consolidates all debug and diagnostic features
 ///
@@ -22,7 +22,7 @@ pub use config::{DiagnosticsConfig, DiagnosticsState};
 /// - Toggleable slope rendering (affects terrain mesh and grid)
 /// - Fixed lighting mode for consistent debugging
 ///
-/// All features can be toggled via keyboard shortcuts (see DiagnosticsConfig).
+/// All features can be toggled via the developer console (NumpadDivide to open).
 pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {
@@ -40,7 +40,6 @@ impl Plugin for DiagnosticsPlugin {
 
         // Initialize shared diagnostic resources
         app.init_resource::<DiagnosticsState>();
-        app.init_resource::<DiagnosticsConfig>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -55,12 +54,7 @@ impl Plugin for DiagnosticsPlugin {
         app.add_systems(
             Update,
             (
-                // Input handling systems
-                grid::toggle_grid_visibility,
-                toggles::toggle_slope_rendering,
-                toggles::toggle_fixed_lighting,
-                perf_ui::toggle_performance_ui,
-                // Mesh update systems
+                // Mesh update systems (no direct input handlers - use dev console)
                 grid::update_grid_mesh,
             ),
         );
@@ -79,10 +73,12 @@ mod tests {
 
     #[test]
     fn test_toggle_grid_triggers_regen_on_enable() {
+        // NOTE: This test validates the legacy toggle behavior.
+        // Grid toggling is now handled by the developer console.
+
         // Setup minimal app with required resources
         let mut app = App::new();
         app.init_resource::<DiagnosticsState>();
-        app.init_resource::<DiagnosticsConfig>();
 
         // Spawn grid overlay entity
         app.world_mut().spawn((
@@ -124,12 +120,14 @@ mod tests {
 
     #[test]
     fn test_toggle_grid_off_does_not_trigger_regen() {
+        // NOTE: This test validates the legacy toggle behavior.
+        // Grid toggling is now handled by the developer console.
+
         // Setup with grid already visible
         let mut app = App::new();
         let mut state = DiagnosticsState::default();
         state.grid_visible = true;
         app.insert_resource(state);
-        app.init_resource::<DiagnosticsConfig>();
 
         // Spawn grid overlay entity
         app.world_mut().spawn((

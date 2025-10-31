@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use crate::common::resources::map::Map;
-use super::config::{DiagnosticsConfig, DiagnosticsState};
+use super::config::DiagnosticsState;
 
 // ============================================================================
 // Constants
@@ -86,15 +86,18 @@ pub fn setup_grid_overlay(
 
 /// Toggles grid visibility when the grid toggle key is pressed
 ///
+/// NOTE: This function is deprecated and only used by legacy tests.
+/// Grid toggling is now handled by the developer console.
+///
 /// When toggling on, sets the regeneration flag to ensure the mesh is rebuilt
 /// with current map data. When toggling off, just hides the mesh.
 pub fn toggle_grid_visibility(
     keyboard: Res<ButtonInput<KeyCode>>,
-    config: Res<DiagnosticsConfig>,
     mut state: ResMut<DiagnosticsState>,
     mut query: Query<(&mut Visibility, &mut HexGridOverlay)>,
 ) {
-    if keyboard.just_pressed(config.grid_toggle_key) {
+    // Hardcoded key for legacy test compatibility
+    if keyboard.just_pressed(KeyCode::KeyJ) {
         state.grid_visible = !state.grid_visible;
 
         if let Ok((mut visibility, mut overlay)) = query.single_mut() {

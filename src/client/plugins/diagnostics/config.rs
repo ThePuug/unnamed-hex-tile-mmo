@@ -1,39 +1,18 @@
 use bevy::prelude::*;
 
-/// Configuration for diagnostics features
-#[derive(Resource)]
-pub struct DiagnosticsConfig {
-    /// Key to toggle debug grid (default: J)
-    pub grid_toggle_key: KeyCode,
-    /// Key to toggle slope rendering (default: H)
-    pub slope_toggle_key: KeyCode,
-    /// Key to toggle fixed lighting (default: G)
-    pub lighting_toggle_key: KeyCode,
-    /// Key to toggle performance UI (default: F3)
-    pub perf_ui_toggle_key: KeyCode,
-}
-
-impl Default for DiagnosticsConfig {
-    fn default() -> Self {
-        Self {
-            grid_toggle_key: KeyCode::KeyJ,
-            slope_toggle_key: KeyCode::KeyH,
-            lighting_toggle_key: KeyCode::KeyG,
-            perf_ui_toggle_key: KeyCode::F3,
-        }
-    }
-}
-
 /// Consolidated state for all diagnostic features
+///
+/// All features are toggled via the developer console (NumpadDivide to open).
+/// Direct keybindings have been removed to eliminate input conflicts.
 #[derive(Resource)]
 pub struct DiagnosticsState {
-    /// Debug grid visibility (toggled with 'J' key)
+    /// Debug grid visibility
     pub grid_visible: bool,
-    /// Slope rendering enabled (toggled with 'H' key, required for proper physics)
+    /// Slope rendering enabled (required for proper physics)
     pub slope_rendering_enabled: bool,
-    /// Fixed lighting at 9 AM (toggled with 'G' key, false = dynamic day/night cycle)
+    /// Fixed lighting at 9 AM (false = dynamic day/night cycle)
     pub fixed_lighting_enabled: bool,
-    /// Performance UI visibility (toggled with 'F3' key)
+    /// Performance UI visibility
     pub perf_ui_visible: bool,
 }
 

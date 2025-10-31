@@ -4,13 +4,16 @@ use crate::{
     client::components::Terrain,
     common::resources::map::Map,
 };
-use super::config::{DiagnosticsConfig, DiagnosticsState};
+use super::config::DiagnosticsState;
 
 // ============================================================================
 // Feature Toggle Systems
 // ============================================================================
 
 /// Toggles slope rendering mode and triggers mesh regeneration
+///
+/// NOTE: This function is deprecated and only used by legacy tests.
+/// Slope rendering toggle is now handled by the developer console.
 ///
 /// When slope rendering is disabled, all tiles are rendered flat at their base elevation.
 /// When enabled, vertices are adjusted to create smooth transitions between height differences.
@@ -23,12 +26,12 @@ use super::config::{DiagnosticsConfig, DiagnosticsState};
 /// Physics requires slope rendering to be enabled for correct collision detection.
 pub fn toggle_slope_rendering(
     keyboard: Res<ButtonInput<KeyCode>>,
-    config: Res<DiagnosticsConfig>,
     mut state: ResMut<DiagnosticsState>,
     mut terrain_query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
 ) {
-    if keyboard.just_pressed(config.slope_toggle_key) {
+    // Hardcoded key for legacy test compatibility
+    if keyboard.just_pressed(KeyCode::KeyH) {
         state.slope_rendering_enabled = !state.slope_rendering_enabled;
 
         info!(
@@ -52,6 +55,9 @@ pub fn toggle_slope_rendering(
 
 /// Toggles between fixed lighting (9 AM) and dynamic day/night cycle
 ///
+/// NOTE: This function is deprecated and only used by legacy tests.
+/// Fixed lighting toggle is now handled by the developer console.
+///
 /// Fixed lighting is useful for debugging and ensures consistent visibility.
 /// Dynamic lighting provides realistic time-of-day variation.
 ///
@@ -59,10 +65,10 @@ pub fn toggle_slope_rendering(
 /// whether to advance the time of day or keep it locked.
 pub fn toggle_fixed_lighting(
     keyboard: Res<ButtonInput<KeyCode>>,
-    config: Res<DiagnosticsConfig>,
     mut state: ResMut<DiagnosticsState>,
 ) {
-    if keyboard.just_pressed(config.lighting_toggle_key) {
+    // Hardcoded key for legacy test compatibility
+    if keyboard.just_pressed(KeyCode::KeyG) {
         state.fixed_lighting_enabled = !state.fixed_lighting_enabled;
 
         info!(

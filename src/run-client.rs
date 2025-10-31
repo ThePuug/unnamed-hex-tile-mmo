@@ -29,11 +29,12 @@ use common::{
 };
 use client::{
     plugins::{
+        console::DevConsolePlugin,
         diagnostics::DiagnosticsPlugin,
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, animator, camera, combat, input, renet, spawner_viz, world}
+    systems::{actor, animator, camera, combat, debug_resources, input, renet, spawner_viz, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -69,6 +70,7 @@ fn main() {
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
+        DevConsolePlugin,
         DiagnosticsPlugin,
         UiPlugin,
     ));
@@ -121,6 +123,14 @@ fn main() {
         spawner_viz::visualize_spawners,
         spawner_viz::toggle_spawner_viz,
         spawner_viz::cleanup_despawned_spawner_viz,
+    ));
+
+    // UAT testing aids - client-side hacks for testing resource/threat mechanics
+    // NOTE: Violates server authority (ADR-002) - debug builds only
+    #[cfg(debug_assertions)]
+    app.add_systems(Update, (
+        debug_resources::debug_drain_resources,
+        debug_resources::debug_process_expired_threats,
     ));
 
     app.add_systems(Update, (
