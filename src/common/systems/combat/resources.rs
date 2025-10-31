@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, Loc, offset::Offset, resources::*},
+    components::{ActorAttributes, Loc, offset::Offset, resources::*, entity_type::EntityType},
     message::{Component as MessageComponent, Event, *},
 };
 
@@ -102,12 +102,12 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &crate::common::components::ActorAttributes)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType)>,
 ) {
     use qrz::Qrz;
     use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             info!("SERVER: Player {:?} respawning at origin", ent);
 
@@ -132,17 +132,11 @@ pub fn process_respawn(
             commands.entity(ent).remove::<RespawnTimer>();
 
             // Re-spawn the player on client (was despawned on death)
-            // Send Spawn event to re-create client entity
+            // Send Spawn event to re-create client entity with original actor type
             writer.write(Do {
                 event: Event::Spawn {
                     ent,
-                    typ: crate::common::components::entity_type::EntityType::Actor(
-                        crate::common::components::entity_type::actor::ActorImpl {
-                            origin: crate::common::components::entity_type::actor::Origin::Natureborn,
-                            approach: crate::common::components::entity_type::actor::Approach::Direct,
-                            resilience: crate::common::components::entity_type::actor::Resilience::Vital,
-                        }
-                    ),
+                    typ: *entity_type,  // Use actual entity type (preserves Triumvirate, etc.)
                     qrz: spawn_qrz,
                     attrs: Some(*attrs),
                 },
