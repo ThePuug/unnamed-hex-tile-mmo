@@ -49,8 +49,19 @@ pub fn handle_apply_damage(
         if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
             // Update health
             if let Ok(mut health) = health_query.get_mut(ent) {
-                health.state = (health.state - damage).max(0.0);
-                health.step = health.state;
+                let new_health = (health.state - damage).max(0.0);
+
+                // Check if prediction was correct (for local player)
+                let prediction_error = (health.step - new_health).abs();
+                if prediction_error > 0.1 {
+                    warn!("CLIENT: Health prediction mismatch! Predicted: {:.1}, Actual: {:.1}, Error: {:.1}",
+                        health.step, new_health, prediction_error);
+                    // Rollback: snap step to server's authoritative value
+                    health.step = new_health;
+                }
+
+                health.state = new_health;
+                health.step = new_health; // Ensure sync for non-predicted entities (NPCs)
             }
 
             // Remove the resolved threat from the queue
@@ -193,6 +204,46 @@ pub fn handle_ability_failed(
             // TODO Phase 6: Show error message in UI
             // For now, server will send corrective Stamina and ClearQueue events
         }
+    }
+}
+
+/// Client system to predict local player damage when threats expire
+/// Provides instant visual feedback for health changes
+pub fn predict_threat_resolution(
+    mut query: Query<(&mut ReactionQueue, &mut Health, &ActorAttributes), With<crate::common::components::Actor>>,
+    time: Res<Time>,
+    server: Res<crate::client::resources::Server>,
+) {
+    for (mut queue, mut health, attrs) in &mut query {
+        // Calculate current time (using server time for consistency)
+        let now_ms = server.current_time(time.elapsed().as_millis());
+        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+
+        // Check for expired threats (same logic as server)
+        let expired_threats = crate::common::systems::combat::queue::check_expired_threats(&queue, now);
+
+        // Predict damage for each expired threat
+        for threat in expired_threats {
+            // Calculate final damage using Phase 2 mitigation
+            let final_damage = crate::common::systems::combat::damage::apply_passive_modifiers(
+                threat.damage,
+                attrs,
+                threat.damage_type,
+            );
+
+            // Apply predicted damage to health.step (not state - that's server-authoritative)
+            health.step = (health.step - final_damage).max(0.0);
+
+            info!("CLIENT PREDICTION: Threat expired, predicted damage: {:.1}, new health.step: {:.1}",
+                final_damage, health.step);
+        }
+
+        // Remove expired threats from queue (client-side cleanup)
+        // Server will send ApplyDamage events which will confirm/correct our prediction
+        queue.threats.retain(|threat| {
+            let time_since_insert = now.saturating_sub(threat.inserted_at);
+            time_since_insert < threat.timer_duration
+        });
     }
 }
 

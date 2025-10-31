@@ -111,6 +111,7 @@ fn main() {
         camera::update,
         combat::predict_basic_attack,
         combat::predict_dodge,
+        combat::predict_threat_resolution,
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,
