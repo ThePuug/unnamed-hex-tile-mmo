@@ -36,10 +36,14 @@ pub fn handle_insert_threat(
 
 /// Client system to handle ApplyDamage events
 /// Updates health and removes the corresponding threat from the queue
+/// Spawns floating damage numbers above the entity
 pub fn handle_apply_damage(
+    mut commands: Commands,
     mut reader: EventReader<Do>,
     mut health_query: Query<&mut Health>,
     mut queue_query: Query<&mut ReactionQueue>,
+    transform_query: Query<&Transform>,
+    time: Res<Time>,
 ) {
     for event in reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
@@ -55,6 +59,32 @@ pub fn handle_apply_damage(
                 if let Some(pos) = queue.threats.iter().position(|t| t.source == source) {
                     queue.threats.remove(pos);
                 }
+            }
+
+            // Spawn floating damage number above entity using UI system
+            if let Ok(transform) = transform_query.get(ent) {
+                let damage_text = format!("{:.0}", damage);
+                let world_pos = transform.translation + Vec3::new(0.0, 2.5, 0.0);
+
+                commands.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        ..default()
+                    },
+                    Text::new(damage_text),
+                    TextFont {
+                        font_size: 32.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    crate::client::components::FloatingText {
+                        spawn_time: time.elapsed(),
+                        world_position: world_pos,
+                        lifetime: 1.5,
+                        velocity: 1.0,
+                    },
+                ));
             }
         }
     }
@@ -163,6 +193,46 @@ pub fn handle_ability_failed(
             // TODO Phase 6: Show error message in UI
             // For now, server will send corrective Stamina and ClearQueue events
         }
+    }
+}
+
+/// System to update floating text (damage numbers)
+/// Projects world position to screen space, moves text upward, fades out, and despawns
+pub fn update_floating_text(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut crate::client::components::FloatingText, &mut Node, &mut TextColor)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    time: Res<Time>,
+) {
+    let Ok((camera, camera_transform)) = camera_query.single() else {
+        return;
+    };
+
+    for (entity, mut floating_text, mut node, mut text_color) in &mut query {
+        let elapsed = (time.elapsed() - floating_text.spawn_time).as_secs_f32();
+
+        // Check if lifetime expired
+        if elapsed >= floating_text.lifetime {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        // Move upward in world space
+        let delta = time.delta_secs();
+        floating_text.world_position.y += floating_text.velocity * delta;
+
+        // Project world position to screen space
+        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, floating_text.world_position) {
+            node.left = Val::Px(viewport_pos.x);
+            node.top = Val::Px(viewport_pos.y);
+        } else {
+            // Position is behind camera or off-screen, hide it
+            node.left = Val::Px(-1000.0);
+        }
+
+        // Fade out (alpha based on remaining lifetime)
+        let alpha = 1.0 - (elapsed / floating_text.lifetime);
+        text_color.0 = text_color.0.with_alpha(alpha);
     }
 }
 
