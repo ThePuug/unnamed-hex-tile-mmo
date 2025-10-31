@@ -44,13 +44,19 @@ pub fn update_floating_text(
 /// Health bars are shown for entities in combat or with HP < max
 pub fn spawn_health_bars(
     mut commands: Commands,
-    query: Query<(Entity, &crate::common::components::resources::Health)>,
+    query: Query<(Entity, &crate::common::components::resources::Health), Changed<crate::common::components::resources::Health>>,
     existing_bars: Query<&crate::client::components::HealthBar>,
 ) {
+    // Build HashSet of entities that already have health bars (O(n) once)
+    let tracked_entities: std::collections::HashSet<_> = existing_bars
+        .iter()
+        .map(|bar| bar.tracked_entity)
+        .collect();
+
+    // Only iterate entities whose Health changed this frame (reactive, not polling)
     for (entity, health) in &query {
-        // Check if this entity already has a health bar
-        let has_bar = existing_bars.iter().any(|bar| bar.tracked_entity == entity);
-        if has_bar {
+        // O(1) lookup instead of O(n) iteration
+        if tracked_entities.contains(&entity) {
             continue;
         }
 
