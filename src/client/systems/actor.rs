@@ -115,6 +115,7 @@ pub fn do_spawn(
             Physics::default(),
             attrs_val,
             reaction_queue,
+            crate::common::components::gcd::Gcd::new(),
         ))
         .observe(ready);
     }

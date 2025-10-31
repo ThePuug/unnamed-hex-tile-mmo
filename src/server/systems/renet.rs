@@ -120,6 +120,7 @@ pub fn do_manage_connections(
                     mana,
                     combat_state,
                     reaction_queue,
+                    gcd::Gcd::new(),  // GCD component for cooldown tracking
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));

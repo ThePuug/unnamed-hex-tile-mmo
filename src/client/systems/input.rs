@@ -28,11 +28,11 @@ pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits, &crate::common::components::resources::Health), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits, &crate::common::components::resources::Health, Option<&crate::common::components::gcd::Gcd>), With<Actor>>,
     mut writer: EventWriter<Try>,
     dt: Res<Time>,
 ) {
-    if let Ok((ent, &heading, mut keybits0, health)) = query.single_mut() {
+    if let Ok((ent, &heading, mut keybits0, health, gcd_opt)) = query.single_mut() {
         // Don't process input while dead (health <= 0)
         if health.state <= 0.0 {
             return;
@@ -40,18 +40,21 @@ pub fn update_keybits(
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 
+        // Check GCD before allowing ability usage
+        let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
+
         // BasicAttack ability (Q key) - Send as Try event to server for validation
-        if keyboard.just_pressed(KEYCODE_GCD1) {
+        if keyboard.just_pressed(KEYCODE_GCD1) && !gcd_active {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::BasicAttack }});
         }
 
         // Dodge ability (Space key) - Send as Try event to server for validation
-        if keyboard.just_pressed(KEYCODE_DODGE) {
+        if keyboard.just_pressed(KEYCODE_DODGE) && !gcd_active {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
         }
 
         // Place spawner (P key) - Debug utility to spawn NPCs
-        if keyboard.just_pressed(KEYCODE_PLACE_SPAWNER) {
+        if keyboard.just_pressed(KEYCODE_PLACE_SPAWNER) && !gcd_active {
             let spawner = Spawner {
                 npc_template: NpcTemplate::Dog,
                 max_count: 3,

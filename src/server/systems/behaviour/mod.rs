@@ -1,4 +1,7 @@
+pub mod face_target;
+pub mod find_target;
 pub mod pathto;
+pub mod use_ability;
 
 use bevy::prelude::*;
 use bevy_behave::prelude::*;

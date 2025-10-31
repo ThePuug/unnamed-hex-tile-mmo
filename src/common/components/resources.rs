@@ -23,6 +23,15 @@ impl Default for Health {
     }
 }
 
+impl Health {
+    /// Returns the current health value
+    /// On server: returns state (authoritative)
+    /// On client: returns state (confirmed) or step (predicted for local player)
+    pub fn current(&self) -> f32 {
+        self.state
+    }
+}
+
 /// Stamina resource component following state/step prediction pattern
 /// - state: Server-authoritative stamina (confirmed)
 /// - step: Client prediction (local player) OR interpolated value (remote entities)

@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, reaction_queue::*, resources::*},
+        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, reaction_queue::*, resources::*, gcd::Gcd},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
@@ -14,7 +14,12 @@ use crate::{
             resources as resource_calcs,
         },
     },
-    server::systems::behaviour::{AttackTarget, FindSomethingInterestingWithin, Nearby, NearbyOrigin},
+    server::systems::behaviour::{
+        AttackTarget, FindSomethingInterestingWithin, Nearby, NearbyOrigin,
+        find_target::FindOrKeepTarget,
+        face_target::FaceTarget,
+        use_ability::UseAbilityIfAdjacent,
+    },
 };
 
 /// System that ticks spawners and spawns NPCs when conditions are met
@@ -99,12 +104,20 @@ fn spawn_npc(
     // Create behavior tree based on template
     let behavior_tree = match template {
         NpcTemplate::Dog | NpcTemplate::Wolf => {
+            // ADR-006: New combat behavior with sticky targeting and sustained pressure
             BehaveTree::new(behave! {
                 Behave::Forever => {
                     Behave::Sequence => {
                         Behave::spawn_named(
-                            "find something interesting",
-                            FindSomethingInterestingWithin { dist: 20 }
+                            "find or keep target",
+                            FindOrKeepTarget {
+                                dist: 20,           // Acquisition range
+                                leash_distance: 30, // Max chase distance
+                            }
+                        ),
+                        Behave::spawn_named(
+                            "face target (before pathfinding)",
+                            FaceTarget
                         ),
                         Behave::spawn_named(
                             "set dest near target",
@@ -119,10 +132,16 @@ fn spawn_npc(
                             PathTo::default()
                         ),
                         Behave::spawn_named(
-                            "attack target",
-                            AttackTarget
+                            "face target (after pathfinding)",
+                            FaceTarget
                         ),
-                        Behave::Wait(2.),  // 2 second cooldown between attacks
+                        Behave::spawn_named(
+                            "use ability if adjacent",
+                            UseAbilityIfAdjacent {
+                                ability: AbilityType::BasicAttack,
+                            }
+                        ),
+                        Behave::Wait(1.0),  // 1 second GCD for sustained pressure (ADR-006)
                     }
                 }
             })
@@ -207,6 +226,7 @@ fn spawn_npc(
             mana,
             combat_state,
             reaction_queue,
+            Gcd::new(),  // GCD component for cooldown tracking
             children![(
                 Name::new("behaviour"),
                 behavior_tree,

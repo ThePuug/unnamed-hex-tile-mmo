@@ -90,6 +90,7 @@ fn main() {
         actor::do_incremental,
         actor::update,
         combat::handle_use_ability,
+        combat::apply_gcd,  // ADR-006: Activate GCD component from Event::Gcd
         common::systems::combat::resources::check_death, // Check for death from ANY source
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,

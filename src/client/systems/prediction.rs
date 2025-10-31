@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::time::Duration;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, ActorAttributes, Loc},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, ActorAttributes, Loc},
     message::{AbilityType, Event as GameEvent, Try},
     plugins::nntree::NNTree,
     systems::{combat::queue as queue_utils, targeting::*},
@@ -12,6 +12,7 @@ use crate::common::{
 pub fn predict_basic_attack(
     mut try_reader: EventReader<Try>,
     player_query: Query<(&Loc, &Heading), With<crate::common::components::Actor>>,
+    mut player_gcd_query: Query<Option<&mut Gcd>, With<crate::common::components::Actor>>,
     mut target_query: Query<(Option<&mut ReactionQueue>, Option<&ActorAttributes>)>,
     entity_query: Query<(&EntityType, &Loc)>,
     nntree: Res<NNTree>,
@@ -20,6 +21,7 @@ pub fn predict_basic_attack(
 ) {
     for event in try_reader.read() {
         if let GameEvent::UseAbility { ent, ability: AbilityType::BasicAttack } = event.event {
+            // Input system already checked GCD - if we got this Try event, it's valid
             // Get player's location and heading
             let Ok((player_loc, player_heading)) = player_query.get(ent) else { continue; };
 
@@ -50,6 +52,15 @@ pub fn predict_basic_attack(
 
                     // Insert predicted threat (client sees it immediately)
                     queue_utils::insert_threat(&mut queue, predicted_threat, now);
+
+                    // Predict GCD activation (prevents double-press before server confirmation)
+                    if let Ok(Some(mut gcd)) = player_gcd_query.get_mut(ent) {
+                        gcd.activate(
+                            crate::common::systems::combat::gcd::GcdType::Attack,
+                            std::time::Duration::from_secs(1),
+                            time.elapsed(),
+                        );
+                    }
                 }
             }
         }
@@ -60,11 +71,13 @@ pub fn predict_basic_attack(
 /// Optimistically clears queue and consumes stamina before server confirmation
 pub fn predict_dodge(
     mut try_reader: EventReader<Try>,
-    mut query: Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes)>,
+    mut query: Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes, Option<&mut Gcd>)>,
+    time: Res<Time>,
 ) {
     for event in try_reader.read() {
         if let GameEvent::UseAbility { ent, ability: AbilityType::Dodge } = event.event {
-            if let Ok((mut queue, mut stamina, _attrs)) = query.get_mut(ent) {
+            if let Ok((mut queue, mut stamina, _attrs, gcd_opt)) = query.get_mut(ent) {
+                // Input system already checked GCD - if we got this Try event, it's valid
                 // Calculate dodge cost (15% of max stamina as per ADR)
                 let dodge_cost = stamina.max * 0.15;
 
@@ -77,6 +90,15 @@ pub fn predict_dodge(
                     // Consume stamina
                     stamina.state -= dodge_cost;
                     stamina.step = stamina.state;
+
+                    // Predict GCD activation (prevents double-press before server confirmation)
+                    if let Some(mut gcd) = gcd_opt {
+                        gcd.activate(
+                            crate::common::systems::combat::gcd::GcdType::Attack,
+                            std::time::Duration::from_secs(1),
+                            time.elapsed(),
+                        );
+                    }
                 }
             }
         }

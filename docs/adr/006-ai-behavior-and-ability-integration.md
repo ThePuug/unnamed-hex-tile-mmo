@@ -2,7 +2,37 @@
 
 ## Status
 
-Proposed
+**Ready for Implementation** (Proposed → Accepted pending implementation)
+
+## MVP Critical Path: Three Must-Have Components
+
+**The following three components are MANDATORY for functional AI combat.** Without all three, dogs will behave unreliably and break combat pressure testing.
+
+### 1. TargetLock Component (CRITICAL)
+**Problem:** Behavior tree sequence failures cause `FindSomethingInterestingWithin` to re-select targets, breaking combat pressure.
+**Solution:** Sticky target lock that persists until target becomes invalid (dead, despawned, or beyond leash distance).
+**Impact:** Enables sustained pressure, allows reaction queue validation (ADR-003), prevents "dog randomly abandons chase" behavior.
+**Specification:** See [Decision 4](#decision-4-targetlock-component-structure-prevents-target-switching) below.
+
+### 2. GCD Component (CRITICAL)
+**Problem:** No cooldown enforcement means NPCs could spam abilities if behavior tree retries quickly.
+**Solution:** Global Cooldown (GCD) component tracks cooldown state, validated at both behavior node and server execution.
+**Impact:** Stabilizes attack speed at ~1 second, prevents ability spam, enables predictable combat timing.
+**Specification:** See [Decision 3](#decision-3-gcd-component-structure) below.
+
+### 3. FindOrKeepTarget Behavior Node (CRITICAL)
+**Problem:** `FindSomethingInterestingWithin` finds new target every call, no memory of previous target.
+**Solution:** New `FindOrKeepTarget` node checks existing lock first, only searches for new target if lock invalid.
+**Impact:** NPCs commit to targets until invalid, maintains target consistency across behavior tree loops.
+**Specification:** See [Decision 4](#decision-4-targetlock-component-structure-prevents-target-switching) (includes both TargetLock component and FindOrKeepTarget node).
+
+### Expected Outcome
+**"Dogs reliably chase and attack me every ~1s. Combat feels intense. I'm dying because I don't know when to dodge, but at least the dogs are consistent."**
+
+### Implementation Time
+**3-5 days** for MVP critical path (Phases 1-6 core functionality).
+
+---
 
 ## Context
 
@@ -1145,7 +1175,7 @@ None! All communication uses existing events from ADR-004:
 
 1. **`Gcd` Component** - Cooldown tracking for all actors (players and NPCs)
 2. **`TargetLock` Component** - Sticky target acquisition (prevents target switching, MANDATORY for MVP)
-3. **`FindOrKeepTarget` Behavior Node** - Target acquisition with 10s lock duration
+3. **`FindOrKeepTarget` Behavior Node** - Target acquisition with sticky lock (no time limit, persists until invalid)
 4. **`FaceTarget` Behavior Node** - Updates NPC heading to face Target entity (runs twice per sequence)
 5. **`UseAbilityIfAdjacent` Behavior Node** - Emits `Try::UseAbility` when adjacent + facing + GCD ready
 6. **Wild Dog Behavior Tree** - Complete attack pattern with sustained pressure (1s attack cooldown)
@@ -1164,3 +1194,38 @@ None! All communication uses existing events from ADR-004:
 3. FaceTarget updates heading correctly (twice: before and after pathfinding)
 4. UseAbilityIfAdjacent emits abilities when conditions met
 5. Full combat loop functional with sustained pressure (Dog → attack → queue fills → Dodge required)
+
+---
+
+## Quick Start: MVP Implementation Checklist
+
+For developers ready to implement, here's the **minimum viable path** to functional dog combat:
+
+### Phase 1: Foundation (1-2 days)
+- [ ] Create `Gcd` component in `src/common/components/gcd.rs`
+- [ ] Create `TargetLock` component in `src/server/components/target_lock.rs`
+- [ ] Add `Gcd::new()` to NPC and player spawn flows
+- [ ] Unit tests for both components
+
+### Phase 2: Behavior Nodes (2-3 days)
+- [ ] Implement `FindOrKeepTarget` in `src/server/systems/behaviour/find_target.rs`
+- [ ] Implement `FaceTarget` in `src/server/systems/behaviour/face_target.rs`
+- [ ] Implement `UseAbilityIfAdjacent` in `src/server/systems/behaviour/use_ability.rs`
+- [ ] Register all nodes with behavior plugin
+
+### Phase 3: Wild Dog Behavior Tree (1 day)
+- [ ] Update Wild Dog tree in `spawner.rs` to use new nodes
+- [ ] Sequence: FindOrKeepTarget → FaceTarget → Nearby → PathTo → FaceTarget → UseAbilityIfAdjacent → Wait(1.0)
+- [ ] Set leash distance to 30 hexes, acquisition range to 20 hexes
+
+### Phase 4: Validation (1 day)
+- [ ] **Critical Test:** Dog locks to Player A, ignores closer Player B
+- [ ] **Critical Test:** 2 Dogs fill reaction queue within 3 seconds
+- [ ] **Critical Test:** Behavior tree success rate >80%
+- [ ] Visual test: Dogs chase and attack consistently every ~1 second
+
+### Success Criteria
+✅ Dogs commit to targets (no mid-chase abandonment)
+✅ Attack speed ~1 second (creates pressure)
+✅ Reaction queue accumulates threats (validates ADR-003)
+✅ Combat feels intense and consistent (player feedback matches expected outcome)

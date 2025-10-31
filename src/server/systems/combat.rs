@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, *},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::{
-        combat::{damage as damage_calc, queue as queue_utils},
+        combat::{damage as damage_calc, queue as queue_utils, gcd::GcdType},
         targeting::*,
     },
 };
@@ -134,6 +134,7 @@ pub fn handle_use_ability(
     )>,
     entity_query: Query<(&EntityType, &Loc)>,
     caster_respawn_query: Query<&RespawnTimer>,
+    gcd_query: Query<&Gcd>,  // GCD validation query
     respawn_query: Query<&RespawnTimer>,
     nntree: Res<NNTree>,
     time: Res<Time>,
@@ -145,6 +146,19 @@ pub fn handle_use_ability(
             // Ignore abilities from dead players (those with RespawnTimer)
             if caster_respawn_query.get(ent).is_ok() {
                 continue;
+            }
+
+            // Check GCD - if active, reject ability
+            if let Ok(gcd) = gcd_query.get(ent) {
+                if gcd.is_active(time.elapsed()) {
+                    writer.write(Do {
+                        event: GameEvent::AbilityFailed {
+                            ent,
+                            reason: AbilityFailReason::OnCooldown,
+                        },
+                    });
+                    continue;
+                }
             }
 
             match ability {
@@ -264,8 +278,40 @@ pub fn handle_use_ability(
                                 component: crate::common::message::Component::Stamina(*stamina),
                             },
                         });
+
+                        // Broadcast GCD event (Dodge triggers Attack GCD)
+                        writer.write(Do {
+                            event: GameEvent::Gcd {
+                                ent,
+                                typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                            },
+                        });
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Server system to activate GCD component when GCD events are emitted
+/// Listens to Do<Event::Gcd> and calls gcd.activate() on the entity
+pub fn apply_gcd(
+    mut reader: EventReader<Do>,
+    mut query: Query<&mut Gcd>,
+    time: Res<Time>,
+) {
+    for event in reader.read() {
+        if let GameEvent::Gcd { ent, typ } = event.event {
+            if let Ok(mut gcd) = query.get_mut(ent) {
+                // Determine GCD duration based on type
+                let duration = match typ {
+                    GcdType::Attack => std::time::Duration::from_secs(1),  // 1s for attacks (ADR-006)
+                    GcdType::Spawn(_) => std::time::Duration::from_millis(500),  // 0.5s for spawning entities
+                    GcdType::PlaceSpawner(_) => std::time::Duration::from_secs(2),  // 2s for spawner placement
+                };
+
+                // Activate GCD
+                gcd.activate(typ, duration, time.elapsed());
             }
         }
     }

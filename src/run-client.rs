@@ -110,6 +110,7 @@ fn main() {
         actor_dead_visibility::update_dead_visibility,
         animator::update,
         camera::update,
+        combat::apply_gcd,
         prediction::predict_basic_attack,
         prediction::predict_dodge,
         prediction::predict_threat_resolution,

@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{reaction_queue::*, resources::*},
+    components::{reaction_queue::*, resources::*, gcd::Gcd},
     message::{Do, Event as GameEvent},
-    systems::combat::queue as queue_utils,
+    systems::combat::{queue as queue_utils, gcd::GcdType},
 };
 
 /// Client system to handle InsertThreat events
@@ -125,6 +125,31 @@ pub fn handle_ability_failed(
             warn!("Client: Ability failed for {:?}: {:?}", ent, reason);
             // TODO Phase 6: Show error message in UI
             // For now, server will send corrective Stamina and ClearQueue events
+        }
+    }
+}
+
+/// Client system to activate GCD component when GCD events are received from server
+/// Listens to Do<Event::Gcd> and calls gcd.activate() on the local entity
+/// This ensures client-side prediction checks (predict_dodge, etc.) see accurate GCD state
+pub fn apply_gcd(
+    mut reader: EventReader<Do>,
+    mut query: Query<&mut Gcd>,
+    time: Res<Time>,
+) {
+    for event in reader.read() {
+        if let GameEvent::Gcd { ent, typ } = event.event {
+            if let Ok(mut gcd) = query.get_mut(ent) {
+                // Determine GCD duration based on type (must match server durations)
+                let duration = match typ {
+                    GcdType::Attack => std::time::Duration::from_secs(1),  // 1s for attacks
+                    GcdType::Spawn(_) => std::time::Duration::from_millis(500),  // 0.5s for spawning
+                    GcdType::PlaceSpawner(_) => std::time::Duration::from_secs(2),  // 2s for spawner placement
+                };
+
+                // Activate local GCD
+                gcd.activate(typ, duration, time.elapsed());
+            }
         }
     }
 }
