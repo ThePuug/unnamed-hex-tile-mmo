@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, renet, spawner_viz, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, prediction, renet, spawner_viz, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -110,16 +110,13 @@ fn main() {
         actor_dead_visibility::update_dead_visibility,
         animator::update,
         camera::update,
-        combat::predict_basic_attack,
-        combat::predict_dodge,
-        combat::predict_threat_resolution,
+        prediction::predict_basic_attack,
+        prediction::predict_dodge,
+        prediction::predict_threat_resolution,
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,
         combat::handle_ability_failed,
-        combat::update_floating_text,
-        combat::spawn_health_bars,
-        combat::update_health_bars,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
     ));
