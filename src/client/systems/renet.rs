@@ -91,11 +91,22 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
-                let Some((ent, _)) = l2r.remove_by_right(&ent) else {
-                    // Entity not in our map - likely another client disconnecting or already despawned
-                    continue
-                };
-                commands.entity(ent).despawn();
+                // Check if this is the local player (has InputQueue)
+                let is_local_player = l2r.get_by_right(&ent)
+                    .and_then(|&local_ent| buffers.get(&local_ent))
+                    .is_some();
+
+                if is_local_player {
+                    // For local player: DON'T despawn the entity, just mark as dead
+                    // The entity will be reused on respawn
+                    // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
+                } else {
+                    // For NPCs/other entities: remove from EntityMap and despawn
+                    let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
+                        continue
+                    };
+                    commands.entity(local_ent).despawn();
+                }
             }
             Do { event: Event::Incremental { ent, component } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

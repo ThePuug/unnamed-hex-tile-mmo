@@ -14,10 +14,17 @@ use crate::{
 pub fn try_input(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
+    respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
 ) {
     for &message in reader.read() {
         let Try { event } = message;
-        let Event::Input { .. } = event else { continue };
+        let Event::Input { ent, .. } = event else { continue };
+
+        // Ignore input from dead players (those with RespawnTimer)
+        if respawn_query.get(ent).is_ok() {
+            continue;
+        }
+
         writer.write(Do { event });
     }
 }

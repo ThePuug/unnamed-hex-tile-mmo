@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, animator, camera, combat, debug_resources, input, renet, spawner_viz, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, renet, spawner_viz, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -107,6 +107,7 @@ fn main() {
         actor::do_spawn,
         actor::try_gcd,
         actor::update,
+        actor_dead_visibility::update_dead_visibility,
         animator::update,
         camera::update,
         combat::predict_basic_attack,

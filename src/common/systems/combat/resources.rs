@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, Loc, resources::*},
+    components::{ActorAttributes, Loc, offset::Offset, resources::*},
     message::{Component as MessageComponent, Event, *},
 };
 
@@ -81,7 +81,7 @@ pub fn regenerate_resources(
 /// Emits Try::Death events for the death handler to process
 pub fn check_death(
     mut writer: EventWriter<Try>,
-    query: Query<(Entity, &Health)>,
+    query: Query<(Entity, &Health), Without<RespawnTimer>>,
 ) {
     for (ent, health) in &query {
         if health.state <= 0.0 {
@@ -98,15 +98,21 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &crate::common::components::ActorAttributes)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &crate::common::components::ActorAttributes)>,
 ) {
     use qrz::Qrz;
+    use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, _attrs) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
+
+            // Clear offset to snap to new position (no interpolation)
+            offset.state = Vec3::ZERO;
+            offset.step = Vec3::ZERO;
+            offset.prev_step = Vec3::ZERO;
 
             // Restore resources to full
             health.state = health.max;
@@ -119,15 +125,24 @@ pub fn process_respawn(
             // Remove respawn timer
             commands.entity(ent).remove::<RespawnTimer>();
 
-            // Broadcast location update
+            // Re-spawn the player on client (was despawned on death)
+            // Send Spawn event to re-create client entity
             writer.write(Do {
-                event: Event::Incremental {
+                event: Event::Spawn {
                     ent,
-                    component: MessageComponent::Loc(*loc),
+                    typ: crate::common::components::entity_type::EntityType::Actor(
+                        crate::common::components::entity_type::actor::ActorImpl {
+                            origin: crate::common::components::entity_type::actor::Origin::Natureborn,
+                            approach: crate::common::components::entity_type::actor::Approach::Direct,
+                            resilience: crate::common::components::entity_type::actor::Resilience::Vital,
+                        }
+                    ),
+                    qrz: spawn_qrz,
+                    attrs: Some(*attrs),
                 },
             });
 
-            // Broadcast resource updates
+            // Broadcast resource updates (sent after Spawn so client entity exists)
             writer.write(Do {
                 event: Event::Incremental {
                     ent,
@@ -151,45 +166,48 @@ pub fn process_respawn(
 }
 
 /// Handle death events for players and NPCs
-/// Runs on server only
-/// For NPCs: despawn immediately
+/// Runs on server only as an observer for Death events
+/// For NPCs: emit Despawn event (actual despawn happens in cleanup_despawned in PostUpdate)
 /// For players: add respawn timer (5 seconds), will respawn at origin (0,0,4)
 pub fn handle_death(
+    trigger: Trigger<Try>,
     mut commands: Commands,
-    mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
     mut query: Query<(Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
 ) {
-    for &Try { event } in reader.read() {
-        if let Event::Death { ent } = event {
-            // Check if this is a player or NPC and set resources to 0
-            let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(ent) {
-                // Set resources to 0 to prevent "zombie" state
-                health.state = 0.0;
-                health.step = 0.0;
-                stamina.state = 0.0;
-                stamina.step = 0.0;
-                mana.state = 0.0;
-                mana.step = 0.0;
+    let event = &trigger.event().event;
+    if let Event::Death { ent } = event {
+        // Check if this is a player or NPC and set resources to 0
+        let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(*ent) {
+            // Set resources to 0 to prevent "zombie" state
+            health.state = 0.0;
+            health.step = 0.0;
+            stamina.state = 0.0;
+            stamina.step = 0.0;
+            mana.state = 0.0;
+            mana.step = 0.0;
 
-                behaviour
-                    .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+            behaviour
+                .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
-            if is_player {
-                // Player death: add respawn timer (5 seconds)
-                commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
-            } else {
-                // NPC death: despawn immediately
-                commands.entity(ent).despawn();
-                writer.write(Do {
-                    event: Event::Despawn { ent },
-                });
-            }
+        if is_player {
+            // Player death: add respawn timer (5 seconds) and despawn from client view
+            commands.entity(*ent).insert(RespawnTimer::new(time.elapsed()));
+
+            // Send Despawn to client so player disappears visually
+            writer.write(Do {
+                event: Event::Despawn { ent: *ent },
+            });
+        } else {
+            // NPC death: emit Despawn event (actual despawn happens in PostUpdate)
+            writer.write(Do {
+                event: Event::Despawn { ent: *ent },
+            });
         }
     }
 }

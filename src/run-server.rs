@@ -67,6 +67,7 @@ fn main() {
     // Add observers for triggered events
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
+    app.add_observer(common::systems::combat::resources::handle_death);
 
     app.add_systems(Startup, (
         world::setup,
@@ -106,8 +107,6 @@ fn main() {
         actor::try_discover_chunk,  // New chunk-based discovery
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         server::systems::diagnostics::check_duplicate_tiles,
-        common::systems::combat::resources::check_death,   // Check for HP <= 0, emit Death events
-        common::systems::combat::resources::handle_death,  // Handle Death events, add respawn timer
         common::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
 

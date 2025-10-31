@@ -86,13 +86,13 @@ pub fn process_deal_damage(
 pub fn resolve_threat(
     trigger: Trigger<Try>,
     mut commands: Commands,
-    mut query: Query<(&mut Health, &ActorAttributes)>,
+    mut query: Query<(&mut Health, &ActorAttributes, Option<&RespawnTimer>)>,
     mut writer: EventWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
-        if let Ok((mut health, attrs)) = query.get_mut(*ent) {
+        if let Ok((mut health, attrs, respawn_timer)) = query.get_mut(*ent) {
             // Apply passive modifiers (Phase 2)
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
@@ -113,9 +113,8 @@ pub fn resolve_threat(
                 },
             });
 
-            // Check for death
-            if health.state <= 0.0 {
-                info!("Entity {:?} died from threat", ent);
+            // Check for death (skip if already has respawn timer)
+            if health.state <= 0.0 && respawn_timer.is_none() {
                 // Emit Death event
                 commands.trigger_targets(
                     Try {
@@ -143,6 +142,8 @@ pub fn handle_use_ability(
         Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes)>,
     )>,
     entity_query: Query<(&EntityType, &Loc)>,
+    caster_respawn_query: Query<&RespawnTimer>,
+    respawn_query: Query<&RespawnTimer>,
     nntree: Res<NNTree>,
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
@@ -150,6 +151,11 @@ pub fn handle_use_ability(
 ) {
     for event in reader.read() {
         if let GameEvent::UseAbility { ent, ability } = event.event {
+            // Ignore abilities from dead players (those with RespawnTimer)
+            if caster_respawn_query.get(ent).is_ok() {
+                continue;
+            }
+
             match ability {
                 AbilityType::BasicAttack => {
                     // Get caster's location and heading from Query 0
@@ -159,19 +165,25 @@ pub fn handle_use_ability(
                         continue;
                     };
 
-                    // Use targeting system to select target
+                    // Use targeting system to select target (exclude dead players with RespawnTimer)
                     let target_opt = select_target(
                         ent, // caster entity
                         caster_loc,
                         caster_heading,
                         None, // No tier lock in MVP
                         &nntree,
-                        |target_ent| entity_query.get(target_ent).ok().map(|(et, _)| *et),
+                        |target_ent| {
+                            // Skip entities with RespawnTimer (dead players)
+                            if respawn_query.get(target_ent).is_ok() {
+                                return None;
+                            }
+                            entity_query.get(target_ent).ok().map(|(et, _)| *et)
+                        },
                     );
 
                     if let Some(target_ent) = target_opt {
-                        // BasicAttack: 20 base physical damage (no stamina cost)
-                        let base_damage = 20.0;
+                        // BasicAttack: 200 base physical damage for fast testing (no stamina cost)
+                        let base_damage = 200.0;
 
                         // Emit DealDamage event
                         commands.trigger_targets(

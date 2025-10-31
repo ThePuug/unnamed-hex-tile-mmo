@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod actor_dead_visibility;
 pub mod animator;
 pub mod camera;
 pub mod character_panel;

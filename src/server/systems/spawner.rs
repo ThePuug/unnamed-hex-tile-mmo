@@ -155,7 +155,7 @@ fn spawn_npc(
     };
 
     let attrs = ActorAttributes::new(
-        -20, 10, -5,   // might_grace
+        -90, 80, 0,   // might_grace (HIGH MIGHT for testing - dogs hit HARD)
         -10, 15, -15,  // vitality_focus
         0, 20, 5,      // instinct_presence
     );

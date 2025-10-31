@@ -363,9 +363,14 @@ pub fn write_try(
 pub fn cleanup_despawned(
     mut commands: Commands,
     mut reader: EventReader<Do>,
+    respawn_query: Query<&RespawnTimer>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Despawn { ent } } = message {
+            // Don't despawn entities with RespawnTimer (dead players waiting to respawn)
+            if respawn_query.get(ent).is_ok() {
+                continue;
+            }
             commands.entity(ent).despawn();
         }
     }
