@@ -1,11 +1,14 @@
 pub mod actor;
+pub mod actor_dead_visibility;
 pub mod animator;
 pub mod camera;
 pub mod character_panel;
 pub mod combat;
+pub mod combat_ui;
 pub mod debug_resources;
 // pub mod effect;
 pub mod input;
+pub mod prediction;
 pub mod renet;
 pub mod resource_bars;
 pub mod spawner_viz;

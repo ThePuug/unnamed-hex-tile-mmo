@@ -18,7 +18,11 @@ pub fn try_incremental(
     }
 }
 
+/// Process incremental component updates from server.
+/// Updates existing components or inserts them if missing (late-binding for NPCs).
+/// Exceptions: Loc/Offset/Heading require all related components and skip if dependencies missing.
 pub fn do_incremental(
+    mut commands: Commands,
     mut reader: EventReader<Do>,
     mut query: Query<(
         Option<&mut Loc>,
@@ -112,30 +116,46 @@ pub fn do_incremental(
                 }
             }
             Component::Behaviour(behaviour) => {
-                let Some(mut behaviour0) = o_behaviour else { continue };
-                *behaviour0 = behaviour;
+                if let Some(mut behaviour0) = o_behaviour {
+                    *behaviour0 = behaviour;
+                } else {
+                    commands.entity(ent).insert(behaviour);
+                }
             }
             Component::KeyBits(keybits) => {
-                let Some(mut keybits0) = o_keybits else { continue; };
-                *keybits0 = keybits;
+                if let Some(mut keybits0) = o_keybits {
+                    *keybits0 = keybits;
+                } else {
+                    commands.entity(ent).insert(keybits);
+                }
             }
             Component::Health(health) => {
-                let Some(mut health0) = o_health else {
-                    continue;
-                };
-                *health0 = health;
+                if let Some(mut health0) = o_health {
+                    *health0 = health;
+                } else {
+                    commands.entity(ent).insert(health);
+                }
             }
             Component::Stamina(stamina) => {
-                let Some(mut stamina0) = o_stamina else { continue; };
-                *stamina0 = stamina;
+                if let Some(mut stamina0) = o_stamina {
+                    *stamina0 = stamina;
+                } else {
+                    commands.entity(ent).insert(stamina);
+                }
             }
             Component::Mana(mana) => {
-                let Some(mut mana0) = o_mana else { continue; };
-                *mana0 = mana;
+                if let Some(mut mana0) = o_mana {
+                    *mana0 = mana;
+                } else {
+                    commands.entity(ent).insert(mana);
+                }
             }
             Component::CombatState(combat_state) => {
-                let Some(mut combat_state0) = o_combat_state else { continue; };
-                *combat_state0 = combat_state;
+                if let Some(mut combat_state0) = o_combat_state {
+                    *combat_state0 = combat_state;
+                } else {
+                    commands.entity(ent).insert(combat_state);
+                }
             }
             _ => {}
         }

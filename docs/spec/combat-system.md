@@ -466,7 +466,7 @@ Enemies use simplified directional targeting:
 **Simple Melee Enemy (Wild Dog):**
 1. Detect player within aggro radius (10 hexes)
 2. Face toward player, pathfind to adjacent hex
-3. When adjacent and facing player, attack every 2-3 seconds
+3. When adjacent and facing player, attack every 1-2 seconds
 4. Attack enters player's reaction queue
 5. If player moves away, turn to face and pursue
 6. Leash if player exceeds 30 hex distance
@@ -554,7 +554,7 @@ Enemies broadcast intent before major attacks:
 **Wild Dog:**
 * HP: 100
 * Damage: 15 physical
-* Attack speed: 2 seconds
+* Attack speed: 1 second
 * Behavior: Aggro at 10 hexes, melee pursuit, basic attack
 
 ### Systems Required

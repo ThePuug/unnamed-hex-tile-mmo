@@ -28,11 +28,15 @@ pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits, &crate::common::components::resources::Health), With<Actor>>,
     mut writer: EventWriter<Try>,
     dt: Res<Time>,
 ) {
-    if let Ok((ent, &heading, mut keybits0)) = query.single_mut() {
+    if let Ok((ent, &heading, mut keybits0, health)) = query.single_mut() {
+        // Don't process input while dead (health <= 0)
+        if health.state <= 0.0 {
+            return;
+        }
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 

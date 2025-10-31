@@ -28,6 +28,14 @@ pub enum Event {
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
     Death { ent: Entity },
+    /// Server-internal: Deal damage (Try event)
+    /// Triggers damage calculation and queue insertion
+    DealDamage {
+        source: Entity,
+        target: Entity,
+        base_damage: f32,
+        damage_type: DamageType,
+    },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
     /// Server → Client: Apply damage to entity (threat resolved)

@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed
+**Accepted** - 2025-10-31
+
+See `docs/adr/005-acceptance.md` for implementation review and acceptance criteria.
 
 ## Context
 

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, Loc, resources::*},
+    components::{ActorAttributes, Loc, offset::Offset, resources::*, entity_type::EntityType},
     message::{Component as MessageComponent, Event, *},
 };
 
@@ -78,16 +78,20 @@ pub fn regenerate_resources(
 
 /// Check for entities with health <= 0 and emit death events
 /// Runs on server only, after damage application systems
-/// Emits Try::Death events for the death handler to process
+/// Emits Try::Death events for the death handler observer to process
 pub fn check_death(
-    mut writer: EventWriter<Try>,
-    query: Query<(Entity, &Health)>,
+    mut commands: Commands,
+    query: Query<(Entity, &Health), Without<RespawnTimer>>,
 ) {
     for (ent, health) in &query {
         if health.state <= 0.0 {
-            writer.write(Try {
-                event: Event::Death { ent },
-            });
+            // Use trigger system (not event system) to communicate with observer
+            commands.trigger_targets(
+                Try {
+                    event: Event::Death { ent },
+                },
+                ent,
+            );
         }
     }
 }
@@ -98,15 +102,23 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &crate::common::components::ActorAttributes)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType)>,
 ) {
     use qrz::Qrz;
+    use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, _attrs) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type) in &mut query {
         if timer.should_respawn(time.elapsed()) {
+            info!("SERVER: Player {:?} respawning at origin", ent);
+
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
+
+            // Clear offset to snap to new position (no interpolation)
+            offset.state = Vec3::ZERO;
+            offset.step = Vec3::ZERO;
+            offset.prev_step = Vec3::ZERO;
 
             // Restore resources to full
             health.state = health.max;
@@ -119,15 +131,18 @@ pub fn process_respawn(
             // Remove respawn timer
             commands.entity(ent).remove::<RespawnTimer>();
 
-            // Broadcast location update
+            // Re-spawn the player on client (was despawned on death)
+            // Send Spawn event to re-create client entity with original actor type
             writer.write(Do {
-                event: Event::Incremental {
+                event: Event::Spawn {
                     ent,
-                    component: MessageComponent::Loc(*loc),
+                    typ: *entity_type,  // Use actual entity type (preserves Triumvirate, etc.)
+                    qrz: spawn_qrz,
+                    attrs: Some(*attrs),
                 },
             });
 
-            // Broadcast resource updates
+            // Broadcast resource updates (sent after Spawn so client entity exists)
             writer.write(Do {
                 event: Event::Incremental {
                     ent,
@@ -146,50 +161,57 @@ pub fn process_respawn(
                     component: MessageComponent::Mana(*mana),
                 },
             });
+
+            info!("SERVER: Player {:?} respawned - sent Spawn event to recreate entity", ent);
         }
     }
 }
 
 /// Handle death events for players and NPCs
-/// Runs on server only
-/// For NPCs: despawn immediately
+/// Runs on server only as an observer for Death events
+/// For NPCs: emit Despawn event (actual despawn happens in cleanup_despawned in PostUpdate)
 /// For players: add respawn timer (5 seconds), will respawn at origin (0,0,4)
 pub fn handle_death(
+    trigger: Trigger<Try>,
     mut commands: Commands,
-    mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
     mut query: Query<(Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
 ) {
-    for &Try { event } in reader.read() {
-        if let Event::Death { ent } = event {
-            // Check if this is a player or NPC and set resources to 0
-            let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(ent) {
-                // Set resources to 0 to prevent "zombie" state
-                health.state = 0.0;
-                health.step = 0.0;
-                stamina.state = 0.0;
-                stamina.step = 0.0;
-                mana.state = 0.0;
-                mana.step = 0.0;
+    let event = &trigger.event().event;
+    if let Event::Death { ent } = event {
+        // Check if this is a player or NPC and set resources to 0
+        let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(*ent) {
+            // Set resources to 0 to prevent "zombie" state
+            health.state = 0.0;
+            health.step = 0.0;
+            stamina.state = 0.0;
+            stamina.step = 0.0;
+            mana.state = 0.0;
+            mana.step = 0.0;
 
-                behaviour
-                    .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+            behaviour
+                .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
-            if is_player {
-                // Player death: add respawn timer (5 seconds)
-                commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
-            } else {
-                // NPC death: despawn immediately
-                commands.entity(ent).despawn();
-                writer.write(Do {
-                    event: Event::Despawn { ent },
-                });
-            }
+        if is_player {
+            // Player death: add respawn timer (5 seconds) and despawn from client view
+            commands.entity(*ent).insert(RespawnTimer::new(time.elapsed()));
+
+            // Send Despawn to client so player disappears visually
+            info!("SERVER: Player {:?} died - sending Despawn event", ent);
+            writer.write(Do {
+                event: Event::Despawn { ent: *ent },
+            });
+        } else {
+            // NPC death: emit Despawn event (actual despawn happens in PostUpdate)
+            info!("SERVER: NPC {:?} died - sending Despawn event", ent);
+            writer.write(Do {
+                event: Event::Despawn { ent: *ent },
+            });
         }
     }
 }
@@ -370,5 +392,113 @@ mod tests {
 
         let resistance = calculate_resistance(&attrs, 0.0);
         assert!(resistance <= 0.75);
+    }
+
+    #[test]
+    fn test_check_death_emits_event_when_health_zero() {
+        use std::sync::{Arc, Mutex};
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with 0 health (e.g., from fall damage, not combat)
+        let entity = world.spawn((
+            Health {
+                max: 100.0,
+                state: 0.0,
+                step: 0.0,
+            },
+        )).id();
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify Death trigger was emitted
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 1, "Expected one Death trigger");
+        assert_eq!(triggers[0], entity, "Death trigger should be for the correct entity");
+    }
+
+    #[test]
+    fn test_check_death_ignores_entities_with_respawn_timer() {
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with 0 health AND RespawnTimer (already dead)
+        world.spawn((
+            Health {
+                max: 100.0,
+                state: 0.0,
+                step: 0.0,
+            },
+            RespawnTimer::new(Duration::from_secs(0)),
+        ));
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify NO Death trigger was emitted (entity already has respawn timer)
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 0, "Should not emit Death trigger for entities with RespawnTimer");
+    }
+
+    #[test]
+    fn test_check_death_ignores_alive_entities() {
+        use std::sync::{Arc, Mutex};
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with positive health
+        world.spawn((
+            Health {
+                max: 100.0,
+                state: 50.0,
+                step: 50.0,
+            },
+        ));
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify NO Death trigger was emitted
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 0, "Should not emit Death trigger for alive entities");
     }
 }

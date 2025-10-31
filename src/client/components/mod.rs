@@ -35,3 +35,24 @@ pub struct TargetIndicator {
 /// Marks a tile entity as belonging to a specific chunk
 #[derive(Component, Copy, Clone, Debug)]
 pub struct ChunkMember(pub ChunkId);
+
+/// Floating text component for damage numbers and other temporary text
+/// Used with UI Node entities that follow world-space positions
+#[derive(Component)]
+pub struct FloatingText {
+    /// Time when this text was spawned
+    pub spawn_time: std::time::Duration,
+    /// How long this text should live (in seconds)
+    pub lifetime: f32,
+    /// World position this text is attached to
+    pub world_position: bevy::math::Vec3,
+    /// Upward velocity (world units per second)
+    pub velocity: f32,
+}
+
+/// Health bar component - tracks which entity this bar belongs to
+#[derive(Component)]
+pub struct HealthBar {
+    /// Entity this health bar is tracking
+    pub tracked_entity: bevy::prelude::Entity,
+}

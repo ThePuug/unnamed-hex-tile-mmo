@@ -72,7 +72,7 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(Entity, &Loc, &Heading), With<Actor>>,
+    local_player_query: Query<(Entity, &Loc, &Heading, &crate::common::components::resources::Health), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc)>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -80,9 +80,18 @@ pub fn update(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Get local player
-    let Ok((player_ent, player_loc, player_heading)) = local_player_query.get_single() else {
+    let Ok((player_ent, player_loc, player_heading, health)) = local_player_query.get_single() else {
         return;
     };
+
+    // Don't show target indicator while dead (health <= 0)
+    if health.state <= 0.0 {
+        // Hide all indicators
+        for (_, _, mut visibility, _, _) in &mut indicator_query {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    }
 
     // Select the current hostile target using Phase 2 targeting system
     let hostile_target = select_target(
