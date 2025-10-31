@@ -19,6 +19,7 @@ pub fn try_incremental(
 }
 
 pub fn do_incremental(
+    mut commands: Commands,
     mut reader: EventReader<Do>,
     mut query: Query<(
         Option<&mut Loc>,
@@ -120,22 +121,33 @@ pub fn do_incremental(
                 *keybits0 = keybits;
             }
             Component::Health(health) => {
-                let Some(mut health0) = o_health else {
-                    continue;
-                };
-                *health0 = health;
+                if let Some(mut health0) = o_health {
+                    *health0 = health;
+                } else {
+                    // Entity doesn't have Health yet (e.g., NPCs on spawn) - insert it
+                    commands.entity(ent).insert(health);
+                }
             }
             Component::Stamina(stamina) => {
-                let Some(mut stamina0) = o_stamina else { continue; };
-                *stamina0 = stamina;
+                if let Some(mut stamina0) = o_stamina {
+                    *stamina0 = stamina;
+                } else {
+                    commands.entity(ent).insert(stamina);
+                }
             }
             Component::Mana(mana) => {
-                let Some(mut mana0) = o_mana else { continue; };
-                *mana0 = mana;
+                if let Some(mut mana0) = o_mana {
+                    *mana0 = mana;
+                } else {
+                    commands.entity(ent).insert(mana);
+                }
             }
             Component::CombatState(combat_state) => {
-                let Some(mut combat_state0) = o_combat_state else { continue; };
-                *combat_state0 = combat_state;
+                if let Some(mut combat_state0) = o_combat_state {
+                    *combat_state0 = combat_state;
+                } else {
+                    commands.entity(ent).insert(combat_state);
+                }
             }
             _ => {}
         }

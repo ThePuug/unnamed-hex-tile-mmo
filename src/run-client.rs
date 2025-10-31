@@ -118,6 +118,8 @@ fn main() {
         combat::handle_clear_queue,
         combat::handle_ability_failed,
         combat::update_floating_text,
+        combat::spawn_health_bars,
+        combat::update_health_bars,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
     ));

@@ -49,3 +49,10 @@ pub struct FloatingText {
     /// Upward velocity (world units per second)
     pub velocity: f32,
 }
+
+/// Health bar component - tracks which entity this bar belongs to
+#[derive(Component)]
+pub struct HealthBar {
+    /// Entity this health bar is tracking
+    pub tracked_entity: bevy::prelude::Entity,
+}
