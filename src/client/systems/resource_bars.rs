@@ -16,6 +16,18 @@ pub struct StaminaBar;
 #[derive(Component)]
 pub struct ManaBar;
 
+/// Marker component for the health bar text label
+#[derive(Component)]
+pub struct HealthText;
+
+/// Marker component for the stamina bar text label
+#[derive(Component)]
+pub struct StaminaText;
+
+/// Marker component for the mana bar text label
+#[derive(Component)]
+pub struct ManaText;
+
 /// Setup resource bars in the player HUD
 /// Creates health, stamina, and mana bars in bottom-center position
 /// Positioned at midpoint between player and bottom of screen for combat-critical info
@@ -54,20 +66,38 @@ pub fn setup(
                 width: Val::Px(200.),
                 height: Val::Px(20.),
                 border: UiRect::all(Val::Px(2.)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
             BorderColor(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {
+            // Stamina fill bar
             parent.spawn((
                 Node {
                     width: Val::Percent(100.),
                     height: Val::Percent(100.),
+                    position_type: PositionType::Absolute,
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.9, 0.9, 0.2)), // Yellow
+                BackgroundColor(Color::srgb(0.9, 0.8, 0.0)), // Yellow
                 StaminaBar,
+            ));
+            // Stamina text label
+            parent.spawn((
+                Text::new("100 / 100"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    position_type: PositionType::Relative,
+                    ..default()
+                },
+                StaminaText,
             ));
         });
 
@@ -77,20 +107,38 @@ pub fn setup(
                 width: Val::Px(200.),
                 height: Val::Px(20.),
                 border: UiRect::all(Val::Px(2.)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
             BorderColor(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {
+            // Health fill bar
             parent.spawn((
                 Node {
                     width: Val::Percent(100.),
                     height: Val::Percent(100.),
+                    position_type: PositionType::Absolute,
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.8, 0.2, 0.2)), // Red
+                BackgroundColor(Color::srgb(0.9, 0.1, 0.1)), // Red
                 HealthBar,
+            ));
+            // Health text label
+            parent.spawn((
+                Text::new("100 / 100"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    position_type: PositionType::Relative,
+                    ..default()
+                },
+                HealthText,
             ));
         });
 
@@ -100,35 +148,56 @@ pub fn setup(
                 width: Val::Px(200.),
                 height: Val::Px(20.),
                 border: UiRect::all(Val::Px(2.)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
             BorderColor(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {
+            // Mana fill bar
             parent.spawn((
                 Node {
                     width: Val::Percent(100.),
                     height: Val::Percent(100.),
+                    position_type: PositionType::Absolute,
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.2, 0.5, 0.9)), // Blue
+                BackgroundColor(Color::srgb(0.1, 0.4, 0.9)), // Blue
                 ManaBar,
+            ));
+            // Mana text label
+            parent.spawn((
+                Text::new("100 / 100"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    position_type: PositionType::Relative,
+                    ..default()
+                },
+                ManaText,
             ));
         });
     });
     });
 }
 
-/// Update resource bar widths based on player's current resources
+/// Update resource bar widths and text labels based on player's current resources
 /// Uses `step` for local player (client prediction)
 pub fn update(
     mut health_query: Query<&mut Node, (With<HealthBar>, Without<StaminaBar>, Without<ManaBar>)>,
     mut stamina_query: Query<&mut Node, (With<StaminaBar>, Without<HealthBar>, Without<ManaBar>)>,
     mut mana_query: Query<&mut Node, (With<ManaBar>, Without<HealthBar>, Without<StaminaBar>)>,
+    mut health_text_query: Query<&mut Text, (With<HealthText>, Without<StaminaText>, Without<ManaText>)>,
+    mut stamina_text_query: Query<&mut Text, (With<StaminaText>, Without<HealthText>, Without<ManaText>)>,
+    mut mana_text_query: Query<&mut Text, (With<ManaText>, Without<HealthText>, Without<StaminaText>)>,
     player_query: Query<(&Health, &Stamina, &Mana), With<Behaviour>>,
 ) {
-    // Find the local player (has Behaviour::Controlled component)
+    // Find the local player (has Behaviour component)
     for (health, stamina, mana) in &player_query {
         // Update health bar width (use step for client prediction)
         for mut node in &mut health_query {
@@ -138,6 +207,11 @@ pub fn update(
                 0.0
             };
             node.width = Val::Percent(percent);
+        }
+
+        // Update health text
+        for mut text in &mut health_text_query {
+            **text = format!("{:.0} / {:.0}", health.step, health.max);
         }
 
         // Update stamina bar width
@@ -150,6 +224,11 @@ pub fn update(
             node.width = Val::Percent(percent);
         }
 
+        // Update stamina text
+        for mut text in &mut stamina_text_query {
+            **text = format!("{:.0} / {:.0}", stamina.step, stamina.max);
+        }
+
         // Update mana bar width
         for mut node in &mut mana_query {
             let percent = if mana.max > 0.0 {
@@ -158,6 +237,11 @@ pub fn update(
                 0.0
             };
             node.width = Val::Percent(percent);
+        }
+
+        // Update mana text
+        for mut text in &mut mana_text_query {
+            **text = format!("{:.0} / {:.0}", mana.step, mana.max);
         }
 
         // Only update for the first player found (local player)
