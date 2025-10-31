@@ -18,6 +18,9 @@ pub fn try_incremental(
     }
 }
 
+/// Process incremental component updates from server.
+/// Updates existing components or inserts them if missing (late-binding for NPCs).
+/// Exceptions: Loc/Offset/Heading require all related components and skip if dependencies missing.
 pub fn do_incremental(
     mut commands: Commands,
     mut reader: EventReader<Do>,
@@ -113,18 +116,23 @@ pub fn do_incremental(
                 }
             }
             Component::Behaviour(behaviour) => {
-                let Some(mut behaviour0) = o_behaviour else { continue };
-                *behaviour0 = behaviour;
+                if let Some(mut behaviour0) = o_behaviour {
+                    *behaviour0 = behaviour;
+                } else {
+                    commands.entity(ent).insert(behaviour);
+                }
             }
             Component::KeyBits(keybits) => {
-                let Some(mut keybits0) = o_keybits else { continue; };
-                *keybits0 = keybits;
+                if let Some(mut keybits0) = o_keybits {
+                    *keybits0 = keybits;
+                } else {
+                    commands.entity(ent).insert(keybits);
+                }
             }
             Component::Health(health) => {
                 if let Some(mut health0) = o_health {
                     *health0 = health;
                 } else {
-                    // Entity doesn't have Health yet (e.g., NPCs on spawn) - insert it
                     commands.entity(ent).insert(health);
                 }
             }
