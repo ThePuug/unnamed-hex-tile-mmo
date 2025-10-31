@@ -100,9 +100,11 @@ pub fn write_do(
                     // For local player: DON'T despawn the entity, just mark as dead
                     // The entity will be reused on respawn
                     // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
+                    info!("CLIENT: Received Despawn for LOCAL player {:?} - keeping entity alive (hidden)", ent);
                 } else {
-                    // For NPCs/other entities: remove from EntityMap and despawn
+                    // For NPCs/other players: remove from EntityMap and despawn
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
+                        warn!("CLIENT: Received Despawn for unknown entity {:?} - not in EntityMap", ent);
                         continue
                     };
                     commands.entity(local_ent).despawn();

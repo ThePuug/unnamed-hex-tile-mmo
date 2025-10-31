@@ -6,12 +6,13 @@ use qrz::*;
 
 use crate::{
     common::{
-        components::{ *, 
+        components::{ *,
             entity_type::*,
-            heading::Heading, 
-            keybits::KeyBits, 
-            offset::Offset, 
-        }, 
+            heading::Heading,
+            keybits::KeyBits,
+            offset::Offset,
+            resources::RespawnTimer,
+        },
         message::{ Event, * },
         systems::*
     }, 
@@ -35,10 +36,12 @@ pub fn setup(
 pub fn try_spawn(
     mut reader: EventReader<Try>,
     mut writer: EventWriter<Do>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>), Without<RespawnTimer>>,
 ) {
     for &message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
+        // Skip dead players (those with RespawnTimer) - they shouldn't be discovered/spawned
+        // until process_respawn sends an official Spawn event after the 5-second timer
         let Ok((loc, typ, attrs)) = query.get(ent) else { continue; };
         writer.write(Do { event: Event::Spawn { ent, typ: *typ, qrz: **loc, attrs: attrs.copied() }});
     }

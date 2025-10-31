@@ -274,17 +274,17 @@ pub fn write_try(
                 // Send despawn event to players who might have this entity rendered
                 // Use a large radius (70 tiles) to ensure despawns reach all players within despawn_distance (60) with buffer
                 if let Ok(&loc) = query.get(ent) {
-                    let nearby_players: Vec<_> = nntree.locate_within_distance(loc, 70*70)
-                        .filter_map(|other| lobby.get_by_right(&other.ent).map(|id| (*id, other.ent)))
-                        .collect();
-
-                    for (client_id, _) in nearby_players {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Despawn { ent }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+                    for other in nntree.locate_within_distance(loc, 70*70) {
+                        if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                            let message = bincode::serde::encode_to_vec(
+                                Do { event: Event::Despawn { ent }},
+                                bincode::config::legacy()).unwrap();
+                            conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        }
                     }
                     // Note: Actual despawning happens in cleanup_despawned system (PostUpdate)
+                } else {
+                    warn!("SERVER: Cannot send Despawn for entity {:?} - no Loc component", ent);
                 }
             }
             Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {

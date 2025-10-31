@@ -78,16 +78,20 @@ pub fn regenerate_resources(
 
 /// Check for entities with health <= 0 and emit death events
 /// Runs on server only, after damage application systems
-/// Emits Try::Death events for the death handler to process
+/// Emits Try::Death events for the death handler observer to process
 pub fn check_death(
-    mut writer: EventWriter<Try>,
+    mut commands: Commands,
     query: Query<(Entity, &Health), Without<RespawnTimer>>,
 ) {
     for (ent, health) in &query {
         if health.state <= 0.0 {
-            writer.write(Try {
-                event: Event::Death { ent },
-            });
+            // Use trigger system (not event system) to communicate with observer
+            commands.trigger_targets(
+                Try {
+                    event: Event::Death { ent },
+                },
+                ent,
+            );
         }
     }
 }
@@ -105,6 +109,8 @@ pub fn process_respawn(
 
     for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs) in &mut query {
         if timer.should_respawn(time.elapsed()) {
+            info!("SERVER: Player {:?} respawning at origin", ent);
+
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
@@ -161,6 +167,8 @@ pub fn process_respawn(
                     component: MessageComponent::Mana(*mana),
                 },
             });
+
+            info!("SERVER: Player {:?} respawned - sent Spawn event to recreate entity", ent);
         }
     }
 }
@@ -200,11 +208,13 @@ pub fn handle_death(
             commands.entity(*ent).insert(RespawnTimer::new(time.elapsed()));
 
             // Send Despawn to client so player disappears visually
+            info!("SERVER: Player {:?} died - sending Despawn event", ent);
             writer.write(Do {
                 event: Event::Despawn { ent: *ent },
             });
         } else {
             // NPC death: emit Despawn event (actual despawn happens in PostUpdate)
+            info!("SERVER: NPC {:?} died - sending Despawn event", ent);
             writer.write(Do {
                 event: Event::Despawn { ent: *ent },
             });
@@ -388,5 +398,113 @@ mod tests {
 
         let resistance = calculate_resistance(&attrs, 0.0);
         assert!(resistance <= 0.75);
+    }
+
+    #[test]
+    fn test_check_death_emits_event_when_health_zero() {
+        use std::sync::{Arc, Mutex};
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with 0 health (e.g., from fall damage, not combat)
+        let entity = world.spawn((
+            Health {
+                max: 100.0,
+                state: 0.0,
+                step: 0.0,
+            },
+        )).id();
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify Death trigger was emitted
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 1, "Expected one Death trigger");
+        assert_eq!(triggers[0], entity, "Death trigger should be for the correct entity");
+    }
+
+    #[test]
+    fn test_check_death_ignores_entities_with_respawn_timer() {
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with 0 health AND RespawnTimer (already dead)
+        world.spawn((
+            Health {
+                max: 100.0,
+                state: 0.0,
+                step: 0.0,
+            },
+            RespawnTimer::new(Duration::from_secs(0)),
+        ));
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify NO Death trigger was emitted (entity already has respawn timer)
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 0, "Should not emit Death trigger for entities with RespawnTimer");
+    }
+
+    #[test]
+    fn test_check_death_ignores_alive_entities() {
+        use std::sync::{Arc, Mutex};
+
+        let mut world = World::new();
+
+        // Track death triggers using a test observer
+        let death_triggers: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
+        let death_triggers_clone = death_triggers.clone();
+
+        world.add_observer(move |trigger: Trigger<Try>| {
+            if let Event::Death { ent } = &trigger.event().event {
+                death_triggers_clone.lock().unwrap().push(*ent);
+            }
+        });
+
+        // Create entity with positive health
+        world.spawn((
+            Health {
+                max: 100.0,
+                state: 50.0,
+                step: 50.0,
+            },
+        ));
+
+        // Run check_death system
+        let mut schedule = Schedule::default();
+        schedule.add_systems(check_death);
+        schedule.run(&mut world);
+
+        // Verify NO Death trigger was emitted
+        let triggers = death_triggers.lock().unwrap();
+        assert_eq!(triggers.len(), 0, "Should not emit Death trigger for alive entities");
     }
 }

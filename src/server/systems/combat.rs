@@ -85,14 +85,14 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events emitted by expiry system or overflow
 pub fn resolve_threat(
     trigger: Trigger<Try>,
-    mut commands: Commands,
-    mut query: Query<(&mut Health, &ActorAttributes, Option<&RespawnTimer>)>,
+    _commands: Commands,
+    mut query: Query<(&mut Health, &ActorAttributes)>,
     mut writer: EventWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
-        if let Ok((mut health, attrs, respawn_timer)) = query.get_mut(*ent) {
+        if let Ok((mut health, attrs)) = query.get_mut(*ent) {
             // Apply passive modifiers (Phase 2)
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
@@ -113,16 +113,7 @@ pub fn resolve_threat(
                 },
             });
 
-            // Check for death (skip if already has respawn timer)
-            if health.state <= 0.0 && respawn_timer.is_none() {
-                // Emit Death event
-                commands.trigger_targets(
-                    Try {
-                        event: GameEvent::Death { ent: *ent },
-                    },
-                    *ent,
-                );
-            }
+            // Death check moved to dedicated check_death system (decoupled from combat)
         }
     }
 }
