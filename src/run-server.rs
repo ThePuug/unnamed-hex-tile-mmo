@@ -65,6 +65,7 @@ fn main() {
     app.add_event::<Tick>();
 
     // Add observers for triggered events
+    app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
 
     app.add_systems(Startup, (

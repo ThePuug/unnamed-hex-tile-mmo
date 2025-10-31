@@ -3,46 +3,64 @@ use crate::common::{
     components::{entity_type::*, heading::*, reaction_queue::*, resources::*, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
-    systems::{combat::queue as queue_utils, targeting::*},
+    systems::{
+        combat::{damage as damage_calc, queue as queue_utils},
+        targeting::*,
+    },
 };
 
-/// Helper function to deal damage to an entity
-/// Inserts threat into reaction queue if entity has one
-/// Returns true if threat was queued, false if immediate damage was applied
-pub fn deal_damage(
-    commands: &mut Commands,
-    target: Entity,
-    source: Entity,
-    damage: f32,
-    damage_type: DamageType,
-    queue_opt: Option<&mut ReactionQueue>,
-    attrs_opt: Option<&ActorAttributes>,
-    time: &Time,
-    runtime: &crate::server::resources::RunTime,
-    writer: &mut EventWriter<Do>,
+/// System to process DealDamage events (Phase 1: Outgoing damage calculation)
+/// Rolls for crit, calculates outgoing damage, inserts into reaction queue
+pub fn process_deal_damage(
+    trigger: Trigger<Try>,
+    mut commands: Commands,
+    mut query: Query<(&mut ReactionQueue, &ActorAttributes)>,
+    all_attrs: Query<&ActorAttributes>,
+    time: Res<Time>,
+    runtime: Res<crate::server::resources::RunTime>,
+    mut writer: EventWriter<Do>,
 ) {
-    // If target has reaction queue, insert threat
-    if let (Some(queue), Some(attrs)) = (queue_opt, attrs_opt) {
+    let event = &trigger.event().event;
+
+    if let GameEvent::DealDamage { source, target, base_damage, damage_type } = event {
+        // Get attacker attributes for scaling
+        let Ok(source_attrs) = all_attrs.get(*source) else {
+            return;
+        };
+
+        // Roll for critical hit
+        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs);
+
+        // Calculate outgoing damage (Phase 1)
+        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
+        let outgoing_with_crit = outgoing * crit_mult;
+
+        // Get target's queue and attributes
+        let Ok((mut queue, attrs)) = query.get_mut(*target) else {
+            return;
+        };
+
+        // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         let timer_duration = queue_utils::calculate_timer_duration(attrs);
 
         let threat = QueuedThreat {
-            source,
-            damage,
-            damage_type,
+            source: *source,
+            damage: outgoing_with_crit,
+            damage_type: *damage_type,
             inserted_at: now,
             timer_duration,
         };
 
         // Try to insert threat into queue
-        let overflow = queue_utils::insert_threat(queue, threat, now);
+        let overflow = queue_utils::insert_threat(&mut queue, threat, now);
 
         // Send InsertThreat event to clients
         writer.write(Do {
             event: GameEvent::InsertThreat {
-                ent: target,
+                ent: *target,
                 threat,
             },
         });
@@ -53,39 +71,44 @@ pub fn deal_damage(
             commands.trigger_targets(
                 Try {
                     event: GameEvent::ResolveThreat {
-                        ent: target,
+                        ent: *target,
                         threat: overflow_threat,
                     },
                 },
-                target,
+                *target,
             );
         }
     }
 }
 
-/// System to resolve threats (apply damage with modifiers)
+/// System to resolve threats (Phase 2: Apply passive modifiers and apply to health)
 /// Processes ResolveThreat events emitted by expiry system or overflow
 pub fn resolve_threat(
     trigger: Trigger<Try>,
+    mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes)>,
     mut writer: EventWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
-        if let Ok((mut health, _attrs)) = query.get_mut(*ent) {
-            // For MVP Phase 3: Just apply raw damage (Phase 4 will add modifiers)
-            let damage_to_apply = threat.damage;
+        if let Ok((mut health, attrs)) = query.get_mut(*ent) {
+            // Apply passive modifiers (Phase 2)
+            let final_damage = damage_calc::apply_passive_modifiers(
+                threat.damage,
+                attrs,
+                threat.damage_type,
+            );
 
             // Apply damage to health
-            health.state = (health.state - damage_to_apply).max(0.0);
+            health.state = (health.state - final_damage).max(0.0);
             health.step = health.state; // Snap step to state for immediate feedback
 
             // Broadcast damage event to clients
             writer.write(Do {
                 event: GameEvent::ApplyDamage {
                     ent: *ent,
-                    damage: damage_to_apply,
+                    damage: final_damage,
                     source: threat.source,
                 },
             });
@@ -93,9 +116,13 @@ pub fn resolve_threat(
             // Check for death
             if health.state <= 0.0 {
                 info!("Entity {:?} died from threat", ent);
-                // Death is a Try event (server-internal)
-                // We need to use an EventWriter<Try> for this, but we only have EventWriter<Do>
-                // For now, skip death handling in resolve_threat - it should be handled by check_death system
+                // Emit Death event
+                commands.trigger_targets(
+                    Try {
+                        event: GameEvent::Death { ent: *ent },
+                    },
+                    *ent,
+                );
             }
         }
     }
@@ -143,33 +170,29 @@ pub fn handle_use_ability(
                     );
 
                     if let Some(target_ent) = target_opt {
-                        // Get target's queue and attributes from Query 1 (in ParamSet)
-                        if let Ok((mut queue_opt, attrs_opt)) = param_set.p1().get_mut(target_ent) {
-                            // BasicAttack: 20 base physical damage (no stamina cost)
-                            let base_damage = 20.0;
+                        // BasicAttack: 20 base physical damage (no stamina cost)
+                        let base_damage = 20.0;
 
-                            // Deal damage using combat system
-                            deal_damage(
-                                &mut commands,
-                                target_ent,
-                                ent, // source
-                                base_damage,
-                                DamageType::Physical,
-                                queue_opt.as_deref_mut(),
-                                attrs_opt.as_deref(),
-                                &time,
-                                &runtime,
-                                &mut writer,
-                            );
-
-                            // Broadcast GCD event (BasicAttack triggers Attack GCD)
-                            writer.write(Do {
-                                event: GameEvent::Gcd {
-                                    ent,
-                                    typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                        // Emit DealDamage event
+                        commands.trigger_targets(
+                            Try {
+                                event: GameEvent::DealDamage {
+                                    source: ent,
+                                    target: target_ent,
+                                    base_damage,
+                                    damage_type: DamageType::Physical,
                                 },
-                            });
-                        }
+                            },
+                            target_ent,
+                        );
+
+                        // Broadcast GCD event (BasicAttack triggers Attack GCD)
+                        writer.write(Do {
+                            event: GameEvent::Gcd {
+                                ent,
+                                typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                            },
+                        });
                     } else {
                         // No valid target in facing cone
                         writer.write(Do {
