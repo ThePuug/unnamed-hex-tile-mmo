@@ -78,8 +78,8 @@ pub fn predict_dodge(
         if let GameEvent::UseAbility { ent, ability: AbilityType::Dodge } = event.event {
             if let Ok((mut queue, mut stamina, _attrs, gcd_opt)) = query.get_mut(ent) {
                 // Input system already checked GCD - if we got this Try event, it's valid
-                // Calculate dodge cost (15% of max stamina as per ADR)
-                let dodge_cost = stamina.max * 0.15;
+                // Fixed dodge cost
+                let dodge_cost = 60.0;
 
                 // Check if we have enough stamina
                 if stamina.state >= dodge_cost && !queue.is_empty() {

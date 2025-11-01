@@ -223,8 +223,8 @@ pub fn handle_use_ability(
                 AbilityType::Dodge => {
                     // Get caster's queue and stamina from Query 2
                     if let Ok((mut queue, mut stamina, _attrs)) = param_set.p2().get_mut(ent) {
-                        // Calculate dodge cost (15% of max stamina)
-                        let dodge_cost = stamina.max * 0.15;
+                        // Fixed dodge cost
+                        let dodge_cost = 60.0;
 
                         // Validate ability usage
                         if stamina.state < dodge_cost {

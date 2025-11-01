@@ -5,11 +5,12 @@ use crate::common::{
 };
 
 /// Calculate maximum stamina from actor attributes
-/// Formula: 100 + (might * 0.5) + (vitality * 0.3)
+/// Formula: 100 + (might * 1.0) + (vitality * 0.3)
+/// 50 might = 150 stamina, 100 might = 200 stamina, 150 might = 250 stamina
 pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
     let might = attrs.might() as f32;
     let vitality = attrs.vitality() as f32;
-    100.0 + (might * 0.5) + (vitality * 0.3)
+    100.0 + (might * 1.0) + (vitality * 0.3)
 }
 
 /// Calculate maximum mana from actor attributes
@@ -58,11 +59,15 @@ pub fn regenerate_resources(
     time: Res<Time>,
 ) {
     let current_time = time.elapsed();
+    // Cap dt to 1 second max to prevent instant regen from stale last_update values
+    // (e.g., after network updates where last_update gets reset to Duration::ZERO)
+    const MAX_DT_SECS: f32 = 1.0;
 
     for (mut stamina, mut mana) in &mut query {
-        // Calculate time since last update (in seconds)
-        let dt_stamina = (current_time - stamina.last_update).as_secs_f32();
-        let dt_mana = (current_time - mana.last_update).as_secs_f32();
+        // Calculate time since last update (in seconds), using saturating_sub to avoid panics
+        // Cap to MAX_DT_SECS to prevent instant regeneration from stale timestamps
+        let dt_stamina = current_time.saturating_sub(stamina.last_update).as_secs_f32().min(MAX_DT_SECS);
+        let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
 
         // Regenerate stamina
         stamina.state = (stamina.state + stamina.regen_rate * dt_stamina).min(stamina.max);
@@ -243,11 +248,11 @@ mod tests {
     #[test]
     fn test_max_stamina_with_might() {
         // Might-heavy build: -100A/50S → 150 might, 0 vitality
-        // stamina = 100 + (150 * 0.5) + (0 * 0.3) = 175
+        // stamina = 100 + (150 * 1.0) + (0 * 0.3) = 250
         let attrs = test_attrs((-100, 50, 0), (0, 0, 0), (0, 0, 0));
         assert_eq!(attrs.might(), 150);
         assert_eq!(attrs.vitality(), 0);
-        assert_eq!(calculate_max_stamina(&attrs), 175.0);
+        assert_eq!(calculate_max_stamina(&attrs), 250.0);
     }
 
     #[test]
@@ -263,11 +268,11 @@ mod tests {
     #[test]
     fn test_max_stamina_balanced() {
         // Balanced build: 0A/50S → 50 might, 50 vitality
-        // stamina = 100 + (50 * 0.5) + (50 * 0.3) = 140
+        // stamina = 100 + (50 * 1.0) + (50 * 0.3) = 165
         let attrs = test_attrs((0, 50, 0), (0, 50, 0), (0, 0, 0));
         assert_eq!(attrs.might(), 50);
         assert_eq!(attrs.vitality(), 50);
-        assert_eq!(calculate_max_stamina(&attrs), 140.0);
+        assert_eq!(calculate_max_stamina(&attrs), 165.0);
     }
 
     #[test]

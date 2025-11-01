@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{character_panel, combat_ui, debug_resources, resource_bars, target_indicator, threat_icons, ui};
+use crate::client::systems::{action_bar, character_panel, combat_ui, debug_resources, resource_bars, target_indicator, threat_icons, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -24,6 +24,7 @@ impl Plugin for UiPlugin {
                 ui::setup.after(crate::client::systems::camera::setup),
                 character_panel::setup,
                 resource_bars::setup.after(crate::client::systems::camera::setup),
+                action_bar::setup.after(crate::client::systems::camera::setup),
                 threat_icons::setup.after(crate::client::systems::camera::setup),
                 target_indicator::setup,
             ),
@@ -38,6 +39,7 @@ impl Plugin for UiPlugin {
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
                 resource_bars::update,
+                action_bar::update,
                 target_indicator::update,
                 debug_resources::debug_drain_resources, // DEBUG: Remove after testing
                 debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
