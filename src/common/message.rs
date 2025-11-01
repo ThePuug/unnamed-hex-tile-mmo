@@ -69,6 +69,7 @@ pub enum AbilityFailReason {
     NoTargets,
     OnCooldown,
     InvalidTarget,
+    OutOfRange,
 }
 
 /// Types of queue clears for reaction abilities

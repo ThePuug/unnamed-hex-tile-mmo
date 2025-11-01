@@ -114,8 +114,6 @@ pub fn process_respawn(
 
     for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
-            info!("SERVER: Player {:?} respawning at origin", ent);
-
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
@@ -176,8 +174,6 @@ pub fn process_respawn(
                     },
                 });
             }
-
-            info!("SERVER: Player {:?} respawned - sent Spawn event to recreate entity", ent);
         }
     }
 }
@@ -217,13 +213,11 @@ pub fn handle_death(
             commands.entity(*ent).insert(RespawnTimer::new(time.elapsed()));
 
             // Send Despawn to client so player disappears visually
-            info!("SERVER: Player {:?} died - sending Despawn event", ent);
             writer.write(Do {
                 event: Event::Despawn { ent: *ent },
             });
         } else {
             // NPC death: emit Despawn event (actual despawn happens in PostUpdate)
-            info!("SERVER: NPC {:?} died - sending Despawn event", ent);
             writer.write(Do {
                 event: Event::Despawn { ent: *ent },
             });

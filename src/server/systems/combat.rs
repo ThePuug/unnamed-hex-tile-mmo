@@ -204,29 +204,47 @@ pub fn handle_use_ability(
                     );
 
                     if let Some(target_ent) = target_opt {
-                        // BasicAttack: 20 base physical damage (no stamina cost)
-                        let base_damage = 20.0;
+                        // BasicAttack is melee only - check distance (must be adjacent = distance 1)
+                        let target_loc = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc);
 
-                        // Emit DealDamage event
-                        commands.trigger_targets(
-                            Try {
-                                event: GameEvent::DealDamage {
-                                    source: ent,
-                                    target: target_ent,
-                                    base_damage,
-                                    damage_type: DamageType::Physical,
+                        if let Some(target_loc) = target_loc {
+                            let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+                            if distance > 1 {
+                                // Target is too far for melee attack
+                                writer.write(Do {
+                                    event: GameEvent::AbilityFailed {
+                                        ent,
+                                        reason: AbilityFailReason::OutOfRange,
+                                    },
+                                });
+                                continue;
+                            }
+
+                            // BasicAttack: 20 base physical damage (no stamina cost)
+                            let base_damage = 20.0;
+
+                            // Emit DealDamage event
+                            commands.trigger_targets(
+                                Try {
+                                    event: GameEvent::DealDamage {
+                                        source: ent,
+                                        target: target_ent,
+                                        base_damage,
+                                        damage_type: DamageType::Physical,
+                                    },
                                 },
-                            },
-                            target_ent,
-                        );
+                                target_ent,
+                            );
 
-                        // Broadcast GCD event (BasicAttack triggers Attack GCD)
-                        writer.write(Do {
-                            event: GameEvent::Gcd {
-                                ent,
-                                typ: crate::common::systems::combat::gcd::GcdType::Attack,
-                            },
-                        });
+                            // Broadcast GCD event (BasicAttack triggers Attack GCD)
+                            writer.write(Do {
+                                event: GameEvent::Gcd {
+                                    ent,
+                                    typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                                },
+                            });
+                        }
                     } else {
                         // No valid target in facing cone
                         writer.write(Do {

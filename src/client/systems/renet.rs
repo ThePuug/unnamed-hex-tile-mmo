@@ -71,12 +71,10 @@ pub fn write_do(
                 let ent = match typ {
                     EntityType::Actor(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) {
-                            info!("SPAWN: Reusing existing entity {:?} (local player)", loc);
                             loc
                         }
                         else {
                             let loc = commands.spawn(typ).id();
-                            info!("SPAWN: Created new entity {:?} (remote player, no Actor marker)", loc);
                             l2r.insert(loc, ent);
                             loc
                         }

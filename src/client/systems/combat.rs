@@ -50,8 +50,6 @@ pub fn handle_apply_damage(
                 // Check if prediction was correct (for local player)
                 let prediction_error = (health.step - new_health).abs();
                 if prediction_error > 0.1 {
-                    warn!("CLIENT: Health prediction mismatch! Predicted: {:.1}, Actual: {:.1}, Error: {:.1}",
-                        health.step, new_health, prediction_error);
                     // Rollback: snap step to server's authoritative value
                     health.step = new_health;
                 }
@@ -119,8 +117,7 @@ pub fn handle_ability_failed(
     mut reader: EventReader<Do>,
 ) {
     for event in reader.read() {
-        if let GameEvent::AbilityFailed { ent, reason } = &event.event {
-            warn!("Client: Ability failed for {:?}: {:?}", ent, reason);
+        if let GameEvent::AbilityFailed { ent: _, reason: _ } = &event.event {
             // TODO Phase 6: Show error message in UI
             // For now, server will send corrective Stamina and ClearQueue events
         }
