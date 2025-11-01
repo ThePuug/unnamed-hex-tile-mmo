@@ -70,6 +70,18 @@ pub struct CapacityDot {
     pub index: usize,
 }
 
+/// Marker component for timer ring within threat icon
+#[derive(Component)]
+pub struct TargetThreatTimerRing {
+    pub index: usize,
+}
+
+/// Marker component for attack type icon text within threat icon
+#[derive(Component)]
+pub struct TargetThreatAttackIcon {
+    pub index: usize,
+}
+
 /// Marker component for the target's triumvirate text (approach/resilience)
 #[derive(Component)]
 pub struct TargetTriumvirateText;
@@ -520,8 +532,11 @@ pub fn update_queue(
     mut queue_container_query: Query<&mut Visibility, With<TargetQueueContainer>>,
     queue_children_query: Query<&Children, With<TargetQueueContainer>>,
     dots_container_query: Query<Entity, With<DotsContainer>>,
-    threat_icon_query: Query<Entity, With<TargetThreatIcon>>,
-    capacity_dot_query: Query<Entity, With<CapacityDot>>,
+    mut threat_icon_query: Query<(Entity, &TargetThreatIcon, &mut BorderColor), (Without<CapacityDot>, Without<TargetThreatTimerRing>)>,
+    capacity_dot_query: Query<(Entity, &CapacityDot)>,
+    mut dot_node_query: Query<(&mut BackgroundColor, &mut BorderColor), (With<CapacityDot>, Without<TargetThreatIcon>, Without<TargetThreatTimerRing>)>,
+    mut timer_ring_query: Query<(&TargetThreatTimerRing, &mut Node, &mut BorderColor), (Without<TargetThreatIcon>, Without<CapacityDot>)>,
+    mut attack_icon_query: Query<(&TargetThreatAttackIcon, &mut Text)>,
     target_query: Query<Option<&ReactionQueue>>,
     time: Res<Time>,
     server: Res<Server>,
@@ -546,27 +561,61 @@ pub fn update_queue(
             // Target has a queue - show it
             *queue_visibility = Visibility::Visible;
 
-            // Despawn old capacity dots and threat icons
-            for dot_ent in &capacity_dot_query {
-                commands.entity(dot_ent).despawn_recursive();
-            }
-            for icon_ent in &threat_icon_query {
-                commands.entity(icon_ent).despawn_recursive();
-            }
-
             // Get actual queue capacity from the component
             let queue_capacity = queue.capacity;
             let filled_slots = queue.threats.len();
             let is_full = queue.is_full();
 
-            // Spawn capacity dots in the dots container
-            if let Ok(dots_container_ent) = dots_container_query.get_single() {
-                commands.entity(dots_container_ent).with_children(|parent| {
-                    for i in 0..queue_capacity {
-                        let is_filled = i < filled_slots;
+            // Check if we need to rebuild capacity dots (capacity changed)
+            let current_dots: Vec<_> = capacity_dot_query.iter().collect();
+            let dots_need_rebuild = current_dots.len() != queue_capacity;
 
-                        // Use circular UI nodes instead of text characters
-                        let (bg_color, border_color) = if is_full && is_filled {
+            if dots_need_rebuild {
+                // Capacity changed - despawn all and respawn with correct count
+                for (dot_ent, _) in &current_dots {
+                    commands.entity(*dot_ent).despawn_recursive();
+                }
+
+                // Spawn capacity dots in the dots container
+                if let Ok(dots_container_ent) = dots_container_query.get_single() {
+                    commands.entity(dots_container_ent).with_children(|parent| {
+                        for i in 0..queue_capacity {
+                            let is_filled = i < filled_slots;
+
+                            // Use circular UI nodes instead of text characters
+                            let (bg_color, border_color) = if is_full && is_filled {
+                                // Full queue: filled dots are bright red with red border
+                                (Color::srgb(1.0, 0.3, 0.3), Color::srgb(1.0, 0.3, 0.3))
+                            } else if is_filled {
+                                // Filled but not full: orange-red fill with border
+                                (Color::srgb(0.9, 0.4, 0.4), Color::srgb(0.9, 0.4, 0.4))
+                            } else {
+                                // Empty: transparent with gray border
+                                (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
+                            };
+
+                            parent.spawn((
+                                Node {
+                                    width: Val::Px(8.),
+                                    height: Val::Px(8.),
+                                    border: UiRect::all(Val::Px(1.)),
+                                    ..default()
+                                },
+                                BorderColor(border_color),
+                                BorderRadius::all(Val::Percent(50.)), // Make circular
+                                BackgroundColor(bg_color),
+                                CapacityDot { index: i },
+                            ));
+                        }
+                    });
+                }
+            } else {
+                // Capacity unchanged - just update colors of existing dots
+                for (dot_ent, dot) in &current_dots {
+                    if let Ok((mut bg_color, mut border_color)) = dot_node_query.get_mut(*dot_ent) {
+                        let is_filled = dot.index < filled_slots;
+
+                        let (new_bg, new_border) = if is_full && is_filled {
                             // Full queue: filled dots are bright red with red border
                             (Color::srgb(1.0, 0.3, 0.3), Color::srgb(1.0, 0.3, 0.3))
                         } else if is_filled {
@@ -577,23 +626,13 @@ pub fn update_queue(
                             (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
                         };
 
-                        parent.spawn((
-                            Node {
-                                width: Val::Px(8.),
-                                height: Val::Px(8.),
-                                border: UiRect::all(Val::Px(1.)),
-                                ..default()
-                            },
-                            BorderColor(border_color),
-                            BorderRadius::all(Val::Percent(50.)), // Make circular
-                            BackgroundColor(bg_color),
-                            CapacityDot { index: i },
-                        ));
+                        bg_color.0 = new_bg;
+                        border_color.0 = new_border;
                     }
-                });
+                }
             }
 
-            // Spawn threat icons (LIMIT TO FIRST 3)
+            // Update threat icons (LIMIT TO FIRST 3)
             if let Ok(queue_children) = queue_children_query.get_single() {
                 let threat_icons_container = queue_children.get(1).copied();
 
@@ -601,101 +640,167 @@ pub fn update_queue(
                     let now_ms = server.current_time(time.elapsed().as_millis());
                     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-                    commands.entity(icons_ent).with_children(|parent| {
-                        // Filter out expired threats and limit to first 3
-                        let active_threats: Vec<_> = queue.threats.iter()
-                            .filter(|threat| {
-                                let elapsed = now.saturating_sub(threat.inserted_at);
-                                elapsed < threat.timer_duration  // Only show non-expired threats
-                            })
-                            .take(3)
-                            .enumerate()
-                            .collect();
+                    // Filter out expired threats and limit to first 3
+                    let active_threats: Vec<_> = queue.threats.iter()
+                        .filter(|threat| {
+                            let elapsed = now.saturating_sub(threat.inserted_at);
+                            elapsed < threat.timer_duration  // Only show non-expired threats
+                        })
+                        .take(3)
+                        .enumerate()
+                        .collect();
 
-                        for (index, threat) in active_threats {
+                    let target_count = active_threats.len();
+                    let current_icon_count = threat_icon_query.iter().count();
+                    let icons_need_rebuild = current_icon_count != target_count;
+
+                    if icons_need_rebuild {
+                        // Icon count changed - despawn all and respawn with correct count
+                        for (icon_ent, _, _) in threat_icon_query.iter() {
+                            commands.entity(icon_ent).despawn_recursive();
+                        }
+
+                        // Spawn new threat icons
+                        commands.entity(icons_ent).with_children(|parent| {
+                            for (index, threat) in &active_threats {
+                                // Calculate timer progress
+                                let elapsed = now.saturating_sub(threat.inserted_at);
+                                let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
+                                let remaining = 1.0 - progress;
+
+                                // Color gradient: Yellow (start) → Orange (50%) → Red (end)
+                                let timer_color = if remaining > 0.5 {
+                                    // Yellow → Orange transition (100% to 50% remaining)
+                                    let t = (remaining - 0.5) / 0.5;
+                                    Color::srgba(
+                                        1.0,
+                                        0.9 * t + 0.5 * (1.0 - t),
+                                        0.0,
+                                        0.9,
+                                    )
+                                } else {
+                                    // Orange → Red transition (50% to 0% remaining)
+                                    let t = remaining / 0.5;
+                                    Color::srgba(
+                                        1.0,
+                                        0.5 * t,
+                                        0.0,
+                                        0.9,
+                                    )
+                                };
+
+                                // Size grows from 15% to 100% as timer counts down
+                                let size_percent = 15.0 + (85.0 * progress);
+                                let offset_percent = (100.0 - size_percent) / 2.0;
+
+                                // Threat icon (circular, 40px)
+                                parent.spawn((
+                                    Node {
+                                        width: Val::Px(40.),
+                                        height: Val::Px(40.),
+                                        border: UiRect::all(Val::Px(2.)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    },
+                                    BorderColor(if is_full {
+                                        Color::srgb(1.0, 0.2, 0.2)  // Brighter red when full
+                                    } else {
+                                        Color::srgb(0.8, 0.2, 0.2)  // Normal red
+                                    }),
+                                    BorderRadius::all(Val::Percent(50.)), // Make circular
+                                    BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
+                                    TargetThreatIcon { index: *index },
+                                ))
+                                .with_children(|parent| {
+                                    // Timer ring (grows from center as time runs out)
+                                    parent.spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            width: Val::Percent(size_percent),
+                                            height: Val::Percent(size_percent),
+                                            left: Val::Percent(offset_percent),
+                                            top: Val::Percent(offset_percent),
+                                            border: UiRect::all(Val::Px(3.)),
+                                            ..default()
+                                        },
+                                        BorderColor(timer_color),
+                                        BorderRadius::all(Val::Percent(50.)),
+                                        BackgroundColor(Color::NONE),
+                                        TargetThreatTimerRing { index: *index },
+                                    ));
+
+                                    // Attack type icon (centered)
+                                    let icon_text = match threat.damage_type {
+                                        DamageType::Physical => "⚔",
+                                        DamageType::Magic => "🔥",
+                                    };
+
+                                    parent.spawn((
+                                        Text::new(icon_text),
+                                        TextFont {
+                                            font_size: 22.0,
+                                            ..default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                        TargetThreatAttackIcon { index: *index },
+                                    ));
+                                });
+                            }
+                        });
+                    } else {
+                        // Icon count unchanged - update existing icons
+                        for (index, threat) in &active_threats {
                             // Calculate timer progress
                             let elapsed = now.saturating_sub(threat.inserted_at);
                             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
                             let remaining = 1.0 - progress;
 
-                            // Color gradient: Yellow (start) → Orange (50%) → Red (end)
+                            // Color gradient for timer ring
                             let timer_color = if remaining > 0.5 {
-                                // Yellow → Orange transition (100% to 50% remaining)
                                 let t = (remaining - 0.5) / 0.5;
-                                Color::srgba(
-                                    1.0,
-                                    0.9 * t + 0.5 * (1.0 - t),
-                                    0.0,
-                                    0.9,
-                                )
+                                Color::srgba(1.0, 0.9 * t + 0.5 * (1.0 - t), 0.0, 0.9)
                             } else {
-                                // Orange → Red transition (50% to 0% remaining)
                                 let t = remaining / 0.5;
-                                Color::srgba(
-                                    1.0,
-                                    0.5 * t,
-                                    0.0,
-                                    0.9,
-                                )
+                                Color::srgba(1.0, 0.5 * t, 0.0, 0.9)
                             };
 
-                            // Size grows from 15% to 100% as timer counts down
-                            let size_percent = 15.0 + (85.0 * progress);
-                            let offset_percent = (100.0 - size_percent) / 2.0;
+                            // Update timer ring size and color
+                            for (ring, mut node, mut border_color) in timer_ring_query.iter_mut() {
+                                if ring.index == *index {
+                                    let size_percent = 15.0 + (85.0 * progress);
+                                    let offset_percent = (100.0 - size_percent) / 2.0;
+                                    node.width = Val::Percent(size_percent);
+                                    node.height = Val::Percent(size_percent);
+                                    node.left = Val::Percent(offset_percent);
+                                    node.top = Val::Percent(offset_percent);
+                                    border_color.0 = timer_color;
+                                }
+                            }
 
-                            // Threat icon (circular, 40px)
-                            parent.spawn((
-                                Node {
-                                    width: Val::Px(40.),
-                                    height: Val::Px(40.),
-                                    border: UiRect::all(Val::Px(2.)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BorderColor(if is_full {
-                                    Color::srgb(1.0, 0.2, 0.2)  // Brighter red when full
-                                } else {
-                                    Color::srgb(0.8, 0.2, 0.2)  // Normal red
-                                }),
-                                BorderRadius::all(Val::Percent(50.)), // Make circular
-                                BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
-                                TargetThreatIcon { index },
-                            ))
-                            .with_children(|parent| {
-                                // Timer ring (grows from center as time runs out)
-                                parent.spawn((
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        width: Val::Percent(size_percent),
-                                        height: Val::Percent(size_percent),
-                                        left: Val::Percent(offset_percent),
-                                        top: Val::Percent(offset_percent),
-                                        border: UiRect::all(Val::Px(3.)),
-                                        ..default()
-                                    },
-                                    BorderColor(timer_color),
-                                    BorderRadius::all(Val::Percent(50.)),
-                                    BackgroundColor(Color::NONE),
-                                ));
+                            // Update attack icon text if damage type changed
+                            for (attack_icon, mut text) in attack_icon_query.iter_mut() {
+                                if attack_icon.index == *index {
+                                    let icon_text = match threat.damage_type {
+                                        DamageType::Physical => "⚔",
+                                        DamageType::Magic => "🔥",
+                                    };
+                                    **text = icon_text.to_string();
+                                }
+                            }
 
-                                // Attack type icon (centered)
-                                let icon_text = match threat.damage_type {
-                                    DamageType::Physical => "⚔",
-                                    DamageType::Magic => "🔥",
-                                };
-
-                                parent.spawn((
-                                    Text::new(icon_text),
-                                    TextFont {
-                                        font_size: 22.0,
-                                        ..default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                ));
-                            });
+                            // Update threat icon border color based on queue fullness
+                            for (_icon_ent, icon, mut border_color) in threat_icon_query.iter_mut() {
+                                if icon.index == *index {
+                                    border_color.0 = if is_full {
+                                        Color::srgb(1.0, 0.2, 0.2)
+                                    } else {
+                                        Color::srgb(0.8, 0.2, 0.2)
+                                    };
+                                }
+                            }
                         }
-                    });
+                    }
                 }
             }
         } else {
