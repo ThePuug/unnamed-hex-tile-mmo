@@ -329,6 +329,118 @@ where
     Some(best_target)
 }
 
+/// Select the nearest ally based on heading and distance
+///
+/// Similar to select_target but filters for allies (PlayerControlled) instead of hostiles.
+/// Used for ally targeting and ally target frame display.
+///
+/// # Algorithm
+///
+/// 1. Query entities within max range (20 hexes) using spatial index
+/// 2. Filter to allies (PlayerControlled) only
+/// 3. Skip self (by entity)
+/// 4. Filter to entities within 120° facing cone
+/// 5. Select nearest by distance
+/// 6. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
+///
+/// # Arguments
+///
+/// * `caster_ent` - Entity of the caster (to skip self)
+/// * `caster_loc` - Location of the caster
+/// * `caster_heading` - Heading direction of the caster
+/// * `nntree` - Spatial index for proximity queries
+/// * `is_player_controlled` - Function to check if entity is player-controlled
+///
+/// # Returns
+///
+/// `Some(Entity)` if a valid ally target is found, `None` otherwise
+pub fn select_ally_target<F>(
+    caster_ent: Entity,
+    caster_loc: Loc,
+    caster_heading: Heading,
+    nntree: &NNTree,
+    is_player_controlled: F,
+) -> Option<Entity>
+where
+    F: Fn(Entity) -> bool,
+{
+    // Query entities within max range (20 hexes)
+    let max_range_sq = 20 * 20;
+    let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
+
+    // Build list of valid ally targets with their distances and angles
+    let mut candidates: Vec<(Entity, Loc, u32, f32)> = Vec::new();
+
+    for nn in nearby {
+        let ent = nn.ent;
+        let target_loc = nn.loc;
+
+        // Skip self
+        if ent == caster_ent {
+            continue;
+        }
+
+        // Filter to allies only (PlayerControlled)
+        if !is_player_controlled(ent) {
+            continue;
+        }
+
+        // Check if in facing cone (120° cone = ±60°)
+        if !is_in_facing_cone(caster_heading, caster_loc, target_loc) {
+            continue;
+        }
+
+        // Calculate distance (use flat_distance for 2D hex grid)
+        let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+        // Calculate angle to target for tiebreaker
+        let target_angle = angle_between_locs(caster_loc, target_loc);
+
+        candidates.push((ent, target_loc, distance, target_angle));
+    }
+
+    // No valid allies
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Sort by distance (nearest first)
+    candidates.sort_by_key(|(_, _, dist, _)| *dist);
+    let nearest_distance = candidates[0].2;
+
+    // Find all allies at nearest distance
+    let nearest_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|(_, _, dist, _)| *dist == nearest_distance)
+        .collect();
+
+    // If only one at nearest distance, return it
+    if nearest_candidates.len() == 1 {
+        return Some(nearest_candidates[0].0);
+    }
+
+    // Geometric tiebreaker: pick ally closest to exact heading angle
+    let heading_angle = caster_heading.to_angle();
+    let mut best_target = nearest_candidates[0].0;
+    let mut smallest_delta = f32::MAX;
+
+    for (ent, _, _, target_angle) in nearest_candidates {
+        let mut delta = (*target_angle - heading_angle).abs();
+
+        // Normalize to 0-180 range (shortest angular distance)
+        if delta > 180.0 {
+            delta = 360.0 - delta;
+        }
+
+        if delta < smallest_delta {
+            smallest_delta = delta;
+            best_target = *ent;
+        }
+    }
+
+    Some(best_target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,9 +691,10 @@ mod tests {
 
         let entity = world.spawn((
             EntityType::Actor(ActorImpl {
-                origin: Origin::Natureborn,
+                origin: Origin::Evolved,
                 approach: Approach::Direct,
                 resilience: Resilience::Vital,
+                identity: ActorIdentity::Npc(NpcType::WildDog), // Test helper - generic NPC
             }),
             loc,
         )).id();

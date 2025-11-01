@@ -173,10 +173,13 @@ fn spawn_npc(
         }
     };
 
+    // Level 10: Might+Instinct focused distribution
+    // axis=-6 (3 levels) + spectrum=2 (2 levels) = 5 levels per stat → 10 total
+    // Negative axis favors might and instinct sides
     let attrs = ActorAttributes::new(
-        -90, 80, 0,   // might_grace (HIGH MIGHT for testing - dogs hit HARD)
-        -10, 15, -15,  // vitality_focus
-        0, 20, 5,      // instinct_presence
+        -6, 2, 0,      // might_grace: might-focused (5 levels)
+        0, 0, 0,       // vitality_focus: no investment (0 levels)
+        -6, 2, 0,      // instinct_presence: instinct-focused (5 levels)
     );
 
     // Calculate initial resources from attributes
@@ -652,17 +655,17 @@ mod tests {
     fn test_npc_template_actor_impl_returns_correct_types() {
         // Verify each NPC template returns the expected actor configuration
         let dog = NpcTemplate::Dog.actor_impl();
-        assert_eq!(dog.origin, Origin::Natureborn);
+        assert_eq!(dog.origin, Origin::Evolved);
         assert_eq!(dog.approach, Approach::Direct);
         assert_eq!(dog.resilience, Resilience::Primal);
 
         let wolf = NpcTemplate::Wolf.actor_impl();
-        assert_eq!(wolf.origin, Origin::Natureborn);
+        assert_eq!(wolf.origin, Origin::Evolved);
         assert_eq!(wolf.approach, Approach::Ambushing);
         assert_eq!(wolf.resilience, Resilience::Vital);
 
         let rabbit = NpcTemplate::Rabbit.actor_impl();
-        assert_eq!(rabbit.origin, Origin::Natureborn);
+        assert_eq!(rabbit.origin, Origin::Evolved);
         assert_eq!(rabbit.approach, Approach::Evasive);
         assert_eq!(rabbit.resilience, Resilience::Primal);
     }
@@ -899,7 +902,7 @@ mod tests {
             match typ {
                 EntityType::Actor(actor) => {
                     // Verify it's a Wolf (from NpcTemplate::Wolf)
-                    assert_eq!(actor.origin, Origin::Natureborn,
+                    assert_eq!(actor.origin, Origin::Evolved,
                         "Expected Wolf origin to be Natureborn");
                     assert_eq!(actor.approach, Approach::Ambushing,
                         "Expected Wolf approach to be Ambushing");

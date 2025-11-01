@@ -7,26 +7,24 @@ use crate::common::{
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
-/// Skips duplicates if already predicted
+/// No deduplication needed - we don't predict threat insertions
 pub fn handle_insert_threat(
     mut reader: EventReader<Do>,
     mut query: Query<&mut ReactionQueue>,
+    time: Res<Time>,
+    server: Res<crate::client::resources::Server>,
 ) {
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
-                // Check if this threat was already predicted (deduplication)
-                // Match by source and very close inserted_at timestamp (within 50ms tolerance)
-                let is_duplicate = queue.threats.iter().any(|existing| {
-                    existing.source == threat.source &&
-                    existing.damage == threat.damage &&
-                    existing.inserted_at.as_millis().abs_diff(threat.inserted_at.as_millis()) < 50
-                });
+                // Calculate current server time
+                let client_now = time.elapsed().as_millis();
+                let server_now_ms = server.current_time(client_now);
+                let server_now = std::time::Duration::from_millis(server_now_ms.min(u64::MAX as u128) as u64);
 
-                if !is_duplicate {
-                    // Insert threat into client's visual queue
-                    queue.threats.push_back(threat);
-                }
+                // Use insert_threat helper to properly handle queue capacity
+                let _overflow = queue_utils::insert_threat(&mut queue, threat, server_now);
+                // Note: We ignore overflow - server already handled it
             }
         }
     }

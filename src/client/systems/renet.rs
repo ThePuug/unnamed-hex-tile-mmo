@@ -58,7 +58,8 @@ pub fn write_do(
                 let mana = Mana { state: 1.0, step: 1.0, max: 1.0, regen_rate: 8.0, last_update: Duration::ZERO };
                 let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
 
-                let ent = commands.spawn((Actor, Behaviour::Controlled, health, stamina, mana, combat_state)).id();
+                let ent = commands.spawn((Actor, Behaviour::Controlled, PlayerControlled, health, stamina, mana, combat_state)).id();
+                info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
@@ -70,10 +71,12 @@ pub fn write_do(
                 let ent = match typ {
                     EntityType::Actor(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) {
+                            info!("SPAWN: Reusing existing entity {:?} (local player)", loc);
                             loc
                         }
                         else {
                             let loc = commands.spawn(typ).id();
+                            info!("SPAWN: Created new entity {:?} (remote player, no Actor marker)", loc);
                             l2r.insert(loc, ent);
                             loc
                         }
@@ -166,6 +169,10 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
             }
+            Do { event: Event::Pong { client_time } } => {
+                // Forward Pong to Do writer for handle_pong system
+                do_writer.write(Do { event: Event::Pong { client_time } });
+            }
             _ => {}
         }
     }
@@ -201,7 +208,68 @@ pub fn send_try(
                     ability
                 }}, bincode::config::legacy()).unwrap());
             }
+            Try { event: Event::Ping { client_time } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
+                    client_time
+                }}, bincode::config::legacy()).unwrap());
+            }
             _ => {}
         }
+    }
+}
+
+/// Handle Pong response to refine time sync with measured network latency
+pub fn handle_pong(
+    mut reader: EventReader<Do>,
+    mut server: ResMut<crate::client::resources::Server>,
+    time: Res<Time>,
+) {
+    for &message in reader.read() {
+        let Do { event: Event::Pong { client_time } } = message else { continue };
+        let client_now = time.elapsed().as_millis();
+
+        // Calculate round-trip time (RTT) and one-way latency
+        let rtt = client_now.saturating_sub(client_time);
+        let measured_latency = rtt / 2;
+
+        let old_smoothed = server.smoothed_latency;
+
+        // Update smoothed latency using exponential moving average
+        // alpha = 0.2 means: 20% new measurement, 80% old average
+        // This provides smoothing while still adapting to changes
+        let alpha = 0.2;
+        server.smoothed_latency = ((old_smoothed as f64 * (1.0 - alpha))
+            + (measured_latency as f64 * alpha)) as u128;
+
+        // Adjust server_time_at_init based on the change in latency estimate
+        // This prevents time jumps - we gradually correct for latency changes
+        let latency_delta = server.smoothed_latency as i128 - old_smoothed as i128;
+        if latency_delta != 0 {
+            // Positive delta = latency increased, we're behind, add time
+            // Negative delta = latency decreased, we're ahead, subtract time
+            server.server_time_at_init = if latency_delta > 0 {
+                server.server_time_at_init.saturating_add(latency_delta as u128)
+            } else {
+                server.server_time_at_init.saturating_sub(latency_delta.unsigned_abs())
+            };
+        }
+    }
+}
+
+/// Send periodic pings to keep latency estimate up-to-date
+/// Sends a ping every 5 seconds to measure network conditions
+pub fn periodic_ping(
+    mut server: ResMut<crate::client::resources::Server>,
+    mut try_writer: EventWriter<Try>,
+    time: Res<Time>,
+) {
+    const PING_INTERVAL_MS: u128 = 5000; // Ping every 5 seconds
+
+    let client_now = time.elapsed().as_millis();
+
+    // Check if it's time to send another ping
+    if client_now.saturating_sub(server.last_ping_time) >= PING_INTERVAL_MS {
+        server.last_ping_time = client_now;
+        try_writer.send(Try { event: Event::Ping { client_time: client_now } });
     }
 }

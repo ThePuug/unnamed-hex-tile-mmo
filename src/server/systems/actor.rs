@@ -249,7 +249,7 @@ mod tests {
             Loc::new(Qrz { q: 0, r: 0, z: 0 }),
             Heading::new(Qrz { q: 0, r: 1, z: 0 }), // south-east direction (valid DIRECTIONS entry)
             Offset::default(),
-            EntityType::Actor(ActorImpl::new(Origin::Natureborn, Approach::Direct, Resilience::Vital)),
+            EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
             PlayerDiscoveryState::default(),
         )).id();
 
@@ -339,7 +339,7 @@ mod tests {
         let spawn_loc = Qrz { q: 0, r: 0, z: 4 };
         let player = app.world_mut().spawn((
             Loc::new(spawn_loc),
-            EntityType::Actor(ActorImpl::new(Origin::Natureborn, Approach::Direct, Resilience::Vital)),
+            EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
             PlayerDiscoveryState::default(),
         )).id();
 
@@ -347,7 +347,7 @@ mod tests {
         app.world_mut().send_event(Do {
             event: Event::Spawn {
                 ent: player,
-                typ: EntityType::Actor(ActorImpl::new(Origin::Natureborn, Approach::Direct, Resilience::Vital)),
+                typ: EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
                 qrz: spawn_loc,
                 attrs: None,
             }

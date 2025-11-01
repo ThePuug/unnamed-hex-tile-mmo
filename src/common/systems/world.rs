@@ -33,13 +33,14 @@ pub fn do_incremental(
         Option<&mut Health>,
         Option<&mut Stamina>,
         Option<&mut Mana>,
-        Option<&mut CombatState>)>,
+        Option<&mut CombatState>,
+        Option<&mut PlayerControlled>)>,
     map: Res<Map>,
     buffers: Res<crate::common::resources::InputQueues>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled)) = query.get_mut(ent) else {
             // Entity might have been despawned - skip this update
             continue;
         };
@@ -156,6 +157,12 @@ pub fn do_incremental(
                 } else {
                     commands.entity(ent).insert(combat_state);
                 }
+            }
+            Component::PlayerControlled(player_controlled) => {
+                if o_player_controlled.is_none() {
+                    commands.entity(ent).insert(player_controlled);
+                }
+                // PlayerControlled is a marker - if already present, no update needed
             }
             _ => {}
         }

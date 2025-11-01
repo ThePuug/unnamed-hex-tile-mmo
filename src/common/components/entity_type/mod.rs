@@ -15,3 +15,15 @@ pub enum EntityType {
     Actor(ActorImpl),
     Decorator(Decorator),
 }
+
+impl EntityType {
+    /// Get human-readable display name for this entity type
+    /// Returns a name suitable for showing to players in UI
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            EntityType::Unset => "Unknown",
+            EntityType::Actor(actor_impl) => actor_impl.identity.display_name(),
+            EntityType::Decorator(_) => "Object",
+        }
+    }
+}

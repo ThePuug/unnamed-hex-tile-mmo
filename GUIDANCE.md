@@ -279,6 +279,7 @@ pub struct InputQueue {
 8. **Set remote `state` to Vec3::ZERO**: Must be heading-based position
 9. **Pop/push queue front**: Use `front_mut()` to avoid temporary empty queue
 10. **Run `controlled::tick` in FixedUpdate**: Must be Update, `.after(update_keybits)`
+11. **Use manual system ordering (`.after()`) to fix bugs**: Almost never the answer - investigate root cause instead. Bevy commands flush automatically between system sets. If components are missing, they'll exist by next frame. Manual ordering is a code smell indicating architectural issues.
 
 ### Performance Patterns
 

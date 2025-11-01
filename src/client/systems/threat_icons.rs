@@ -134,17 +134,21 @@ pub fn update(
                 .is_some();
 
             if is_filled && !has_timer_ring {
-                // Need to spawn timer ring
+                // Need to spawn timer ring (circular border with color gradient)
+                // Starts at 15% size (centered), grows to 100% as timer counts down
                 commands.entity(*entity).with_children(|parent| {
                     parent.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            width: Val::Percent(100.),
-                            height: Val::Percent(100.),
-                            border: UiRect::all(Val::Px(2.)),
+                            width: Val::Percent(15.),
+                            height: Val::Percent(15.),
+                            left: Val::Percent(42.5), // Center the 15% ring
+                            top: Val::Percent(42.5),
+                            border: UiRect::all(Val::Px(3.)),
                             ..default()
                         },
-                        BorderColor(Color::srgba(1.0, 0.8, 0.0, 0.8)),
+                        BorderColor(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow
+                        BorderRadius::all(Val::Percent(50.)), // Make circular
                         BackgroundColor(Color::NONE),
                         ThreatTimerRing { index: icon.index },
                     ));
@@ -162,18 +166,53 @@ pub fn update(
         }
     }
 
-    // Update timer rings
-    for (_entity, ring, mut node) in ring_query.iter_mut() {
+    // Update timer rings with:
+    // - Color gradient (yellow → orange → red as time runs out)
+    // - Growing size (small → large as time runs out)
+    for (entity, ring, mut node) in ring_query.iter_mut() {
         if ring.index < queue.threats.len() {
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
-
-            // Update the timer ring's arc (simulated by width - proper arc would need custom rendering)
-            // For now, we'll just update opacity to show time remaining
             let remaining = 1.0 - progress;
-            // Timer ring will be more visible when time is running out
-            node.width = Val::Percent(100.0 * remaining);
+
+            // Color gradient: Yellow (start) → Orange (50%) → Red (end)
+            // remaining: 1.0 = just inserted, 0.0 = about to resolve
+            let color = if remaining > 0.5 {
+                // Yellow → Orange transition (100% to 50% remaining)
+                let t = (remaining - 0.5) / 0.5; // 1.0 at start, 0.0 at midpoint
+                Color::srgba(
+                    1.0,
+                    0.9 * t + 0.5 * (1.0 - t), // 0.9 → 0.5 (yellow to orange)
+                    0.0,
+                    0.9,
+                )
+            } else {
+                // Orange → Red transition (50% to 0% remaining)
+                let t = remaining / 0.5; // 1.0 at midpoint, 0.0 at end
+                Color::srgba(
+                    1.0,
+                    0.5 * t, // 0.5 → 0.0 (orange to red)
+                    0.0,
+                    0.9,
+                )
+            };
+
+            // Size grows from 15% to 100% as timer counts down
+            // remaining: 1.0 = 15%, 0.0 = 100%
+            let size_percent = 15.0 + (85.0 * progress);
+
+            // Center the ring as it grows by offsetting it
+            // When size is 15%, offset by 42.5% to center it
+            // When size is 100%, offset by 0% (no offset needed)
+            let offset_percent = (100.0 - size_percent) / 2.0;
+
+            node.width = Val::Percent(size_percent);
+            node.height = Val::Percent(size_percent);
+            node.left = Val::Percent(offset_percent);
+            node.top = Val::Percent(offset_percent);
+
+            commands.entity(entity).insert(BorderColor(color));
         }
     }
 }
@@ -203,7 +242,7 @@ fn spawn_threat_icon(
     };
 
     commands.entity(container).with_children(|parent| {
-        // Threat icon background
+        // Threat icon background (circular)
         parent.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -222,21 +261,26 @@ fn spawn_threat_icon(
                 ..default()
             },
             BorderColor(border_color),
+            BorderRadius::all(Val::Percent(50.)), // Make circular
             BackgroundColor(background_color),
             ThreatIcon { index },
         ))
         .with_children(|parent| {
             // Timer ring (only visible for filled slots)
+            // Circular border that changes color and grows as time runs out
             if is_filled {
                 parent.spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        width: Val::Percent(100.),
-                        height: Val::Percent(100.),
-                        border: UiRect::all(Val::Px(2.)),
+                        width: Val::Percent(15.), // Start at 15%, grow to 100%
+                        height: Val::Percent(15.),
+                        left: Val::Percent(42.5), // Center the 15% ring
+                        top: Val::Percent(42.5),
+                        border: UiRect::all(Val::Px(3.)),
                         ..default()
                     },
-                    BorderColor(Color::srgba(1.0, 0.8, 0.0, 0.8)), // Yellow/orange timer ring
+                    BorderColor(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow, will transition to red
+                    BorderRadius::all(Val::Percent(50.)), // Make circular
                     BackgroundColor(Color::NONE),
                     ThreatTimerRing { index },
                 ));

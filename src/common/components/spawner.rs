@@ -51,9 +51,24 @@ impl NpcTemplate {
     /// Get the ActorImpl for this NPC type
     pub fn actor_impl(&self) -> ActorImpl {
         match self {
-            Self::Dog => ActorImpl::new(Origin::Natureborn, Approach::Direct, Resilience::Primal),
-            Self::Wolf => ActorImpl::new(Origin::Natureborn, Approach::Ambushing, Resilience::Vital),
-            Self::Rabbit => ActorImpl::new(Origin::Natureborn, Approach::Evasive, Resilience::Primal),
+            Self::Dog => ActorImpl::new(
+                Origin::Evolved,
+                Approach::Direct,
+                Resilience::Primal,
+                ActorIdentity::Npc(NpcType::WildDog),
+            ),
+            Self::Wolf => ActorImpl::new(
+                Origin::Evolved,
+                Approach::Ambushing,
+                Resilience::Vital,
+                ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Wolf variant
+            ),
+            Self::Rabbit => ActorImpl::new(
+                Origin::Evolved,
+                Approach::Evasive,
+                Resilience::Primal,
+                ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Rabbit variant
+            ),
         }
     }
 }

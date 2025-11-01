@@ -4,7 +4,7 @@ use rand::seq::IteratorRandom;
 
 use crate::{
     common::{
-        components::{Loc, resources::Health},
+        components::{Loc, resources::Health, behaviour::PlayerControlled},
         plugins::nntree::*,
     },
     server::{
@@ -31,7 +31,7 @@ pub fn find_or_keep_target(
     nntree: Res<NNTree>,
     mut query: Query<(&FindOrKeepTarget, &BehaveCtx)>,
     q_npc: Query<(&Loc, Option<&TargetLock>)>,
-    q_target: Query<(&Loc, &Health)>,
+    q_target: Query<(&Loc, &Health, Option<&PlayerControlled>)>,
 ) {
     for (&node, &ctx) in &mut query {
         let npc_entity = ctx.target_entity();
@@ -44,10 +44,13 @@ pub fn find_or_keep_target(
 
         // 1. Check if we have a locked target that's still valid
         if let Some(lock) = lock_opt {
-            // Try to get locked target's location and health
-            if let Ok((target_loc, target_health)) = q_target.get(lock.locked_target) {
-                // Validate: in chase range AND alive
-                if lock.is_target_valid(Some(target_loc), npc_loc) && target_health.current() > 0.0 {
+            // Try to get locked target's location, health, and PlayerControlled status
+            if let Ok((target_loc, target_health, player_controlled)) = q_target.get(lock.locked_target) {
+                // Validate: in chase range AND alive AND is a player (asymmetric targeting)
+                if lock.is_target_valid(Some(target_loc), npc_loc)
+                    && target_health.current() > 0.0
+                    && player_controlled.is_some()  // NPCs only target players
+                {
                     // Keep existing target (lock still valid)
                     commands.entity(npc_entity).insert(Target(lock.locked_target));
                     commands.trigger(ctx.success());
@@ -62,13 +65,16 @@ pub fn find_or_keep_target(
         // 2. Find new target (no lock or lock was invalid)
         let nearby = nntree.locate_within_distance(*npc_loc, node.dist as i16 * node.dist as i16);
 
-        // Filter to entities with Health > 0 (alive targets)
+        // Filter to entities with Health > 0 AND PlayerControlled (asymmetric targeting)
         let valid_targets: Vec<Entity> = nearby
             .filter_map(|result| {
                 let ent = result.ent;
-                // Check if entity has Health and is alive
-                q_target.get(ent).ok().and_then(|(_, health)| {
-                    if health.current() > 0.0 && ent != npc_entity {  // Don't target self
+                // Check if entity has Health, is alive, and is a player (asymmetric targeting)
+                q_target.get(ent).ok().and_then(|(_, health, player_controlled)| {
+                    if health.current() > 0.0
+                        && ent != npc_entity  // Don't target self
+                        && player_controlled.is_some()  // NPCs only target players
+                    {
                         Some(ent)
                     } else {
                         None

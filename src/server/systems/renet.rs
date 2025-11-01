@@ -50,7 +50,7 @@ pub fn do_manage_connections(
     mut writer: EventWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>, Option<&PlayerControlled>)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
@@ -60,21 +60,18 @@ pub fn do_manage_connections(
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
-                    Origin::Natureborn,
+                    Origin::Evolved,
                     Approach::Direct,
-                    Resilience::Vital));
+                    Resilience::Vital,
+                    ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // UAT Testing: Start at Focus threshold (2/3 queue slots boundary)
-                // vitality_focus_axis = 33, spectrum = 33 allows shift to test boundary
-                // Focus = axis + shift: starting at 33, shift down/up to cross 66 threshold
-                // With shift -33: Focus = 0 (1 slot)
-                // With shift 0: Focus = 33 (2 slots)
-                // With shift +33: Focus = 66 (3 slots) ← crosses threshold here!
+                // Level 10: Full spectrum distribution (4+3+3=10 points)
+                // Balanced axis (0) allows players to shift in any direction for skill balance testing
                 let attrs = ActorAttributes::new(
-                    -10, 45, -45,  // might_grace
-                    33, 33, 0,     // vitality_focus
-                    -10, 45, 45,   // instinct_presence
+                    0, 4, 0,       // might_grace: 4 spectrum
+                    0, 3, 0,       // vitality_focus: 3 spectrum
+                    0, 3, 0,       // instinct_presence: 3 spectrum
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
@@ -114,6 +111,7 @@ pub fn do_manage_connections(
                     typ,
                     loc,
                     Behaviour::Controlled,
+                    PlayerControlled,
                     attrs,
                     health,
                     stamina,
@@ -125,6 +123,8 @@ pub fn do_manage_connections(
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
+                // Broadcast PlayerControlled to nearby players so they recognize this as an ally
+                writer.write(Do { event: Event::Incremental { ent, component: Component::PlayerControlled(PlayerControlled) }});
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue {
@@ -156,10 +156,14 @@ pub fn do_manage_connections(
                     Do { event: Event::Incremental { ent, component: Component::CombatState(combat_state) }},
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component: Component::PlayerControlled(PlayerControlled) }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
                 // spawn nearby actors
                 for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ, attrs, health, stamina, mana, combat_state) = query.get(other.ent).unwrap();
+                    let (&loc, &typ, attrs, health, stamina, mana, combat_state, player_controlled) = query.get(other.ent).unwrap();
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
                         bincode::config::legacy()).unwrap();
@@ -187,6 +191,12 @@ pub fn do_manage_connections(
                     if let Some(cs) = combat_state {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Incremental { ent: other.ent, component: Component::CombatState(*cs) }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                    if let Some(pc) = player_controlled {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Incremental { ent: other.ent, component: Component::PlayerControlled(*pc) }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
@@ -230,6 +240,13 @@ pub fn write_try(
                 Try { event: Event::UseAbility { ent: _, ability } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::UseAbility { ent, ability }});
+                }
+                Try { event: Event::Ping { client_time } } => {
+                    // Immediately respond with Pong (echo client timestamp)
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Pong { client_time }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 _ => {}
             }

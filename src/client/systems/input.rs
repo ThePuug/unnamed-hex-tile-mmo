@@ -53,6 +53,11 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
         }
 
+        // Dodge ability (E key) - Skill-based dodge trigger
+        if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
+        }
+
         // Place spawner (P key) - Debug utility to spawn NPCs
         if keyboard.just_pressed(KEYCODE_PLACE_SPAWNER) && !gcd_active {
             let spawner = Spawner {
