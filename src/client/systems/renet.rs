@@ -59,6 +59,7 @@ pub fn write_do(
                 let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
 
                 let ent = commands.spawn((Actor, Behaviour::Controlled, health, stamina, mana, combat_state)).id();
+                info!("INIT: Spawned local player entity {:?} with Actor marker", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
@@ -70,10 +71,12 @@ pub fn write_do(
                 let ent = match typ {
                     EntityType::Actor(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) {
+                            info!("SPAWN: Reusing existing entity {:?} (local player)", loc);
                             loc
                         }
                         else {
                             let loc = commands.spawn(typ).id();
+                            info!("SPAWN: Created new entity {:?} (remote player, no Actor marker)", loc);
                             l2r.insert(loc, ent);
                             loc
                         }

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{action_bar, character_panel, combat_ui, debug_resources, resource_bars, target_indicator, threat_icons, ui};
+use crate::client::systems::{action_bar, character_panel, combat_ui, debug_resources, resource_bars, target_frame, target_indicator, threat_icons, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -16,6 +16,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
+        app.init_resource::<target_frame::LockedTarget>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -26,23 +27,26 @@ impl Plugin for UiPlugin {
                 resource_bars::setup.after(crate::client::systems::camera::setup),
                 action_bar::setup.after(crate::client::systems::camera::setup),
                 threat_icons::setup.after(crate::client::systems::camera::setup),
+                target_frame::setup.after(crate::client::systems::camera::setup),
                 target_indicator::setup,
             ),
         );
 
-        // Update systems run every frame
+        // HUD update systems (registered individually due to complex query types)
+        app.add_systems(Update, ui::update);
+        app.add_systems(Update, resource_bars::update);
+        app.add_systems(Update, action_bar::update);
+        app.add_systems(Update, target_frame::update);
+        app.add_systems(Update, target_frame::update_queue);
+        app.add_systems(Update, target_indicator::update);
+
+        // Character panel systems
         app.add_systems(
             Update,
             (
-                ui::update,
                 character_panel::toggle_panel,
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
-                resource_bars::update,
-                action_bar::update,
-                target_indicator::update,
-                debug_resources::debug_drain_resources, // DEBUG: Remove after testing
-                debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
             ),
         );
 
@@ -52,6 +56,8 @@ impl Plugin for UiPlugin {
             (
                 threat_icons::update,
                 threat_icons::animate_clear,
+                debug_resources::debug_drain_resources, // DEBUG: Remove after testing
+                debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
             ),
         );
 

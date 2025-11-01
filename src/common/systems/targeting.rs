@@ -579,9 +579,10 @@ mod tests {
 
         let entity = world.spawn((
             EntityType::Actor(ActorImpl {
-                origin: Origin::Natureborn,
+                origin: Origin::Evolved,
                 approach: Approach::Direct,
                 resilience: Resilience::Vital,
+                identity: ActorIdentity::Npc(NpcType::WildDog), // Test helper - generic NPC
             }),
             loc,
         )).id();

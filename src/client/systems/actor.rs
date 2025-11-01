@@ -10,7 +10,7 @@ use crate::{
     client::components::*,
     common::{
         components::{
-            behaviour::*,
+            behaviour::Behaviour,
             entity_type::{ actor::*, * },
             heading::*, keybits::*, offset::*,
             reaction_queue::ReactionQueue,
@@ -89,35 +89,47 @@ pub fn do_spawn(
         };
         let loc = Loc::new(qrz);
 
-        // Note: Resource components (Health, Stamina, Mana, CombatState) are already on the entity
-        // from Init event and have been updated by Incremental events. Don't re-insert them here!
+        // Initialize resource components with placeholder values
+        // These will be updated by Incremental events from the server
+        use crate::common::components::resources::*;
+        let health = Health { state: 100.0, step: 100.0, max: 100.0 };
+        let stamina = Stamina { state: 100.0, step: 100.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO };
+        let mana = Mana { state: 100.0, step: 100.0, max: 100.0, regen_rate: 8.0, last_update: std::time::Duration::ZERO };
+        let combat_state = CombatState { in_combat: false, last_action: std::time::Duration::ZERO };
 
         // Initialize reaction queue with capacity based on Focus attribute
         let attrs_val = attrs.unwrap_or_default();
         let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
         let reaction_queue = ReactionQueue::new(queue_capacity);
 
-        commands.entity(ent).insert((
-            loc,
-            typ,
-            Behaviour::Controlled,  // Remote players are controlled by network updates
-            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
-            Transform {
-                translation: map.convert(qrz),
-                scale: Vec3::ONE * map.radius(),
-                ..default()},
-            AirTime { state: Some(0), step: None },
-            NearestNeighbor::new(ent, loc),
-            Heading::default(),
-            Offset::default(),
-            KeyBits::default(),
-            Visibility::default(),
-            Physics::default(),
-            attrs_val,
-            reaction_queue,
-            crate::common::components::gcd::Gcd::new(),
-        ))
-        .observe(ready);
+        commands.entity(ent)
+            .insert((
+                loc,
+                typ,
+                Behaviour::Controlled,  // All actors need this for movement (local input or network updates)
+                SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                Transform {
+                    translation: map.convert(qrz),
+                    scale: Vec3::ONE * map.radius(),
+                    ..default()},
+                AirTime { state: Some(0), step: None },
+                NearestNeighbor::new(ent, loc),
+                Heading::default(),
+                Offset::default(),
+                KeyBits::default(),
+                Visibility::default(),
+                Physics::default(),
+            ))
+            .insert((
+                attrs_val,
+                reaction_queue,
+                crate::common::components::gcd::Gcd::new(),
+                health,
+                stamina,
+                mana,
+                combat_state,
+            ))
+            .observe(ready);
     }
 }
 
@@ -135,34 +147,15 @@ pub fn try_gcd(
 fn get_asset(typ: EntityType) -> String {
     match typ {
         EntityType::Actor(desc) => {
-            let origin_str = match desc.origin {
-                Origin::Natureborn => "natureborn",
-                Origin::Synthetic => "synthetic",
-                Origin::Dreamborn => "dreamborn",
-                Origin::Voidborn => "voidborn",
-                Origin::Mythic => "mythic",
-                Origin::Dimensional => "dimensional",
-                Origin::Indiscernible => "indiscernible",
-            };
-            let approach_str = match desc.approach {
-                Approach::Direct => "direct",
-                Approach::Distant => "distant",
-                Approach::Ambushing => "ambushing",
-                Approach::Patient => "patient",
-                Approach::Binding => "binding",
-                Approach::Evasive => "evasive",
-                Approach::Overwhelming => "overwhelming",
-            };
-            let resilience_str = match desc.resilience {
-                Resilience::Vital => "vital",
-                Resilience::Mental => "mental",
-                Resilience::Hardened => "hardened",
-                Resilience::Shielded => "shielded",
-                Resilience::Blessed => "blessed",
-                Resilience::Primal => "primal",
-                Resilience::Eternal => "eternal",
-            };
-            format!("actors/{}-{}-{}.glb", origin_str, approach_str, resilience_str)
+            // Model is determined by identity, not triumvirate
+            // Triumvirate (origin/approach/resilience) affects combat behavior only
+            match desc.identity {
+                ActorIdentity::Player => "actors/player-basic.glb".to_string(),
+                ActorIdentity::Npc(npc_type) => match npc_type {
+                    NpcType::WildDog => "actors/dog-basic.glb".to_string(),
+                    // Future NPCs will have their own model paths
+                }
+            }
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }

@@ -4,19 +4,18 @@ use crate::common::{
     components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, ActorAttributes, Loc},
     message::{AbilityType, Event as GameEvent, Try},
     plugins::nntree::NNTree,
-    systems::{combat::queue as queue_utils, targeting::*},
+    systems::targeting::*,
 };
 
 /// Client system to predict BasicAttack ability usage
-/// Optimistically inserts threat into target's queue before server confirmation
+/// Predicts GCD activation to prevent double-attacks
+/// Does NOT predict threat insertion (server-authoritative)
 pub fn predict_basic_attack(
     mut try_reader: EventReader<Try>,
     player_query: Query<(&Loc, &Heading), With<crate::common::components::Actor>>,
     mut player_gcd_query: Query<Option<&mut Gcd>, With<crate::common::components::Actor>>,
-    mut target_query: Query<(Option<&mut ReactionQueue>, Option<&ActorAttributes>)>,
     entity_query: Query<(&EntityType, &Loc)>,
     nntree: Res<NNTree>,
-    server: Res<crate::client::resources::Server>,
     time: Res<Time>,
 ) {
     for event in try_reader.read() {
@@ -35,32 +34,18 @@ pub fn predict_basic_attack(
                 |target_ent| entity_query.get(target_ent).ok().map(|(et, _)| *et),
             );
 
-            if let Some(target_ent) = target_opt {
-                // Predict threat insertion (immediate UI feedback)
-                if let Ok((Some(mut queue), Some(attrs))) = target_query.get_mut(target_ent) {
-                    let now_ms = server.current_time(time.elapsed().as_millis());
-                    let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-                    let timer_duration = queue_utils::calculate_timer_duration(attrs);
+            if let Some(_target_ent) = target_opt {
+                // DON'T predict threat insertion into remote queues
+                // Server will send InsertThreat event after validation
+                // This avoids non-deterministic deduplication issues with network latency
 
-                    let predicted_threat = QueuedThreat {
-                        source: ent,
-                        damage: 20.0,
-                        damage_type: DamageType::Physical,
-                        inserted_at: now,
-                        timer_duration,
-                    };
-
-                    // Insert predicted threat (client sees it immediately)
-                    queue_utils::insert_threat(&mut queue, predicted_threat, now);
-
-                    // Predict GCD activation (prevents double-press before server confirmation)
-                    if let Ok(Some(mut gcd)) = player_gcd_query.get_mut(ent) {
-                        gcd.activate(
-                            crate::common::systems::combat::gcd::GcdType::Attack,
-                            std::time::Duration::from_secs(1),
-                            time.elapsed(),
-                        );
-                    }
+                // DO predict GCD activation (prevents double-press before server confirmation)
+                if let Ok(Some(mut gcd)) = player_gcd_query.get_mut(ent) {
+                    gcd.activate(
+                        crate::common::systems::combat::gcd::GcdType::Attack,
+                        std::time::Duration::from_secs(1),
+                        time.elapsed(),
+                    );
                 }
             }
         }

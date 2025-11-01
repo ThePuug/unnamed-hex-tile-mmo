@@ -13,6 +13,7 @@ pub mod prediction;
 pub mod renet;
 pub mod resource_bars;
 pub mod spawner_viz;
+pub mod target_frame;
 pub mod target_indicator;
 pub mod threat_icons;
 pub mod ui;

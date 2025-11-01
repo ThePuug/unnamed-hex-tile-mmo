@@ -60,9 +60,10 @@ pub fn do_manage_connections(
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
-                    Origin::Natureborn,
+                    Origin::Evolved,
                     Approach::Direct,
-                    Resilience::Vital));
+                    Resilience::Vital,
+                    ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
                 // Level 10: Full spectrum distribution (4+3+3=10 points)
