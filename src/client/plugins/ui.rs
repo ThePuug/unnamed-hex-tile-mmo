@@ -67,6 +67,7 @@ impl Plugin for UiPlugin {
             (
                 combat_ui::update_floating_text,
                 combat_ui::spawn_health_bars,
+                combat_ui::spawn_health_bars_on_combat, // ADR-008 Phase 6: spawn on combat state changes
                 combat_ui::update_health_bars,
             ),
         );

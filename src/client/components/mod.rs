@@ -55,4 +55,6 @@ pub struct FloatingText {
 pub struct HealthBar {
     /// Entity this health bar is tracking
     pub tracked_entity: bevy::prelude::Entity,
+    /// Current displayed fill ratio (0.0 to 1.0) for smooth interpolation
+    pub current_fill: f32,
 }

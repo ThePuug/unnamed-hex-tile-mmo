@@ -4,17 +4,26 @@ use crate::{
     common::components::{Actor, resources::*},
 };
 
-/// Marker component for the health bar UI element
+/// Component for the health bar UI element with interpolation state
 #[derive(Component)]
-pub struct HealthBar;
+pub struct HealthBar {
+    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
+    pub current_percent: f32,
+}
 
-/// Marker component for the stamina bar UI element
+/// Component for the stamina bar UI element with interpolation state
 #[derive(Component)]
-pub struct StaminaBar;
+pub struct StaminaBar {
+    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
+    pub current_percent: f32,
+}
 
-/// Marker component for the mana bar UI element
+/// Component for the mana bar UI element with interpolation state
 #[derive(Component)]
-pub struct ManaBar;
+pub struct ManaBar {
+    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
+    pub current_percent: f32,
+}
 
 /// Marker component for the health bar text label
 #[derive(Component)]
@@ -83,7 +92,9 @@ pub fn setup(
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.9, 0.8, 0.0)), // Yellow
-                StaminaBar,
+                StaminaBar {
+                    current_percent: 100.0, // Initialize at full
+                },
             ));
             // Stamina text label
             parent.spawn((
@@ -124,7 +135,9 @@ pub fn setup(
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.9, 0.1, 0.1)), // Red
-                HealthBar,
+                HealthBar {
+                    current_percent: 100.0, // Initialize at full
+                },
             ));
             // Health text label
             parent.spawn((
@@ -165,7 +178,9 @@ pub fn setup(
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.1, 0.4, 0.9)), // Blue
-                ManaBar,
+                ManaBar {
+                    current_percent: 100.0, // Initialize at full
+                },
             ));
             // Mana text label
             parent.spawn((
@@ -188,25 +203,34 @@ pub fn setup(
 
 /// Update resource bar widths and text labels based on player's current resources
 /// Uses `step` for local player (client prediction)
+/// Smoothly interpolates bar width changes over ~0.2s for visual polish
 pub fn update(
-    mut health_query: Query<&mut Node, (With<HealthBar>, Without<StaminaBar>, Without<ManaBar>)>,
-    mut stamina_query: Query<&mut Node, (With<StaminaBar>, Without<HealthBar>, Without<ManaBar>)>,
-    mut mana_query: Query<&mut Node, (With<ManaBar>, Without<HealthBar>, Without<StaminaBar>)>,
+    mut health_query: Query<(&mut HealthBar, &mut Node), (Without<StaminaBar>, Without<ManaBar>)>,
+    mut stamina_query: Query<(&mut StaminaBar, &mut Node), (Without<HealthBar>, Without<ManaBar>)>,
+    mut mana_query: Query<(&mut ManaBar, &mut Node), (Without<HealthBar>, Without<StaminaBar>)>,
     mut health_text_query: Query<&mut Text, (With<HealthText>, Without<StaminaText>, Without<ManaText>)>,
     mut stamina_text_query: Query<&mut Text, (With<StaminaText>, Without<HealthText>, Without<ManaText>)>,
     mut mana_text_query: Query<&mut Text, (With<ManaText>, Without<HealthText>, Without<StaminaText>)>,
     player_query: Query<(&Health, &Stamina, &Mana), With<Actor>>,
+    time: Res<Time>,
 ) {
+    const INTERPOLATION_SPEED: f32 = 5.0; // Same as world-space health bars
+
     // Find the local player (has Actor component)
     for (health, stamina, mana) in &player_query {
+        let delta = time.delta_secs();
+
         // Update health bar width (use step for client prediction)
-        for mut node in &mut health_query {
-            let percent = if health.max > 0.0 {
+        for (mut health_bar, mut node) in &mut health_query {
+            let target_percent = if health.max > 0.0 {
                 (health.step / health.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
-            node.width = Val::Percent(percent);
+
+            // Smoothly interpolate toward target
+            health_bar.current_percent = health_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
+            node.width = Val::Percent(health_bar.current_percent);
         }
 
         // Update health text
@@ -215,13 +239,16 @@ pub fn update(
         }
 
         // Update stamina bar width
-        for mut node in &mut stamina_query {
-            let percent = if stamina.max > 0.0 {
+        for (mut stamina_bar, mut node) in &mut stamina_query {
+            let target_percent = if stamina.max > 0.0 {
                 (stamina.step / stamina.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
-            node.width = Val::Percent(percent);
+
+            // Smoothly interpolate toward target
+            stamina_bar.current_percent = stamina_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
+            node.width = Val::Percent(stamina_bar.current_percent);
         }
 
         // Update stamina text
@@ -230,13 +257,16 @@ pub fn update(
         }
 
         // Update mana bar width
-        for mut node in &mut mana_query {
-            let percent = if mana.max > 0.0 {
+        for (mut mana_bar, mut node) in &mut mana_query {
+            let target_percent = if mana.max > 0.0 {
                 (mana.step / mana.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
-            node.width = Val::Percent(percent);
+
+            // Smoothly interpolate toward target
+            mana_bar.current_percent = mana_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
+            node.width = Val::Percent(mana_bar.current_percent);
         }
 
         // Update mana text
