@@ -30,6 +30,7 @@ impl Plugin for UiPlugin {
                 threat_icons::setup.after(crate::client::systems::camera::setup),
                 target_frame::setup.after(crate::client::systems::camera::setup),
                 target_indicator::setup,
+                combat_ui::setup_health_bars.after(crate::client::systems::camera::setup),
             ),
         );
 
@@ -64,14 +65,13 @@ impl Plugin for UiPlugin {
             ),
         );
 
-        // Combat UI feedback systems (floating damage numbers, health bars)
+        // Combat UI feedback systems (floating damage numbers, health bars, threat dots)
         app.add_systems(
             Update,
             (
                 combat_ui::update_floating_text,
-                combat_ui::spawn_health_bars,
-                combat_ui::spawn_health_bars_on_combat, // ADR-008 Phase 6: spawn on combat state changes
                 combat_ui::update_health_bars,
+                combat_ui::update_threat_queue_dots, // Threat queue capacity dots above health bars
             ),
         );
     }

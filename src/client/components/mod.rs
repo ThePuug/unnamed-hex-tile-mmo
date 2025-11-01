@@ -50,11 +50,35 @@ pub struct FloatingText {
     pub velocity: f32,
 }
 
-/// Health bar component - tracks which entity this bar belongs to
+/// World-space health bar component with interpolation state
 #[derive(Component)]
-pub struct HealthBar {
-    /// Entity this health bar is tracking
-    pub tracked_entity: bevy::prelude::Entity,
+pub struct WorldHealthBar {
     /// Current displayed fill ratio (0.0 to 1.0) for smooth interpolation
     pub current_fill: f32,
+}
+
+/// Marker for hostile target health bar
+#[derive(Component)]
+pub struct HostileHealthBar;
+
+/// Marker for ally target health bar
+#[derive(Component)]
+pub struct AllyHealthBar;
+
+/// Threat queue dots container - shows capacity dots above health bars
+#[derive(Component)]
+pub struct ThreatQueueDots;
+
+/// Marker for hostile target threat queue dots
+#[derive(Component)]
+pub struct HostileQueueDots;
+
+/// Marker for ally target threat queue dots
+#[derive(Component)]
+pub struct AllyQueueDots;
+
+/// Marker component for individual capacity dots in world-space threat display
+#[derive(Component)]
+pub struct ThreatCapacityDot {
+    pub index: usize,
 }

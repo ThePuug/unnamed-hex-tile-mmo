@@ -132,7 +132,7 @@ pub fn handle_use_ability(
         // Query 2: For Dodge - get caster's ReactionQueue/Stamina
         Query<(&mut ReactionQueue, &mut Stamina, &ActorAttributes)>,
     )>,
-    entity_query: Query<(&EntityType, &Loc)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     caster_respawn_query: Query<&RespawnTimer>,
     gcd_query: Query<&Gcd>,  // GCD validation query
     respawn_query: Query<&RespawnTimer>,
@@ -170,7 +170,14 @@ pub fn handle_use_ability(
                         continue;
                     };
 
-                    // Use targeting system to select target (exclude dead players with RespawnTimer)
+                    // Determine if caster is a player (for asymmetric targeting)
+                    let caster_is_player = entity_query
+                        .get(ent)
+                        .ok()
+                        .and_then(|(_, _, pc_opt)| pc_opt)
+                        .is_some();
+
+                    // Use targeting system to select target (asymmetric: players attack NPCs, NPCs attack players)
                     let target_opt = select_target(
                         ent, // caster entity
                         caster_loc,
@@ -182,7 +189,17 @@ pub fn handle_use_ability(
                             if respawn_query.get(target_ent).is_ok() {
                                 return None;
                             }
-                            entity_query.get(target_ent).ok().map(|(et, _)| *et)
+                            entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
+                                let target_is_player = player_controlled_opt.is_some();
+
+                                // Asymmetric targeting: can only attack entities on opposite "team"
+                                // Players attack NPCs, NPCs attack players (no friendly fire)
+                                if caster_is_player != target_is_player {
+                                    Some(*et)
+                                } else {
+                                    None  // Same team - no friendly fire
+                                }
+                            })
                         },
                     );
 

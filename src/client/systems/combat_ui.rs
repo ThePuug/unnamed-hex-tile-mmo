@@ -40,250 +40,553 @@ pub fn update_floating_text(
     }
 }
 
-/// Helper function to determine if a health bar should be shown
-/// ADR-008 Phase 6 visibility rules:
-/// - Players (PlayerControlled): Always show
-/// - NPCs: Show when in combat OR damaged
-fn should_show_health_bar(
-    health: &crate::common::components::resources::Health,
-    combat_state: Option<&crate::common::components::resources::CombatState>,
-    player_controlled: Option<&crate::common::components::behaviour::PlayerControlled>,
-) -> bool {
-    // Always show for players (PlayerControlled marker)
-    if player_controlled.is_some() {
-        return true;
+/// Setup persistent world-space health bars and threat queue dots
+/// Creates 2 health bars (hostile, ally) and 2 dots containers with max capacity
+/// These are shown/hidden and repositioned based on current targets
+pub fn setup_health_bars(mut commands: Commands) {
+    const BAR_WIDTH: f32 = 50.0;
+    const BAR_HEIGHT: f32 = 6.0;
+    const MAX_QUEUE_CAPACITY: usize = 10;
+
+    // Spawn hostile target health bar (hidden by default)
+    let hostile_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(-10000.0), // Start off-screen
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::client::components::WorldHealthBar {
+            current_fill: 1.0,
+        },
+        crate::client::components::HostileHealthBar,
+    )).id();
+
+    // Background bar (dark gray)
+    let hostile_bg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+    )).id();
+
+    // Foreground bar (red)
+    let hostile_fg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.9, 0.1, 0.1)),
+        ZIndex(1),
+    )).id();
+
+    commands.entity(hostile_container).add_children(&[hostile_bg, hostile_fg]);
+
+    // Spawn ally target health bar (hidden by default)
+    let ally_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(-10000.0), // Start off-screen
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::client::components::WorldHealthBar {
+            current_fill: 1.0,
+        },
+        crate::client::components::AllyHealthBar,
+    )).id();
+
+    // Background bar (dark gray)
+    let ally_bg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+    )).id();
+
+    // Foreground bar (green for ally)
+    let ally_fg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.1, 0.9, 0.1)),
+        ZIndex(1),
+    )).id();
+
+    commands.entity(ally_container).add_children(&[ally_bg, ally_fg]);
+
+    // Spawn hostile target threat queue dots container (hidden by default)
+    let hostile_dots_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(3.0),
+            left: Val::Px(-10000.0), // Start off-screen
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::client::components::ThreatQueueDots,
+        crate::client::components::HostileQueueDots,
+    )).id();
+
+    // Spawn max capacity dots for hostile (all start gray/empty)
+    let mut hostile_dot_ids = Vec::new();
+    for i in 0..MAX_QUEUE_CAPACITY {
+        let dot_id = commands.spawn((
+            Node {
+                width: Val::Px(8.0),
+                height: Val::Px(8.0),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+            BorderRadius::all(Val::Percent(50.0)),
+            BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+            Visibility::Hidden, // Start hidden, will be shown based on capacity
+            crate::client::components::ThreatCapacityDot { index: i },
+        )).id();
+        hostile_dot_ids.push(dot_id);
     }
+    commands.entity(hostile_dots_container).add_children(&hostile_dot_ids);
 
-    // For NPCs: show if in combat OR damaged
-    let is_in_combat = combat_state.map(|c| c.in_combat).unwrap_or(false);
-    let is_damaged = health.state < health.max || health.step < health.max;
+    // Spawn ally target threat queue dots container (hidden by default)
+    let ally_dots_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(3.0),
+            left: Val::Px(-10000.0), // Start off-screen
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::client::components::ThreatQueueDots,
+        crate::client::components::AllyQueueDots,
+    )).id();
 
-    is_in_combat || is_damaged
-}
-
-/// System to spawn health bars for entities that need them
-/// Health bars are shown for players (always) and NPCs (in combat or damaged)
-pub fn spawn_health_bars(
-    mut commands: Commands,
-    query: Query<
-        (
-            Entity,
-            &crate::common::components::resources::Health,
-            Option<&crate::common::components::resources::CombatState>,
-            Option<&crate::common::components::behaviour::PlayerControlled>,
-        ),
-        Changed<crate::common::components::resources::Health>,
-    >,
-    existing_bars: Query<&crate::client::components::HealthBar>,
-) {
-    // Build HashSet of entities that already have health bars (O(n) once)
-    let tracked_entities: std::collections::HashSet<_> = existing_bars
-        .iter()
-        .map(|bar| bar.tracked_entity)
-        .collect();
-
-    // Only iterate entities whose Health changed this frame (reactive, not polling)
-    for (entity, health, combat_state, player_controlled) in &query {
-        // O(1) lookup instead of O(n) iteration
-        if tracked_entities.contains(&entity) {
-            continue;
-        }
-
-        // Check if health bar should be shown
-        if should_show_health_bar(health, combat_state, player_controlled) {
-            // Calculate initial fill ratio
-            let health_ratio = (health.step / health.max).clamp(0.0, 1.0);
-
-            // Create container with relative positioning for children
-            let container = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0),
-                    height: Val::Px(6.0),
-                    ..default()
-                },
-                crate::client::components::HealthBar {
-                    tracked_entity: entity,
-                    current_fill: health_ratio, // Initialize with current health ratio
-                },
-            )).id();
-
-            // Create background bar (dark gray, full width)
-            let background = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0),
-                    height: Val::Px(6.0),
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
-            )).id();
-
-            // Create foreground bar (red per ADR-008, variable width)
-            let foreground = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0 * health_ratio),  // Initialize with current health
-                    height: Val::Px(6.0),
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.9, 0.1, 0.1)), // Red per ADR-008 spec
-                ZIndex(1), // Foreground on top
-            )).id();
-
-            // Add children to container
-            commands.entity(container).add_children(&[background, foreground]);
-        }
+    // Spawn max capacity dots for ally (all start gray/empty)
+    let mut ally_dot_ids = Vec::new();
+    for i in 0..MAX_QUEUE_CAPACITY {
+        let dot_id = commands.spawn((
+            Node {
+                width: Val::Px(8.0),
+                height: Val::Px(8.0),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+            BorderRadius::all(Val::Percent(50.0)),
+            BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+            Visibility::Hidden, // Start hidden, will be shown based on capacity
+            crate::client::components::ThreatCapacityDot { index: i },
+        )).id();
+        ally_dot_ids.push(dot_id);
     }
-}
-
-/// System to spawn health bars when entities enter combat
-/// Complements spawn_health_bars by triggering on CombatState changes
-pub fn spawn_health_bars_on_combat(
-    mut commands: Commands,
-    query: Query<
-        (
-            Entity,
-            &crate::common::components::resources::Health,
-            &crate::common::components::resources::CombatState,
-            Option<&crate::common::components::behaviour::PlayerControlled>,
-        ),
-        Changed<crate::common::components::resources::CombatState>,
-    >,
-    existing_bars: Query<&crate::client::components::HealthBar>,
-) {
-    // Build HashSet of entities that already have health bars
-    let tracked_entities: std::collections::HashSet<_> = existing_bars
-        .iter()
-        .map(|bar| bar.tracked_entity)
-        .collect();
-
-    for (entity, health, combat_state, player_controlled) in &query {
-        // Skip if already has a health bar
-        if tracked_entities.contains(&entity) {
-            continue;
-        }
-
-        // Check if health bar should be shown
-        if should_show_health_bar(health, Some(combat_state), player_controlled) {
-            // Calculate initial fill ratio
-            let health_ratio = (health.step / health.max).clamp(0.0, 1.0);
-
-            // Create container with relative positioning for children
-            let container = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0),
-                    height: Val::Px(6.0),
-                    ..default()
-                },
-                crate::client::components::HealthBar {
-                    tracked_entity: entity,
-                    current_fill: health_ratio,
-                },
-            )).id();
-
-            // Create background bar (dark gray, full width)
-            let background = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0),
-                    height: Val::Px(6.0),
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
-            )).id();
-
-            // Create foreground bar (red per ADR-008)
-            let foreground = commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(50.0 * health_ratio),
-                    height: Val::Px(6.0),
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.9, 0.1, 0.1)),
-                ZIndex(1),
-            )).id();
-
-            commands.entity(container).add_children(&[background, foreground]);
-        }
-    }
+    commands.entity(ally_dots_container).add_children(&ally_dot_ids);
 }
 
 /// System to update health bar positions and widths
-/// Projects world positions to screen space and updates bar width based on health ratio
+/// Updates 2 persistent health bars (hostile and ally) based on current targets
 /// Smoothly interpolates width changes over 0.2s per ADR-008
 pub fn update_health_bars(
-    mut commands: Commands,
-    mut bar_query: Query<(Entity, &mut crate::client::components::HealthBar, &Children, &mut Node)>,
-    mut child_node_query: Query<&mut Node, Without<crate::client::components::HealthBar>>,
-    entity_query: Query<(
-        &crate::common::components::resources::Health,
-        Option<&crate::common::components::resources::CombatState>,
-        Option<&crate::common::components::behaviour::PlayerControlled>,
-        &Transform,
-    )>,
+    mut hostile_query: Query<
+        (&mut crate::client::components::WorldHealthBar, &Children, &mut Node, &mut Visibility),
+        (With<crate::client::components::HostileHealthBar>, Without<crate::client::components::AllyHealthBar>)
+    >,
+    mut ally_query: Query<
+        (&mut crate::client::components::WorldHealthBar, &Children, &mut Node, &mut Visibility),
+        (With<crate::client::components::AllyHealthBar>, Without<crate::client::components::HostileHealthBar>)
+    >,
+    mut child_node_query: Query<&mut Node, (Without<crate::client::components::WorldHealthBar>, Without<crate::client::components::HostileHealthBar>, Without<crate::client::components::AllyHealthBar>)>,
+    entity_query: Query<(&crate::common::components::resources::Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading), With<crate::common::components::Actor>>,
+    targeting_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    nntree: Res<crate::common::plugins::nntree::NNTree>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.get_single() else {
         return;
     };
 
-    const INTERPOLATION_SPEED: f32 = 5.0; // Higher = faster interpolation (0.2s approximate)
+    // Get local player for targeting
+    let Ok((player_ent, player_loc, player_heading)) = player_query.get_single() else {
+        return;
+    };
+
+    // Get currently facing targets (non-sticky)
+    let hostile_target = crate::common::systems::targeting::select_target(
+        player_ent,
+        *player_loc,
+        *player_heading,
+        None,
+        &nntree,
+        |ent| {
+            targeting_query.get(ent).ok().and_then(|(et, _, player_controlled_opt)| {
+                if player_controlled_opt.is_some() {
+                    return None; // Exclude allies
+                }
+                Some(*et)
+            })
+        },
+    );
+
+    let ally_target = crate::common::systems::targeting::select_ally_target(
+        player_ent,
+        *player_loc,
+        *player_heading,
+        &nntree,
+        |ent| targeting_query.get(ent).ok().map(|(_, _, pc)| pc.is_some()).unwrap_or(false),
+    );
+
+    const INTERPOLATION_SPEED: f32 = 5.0;
+    const BAR_WIDTH: f32 = 50.0;
+    let delta = time.delta_secs();
+
+    // Update hostile health bar
+    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = hostile_query.get_single_mut() {
+        if let Some(target_ent) = hostile_target {
+            // Target exists - show and update bar
+            if let Ok((health, transform)) = entity_query.get(target_ent) {
+                *visibility = Visibility::Visible;
+
+                // Calculate target health ratio
+                let target_ratio = (health.step / health.max).clamp(0.0, 1.0);
+
+                // Smoothly interpolate current fill toward target
+                health_bar.current_fill = health_bar.current_fill.lerp(target_ratio, INTERPOLATION_SPEED * delta);
+
+                // Calculate world position (above entity)
+                let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);
+
+                // Project to screen space
+                if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
+                    // Update container position (centered horizontally)
+                    container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
+                    container_node.top = Val::Px(viewport_pos.y);
+
+                    // Update foreground bar width (children[1])
+                    if children.len() >= 2 {
+                        if let Ok(mut foreground_node) = child_node_query.get_mut(children[1]) {
+                            foreground_node.width = Val::Px(BAR_WIDTH * health_bar.current_fill);
+                        }
+                    }
+                } else {
+                    // Off-screen, hide it
+                    container_node.left = Val::Px(-10000.0);
+                }
+            } else {
+                // Target entity doesn't exist, hide bar
+                *visibility = Visibility::Hidden;
+            }
+        } else {
+            // No target, hide bar
+            *visibility = Visibility::Hidden;
+        }
+    }
+
+    // Update ally health bar
+    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = ally_query.get_single_mut() {
+        if let Some(target_ent) = ally_target {
+            // Target exists - show and update bar
+            if let Ok((health, transform)) = entity_query.get(target_ent) {
+                *visibility = Visibility::Visible;
+
+                // Calculate target health ratio
+                let target_ratio = (health.step / health.max).clamp(0.0, 1.0);
+
+                // Smoothly interpolate current fill toward target
+                health_bar.current_fill = health_bar.current_fill.lerp(target_ratio, INTERPOLATION_SPEED * delta);
+
+                // Calculate world position (above entity)
+                let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);
+
+                // Project to screen space
+                if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
+                    // Update container position (centered horizontally)
+                    container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
+                    container_node.top = Val::Px(viewport_pos.y);
+
+                    // Update foreground bar width (children[1])
+                    if children.len() >= 2 {
+                        if let Ok(mut foreground_node) = child_node_query.get_mut(children[1]) {
+                            foreground_node.width = Val::Px(BAR_WIDTH * health_bar.current_fill);
+                        }
+                    }
+                } else {
+                    // Off-screen, hide it
+                    container_node.left = Val::Px(-10000.0);
+                }
+            } else {
+                // Target entity doesn't exist, hide bar
+                *visibility = Visibility::Hidden;
+            }
+        } else {
+            // No target, hide bar
+            *visibility = Visibility::Hidden;
+        }
+    }
+}
+
+/// System to update threat queue dots above health bars
+/// Updates 2 persistent dots containers (hostile and ally) based on current targets
+/// Shows/hides individual dots based on target's queue capacity
+pub fn update_threat_queue_dots(
+    mut hostile_query: Query<
+        (&Children, &mut Node, &mut Visibility),
+        (With<crate::client::components::HostileQueueDots>, Without<crate::client::components::AllyQueueDots>)
+    >,
+    mut ally_query: Query<
+        (&Children, &mut Node, &mut Visibility),
+        (With<crate::client::components::AllyQueueDots>, Without<crate::client::components::HostileQueueDots>)
+    >,
+    mut dot_query: Query<
+        (&crate::client::components::ThreatCapacityDot, &mut Visibility, &mut BackgroundColor, &mut BorderColor),
+        (Without<crate::client::components::HostileQueueDots>, Without<crate::client::components::AllyQueueDots>)
+    >,
+    queue_query: Query<(Option<&crate::common::components::reaction_queue::ReactionQueue>, &Transform)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading), With<crate::common::components::Actor>>,
+    entity_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    nntree: Res<crate::common::plugins::nntree::NNTree>,
+) {
+    let Ok((camera, camera_transform)) = camera_query.get_single() else {
+        return;
+    };
+
+    // Get local player for targeting
+    let Ok((player_ent, player_loc, player_heading)) = player_query.get_single() else {
+        return;
+    };
+
+    // Get currently facing targets (non-sticky)
+    let hostile_target = crate::common::systems::targeting::select_target(
+        player_ent,
+        *player_loc,
+        *player_heading,
+        None,
+        &nntree,
+        |ent| {
+            entity_query.get(ent).ok().and_then(|(et, _, player_controlled_opt)| {
+                if player_controlled_opt.is_some() {
+                    return None; // Exclude allies
+                }
+                Some(*et)
+            })
+        },
+    );
+
+    let ally_target = crate::common::systems::targeting::select_ally_target(
+        player_ent,
+        *player_loc,
+        *player_heading,
+        &nntree,
+        |ent| entity_query.get(ent).ok().map(|(_, _, pc)| pc.is_some()).unwrap_or(false),
+    );
+
     const BAR_WIDTH: f32 = 50.0;
 
-    for (bar_entity, mut health_bar, children, mut container_node) in &mut bar_query {
-        // Get the tracked entity's components
-        let Ok((health, combat_state, player_controlled, transform)) = entity_query.get(health_bar.tracked_entity) else {
-            // Entity no longer exists, despawn health bar
-            commands.entity(bar_entity).despawn_recursive();
-            continue;
-        };
+    // Update hostile dots container
+    if let Ok((children, mut container_node, mut visibility)) = hostile_query.get_single_mut() {
+        if let Some(target_ent) = hostile_target {
+            // Target exists - check if it has a queue
+            if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
+                if let Some(queue) = queue_opt {
+                    if queue.capacity > 0 {
+                        // Show container
+                        *visibility = Visibility::Visible;
 
-        // Check if health bar should still be visible (ADR-008 Phase 6 rules)
-        if !should_show_health_bar(health, combat_state, player_controlled) {
-            // No longer meets visibility criteria, despawn bar
-            commands.entity(bar_entity).despawn_recursive();
-            continue;
-        }
+                        // Calculate world position (above entity, above health bar)
+                        let world_pos = transform.translation + Vec3::new(0.0, 2.1, 0.0);
 
-        // Calculate target health ratio
-        let target_ratio = (health.step / health.max).clamp(0.0, 1.0);
+                        // Project to screen space
+                        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
+                            // Left-align with health bar edge
+                            container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
+                            container_node.top = Val::Px(viewport_pos.y);
 
-        // Smoothly interpolate current fill toward target (ADR-008 Phase 8: smooth animation)
-        let delta = time.delta_secs();
-        health_bar.current_fill = health_bar.current_fill.lerp(target_ratio, INTERPOLATION_SPEED * delta);
+                            // Update dots visibility and colors
+                            let filled_slots = queue.threats.len();
+                            let is_full = queue.is_full();
 
-        // Calculate world position (above entity)
-        let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);
+                            for child in children.iter() {
+                                if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {
+                                    // Show dots up to capacity, hide the rest
+                                    if dot.index < queue.capacity {
+                                        *dot_vis = Visibility::Visible;
 
-        // Project to screen space
-        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
-            // Update container position (centered horizontally)
-            container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
-            container_node.top = Val::Px(viewport_pos.y);
+                                        // Update colors based on filled state
+                                        let is_filled = dot.index < filled_slots;
+                                        let (bg_color, border_color) = if is_full && is_filled {
+                                            // Full queue: bright red
+                                            (Color::srgb(1.0, 0.2, 0.2), Color::srgb(1.0, 0.2, 0.2))
+                                        } else if is_filled {
+                                            // Filled but not full: yellow-orange
+                                            (Color::srgb(1.0, 0.7, 0.2), Color::srgb(1.0, 0.7, 0.2))
+                                        } else {
+                                            // Empty: filled gray with gray border
+                                            (Color::srgb(0.3, 0.3, 0.3), Color::srgb(0.5, 0.5, 0.5))
+                                        };
 
-            // Update foreground bar width based on interpolated health ratio
-            // Children: [0] = background, [1] = foreground
-            if children.len() >= 2 {
-                let foreground_entity = children[1];
-                if let Ok(mut foreground_node) = child_node_query.get_mut(foreground_entity) {
-                    foreground_node.width = Val::Px(BAR_WIDTH * health_bar.current_fill);
+                                        *dot_bg = BackgroundColor(bg_color);
+                                        *dot_border = BorderColor(border_color);
+                                    } else {
+                                        *dot_vis = Visibility::Hidden;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Off-screen, hide container
+                            container_node.left = Val::Px(-10000.0);
+                        }
+                    } else {
+                        // No capacity, hide container and all dots
+                        *visibility = Visibility::Hidden;
+                        for child in children.iter() {
+                            if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                                *dot_vis = Visibility::Hidden;
+                            }
+                        }
+                    }
+                } else {
+                    // No queue, hide container and all dots
+                    *visibility = Visibility::Hidden;
+                    for child in children.iter() {
+                        if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                            *dot_vis = Visibility::Hidden;
+                        }
+                    }
+                }
+            } else {
+                // Target doesn't exist or has no transform, hide container and all dots
+                *visibility = Visibility::Hidden;
+                for child in children.iter() {
+                    if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                        *dot_vis = Visibility::Hidden;
+                    }
                 }
             }
         } else {
-            // Off-screen, hide it
-            container_node.left = Val::Px(-10000.0);
+            // No target, hide container and all dots
+            *visibility = Visibility::Hidden;
+            for child in children.iter() {
+                if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                    *dot_vis = Visibility::Hidden;
+                }
+            }
+        }
+    }
+
+    // Update ally dots container
+    if let Ok((children, mut container_node, mut visibility)) = ally_query.get_single_mut() {
+        if let Some(target_ent) = ally_target {
+            // Target exists - check if it has a queue
+            if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
+                if let Some(queue) = queue_opt {
+                    if queue.capacity > 0 {
+                        // Show container
+                        *visibility = Visibility::Visible;
+
+                        // Calculate world position (above entity, above health bar)
+                        let world_pos = transform.translation + Vec3::new(0.0, 2.1, 0.0);
+
+                        // Project to screen space
+                        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
+                            // Left-align with health bar edge
+                            container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
+                            container_node.top = Val::Px(viewport_pos.y);
+
+                            // Update dots visibility and colors
+                            let filled_slots = queue.threats.len();
+                            let is_full = queue.is_full();
+
+                            for child in children.iter() {
+                                if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {
+                                    // Show dots up to capacity, hide the rest
+                                    if dot.index < queue.capacity {
+                                        *dot_vis = Visibility::Visible;
+
+                                        // Update colors based on filled state
+                                        let is_filled = dot.index < filled_slots;
+                                        let (bg_color, border_color) = if is_full && is_filled {
+                                            // Full queue: bright red
+                                            (Color::srgb(1.0, 0.2, 0.2), Color::srgb(1.0, 0.2, 0.2))
+                                        } else if is_filled {
+                                            // Filled but not full: yellow-orange
+                                            (Color::srgb(1.0, 0.7, 0.2), Color::srgb(1.0, 0.7, 0.2))
+                                        } else {
+                                            // Empty: filled gray with gray border
+                                            (Color::srgb(0.3, 0.3, 0.3), Color::srgb(0.5, 0.5, 0.5))
+                                        };
+
+                                        *dot_bg = BackgroundColor(bg_color);
+                                        *dot_border = BorderColor(border_color);
+                                    } else {
+                                        *dot_vis = Visibility::Hidden;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Off-screen, hide container
+                            container_node.left = Val::Px(-10000.0);
+                        }
+                    } else {
+                        // No capacity, hide container and all dots
+                        *visibility = Visibility::Hidden;
+                        for child in children.iter() {
+                            if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                                *dot_vis = Visibility::Hidden;
+                            }
+                        }
+                    }
+                } else {
+                    // No queue, hide container and all dots
+                    *visibility = Visibility::Hidden;
+                    for child in children.iter() {
+                        if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                            *dot_vis = Visibility::Hidden;
+                        }
+                    }
+                }
+            } else {
+                // Target doesn't exist or has no transform, hide container and all dots
+                *visibility = Visibility::Hidden;
+                for child in children.iter() {
+                    if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                        *dot_vis = Visibility::Hidden;
+                    }
+                }
+            }
+        } else {
+            // No target, hide container and all dots
+            *visibility = Visibility::Hidden;
+            for child in children.iter() {
+                if let Ok((_, mut dot_vis, _, _)) = dot_query.get_mut(child) {
+                    *dot_vis = Visibility::Hidden;
+                }
+            }
         }
     }
 }

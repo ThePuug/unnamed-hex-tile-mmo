@@ -107,12 +107,12 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) {
     use qrz::Qrz;
     use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             info!("SERVER: Player {:?} respawning at origin", ent);
 
@@ -166,6 +166,16 @@ pub fn process_respawn(
                     component: MessageComponent::Mana(*mana),
                 },
             });
+
+            // Broadcast PlayerControlled if this entity is player-controlled (so other clients recognize as ally)
+            if let Some(pc) = player_controlled {
+                writer.write(Do {
+                    event: Event::Incremental {
+                        ent,
+                        component: MessageComponent::PlayerControlled(*pc),
+                    },
+                });
+            }
 
             info!("SERVER: Player {:?} respawned - sent Spawn event to recreate entity", ent);
         }
