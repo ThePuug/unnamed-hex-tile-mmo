@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    common::components::{resources::*, behaviour::Behaviour},
+    common::components::{Actor, resources::*},
 };
 
 /// Marker component for the health bar UI element
@@ -195,9 +195,9 @@ pub fn update(
     mut health_text_query: Query<&mut Text, (With<HealthText>, Without<StaminaText>, Without<ManaText>)>,
     mut stamina_text_query: Query<&mut Text, (With<StaminaText>, Without<HealthText>, Without<ManaText>)>,
     mut mana_text_query: Query<&mut Text, (With<ManaText>, Without<HealthText>, Without<StaminaText>)>,
-    player_query: Query<(&Health, &Stamina, &Mana), With<Behaviour>>,
+    player_query: Query<(&Health, &Stamina, &Mana), With<Actor>>,
 ) {
-    // Find the local player (has Behaviour component)
+    // Find the local player (has Actor component)
     for (health, stamina, mana) in &player_query {
         // Update health bar width (use step for client prediction)
         for mut node in &mut health_query {

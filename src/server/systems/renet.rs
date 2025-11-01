@@ -65,16 +65,12 @@ pub fn do_manage_connections(
                     Resilience::Vital));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // UAT Testing: Start at Focus threshold (2/3 queue slots boundary)
-                // vitality_focus_axis = 33, spectrum = 33 allows shift to test boundary
-                // Focus = axis + shift: starting at 33, shift down/up to cross 66 threshold
-                // With shift -33: Focus = 0 (1 slot)
-                // With shift 0: Focus = 33 (2 slots)
-                // With shift +33: Focus = 66 (3 slots) ← crosses threshold here!
+                // Level 10: Full spectrum distribution (4+3+3=10 points)
+                // Balanced axis (0) allows players to shift in any direction for skill balance testing
                 let attrs = ActorAttributes::new(
-                    -10, 45, -45,  // might_grace
-                    33, 33, 0,     // vitality_focus
-                    -10, 45, 45,   // instinct_presence
+                    0, 4, 0,       // might_grace: 4 spectrum
+                    0, 3, 0,       // vitality_focus: 3 spectrum
+                    0, 3, 0,       // instinct_presence: 3 spectrum
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();

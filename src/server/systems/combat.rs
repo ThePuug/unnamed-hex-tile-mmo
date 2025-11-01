@@ -187,8 +187,8 @@ pub fn handle_use_ability(
                     );
 
                     if let Some(target_ent) = target_opt {
-                        // BasicAttack: 200 base physical damage for fast testing (no stamina cost)
-                        let base_damage = 200.0;
+                        // BasicAttack: 20 base physical damage (no stamina cost)
+                        let base_damage = 20.0;
 
                         // Emit DealDamage event
                         commands.trigger_targets(

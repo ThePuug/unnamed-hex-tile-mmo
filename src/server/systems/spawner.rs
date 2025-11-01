@@ -173,10 +173,13 @@ fn spawn_npc(
         }
     };
 
+    // Level 10: Might+Instinct focused distribution
+    // axis=-6 (3 levels) + spectrum=2 (2 levels) = 5 levels per stat → 10 total
+    // Negative axis favors might and instinct sides
     let attrs = ActorAttributes::new(
-        -90, 80, 0,   // might_grace (HIGH MIGHT for testing - dogs hit HARD)
-        -10, 15, -15,  // vitality_focus
-        0, 20, 5,      // instinct_presence
+        -6, 2, 0,      // might_grace: might-focused (5 levels)
+        0, 0, 0,       // vitality_focus: no investment (0 levels)
+        -6, 2, 0,      // instinct_presence: instinct-focused (5 levels)
     );
 
     // Calculate initial resources from attributes

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{gcd::Gcd, resources::*, behaviour::Behaviour},
+        components::{Actor, gcd::Gcd, resources::*},
         message::AbilityType,
     },
 };
@@ -168,16 +168,16 @@ pub fn setup(
 /// Updates border colors to indicate ability states (ready/cooldown/insufficient resources)
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor)>,
-    player_query: Query<(&Stamina, &Mana, &Gcd), With<Behaviour>>,
+    player_query: Query<(&Stamina, &Mana, Option<&Gcd>), With<Actor>>,
     time: Res<Time>,
 ) {
     // Get player resources
-    let Ok((stamina, mana, gcd)) = player_query.get_single() else {
-        return;
+    let Ok((stamina, mana, gcd_opt)) = player_query.get_single() else {
+        return;  // No player yet
     };
 
     let now = time.elapsed();
-    let gcd_active = gcd.is_active(now);
+    let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(now));
 
     for (slot, mut border_color) in &mut slot_query {
         if let Some(ability) = slot.ability {
