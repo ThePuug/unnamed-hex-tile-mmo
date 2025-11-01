@@ -7,12 +7,27 @@ use crate::common::chunk::ChunkId;
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
 
-#[derive(Debug, Default, Resource)]
+#[derive(Debug, Resource)]
 pub struct Server {
     /// Server's game world time when Init event was received
     pub server_time_at_init: u128,
     /// Client's elapsed time when Init event was received
     pub client_time_at_init: u128,
+    /// Last time we sent a ping (for periodic pings)
+    pub last_ping_time: u128,
+    /// Smoothed network latency estimate (exponential moving average)
+    pub smoothed_latency: u128,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self {
+            server_time_at_init: 0,
+            client_time_at_init: 0,
+            last_ping_time: 0,
+            smoothed_latency: 50, // Initial estimate: 50ms
+        }
+    }
 }
 
 impl Server {

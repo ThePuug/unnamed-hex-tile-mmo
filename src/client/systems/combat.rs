@@ -12,14 +12,18 @@ pub fn handle_insert_threat(
     mut reader: EventReader<Do>,
     mut query: Query<&mut ReactionQueue>,
     time: Res<Time>,
+    server: Res<crate::client::resources::Server>,
 ) {
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
+                // Calculate current server time
+                let client_now = time.elapsed().as_millis();
+                let server_now_ms = server.current_time(client_now);
+                let server_now = std::time::Duration::from_millis(server_now_ms.min(u64::MAX as u128) as u64);
+
                 // Use insert_threat helper to properly handle queue capacity
-                // When queue is full, this pops the oldest threat (same as server logic)
-                let now = time.elapsed();
-                let _overflow = queue_utils::insert_threat(&mut queue, threat, now);
+                let _overflow = queue_utils::insert_threat(&mut queue, threat, server_now);
                 // Note: We ignore overflow - server already handled it
             }
         }

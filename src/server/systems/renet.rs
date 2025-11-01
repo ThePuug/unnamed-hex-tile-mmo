@@ -228,6 +228,13 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::UseAbility { ent, ability }});
                 }
+                Try { event: Event::Ping { client_time } } => {
+                    // Immediately respond with Pong (echo client timestamp)
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Pong { client_time }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+                }
                 _ => {}
             }
         }

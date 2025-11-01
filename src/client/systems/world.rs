@@ -70,16 +70,23 @@ pub fn setup(
 
 pub fn do_init(
     mut reader: EventReader<Do>,
+    mut try_writer: EventWriter<Try>,
     mut server: ResMut<Server>,
     time: Res<Time>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Init { dt, .. } } = message else { continue };
         let client_now = time.elapsed().as_millis();
-        server.server_time_at_init = dt;
+
+        // CRITICAL: The server captured dt when it SENT Init, but we're receiving it now
+        // During the client startup time (client_now ms), the server's clock also advanced
+        // We need to add that startup time to server_time_at_init to compensate
+        server.server_time_at_init = dt.saturating_add(server.smoothed_latency).saturating_add(client_now);
         server.client_time_at_init = client_now;
-        info!("Time sync initialized: server_time_at_init={:.3}s, client_time_at_init={:.3}s",
-            dt as f64 / 1000.0, client_now as f64 / 1000.0);
+        server.last_ping_time = client_now; // Track when we sent initial ping
+
+        // Send initial Ping to measure actual network latency
+        try_writer.send(Try { event: Event::Ping { client_time: client_now } });
     }
 }
 

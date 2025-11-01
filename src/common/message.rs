@@ -48,6 +48,10 @@ pub enum Event {
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
+    /// Client → Server: Measure network latency (client timestamp)
+    Ping { client_time: u128 },
+    /// Server → Client: Response to ping (echoes client timestamp)
+    Pong { client_time: u128 },
 }
 
 /// Types of abilities that can be used

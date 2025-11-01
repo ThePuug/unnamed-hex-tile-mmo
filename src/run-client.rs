@@ -140,6 +140,8 @@ fn main() {
         world::async_spawn,
         world::async_ready,
         world::do_init,
+        renet::handle_pong,
+        renet::periodic_ping,
         world::do_spawn,
         world::update,
     ));

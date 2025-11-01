@@ -373,21 +373,29 @@ pub fn update_queue(
                 commands.entity(dots_container_ent).with_children(|parent| {
                     for i in 0..queue_capacity {
                         let is_filled = i < filled_slots;
-                        let dot_char = if is_filled { "●" } else { "○" };
+
+                        // Use circular UI nodes instead of text characters
+                        let (bg_color, border_color) = if is_full && is_filled {
+                            // Full queue: filled dots are bright red with red border
+                            (Color::srgb(1.0, 0.3, 0.3), Color::srgb(1.0, 0.3, 0.3))
+                        } else if is_filled {
+                            // Filled but not full: orange-red fill with border
+                            (Color::srgb(0.9, 0.4, 0.4), Color::srgb(0.9, 0.4, 0.4))
+                        } else {
+                            // Empty: transparent with gray border
+                            (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
+                        };
 
                         parent.spawn((
-                            Text::new(dot_char),
-                            TextFont {
-                                font_size: 12.0,
+                            Node {
+                                width: Val::Px(8.),
+                                height: Val::Px(8.),
+                                border: UiRect::all(Val::Px(1.)),
                                 ..default()
                             },
-                            TextColor(if is_full {
-                                Color::srgb(1.0, 0.3, 0.3)  // Brighter red when full
-                            } else if is_filled {
-                                Color::srgb(0.9, 0.4, 0.4)  // Orange-red for filled
-                            } else {
-                                Color::srgb(0.5, 0.5, 0.5)  // Gray for empty
-                            }),
+                            BorderColor(border_color),
+                            BorderRadius::all(Val::Percent(50.)), // Make circular
+                            BackgroundColor(bg_color),
                             CapacityDot { index: i },
                         ));
                     }
@@ -419,10 +427,35 @@ pub fn update_queue(
                             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
                             let remaining = 1.0 - progress;
 
-                            // Threat icon (larger size - 40px instead of 32px)
+                            // Color gradient: Yellow (start) → Orange (50%) → Red (end)
+                            let timer_color = if remaining > 0.5 {
+                                // Yellow → Orange transition (100% to 50% remaining)
+                                let t = (remaining - 0.5) / 0.5;
+                                Color::srgba(
+                                    1.0,
+                                    0.9 * t + 0.5 * (1.0 - t),
+                                    0.0,
+                                    0.9,
+                                )
+                            } else {
+                                // Orange → Red transition (50% to 0% remaining)
+                                let t = remaining / 0.5;
+                                Color::srgba(
+                                    1.0,
+                                    0.5 * t,
+                                    0.0,
+                                    0.9,
+                                )
+                            };
+
+                            // Size grows from 15% to 100% as timer counts down
+                            let size_percent = 15.0 + (85.0 * progress);
+                            let offset_percent = (100.0 - size_percent) / 2.0;
+
+                            // Threat icon (circular, 40px)
                             parent.spawn((
                                 Node {
-                                    width: Val::Px(40.),  // Increased from 32px
+                                    width: Val::Px(40.),
                                     height: Val::Px(40.),
                                     border: UiRect::all(Val::Px(2.)),
                                     justify_content: JustifyContent::Center,
@@ -434,11 +467,28 @@ pub fn update_queue(
                                 } else {
                                     Color::srgb(0.8, 0.2, 0.2)  // Normal red
                                 }),
+                                BorderRadius::all(Val::Percent(50.)), // Make circular
                                 BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
                                 TargetThreatIcon { index },
                             ))
                             .with_children(|parent| {
-                                // Attack type icon
+                                // Timer ring (grows from center as time runs out)
+                                parent.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        width: Val::Percent(size_percent),
+                                        height: Val::Percent(size_percent),
+                                        left: Val::Percent(offset_percent),
+                                        top: Val::Percent(offset_percent),
+                                        border: UiRect::all(Val::Px(3.)),
+                                        ..default()
+                                    },
+                                    BorderColor(timer_color),
+                                    BorderRadius::all(Val::Percent(50.)),
+                                    BackgroundColor(Color::NONE),
+                                ));
+
+                                // Attack type icon (centered)
                                 let icon_text = match threat.damage_type {
                                     DamageType::Physical => "⚔",
                                     DamageType::Magic => "🔥",
@@ -447,25 +497,10 @@ pub fn update_queue(
                                 parent.spawn((
                                     Text::new(icon_text),
                                     TextFont {
-                                        font_size: 22.0,  // Increased from 20.0
+                                        font_size: 22.0,
                                         ..default()
                                     },
                                     TextColor(Color::WHITE),
-                                ));
-
-                                // Timer text below icon
-                                parent.spawn((
-                                    Text::new(format!("{:.1}s", remaining * threat.timer_duration.as_secs_f32())),
-                                    TextFont {
-                                        font_size: 9.0,  // Increased from 8.0
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        bottom: Val::Px(2.),
-                                        ..default()
-                                    },
                                 ));
                             });
                         }
