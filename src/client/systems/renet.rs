@@ -58,8 +58,8 @@ pub fn write_do(
                 let mana = Mana { state: 1.0, step: 1.0, max: 1.0, regen_rate: 8.0, last_update: Duration::ZERO };
                 let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
 
-                let ent = commands.spawn((Actor, Behaviour::Controlled, health, stamina, mana, combat_state)).id();
-                info!("INIT: Spawned local player entity {:?} with Actor marker", ent);
+                let ent = commands.spawn((Actor, Behaviour::Controlled, PlayerControlled, health, stamina, mana, combat_state)).id();
+                info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));

@@ -42,15 +42,15 @@ pub fn update_floating_text(
 
 /// Helper function to determine if a health bar should be shown
 /// ADR-008 Phase 6 visibility rules:
-/// - Players (Controlled): Always show
+/// - Players (PlayerControlled): Always show
 /// - NPCs: Show when in combat OR damaged
 fn should_show_health_bar(
     health: &crate::common::components::resources::Health,
     combat_state: Option<&crate::common::components::resources::CombatState>,
-    behaviour: Option<&crate::common::components::behaviour::Behaviour>,
+    player_controlled: Option<&crate::common::components::behaviour::PlayerControlled>,
 ) -> bool {
-    // Always show for players (Controlled behaviour)
-    if let Some(crate::common::components::behaviour::Behaviour::Controlled) = behaviour {
+    // Always show for players (PlayerControlled marker)
+    if player_controlled.is_some() {
         return true;
     }
 
@@ -70,7 +70,7 @@ pub fn spawn_health_bars(
             Entity,
             &crate::common::components::resources::Health,
             Option<&crate::common::components::resources::CombatState>,
-            Option<&crate::common::components::behaviour::Behaviour>,
+            Option<&crate::common::components::behaviour::PlayerControlled>,
         ),
         Changed<crate::common::components::resources::Health>,
     >,
@@ -83,14 +83,14 @@ pub fn spawn_health_bars(
         .collect();
 
     // Only iterate entities whose Health changed this frame (reactive, not polling)
-    for (entity, health, combat_state, behaviour) in &query {
+    for (entity, health, combat_state, player_controlled) in &query {
         // O(1) lookup instead of O(n) iteration
         if tracked_entities.contains(&entity) {
             continue;
         }
 
         // Check if health bar should be shown
-        if should_show_health_bar(health, combat_state, behaviour) {
+        if should_show_health_bar(health, combat_state, player_controlled) {
             // Calculate initial fill ratio
             let health_ratio = (health.step / health.max).clamp(0.0, 1.0);
 
@@ -150,7 +150,7 @@ pub fn spawn_health_bars_on_combat(
             Entity,
             &crate::common::components::resources::Health,
             &crate::common::components::resources::CombatState,
-            Option<&crate::common::components::behaviour::Behaviour>,
+            Option<&crate::common::components::behaviour::PlayerControlled>,
         ),
         Changed<crate::common::components::resources::CombatState>,
     >,
@@ -162,14 +162,14 @@ pub fn spawn_health_bars_on_combat(
         .map(|bar| bar.tracked_entity)
         .collect();
 
-    for (entity, health, combat_state, behaviour) in &query {
+    for (entity, health, combat_state, player_controlled) in &query {
         // Skip if already has a health bar
         if tracked_entities.contains(&entity) {
             continue;
         }
 
         // Check if health bar should be shown
-        if should_show_health_bar(health, Some(combat_state), behaviour) {
+        if should_show_health_bar(health, Some(combat_state), player_controlled) {
             // Calculate initial fill ratio
             let health_ratio = (health.step / health.max).clamp(0.0, 1.0);
 
@@ -229,7 +229,7 @@ pub fn update_health_bars(
     entity_query: Query<(
         &crate::common::components::resources::Health,
         Option<&crate::common::components::resources::CombatState>,
-        Option<&crate::common::components::behaviour::Behaviour>,
+        Option<&crate::common::components::behaviour::PlayerControlled>,
         &Transform,
     )>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
@@ -244,14 +244,14 @@ pub fn update_health_bars(
 
     for (bar_entity, mut health_bar, children, mut container_node) in &mut bar_query {
         // Get the tracked entity's components
-        let Ok((health, combat_state, behaviour, transform)) = entity_query.get(health_bar.tracked_entity) else {
+        let Ok((health, combat_state, player_controlled, transform)) = entity_query.get(health_bar.tracked_entity) else {
             // Entity no longer exists, despawn health bar
             commands.entity(bar_entity).despawn_recursive();
             continue;
         };
 
         // Check if health bar should still be visible (ADR-008 Phase 6 rules)
-        if !should_show_health_bar(health, combat_state, behaviour) {
+        if !should_show_health_bar(health, combat_state, player_controlled) {
             // No longer meets visibility criteria, despawn bar
             commands.entity(bar_entity).despawn_recursive();
             continue;

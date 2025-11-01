@@ -17,6 +17,7 @@ impl Plugin for UiPlugin {
         // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
         app.init_resource::<target_frame::LockedTarget>();
+        app.init_resource::<target_frame::AllyTarget>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -37,7 +38,9 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, action_bar::update);
         app.add_systems(Update, target_frame::update);
+        app.add_systems(Update, target_frame::update_ally_frame);
         app.add_systems(Update, target_frame::update_queue);
+        app.add_systems(Update, target_frame::update_ally_queue);
         app.add_systems(Update, target_indicator::update);
 
         // Character panel systems

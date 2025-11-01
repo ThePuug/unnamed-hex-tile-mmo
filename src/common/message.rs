@@ -92,6 +92,7 @@ pub enum Component {
     Loc(Loc),
     Mana(Mana),
     Offset(Offset),
+    PlayerControlled(PlayerControlled),
     Stamina(Stamina),
 }
 

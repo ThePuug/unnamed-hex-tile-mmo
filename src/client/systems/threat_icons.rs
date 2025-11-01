@@ -173,17 +173,6 @@ pub fn update(
         if ring.index < queue.threats.len() {
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
-
-            // Debug logging: compare threat timestamp vs current time (use millis for precision)
-            if elapsed.as_millis() < 50 || elapsed > threat.timer_duration.saturating_sub(std::time::Duration::from_millis(50)) {
-                info!("Threat timer: inserted_at={}ms, now={}ms, elapsed={}ms, duration={}ms, progress={:.1}%",
-                    threat.inserted_at.as_millis(),
-                    now.as_millis(),
-                    elapsed.as_millis(),
-                    threat.timer_duration.as_millis(),
-                    (elapsed.as_millis() as f32 / threat.timer_duration.as_millis() as f32 * 100.0));
-            }
-
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
             let remaining = 1.0 - progress;
 

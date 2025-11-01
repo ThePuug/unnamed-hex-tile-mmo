@@ -106,7 +106,9 @@ pub fn do_spawn(
             .insert((
                 loc,
                 typ,
-                Behaviour::Controlled,  // All actors need this for movement (local input or network updates)
+                // All actors need Behaviour::Controlled on client for movement interpolation
+                // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
+                Behaviour::Controlled,
                 SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
                 Transform {
                     translation: map.convert(qrz),
