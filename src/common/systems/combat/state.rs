@@ -72,7 +72,8 @@ fn has_hostile_within_radius(
     radius: i16,
 ) -> bool {
     // Query NNTree for entities within radius (squared distance)
-    let nearby = nntree.locate_within_distance(*self_loc, radius * radius);
+    // Cast to i32 since NNTree Scalar type is i32
+    let nearby = nntree.locate_within_distance(*self_loc, (radius as i32) * (radius as i32));
 
     for other in nearby {
         if other.ent == self_ent {

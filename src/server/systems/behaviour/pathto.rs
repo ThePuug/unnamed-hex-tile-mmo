@@ -101,7 +101,9 @@ pub fn apply(
         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
         let (offset, airtime) = physics::apply(Loc::new(dest), dt_ms, loc, offset0.state, airtime0.state, movement_speed, *heading0, &map, &nntree);
-        (offset0.state, airtime0.state) = (offset,airtime);
+
+        // Update server-side offset state for physics
+        (offset0.state, airtime0.state) = (offset, airtime);
     }
 }
 

@@ -5,7 +5,8 @@ use bevy::prelude::*;
 /// This plugin provides:
 /// - Physics application to controlled entities
 /// - Input time accumulation (tick)
-/// - Remote player interpolation toward authoritative state
+///
+/// Note: Remote player/NPC interpolation is now handled by actor::update using time-based interpolation.
 ///
 /// Used by both client and server for entities with Behaviour::Controlled.
 pub struct ControlledPlugin;
@@ -16,7 +17,6 @@ impl Plugin for ControlledPlugin {
             FixedUpdate,
             (
                 crate::common::systems::behaviour::controlled::apply,
-                crate::common::systems::behaviour::controlled::interpolate_remote,
                 crate::common::systems::behaviour::controlled::tick,
             ),
         );

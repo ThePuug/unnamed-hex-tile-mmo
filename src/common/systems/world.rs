@@ -55,9 +55,19 @@ pub fn do_incremental(
 
                 // Check if this is a local player (has input buffer) or remote player
                 let is_local = buffers.get(&ent).is_some();
+                let is_player = o_player_controlled.is_some();
+
+                // On server: skip offset adjustments for NPCs (server is authoritative for NPC physics)
+                // On client: process all Loc updates (both players and NPCs come from server)
+                // We detect "server authoritative NPC" by: not a player, and Loc is already up-to-date
+                // (server's actor::update already set Loc and adjusted offset before sending this event)
+                if !is_player && **loc0 == *loc {
+                    // NPC Loc update on server - offset was already adjusted by server/actor::update
+                    continue;
+                }
 
                 if is_local {
-                    // Local player: preserve world-space positions for smooth visual transitions
+                    // Local players only: preserve world-space positions for smooth visual transitions
                     // Convert all offset fields to world positions, then re-express in new tile's coordinate system
                     let state_world = map.convert(**loc0) + offset0.state;
                     let prev_world = map.convert(**loc0) + offset0.prev_step;
@@ -68,15 +78,21 @@ pub fn do_incremental(
                     offset0.prev_step = prev_world - new_tile_center;
                     offset0.step = step_world - new_tile_center;
                 } else {
-                    // Remote player: preserve only visual positions for smooth transitions
-                    // State should be the heading-based position for remote players
-                    let prev_world = map.convert(**loc0) + offset0.prev_step;
-                    let step_world = map.convert(**loc0) + offset0.step;
+                    // Remote players and NPCs: use heading-based positioning for smooth transitions
+                    // Calculate current visual position to preserve for interpolation
+                    // Use actual interpolated position (not just step target) in case update arrives mid-interpolation
+                    let current_interp_fraction = if offset0.interp_duration > 0.0 {
+                        (offset0.interp_elapsed / offset0.interp_duration).min(1.0)
+                    } else {
+                        1.0
+                    };
+                    let current_visual_offset = offset0.prev_step.lerp(offset0.step, current_interp_fraction);
+                    let prev_world = map.convert(**loc0) + current_visual_offset;
 
                     let new_tile_center = map.convert(*loc);
 
                     // Calculate heading-based target position
-                    let Some(ref heading0) = o_heading else { panic!("no heading for remote player") };
+                    let Some(ref heading0) = o_heading else { panic!("no heading for remote player/NPC") };
                     let target_offset = if ***heading0 != default() {
                         let heading_neighbor_world = map.convert(*loc + ***heading0);
                         let direction = heading_neighbor_world - new_tile_center;
@@ -85,9 +101,19 @@ pub fn do_incremental(
                         Vec2::ZERO
                     };
 
-                    offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
+                    let target_offset_3d = Vec3::new(target_offset.x, 0.0, target_offset.y);
+
+                    // Set up interpolation: prev_step (current visual) -> step (heading target)
                     offset0.prev_step = prev_world - new_tile_center;
-                    offset0.step = step_world - new_tile_center;
+                    offset0.step = target_offset_3d;
+                    offset0.state = target_offset_3d;
+
+                    // Calculate expected travel time based on distance and movement speed
+                    // Used for time-based interpolation of remote players and NPCs
+                    let distance = (offset0.step - offset0.prev_step).length();
+                    const MOVEMENT_SPEED: f32 = 0.005; // units per millisecond
+                    offset0.interp_duration = distance / MOVEMENT_SPEED / 1000.0; // convert ms to seconds
+                    offset0.interp_elapsed = 0.0;
                 }
 
                 *loc0 = loc;
@@ -95,11 +121,22 @@ pub fn do_incremental(
             Component::Heading(heading) => {
                 let Some(mut heading0) = o_heading else { continue; };
 
-                *heading0 = heading;
-
                 // Update offset.state for remote players when heading changes
                 let is_local = buffers.get(&ent).is_some();
-                if !is_local {
+                let is_player = o_player_controlled.is_some();
+
+                // On server: skip offset adjustments for NPCs (server is authoritative for NPC physics)
+                // Check before assignment to detect if this is a server NPC update
+                if !is_player && *heading0 == heading {
+                    // NPC Heading update on server - heading already set, don't reset offset.state
+                    continue;
+                }
+
+                *heading0 = heading;
+
+                // Only update offset.state for remote PLAYERS on heading change
+                // NPCs get Heading+Loc updates together, so skip standalone heading adjustments
+                if !is_local && is_player {
                     if let Some(mut offset0) = o_offset {
                         let Some(ref loc0) = o_loc else { panic!("no loc") };
                         let tile_center = map.convert(***loc0);

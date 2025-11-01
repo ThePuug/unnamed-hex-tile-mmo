@@ -102,7 +102,6 @@ pub fn update_tile_crossings(
         let new_tile = map.convert(world_pos);
 
         if new_tile != **loc {
-            debug!("NPC {:?} crossed tile boundary: {:?} -> {:?}", ent, **loc, new_tile);
             *loc = Loc::new(new_tile);
         }
     }
@@ -268,7 +267,7 @@ mod tests {
         app.world_mut().spawn((
             Loc::new(qrz),
             Heading::default(),
-            Offset { state: offset, step: offset, prev_step: offset },
+            Offset { state: offset, step: offset, prev_step: offset, interp_elapsed: 0.0, interp_duration: 0.0 },
             AirTime { state: None, step: None },
             Physics,
         )).id()

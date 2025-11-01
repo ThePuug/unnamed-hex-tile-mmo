@@ -203,17 +203,29 @@ pub fn try_discover(
 }
 
 pub fn update(
+    mut commands: Commands,
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Loc, &Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &Loc, &mut Offset, &Heading), Changed<Offset>>,
     map: Res<Map>,
+    time: Res<Time>,
 ) {
-    for (ent, &loc0, &offset) in &mut query {
+    for (ent, &loc0, mut offset, &heading) in &mut query {
         let px = map.convert(*loc0);
         let qrz = map.convert(px + offset.state);
         if *loc0 != qrz {
-            let loc = Loc::new(qrz);
-            let component = Component::Loc(loc);
-            writer.write(Try { event: Event::Incremental { ent, component } });
+            // Adjust offset to be relative to new tile center
+            let world_pos = px + offset.state;
+            let new_tile_center = map.convert(qrz);
+            offset.state = world_pos - new_tile_center;
+
+            // Update Loc component directly
+            commands.entity(ent).insert(Loc::new(qrz));
+
+            // Send Loc update to client
+            writer.write(Try { event: Event::Incremental { ent, component: Component::Loc(Loc::new(qrz)) } });
+
+            // Send Heading update so client can calculate proper interpolation target
+            writer.write(Try { event: Event::Incremental { ent, component: Component::Heading(heading) } });
         }
     }
 }

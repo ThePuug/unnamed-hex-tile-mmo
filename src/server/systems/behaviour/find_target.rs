@@ -63,7 +63,8 @@ pub fn find_or_keep_target(
         }
 
         // 2. Find new target (no lock or lock was invalid)
-        let nearby = nntree.locate_within_distance(*npc_loc, node.dist as i16 * node.dist as i16);
+        // Cast to i32 since NNTree Scalar type is i32
+        let nearby = nntree.locate_within_distance(*npc_loc, node.dist as i32 * node.dist as i32);
 
         // Filter to entities with Health > 0 AND PlayerControlled (asymmetric targeting)
         let valid_targets: Vec<Entity> = nearby

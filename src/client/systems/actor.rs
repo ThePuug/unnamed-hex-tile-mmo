@@ -18,7 +18,7 @@ use crate::{
         },
         message::{ Event, * },
         plugins::nntree::NearestNeighbor,
-        resources::map::Map,
+        resources::{map::Map, InputQueues},
         systems::combat::queue as queue_calcs,
     }
 };
@@ -56,20 +56,34 @@ fn ready(
 
 pub fn update(
     fixed_time: Res<Time<Fixed>>,
-    mut query: Query<(&Loc, &Offset, &Heading, &mut Transform)>,
+    time: Res<Time>,
+    mut query: Query<(Entity, &Loc, &mut Offset, &Heading, &mut Transform)>,
     map: Res<Map>,
+    buffers: Res<InputQueues>,
 ) {
-    for (&loc, offset, &heading, mut transform0) in &mut query {
-        // Interpolate between FixedUpdate ticks using overstep fraction
-        // overstep_fraction: 0.0 = just ran FixedUpdate, 1.0 = about to run FixedUpdate
-        let overstep_fraction = fixed_time.overstep_fraction();
+    let delta = time.delta_secs();
+
+    for (ent, &loc, mut offset, &heading, mut transform0) in &mut query {
+        let is_local = buffers.get(&ent).is_some();
+
+        let interp_fraction = if is_local {
+            // Local players: use FixedUpdate overstep fraction
+            fixed_time.overstep_fraction()
+        } else {
+            // NPCs and remote players: use time-based interpolation
+            offset.interp_elapsed += delta;
+            if offset.interp_duration > 0.0 {
+                (offset.interp_elapsed / offset.interp_duration).min(1.0)
+            } else {
+                1.0
+            }
+        };
 
         let prev_pos = map.convert(*loc) + offset.prev_step;
         let curr_pos = map.convert(*loc) + offset.step;
 
         // Interpolate between previous and current physics positions
-        // Physics handles heading-based positioning, so just render what physics calculates
-        let final_pos = prev_pos.lerp(curr_pos, overstep_fraction);
+        let final_pos = prev_pos.lerp(curr_pos, interp_fraction);
 
         transform0.translation = final_pos;
         transform0.rotation = heading.into();
@@ -183,6 +197,8 @@ mod tests {
             state: Vec3::ZERO,
             step: Vec3::ZERO,
             prev_step: Vec3::ZERO,
+            interp_elapsed: 0.0,
+            interp_duration: 0.0,
         };
 
         // Player is facing East (q: 1, r: 0, z: 0)
@@ -240,6 +256,8 @@ mod tests {
             state: Vec3::ZERO,
             step: physics_position,
             prev_step: Vec3::new(0.4, 0.0, 0.2),
+            interp_elapsed: 0.0,
+            interp_duration: 0.0,
         };
 
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
@@ -278,6 +296,8 @@ mod tests {
             state: Vec3::ZERO,
             step: Vec3::ZERO,
             prev_step: Vec3::ZERO,
+            interp_elapsed: 0.0,
+            interp_duration: 0.0,
         };
 
         let _heading = Heading::default(); // No heading
@@ -308,6 +328,8 @@ mod tests {
             state: Vec3::ZERO,
             step: small_offset,
             prev_step: Vec3::ZERO,
+            interp_elapsed: 0.0,
+            interp_duration: 0.0,
         };
 
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });

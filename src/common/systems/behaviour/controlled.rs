@@ -84,43 +84,6 @@ pub fn apply(
     }
 }
 
-pub fn interpolate_remote(
-    mut query: Query<(Entity, &mut Offset, &Behaviour, Option<&ActorAttributes>)>,
-    buffers: Res<InputQueues>,
-    dt: Res<Time>,
-) {
-    let dt = dt.delta().as_millis() as f32;
-
-    for (entity, mut offset, &behaviour, attrs) in &mut query {
-        let Behaviour::Controlled = behaviour else { continue; };
-
-        // Only process remote players (entities without input buffers)
-        // Local players are handled by physics system
-        if buffers.get(&entity).is_some() {
-            continue;
-        }
-
-        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-        // Move step toward state (zero for remote players) at movement_speed
-        offset.prev_step = offset.step;
-
-        let direction = offset.state - offset.step;
-        let distance = direction.length();
-
-        if distance > 0.001 {
-            let move_dist = movement_speed * dt;
-            if move_dist >= distance {
-                offset.step = offset.state;
-            } else {
-                offset.step += direction.normalize() * move_dist;
-            }
-        } else {
-            offset.step = offset.state;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

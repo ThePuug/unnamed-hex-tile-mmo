@@ -56,7 +56,7 @@ pub fn find_something_interesting_within(
 ) {
     for (&behaviour, &ctx) in &mut query {
         let Ok((&loc, &nn)) = q_target.get(ctx.target_entity()) else { continue };
-        let dist = behaviour.dist as i16;
+        let dist = behaviour.dist as i32;
         let others = nntree.locate_within_distance(loc, dist*dist).map(
             |it| q_other.get(it.ent).expect("missing other entity")
         );
