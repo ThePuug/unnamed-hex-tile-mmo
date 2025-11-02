@@ -116,6 +116,11 @@ pub fn calculate_visible_chunks(center: ChunkId, radius: u8) -> Vec<ChunkId> {
     visible
 }
 
+/// Check if a location (Qrz) is within a specific chunk
+pub fn is_loc_in_chunk(loc: Qrz, chunk_id: ChunkId) -> bool {
+    loc_to_chunk(loc) == chunk_id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

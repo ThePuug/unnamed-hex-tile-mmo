@@ -98,7 +98,7 @@ pub fn write_do(
                 } else {
                     // For NPCs/other players: remove from EntityMap and despawn
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
-                        warn!("CLIENT: Received Despawn for unknown entity {:?} - not in EntityMap", ent);
+                        // Entity not in map - already despawned or never spawned locally
                         continue
                     };
                     commands.entity(local_ent).despawn();

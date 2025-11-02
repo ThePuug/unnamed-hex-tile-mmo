@@ -10,6 +10,7 @@ use crate::{ common::{
             entity_type::{ *,
                 actor::*,
             },
+            heading::*,
             keybits::*,
             reaction_queue::*,
             resources::*,
@@ -50,7 +51,7 @@ pub fn do_manage_connections(
     mut writer: EventWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>, Option<&PlayerControlled>)>,
+    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>, Option<&PlayerControlled>, Option<&Heading>)>,
     time: Res<Time>,
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
@@ -139,73 +140,49 @@ pub fn do_manage_connections(
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
-                // Send Spawn directly BEFORE resource states to ensure entity exists when Incrementals arrive
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-
-                // Send initial resource states directly to connecting client
+                // Send Spawn + all component states directly to connecting client
                 // Can't use event writer here because send_do relies on NNTree proximity,
                 // and this entity isn't in NNTree yet
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component: Component::Health(health) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component: Component::Stamina(stamina) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component: Component::Mana(mana) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component: Component::CombatState(combat_state) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component: Component::PlayerControlled(PlayerControlled) }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                // Use shared helper to ensure consistency with other player spawns
+                use crate::server::systems::world::generate_actor_spawn_events;
+                let spawn_events = generate_actor_spawn_events(
+                    ent,
+                    typ,
+                    qrz,
+                    Some(attrs),
+                    Some(&PlayerControlled),
+                    None,  // No heading initially
+                    Some(&health),
+                    Some(&stamina),
+                    Some(&mana),
+                    Some(&combat_state),
+                );
+
+                for event in spawn_events {
+                    let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
 
                 // spawn nearby actors
                 for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ, attrs, health, stamina, mana, combat_state, player_controlled) = query.get(other.ent).unwrap();
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { typ, ent: other.ent, qrz: *loc, attrs: attrs.copied() }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    let (&loc, &typ, attrs, health, stamina, mana, combat_state, player_controlled, heading) = query.get(other.ent).unwrap();
 
-                    // Send resource states if entity has them
-                    if let Some(h) = health {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent: other.ent, component: Component::Health(*h) }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                    if let Some(s) = stamina {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent: other.ent, component: Component::Stamina(*s) }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                    if let Some(m) = mana {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent: other.ent, component: Component::Mana(*m) }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                    if let Some(cs) = combat_state {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent: other.ent, component: Component::CombatState(*cs) }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                    if let Some(pc) = player_controlled {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent: other.ent, component: Component::PlayerControlled(*pc) }},
-                            bincode::config::legacy()).unwrap();
+                    // Send Spawn + all actor components using shared helper to ensure consistency
+                    let spawn_events = generate_actor_spawn_events(
+                        other.ent,
+                        typ,
+                        *loc,
+                        attrs.copied(),
+                        player_controlled,
+                        heading,
+                        health,
+                        stamina,
+                        mana,
+                        combat_state,
+                    );
+
+                    for event in spawn_events {
+                        let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
@@ -281,7 +258,9 @@ pub fn write_try(
                 }
 
                 // Also send to nearby players
-                for other in nntree.locate_within_distance(Loc::new(qrz), 20*20) {
+                // Range must be at least 35 tiles to cover all chunks within FOV_CHUNK_RADIUS=2
+                // (5x5 chunks, worst-case actor at corner chunk edge ≈ 34 tiles from center)
+                for other in nntree.locate_within_distance(Loc::new(qrz), 35*35) {
                     let Some(client_id) = lobby.get_by_right(&other.ent) else { continue; };
                     // Skip if already sent above
                     if other.ent == ent { continue; }
@@ -307,8 +286,9 @@ pub fn write_try(
 
                 // Also send to nearby players (skip owning client to avoid duplicate)
                 // Entity might have been despawned in the same frame, so handle gracefully
+                // Range must match Spawn events (35 tiles) to ensure component updates reach all discovering players
                 let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
+                for other in nntree.locate_within_distance(loc, 35*35) {
                     if let Some(client_id) = lobby.get_by_right(&other.ent) {
                         // Skip if we already sent to this client above
                         if other.ent == ent { continue; }

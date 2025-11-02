@@ -8,7 +8,9 @@ use crate::{
         components::{
             entity_type::{ decorator::*, *},
             heading::Heading,
-            offset::Offset, *
+            offset::Offset,
+            resources::RespawnTimer,
+            *
         },
         message::{Component, Event, *},
         resources::map::*,
@@ -28,6 +30,13 @@ pub fn do_spawn_discover(
 
         // Only process entities with PlayerDiscoveryState (players)
         let Ok(mut player_state) = player_states.get_mut(ent) else { continue };
+
+        // CRITICAL: Only discover chunks for initial spawns (when last_chunk is None).
+        // This prevents infinite loops when try_discover_chunk sends Do::Spawn events
+        // for remote players - we don't want to re-discover chunks for them.
+        if player_state.last_chunk.is_some() {
+            continue;
+        }
 
         // Get player's location
         let Ok(loc) = query.get(ent) else { continue };
@@ -128,7 +137,21 @@ pub fn try_discover_chunk(
     mut world_cache: ResMut<WorldDiscoveryCache>,
     terrain: Res<Terrain>,
     mut map: ResMut<Map>,
+    actors_query: Query<(
+        Entity,
+        &Loc,
+        &EntityType,
+        Option<&ActorAttributes>,
+        Option<&crate::common::components::behaviour::PlayerControlled>,
+        Option<&Heading>,
+        Option<&crate::common::components::resources::Health>,
+        Option<&crate::common::components::resources::Stamina>,
+        Option<&crate::common::components::resources::Mana>,
+        Option<&crate::common::components::resources::CombatState>,
+    ), Without<RespawnTimer>>,
 ) {
+    use crate::common::chunk::is_loc_in_chunk;
+
     for &message in reader.read() {
         if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = message {
             // Check cache first
@@ -164,7 +187,7 @@ pub fn try_discover_chunk(
                 }
             }
 
-            // Send chunk to player
+            // Send chunk terrain to player
             writer.write(Do {
                 event: Event::ChunkData {
                     ent,
@@ -172,6 +195,30 @@ pub fn try_discover_chunk(
                     tiles: chunk.tiles.clone(),
                 }
             });
+
+            // Send all actors (NPCs and players) that are in this chunk
+            for (actor_ent, actor_loc, actor_type, attrs, player_controlled, heading, health, stamina, mana, combat_state) in actors_query.iter() {
+                if is_loc_in_chunk(**actor_loc, chunk_id) {
+                    // Send Spawn + all actor components using shared helper
+                    use crate::server::systems::world::generate_actor_spawn_events;
+                    let spawn_events = generate_actor_spawn_events(
+                        actor_ent,
+                        *actor_type,
+                        **actor_loc,
+                        attrs.copied(),
+                        player_controlled,
+                        heading,
+                        health,
+                        stamina,
+                        mana,
+                        combat_state,
+                    );
+
+                    for event in spawn_events {
+                        writer.write(event);
+                    }
+                }
+            }
         }
     }
 }
