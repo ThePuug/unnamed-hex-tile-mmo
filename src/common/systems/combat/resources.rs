@@ -122,6 +122,8 @@ pub fn process_respawn(
             offset.state = Vec3::ZERO;
             offset.step = Vec3::ZERO;
             offset.prev_step = Vec3::ZERO;
+            offset.interp_elapsed = 0.0;
+            offset.interp_duration = 0.0;
 
             // Restore resources to full
             health.state = health.max;

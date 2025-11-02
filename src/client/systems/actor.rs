@@ -103,14 +103,6 @@ pub fn do_spawn(
         };
         let loc = Loc::new(qrz);
 
-        // Initialize resource components with placeholder values
-        // These will be updated by Incremental events from the server
-        use crate::common::components::resources::*;
-        let health = Health { state: 100.0, step: 100.0, max: 100.0 };
-        let stamina = Stamina { state: 100.0, step: 100.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO };
-        let mana = Mana { state: 100.0, step: 100.0, max: 100.0, regen_rate: 8.0, last_update: std::time::Duration::ZERO };
-        let combat_state = CombatState { in_combat: false, last_action: std::time::Duration::ZERO };
-
         // Initialize reaction queue with capacity based on Focus attribute
         let attrs_val = attrs.unwrap_or_default();
         let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
@@ -140,12 +132,11 @@ pub fn do_spawn(
                 attrs_val,
                 reaction_queue,
                 crate::common::components::gcd::Gcd::new(),
-                health,
-                stamina,
-                mana,
-                combat_state,
             ))
             .observe(ready);
+
+        // Health/Stamina/Mana/CombatState will be inserted by Incremental events from server
+        // (do_incremental handles inserting missing components)
     }
 }
 

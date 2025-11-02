@@ -28,15 +28,13 @@ pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits, &crate::common::components::resources::Health, Option<&crate::common::components::gcd::Gcd>), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&crate::common::components::gcd::Gcd>), With<Actor>>,
     mut writer: EventWriter<Try>,
     dt: Res<Time>,
 ) {
-    if let Ok((ent, &heading, mut keybits0, health, gcd_opt)) = query.single_mut() {
-        // Don't process input while dead (health <= 0)
-        if health.state <= 0.0 {
-            return;
-        }
+    if let Ok((ent, &heading, mut keybits0, gcd_opt)) = query.single_mut() {
+        // Note: We removed client-side death prediction
+        // The server will reject inputs for dead players, preventing premature input blocking
         let delta_ns = dt.delta().as_nanos();
         keybits0.accumulator += delta_ns;
 

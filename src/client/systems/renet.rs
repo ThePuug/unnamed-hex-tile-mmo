@@ -49,16 +49,9 @@ pub fn write_do(
 
             // insert l2r for player
             Do { event: Event::Init { ent: ent0, dt }} => {
-
-                // Initialize with placeholder resources so Incremental events can update them
-                use crate::common::components::resources::*;
-                use std::time::Duration;
-                let health = Health { state: 1.0, step: 1.0, max: 1.0 };
-                let stamina = Stamina { state: 1.0, step: 1.0, max: 1.0, regen_rate: 10.0, last_update: Duration::ZERO };
-                let mana = Mana { state: 1.0, step: 1.0, max: 1.0, regen_rate: 8.0, last_update: Duration::ZERO };
-                let combat_state = CombatState { in_combat: false, last_action: Duration::ZERO };
-
-                let ent = commands.spawn((Actor, Behaviour::Controlled, PlayerControlled, health, stamina, mana, combat_state)).id();
+                // Create local player entity with markers
+                // Health/Stamina/Mana will be inserted by Incremental events from server
+                let ent = commands.spawn((Actor, Behaviour::Controlled, PlayerControlled)).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {

@@ -90,42 +90,6 @@ pub fn predict_dodge(
     }
 }
 
-/// Client system to predict local player damage when threats expire
-/// Provides instant visual feedback for health changes
-pub fn predict_threat_resolution(
-    mut query: Query<(&mut ReactionQueue, &mut Health, &ActorAttributes), With<crate::common::components::Actor>>,
-    time: Res<Time>,
-    server: Res<crate::client::resources::Server>,
-) {
-    for (mut queue, mut health, attrs) in &mut query {
-        // Calculate current time (using server time for consistency)
-        let now_ms = server.current_time(time.elapsed().as_millis());
-        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-
-        // Check for expired threats (same logic as server)
-        let expired_threats = crate::common::systems::combat::queue::check_expired_threats(&queue, now);
-
-        // Predict damage for each expired threat
-        for threat in expired_threats {
-            // Calculate final damage using Phase 2 mitigation
-            let final_damage = crate::common::systems::combat::damage::apply_passive_modifiers(
-                threat.damage,
-                attrs,
-                threat.damage_type,
-            );
-
-            // Apply predicted damage to health.step (not state - that's server-authoritative)
-            health.step = (health.step - final_damage).max(0.0);
-
-            info!("CLIENT PREDICTION: Threat expired, predicted damage: {:.1}, new health.step: {:.1}",
-                final_damage, health.step);
-        }
-
-        // Remove expired threats from queue (client-side cleanup)
-        // Server will send ApplyDamage events which will confirm/correct our prediction
-        queue.threats.retain(|threat| {
-            let time_since_insert = now.saturating_sub(threat.inserted_at);
-            time_since_insert < threat.timer_duration
-        });
-    }
-}
+// REMOVED: Client-side threat expiration prediction
+// This was causing player frustration due to desync between predicted and actual damage
+// Server now handles all threat resolution authoritatively

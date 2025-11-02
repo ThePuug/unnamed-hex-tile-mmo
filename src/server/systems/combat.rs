@@ -14,7 +14,7 @@ use crate::common::{
 pub fn process_deal_damage(
     trigger: Trigger<Try>,
     mut commands: Commands,
-    mut query: Query<(&mut ReactionQueue, &ActorAttributes)>,
+    mut query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
@@ -35,10 +35,15 @@ pub fn process_deal_damage(
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
         let outgoing_with_crit = outgoing * crit_mult;
 
-        // Get target's queue and attributes
-        let Ok((mut queue, attrs)) = query.get_mut(*target) else {
+        // Get target's queue, attributes, and health
+        let Ok((mut queue, attrs, health)) = query.get_mut(*target) else {
             return;
         };
+
+        // Don't queue threats on dead targets
+        if health.state <= 0.0 {
+            return;
+        }
 
         // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
@@ -110,6 +115,14 @@ pub fn resolve_threat(
                     ent: *ent,
                     damage: final_damage,
                     source: threat.source,
+                },
+            });
+
+            // Send authoritative health value to sync clients
+            writer.write(Do {
+                event: GameEvent::Incremental {
+                    ent: *ent,
+                    component: crate::common::message::Component::Health(*health),
                 },
             });
 

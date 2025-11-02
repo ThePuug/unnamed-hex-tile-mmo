@@ -113,7 +113,7 @@ fn main() {
         combat::apply_gcd,
         prediction::predict_basic_attack,
         prediction::predict_dodge,
-        prediction::predict_threat_resolution,
+        // REMOVED: prediction::predict_threat_resolution - server-authoritative only
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,

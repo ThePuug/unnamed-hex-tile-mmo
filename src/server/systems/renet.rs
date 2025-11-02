@@ -122,6 +122,8 @@ pub fn do_manage_connections(
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
+
+                // Broadcast Spawn to nearby players (goes through send_do system for proximity filtering)
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
                 // Broadcast PlayerControlled to nearby players so they recognize this as an ally
                 writer.write(Do { event: Event::Incremental { ent, component: Component::PlayerControlled(PlayerControlled) }});
@@ -134,6 +136,12 @@ pub fn do_manage_connections(
                 let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
                 let message = bincode::serde::encode_to_vec(
                     Do { event: Event::Init { ent, dt }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+
+                // Send Spawn directly BEFORE resource states to ensure entity exists when Incrementals arrive
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }},
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
@@ -264,8 +272,19 @@ pub fn write_try(
     for &message in reader.read() {
         match message {
             Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
+                // Always send Spawn to the owning client (for respawns, initial spawns, etc.)
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Spawn { ent, typ, qrz, attrs }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+
+                // Also send to nearby players
                 for other in nntree.locate_within_distance(Loc::new(qrz), 20*20) {
                     let Some(client_id) = lobby.get_by_right(&other.ent) else { continue; };
+                    // Skip if already sent above
+                    if other.ent == ent { continue; }
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Spawn { ent, typ, qrz, attrs }},
                         bincode::config::legacy()).unwrap();
@@ -277,10 +296,22 @@ pub fn write_try(
                     Component::KeyBits(_) => continue,
                     _ => {}
                 }
+
+                // Always send Incremental to owning client first (for respawns, etc.)
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Incremental { ent, component }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+
+                // Also send to nearby players (skip owning client to avoid duplicate)
                 // Entity might have been despawned in the same frame, so handle gracefully
                 let Ok(&loc) = query.get(ent) else { continue; };
                 for other in nntree.locate_within_distance(loc, 20*20) {
                     if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        // Skip if we already sent to this client above
+                        if other.ent == ent { continue; }
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Incremental { ent, component }},
                             bincode::config::legacy()).unwrap();

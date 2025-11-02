@@ -112,8 +112,16 @@ pub fn do_incremental(
                     // Used for time-based interpolation of remote players and NPCs
                     let distance = (offset0.step - offset0.prev_step).length();
                     const MOVEMENT_SPEED: f32 = 0.005; // units per millisecond
-                    offset0.interp_duration = distance / MOVEMENT_SPEED / 1000.0; // convert ms to seconds
-                    offset0.interp_elapsed = 0.0;
+                    const MIN_INTERP_DISTANCE: f32 = 0.01; // Don't interpolate tiny movements (spawns/teleports)
+
+                    if distance > MIN_INTERP_DISTANCE {
+                        offset0.interp_duration = distance / MOVEMENT_SPEED / 1000.0; // convert ms to seconds
+                        offset0.interp_elapsed = 0.0;
+                    } else {
+                        // Distance too small - snap instantly (no interpolation)
+                        offset0.interp_duration = 0.0;
+                        offset0.interp_elapsed = 0.0;
+                    }
                 }
 
                 *loc0 = loc;
