@@ -1,0 +1,277 @@
+# Combat System - Feature Matrix
+
+**Specification:** [combat-system.md](combat-system.md)
+**Last Updated:** 2025-11-02
+**Overall Status:** 17/42 features complete (40% - MVP scope)
+
+---
+
+## Status Legend
+
+- ✅ **Complete** - Fully implemented per spec
+- 🚧 **Partial** - Partially implemented or MVP version
+- ❌ **Not Started** - Planned but not implemented
+- ⏸️ **Deferred** - Intentionally postponed to post-MVP
+- 🔄 **In Progress** - Currently being developed
+
+---
+
+## Feature Breakdown
+
+### Movement and Heading
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Arrow key movement | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 22-31 | 4-key hex movement implemented |
+| Heading tracking | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 33-41 | Persists after movement stops |
+| Character rotation | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 43-45 | Visual facing indicator |
+| Position on hex | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 44 | Micro-positioning based on facing |
+| Facing cone (60°) | ⏸️ Deferred | - | Lines 35, 45 | Optional visual overlay, not MVP |
+
+**Category Status:** 4/5 complete (80%)
+
+---
+
+### Targeting System
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Directional targeting | ✅ Complete | [ADR-004](../adr/004-ability-system-and-targeting.md) | Lines 48-62 | Face + proximity based |
+| Hostile indicator (red) | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Lines 66-69 | World-space hex indicator |
+| Ally indicator (green) | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Lines 66-69 | Ready for PvP/allies |
+| Range tier system | 🚧 Partial | [ADR-004](../adr/004-ability-system-and-targeting.md) | Lines 71-76 | Close/Mid/Far defined |
+| Automatic targeting | ✅ Complete | [ADR-004](../adr/004-ability-system-and-targeting.md) | Lines 80-83 | Nearest in facing direction |
+| Tier lock (1/2/3 keys) | 🚧 Partial | [ADR-004](../adr/004-ability-system-and-targeting.md) | Lines 85-106 | Defined in spec, implementation TBD |
+| TAB cycling | ❌ Not Started | - | Lines 108-115 | Manual target selection |
+| ESC clear targeting | ❌ Not Started | - | Line 113 | Return to auto-target |
+| Tier badge visual | ❌ Not Started | - | Lines 127 | UI feedback for tier lock |
+| Facing cone overlay | ⏸️ Deferred | - | Line 131 | Optional visual aid |
+
+**Category Status:** 4/10 complete (40%)
+
+---
+
+### Attack Execution Patterns
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Instant attacks | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 145-149 | Lunge, Overpower implemented |
+| Projectile attacks | ❌ Not Started | - | Lines 151-161 | Travel time, dodgeable |
+| Ground effects/telegraphs | ❌ Not Started | - | Lines 163-173 | AOE warnings, delayed damage |
+| Unavoidable attacks | ⏸️ Deferred | - | Lines 175-179 | Ultimate-tier abilities |
+
+**Category Status:** 1/4 complete (25%)
+
+---
+
+### Reaction Queue System
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Threat queue component | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 188-194 | Per-entity queue |
+| Independent timers | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Line 190 | Circular progress |
+| Queue capacity (Focus) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 222-230 | Scales with Focus attribute |
+| Timer duration (Instinct) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 212-220 | Reaction window scaling |
+| Queue overflow resolution | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 239-243 | Oldest threat resolves |
+| Queue display UI | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Lines 196-209 | Circular icons with timers |
+| Reaction ability clear | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 244-248 | Deflect clears queue |
+
+**Category Status:** 7/7 complete (100%)
+
+---
+
+### Reaction Abilities
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Deflect (full clear) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 289-294 | MVP version (all threats, not first) |
+| Dodge (Evasive) | ⏸️ Deferred | - | Lines 260-264 | Post-MVP |
+| Ward (Shielded) | ⏸️ Deferred | - | Lines 266-270 | Post-MVP |
+| Fortify (Hardened) | ⏸️ Deferred | - | Lines 272-276 | Post-MVP |
+| Counter (Patient) | ⏸️ Deferred | - | Lines 282-287 | Post-MVP |
+| Parry (Primal) | ⏸️ Deferred | - | Lines 296-302 | Post-MVP |
+| Endure (Vital) | ⏸️ Deferred | - | Lines 308-313 | Post-MVP |
+| Dispel (Mental) | ⏸️ Deferred | - | Lines 315-320 | Post-MVP |
+| Global Cooldown (0.5s) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 323-328 | Prevents spam |
+
+**Category Status:** 2/9 complete (22% - MVP scope intentional)
+
+---
+
+### MVP Abilities (Phase 1)
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Auto-Attack (passive) | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 538-548 | 1.5s adjacent attack |
+| Lunge (Q) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 550-560 | Gap closer, 200% damage |
+| Overpower (W) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 562-573 | Heavy strike, 400% damage |
+| Knockback (E) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 575-587 | Positioning tool |
+| Deflect (R) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 589-599 | Full queue clear (MVP) |
+
+**Category Status:** 5/5 complete (100%)
+
+---
+
+### Resources
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Stamina pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 334-350 | Scales with Might/Vitality |
+| Stamina regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 340 | 10/sec base rate |
+| Mana pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 352-369 | Scales with Focus/Presence |
+| Mana regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 359 | 8/sec base rate |
+| Resource bars UI | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 1 | Stamina/Health/Mana display |
+
+**Category Status:** 5/5 complete (100%)
+
+---
+
+### Damage Calculation
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Physical damage formula | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Lines 377-380 | Might scaling |
+| Magic damage formula | 🚧 Partial | [ADR-005](../adr/005-damage-pipeline.md) | Lines 382-385 | Formula exists, no magic abilities yet |
+| Critical hits | ⏸️ Deferred | - | Lines 387-393 | Instinct-based crits |
+| Armor (physical reduction) | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Lines 399-407 | Vitality scaling |
+| Resistance (magic reduction) | 🚧 Partial | [ADR-005](../adr/005-damage-pipeline.md) | Lines 409-417 | Formula exists, no magic damage yet |
+| Stagger resist | ⏸️ Deferred | - | Lines 419-424 | Cast interruption system |
+
+**Category Status:** 3/6 complete (50%)
+
+---
+
+### Combat State
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Enter combat triggers | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 432-436 | Damage/aggro/ability use |
+| Combat state effects | 🚧 Partial | [ADR-002](../adr/002-combat-foundation.md) | Lines 440-445 | UI shows, other effects TBD |
+| Leave combat conditions | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 449-452 | Distance/time based |
+| Combat music | ❌ Not Started | - | Line 443 | Audio system |
+
+**Category Status:** 2/4 complete (50%)
+
+---
+
+### Enemy AI
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Enemy directional targeting | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 458-464 | Face + geometric target |
+| Wild Dog (melee enemy) | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 468-480 | Aggro, pursuit, attack cycle |
+| Ranged enemy (Forest Sprite) | ❌ Not Started | - | Lines 482-490 | Kiting behavior |
+| Visual telegraphs | ❌ Not Started | - | Lines 494-504 | Enemy attack warnings |
+
+**Category Status:** 2/4 complete (50%)
+
+---
+
+### Combat HUD
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Resource bars | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 1 | Stamina/Health/Mana |
+| Action bar (Q/W/E/R) | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 2 | 4 ability slots with states |
+| Threat icons display | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 3 | Circular timers, attack icons |
+| Target indicators | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 4 | Red hostile, green ally |
+| Target detail frame | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 5 | Name, health, triumvirate |
+| World health bars | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 6 | Above current targets |
+| Combat state visuals | ⏸️ Deferred | - | Phase 7 | Vignette, glows (intentionally skipped) |
+
+**Category Status:** 6/7 complete (86%)
+
+---
+
+### Special Mechanics
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Mutual destruction | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Lines 508-526 | Both combatants can die |
+
+**Category Status:** 1/1 complete (100%)
+
+---
+
+## Implementation Deviations
+
+Features where implementation intentionally differs from spec:
+
+### 1. Reaction Queue Position
+- **Spec Says:** Top-center, 50px from top edge (Line 82 in ADR-008)
+- **Actually Implemented:** Center-screen with VERTICAL_OFFSET = -150px (above center)
+- **Rationale:** Better visibility during combat, closer to player focus area
+- **ADR Reference:** [ADR-008 Acceptance](../adr/008-acceptance.md) Lines 81-88
+
+### 2. Deflect Ability Scope
+- **Spec Says:** Clears first queued threat only (Hardened signature, Lines 289-294)
+- **Actually Implemented:** Clears all queued threats (50 stamina cost)
+- **Rationale:** Simplified MVP defensive option, expensive cost forces tactical usage
+- **ADR Reference:** [ADR-009](../adr/009-mvp-ability-set.md)
+
+### 3. World Health Bars Implementation
+- **Spec Says:** Health bars on all entities in combat (spawn/despawn per entity)
+- **Actually Implemented:** 2 persistent bars (hostile, ally) repositioned to current targets
+- **Rationale:** More performant, clearer visual feedback, less clutter
+- **ADR Reference:** [ADR-008 Acceptance](../adr/008-acceptance.md) Lines 130-150
+
+### 4. Action Bar Range Feedback
+- **Spec Says:** Target out of ability range: Indicator dims or shows range error on cast attempt (Line 130)
+- **Actually Implemented:** Action bar shows visual range validation feedback (red border when target out of range), plus basic attack restricted to adjacent tiles only
+- **Rationale:** Proactive UX feedback prevents failed ability attempts, clearer tactical feedback
+- **Implementation Commit:** `c9db09a` (2025-11-01)
+
+---
+
+## Spec Gaps
+
+Features described in spec but not yet in implementation plan:
+
+### High Priority
+- **TAB Cycling:** Manual target selection within tier (Lines 108-115)
+- **Tier Lock Number Keys:** 1/2/3 for range tier selection (Lines 85-106)
+- **Projectile Attacks:** Travel time, dodgeable mechanics (Lines 151-161)
+
+### Medium Priority
+- **Ranged Enemy Type:** Forest Sprite with kiting behavior (Lines 482-490)
+- **Critical Hit System:** Instinct-based crits (Lines 387-393)
+- **Visual Telegraphs:** Enemy attack warnings (Lines 494-504)
+
+### Low Priority (Post-MVP)
+- **Full Reaction Ability Set:** 7 additional reaction abilities (Lines 260-320)
+- **Ground Effects:** AOE telegraphs with delayed damage (Lines 163-173)
+- **Unavoidable Attacks:** Ultimate-tier mechanics (Lines 175-179)
+- **Combat Music:** Audio system integration (Line 443)
+- **Stagger System:** Cast interruption mechanics (Lines 419-424)
+
+---
+
+## Progress Summary
+
+**MVP Scope (Phase 1):** 17/25 features complete (68%)
+- Core movement, targeting, queue, abilities: ✅ Complete
+- Missing: TAB cycling, tier lock keys, visual polish
+
+**Post-MVP (Phases 2-4):** 0/17 features started (0%)
+- Build diversity, tactical depth, advanced systems
+
+**Total Combat System:** 17/42 features complete (40%)
+
+---
+
+## Next Priorities
+
+Based on spec completeness and user value:
+
+1. **Tier Lock Number Keys (1/2/3)** - Critical for range targeting UX
+2. **TAB Cycling** - Required for equidistant target selection
+3. **Tier Badge Visual Feedback** - Shows which tier is locked
+4. **Second Enemy Type** - Validates targeting system, increases variety
+5. **Projectile Attack Pattern** - Foundation for ranged combat
+6. **Visual Telegraphs** - Skill expression and counterplay
+
+---
+
+**Document Version:** 1.0
+**Maintained By:** Development team
+**Review Cadence:** Update after each ADR acceptance or spec change

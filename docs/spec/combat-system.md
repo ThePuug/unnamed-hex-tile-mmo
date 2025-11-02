@@ -56,8 +56,9 @@ All combat is **directional** - you face a direction and abilities target based 
 
 **Target Selection:**
 * Your "target" is determined by direction + proximity
-* Basic attacks hit the **nearest hostile within range in the direction you're facing**
-* No clicking, no cursor - just face enemies and attack
+* Attacks and abilities hit the **nearest hostile within range in the direction you're facing**
+* No clicking, no cursor - just face enemies and use abilities
+* Auto-attacks automatically target adjacent hostiles
 
 **Target Indicators:**
 
@@ -99,9 +100,9 @@ Scenario: Warrior fighting NPC dog (range 1), hostile player approaches (range 7
 
 1. Default: Red indicator on dog (nearest, range 1)
 2. Press "3" (far tier lock) → indicator switches to player (nearest in far tier)
-3. Press "Q" (Charge gap closer) → charges at player
+3. Press "Q" (Lunge gap closer) → dashes to player
 4. Tier lock drops → indicator returns to nearest (now player at range 1)
-5. Press "W" (Overpower) → hits player immediately
+5. Press "W" (Overpower) → hits player with heavy damage
 ```
 
 *Manual (TAB Cycle):*
@@ -144,8 +145,8 @@ Scenario: Warrior fighting NPC dog (range 1), hostile player approaches (range 7
 **Instant Attacks:**
 * Resolve immediately on cast
 * Target based on facing direction + proximity at moment of cast
-* Typically melee/adjacent hex abilities
-* Example: Basic sword strike, Charge (Direct signature)
+* Typically melee/adjacent hex abilities or gap closers
+* Example: Lunge (Direct signature), Overpower (Overwhelming signature)
 
 **Projectile Attacks:**
 * Projectile spawns and travels toward target hex
@@ -290,6 +291,7 @@ Clear **first N threats** in queue (leftmost).
 * Clears: 1 threat (leftmost, physical only)
 * Visual: Shield block animation
 * Audio: Impact thud
+* Note: MVP version clears ALL threats (50 stamina) as simplified defensive option
 
 **Parry (Primal signature):**
 * Cost: 25 stamina
@@ -530,24 +532,70 @@ Enemies broadcast intent before major attacks:
 
 ### Player Abilities
 
-**Offensive:**
-* **Basic Attack (Q key)**
-  - Instant, no cost, no cooldown
-  - Range: Adjacent hex (1 hex away, close tier)
+**Design Note:** All MVP abilities cost stamina only (no mana). Stamina pool scales with Might (primary) and Vitality (secondary), while Direct abilities (Lunge) scale damage with Vitality. This creates build diversity: Might specialists have large stamina pools for more ability casts, Vitality specialists deal more damage per cast but have smaller resource pools.
+
+**Passive:**
+* **Auto-Attack**
+  - Automatic, no cost, no cooldown
+  - Range: Adjacent hex (1 hex away)
   - Targeting: Nearest hostile in facing direction (60° cone) within range
-  - Damage: 20 physical, scales with Might
-  - Visual: Simple attack animation, swing weapon toward target
+  - Attack speed: Every 1.5 seconds while in combat
+  - Damage: 20 physical (100% base), scales with Might
+  - Pauses when not adjacent to target
+  - Visual: Character automatically swings weapon at adjacent target
   - Audio: Weapon swoosh + impact sound
-  - Player interaction: Face enemy with arrow keys, press Q to attack
+  - Player interaction: Passive - triggers automatically when adjacent to hostile target
+
+**Offensive:**
+* **Lunge (Q key)**
+  - Instant gap closer with damage
+  - Range: 4 hexes (mid tier)
+  - Cost: 20 stamina
+  - Cooldown: None
+  - Targeting: Nearest hostile in facing direction (60° cone) within range
+  - Effect: Instantly teleport adjacent to target, deal 40 physical damage (200% base)
+  - Damage scales with Vitality (Direct approach primary attribute)
+  - Visual: Quick dash to target, attack animation on arrival
+  - Audio: Dash sound + impact
+  - Player interaction: Face enemy, press Q to close distance and attack
+
+* **Overpower (W key)**
+  - Heavy melee strike
+  - Range: Adjacent hex (1 hex away, close tier)
+  - Cost: 40 stamina
+  - Cooldown: 2 seconds
+  - Targeting: Nearest hostile in facing direction (60° cone) within range
+  - Effect: Deal 80 physical damage (400% base) to target
+  - Damage scales with Presence (Overwhelming approach primary attribute)
+  - Visual: Heavy wind-up animation, devastating impact effect
+  - Audio: Heavy swing + crushing impact
+  - Player interaction: Face enemy when adjacent, press W for finishing blow
+
+**Utility:**
+* **Knockback (E key)**
+  - Defensive positioning tool
+  - Range: 2 hexes
+  - Cost: 30 stamina
+  - Cooldown: 1.5 seconds
+  - Targeting: Nearest hostile in facing direction (60° cone) within range
+  - Effect: Push target back 1 hex (away from caster)
+  - Does not deal damage
+  - If target blocked by terrain/obstacle, push fails but still costs stamina
+  - Visual: Force push animation, target slides backward
+  - Audio: Impact thud + knockback sound
+  - Player interaction: Face enemy within 2 hexes, press E to create space
 
 **Defensive:**
-* **Dodge (E key)**
-  - Clear entire queue, 30 stamina, 0.5s GCD
-  - Self-target ability (no targeting required)
-  - No movement (advanced version later will have dash)
-  - Visual: Blur/ghost effect (you evade but stay in place)
-  - Audio: Whoosh sound
-  - Player interaction: Press E when queue has threats to clear them
+* **Deflect (R key)**
+  - Full queue clear (MVP version - simplified from Hardened signature)
+  - Range: Self-target
+  - Cost: 50 stamina
+  - Cooldown: 0.5s GCD
+  - Effect: Clear all queued threats, preventing all damage
+  - Visual: Shield block animation with defensive posture
+  - Audio: Multiple shield impacts (one per threat blocked)
+  - Player interaction: Press R when threats in queue to block all incoming damage
+  - Note: Expensive resource cost forces careful usage and positioning as alternative
 
 ### Enemy Type
 
@@ -560,7 +608,7 @@ Enemies broadcast intent before major attacks:
 ### Systems Required
 
 1. **Movement and Heading:**
-   - WASD movement between hexes
+   - Arrow key movement between hexes
    - Heading tracking (persists after movement stops)
    - Character rotation to match heading
    - Position on hex indicates facing direction
@@ -609,26 +657,33 @@ Enemies broadcast intent before major attacks:
 
 ### Success Criteria
 
-* Player can move with WASD and heading updates correctly
+* Player can move with Arrow Keys and heading updates correctly
 * Target indicator shows nearest hostile in facing direction
 * Player can face Wild Dog and see red indicator on it
-* Player can Basic Attack and hit indicated target
+* **Auto-Attack activates automatically when adjacent to target**
+* Player can Lunge (Q) to close distance and deal 200% damage
+* Player can Overpower (W) when adjacent for heavy 400% damage
+* Player can Knockback (E) to push target away and create space
 * Dog's attacks enter player's reaction queue with visible timer
-* Player can Dodge to clear queue (stamina cost applied)
+* Player can Deflect (R) to clear entire queue (expensive stamina cost)
 * If player doesn't react, damage applies with armor reduction
-* Positioning matters: player can reposition to change target
+* **Positioning matters: staying in melee provides free DPS but exposes to danger**
+* **Resource management critical: all abilities cost stamina, must balance offense and defense**
 * Target indicator updates smoothly as player moves/rotates
 * Combat feels responsive and clear (no confusion about what's happening)
 * Player can win or lose based on resource management, reactions, AND positioning
+* **Removing Dodge forces tactical positioning rather than panic-button spam**
 
 ---
 
 ## Post-MVP Extensions
 
 ### Phase 2: Build Diversity
-* Add 2-3 more reaction abilities (Counter, Parry, Ward)
-* Add 2-3 offensive abilities (Charge, Fireball, Mark)
+* Add 2-3 more reaction abilities (Counter, Fortify, Ward)
+* Add 2-3 offensive abilities (Trap, Volley, Mark)
+* Add magic damage type and mana-based abilities
 * Multiple enemy types (ranged, tank, fast)
+* Note: MVP abilities (Lunge, Overpower) are from Direct and Overwhelming approaches
 
 ### Phase 3: Tactical Depth
 * Positional modifiers (flanking bonus, terrain advantage)
@@ -655,10 +710,11 @@ Enemies broadcast intent before major attacks:
 * Your character faces the direction you last moved
 
 ### Combat Abilities (Left Hand)
-* **Q**: Ability slot 1 (Example: Basic Attack)
-* **W**: Ability slot 2 (Example: Secondary ability)
-* **E**: Ability slot 3 (Example: Dodge/Reaction ability)
-* **R**: Ability slot 4 (Example: Ultimate/Special ability)
+* **Q**: Lunge - Gap closer + 200% damage (range 4)
+* **W**: Overpower - Heavy 400% damage strike (range 1)
+* **E**: Knockback - Push target back 1 hex (range 2)
+* **R**: Deflect - Clear all queued threats (self-target, expensive)
+* **Auto-Attack**: Passive - Automatically attacks adjacent hostile every 1.5s
 * Abilities target current hostile/ally indicator or self (depending on ability)
 
 ### Targeting (Left Hand)
@@ -702,6 +758,11 @@ Enemies broadcast intent before major attacks:
 * Should armor cap at 75% reduction or lower/higher?
 * Are range tiers correct? (1-2 close, 3-6 mid, 7+ far)
 * Should enemies get facing bonus/penalty? (backstab damage, frontal armor)
+* **Auto-attack timing:** Is 1.5s attack speed correct? Too fast/slow?
+* **Ability costs:** Are 20/30/40/50 stamina costs balanced for MVP?
+* **Deflect cost:** Is 50 stamina (expensive) sufficient to force positioning gameplay?
+* **Knockback mechanics:** Should failed knockback (terrain blocked) still cost stamina?
+* **Lunge range:** Is 4 hexes correct or should it be shorter/longer?
 
 **Directional Combat:**
 * ✅ **Facing cone: 60 degrees** (decided - one hex-face direction)
@@ -709,6 +770,8 @@ Enemies broadcast intent before major attacks:
 * Should abilities have facing requirements? (some abilities only work if target is in front)
 * How much does heading/position on hex matter geometrically? (for tiebreakers)
 * Movement speed/responsiveness? - Needs playtesting to balance feel vs tactical play
+* **Auto-attack pause:** Should auto-attack pause while moving? Or only when not adjacent?
+* **Auto-attack windup:** Should there be animation lock/windup time to prevent kiting abuse?
 
 **Scope:**
 * Should MVP include health bars for enemies? (assumed yes)
