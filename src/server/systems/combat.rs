@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, *},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, LastAutoAttack, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::{
@@ -175,7 +175,9 @@ pub fn handle_use_ability(
             }
 
             match ability {
-                AbilityType::BasicAttack => {
+                AbilityType::AutoAttack | AbilityType::Overpower => {
+                    // Auto-Attack (passive, free, 20 dmg) and Overpower (W, 40 stam, 80 dmg)
+                    // Both are melee attacks (adjacent hex range)
                     // Get caster's location and heading from Query 0
                     let (caster_loc, caster_heading) = if let Ok(data) = param_set.p0().get(ent) {
                         (*data.0, *data.1)
@@ -234,8 +236,37 @@ pub fn handle_use_ability(
                                 continue;
                             }
 
-                            // BasicAttack: 20 base physical damage (no stamina cost)
-                            let base_damage = 20.0;
+                            // Determine damage and stamina cost based on ability
+                            let (base_damage, stamina_cost) = match ability {
+                                AbilityType::AutoAttack => (20.0, 0.0),    // Free attack
+                                AbilityType::Overpower => (80.0, 40.0),    // Heavy strike
+                                _ => unreachable!(),
+                            };
+
+                            // Check stamina if ability has a cost
+                            if stamina_cost > 0.0 {
+                                if let Ok((_, mut stamina, _)) = param_set.p2().get_mut(ent) {
+                                    if stamina.state < stamina_cost {
+                                        writer.write(Do {
+                                            event: GameEvent::AbilityFailed {
+                                                ent,
+                                                reason: AbilityFailReason::InsufficientStamina,
+                                            },
+                                        });
+                                        continue;
+                                    }
+                                    stamina.state -= stamina_cost;
+                                    stamina.step = stamina.state;
+
+                                    // Broadcast updated stamina
+                                    writer.write(Do {
+                                        event: GameEvent::Incremental {
+                                            ent,
+                                            component: crate::common::message::Component::Stamina(*stamina),
+                                        },
+                                    });
+                                }
+                            }
 
                             // Emit DealDamage event
                             commands.trigger_targets(
@@ -250,7 +281,146 @@ pub fn handle_use_ability(
                                 target_ent,
                             );
 
-                            // Broadcast GCD event (BasicAttack triggers Attack GCD)
+                            // Only Overpower triggers GCD - AutoAttack is passive and shouldn't trigger GCD
+                            if ability == AbilityType::Overpower {
+                                writer.write(Do {
+                                    event: GameEvent::Gcd {
+                                        ent,
+                                        typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                                    },
+                                });
+                            }
+                        }
+                    } else {
+                        // No valid target in facing cone
+                        writer.write(Do {
+                            event: GameEvent::AbilityFailed {
+                                ent,
+                                reason: AbilityFailReason::NoTargets,
+                            },
+                        });
+                    }
+                }
+                AbilityType::Lunge => {
+                    // Lunge: Gap closer (Q, 4 hex range, 20 stam, 40 dmg, teleport adjacent to target)
+                    // Get caster's location and heading
+                    let (caster_loc, caster_heading) = if let Ok(data) = param_set.p0().get(ent) {
+                        (*data.0, *data.1)
+                    } else {
+                        continue;
+                    };
+
+                    // Determine if caster is a player (for asymmetric targeting)
+                    let caster_is_player = entity_query
+                        .get(ent)
+                        .ok()
+                        .and_then(|(_, _, pc_opt)| pc_opt)
+                        .is_some();
+
+                    // Use targeting system to find target
+                    let target_opt = select_target(
+                        ent,
+                        caster_loc,
+                        caster_heading,
+                        None, // No tier lock
+                        &nntree,
+                        |target_ent| {
+                            // Skip dead players
+                            if respawn_query.get(target_ent).is_ok() {
+                                return None;
+                            }
+                            entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
+                                let target_is_player = player_controlled_opt.is_some();
+                                // Asymmetric targeting: can only attack entities on opposite "team"
+                                if caster_is_player != target_is_player {
+                                    Some(*et)
+                                } else {
+                                    None
+                                }
+                            })
+                        },
+                    );
+
+                    if let Some(target_ent) = target_opt {
+                        let target_loc = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc);
+
+                        if let Some(target_loc) = target_loc {
+                            // Check range (must be within 4 hexes for Lunge)
+                            let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+                            if distance > 4 || distance < 1 {
+                                // Target is out of range (or we're already on top of them)
+                                writer.write(Do {
+                                    event: GameEvent::AbilityFailed {
+                                        ent,
+                                        reason: AbilityFailReason::OutOfRange,
+                                    },
+                                });
+                                continue;
+                            }
+
+                            // Check stamina (20 cost)
+                            let lunge_stamina_cost = 20.0;
+                            if let Ok((_, mut stamina, _)) = param_set.p2().get_mut(ent) {
+                                if stamina.state < lunge_stamina_cost {
+                                    writer.write(Do {
+                                        event: GameEvent::AbilityFailed {
+                                            ent,
+                                            reason: AbilityFailReason::InsufficientStamina,
+                                        },
+                                    });
+                                    continue;
+                                }
+
+                                // Consume stamina
+                                stamina.state -= lunge_stamina_cost;
+                                stamina.step = stamina.state;
+
+                                // Broadcast updated stamina
+                                writer.write(Do {
+                                    event: GameEvent::Incremental {
+                                        ent,
+                                        component: crate::common::message::Component::Stamina(*stamina),
+                                    },
+                                });
+                            } else {
+                                continue;
+                            }
+
+                            // Find landing position: adjacent to target, closest to caster
+                            let target_neighbors = (*target_loc).neighbors();
+                            let landing_loc = target_neighbors
+                                .iter()
+                                .min_by_key(|neighbor_loc| caster_loc.flat_distance(neighbor_loc))
+                                .copied()
+                                .unwrap_or(*target_loc); // Fallback to target loc if no neighbors
+
+                            // Update caster's location (teleport)
+                            // Need to update Loc component via commands
+                            commands.entity(ent).insert(Loc::new(landing_loc));
+
+                            // Broadcast location update to clients
+                            writer.write(Do {
+                                event: GameEvent::Incremental {
+                                    ent,
+                                    component: crate::common::message::Component::Loc(Loc::new(landing_loc)),
+                                },
+                            });
+
+                            // Deal damage (40 base damage)
+                            commands.trigger_targets(
+                                Try {
+                                    event: GameEvent::DealDamage {
+                                        source: ent,
+                                        target: target_ent,
+                                        base_damage: 40.0,
+                                        damage_type: DamageType::Physical,
+                                    },
+                                },
+                                target_ent,
+                            );
+
+                            // Broadcast GCD event (Lunge triggers Attack GCD)
                             writer.write(Do {
                                 event: GameEvent::Gcd {
                                     ent,
@@ -268,14 +438,138 @@ pub fn handle_use_ability(
                         });
                     }
                 }
-                AbilityType::Dodge => {
+                AbilityType::Knockback => {
+                    // Knockback: Push enemy (E, 2 hex range, 30 stam, push 1 hex away)
+                    // Get caster's location and heading
+                    let (caster_loc, caster_heading) = if let Ok(data) = param_set.p0().get(ent) {
+                        (*data.0, *data.1)
+                    } else {
+                        continue;
+                    };
+
+                    // Determine if caster is a player (for asymmetric targeting)
+                    let caster_is_player = entity_query
+                        .get(ent)
+                        .ok()
+                        .and_then(|(_, _, pc_opt)| pc_opt)
+                        .is_some();
+
+                    // Use targeting system to find target
+                    let target_opt = select_target(
+                        ent,
+                        caster_loc,
+                        caster_heading,
+                        None, // No tier lock
+                        &nntree,
+                        |target_ent| {
+                            // Skip dead players
+                            if respawn_query.get(target_ent).is_ok() {
+                                return None;
+                            }
+                            entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
+                                let target_is_player = player_controlled_opt.is_some();
+                                // Asymmetric targeting: can only attack entities on opposite "team"
+                                if caster_is_player != target_is_player {
+                                    Some(*et)
+                                } else {
+                                    None
+                                }
+                            })
+                        },
+                    );
+
+                    if let Some(target_ent) = target_opt {
+                        let target_loc = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc);
+
+                        if let Some(target_loc) = target_loc {
+                            // Check range (must be within 2 hexes for Knockback)
+                            let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+                            if distance > 2 || distance < 1 {
+                                // Target is out of range (or we're on top of them)
+                                writer.write(Do {
+                                    event: GameEvent::AbilityFailed {
+                                        ent,
+                                        reason: AbilityFailReason::OutOfRange,
+                                    },
+                                });
+                                continue;
+                            }
+
+                            // Check stamina (30 cost)
+                            let knockback_stamina_cost = 30.0;
+                            if let Ok((_, mut stamina, _)) = param_set.p2().get_mut(ent) {
+                                if stamina.state < knockback_stamina_cost {
+                                    writer.write(Do {
+                                        event: GameEvent::AbilityFailed {
+                                            ent,
+                                            reason: AbilityFailReason::InsufficientStamina,
+                                        },
+                                    });
+                                    continue;
+                                }
+
+                                // Consume stamina
+                                stamina.state -= knockback_stamina_cost;
+                                stamina.step = stamina.state;
+
+                                // Broadcast updated stamina
+                                writer.write(Do {
+                                    event: GameEvent::Incremental {
+                                        ent,
+                                        component: crate::common::message::Component::Stamina(*stamina),
+                                    },
+                                });
+                            } else {
+                                continue;
+                            }
+
+                            // Calculate push direction: find neighbor of target that's furthest from caster
+                            let target_neighbors = (*target_loc).neighbors();
+                            let push_loc = target_neighbors
+                                .iter()
+                                .max_by_key(|neighbor_loc| caster_loc.flat_distance(neighbor_loc))
+                                .copied()
+                                .unwrap_or(*target_loc); // Fallback to current loc if no neighbors
+
+                            // Update target's location (push)
+                            commands.entity(target_ent).insert(Loc::new(push_loc));
+
+                            // Broadcast location update to clients
+                            writer.write(Do {
+                                event: GameEvent::Incremental {
+                                    ent: target_ent,
+                                    component: crate::common::message::Component::Loc(Loc::new(push_loc)),
+                                },
+                            });
+
+                            // Broadcast GCD event (Knockback triggers Attack GCD)
+                            writer.write(Do {
+                                event: GameEvent::Gcd {
+                                    ent,
+                                    typ: crate::common::systems::combat::gcd::GcdType::Attack,
+                                },
+                            });
+                        }
+                    } else {
+                        // No valid target in facing cone
+                        writer.write(Do {
+                            event: GameEvent::AbilityFailed {
+                                ent,
+                                reason: AbilityFailReason::NoTargets,
+                            },
+                        });
+                    }
+                }
+                AbilityType::Deflect => {
+                    // Deflect: Clear all queued threats (R, 50 stamina)
                     // Get caster's queue and stamina from Query 2
                     if let Ok((mut queue, mut stamina, _attrs)) = param_set.p2().get_mut(ent) {
-                        // Fixed dodge cost
-                        let dodge_cost = 60.0;
+                        // Fixed deflect cost (ADR-009)
+                        let deflect_cost = 50.0;
 
                         // Validate ability usage
-                        if stamina.state < dodge_cost {
+                        if stamina.state < deflect_cost {
                             // Not enough stamina
                             writer.write(Do {
                                 event: GameEvent::AbilityFailed {
@@ -294,7 +588,7 @@ pub fn handle_use_ability(
                         }
 
                         if queue.is_empty() {
-                            // Nothing to dodge
+                            // Nothing to deflect (no queued threats)
                             writer.write(Do {
                                 event: GameEvent::AbilityFailed {
                                     ent,
@@ -304,8 +598,8 @@ pub fn handle_use_ability(
                             continue;
                         }
 
-                        // Valid dodge - consume stamina
-                        stamina.state -= dodge_cost;
+                        // Valid deflect - consume stamina
+                        stamina.state -= deflect_cost;
                         stamina.step = stamina.state;
 
                         // Clear queue
@@ -327,7 +621,7 @@ pub fn handle_use_ability(
                             },
                         });
 
-                        // Broadcast GCD event (Dodge triggers Attack GCD)
+                        // Broadcast GCD event (Deflect triggers Attack GCD)
                         writer.write(Do {
                             event: GameEvent::Gcd {
                                 ent,
@@ -361,6 +655,72 @@ pub fn apply_gcd(
                 // Activate GCD
                 gcd.activate(typ, duration, time.elapsed());
             }
+        }
+    }
+}
+
+/// CRITICAL: until we add a new system ... we need this one to bypass a random magic 
+/// number of systems causing scheduling issues
+pub fn do_nothing(){}
+
+/// System to automatically trigger auto-attacks when adjacent to hostiles (ADR-009)
+/// Runs periodically to check if actors have adjacent hostiles and can auto-attack
+/// Auto-attack cooldown: 1.5s (1500ms)
+pub fn process_passive_auto_attack(
+    mut query: Query<
+        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::server::systems::behaviour::Target),
+        Without<crate::common::components::behaviour::PlayerControlled>
+    >,
+    entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
+    time: Res<Time>,
+    runtime: Res<crate::server::resources::RunTime>,
+    mut writer: EventWriter<Try>,
+) {
+    // Use game world time (server uptime + offset) for consistent time base
+    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+
+    const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
+
+    // Only iterate over NPCs (entities Without PlayerControlled)
+    for (ent, loc, mut last_auto_attack, gcd_opt, target) in query.iter_mut() {
+        // Check if on GCD
+        if let Some(gcd) = gcd_opt {
+            if gcd.is_active(time.elapsed()) {
+                continue; // Skip if on GCD
+            }
+        }
+
+        // Check cooldown (1.5s between auto-attacks)
+        let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
+        if time_since_last_attack.as_millis() < AUTO_ATTACK_COOLDOWN_MS as u128 {
+            continue; // Still on cooldown
+        }
+
+        // ADR-009: Check if NPC's locked target (from behavior tree) is adjacent
+        // Get target's location
+        let Ok((_, target_loc, respawn_timer_opt)) = entity_query.get(**target) else {
+            continue; // Target entity doesn't exist or missing components
+        };
+
+        // Skip dead targets
+        if respawn_timer_opt.is_some() {
+            continue;
+        }
+
+        // Check if target is adjacent (distance == 1)
+        let distance = loc.flat_distance(target_loc);
+        if distance == 1 {
+            // Target is adjacent - trigger auto-attack
+            writer.write(Try {
+                event: GameEvent::UseAbility {
+                    ent,
+                    ability: AbilityType::AutoAttack,
+                },
+            });
+
+            // Update last attack time
+            last_auto_attack.last_attack_time = now;
         }
     }
 }

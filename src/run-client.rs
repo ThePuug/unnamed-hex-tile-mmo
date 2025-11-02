@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, prediction, renet, spawner_viz, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, renet, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -111,21 +111,13 @@ fn main() {
         animator::update,
         camera::update,
         combat::apply_gcd,
-        prediction::predict_basic_attack,
-        prediction::predict_dodge,
-        // REMOVED: prediction::predict_threat_resolution - server-authoritative only
+        // REMOVED: Client-side attack prediction - all combat is server-authoritative
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,
         combat::handle_ability_failed,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
-    ));
-
-    app.add_systems(Update, (
-        spawner_viz::visualize_spawners,
-        spawner_viz::toggle_spawner_viz,
-        spawner_viz::cleanup_despawned_spawner_viz,
     ));
 
     // UAT testing aids - client-side hacks for testing resource/threat mechanics
@@ -156,7 +148,6 @@ fn main() {
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
-    app.init_resource::<spawner_viz::SpawnerVizState>();
 
     // Add chunk eviction system (runs periodically to cleanup distant chunks)
     // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction

@@ -5,10 +5,8 @@ use crate::{common::{
         components::{
             heading::*,
             keybits::*,
-            spawner::*,
         },
         message::{AbilityType, Component, Event},
-        systems::combat::gcd::*,
         resources::*,
     }, *
 };
@@ -18,10 +16,6 @@ pub const KEYCODE_UP: KeyCode = KeyCode::ArrowUp;
 pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
 pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
-
-pub const KEYCODE_GCD1: KeyCode = KeyCode::KeyQ;
-pub const KEYCODE_DODGE: KeyCode = KeyCode::Space;
-pub const KEYCODE_PLACE_SPAWNER: KeyCode = KeyCode::KeyP;
 
 /// Milliseconds between periodic input sends
 pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
@@ -41,34 +35,26 @@ pub fn update_keybits(
         // Check GCD before allowing ability usage
         let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
 
-        // BasicAttack ability (Q key) - Send as Try event to server for validation
-        if keyboard.just_pressed(KEYCODE_GCD1) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::BasicAttack }});
+        // ADR-009 MVP Ability Set
+
+        // Lunge ability (Q key) - Gap closer
+        if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge }});
         }
 
-        // Dodge ability (Space key) - Send as Try event to server for validation
-        if keyboard.just_pressed(KEYCODE_DODGE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
+        // Overpower ability (W key) - Heavy strike
+        if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower }});
         }
 
-        // Dodge ability (E key) - Skill-based dodge trigger
+        // Knockback ability (E key) - Push enemy
         if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Dodge }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Knockback }});
         }
 
-        // Place spawner (P key) - Debug utility to spawn NPCs
-        if keyboard.just_pressed(KEYCODE_PLACE_SPAWNER) && !gcd_active {
-            let spawner = Spawner {
-                npc_template: NpcTemplate::Dog,
-                max_count: 3,
-                spawn_radius: 2,
-                player_activation_range: 20,
-                leash_distance: 30,
-                despawn_distance: 50,
-                respawn_timer_ms: 5000,
-                last_spawn_attempt: 0,
-            };
-            writer.write(Try { event: Event::Gcd { ent, typ: GcdType::PlaceSpawner(spawner) }});
+        // Deflect ability (R key) - Clear all threats
+        if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect }});
         }
 
         let mut keybits = KeyBits::default();

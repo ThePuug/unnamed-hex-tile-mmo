@@ -2,7 +2,7 @@
 
 **Specification:** [combat-system.md](combat-system.md)
 **Last Updated:** 2025-11-02
-**Overall Status:** 17/42 features complete (40% - MVP scope)
+**Overall Status:** 13/44 features complete (30% - MVP scope)
 
 ---
 
@@ -55,12 +55,12 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Instant attacks | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 145-149 | Lunge, Overpower implemented |
+| Instant attacks | 🚧 Partial | Implemented | Lines 145-149 | BasicAttack only (Lunge/Overpower not yet) |
 | Projectile attacks | ❌ Not Started | - | Lines 151-161 | Travel time, dodgeable |
 | Ground effects/telegraphs | ❌ Not Started | - | Lines 163-173 | AOE warnings, delayed damage |
 | Unavoidable attacks | ⏸️ Deferred | - | Lines 175-179 | Ultimate-tier abilities |
 
-**Category Status:** 1/4 complete (25%)
+**Category Status:** 0/4 complete (0%)
 
 ---
 
@@ -84,8 +84,8 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Deflect (full clear) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 289-294 | MVP version (all threats, not first) |
-| Dodge (Evasive) | ⏸️ Deferred | - | Lines 260-264 | Post-MVP |
+| Dodge (queue clear) | ✅ Complete | Implemented | Lines 260-264 | 60 stamina, clears queue |
+| Deflect (Hardened) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 289-294 | 50 stamina, full queue clear |
 | Ward (Shielded) | ⏸️ Deferred | - | Lines 266-270 | Post-MVP |
 | Fortify (Hardened) | ⏸️ Deferred | - | Lines 272-276 | Post-MVP |
 | Counter (Patient) | ⏸️ Deferred | - | Lines 282-287 | Post-MVP |
@@ -102,13 +102,15 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Auto-Attack (passive) | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 538-548 | 1.5s adjacent attack |
-| Lunge (Q) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 550-560 | Gap closer, 200% damage |
-| Overpower (W) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 562-573 | Heavy strike, 400% damage |
-| Knockback (E) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 575-587 | Positioning tool |
-| Deflect (R) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 589-599 | Full queue clear (MVP) |
+| BasicAttack (Q) | ✅ Complete | Implemented | Lines 538-548 | Manual melee attack |
+| Dodge (E) | ✅ Complete | Implemented | Lines 260-264 | Queue clear, 60 stamina |
+| Auto-Attack (passive) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 538-548 | 1.5s adjacent attack |
+| Lunge (Q) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 550-560 | Gap closer, 200% damage |
+| Overpower (W) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 562-573 | Heavy strike, 400% damage |
+| Knockback (E) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 575-587 | Positioning tool |
+| Deflect (R) | ❌ Not Started | [ADR-009 (Proposed)](../adr/009-mvp-ability-set.md) | Lines 589-599 | Full queue clear (MVP) |
 
-**Category Status:** 5/5 complete (100%)
+**Category Status:** 2/7 complete (29%)
 
 ---
 
@@ -248,27 +250,28 @@ Features described in spec but not yet in implementation plan:
 
 ## Progress Summary
 
-**MVP Scope (Phase 1):** 17/25 features complete (68%)
-- Core movement, targeting, queue, abilities: ✅ Complete
-- Missing: TAB cycling, tier lock keys, visual polish
+**MVP Scope (Phase 1):** 13/31 features complete (42%)
+- Core systems: Movement (4/4), Queue (7/7), Resources (5/5), HUD (6/6) ✅ Complete
+- Partial systems: Targeting (4/9), Damage (3/4), Combat State (2/3), Enemy AI (2/3)
+- Missing: MVP abilities (2/7), attack execution (0/3), TAB cycling, tier lock keys
 
-**Post-MVP (Phases 2-4):** 0/17 features started (0%)
-- Build diversity, tactical depth, advanced systems
+**Post-MVP (Phases 2-4):** 0/13 features started (0%)
+- Deferred: 7 reaction abilities, crits, stagger, facing cone visuals, combat state visuals, ranged enemies, telegraphs, unavoidable attacks
 
-**Total Combat System:** 17/42 features complete (40%)
+**Total Combat System:** 13/44 features complete (30%)
 
 ---
 
 ## Next Priorities
 
-Based on spec completeness and user value:
+Based on actual implementation status and user value:
 
-1. **Tier Lock Number Keys (1/2/3)** - Critical for range targeting UX
-2. **TAB Cycling** - Required for equidistant target selection
-3. **Tier Badge Visual Feedback** - Shows which tier is locked
-4. **Second Enemy Type** - Validates targeting system, increases variety
-5. **Projectile Attack Pattern** - Foundation for ranged combat
-6. **Visual Telegraphs** - Skill expression and counterplay
+1. **Accept or Reject ADR-009** - MVP ability set (Auto-Attack, Lunge, Overpower, Knockback, Deflect) is still in "Proposed" status
+2. **Implement Accepted MVP Abilities** - Currently only BasicAttack and Dodge exist (2/7 abilities)
+3. **Tier Lock Number Keys (1/2/3)** - Critical for range targeting UX
+4. **TAB Cycling** - Required for equidistant target selection
+5. **Second Enemy Type** - Validates targeting system, increases variety
+6. **Projectile Attack Pattern** - Foundation for ranged combat
 
 ---
 

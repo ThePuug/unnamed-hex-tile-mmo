@@ -9,10 +9,9 @@ pub mod combat_ui;
 pub mod debug_resources;
 // pub mod effect;
 pub mod input;
-pub mod prediction;
+// pub mod prediction; // REMOVED: Client-side attack prediction removed
 pub mod renet;
 pub mod resource_bars;
-pub mod spawner_viz;
 pub mod target_frame;
 pub mod target_indicator;
 pub mod threat_icons;

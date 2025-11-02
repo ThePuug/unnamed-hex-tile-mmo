@@ -15,10 +15,9 @@ use crate::{
         },
     },
     server::systems::behaviour::{
-        AttackTarget, FindSomethingInterestingWithin, Nearby, NearbyOrigin,
+        FindSomethingInterestingWithin, Nearby, NearbyOrigin,
         find_target::FindOrKeepTarget,
         face_target::FaceTarget,
-        use_ability::UseAbilityIfAdjacent,
     },
 };
 
@@ -135,13 +134,9 @@ fn spawn_npc(
                             "face target (after pathfinding)",
                             FaceTarget
                         ),
-                        Behave::spawn_named(
-                            "use ability if adjacent",
-                            UseAbilityIfAdjacent {
-                                ability: AbilityType::BasicAttack,
-                            }
-                        ),
-                        Behave::Wait(1.0),  // 1 second GCD for sustained pressure (ADR-006)
+                        // ADR-009: Auto-attack is handled by passive system (process_passive_auto_attack)
+                        // Dogs only need to pathfind to target and face them - attacks are automatic
+                        Behave::Wait(1.0),  // DIAGNOSTIC: Testing if wait fixes movement regression
                     }
                 }
             })
@@ -230,6 +225,7 @@ fn spawn_npc(
             combat_state,
             reaction_queue,
             Gcd::new(),  // GCD component for cooldown tracking
+            LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
             children![(
                 Name::new("behaviour"),
                 behavior_tree,

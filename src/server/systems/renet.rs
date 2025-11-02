@@ -120,6 +120,7 @@ pub fn do_manage_connections(
                     combat_state,
                     reaction_queue,
                     gcd::Gcd::new(),  // GCD component for cooldown tracking
+                    LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));

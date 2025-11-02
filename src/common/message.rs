@@ -54,11 +54,19 @@ pub enum Event {
     Pong { client_time: u128 },
 }
 
-/// Types of abilities that can be used
+/// Types of abilities that can be used (ADR-009 MVP ability set)
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityType {
-    BasicAttack,
-    Dodge,
+    /// Q: Gap closer - teleport adjacent to target (4 hex range, 20 stam, 40 dmg)
+    Lunge,
+    /// W: Heavy strike - high damage melee attack (1 hex, 40 stam, 80 dmg, 2s CD)
+    Overpower,
+    /// E: Positioning - push target 1 hex away (2 hex range, 30 stam, 1.5s CD)
+    Knockback,
+    /// R: Emergency defense - clear all queued threats (50 stam, 0.5s GCD)
+    Deflect,
+    /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
+    AutoAttack,
 }
 
 /// Reasons why an ability usage might fail

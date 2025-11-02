@@ -215,12 +215,12 @@ pub fn attack_target(
                 |ent| player_query.get(ent).ok().map(|(et, _)| *et),
             );
 
-            // If target is in facing cone, attack!
+            // If target is in facing cone, use auto-attack
             if selected == Some(**target) {
                 writer.write(Try {
                     event: GameEvent::UseAbility {
                         ent: target_entity,
-                        ability: AbilityType::BasicAttack,
+                        ability: AbilityType::AutoAttack,
                     },
                 });
             }

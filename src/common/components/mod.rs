@@ -286,6 +286,22 @@ pub struct Sun();
 #[derive(Debug, Default, Component)]
 pub struct Moon();
 
+/// Tracks the last time an auto-attack was performed (ADR-009)
+/// Used to enforce 1.5s cooldown between passive auto-attacks
+#[derive(Clone, Component, Copy, Debug)]
+pub struct LastAutoAttack {
+    /// Game time when last auto-attack was performed (server time + offset)
+    pub last_attack_time: std::time::Duration,
+}
+
+impl Default for LastAutoAttack {
+    fn default() -> Self {
+        Self {
+            last_attack_time: std::time::Duration::ZERO,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

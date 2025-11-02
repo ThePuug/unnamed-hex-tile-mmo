@@ -89,6 +89,8 @@ fn main() {
         panic_on_error_system,
         actor::do_incremental,
         actor::update,
+        combat::do_nothing, // CRITICAL: needed because of some magic number of systems
+        combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         combat::handle_use_ability,
         combat::apply_gcd,  // ADR-006: Activate GCD component from Event::Gcd
         common::systems::combat::resources::check_death, // Check for death from ANY source
