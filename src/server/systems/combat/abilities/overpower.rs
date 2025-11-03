@@ -35,17 +35,31 @@ pub fn handle_overpower(
             continue;
         };
 
+        // Check if caster is dead (has RespawnTimer)
+        if respawn_query.get(*ent).is_ok() {
+            // Dead players can't use abilities - silently ignore
+            continue;
+        }
+
+        // Check GCD (must not be on cooldown)
+        let Ok(gcd) = gcd_query.get(*ent) else {
+            continue;
+        };
+
+        if gcd.is_active(time.elapsed()) {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::OnCooldown,
+                },
+            });
+            continue;
+        }
+
         // Get caster's location and heading
         let Ok((caster_loc, caster_heading)) = loc_heading_query.get(*ent) else {
             continue;
         };
-
-        // Determine if caster is a player (for asymmetric targeting)
-        let caster_is_player = entity_query
-            .get(*ent)
-            .ok()
-            .and_then(|(_, _, pc_opt)| pc_opt)
-            .is_some();
 
         // Use targeting system to select target (asymmetric: players attack NPCs, NPCs attack players)
         let target_opt = select_target(
@@ -59,17 +73,11 @@ pub fn handle_overpower(
                 if respawn_query.get(target_ent).is_ok() {
                     return None;
                 }
-                entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                    let target_is_player = player_controlled_opt.is_some();
-
-                    // Asymmetric targeting: can only attack entities on opposite "team"
-                    // Players attack NPCs, NPCs attack players (no friendly fire)
-                    if caster_is_player != target_is_player {
-                        Some(*et)
-                    } else {
-                        None  // Same team - no friendly fire
-                    }
-                })
+                entity_query.get(target_ent).ok().map(|(et, _, _)| *et)
+            },
+            |target_ent| {
+                // Check if entity is player-controlled
+                entity_query.get(target_ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some()
             },
         );
 

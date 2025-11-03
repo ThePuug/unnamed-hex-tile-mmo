@@ -116,22 +116,14 @@ pub fn update(
     }
 
     // Select the current hostile target using Phase 2 targeting system
-    // Filter out allies (PlayerControlled) from hostile targeting
     let hostile_target = select_target(
         player_ent,
         *player_loc,
         *player_heading,
         None, // No tier lock in MVP
         &nntree,
-        |ent| {
-            entity_query.get(ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                // Exclude allies (PlayerControlled) from hostile targeting
-                if player_controlled_opt.is_some() {
-                    return None;
-                }
-                Some(*et)
-            })
-        },
+        |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+        |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
     );
 
     // Select the current ally target using directional targeting

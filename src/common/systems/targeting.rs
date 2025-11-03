@@ -209,10 +209,11 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 ///
 /// 1. Query entities within max range (20 hexes) using spatial index
 /// 2. Filter to actors (NPCs and players only)
-/// 3. Filter to entities within 120° facing cone
-/// 4. Apply tier filter if locked (MVP passes None)
-/// 5. Select nearest by distance
-/// 6. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
+/// 3. Filter out same-team entities (players can't target players, NPCs can't target NPCs)
+/// 4. Filter to entities within 120° facing cone
+/// 5. Apply tier filter if locked (MVP passes None)
+/// 6. Select nearest by distance
+/// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
 ///
 /// # Performance
 ///
@@ -229,21 +230,27 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 /// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
 /// * `get_entity_type` - Function to get EntityType for an entity
+/// * `is_player_controlled` - Function to check if entity is player-controlled
 ///
 /// # Returns
 ///
 /// `Some(Entity)` if a valid target is found, `None` otherwise
-pub fn select_target<F>(
+pub fn select_target<F, G>(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
     tier_lock: Option<RangeTier>,
     nntree: &NNTree,
     get_entity_type: F,
+    is_player_controlled: G,
 ) -> Option<Entity>
 where
     F: Fn(Entity) -> Option<EntityType>,
+    G: Fn(Entity) -> bool,
 {
+    // Determine if caster is player-controlled (for team filtering)
+    let caster_is_player = is_player_controlled(caster_ent);
+
     // Query entities within max range (20 hexes)
     // Using locate_within_distance with squared distance
     let max_range_sq = 20 * 20;
@@ -266,6 +273,13 @@ where
             continue;
         };
         if !matches!(entity_type, EntityType::Actor(_)) {
+            continue;
+        }
+
+        // Filter out same-team entities
+        // Players can't target players, NPCs can't target NPCs
+        let target_is_player = is_player_controlled(ent);
+        if caster_is_player == target_is_player {
             continue;
         }
 
@@ -468,6 +482,7 @@ pub fn update_targets_on_change(
         (Or<(Changed<Heading>, Changed<Loc>)>, Without<TargetLock>)
     >,
     entity_types: Query<&EntityType>,
+    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target) in &mut query {
@@ -479,6 +494,7 @@ pub fn update_targets_on_change(
             None, // No tier lock (automatic targeting)
             &nntree,
             |e| entity_types.get(e).ok().copied(),
+            |e| player_controlled.contains(e),
         );
 
         // Update the Target component
@@ -497,6 +513,7 @@ pub fn update_targets_on_change(
         Or<(Changed<Heading>, Changed<Loc>)>
     >,
     entity_types: Query<&EntityType>,
+    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target) in &mut query {
@@ -508,6 +525,7 @@ pub fn update_targets_on_change(
             None, // No tier lock (automatic targeting)
             &nntree,
             |e| entity_types.get(e).ok().copied(),
+            |e| player_controlled.contains(e),
         );
 
         // Update the Target component
@@ -796,92 +814,110 @@ mod tests {
 
     #[test]
     fn test_select_target_single_target_ahead() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn caster
+        // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
 
-        // Spawn target directly ahead (east)
+        // Spawn target directly ahead (east) - NPC
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        });
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
 
     #[test]
     fn test_select_target_no_targets() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        });
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
 
     #[test]
     fn test_select_target_behind_caster() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn target behind (west)
+        // Spawn target behind (west) - NPC
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
 
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        });
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
 
     #[test]
     fn test_select_target_nearest_wins() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn targets at different distances, all in front
+        // Spawn targets at different distances, all in front - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 3, r: 0, z: 0 })); // Far
         let nearest = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Near
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Mid
 
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        });
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
 
     #[test]
     fn test_select_target_geometric_tiebreaker() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
 
-        // Spawn two targets at same distance (1 hex away)
+        // Spawn two targets at same distance (1 hex away) - NPCs
         // One directly ahead (east), one at an angle (northeast)
         let directly_ahead = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // East
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: -1, z: 0 })); // Northeast
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -891,18 +927,21 @@ mod tests {
 
     #[test]
     fn test_select_target_ignores_decorators() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn decorator (not targetable) and actor
+        // Spawn decorator (not targetable) and actor - NPC
         spawn_decorator(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Decorator directly ahead
         let actor = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Actor further away
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(
             result, Some(actor),
@@ -912,18 +951,21 @@ mod tests {
 
     #[test]
     fn test_select_target_tier_lock_close() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn targets at different tiers
+        // Spawn targets at different tiers - NPCs
         let close_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(
             result, Some(close_target),
@@ -933,19 +975,22 @@ mod tests {
 
     #[test]
     fn test_select_target_tier_lock_mid() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn targets at different tiers
+        // Spawn targets at different tiers - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
         let mid_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 4, r: 0, z: 0 })); // Distance 4 (Mid)
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(
             result, Some(mid_target),
@@ -955,17 +1000,20 @@ mod tests {
 
     #[test]
     fn test_select_target_tier_lock_no_matches() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 
-        // Spawn only close targets
+        // Spawn only close targets - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         assert_eq!(
             result, None,
@@ -975,24 +1023,86 @@ mod tests {
 
     #[test]
     fn test_select_target_within_120_degree_cone() {
+        use crate::common::components::behaviour::PlayerControlled;
+
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
 
-        // Spawn targets at various angles
+        // Spawn targets at various angles - NPCs
         let ne_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: -1, z: 0 })); // Northeast (30°) - within cone
         let se_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 0, r: 1, z: 0 })); // Southeast (150°) - within cone
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 0, r: -1, z: 0 })); // Northwest (330°) - outside cone
 
-        // Query removed
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied());
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
 
         // Should select one of the targets within the cone (ne_target or se_target)
         assert!(
             result == Some(ne_target) || result == Some(se_target),
             "Should select a target within the 120° cone"
+        );
+    }
+
+    #[test]
+    fn test_select_target_filters_out_allies() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn another player (ally) - should NOT be targetable as hostile
+        let ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
+        world.entity_mut(ally).insert(PlayerControlled);
+
+        // Spawn NPC (hostile) - should be targetable
+        let npc = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
+
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
+            world.get::<EntityType>(ent).copied()
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+
+        assert_eq!(
+            result, Some(npc),
+            "Should select NPC and skip ally player"
+        );
+    }
+
+    #[test]
+    fn test_select_target_npcs_only_target_players() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (NPC - no PlayerControlled)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+
+        // Spawn another NPC - should NOT be targetable
+        spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
+
+        // Spawn player (hostile for NPCs) - should be targetable
+        let player = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
+        world.entity_mut(player).insert(PlayerControlled);
+
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
+            world.get::<EntityType>(ent).copied()
+        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+
+        assert_eq!(
+            result, Some(player),
+            "NPC should select player and skip other NPC"
         );
     }
 }

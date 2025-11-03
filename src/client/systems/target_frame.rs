@@ -424,22 +424,14 @@ pub fn update(
     }
 
     // Select current hostile target using directional targeting
-    // Filter out allies (PlayerControlled) from hostile targeting
     let facing_target = select_target(
         player_ent,
         *player_loc,
         *player_heading,
         None, // No tier lock in MVP
         &nntree,
-        |ent| {
-            target_query.get(ent).ok().and_then(|(et, _, _, _, player_controlled_opt)| {
-                // Exclude allies (PlayerControlled) from hostile targeting
-                if player_controlled_opt.is_some() {
-                    return None;
-                }
-                Some(*et)
-            })
-        },
+        |ent| target_query.get(ent).ok().map(|(et, _, _, _, _)| *et),
+        |ent| target_query.get(ent).ok().and_then(|(_, _, _, _, pc_opt)| pc_opt).is_some(),
     );
 
     // Sticky targeting: Update target when a new target is found in facing cone

@@ -177,7 +177,7 @@ pub fn setup(
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor)>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&Gcd>), With<Actor>>,
-    entity_query: Query<(&EntityType, &Loc)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
@@ -237,7 +237,7 @@ fn get_ability_state(
     player_loc: Loc,
     player_heading: Heading,
     nntree: &NNTree,
-    entity_query: &Query<(&EntityType, &Loc)>,
+    entity_query: &Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
     // Check GCD first
     if gcd_active {
@@ -258,11 +258,12 @@ fn get_ability_state(
                 player_heading,
                 None,
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _)| *et),
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
             );
 
             if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
                     if distance > 4 {
                         return AbilityState::OutOfRange;
@@ -285,11 +286,12 @@ fn get_ability_state(
                 player_heading,
                 None,
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _)| *et),
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
             );
 
             if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
                     if distance > 1 {
                         return AbilityState::OutOfRange;
@@ -312,11 +314,12 @@ fn get_ability_state(
                 player_heading,
                 None,
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _)| *et),
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
             );
 
             if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
                     if distance > 2 {
                         return AbilityState::OutOfRange;

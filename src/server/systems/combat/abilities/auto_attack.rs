@@ -28,6 +28,12 @@ pub fn handle_auto_attack(
             continue;
         };
 
+        // Check if caster is dead (has RespawnTimer)
+        if respawn_query.get(*ent).is_ok() {
+            // Dead players can't use abilities - silently ignore
+            continue;
+        }
+
         // Validate target_loc is provided
         let Some(target_qrz) = ability_target_loc else {
             writer.write(Do {
