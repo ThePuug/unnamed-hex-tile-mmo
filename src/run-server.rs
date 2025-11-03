@@ -6,7 +6,6 @@ mod server;
 
 use std::{ net::UdpSocket, time::* };
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
-use bevy_behave::prelude::*;
 use bevy_easings::*;
 use bevy_renet::{
     renet::{ConnectionConfig, RenetServer},
@@ -57,13 +56,11 @@ fn main() {
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
         server::plugins::behaviour::BehaviourPlugin,
-        BehavePlugin::default(),
     ));
 
     app.add_event::<Do>();
     app.add_event::<Try>();
     app.add_event::<Tick>();
-    app.add_event::<combat::abilities::TriggerGcd>();
 
     // Add observers for triggered events
     app.add_observer(combat::process_deal_damage);
@@ -99,8 +96,6 @@ fn main() {
         combat::abilities::lunge::handle_lunge,
         combat::abilities::knockback::handle_knockback,
         combat::abilities::deflect::handle_deflect,
-        combat::abilities::emit_gcd,  // Must run after all ability systems
-        combat::apply_gcd,  // ADR-006: Activate GCD component from Event::Gcd
         common::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 

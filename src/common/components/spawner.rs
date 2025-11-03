@@ -44,7 +44,6 @@ impl Spawner {
 pub enum NpcTemplate {
     Dog,
     Wolf,
-    Rabbit,
 }
 
 impl NpcTemplate {
@@ -62,12 +61,6 @@ impl NpcTemplate {
                 Approach::Ambushing,
                 Resilience::Vital,
                 ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Wolf variant
-            ),
-            Self::Rabbit => ActorImpl::new(
-                Origin::Evolved,
-                Approach::Evasive,
-                Resilience::Primal,
-                ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Rabbit variant
             ),
         }
     }

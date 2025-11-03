@@ -1,11 +1,10 @@
 use bevy::{prelude::*, ecs::hierarchy::ChildOf};
-use bevy_behave::prelude::*;
 use qrz::Qrz;
 use rand::Rng;
 
 use crate::{
     common::{
-        components::{*, spawner::*, entity_type::*, behaviour::{Behaviour, PathTo}, reaction_queue::*, resources::*, gcd::Gcd},
+        components::{*, spawner::*, entity_type::*, behaviour::Behaviour, reaction_queue::*, resources::*, gcd::Gcd, heading::Heading, offset::Offset},
         message::*,
         plugins::nntree::*,
         resources::map::Map,
@@ -14,11 +13,7 @@ use crate::{
             resources as resource_calcs,
         },
     },
-    server::systems::behaviour::{
-        FindSomethingInterestingWithin, Nearby, NearbyOrigin,
-        find_target::FindOrKeepTarget,
-        face_target::FaceTarget,
-    },
+    server::systems::behaviour::chase::Chase,
 };
 
 /// System that ticks spawners and spawns NPCs when conditions are met
@@ -114,72 +109,11 @@ fn spawn_npc(
     let actor_impl = template.actor_impl();
     let typ = EntityType::Actor(actor_impl);
 
-    // Create behavior tree based on template
-    let behavior_tree = match template {
-        NpcTemplate::Dog | NpcTemplate::Wolf => {
-            // ADR-006: New combat behavior with sticky targeting and sustained pressure
-            BehaveTree::new(behave! {
-                Behave::Forever => {
-                    Behave::Sequence => {
-                        Behave::spawn_named(
-                            "find or keep target",
-                            FindOrKeepTarget {
-                                dist: 20,           // Acquisition range
-                                leash_distance: 30, // Max chase distance
-                            }
-                        ),
-                        Behave::spawn_named(
-                            "face target (before pathfinding)",
-                            FaceTarget
-                        ),
-                        Behave::spawn_named(
-                            "set dest near target",
-                            Nearby {
-                                min: 1,
-                                max: 1,  // Get close to target (1 tile away)
-                                origin: NearbyOrigin::Target,
-                            }
-                        ),
-                        Behave::spawn_named(
-                            "path to dest",
-                            PathTo::default()
-                        ),
-                        Behave::spawn_named(
-                            "face target (after pathfinding)",
-                            FaceTarget
-                        ),
-                        // ADR-009: Auto-attack is handled by passive system (process_passive_auto_attack)
-                        // Dogs only need to pathfind to target and face them - attacks are automatic
-                        Behave::Wait(1.0),  // DIAGNOSTIC: Testing if wait fixes movement regression
-                    }
-                }
-            })
-        }
-        NpcTemplate::Rabbit => {
-            BehaveTree::new(behave! {
-                Behave::Forever => {
-                    Behave::Sequence => {
-                        Behave::spawn_named(
-                            "find something interesting",
-                            FindSomethingInterestingWithin { dist: 15 }
-                        ),
-                        Behave::spawn_named(
-                            "set dest to target",
-                            Nearby {
-                                min: 0,
-                                max: 0,
-                                origin: NearbyOrigin::Target,
-                            }
-                        ),
-                        Behave::spawn_named(
-                            "path to dest",
-                            PathTo::default()
-                        ),
-                        Behave::Wait(8.),
-                    }
-                }
-            })
-        }
+    // Unified chase behavior - handles targeting, pursuit, and engagement
+    let chase = Chase {
+        acquisition_range: 20,  // How far to search for targets
+        leash_distance: 30,     // Max chase distance
+        attack_range: 1,        // Melee attack range
     };
 
     // Level 10: Might+Instinct focused distribution
@@ -229,7 +163,7 @@ fn spawn_npc(
         .spawn((
             typ,
             loc,
-            Physics, // CRITICAL: NPCs need Physics component to actually move!
+            Physics,
             ChildOf(spawner_ent),
             Name::new(format!("NPC {:?}", template)),
             attrs,
@@ -238,16 +172,20 @@ fn spawn_npc(
             mana,
             combat_state,
             reaction_queue,
-            Gcd::new(),  // GCD component for cooldown tracking
-            LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
-            children![(
-                Name::new("behaviour"),
-                behavior_tree,
-            )],
+            Gcd::new(),
+            LastAutoAttack::default(),
         ))
         .id();
 
-    commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
+    commands.entity(ent).insert((
+        NearestNeighbor::new(ent, loc),
+        chase,
+        Heading::default(),
+        Offset::default(),
+        AirTime::default(),
+    ));
+
+    info!("Spawned NPC {:?} at {:?}", template, spawn_qrz);
 
     // Send spawn event to clients
     writer.write(Do {
@@ -679,11 +617,6 @@ mod tests {
         assert_eq!(wolf.origin, Origin::Evolved);
         assert_eq!(wolf.approach, Approach::Ambushing);
         assert_eq!(wolf.resilience, Resilience::Vital);
-
-        let rabbit = NpcTemplate::Rabbit.actor_impl();
-        assert_eq!(rabbit.origin, Origin::Evolved);
-        assert_eq!(rabbit.approach, Approach::Evasive);
-        assert_eq!(rabbit.resilience, Resilience::Primal);
     }
 
     #[test]
@@ -1066,7 +999,7 @@ mod tests {
         app.insert_resource(NNTree::new_for_test());
         app.insert_resource(create_test_map());
 
-        let spawner = Spawner::new(NpcTemplate::Rabbit, 5, 3, 10, 15, 30, 0);
+        let spawner = Spawner::new(NpcTemplate::Dog, 5, 3, 10, 15, 30, 0);
         let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         app.world_mut().spawn((spawner, spawner_loc, Name::new("Multi-Player Spawner")));
 

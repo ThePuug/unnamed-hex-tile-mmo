@@ -1,11 +1,10 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{reaction_queue::*, resources::*},
+        components::{reaction_queue::*, resources::*, gcd::Gcd},
         message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-        systems::combat::{queue as queue_utils, gcd::GcdType},
+        systems::combat::{gcd::GcdType, queue as queue_utils},
     },
-    server::systems::combat::abilities::TriggerGcd,
 };
 
 /// Handle Deflect ability (R key) - defensive ability that clears all queued threats
@@ -15,9 +14,9 @@ use crate::{
 /// - Triggers Attack GCD
 pub fn handle_deflect(
     mut reader: EventReader<Try>,
-    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
+    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina, &mut Gcd)>,
     mut writer: EventWriter<Do>,
-    mut gcd_writer: EventWriter<TriggerGcd>,
+    time: Res<Time>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -29,8 +28,8 @@ pub fn handle_deflect(
             continue;
         };
 
-        // Get caster's queue and stamina
-        let Ok((mut queue, mut stamina)) = queue_query.get_mut(*ent) else {
+        // Get caster's queue, stamina, and GCD
+        let Ok((mut queue, mut stamina, mut gcd)) = queue_query.get_mut(*ent) else {
             continue;
         };
 
@@ -90,10 +89,8 @@ pub fn handle_deflect(
             },
         });
 
-        // Request GCD trigger (Deflect triggers Attack GCD)
-        gcd_writer.write(TriggerGcd {
-            ent: *ent,
-            typ: GcdType::Attack,
-        });
+        // Trigger Attack GCD immediately (prevents race conditions)
+        let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
+        gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
     }
 }

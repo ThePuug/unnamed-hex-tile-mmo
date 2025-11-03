@@ -1,12 +1,11 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, heading::*, resources::*, Loc, reaction_queue::DamageType},
+        components::{entity_type::*, heading::*, resources::*, Loc, reaction_queue::DamageType, gcd::Gcd},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
         plugins::nntree::*,
         systems::{targeting::*, combat::gcd::GcdType},
     },
-    server::systems::combat::abilities::TriggerGcd,
 };
 
 /// Handle Lunge ability (Q key)
@@ -21,10 +20,11 @@ pub fn handle_lunge(
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_heading_query: Query<(&Loc, &Heading)>,
     mut stamina_query: Query<&mut Stamina>,
+    mut gcd_query: Query<&mut Gcd>,
     respawn_query: Query<&RespawnTimer>,
     nntree: Res<NNTree>,
     mut writer: EventWriter<Do>,
-    mut gcd_writer: EventWriter<TriggerGcd>,
+    time: Res<Time>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -161,10 +161,10 @@ pub fn handle_lunge(
             target_ent,
         );
 
-        // Request GCD trigger (Lunge triggers Attack GCD)
-        gcd_writer.write(TriggerGcd {
-            ent: *ent,
-            typ: GcdType::Attack,
-        });
+        // Trigger Attack GCD immediately (prevents race conditions)
+        if let Ok(mut gcd) = gcd_query.get_mut(*ent) {
+            let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
+            gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
+        }
     }
 }

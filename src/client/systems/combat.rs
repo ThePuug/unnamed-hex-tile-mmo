@@ -123,11 +123,9 @@ pub fn apply_gcd(
     for event in reader.read() {
         if let GameEvent::Gcd { ent, typ } = event.event {
             if let Ok(mut gcd) = query.get_mut(ent) {
-                // Determine GCD duration based on type (must match server durations)
+                // GCD duration for attacks (must match server durations)
                 let duration = match typ {
                     GcdType::Attack => std::time::Duration::from_secs(1),  // 1s for attacks
-                    GcdType::Spawn(_) => std::time::Duration::from_millis(500),  // 0.5s for spawning
-                    GcdType::PlaceSpawner(_) => std::time::Duration::from_secs(2),  // 2s for spawner placement
                 };
 
                 // Activate local GCD

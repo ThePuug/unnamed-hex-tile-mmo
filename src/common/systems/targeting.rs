@@ -30,6 +30,9 @@ use crate::common::{
     plugins::nntree::*,
 };
 
+#[cfg(feature = "server")]
+use crate::server::components::target_lock::TargetLock;
+
 impl Heading {
     /// Convert heading to angle in degrees
     ///
@@ -449,12 +452,45 @@ where
 ///
 /// Used by:
 /// - Players: Target updates as they turn or move
-/// - NPCs: Target updates as behavior tree changes heading/location
+/// - NPCs WITHOUT TargetLock: Target updates reactively based on FOV
+///
+/// NPCs with TargetLock are excluded - behavior tree targeting (FindOrKeepTarget)
+/// is the source of truth for their targets, not reactive FOV targeting.
 ///
 /// # Performance
 ///
 /// Only runs for entities that actually changed (Bevy change detection).
 /// No work done if no entities moved or turned.
+#[cfg(feature = "server")]
+pub fn update_targets_on_change(
+    mut query: Query<
+        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
+        (Or<(Changed<Heading>, Changed<Loc>)>, Without<TargetLock>)
+    >,
+    entity_types: Query<&EntityType>,
+    nntree: Res<NNTree>,
+) {
+    for (ent, loc, heading, mut target) in &mut query {
+        // Use select_target to find what this entity is facing
+        let new_target = select_target(
+            ent,
+            *loc,
+            *heading,
+            None, // No tier lock (automatic targeting)
+            &nntree,
+            |e| entity_types.get(e).ok().copied(),
+        );
+
+        // Update the Target component
+        match new_target {
+            Some(target_ent) => target.set(target_ent),
+            None => target.clear(),
+        }
+    }
+}
+
+/// Client version: reactive targeting without TargetLock filter (client doesn't have TargetLock)
+#[cfg(not(feature = "server"))]
 pub fn update_targets_on_change(
     mut query: Query<
         (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),

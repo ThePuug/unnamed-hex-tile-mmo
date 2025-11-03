@@ -42,15 +42,42 @@ pub enum PathLimit {
     Complete,
 }
 
+/// Defines the pathfinding algorithm used by PathTo
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PathAlgorithm {
+    /// Full A* pathfinding every time dest changes (slow but intelligent)
+    Full,
+    /// Greedy chase: move directly toward dest each tile, no pathfinding (fast, dumb)
+    Greedy,
+}
+
 impl Default for PathLimit {
     fn default() -> Self {
         PathLimit::Complete
     }
 }
 
-#[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
+impl Default for PathAlgorithm {
+    fn default() -> Self {
+        PathAlgorithm::Full
+    }
+}
+
+#[derive(Clone, Component, Debug, Deserialize, Serialize)]
 pub struct PathTo {
     pub dest: Qrz,
     pub path: ArrayVec<[Qrz; 20]>,
     pub limit: PathLimit,
+    pub algorithm: PathAlgorithm,
+}
+
+impl Default for PathTo {
+    fn default() -> Self {
+        Self {
+            dest: Qrz::default(),
+            path: ArrayVec::new(),
+            limit: PathLimit::default(),
+            algorithm: PathAlgorithm::default(),
+        }
+    }
 }

@@ -178,31 +178,7 @@ pub fn validate_ability_prerequisites(
 // - abilities::lunge::handle_lunge
 // - abilities::knockback::handle_knockback
 // - abilities::deflect::handle_deflect
-// All run after validate_ability_prerequisites and before abilities::emit_gcd
-
-/// Server system to activate GCD component when GCD events are emitted
-/// Listens to Do<Event::Gcd> and calls gcd.activate() on the entity
-pub fn apply_gcd(
-    mut reader: EventReader<Do>,
-    mut query: Query<&mut Gcd>,
-    time: Res<Time>,
-) {
-    for event in reader.read() {
-        if let GameEvent::Gcd { ent, typ } = event.event {
-            if let Ok(mut gcd) = query.get_mut(ent) {
-                // Determine GCD duration based on type
-                let duration = match typ {
-                    GcdType::Attack => std::time::Duration::from_secs(1),  // 1s for attacks (ADR-006)
-                    GcdType::Spawn(_) => std::time::Duration::from_millis(500),  // 0.5s for spawning entities
-                    GcdType::PlaceSpawner(_) => std::time::Duration::from_secs(2),  // 2s for spawner placement
-                };
-
-                // Activate GCD
-                gcd.activate(typ, duration, time.elapsed());
-            }
-        }
-    }
-}
+// GCD is now set directly by ability systems to prevent race conditions
 
 /// CRITICAL: until we add a new system ... we need this one to bypass a random magic 
 /// number of systems causing scheduling issues
