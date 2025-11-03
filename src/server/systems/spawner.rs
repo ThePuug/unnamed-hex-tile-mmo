@@ -65,6 +65,7 @@ pub fn tick_spawners(
             spawner.npc_template,
             spawn_qrz,
             spawner.spawn_radius,
+            spawner.leash_distance,
             spawner_ent,
             &mut writer,
             &map,
@@ -82,6 +83,7 @@ fn spawn_npc(
     template: NpcTemplate,
     qrz: impl Into<Qrz>,
     spawn_radius: u8,
+    leash_distance: u8,
     spawner_ent: Entity,
     writer: &mut EventWriter<Do>,
     map: &Map,
@@ -111,9 +113,9 @@ fn spawn_npc(
 
     // Unified chase behavior - handles targeting, pursuit, and engagement
     let chase = Chase {
-        acquisition_range: 20,  // How far to search for targets
-        leash_distance: 30,     // Max chase distance
-        attack_range: 1,        // Melee attack range
+        acquisition_range: 20,         // How far to search for targets
+        leash_distance: leash_distance as i16,  // Max chase distance from spawner config
+        attack_range: 1,               // Melee attack range
     };
 
     // Level 10: Might+Instinct focused distribution
