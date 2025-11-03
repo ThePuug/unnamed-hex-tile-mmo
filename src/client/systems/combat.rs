@@ -185,9 +185,8 @@ pub fn player_auto_attack(
             continue; // Target not found (may have despawned)
         };
 
-        // Check if target is adjacent (distance == 1)
-        let distance = player_loc.distance(target_loc);
-        if distance != 1 {
+        // Check if target is adjacent (considering slopes)
+        if !player_loc.is_adjacent(target_loc) {
             continue; // Target not adjacent
         }
 

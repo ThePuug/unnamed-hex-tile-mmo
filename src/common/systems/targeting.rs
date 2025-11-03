@@ -88,9 +88,10 @@ pub fn is_in_facing_cone(
     caster_loc: Loc,
     target_loc: Loc,
 ) -> bool {
-    // Don't target self
+    // Targets on the same tile are always in the facing cone
+    // (e.g., multiple enemies standing on the same hex)
     if *caster_loc == *target_loc {
-        return false;
+        return true;
     }
 
     let heading_angle = caster_heading.to_angle();
@@ -566,15 +567,16 @@ mod tests {
     }
 
     #[test]
-    fn test_facing_cone_target_at_self() {
-        // Target at same location as caster should return false
+    fn test_facing_cone_target_at_same_tile() {
+        // Target at same location as caster should return true
+        // This handles cases where multiple entities occupy the same hex
         let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
         assert!(
-            !is_in_facing_cone(heading, caster, target),
-            "Should not target self"
+            is_in_facing_cone(heading, caster, target),
+            "Should include targets on same tile (multiple entities on same hex)"
         );
     }
 

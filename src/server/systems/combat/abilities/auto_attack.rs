@@ -44,11 +44,11 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Validate target hex is adjacent (distance == 1)
+        // Validate target hex is adjacent (considering slopes)
+        // Adjacent means 1 hex away horizontally with at most 1 z-level difference
         let target_loc = Loc::new(*target_qrz);
-        let distance = caster_loc.distance(&target_loc);
 
-        if distance != 1 {
+        if !caster_loc.is_adjacent(&target_loc) {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -127,5 +127,214 @@ pub fn handle_auto_attack(
         }
 
         // AutoAttack does NOT trigger GCD (passive ability) - no event emitted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::event::Events;
+    use qrz::Qrz;
+    use crate::common::components::{
+        entity_type::actor::*,
+        behaviour::PlayerControlled,
+    };
+
+    /// Test that auto-attack works on adjacent targets with vertical offset
+    /// With sloping terrain, a target 1 hex away horizontally but 1 z-level different
+    /// should still be considered adjacent for melee attacks
+    #[test]
+    fn test_auto_attack_adjacent_with_vertical_offset() {
+        let mut app = App::new();
+        app.add_event::<Try>();
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        // Spawn caster at z=0
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let caster = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Player,
+            }),
+            caster_loc,
+            PlayerControlled,
+        )).id();
+
+        // Spawn target 1 hex away horizontally, but 1 z-level higher (z=1)
+        let target_loc = Loc::new(Qrz { q: 1, r: 0, z: 1 });
+        let target = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Npc(NpcType::WildDog),
+            }),
+            target_loc,
+        )).id();
+
+        // Add both to NNTree
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(caster, caster_loc));
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(target, target_loc));
+
+        // Send auto-attack command targeting the adjacent hex
+        app.world_mut().resource_mut::<Events<Try>>().send(Try {
+            event: GameEvent::UseAbility {
+                ent: caster,
+                ability: AbilityType::AutoAttack,
+                target_loc: Some(*target_loc),
+            },
+        });
+
+        // Run the handler system
+        app.add_systems(Update, handle_auto_attack);
+        app.update();
+
+        // Should trigger DealDamage, not AbilityFailed
+        let do_events = app.world().resource::<Events<Do>>();
+        let events: Vec<_> = do_events.iter_current_update_events().collect();
+
+        // Should NOT have any AbilityFailed events
+        let failed = events.iter().any(|e| matches!(
+            e.event,
+            GameEvent::AbilityFailed { reason: AbilityFailReason::OutOfRange, .. }
+        ));
+
+        assert!(
+            !failed,
+            "Auto-attack should work on adjacent hex with 1 z-level difference (sloping terrain)"
+        );
+    }
+
+    /// Test that auto-attack rejects targets that are too high (2+ z-levels)
+    #[test]
+    fn test_auto_attack_rejects_too_high_targets() {
+        let mut app = App::new();
+        app.add_event::<Try>();
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        // Spawn caster at z=0
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let caster = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Player,
+            }),
+            caster_loc,
+            PlayerControlled,
+        )).id();
+
+        // Spawn target 1 hex away but 2 z-levels higher (too steep)
+        let target_loc = Loc::new(Qrz { q: 1, r: 0, z: 2 });
+        let target = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Npc(NpcType::WildDog),
+            }),
+            target_loc,
+        )).id();
+
+        // Add both to NNTree
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(caster, caster_loc));
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(target, target_loc));
+
+        // Send auto-attack command
+        app.world_mut().resource_mut::<Events<Try>>().send(Try {
+            event: GameEvent::UseAbility {
+                ent: caster,
+                ability: AbilityType::AutoAttack,
+                target_loc: Some(*target_loc),
+            },
+        });
+
+        // Run the handler system
+        app.add_systems(Update, handle_auto_attack);
+        app.update();
+
+        // Should trigger AbilityFailed with OutOfRange
+        let do_events = app.world().resource::<Events<Do>>();
+        let events: Vec<_> = do_events.iter_current_update_events().collect();
+
+        let failed = events.iter().any(|e| matches!(
+            e.event,
+            GameEvent::AbilityFailed { reason: AbilityFailReason::OutOfRange, .. }
+        ));
+
+        assert!(
+            failed,
+            "Auto-attack should fail when target is 2 z-levels higher (too steep)"
+        );
+    }
+
+    /// Test that auto-attack correctly rejects targets that are too far horizontally
+    #[test]
+    fn test_auto_attack_rejects_distant_targets() {
+        let mut app = App::new();
+        app.add_event::<Try>();
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+
+        // Spawn caster at z=0
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let caster = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Player,
+            }),
+            caster_loc,
+            PlayerControlled,
+        )).id();
+
+        // Spawn target 2 hexes away horizontally (too far for melee)
+        let target_loc = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let target = app.world_mut().spawn((
+            EntityType::Actor(ActorImpl {
+                origin: Origin::Evolved,
+                approach: Approach::Direct,
+                resilience: Resilience::Vital,
+                identity: ActorIdentity::Npc(NpcType::WildDog),
+            }),
+            target_loc,
+        )).id();
+
+        // Add both to NNTree
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(caster, caster_loc));
+        app.world_mut().resource_mut::<NNTree>().insert(NearestNeighbor::new(target, target_loc));
+
+        // Send auto-attack command
+        app.world_mut().resource_mut::<Events<Try>>().send(Try {
+            event: GameEvent::UseAbility {
+                ent: caster,
+                ability: AbilityType::AutoAttack,
+                target_loc: Some(*target_loc),
+            },
+        });
+
+        // Run the handler system
+        app.add_systems(Update, handle_auto_attack);
+        app.update();
+
+        // Should trigger AbilityFailed with OutOfRange
+        let do_events = app.world().resource::<Events<Do>>();
+        let events: Vec<_> = do_events.iter_current_update_events().collect();
+
+        let failed = events.iter().any(|e| matches!(
+            e.event,
+            GameEvent::AbilityFailed { reason: AbilityFailReason::OutOfRange, .. }
+        ));
+
+        assert!(
+            failed,
+            "Auto-attack should fail when target is 2 hexes away (too far for melee)"
+        );
     }
 }
