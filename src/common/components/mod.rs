@@ -7,6 +7,7 @@ pub mod offset;
 pub mod reaction_queue;
 pub mod resources;
 pub mod spawner;
+pub mod target;
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -22,6 +23,221 @@ impl Loc {
 
     pub fn new(qrz: Qrz) -> Self {
         Loc(qrz)
+    }
+
+    /// Check if two locations are adjacent for melee combat with sloping terrain
+    ///
+    /// Two locations are considered adjacent if:
+    /// - They are on the same tile (flat_distance == 0) - for multiple entities on same hex
+    /// - OR they are 1 hex apart horizontally (flat_distance == 1) AND the vertical
+    ///   difference is at most 1 tile (|z_diff| <= 1)
+    ///
+    /// This allows melee attacks up/down slopes but prevents attacks
+    /// against targets that are too high/low (e.g., 2+ tiles above/below)
+    pub fn is_adjacent(&self, other: &Loc) -> bool {
+        let flat_dist = self.flat_distance(other);
+        let z_diff = (self.z - other.z).abs();
+
+        // Same tile is always adjacent (multiple entities on same hex)
+        if flat_dist == 0 {
+            return true;
+        }
+
+        // Otherwise, must be 1 hex away with at most 1 z-level difference
+        flat_dist == 1 && z_diff <= 1
+    }
+
+    /// Check if a target location is reachable within a given number of steps
+    ///
+    /// Uses pathfinding to determine if there's a viable path from `from` to `to`
+    /// that is at most `max_steps` long. Accounts for terrain and slopes (±1 z-level).
+    ///
+    /// # Early Exit Optimization
+    /// Returns false immediately if flat_distance exceeds max_steps (no pathfinding needed)
+    ///
+    /// # Arguments
+    /// * `from` - Starting location
+    /// * `to` - Target location
+    /// * `max_steps` - Maximum number of steps allowed in the path
+    /// * `map` - The game map for pathfinding
+    ///
+    /// # Returns
+    /// `true` if a path exists within max_steps, `false` otherwise
+    pub fn is_reachable_within(from: Loc, to: Loc, max_steps: u32, map: &crate::common::resources::map::Map) -> bool {
+        use pathfinding::prelude::*;
+
+        // Early exit: if flat distance exceeds max_steps, it's definitely unreachable
+        let flat_dist = from.flat_distance(&to) as u32;
+        if flat_dist > max_steps {
+            return false;
+        }
+
+        // Use map.find to get actual ground positions (accounting for terrain)
+        let Some((start, _)) = map.find(*from, -60) else { return false };
+        let Some((dest, _)) = map.find(*to, -60) else { return false };
+
+        // If start and dest are the same, it's reachable
+        if start == dest {
+            return true;
+        }
+
+        // Use BFS (breadth-first search) to find shortest path
+        // BFS is better than A* here because we only care about path length, not optimality
+        let result = bfs(
+            &start,
+            |&loc| {
+                // Get neighbors that are passable (map.neighbors handles ±1 z-level)
+                map.neighbors(loc)
+                    .into_iter()
+                    .map(|(neighbor_loc, _)| neighbor_loc)
+            },
+            |&loc| loc == dest
+        );
+
+        // Check if path exists and is within max_steps
+        match result {
+            Some(path) => {
+                // path.len() includes the start position, so subtract 1 for actual steps
+                let steps = path.len().saturating_sub(1);
+                steps <= max_steps as usize
+            }
+            None => false
+        }
+    }
+}
+
+#[cfg(test)]
+mod loc_tests {
+    use super::*;
+
+    #[test]
+    fn test_is_adjacent_same_level() {
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 0 });
+        assert!(loc1.is_adjacent(&loc2), "Same level, 1 hex apart should be adjacent");
+    }
+
+    #[test]
+    fn test_is_adjacent_one_level_up() {
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 1 });
+        assert!(loc1.is_adjacent(&loc2), "1 level up, 1 hex apart should be adjacent (slope)");
+    }
+
+    #[test]
+    fn test_is_adjacent_one_level_down() {
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 1 });
+        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 0 });
+        assert!(loc1.is_adjacent(&loc2), "1 level down, 1 hex apart should be adjacent (slope)");
+    }
+
+    #[test]
+    fn test_not_adjacent_two_levels_up() {
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 2 });
+        assert!(!loc1.is_adjacent(&loc2), "2 levels up should not be adjacent (too steep)");
+    }
+
+    #[test]
+    fn test_not_adjacent_two_hexes_away() {
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        assert!(!loc1.is_adjacent(&loc2), "2 hexes apart should not be adjacent");
+    }
+
+    #[test]
+    fn test_adjacent_same_tile() {
+        // Same tile is adjacent (for multiple entities on same hex)
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        assert!(loc1.is_adjacent(&loc2), "Same tile should be adjacent (multiple entities on same hex)");
+    }
+
+    #[test]
+    fn test_adjacent_same_tile_different_z() {
+        // Same horizontal position but different z should be adjacent
+        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let loc2 = Loc::new(Qrz { q: 0, r: 0, z: 1 });
+        assert!(loc1.is_adjacent(&loc2), "Same tile, different z should be adjacent");
+    }
+
+    // ===== REACHABILITY TESTS =====
+
+    #[test]
+    fn test_is_reachable_within_early_exit() {
+        use crate::common::{components::entity_type::*, resources::map::Map};
+        use qrz::Map as QrzMap;
+
+        // Create a simple map
+        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
+        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
+        qrz_map.insert(Qrz { q: 5, r: 0, z: -5 }, EntityType::Decorator(Default::default()));
+        let map = Map::new(qrz_map);
+
+        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let to = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+
+        // Target is 5 hexes away, max_steps is 3 - should early exit without pathfinding
+        assert!(!Loc::is_reachable_within(from, to, 3, &map),
+            "Should early exit when flat_distance exceeds max_steps");
+    }
+
+    #[test]
+    fn test_is_reachable_within_straight_line() {
+        use crate::common::{components::entity_type::*, resources::map::Map};
+        use qrz::Map as QrzMap;
+
+        // Create a straight line path
+        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
+        for i in 0..=3 {
+            qrz_map.insert(Qrz { q: i, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
+        }
+        let map = Map::new(qrz_map);
+
+        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let to = Loc::new(Qrz { q: 3, r: 0, z: 0 });
+
+        assert!(Loc::is_reachable_within(from, to, 3, &map),
+            "Should be reachable in exactly 3 steps");
+        assert!(Loc::is_reachable_within(from, to, 5, &map),
+            "Should be reachable with more than needed steps");
+        assert!(!Loc::is_reachable_within(from, to, 2, &map),
+            "Should not be reachable with too few steps");
+    }
+
+    #[test]
+    fn test_is_reachable_within_with_slopes() {
+        use crate::common::{components::entity_type::*, resources::map::Map};
+        use qrz::Map as QrzMap;
+
+        // Create a path with slopes (±1 z-level)
+        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
+        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
+        qrz_map.insert(Qrz { q: 1, r: 0, z: 1 }, EntityType::Decorator(Default::default())); // Up 1
+        qrz_map.insert(Qrz { q: 2, r: 0, z: 1 }, EntityType::Decorator(Default::default())); // Flat
+        qrz_map.insert(Qrz { q: 3, r: 0, z: 0 }, EntityType::Decorator(Default::default())); // Down 1
+        let map = Map::new(qrz_map);
+
+        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let to = Loc::new(Qrz { q: 3, r: 0, z: 0 });
+
+        assert!(Loc::is_reachable_within(from, to, 3, &map),
+            "Should be reachable via slopes in 3 steps");
+    }
+
+    #[test]
+    fn test_is_reachable_within_same_location() {
+        use crate::common::{components::entity_type::*, resources::map::Map};
+        use qrz::Map as QrzMap;
+
+        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
+        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
+        let map = Map::new(qrz_map);
+
+        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+
+        assert!(Loc::is_reachable_within(loc, loc, 0, &map),
+            "Same location should always be reachable");
     }
 }
 
@@ -285,6 +501,22 @@ pub struct Sun();
 
 #[derive(Debug, Default, Component)]
 pub struct Moon();
+
+/// Tracks the last time an auto-attack was performed (ADR-009)
+/// Used to enforce 1.5s cooldown between passive auto-attacks
+#[derive(Clone, Component, Copy, Debug)]
+pub struct LastAutoAttack {
+    /// Game time when last auto-attack was performed (server time + offset)
+    pub last_attack_time: std::time::Duration,
+}
+
+impl Default for LastAutoAttack {
+    fn default() -> Self {
+        Self {
+            last_attack_time: std::time::Duration::ZERO,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

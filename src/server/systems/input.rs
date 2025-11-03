@@ -1,14 +1,12 @@
 use bevy::prelude::*;
-use bevy_behave::prelude::*;
 
 use crate::{
     common::{
-        components::{ behaviour::*, entity_type::*, heading::*, * },
+        components::{ heading::*, * },
         message::{Event, *},
-        plugins::nntree::*,
         systems::combat::gcd::*
     },
-    server::systems::behaviour::*, *
+    *
 };
 
 pub fn try_input(
@@ -55,67 +53,16 @@ pub fn send_input(
     }
 }
 
+/// try_gcd is now vestigial - Event::Gcd only contains GcdType::Attack
+/// which is handled by the ability systems, not here.
+///
+/// This function exists to satisfy the event pipeline but does nothing.
+/// Event::Gcd { typ: GcdType::Attack } is sent but not processed here.
 pub fn try_gcd(
-    mut commands: Commands,
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
-    query: Query<(&Loc, &Heading)>,
+    mut _reader: EventReader<Try>,
 ) {
-    for &message in reader.read() {
-        if let Try { event: Event::Gcd { ent, typ, .. } } = message {
-            match typ {
-                GcdType::Spawn(typ) => {
-                    let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
-                    let ent = match typ {
-                        EntityType::Actor(_) => {
-                            let qrz = *loc + *heading;
-                            let loc = Loc::new(qrz);
-                            let ent = commands.spawn((
-                                typ,
-                                loc,
-                                children![(
-                                    Name::new("curious behaviour"),
-                                    BehaveTree::new(behave! {
-                                        Behave::Forever => {
-                                            Behave::Sequence => {
-                                                Behave::spawn_named(
-                                                    "find something interesting",
-                                                    FindSomethingInterestingWithin { dist: 20 }),
-                                                Behave::spawn_named(
-                                                    "set dest near target",
-                                                    Nearby {
-                                                        min: 1,
-                                                        max: 3,
-                                                        origin: NearbyOrigin::Target,
-                                                    }),
-                                                Behave::spawn_named(
-                                                    "path to dest",
-                                                    PathTo::default()),
-                                                Behave::Wait(5.),
-                                    }}})
-                                )],
-                            )).id();
-                            commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
-                            ent
-                        },
-                        _ => Entity::PLACEHOLDER,
-                    };
-                    writer.write(Do { event: Event::Spawn { ent, typ, qrz: *loc + *heading, attrs: None }});
-                }
-                GcdType::PlaceSpawner(spawner) => {
-                    let (&loc, &heading) = query.get(ent).expect(&format!("missing loc/heading for entity {ent}"));
-                    let qrz = *loc + *heading;
-                    let spawn_loc = Loc::new(qrz);
+    // GcdType::Attack is handled by ability systems (auto_attack, lunge, etc.)
+    // PlaceSpawner and Spawn were removed - spawners are placed during terrain generation
 
-                    // Create the spawner entity
-                    commands.spawn((
-                        spawner,
-                        spawn_loc,
-                        Name::new(format!("Spawner {:?}", spawner.npc_template)),
-                    ));
-                }
-                _ => unreachable!()
-            }
-        }
-    }
+    // This system could be removed entirely if Event::Gcd is not used elsewhere
 }

@@ -81,22 +81,41 @@ pub fn regenerate_resources(
     }
 }
 
-/// Check for entities with health <= 0 and emit death events
+/// Check for entities with health <= 0 and handle death immediately
 /// Runs on server only, after damage application systems
-/// Emits Try::Death events for the death handler observer to process
+/// For NPCs: emits Despawn event directly (no 1-frame delay)
+/// For players: adds RespawnTimer and emits Despawn
 pub fn check_death(
     mut commands: Commands,
-    query: Query<(Entity, &Health), Without<RespawnTimer>>,
+    mut writer: EventWriter<Do>,
+    time: Res<Time>,
+    mut query: Query<(Entity, Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana), Without<RespawnTimer>>,
 ) {
-    for (ent, health) in &query {
+    for (ent, behaviour, mut health, mut stamina, mut mana) in &mut query {
         if health.state <= 0.0 {
-            // Use trigger system (not event system) to communicate with observer
-            commands.trigger_targets(
-                Try {
-                    event: Event::Death { ent },
-                },
-                ent,
-            );
+            // Set resources to 0 to prevent "zombie" state
+            health.state = 0.0;
+            health.step = 0.0;
+            stamina.state = 0.0;
+            stamina.step = 0.0;
+            mana.state = 0.0;
+            mana.step = 0.0;
+
+            // Check if this is a player (Behaviour::Controlled)
+            let is_player = behaviour
+                .map(|b| matches!(b, crate::common::components::behaviour::Behaviour::Controlled))
+                .unwrap_or(false);
+
+            if is_player {
+                // Player death: add respawn timer (5 seconds) and despawn from client view
+                commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
+            }
+
+            // Emit Despawn event immediately (for both players and NPCs)
+            // This avoids the 1-frame delay from using trigger_targets
+            writer.write(Do {
+                event: Event::Despawn { ent },
+            });
         }
     }
 }
@@ -180,11 +199,10 @@ pub fn process_respawn(
     }
 }
 
-/// Handle death events for players and NPCs
-/// Runs on server only as an observer for Death events
-/// For NPCs: emit Despawn event (actual despawn happens in cleanup_despawned in PostUpdate)
-/// For players: add respawn timer (5 seconds), will respawn at origin (0,0,4)
-pub fn handle_death(
+/// DEPRECATED: Death handling is now done directly in check_death to avoid 1-frame delay
+/// This observer is no longer registered or used
+#[allow(dead_code)]
+fn handle_death(
     trigger: Trigger<Try>,
     mut commands: Commands,
     mut writer: EventWriter<Do>,

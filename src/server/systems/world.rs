@@ -13,6 +13,7 @@ use crate::{
             keybits::KeyBits,
             offset::Offset,
             resources::*,
+            spawner::*,
         },
         message::{ Component, Event, * },
         systems::*
@@ -73,17 +74,56 @@ pub fn generate_actor_spawn_events(
 }
 
 pub fn setup(
+    mut commands: Commands,
     mut runtime: ResMut<RunTime>,
     time: Res<Time>,
+    terrain: Res<crate::server::resources::terrain::Terrain>,
+    map: Res<crate::Map>,
 ) {
     let elapsed = time.elapsed().as_millis();
     let secs_since_midnight = Local::now().time().num_seconds_from_midnight();
     let days_since_monday = Local::now().weekday().number_from_monday() - 1;
     let weeks_since_year = Local::now().iso_week().week();
     runtime.elapsed_offset = weeks_since_year as u128 * SEASON_MS
-        + days_since_monday as u128 * WEEK_MS 
-        + secs_since_midnight as u128 * 1000 
+        + days_since_monday as u128 * WEEK_MS
+        + secs_since_midnight as u128 * 1000
         - elapsed;
+
+    // ADR-009: Amp up combat - spawn Wild Dog spawners for isolated encounters
+    // Player spawns at Qrz { q: 0, r: 0, z: 4 }
+    // Place spawners 30+ hexes away on hex plane (q,r), at actual terrain elevation
+    // Spread in different hex directions for isolated 1v1 encounters
+    let spawner_hex_positions = vec![
+        (30, 0),      // ~30 hexes in +q direction
+        (0, 30),      // ~30 hexes in +r direction
+        (-30, 0),     // ~30 hexes in -q direction
+        (0, -30),     // ~30 hexes in -r direction
+    ];
+
+    for (q, r) in spawner_hex_positions {
+        // Convert hex position to world space to query terrain height
+        let world_pos = map.convert(Qrz { q, r, z: 0 });
+        let terrain_height = terrain.get(world_pos.x, world_pos.y);
+
+        // Create spawner at terrain height
+        let spawn_qrz = Qrz { q, r, z: terrain_height };
+
+        let spawner = Spawner::new(
+            NpcTemplate::Dog,
+            3,      // max_count: 3 dogs per spawner (manageable group)
+            4,      // spawn_radius: 4 hexes (tight group)
+            12,     // player_activation_range: 12 hexes (must approach deliberately)
+            20,     // leash_distance: 20 hexes (won't chase forever)
+            35,     // despawn_distance: 35 hexes (cleanup when far away)
+            5000,   // respawn_timer_ms: 5 seconds (breathing room between waves)
+        );
+
+        commands.spawn((
+            spawner,
+            Loc::new(spawn_qrz),
+            Name::new(format!("Wild Dog Spawner {:?}", spawn_qrz)),
+        ));
+    }
 }
 
 pub fn try_spawn(
@@ -154,6 +194,7 @@ pub fn do_spawn(
                             KeyBits::default(),
                             Heading::default(),
                             Offset::default(),
+                            LastAutoAttack::default(), // ADR-009: Track auto-attack cooldown
                             Transform {
                                 translation: map.convert(qrz),
                                 ..default()},

@@ -243,14 +243,8 @@ pub fn update_health_bars(
         *player_heading,
         None,
         &nntree,
-        |ent| {
-            targeting_query.get(ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                if player_controlled_opt.is_some() {
-                    return None; // Exclude allies
-                }
-                Some(*et)
-            })
-        },
+        |ent| targeting_query.get(ent).ok().map(|(et, _, _)| *et),
+        |ent| targeting_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
     );
 
     let ally_target = crate::common::systems::targeting::select_ally_target(
@@ -388,14 +382,8 @@ pub fn update_threat_queue_dots(
         *player_heading,
         None,
         &nntree,
-        |ent| {
-            entity_query.get(ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                if player_controlled_opt.is_some() {
-                    return None; // Exclude allies
-                }
-                Some(*et)
-            })
-        },
+        |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+        |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
     );
 
     let ally_target = crate::common::systems::targeting::select_ally_target(

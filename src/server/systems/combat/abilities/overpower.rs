@@ -1,0 +1,161 @@
+use bevy::prelude::*;
+use crate::{
+    common::{
+        components::{entity_type::*, heading::*, resources::*, Loc, reaction_queue::DamageType, gcd::Gcd},
+        message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
+        plugins::nntree::*,
+        systems::{targeting::*, combat::gcd::GcdType},
+    },
+};
+
+/// Handle Overpower ability (W key)
+/// - 40 stamina cost
+/// - 80 base damage
+/// - Melee range (adjacent hex)
+/// - Triggers Attack GCD
+pub fn handle_overpower(
+    mut commands: Commands,
+    mut reader: EventReader<Try>,
+    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    loc_heading_query: Query<(&Loc, &Heading)>,
+    mut stamina_query: Query<&mut Stamina>,
+    mut gcd_query: Query<&mut Gcd>,
+    respawn_query: Query<&RespawnTimer>,
+    nntree: Res<NNTree>,
+    mut writer: EventWriter<Do>,
+    time: Res<Time>,
+) {
+    for event in reader.read() {
+        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
+            continue;
+        };
+
+        // Filter for Overpower only
+        let Some(AbilityType::Overpower) = (ability == &AbilityType::Overpower).then_some(ability) else {
+            continue;
+        };
+
+        // Check if caster is dead (has RespawnTimer)
+        if respawn_query.get(*ent).is_ok() {
+            // Dead players can't use abilities - silently ignore
+            continue;
+        }
+
+        // Check GCD (must not be on cooldown)
+        let Ok(gcd) = gcd_query.get(*ent) else {
+            continue;
+        };
+
+        if gcd.is_active(time.elapsed()) {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::OnCooldown,
+                },
+            });
+            continue;
+        }
+
+        // Get caster's location and heading
+        let Ok((caster_loc, caster_heading)) = loc_heading_query.get(*ent) else {
+            continue;
+        };
+
+        // Use targeting system to select target (asymmetric: players attack NPCs, NPCs attack players)
+        let target_opt = select_target(
+            *ent, // caster entity
+            *caster_loc,
+            *caster_heading,
+            None, // No tier lock in MVP
+            &nntree,
+            |target_ent| {
+                // Skip entities with RespawnTimer (dead players)
+                if respawn_query.get(target_ent).is_ok() {
+                    return None;
+                }
+                entity_query.get(target_ent).ok().map(|(et, _, _)| *et)
+            },
+            |target_ent| {
+                // Check if entity is player-controlled
+                entity_query.get(target_ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some()
+            },
+        );
+
+        let Some(target_ent) = target_opt else {
+            // No valid target in facing cone
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        };
+
+        // Overpower is melee only - check distance (must be adjacent = distance 1)
+        let Some(target_loc) = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc) else {
+            continue;
+        };
+
+        let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+        if distance > 1 {
+            // Target is too far for melee attack
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::OutOfRange,
+                },
+            });
+            continue;
+        }
+
+        // Check stamina cost (40)
+        let stamina_cost = 40.0;
+        let base_damage = 80.0;
+
+        let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
+            continue;
+        };
+
+        if stamina.state < stamina_cost {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::InsufficientStamina,
+                },
+            });
+            continue;
+        }
+
+        stamina.state -= stamina_cost;
+        stamina.step = stamina.state;
+
+        // Broadcast updated stamina
+        writer.write(Do {
+            event: GameEvent::Incremental {
+                ent: *ent,
+                component: crate::common::message::Component::Stamina(*stamina),
+            },
+        });
+
+        // Emit DealDamage event
+        commands.trigger_targets(
+            Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target: target_ent,
+                    base_damage,
+                    damage_type: DamageType::Physical,
+                },
+            },
+            target_ent,
+        );
+
+        // Trigger Attack GCD immediately (prevents race conditions)
+        if let Ok(mut gcd) = gcd_query.get_mut(*ent) {
+            let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
+            gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
+        }
+    }
+}

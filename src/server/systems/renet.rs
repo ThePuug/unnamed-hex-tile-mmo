@@ -120,6 +120,7 @@ pub fn do_manage_connections(
                     combat_state,
                     reaction_queue,
                     gcd::Gcd::new(),  // GCD component for cooldown tracking
+                    LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
                     PlayerDiscoveryState::default(),
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
@@ -222,9 +223,9 @@ pub fn write_try(
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
-                Try { event: Event::UseAbility { ent: _, ability } } => {
+                Try { event: Event::UseAbility { ent: _, ability, target_loc } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
-                    writer.write(Try { event: Event::UseAbility { ent, ability }});
+                    writer.write(Try { event: Event::UseAbility { ent, ability, target_loc }});
                 }
                 Try { event: Event::Ping { client_time } } => {
                     // Immediately respond with Pong (echo client timestamp)

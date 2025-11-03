@@ -6,7 +6,6 @@ authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 
 [dependencies]
 bevy = { version = "0", features = ["dynamic_linking"] }
-bevy_behave = "0"
 bevy_easings = "0"
 bevy_renet = "2"
 bimap = "0"

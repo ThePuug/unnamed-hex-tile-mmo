@@ -73,12 +73,12 @@ pub fn setup(
             },
         ))
         .with_children(|parent| {
-            // Define ability slots: Q, W, E, R
+            // Define ability slots: Q, W, E, R (ADR-009 MVP ability set)
             let slots = vec![
-                (0, KeyCode::KeyQ, Some(AbilityType::BasicAttack)),  // Q = BasicAttack
-                (1, KeyCode::KeyW, None),                             // W = Empty
-                (2, KeyCode::KeyE, Some(AbilityType::Dodge)),        // E = Dodge
-                (3, KeyCode::KeyR, None),                             // R = Empty
+                (0, KeyCode::KeyQ, Some(AbilityType::Lunge)),      // Q = Lunge (gap closer)
+                (1, KeyCode::KeyW, Some(AbilityType::Overpower)),  // W = Overpower (heavy strike)
+                (2, KeyCode::KeyE, Some(AbilityType::Knockback)),  // E = Knockback (push enemy)
+                (3, KeyCode::KeyR, Some(AbilityType::Deflect)),    // R = Deflect (clear queue)
             ];
 
             for (slot_index, keybind, ability) in slots {
@@ -99,8 +99,11 @@ pub fn setup(
     .with_children(|parent| {
         // Ability icon (center)
         let icon_text = match ability {
-            Some(AbilityType::BasicAttack) => "⚔",
-            Some(AbilityType::Dodge) => "🌀",
+            Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
+            Some(AbilityType::Overpower) => "💥",  // Heavy strike
+            Some(AbilityType::Knockback) => "💨",  // Push effect
+            Some(AbilityType::Deflect) => "🛡",    // Shield / defense
+            Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
             None => "🔒",
         };
 
@@ -138,8 +141,11 @@ pub fn setup(
         // Cost badge (bottom-right corner)
         if let Some(ability_type) = ability {
             let cost_text = match ability_type {
-                AbilityType::BasicAttack => String::new(),  // Free
-                AbilityType::Dodge => "60".to_string(),     // 60 stamina
+                AbilityType::Lunge => "20".to_string(),       // 20 stamina
+                AbilityType::Overpower => "40".to_string(),   // 40 stamina
+                AbilityType::Knockback => "30".to_string(),   // 30 stamina
+                AbilityType::Deflect => "50".to_string(),     // 50 stamina
+                AbilityType::AutoAttack => String::new(),     // Free (passive)
             };
 
             if !cost_text.is_empty() {
@@ -171,7 +177,7 @@ pub fn setup(
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor)>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&Gcd>), With<Actor>>,
-    entity_query: Query<(&EntityType, &Loc)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
@@ -231,7 +237,7 @@ fn get_ability_state(
     player_loc: Loc,
     player_heading: Heading,
     nntree: &NNTree,
-    entity_query: &Query<(&EntityType, &Loc)>,
+    entity_query: &Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
     // Check GCD first
     if gcd_active {
@@ -240,21 +246,52 @@ fn get_ability_state(
 
     // Check resource costs and range requirements
     match ability {
-        AbilityType::BasicAttack => {
-            // Free ability, but requires adjacent target
-            // Check if there's a valid target within range (distance 1)
+        AbilityType::Lunge => {
+            // Gap closer: 4 hex range, 20 stamina, requires target
+            if stamina.step < 20.0 {
+                return AbilityState::InsufficientResources;
+            }
+
             let target_opt = select_target(
                 player_ent,
                 player_loc,
                 player_heading,
                 None,
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _)| *et),
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
             );
 
             if let Some(target_ent) = target_opt {
-                // Check if target is within melee range (adjacent = distance 1)
-                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
+                    let distance = player_loc.flat_distance(target_loc) as u32;
+                    if distance > 4 {
+                        return AbilityState::OutOfRange;
+                    }
+                }
+                AbilityState::Ready
+            } else {
+                AbilityState::OutOfRange
+            }
+        }
+        AbilityType::Overpower => {
+            // Heavy strike: 1 hex range, 40 stamina, requires adjacent target
+            if stamina.step < 40.0 {
+                return AbilityState::InsufficientResources;
+            }
+
+            let target_opt = select_target(
+                player_ent,
+                player_loc,
+                player_heading,
+                None,
+                nntree,
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
+            );
+
+            if let Some(target_ent) = target_opt {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
                     if distance > 1 {
                         return AbilityState::OutOfRange;
@@ -262,17 +299,48 @@ fn get_ability_state(
                 }
                 AbilityState::Ready
             } else {
-                // No valid target in facing cone
                 AbilityState::OutOfRange
             }
         }
-        AbilityType::Dodge => {
-            // Costs 60 stamina
-            if stamina.step >= 60.0 {
+        AbilityType::Knockback => {
+            // Push enemy: 2 hex range, 30 stamina, requires target
+            if stamina.step < 30.0 {
+                return AbilityState::InsufficientResources;
+            }
+
+            let target_opt = select_target(
+                player_ent,
+                player_loc,
+                player_heading,
+                None,
+                nntree,
+                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
+            );
+
+            if let Some(target_ent) = target_opt {
+                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
+                    let distance = player_loc.flat_distance(target_loc) as u32;
+                    if distance > 2 {
+                        return AbilityState::OutOfRange;
+                    }
+                }
+                AbilityState::Ready
+            } else {
+                AbilityState::OutOfRange
+            }
+        }
+        AbilityType::Deflect => {
+            // Clear all threats: 50 stamina, no target required
+            if stamina.step >= 50.0 {
                 AbilityState::Ready
             } else {
                 AbilityState::InsufficientResources
             }
+        }
+        AbilityType::AutoAttack => {
+            // Passive ability - not on action bar, always "ready" but not shown
+            AbilityState::Ready
         }
     }
 }
