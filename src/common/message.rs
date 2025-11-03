@@ -88,6 +88,8 @@ pub enum ClearType {
     All,
     /// Clear first N threats (Counter, Parry - future)
     First(usize),
+    /// Clear last N threats (Knockback - removes most recent threat)
+    Last(usize),
     /// Clear threats by damage type (Ward - future)
     ByType(DamageType),
 }

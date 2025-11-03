@@ -82,9 +82,16 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             queue.threats.drain(..).collect()
         }
         ClearType::First(n) => {
-            // Drain first N threats
+            // Drain first N threats (oldest)
             let count = n.min(queue.threats.len());
             queue.threats.drain(..count).collect()
+        }
+        ClearType::Last(n) => {
+            // Drain last N threats (newest) - for reactive abilities like Knockback
+            let len = queue.threats.len();
+            let count = n.min(len);
+            let start = len.saturating_sub(count);
+            queue.threats.drain(start..).collect()
         }
         ClearType::ByType(damage_type) => {
             // Remove threats matching damage type

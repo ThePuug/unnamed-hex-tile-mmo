@@ -1,27 +1,32 @@
 use bevy::prelude::*;
+use qrz::Qrz;
+use std::ops::Deref;
 use crate::{
     common::{
-        components::{entity_type::*, heading::*, resources::*, Loc, gcd::Gcd},
-        message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-        plugins::nntree::*,
-        systems::{targeting::*, combat::gcd::GcdType},
+        components::{entity_type::*, resources::*, Loc, gcd::Gcd, reaction_queue::ReactionQueue},
+        message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
+        systems::combat::gcd::GcdType,
     },
+    server::resources::RunTime,
 };
 
-/// Handle Knockback ability (E key)
+/// Handle Knockback ability (E key) - REACTIVE COUNTER
 /// - 30 stamina cost
 /// - 2 hex range
-/// - Pushes target 1 hex away
+/// - Targets the source of the most recent threat in your reaction queue
+/// - Only works while threat is still in queue (1-1.75s window based on Instinct)
+/// - Pushes attacker 1 hex directly away from you (using direction vector)
+/// - Removes the threat from queue (cancels the incoming attack)
 /// - Triggers Attack GCD
 pub fn handle_knockback(
     mut commands: Commands,
     mut reader: EventReader<Try>,
-    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    loc_heading_query: Query<(&Loc, &Heading)>,
+    entity_query: Query<(&EntityType, &Loc)>,
+    mut caster_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
     mut gcd_query: Query<&mut Gcd>,
     respawn_query: Query<&RespawnTimer>,
-    nntree: Res<NNTree>,
+    _runtime: Res<RunTime>,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
 ) {
@@ -56,33 +61,9 @@ pub fn handle_knockback(
             continue;
         }
 
-        // Get caster's location and heading
-        let Ok((caster_loc, caster_heading)) = loc_heading_query.get(*ent) else {
-            continue;
-        };
-
-        // Use targeting system to find target
-        let target_opt = select_target(
-            *ent,
-            *caster_loc,
-            *caster_heading,
-            None, // No tier lock
-            &nntree,
-            |target_ent| {
-                // Skip dead players
-                if respawn_query.get(target_ent).is_ok() {
-                    return None;
-                }
-                entity_query.get(target_ent).ok().map(|(et, _, _)| *et)
-            },
-            |target_ent| {
-                // Check if entity is player-controlled
-                entity_query.get(target_ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some()
-            },
-        );
-
-        let Some(target_ent) = target_opt else {
-            // No valid target in facing cone
+        // Get caster's location and reaction queue
+        let Ok((caster_loc, mut queue)) = caster_query.get_mut(*ent) else {
+            // No ReactionQueue component - can't use knockback
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -92,7 +73,41 @@ pub fn handle_knockback(
             continue;
         };
 
-        let Some(target_loc) = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc) else {
+        // Get the most recent threat from the queue (back = newest)
+        let Some(threat) = queue.threats.back().copied() else {
+            // No threats in queue - nothing to knockback
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        };
+
+        let target_ent = threat.source;
+
+        // Check if attacker is still alive
+        if respawn_query.get(target_ent).is_ok() {
+            // Attacker is dead
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
+
+        // Get attacker's location
+        let Some(target_loc) = entity_query.get(target_ent).ok().map(|(_, loc)| *loc) else {
+            // Attacker entity doesn't exist
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
             continue;
         };
 
@@ -138,13 +153,24 @@ pub fn handle_knockback(
             },
         });
 
-        // Calculate push direction: find neighbor of target that's furthest from caster
-        let target_neighbors = (*target_loc).neighbors();
+        // Calculate push direction: directly away from caster
+        // Get Qrz values via Deref trait (Loc derefs to Qrz)
+        let target_qrz: Qrz = *target_loc.deref();  // target_loc is Loc, deref to &Qrz, then copy
+        let caster_qrz: Qrz = *caster_loc.deref();  // caster_loc is &Loc, deref to &Qrz, then copy
+        let direction = target_qrz - caster_qrz;
+
+        // Among target's neighbors, pick the one most aligned with the away direction
+        let target_neighbors = target_qrz.neighbors();
         let push_loc = target_neighbors
             .iter()
-            .max_by_key(|neighbor_loc| caster_loc.flat_distance(neighbor_loc))
+            .max_by_key(|&&neighbor| {
+                // Calculate the step from target to this neighbor
+                let step = neighbor - target_qrz;
+                // Dot product: direction · step (higher = more aligned)
+                direction.q * step.q + direction.r * step.r + direction.z * step.z
+            })
             .copied()
-            .unwrap_or(*target_loc); // Fallback to current loc if no neighbors
+            .unwrap_or(target_qrz); // Fallback to current loc if no neighbors
 
         // Update target's location (push)
         commands.entity(target_ent).insert(Loc::new(push_loc));
@@ -154,6 +180,17 @@ pub fn handle_knockback(
             event: GameEvent::Incremental {
                 ent: target_ent,
                 component: crate::common::message::Component::Loc(Loc::new(push_loc)),
+            },
+        });
+
+        // Remove the threat from the queue (cancel the incoming attack)
+        queue.threats.pop_back();
+
+        // Broadcast threat removal to clients
+        writer.write(Do {
+            event: GameEvent::ClearQueue {
+                ent: *ent,
+                clear_type: ClearType::Last(1),
             },
         });
 
