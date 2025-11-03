@@ -69,6 +69,7 @@ pub fn tick_spawners(
             &mut commands,
             spawner.npc_template,
             spawn_qrz,
+            spawner.spawn_radius,
             spawner_ent,
             &mut writer,
             &map,
@@ -85,18 +86,31 @@ fn spawn_npc(
     commands: &mut Commands,
     template: NpcTemplate,
     qrz: impl Into<Qrz>,
+    spawn_radius: u8,
     spawner_ent: Entity,
     writer: &mut EventWriter<Do>,
     map: &Map,
     time: &Time,
 ) {
     let qrz = qrz.into();
-    // Use map.find to get terrain elevation so NPC spawns on top of terrain
-    let Some((terrain_qrz, _entity_type)) = map.find(qrz, -60) else {
-        warn!("Failed to find terrain for spawn location {:?}, skipping spawn", qrz);
+    // Search from higher Z to account for sloped terrain
+    // On slopes, spawn location might be uphill from spawner
+    let search_start = Qrz {
+        q: qrz.q,
+        r: qrz.r,
+        z: qrz.z + spawn_radius as i16,
+    };
+    let Some((terrain_qrz, _entity_type)) = map.find(search_start, -60) else {
+        warn!("Failed to find terrain for spawn location {:?}, skipping spawn", search_start);
         return;
     };
-    let loc = Loc::new(terrain_qrz);
+    // Spawn NPC one tile ABOVE terrain (not inside it)
+    let spawn_qrz = Qrz {
+        q: terrain_qrz.q,
+        r: terrain_qrz.r,
+        z: terrain_qrz.z + 1,
+    };
+    let loc = Loc::new(spawn_qrz);
     let actor_impl = template.actor_impl();
     let typ = EntityType::Actor(actor_impl);
 
@@ -237,7 +251,7 @@ fn spawn_npc(
 
     // Send spawn event to clients
     writer.write(Do {
-        event: crate::common::message::Event::Spawn { ent, typ, qrz, attrs: Some(attrs) },
+        event: crate::common::message::Event::Spawn { ent, typ, qrz: spawn_qrz, attrs: Some(attrs) },
     });
 
     // Send initial resource states to clients via Incremental
@@ -248,6 +262,7 @@ fn spawn_npc(
 }
 
 /// Helper function to generate a random hex within a radius
+/// Only randomizes horizontal position (q, r), keeps center's Z for terrain lookup
 fn random_hex_within_radius(center: impl Into<Qrz>, radius: u8) -> Qrz {
     if radius == 0 {
         return center.into();
@@ -256,22 +271,22 @@ fn random_hex_within_radius(center: impl Into<Qrz>, radius: u8) -> Qrz {
     let center = center.into();
     let mut rng = rand::rng();
 
-    // Generate random hex coordinates within radius
-    // Using cube coordinates, we need q + r + z = 0 and distance <= radius
+    // Generate random HORIZONTAL offset within radius
+    // Z coordinate is NOT randomized - it will be determined by terrain height
     let radius = radius as i16;
 
     loop {
-        let q = rng.random_range(-radius..=radius);
-        let r = rng.random_range(-radius..=radius);
-        let z = -q - r;
+        let q_offset = rng.random_range(-radius..=radius);
+        let r_offset = rng.random_range(-radius..=radius);
 
-        // Check if within radius using cube distance
-        let dist = (q.abs() + r.abs() + z.abs()) / 2;
+        // Check if within radius using flat hex distance (ignore Z)
+        // Flat distance = max(|q|, |r|, |q+r|)
+        let dist = q_offset.abs().max(r_offset.abs()).max((q_offset + r_offset).abs());
         if dist <= radius {
             return Qrz {
-                q: center.q + q,
-                r: center.r + r,
-                z: center.z + z,
+                q: center.q + q_offset,
+                r: center.r + r_offset,
+                z: center.z,  // Keep center's Z - map.find will adjust to terrain
             };
         }
     }
@@ -346,14 +361,19 @@ mod tests {
 
     #[test]
     fn test_random_hex_within_radius_respects_bounds() {
-        let center = Qrz { q: 0, r: 0, z: 0 };
+        let center = Qrz { q: 10, r: 5, z: 3 };
         let radius = 3;
 
         for _ in 0..100 {
             let result = random_hex_within_radius(center, radius);
-            let dist = (result.q.abs() + result.r.abs() + result.z.abs()) / 2;
+
+            // Check flat distance (only q and r offsets matter)
+            let q_offset = result.q - center.q;
+            let r_offset = result.r - center.r;
+            let dist = q_offset.abs().max(r_offset.abs()).max((q_offset + r_offset).abs());
+
             assert!(dist <= radius as i16, "Generated hex {:?} is outside radius {}", result, radius);
-            assert_eq!(result.q + result.r + result.z, 0, "Invalid hex coordinates");
+            assert_eq!(result.z, center.z, "Z coordinate should not be randomized");
         }
     }
 
