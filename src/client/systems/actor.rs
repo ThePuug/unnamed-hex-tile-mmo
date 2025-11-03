@@ -132,6 +132,8 @@ pub fn do_spawn(
                 attrs_val,
                 reaction_queue,
                 crate::common::components::gcd::Gcd::new(),
+                crate::common::components::target::Target::default(), // For targeting system
+                crate::common::components::LastAutoAttack::default(), // For auto-attack cooldown
             ))
             .observe(ready);
 

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{reaction_queue::*, resources::*, gcd::Gcd},
-    message::{Do, Event as GameEvent},
+    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, behaviour::PlayerControlled, Loc},
+    message::{AbilityType, Do, Event as GameEvent, Try},
     systems::combat::{queue as queue_utils, gcd::GcdType},
 };
 
@@ -31,32 +31,20 @@ pub fn handle_insert_threat(
 }
 
 /// Client system to handle ApplyDamage events
-/// Updates health and removes the corresponding threat from the queue
-/// Spawns floating damage numbers above the entity
+/// Removes the corresponding threat from the queue and spawns floating damage numbers
+/// NOTE: Does NOT update health - server sends authoritative health via Incremental{Health}
 pub fn handle_apply_damage(
     mut commands: Commands,
     mut reader: EventReader<Do>,
-    mut health_query: Query<&mut Health>,
+    _health_query: Query<&mut Health>,
     mut queue_query: Query<&mut ReactionQueue>,
     transform_query: Query<&Transform>,
     time: Res<Time>,
 ) {
     for event in reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
-            // Update health
-            if let Ok(mut health) = health_query.get_mut(ent) {
-                let new_health = (health.state - damage).max(0.0);
-
-                // Check if prediction was correct (for local player)
-                let prediction_error = (health.step - new_health).abs();
-                if prediction_error > 0.1 {
-                    // Rollback: snap step to server's authoritative value
-                    health.step = new_health;
-                }
-
-                health.state = new_health;
-                health.step = new_health; // Ensure sync for non-predicted entities (NPCs)
-            }
+            // NOTE: We do NOT update health here - the server sends authoritative health
+            // via Incremental{Health} messages. Applying damage here would cause double-damage.
 
             // Remove the resolved threat from the queue
             // Match by source - the oldest threat from this source
@@ -146,5 +134,73 @@ pub fn apply_gcd(
                 gcd.activate(typ, duration, time.elapsed());
             }
         }
+    }
+}
+
+/// Client passive auto-attack system for players
+/// Automatically sends AutoAttack Try events when player has an adjacent target
+/// Runs periodically (every 500ms) to check for auto-attack opportunities
+///
+/// Auto-attack will only fire if:
+/// - Player has a Target set (via reactive targeting system)
+/// - Target is adjacent (distance == 1)
+/// - No GCD active (attacks are free actions)
+/// - 1.5s has elapsed since last auto-attack
+pub fn player_auto_attack(
+    mut writer: EventWriter<Try>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut crate::common::components::LastAutoAttack, Option<&Gcd>)>,
+    target_query: Query<&Loc>,
+    input_queues: Res<crate::common::resources::InputQueues>,
+    time: Res<Time>,
+) {
+    const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
+    let now = time.elapsed();
+
+    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt) in &mut player_query {
+        // Only process local player (entity with InputQueue)
+        if input_queues.get(&player_ent).is_none() {
+            continue;
+        }
+
+        // Skip if GCD active (though auto-attack shouldn't trigger GCD)
+        if let Some(gcd) = gcd_opt {
+            if gcd.is_active(time.elapsed()) {
+                continue;
+            }
+        }
+
+        // Check cooldown (1.5s between auto-attacks)
+        let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
+        if time_since_last_attack.as_millis() < AUTO_ATTACK_COOLDOWN_MS as u128 {
+            continue; // Still on cooldown
+        }
+
+        // Get target entity
+        let Some(target_ent) = **player_target else {
+            continue; // No target
+        };
+
+        // Get target location
+        let Ok(target_loc) = target_query.get(target_ent) else {
+            continue; // Target not found (may have despawned)
+        };
+
+        // Check if target is adjacent (distance == 1)
+        let distance = player_loc.distance(target_loc);
+        if distance != 1 {
+            continue; // Target not adjacent
+        }
+
+        // Send AutoAttack Try event with target location
+        writer.write(Try {
+            event: GameEvent::UseAbility {
+                ent: player_ent,
+                ability: AbilityType::AutoAttack,
+                target_loc: Some(**target_loc),
+            },
+        });
+
+        // Update last attack time
+        last_auto_attack.last_attack_time = now;
     }
 }

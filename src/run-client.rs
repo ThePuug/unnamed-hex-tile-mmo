@@ -21,11 +21,11 @@ use bevy_renet::{
 };
 
 use common::{
-    components::{entity_type::*, *}, 
-    message::*, 
-    plugins::nntree, 
+    components::{entity_type::*, *},
+    message::*,
+    plugins::nntree,
     resources::{ map::*,  * },
-    systems::physics,
+    systems::{physics, targeting},
 };
 use client::{
     plugins::{
@@ -110,6 +110,8 @@ fn main() {
         actor_dead_visibility::update_dead_visibility,
         animator::update,
         camera::update,
+        targeting::update_targets_on_change, // Reactive targeting: updates Target when heading/loc changes
+        combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
         combat::apply_gcd,
         // REMOVED: Client-side attack prediction - all combat is server-authoritative
         combat::handle_insert_threat,

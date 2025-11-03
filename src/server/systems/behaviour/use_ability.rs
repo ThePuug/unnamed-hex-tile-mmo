@@ -52,8 +52,15 @@ pub fn use_ability_if_adjacent(
             }
         }
 
+        // Unwrap Target (Option<Entity>)
+        let Some(target_ent) = **target else {
+            // No target entity set, fail
+            commands.trigger(ctx.failure());
+            continue;
+        };
+
         // Get Target's location
-        let Ok(target_loc) = q_target_loc.get(**target) else {
+        let Ok(target_loc) = q_target_loc.get(target_ent) else {
             // Target entity missing Loc, fail
             commands.trigger(ctx.failure());
             continue;
@@ -79,6 +86,7 @@ pub fn use_ability_if_adjacent(
             event: Event::UseAbility {
                 ent: npc_ent,
                 ability: node.ability,
+                target_loc: Some(**target_loc), // Send target hex for validation
             },
         });
 

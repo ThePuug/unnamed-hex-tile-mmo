@@ -22,7 +22,7 @@ use crate::{
         message::*,
         plugins::nntree,
         resources::{map::*, *},
-        systems::physics
+        systems::{physics, targeting}
     },
     server::{
         resources::{terrain::*, *},
@@ -63,11 +63,11 @@ fn main() {
     app.add_event::<Do>();
     app.add_event::<Try>();
     app.add_event::<Tick>();
+    app.add_event::<combat::abilities::TriggerGcd>();
 
     // Add observers for triggered events
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
-    app.add_observer(common::systems::combat::resources::handle_death);
 
     app.add_systems(Startup, (
         world::setup,
@@ -85,15 +85,27 @@ fn main() {
         reaction_queue::process_expired_threats,
     ));
 
+    // Core combat and actor systems
     app.add_systems(Update, (
         panic_on_error_system,
         actor::do_incremental,
         actor::update,
+        targeting::update_targets_on_change, // Reactive targeting: updates NPC Target when heading/loc changes
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
-        combat::handle_use_ability,
+        combat::validate_ability_prerequisites,
+        combat::abilities::auto_attack::handle_auto_attack,
+        combat::abilities::overpower::handle_overpower,
+        combat::abilities::lunge::handle_lunge,
+        combat::abilities::knockback::handle_knockback,
+        combat::abilities::deflect::handle_deflect,
+        combat::abilities::emit_gcd,  // Must run after all ability systems
         combat::apply_gcd,  // ADR-006: Activate GCD component from Event::Gcd
         common::systems::combat::resources::check_death, // Check for death from ANY source
+    ));
+
+    // World, network, and spawner systems
+    app.add_systems(Update, (
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
         input::send_input,

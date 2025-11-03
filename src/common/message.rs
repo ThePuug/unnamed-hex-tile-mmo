@@ -43,7 +43,8 @@ pub enum Event {
     /// Server-internal: Resolve a threat (apply damage with modifiers)
     ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server: Use an ability (Try event)
-    UseAbility { ent: Entity, ability: AbilityType },
+    /// target_loc: Optional target hex location (for validation and targeting)
+    UseAbility { ent: Entity, ability: AbilityType, target_loc: Option<Qrz> },
     /// Server → Client: Ability usage failed
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue

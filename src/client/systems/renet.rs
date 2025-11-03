@@ -51,7 +51,12 @@ pub fn write_do(
             Do { event: Event::Init { ent: ent0, dt }} => {
                 // Create local player entity with markers
                 // Health/Stamina/Mana will be inserted by Incremental events from server
-                let ent = commands.spawn((Actor, Behaviour::Controlled, PlayerControlled)).id();
+                let ent = commands.spawn((
+                    Actor,
+                    Behaviour::Controlled,
+                    PlayerControlled,
+                    crate::common::components::target::Target::default(), // For unified targeting system
+                )).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
@@ -193,10 +198,11 @@ pub fn send_try(
                     ent, typ, qrz, attrs
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::UseAbility { ent, ability } } => {
+            Try { event: Event::UseAbility { ent, ability, target_loc } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
                     ent: *l2r.get_by_left(&ent).unwrap(),
-                    ability
+                    ability,
+                    target_loc
                 }}, bincode::config::legacy()).unwrap());
             }
             Try { event: Event::Ping { client_time } } => {

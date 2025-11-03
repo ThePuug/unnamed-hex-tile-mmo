@@ -441,6 +441,46 @@ where
     Some(best_target)
 }
 
+/// Reactive system that updates Target component when heading or location changes
+///
+/// This system runs whenever an entity's Heading or Loc changes, automatically
+/// recalculating what entity they are facing using select_target().
+///
+/// Used by:
+/// - Players: Target updates as they turn or move
+/// - NPCs: Target updates as behavior tree changes heading/location
+///
+/// # Performance
+///
+/// Only runs for entities that actually changed (Bevy change detection).
+/// No work done if no entities moved or turned.
+pub fn update_targets_on_change(
+    mut query: Query<
+        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
+        Or<(Changed<Heading>, Changed<Loc>)>
+    >,
+    entity_types: Query<&EntityType>,
+    nntree: Res<NNTree>,
+) {
+    for (ent, loc, heading, mut target) in &mut query {
+        // Use select_target to find what this entity is facing
+        let new_target = select_target(
+            ent,
+            *loc,
+            *heading,
+            None, // No tier lock (automatic targeting)
+            &nntree,
+            |e| entity_types.get(e).ok().copied(),
+        );
+
+        // Update the Target component
+        match new_target {
+            Some(target_ent) => target.set(target_ent),
+            None => target.clear(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,18 +9,13 @@ use rand::seq::IteratorRandom;
 use qrz::Qrz;
 
 use crate::common::{
-    components::{entity_type::EntityType, heading::Heading, *},
+    components::{entity_type::EntityType, heading::Heading, target::Target, *},
     message::{AbilityType, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::targeting::*,
 };
 
-#[derive(Clone, Component, Copy, Deref, DerefMut)]
-pub struct Target(Entity);
-
-impl Target {
-    pub fn new(ent: Entity) -> Self { Self(ent) }
-}
+// Target component now in common/components/target.rs (unified for players and NPCs)
 
 /// Origin for Nearby component - where to measure distance from
 #[derive(Clone, Component, Copy, Debug)]
@@ -66,7 +61,7 @@ pub fn find_something_interesting_within(
         }).choose(&mut rand::rng()) else {
             continue
         };
-        commands.entity(ctx.target_entity()).insert(Target::new(o_ent));
+        commands.entity(ctx.target_entity()).insert(Target::new(Some(o_ent)));
         commands.trigger(ctx.success());
     }
 }
@@ -86,7 +81,8 @@ pub fn nearby(
             NearbyOrigin::Target => {
                 // Get Target component and resolve to Loc
                 let Ok((_, Some(target), _)) = q_entity.get(target_entity) else { continue };
-                let Ok(&target_loc) = q_target.get(**target) else { continue };
+                let Some(target_ent) = **target else { continue };  // Unwrap Option<Entity>
+                let Ok(&target_loc) = q_target.get(target_ent) else { continue };
                 target_loc
             }
             NearbyOrigin::Dest => {
@@ -166,8 +162,13 @@ pub fn attack_target(
             continue;
         };
 
+        // Unwrap Target (Option<Entity>)
+        let Some(target_ent) = **target else {
+            continue;  // No target set
+        };
+
         // Get target's location
-        let Ok((_target_type, target_loc)) = player_query.get(**target) else {
+        let Ok((_target_type, target_loc)) = player_query.get(target_ent) else {
             continue;
         };
 
@@ -216,11 +217,13 @@ pub fn attack_target(
             );
 
             // If target is in facing cone, use auto-attack
-            if selected == Some(**target) {
+            // selected is Option<Entity>, **target is Option<Entity>
+            if selected == **target {
                 writer.write(Try {
                     event: GameEvent::UseAbility {
                         ent: target_entity,
                         ability: AbilityType::AutoAttack,
+                        target_loc: Some(**target_loc), // Send target hex for validation
                     },
                 });
             }

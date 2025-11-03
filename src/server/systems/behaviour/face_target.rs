@@ -36,8 +36,15 @@ pub fn face_target(
             continue;
         };
 
+        // Unwrap Target (Option<Entity>)
+        let Some(target_ent) = **target else {
+            // No target set, fail
+            commands.trigger(ctx.failure());
+            continue;
+        };
+
         // Get Target's location
-        let Ok(target_loc) = q_target_loc.get(**target) else {
+        let Ok(target_loc) = q_target_loc.get(target_ent) else {
             // Target entity missing Loc, fail
             commands.trigger(ctx.failure());
             continue;

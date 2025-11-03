@@ -52,7 +52,7 @@ pub fn find_or_keep_target(
                     && player_controlled.is_some()  // NPCs only target players
                 {
                     // Keep existing target (lock still valid)
-                    commands.entity(npc_entity).insert(Target(lock.locked_target));
+                    commands.entity(npc_entity).insert(Target(Some(lock.locked_target)));
                     commands.trigger(ctx.success());
                     continue;
                 }
@@ -91,7 +91,7 @@ pub fn find_or_keep_target(
                 new_target,
                 node.leash_distance,
             ));
-            commands.entity(npc_entity).insert(Target(new_target));
+            commands.entity(npc_entity).insert(Target(Some(new_target)));
             commands.trigger(ctx.success());
         } else {
             // No valid targets: fail

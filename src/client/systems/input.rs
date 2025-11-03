@@ -39,22 +39,22 @@ pub fn update_keybits(
 
         // Lunge ability (Q key) - Gap closer
         if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target_loc: None }});
         }
 
         // Overpower ability (W key) - Heavy strike
         if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target_loc: None }});
         }
 
         // Knockback ability (E key) - Push enemy
         if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Knockback }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Knockback, target_loc: None }});
         }
 
         // Deflect ability (R key) - Clear all threats
         if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target_loc: None }});
         }
 
         let mut keybits = KeyBits::default();

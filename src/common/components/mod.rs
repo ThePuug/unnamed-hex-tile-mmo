@@ -7,6 +7,7 @@ pub mod offset;
 pub mod reaction_queue;
 pub mod resources;
 pub mod spawner;
+pub mod target;
 
 use bevy::prelude::*;
 use qrz::Qrz;
