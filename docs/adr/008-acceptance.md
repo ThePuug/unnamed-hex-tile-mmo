@@ -463,7 +463,7 @@ This acceptance review evaluated:
 - Performance impact estimation
 
 **Standards Applied:**
-- ARCHITECT role principles (ROLES/ARCHITECT.md)
+- ARCHITECT role principles (architectural review, system design quality)
 - Clean code principles (separation of concerns, DRY, KISS)
 - Bevy ECS best practices
 - Performance-conscious design patterns

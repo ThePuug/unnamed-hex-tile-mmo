@@ -759,4 +759,4 @@ The chunk-based terrain system is **ACCEPTED** and ready for merge to main branc
 
 ---
 
-*This acceptance review was conducted using the ARCHITECT role principles defined in [ROLES/ARCHITECT.md](../ROLES/ARCHITECT.md). The review focused on structural integrity, maintainability, documentation quality, and alignment with stated architectural goals.*
+*This acceptance review was conducted using ARCHITECT role principles (architectural review, system design quality). The review focused on structural integrity, maintainability, documentation quality, and alignment with stated architectural goals.*
