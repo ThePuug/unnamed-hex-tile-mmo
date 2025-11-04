@@ -3,6 +3,7 @@ pub mod behaviour;
 pub mod combat;
 pub mod diagnostics;
 pub mod input;
+pub mod projectile;
 pub mod reaction_queue;
 pub mod renet;
 pub mod spawner;

@@ -26,7 +26,7 @@ use bevy::{
 use crate::{
     client::{components::TargetIndicator, plugins::diagnostics::DiagnosticsState},
     common::{
-        components::{behaviour::Behaviour, entity_type::*, heading::*, *},
+        components::{behaviour::Behaviour, entity_type::*, heading::*, targeting_state::TargetingState, *},
         plugins::nntree::*,
         resources::map::Map,
         systems::targeting::{select_target, select_ally_target},
@@ -54,7 +54,7 @@ pub fn setup(
     });
 
     // Spawn the hostile indicator (hidden by default)
-    commands.spawn((
+    let hostile_indicator = commands.spawn((
         Mesh3d(indicator_mesh.clone()),
         MeshMaterial3d(hostile_material),
         Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
@@ -64,7 +64,11 @@ pub fn setup(
         TargetIndicator {
             indicator_type: IndicatorType::Hostile,
         },
-    ));
+    )).id();
+
+    // TODO: Spawn tier badge as child of hostile indicator (ADR-010 Phase 5)
+    // Tier badge requires proper 3D text setup with Bevy 0.16 API
+    // For now, tier lock functionality works without visual badge (tested in Phase 1)
 
     // Green material for ally targets
     let ally_material = materials.add(StandardMaterial {
@@ -76,7 +80,7 @@ pub fn setup(
     });
 
     // Spawn the ally indicator (hidden by default)
-    commands.spawn((
+    let ally_indicator = commands.spawn((
         Mesh3d(indicator_mesh),
         MeshMaterial3d(ally_material),
         Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
@@ -86,7 +90,11 @@ pub fn setup(
         TargetIndicator {
             indicator_type: IndicatorType::Ally,
         },
-    ));
+    )).id();
+
+    // TODO: Spawn tier badge as child of ally indicator (ADR-010 Phase 5)
+    // Tier badge requires proper 3D text setup with Bevy 0.16 API
+    // For now, tier lock functionality works without visual badge (tested in Phase 1)
 }
 
 /// Update target indicator position every frame
@@ -94,7 +102,7 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(Entity, &Loc, &Heading, &crate::common::components::resources::Health), With<Actor>>,
+    local_player_query: Query<(Entity, &Loc, &Heading, &crate::common::components::resources::Health, &TargetingState), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -102,7 +110,7 @@ pub fn update(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Get local player
-    let Ok((player_ent, player_loc, player_heading, health)) = local_player_query.get_single() else {
+    let Ok((player_ent, player_loc, player_heading, health, targeting_state)) = local_player_query.get_single() else {
         return;
     };
 
@@ -115,12 +123,12 @@ pub fn update(
         return;
     }
 
-    // Select the current hostile target using Phase 2 targeting system
+    // Select the current hostile target using directional targeting with tier lock support (ADR-010 Phase 1)
     let hostile_target = select_target(
         player_ent,
         *player_loc,
         *player_heading,
-        None, // No tier lock in MVP
+        targeting_state.get_tier_lock(), // Pass tier lock from TargetingState
         &nntree,
         |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
         |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
@@ -295,6 +303,10 @@ pub fn update(
             }
         }
     }
+
+    // TODO: Update tier badges (ADR-010 Phase 5: Tier lock UI feedback)
+    // Tier badge UI deferred - requires proper 3D text component setup
+    // Tier lock functionality is working (tested in Phase 1), just missing visual indicator
 }
 
 /// Indicator types for different targeting modes

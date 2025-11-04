@@ -25,7 +25,7 @@ use crate::{
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, combat, input, reaction_queue, renet, spawner, world},
+        systems::{actor, combat, input, projectile, reaction_queue, renet, spawner, world},
         *
     }
 };
@@ -80,6 +80,7 @@ fn main() {
         common::systems::combat::resources::regenerate_resources,
         common::systems::combat::state::update_combat_state,
         reaction_queue::process_expired_threats,
+        projectile::update_projectiles, // ADR-010 Phase 5: Projectile movement and hit detection
     ));
 
     // Core combat and actor systems
@@ -91,6 +92,7 @@ fn main() {
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         combat::validate_ability_prerequisites,
+        combat::reset_tier_lock_on_ability_use, // ADR-010 Phase 1: Reset tier lock after ability use
         combat::abilities::auto_attack::handle_auto_attack,
         combat::abilities::overpower::handle_overpower,
         combat::abilities::lunge::handle_lunge,
@@ -106,6 +108,7 @@ fn main() {
         input::send_input,
         input::try_gcd,
         input::try_input,
+        input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         renet::do_manage_connections,
         spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
         spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),

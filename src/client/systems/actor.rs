@@ -134,6 +134,7 @@ pub fn do_spawn(
                 crate::common::components::gcd::Gcd::new(),
                 crate::common::components::target::Target::default(), // For targeting system
                 crate::common::components::LastAutoAttack::default(), // For auto-attack cooldown
+                crate::common::components::targeting_state::TargetingState::new(), // ADR-010 Phase 1: Tier lock targeting
             ))
             .observe(ready);
 
@@ -162,6 +163,7 @@ fn get_asset(typ: EntityType) -> String {
                 ActorIdentity::Player => "actors/player-basic.glb".to_string(),
                 ActorIdentity::Npc(npc_type) => match npc_type {
                     NpcType::WildDog => "actors/dog-basic.glb".to_string(),
+                    NpcType::ForestSprite => "actors/sprite-basic.glb".to_string(),
                     // Future NPCs will have their own model paths
                 }
             }

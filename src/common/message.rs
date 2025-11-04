@@ -5,8 +5,8 @@ use tinyvec::ArrayVec;
 
 use crate::common::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, reaction_queue::*, resources::*, * },
-    systems::combat::gcd::*,
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, projectile::*, reaction_queue::*, resources::*, * },
+    systems::{combat::gcd::*, targeting::RangeTier},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -53,6 +53,8 @@ pub enum Event {
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
+    /// Client → Server: Set tier lock for targeting (ADR-010 Phase 1)
+    SetTierLock { ent: Entity, tier: RangeTier },
 }
 
 /// Types of abilities that can be used (ADR-009 MVP ability set)
@@ -105,6 +107,7 @@ pub enum Component {
     Mana(Mana),
     Offset(Offset),
     PlayerControlled(PlayerControlled),
+    Projectile(Projectile),
     Stamina(Stamina),
 }
 

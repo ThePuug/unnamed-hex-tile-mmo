@@ -32,6 +32,8 @@ pub struct TargetIndicator {
     pub indicator_type: crate::client::systems::target_indicator::IndicatorType,
 }
 
+// TODO: TierBadge component - deferred until proper 3D text setup (ADR-010 Phase 5)
+
 /// Marks a tile entity as belonging to a specific chunk
 #[derive(Component, Copy, Clone, Debug)]
 pub struct ChunkMember(pub ChunkId);

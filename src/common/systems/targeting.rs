@@ -540,6 +540,10 @@ pub fn update_targets_on_change(
 mod tests {
     use super::*;
     use qrz::Qrz;
+    use crate::common::components::{
+        behaviour::PlayerControlled,
+        entity_type::{actor::*, *},
+    };
 
     // ===== HEADING TO ANGLE CONVERSION TESTS =====
 
@@ -1103,6 +1107,159 @@ mod tests {
         assert_eq!(
             result, Some(player),
             "NPC should select player and skip other NPC"
+        );
+    }
+
+    // ===== TIER LOCK INTEGRATION TESTS (ADR-010 Phase 5) =====
+
+    /// Test that tier lock filters targets by distance range (ADR-010 Phase 5)
+    ///
+    /// Validation Criteria:
+    /// - Tier 1 (Close): 0-3 hexes
+    /// - Tier 2 (Mid): 4-8 hexes
+    /// - Tier 3 (Far): 9+ hexes
+    #[test]
+    fn test_tier_lock_filters_by_distance() {
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Close target (2 hexes east) - Tier 1
+        let close_target_loc = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let close_target = spawn_actor(&mut world, &mut nntree, close_target_loc);
+
+        // Mid target (5 hexes east) - Tier 2
+        let mid_target_loc = Loc::new(Qrz { q: 5, r: 0, z: 0 });
+        let mid_target = spawn_actor(&mut world, &mut nntree, mid_target_loc);
+
+        // Far target (10 hexes east) - Tier 3
+        let far_target_loc = Loc::new(Qrz { q: 10, r: 0, z: 0 });
+        let far_target = spawn_actor(&mut world, &mut nntree, far_target_loc);
+
+        // Test Tier 1 lock (Close: 0-3 hexes) - should select close_target
+        let tier1_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Close), // Tier 1
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier1_result, Some(close_target), "Tier 1 lock should select close target (2 hexes)");
+
+        // Test Tier 2 lock (Mid: 4-8 hexes) - should select mid_target
+        let tier2_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Mid), // Tier 2
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier2_result, Some(mid_target), "Tier 2 lock should select mid target (5 hexes)");
+
+        // Test Tier 3 lock (Far: 9+ hexes) - should select far_target
+        let tier3_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Far), // Tier 3
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select far target (10 hexes)");
+
+        // Test no tier lock - should default to closest (close_target)
+        let no_lock_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            None, // No tier lock
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(no_lock_result, Some(close_target), "Without tier lock should default to closest target");
+    }
+
+    /// Test mixed encounter scenario (ADR-010 Phase 5 Validation Criteria)
+    ///
+    /// Scenario: Mixed encounter with different range tiers
+    /// - 1 Forest Sprite at 5 hexes (mid tier: 3-6)
+    /// - 1 Wild Dog at 2 hexes (close tier: 1-2)
+    /// - Default targeting → Wild Dog (closer)
+    /// - Press 2 (Mid tier lock) → Forest Sprite
+    /// - Use Lunge → tier lock drops, targets Wild Dog again
+    #[test]
+    fn test_tier_lock_mixed_encounter() {
+        let (mut world, mut nntree) = setup_test_world();
+
+        let player_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+
+        // Spawn player
+        let player = spawn_actor(&mut world, &mut nntree, player_loc);
+        world.entity_mut(player).insert(PlayerControlled);
+
+        // Wild Dog at 2 hexes (close tier: 1-2)
+        let dog_loc = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let wild_dog = spawn_actor(&mut world, &mut nntree, dog_loc);
+
+        // Forest Sprite at 5 hexes (mid tier: 3-6)
+        let sprite_loc = Loc::new(Qrz { q: 5, r: 0, z: 0 });
+        let forest_sprite = spawn_actor(&mut world, &mut nntree, sprite_loc);
+
+        // 1. Default targeting (no tier lock) → should target Wild Dog (closer)
+        let default_result = select_target(
+            player,
+            player_loc,
+            heading,
+            None, // No tier lock
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            default_result, Some(wild_dog),
+            "Default targeting should target Wild Dog (closer at 2 hexes)"
+        );
+
+        // 2. Press "2" (Tier 2 lock, 4-8 hexes) → should target Forest Sprite
+        let tier2_result = select_target(
+            player,
+            player_loc,
+            heading,
+            Some(RangeTier::Mid), // Tier 2 (Mid: 4-8 hexes)
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            tier2_result, Some(forest_sprite),
+            "Tier 2 lock should target Forest Sprite (5 hexes)"
+        );
+
+        // 3. After ability use, tier lock drops → back to Wild Dog
+        let after_ability_result = select_target(
+            player,
+            player_loc,
+            heading,
+            None, // Tier lock dropped after ability
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            after_ability_result, Some(wild_dog),
+            "After tier lock drops, should target Wild Dog again (closest)"
         );
     }
 }

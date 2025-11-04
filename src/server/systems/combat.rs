@@ -2,7 +2,7 @@ pub mod abilities;
 
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, LastAutoAttack, *},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, targeting_state::TargetingState, gcd::Gcd, LastAutoAttack, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::{
@@ -167,6 +167,25 @@ pub fn validate_ability_prerequisites(
                     });
                     continue;
                 }
+            }
+        }
+    }
+}
+
+/// Reset tier lock after ability use (ADR-010 Phase 1)
+///
+/// This system runs after ability systems execute and resets the TargetingState
+/// to Automatic mode. This implements the state transition:
+/// Tier Locked → Use Any Ability → Default (Auto)
+pub fn reset_tier_lock_on_ability_use(
+    mut reader: EventReader<Try>,
+    mut targeting_states: Query<&mut TargetingState>,
+) {
+    for event in reader.read() {
+        if let GameEvent::UseAbility { ent, ability: _, target_loc: _ } = event.event {
+            // Reset tier lock to automatic for the entity that used an ability
+            if let Ok(mut targeting_state) = targeting_states.get_mut(ent) {
+                targeting_state.reset_to_automatic();
             }
         }
     }

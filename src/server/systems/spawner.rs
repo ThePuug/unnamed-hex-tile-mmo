@@ -13,7 +13,10 @@ use crate::{
             resources as resource_calcs,
         },
     },
-    server::systems::behaviour::chase::Chase,
+    server::systems::behaviour::{
+        chase::Chase,
+        kite::Kite,
+    },
 };
 
 /// System that ticks spawners and spawns NPCs when conditions are met
@@ -60,9 +63,13 @@ pub fn tick_spawners(
 
         // Spawn new NPC at random location within radius
         let spawn_qrz = random_hex_within_radius(*spawner_loc, spawner.spawn_radius);
+
+        // ADR-010 Phase 4: Use mixed spawns (40% Forest Sprite, 60% Wild Dog)
+        let selected_template = NpcTemplate::random_mixed();
+
         spawn_npc(
             &mut commands,
-            spawner.npc_template,
+            selected_template,
             spawn_qrz,
             spawner.spawn_radius,
             spawner.leash_distance,
@@ -111,20 +118,24 @@ fn spawn_npc(
     let actor_impl = template.actor_impl();
     let typ = EntityType::Actor(actor_impl);
 
-    // Unified chase behavior - handles targeting, pursuit, and engagement
-    let chase = Chase {
-        acquisition_range: 20,         // How far to search for targets
-        leash_distance: leash_distance as i16,  // Max chase distance from spawner config
-        attack_range: 1,               // Melee attack range
-    };
+    // ADR-010 Phase 2: Vary Grace (might_grace_axis) to create different movement speeds
+    // Grace range: -40 to +40 (Might-focused to Grace-focused)
+    // This creates speed variation: 80% to 120% of baseline
+    // Formula: max(75, 100 + (grace / 2))
+    //   Grace -40: speed = max(75, 100 - 20) = 80%
+    //   Grace   0: speed = 100% (baseline)
+    //   Grace +40: speed = 100 + 20 = 120%
+    let mut rng = rand::rng();
+    let grace_axis = rng.random_range(-40..=40); // Vary from Might-focused to Grace-focused
 
-    // Level 10: Might+Instinct focused distribution
-    // axis=-6 (3 levels) + spectrum=2 (2 levels) = 5 levels per stat → 10 total
-    // Negative axis favors might and instinct sides
+    // Level 10: Instinct focused distribution
+    // axis varies (Grace variation), spectrum=2 (2 levels) = 5 levels might_grace
+    // vitality_focus: no investment (0 levels)
+    // instinct_presence: instinct-focused (5 levels)
     let attrs = ActorAttributes::new(
-        -6, 2, 0,      // might_grace: might-focused (5 levels)
-        0, 0, 0,       // vitality_focus: no investment (0 levels)
-        -6, 2, 0,      // instinct_presence: instinct-focused (5 levels)
+        grace_axis, 2, 0,  // might_grace: varied for movement speed
+        0, 0, 0,           // vitality_focus: no investment (0 levels)
+        -6, 2, 0,          // instinct_presence: instinct-focused (5 levels)
     );
 
     // Calculate initial resources from attributes
@@ -179,13 +190,35 @@ fn spawn_npc(
         ))
         .id();
 
-    commands.entity(ent).insert((
-        NearestNeighbor::new(ent, loc),
-        chase,
-        Heading::default(),
-        Offset::default(),
-        AirTime::default(),
-    ));
+    // Add behavior component based on template (ADR-010 Phase 4)
+    match template {
+        NpcTemplate::ForestSprite => {
+            // Ranged kiter - maintains distance, fires projectiles
+            let kite = Kite::forest_sprite();
+            commands.entity(ent).insert((
+                NearestNeighbor::new(ent, loc),
+                kite,
+                Heading::default(),
+                Offset::default(),
+                AirTime::default(),
+            ));
+        }
+        NpcTemplate::Dog | NpcTemplate::Wolf => {
+            // Melee aggressor - charges and attacks at close range
+            let chase = Chase {
+                acquisition_range: 20,
+                leash_distance: leash_distance as i16,
+                attack_range: 1,
+            };
+            commands.entity(ent).insert((
+                NearestNeighbor::new(ent, loc),
+                chase,
+                Heading::default(),
+                Offset::default(),
+                AirTime::default(),
+            ));
+        }
+    }
 
     info!("Spawned NPC {:?} at {:?}", template, spawn_qrz);
 
@@ -849,14 +882,19 @@ mod tests {
         assert_eq!(spawn_events.len(), 1, "Expected 1 spawn event");
 
         // Verify spawn event contains correct entity type
+        // ADR-010 Phase 4: Spawner now uses random_mixed() so entity could be Dog or ForestSprite
         if let MsgEvent::Spawn { ent: _, typ, qrz: event_qrz, .. } = &spawn_events[0].event {
             match typ {
                 EntityType::Actor(actor) => {
-                    // Verify it's a Wolf (from NpcTemplate::Wolf)
+                    // Verify it's one of the expected NPC types from random_mixed()
                     assert_eq!(actor.origin, Origin::Evolved,
-                        "Expected Wolf origin to be Natureborn");
-                    assert_eq!(actor.approach, Approach::Ambushing,
-                        "Expected Wolf approach to be Ambushing");
+                        "Expected Evolved origin for all NPCs");
+                    // Could be Dog (Direct) or ForestSprite (Distant)
+                    assert!(
+                        actor.approach == Approach::Direct || actor.approach == Approach::Distant,
+                        "Expected approach to be Direct (Dog) or Distant (ForestSprite), got {:?}",
+                        actor.approach
+                    );
                 },
                 _ => panic!("Expected Actor entity type, got {:?}", typ),
             }
@@ -1091,6 +1129,150 @@ mod tests {
                     "Spawn location {:?} is at distance {} from spawner {:?}, exceeds spawn_radius {}",
                     spawn_qrz, distance, *spawner_loc, spawn_radius);
             }
+        }
+    }
+
+    // ===== MOVEMENT SPEED VARIATION TESTS (ADR-010 Phase 2) =====
+
+    #[test]
+    fn test_spawned_npcs_have_varied_grace_values() {
+        // ADR-010 Phase 2: NPCs should spawn with varied Grace values to demonstrate different movement speeds
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(create_test_map());
+
+        let spawner = Spawner::new(NpcTemplate::Dog, 10, 3, 20, 15, 30, 0);
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Test Spawner")));
+
+        // Add player in range
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Run spawner multiple times to spawn several NPCs
+        app.add_systems(Update, tick_spawners);
+        for _ in 0..10 {
+            app.update();
+        }
+
+        // Collect attributes from spawn events
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert!(spawn_events.len() >= 3, "Expected at least 3 spawns for variation test");
+
+        // Extract grace values (via might_grace_axis since that determines movement speed)
+        let mut grace_values: Vec<i8> = spawn_events.iter()
+            .filter_map(|Do { event }| {
+                if let MsgEvent::Spawn { attrs: Some(attrs), .. } = event {
+                    Some(attrs.might_grace_axis)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(!grace_values.is_empty(), "Expected spawn events to include ActorAttributes");
+
+        // Verify we have variation (not all the same value)
+        grace_values.sort();
+        grace_values.dedup();
+        assert!(
+            grace_values.len() > 1,
+            "Expected NPCs to spawn with varied Grace values, but all had the same value. \
+             This ensures visible movement speed differences (ADR-010 Phase 2). \
+             Unique grace values: {:?}",
+            grace_values
+        );
+
+        // Verify values are within reasonable range (-100 to +100)
+        for grace in &grace_values {
+            assert!(
+                *grace >= -100 && *grace <= 100,
+                "Grace value {} is outside valid range [-100, +100]",
+                grace
+            );
+        }
+    }
+
+    #[test]
+    fn test_npc_movement_speed_varies_with_grace() {
+        // Verify that NPCs spawned with different Grace values have different movement speeds
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<Do>();
+        app.insert_resource(NNTree::new_for_test());
+        app.insert_resource(create_test_map());
+
+        let spawner = Spawner::new(NpcTemplate::Wolf, 10, 3, 20, 15, 30, 0);
+        let spawner_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        app.world_mut().spawn((spawner, spawner_loc, Name::new("Wolf Spawner")));
+
+        // Add player in range
+        let player_loc = Loc::new(Qrz { q: 5, r: 0, z: -5 });
+        app.world_mut().spawn((
+            Actor,
+            Behaviour::Controlled,
+            player_loc,
+            Name::new("Test Player"),
+        ));
+
+        // Spawn multiple NPCs
+        app.add_systems(Update, tick_spawners);
+        for _ in 0..5 {
+            app.update();
+        }
+
+        // Collect movement speeds from spawn events
+        let events = app.world().resource::<Events<Do>>();
+        let spawn_events: Vec<_> = events.iter_current_update_events()
+            .filter(|Do { event }| matches!(event, MsgEvent::Spawn { .. }))
+            .collect();
+
+        assert!(spawn_events.len() >= 2, "Expected at least 2 spawns for speed comparison");
+
+        // Extract movement speeds
+        let mut speeds: Vec<f32> = spawn_events.iter()
+            .filter_map(|Do { event }| {
+                if let MsgEvent::Spawn { attrs: Some(attrs), .. } = event {
+                    Some(attrs.movement_speed())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(!speeds.is_empty(), "Expected spawn events to include ActorAttributes");
+
+        // Verify we have speed variation
+        speeds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let min_speed = speeds.first().unwrap();
+        let max_speed = speeds.last().unwrap();
+
+        assert!(
+            max_speed > min_speed,
+            "Expected NPCs to have different movement speeds. Min: {}, Max: {} (should vary per ADR-010)",
+            min_speed, max_speed
+        );
+
+        // Verify speeds are within valid range (75% to 150% of base 0.005)
+        // Base speed = 0.005
+        // 75% = 0.00375, 150% = 0.0075
+        for speed in &speeds {
+            assert!(
+                *speed >= 0.00375 && *speed <= 0.0075,
+                "Movement speed {} is outside valid range [0.00375, 0.0075]",
+                speed
+            );
         }
     }
 }
