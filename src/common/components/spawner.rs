@@ -65,7 +65,7 @@ impl NpcTemplate {
                 ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Wolf variant
             ),
             Self::ForestSprite => ActorImpl::new(
-                Origin::Evolved,
+                Origin::Essential,
                 Approach::Distant,  // Ranged enemy that kites
                 Resilience::Primal,
                 ActorIdentity::Npc(NpcType::ForestSprite),
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn test_forest_sprite_template_actor_impl() {
         let sprite = NpcTemplate::ForestSprite.actor_impl();
-        assert_eq!(sprite.origin, Origin::Evolved);
+        assert_eq!(sprite.origin, Origin::Essential);
         assert_eq!(sprite.approach, Approach::Distant); // Ranged enemy
         assert_eq!(sprite.resilience, Resilience::Primal);
         assert_eq!(sprite.identity, ActorIdentity::Npc(NpcType::ForestSprite));

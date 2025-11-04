@@ -6,10 +6,10 @@ pub mod camera;
 pub mod character_panel;
 pub mod combat;
 pub mod combat_ui;
-pub mod debug_resources;
 // pub mod effect;
 pub mod input;
 // pub mod prediction; // REMOVED: Client-side attack prediction removed
+pub mod projectile;
 pub mod renet;
 pub mod resource_bars;
 pub mod target_frame;

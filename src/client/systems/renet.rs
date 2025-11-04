@@ -41,6 +41,7 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    locs: Query<&Loc>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -77,6 +78,12 @@ pub fn write_do(
                             loc
                         }
                     },
+                    EntityType::Projectile => {
+                        // Spawn local entity for projectile visual
+                        let loc = commands.spawn(typ).id();
+                        l2r.insert(loc, ent);
+                        loc
+                    },
                     _ => { Entity::PLACEHOLDER }
                 };
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
@@ -90,6 +97,8 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
+                debug!("[CLIENT DESPAWN] Received Despawn event for entity {:?}", ent);
+
                 // Check if this is the local player (has InputQueue)
                 let is_local_player = l2r.get_by_right(&ent)
                     .and_then(|&local_ent| buffers.get(&local_ent))
@@ -103,9 +112,17 @@ pub fn write_do(
                 } else {
                     // For NPCs/other players: remove from EntityMap and despawn
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
-                        // Entity not in map - already despawned or never spawned locally
+                        debug!("[CLIENT DESPAWN] Entity {:?} not in EntityMap - already despawned or never spawned", ent);
                         continue
                     };
+                    debug!("[CLIENT DESPAWN] Despawning local entity {:?} (remote {:?})", local_ent, ent);
+
+                    // Spawn hit flash effect for projectiles (capture Loc before despawning)
+                    if let Ok(loc) = locs.get(local_ent) {
+                        info!("[CLIENT DESPAWN] Writing SpawnHitFlash event at loc {:?}", **loc);
+                        do_writer.write(Do { event: Event::SpawnHitFlash { loc: *loc } });
+                    }
+
                     commands.entity(local_ent).despawn();
                 }
             }

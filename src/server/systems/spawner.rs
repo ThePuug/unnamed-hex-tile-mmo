@@ -64,7 +64,7 @@ pub fn tick_spawners(
         // Spawn new NPC at random location within radius
         let spawn_qrz = random_hex_within_radius(*spawner_loc, spawner.spawn_radius);
 
-        // ADR-010 Phase 4: Use mixed spawns (40% Forest Sprite, 60% Wild Dog)
+        // ADR-010: 40% Forest Sprites (ranged), 60% Dogs (melee)
         let selected_template = NpcTemplate::random_mixed();
 
         spawn_npc(

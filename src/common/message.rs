@@ -55,6 +55,8 @@ pub enum Event {
     Pong { client_time: u128 },
     /// Client → Server: Set tier lock for targeting (ADR-010 Phase 1)
     SetTierLock { ent: Entity, tier: RangeTier },
+    /// Client-only: Spawn hit flash effect at location (projectile hit visual)
+    SpawnHitFlash { loc: Loc },
 }
 
 /// Types of abilities that can be used (ADR-009 MVP ability set)

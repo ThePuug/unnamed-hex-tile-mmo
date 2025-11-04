@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, debug_resources, input, renet, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, input, projectile, renet, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -95,6 +95,7 @@ fn main() {
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
+        projectile::update_projectiles, // Client-side projectile movement simulation
         common::systems::combat::resources::regenerate_resources,
     ));
 
@@ -111,6 +112,8 @@ fn main() {
         animator::update,
         camera::update,
         targeting::update_targets_on_change, // Reactive targeting: updates Target when heading/loc changes
+        projectile::spawn_hit_flash, // Spawn flash effects when projectiles hit
+        projectile::update_hit_flashes, // Update and fade out flash effects
         combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
         combat::apply_gcd,
         // REMOVED: Client-side attack prediction - all combat is server-authoritative
@@ -120,14 +123,6 @@ fn main() {
         combat::handle_ability_failed,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
-    ));
-
-    // UAT testing aids - client-side hacks for testing resource/threat mechanics
-    // NOTE: Violates server authority (ADR-002) - debug builds only
-    #[cfg(debug_assertions)]
-    app.add_systems(Update, (
-        debug_resources::debug_drain_resources,
-        debug_resources::debug_process_expired_threats,
     ));
 
     app.add_systems(Update, (
