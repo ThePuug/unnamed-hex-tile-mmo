@@ -396,11 +396,11 @@ pub fn update(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
-    player_query: Query<(&Health, Option<&crate::common::components::targeting_state::TargetingState>), With<Actor>>,
+    player_query: Query<(&Health, &crate::common::components::target::Target), With<Actor>>,
     target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>)>,
 ) {
-    // Get local player and targeting state
-    let Ok((player_health, targeting_state)) = player_query.get_single() else {
+    // Get local player and target
+    let Ok((player_health, target)) = player_query.get_single() else {
         return;
     };
 
@@ -412,9 +412,9 @@ pub fn update(
         return;
     }
 
-    // Read sticky target from TargetingState.last_target
-    // This persists even when you turn away (unlike Target component which clears)
-    let last_target = targeting_state.and_then(|ts| ts.last_target);
+    // Read sticky target from Target.last_target
+    // This persists even when you turn away (entity field clears but last_target remains)
+    let last_target = target.last_target;
 
     // Show/hide frame and update content based on target
     if let Some(target_ent) = last_target {

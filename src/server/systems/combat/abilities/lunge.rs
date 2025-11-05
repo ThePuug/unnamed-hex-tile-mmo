@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, targeting_state::TargetingState, target::Target, Loc, reaction_queue::DamageType, gcd::Gcd},
+        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, gcd::Gcd},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
         systems::{targeting::get_range_tier, combat::gcd::GcdType},
     },
@@ -17,7 +17,7 @@ pub fn handle_lunge(
     mut commands: Commands,
     mut reader: EventReader<Try>,
     entity_query: Query<&Loc>,
-    loc_target_query: Query<(&Loc, &Target, Option<&TargetingState>)>,
+    loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     mut gcd_query: Query<&mut Gcd>,
     respawn_query: Query<&RespawnTimer>,
@@ -61,14 +61,14 @@ pub fn handle_lunge(
         };
 
         // Get the current target from Target component
-        let target_ent_opt = target.0;
+        let target_ent_opt = target.entity;  // Get the entity field (Option<Entity>)
 
         info!("Lunge activated: caster_loc={:?}, Target={:?}, tier_lock={:?}",
-            caster_loc, target_ent_opt, targeting_state_opt.and_then(|ts| ts.get_tier_lock()));
+            caster_loc, target_ent_opt, targeting_state_opt.and_then(|ts| ts.get()));
 
         // If tier locked, validate target is in correct tier
         let validated_target = if let (Some(targeting_state), Some(target_ent)) = (targeting_state_opt, target_ent_opt) {
-            if let Some(locked_tier) = targeting_state.get_tier_lock() {
+            if let Some(locked_tier) = targeting_state.get() {
                 // Tier locked - validate target is in the correct tier
                 if let Ok(target_loc) = entity_query.get(target_ent) {
                     let distance = caster_loc.flat_distance(target_loc) as u32;

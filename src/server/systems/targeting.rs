@@ -6,11 +6,11 @@
 use bevy::prelude::*;
 
 use crate::common::{
-    components::{heading::Heading, Loc, target::Target, targeting_state::TargetingState, entity_type::EntityType},
+    components::{heading::Heading, Loc, target::Target, tier_lock::TierLock, entity_type::EntityType},
     plugins::nntree::NNTree,
     systems::targeting::update_targets_impl,
 };
-use crate::server::components::target_lock::TargetLock;
+use crate::server::components::target_lock::TargetLock as NpcTargetLock;
 
 /// Reactive system that updates Target component when heading or location changes (SERVER VERSION)
 ///
@@ -26,9 +26,11 @@ use crate::server::components::target_lock::TargetLock;
 ///
 /// # Server-Specific Behavior
 ///
-/// The server version excludes entities with TargetLock component from reactive targeting.
-/// This is critical for AI behavior - NPCs with TargetLock use behavior tree targeting
+/// The server version excludes entities with NpcTargetLock component from reactive targeting.
+/// This is critical for AI behavior - NPCs with NpcTargetLock use behavior tree targeting
 /// (FindOrKeepTarget) as their source of truth.
+///
+/// Players have TierLock (for tier lock targeting), which is different from NpcTargetLock.
 ///
 /// # Performance
 ///
@@ -36,20 +38,20 @@ use crate::server::components::target_lock::TargetLock;
 /// No work done if no entities moved or turned.
 pub fn update_targets_on_change(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut Target, Option<&mut TargetingState>),
-        (Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>, Without<TargetLock>)
+        (Entity, &Loc, &Heading, &mut Target, Option<&TierLock>),
+        (Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>, Without<NpcTargetLock>)
     >,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target, mut targeting_state) in &mut query {
+    for (ent, loc, heading, mut target, tier_lock) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
             &mut target,
-            targeting_state.as_deref_mut(),
+            tier_lock,
             &nntree,
             &entity_types,
             &player_controlled,

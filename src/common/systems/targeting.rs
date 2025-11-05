@@ -26,7 +26,7 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    components::{heading::*, entity_type::*, targeting_state::TargetingState, *},
+    components::{heading::*, entity_type::*, tier_lock::TierLock, *},
     plugins::nntree::*,
 };
 
@@ -479,7 +479,7 @@ where
 /// * `loc` - Current location of the entity
 /// * `heading` - Current heading direction
 /// * `target` - Mutable reference to the Target component
-/// * `targeting_state` - Optional mutable reference to TargetingState component
+/// * `tier_lock` - Optional reference to TierLock component
 /// * `nntree` - Spatial index for proximity queries
 /// * `entity_types` - Query for EntityType components
 /// * `player_controlled` - Query for PlayerControlled components
@@ -488,36 +488,33 @@ pub fn update_targets_impl(
     loc: Loc,
     heading: Heading,
     target: &mut crate::common::components::target::Target,
-    targeting_state: Option<&mut TargetingState>,
+    tier_lock: Option<&TierLock>,
     nntree: &NNTree,
     entity_types: &Query<&EntityType>,
     player_controlled: &Query<&crate::common::components::behaviour::PlayerControlled>,
 ) {
-    // Get tier lock from TargetingState if present
-    let tier_lock = targeting_state.as_ref().and_then(|ts| ts.get_tier_lock());
+    // Get tier constraint from TierLock if present
+    let tier_constraint = tier_lock.and_then(|tl| tl.get());
 
     // Use select_target to find what this entity is facing (with tier lock filter)
     let new_target = select_target(
         ent,
         loc,
         heading,
-        tier_lock,
+        tier_constraint,
         nntree,
         |e| entity_types.get(e).ok().copied(),
         |e| player_controlled.contains(e),
     );
 
-    // Update Target and last_target based on result
+    // Update Target (which handles both entity and last_target internally)
     match new_target {
         Some(target_ent) => {
-            // Target found - update both Target and last_target
+            // Target found - set() updates both entity and last_target
             target.set(target_ent);
-            if let Some(ts) = targeting_state {
-                ts.last_target = Some(target_ent);
-            }
         }
         None => {
-            // No target found - clear Target but leave last_target intact for sticky UI
+            // No target found - clear() sets entity to None but keeps last_target for sticky UI
             target.clear();
         }
     }

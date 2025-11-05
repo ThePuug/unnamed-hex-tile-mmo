@@ -10,7 +10,7 @@ pub mod reaction_queue;
 pub mod resources;
 pub mod spawner;
 pub mod target;
-pub mod targeting_state;
+pub mod tier_lock;
 
 use bevy::prelude::*;
 use qrz::Qrz;

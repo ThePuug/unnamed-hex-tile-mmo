@@ -131,7 +131,7 @@ pub fn kite(
                 // Close enough to spawn - clear returning state, lock, and target
                 commands.entity(npc_entity).remove::<Returning>();
                 commands.entity(npc_entity).remove::<TargetLock>();
-                commands.entity(npc_entity).insert(Target(None));
+                commands.entity(npc_entity).insert(Target::new());
                 continue;
             }
 
@@ -178,7 +178,7 @@ pub fn kite(
             }
 
             // Clear target while returning
-            commands.entity(npc_entity).insert(Target(None));
+            commands.entity(npc_entity).insert(Target::new());
             continue;
         }
 
@@ -261,7 +261,7 @@ pub fn kite(
                         npc_airtime.state = airtime;
                     }
 
-                    commands.entity(npc_entity).insert(Target(None));
+                    commands.entity(npc_entity).insert(Target::new());
                     continue;
                 }
 
@@ -291,7 +291,7 @@ pub fn kite(
                         kite_config.leash_distance,
                         spawner_loc,
                     ));
-                    commands.entity(npc_entity).insert(Target(Some(new_target)));
+                    commands.entity(npc_entity).insert({ let mut t = Target::new(); t.set(new_target); t });
                     new_target
                 } else {
                     // No targets found - stop kiting
@@ -357,7 +357,7 @@ pub fn kite(
                     npc_airtime.state = airtime;
                 }
 
-                commands.entity(npc_entity).insert(Target(Some(target_entity)));
+                commands.entity(npc_entity).insert({ let mut t = Target::new(); t.set(target_entity); t });
             }
             KiteAction::Attack => {
                 // Stay in place and attack if cooldown ready
@@ -416,7 +416,7 @@ pub fn kite(
                     kite_config.last_attack_time = current_time;
                 }
 
-                commands.entity(npc_entity).insert(Target(Some(target_entity)));
+                commands.entity(npc_entity).insert({ let mut t = Target::new(); t.set(target_entity); t });
             }
             KiteAction::Advance => {
                 // Move toward target (similar to chase behavior)
@@ -457,7 +457,7 @@ pub fn kite(
                     npc_airtime.state = airtime;
                 }
 
-                commands.entity(npc_entity).insert(Target(Some(target_entity)));
+                commands.entity(npc_entity).insert({ let mut t = Target::new(); t.set(target_entity); t });
             }
         }
     }

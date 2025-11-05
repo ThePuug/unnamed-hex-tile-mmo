@@ -27,7 +27,7 @@ use bevy::{
 use crate::{
     client::plugins::diagnostics::DiagnosticsState,
     common::{
-        components::{targeting_state::*, *},
+        components::{tier_lock::*, *},
         resources::map::Map,
         systems::targeting::RangeTier,
     },
@@ -70,7 +70,7 @@ pub fn setup(mut commands: Commands) {
 /// Only rebuilds the mesh when the tier actually changes.
 pub fn update(
     mut commands: Commands,
-    local_player_query: Query<(Entity, &Loc, &TargetingState), With<Actor>>,
+    local_player_query: Query<(Entity, &Loc, &TierLock), With<Actor>>,
     mut indicator_query: Query<(Entity, &mut TierLockRangeIndicator, &mut Visibility, Option<&MeshMaterial3d<StandardMaterial>>)>,
     input_queues: Res<crate::common::resources::InputQueues>,
     map: Res<Map>,
@@ -100,7 +100,7 @@ pub fn update(
     };
 
     // Check if tier locked
-    let tier_lock = targeting_state.get_tier_lock();
+    let tier_lock = targeting_state.get();
 
     if tier_lock.is_none() {
         // Not tier locked - hide indicator

@@ -2,7 +2,7 @@ pub mod abilities;
 
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, targeting_state::TargetingState, gcd::Gcd, LastAutoAttack, *},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, tier_lock::TierLock, gcd::Gcd, LastAutoAttack, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::{

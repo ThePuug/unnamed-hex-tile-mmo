@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{Actor, gcd::Gcd, resources::*, targeting_state::TargetingState, Loc, heading::Heading, entity_type::EntityType},
+        components::{Actor, gcd::Gcd, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
         message::AbilityType,
         plugins::nntree::NNTree,
         systems::targeting::select_target,
@@ -176,7 +176,7 @@ pub fn setup(
 /// Updates border colors to indicate ability states (ready/cooldown/insufficient resources)
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor)>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TargetingState, Option<&Gcd>), With<Actor>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
@@ -237,7 +237,7 @@ fn get_ability_state(
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
-    targeting_state: &TargetingState,
+    targeting_state: &TierLock,
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
@@ -258,7 +258,7 @@ fn get_ability_state(
                 player_ent,
                 player_loc,
                 player_heading,
-                targeting_state.get_tier_lock(), // Respect tier lock
+                targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
                 |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
@@ -286,7 +286,7 @@ fn get_ability_state(
                 player_ent,
                 player_loc,
                 player_heading,
-                targeting_state.get_tier_lock(), // Respect tier lock
+                targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
                 |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
@@ -314,7 +314,7 @@ fn get_ability_state(
                 player_ent,
                 player_loc,
                 player_heading,
-                targeting_state.get_tier_lock(), // Respect tier lock
+                targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
                 |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),

@@ -137,7 +137,7 @@ pub fn do_spawn(
                         crate::common::components::gcd::Gcd::new(),
                         crate::common::components::target::Target::default(), // For targeting system
                         crate::common::components::LastAutoAttack::default(), // For auto-attack cooldown
-                        crate::common::components::targeting_state::TargetingState::new(), // ADR-010 Phase 1: Tier lock targeting
+                        crate::common::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
                     ))
                     .observe(ready);
 

@@ -1,0 +1,104 @@
+DEVELOPER AGENT TASK: Targeting Architecture Refactor
+
+## Context
+You are implementing an approved architectural refactor to separate replicated game state from non-replicated UI state in the targeting system.
+
+## Required Reading
+1. Read GUIDANCE.md for TDD workflow and architectural patterns
+2. Review the targeting system specification below
+
+## Architectural Changes
+
+Split TargetingState to separate replicated game state from non-replicated UI state:
+
+**NEW STRUCTURE:**
+1. **Target** (hostile, NOT replicated):
+   - Change from: pub struct Target(pub Option<Entity>)
+   - To: pub struct Target { pub entity: Option<Entity>, pub last_target: Option<Entity> }
+   - Add helper methods matching AllyTarget pattern
+   - Update Deref/DerefMut to target the entity field
+
+2. **AllyTarget** (already correct, NOT replicated):
+   - No changes needed - already has entity and last_target
+
+3. **TierLock** (replicated, hostile only):
+   - Rename from TargetingState
+   - Remove last_target field
+   - Structure: pub struct TierLock { pub tier: Option<RangeTier> }
+
+## Implementation Steps (TDD Approach)
+
+### Phase 1: Component Definitions (Mechanical)
+1. Rename src/common/components/targeting_state.rs -> tier_lock.rs
+2. Update TierLock to remove last_target field, keep only tier
+3. Update src/common/components/target.rs to add last_target field
+4. Update src/common/components/mod.rs: targeting_state -> tier_lock
+5. Run tests to see what breaks
+
+### Phase 2: Message Enum
+1. Update src/common/message.rs: Component::TargetingState -> Component::TierLock
+2. Run tests
+
+### Phase 3: Replication Systems
+1. Update src/server/systems/renet.rs: serialize TierLock
+2. Update src/client/systems/renet.rs: deserialize TierLock
+3. Update src/server/systems/input.rs: tier lock replication
+4. Run tests
+
+### Phase 4: Targeting Systems
+1. Update src/common/systems/targeting.rs:
+   - Change queries: Option<&mut TargetingState> -> Option<&mut TierLock>
+   - Read tier from tier_lock
+   - Update Target writes to set both entity and last_target
+2. Update src/client/systems/targeting.rs
+3. Update src/server/systems/targeting.rs
+4. Run tests
+
+### Phase 5: UI Systems
+1. Update src/client/systems/target_frame.rs: read Target.last_target
+2. Update src/client/systems/target_indicator.rs
+3. Update src/client/systems/combat_ui.rs
+4. Run tests
+
+### Phase 6: Ability/Input Systems
+1. Search for systems that reset tier lock after ability use
+2. Update to reset tier_lock.tier = None
+3. Update tier lock setting (1/2/3 keys)
+4. Run tests
+
+### Phase 7: Entity Spawning
+1. Update src/run-client.rs: use TierLock instead of TargetingState
+2. Update src/run-server.rs
+3. Search for .insert(TargetingState::...) and update
+4. Run tests
+
+### Phase 8: Update Tests
+1. Find all tests using TargetingState and update to TierLock
+2. Update test assertions for Target to use .entity field
+3. Add tests for Target.last_target behavior
+4. Verify NPC targeting works (NPCs have Target without TierLock)
+5. Run full test suite
+
+## Key Test Cases
+- Player with tier lock: targeting respects tier
+- NPC without tier lock: automatic targeting works
+- Target persistence: last_target survives target loss
+- Tier lock persistence: tier survives target change
+- Replication: Only TierLock gets replicated, not Target
+
+## Expected Outcomes
+- Target has entity and last_target fields (symmetric with AllyTarget)
+- TierLock only has tier field (no UI state)
+- Only TierLock gets replicated over network
+- All tests pass (except 2 pre-existing projectile speed failures)
+- NPC targeting still works
+- Player tier lock (1/2/3 keys) still works
+- Target frame sticky behavior still works
+
+## Current Test Status
+Baseline: 216 passed; 2 failed (pre-existing projectile speed test failures)
+
+Document any deviations or issues encountered.
+
+FOLLOW TDD STRICTLY: Test -> Fail -> Implement -> Pass -> Refactor -> Repeat
+

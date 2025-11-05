@@ -1,8 +1,7 @@
 //! Client-specific targeting systems
 //!
 //! This module contains targeting system implementations that are specific to the client.
-//! The main difference from the server is that the client doesn't filter by TargetLock
-//! (since TargetLock is a server-only component).
+//! TierLock is replicated from server, so both client and server have it.
 
 use bevy::prelude::*;
 
@@ -12,7 +11,7 @@ use crate::common::{
         heading::Heading,
         Loc,
         target::Target,
-        targeting_state::TargetingState,
+        tier_lock::TierLock,
         entity_type::EntityType
     },
     plugins::nntree::NNTree,
@@ -26,9 +25,9 @@ use crate::common::{
 ///
 /// # Client-Specific Behavior
 ///
-/// The client version does not filter by TargetLock because TargetLock is a server-only component.
+/// TierLock is replicated from server, so client entities have it too.
 /// The client applies reactive targeting to all entities that have changed heading, location, or
-/// targeting state.
+/// tier lock.
 ///
 /// # Performance
 ///
@@ -36,20 +35,20 @@ use crate::common::{
 /// No work done if no entities moved or turned.
 pub fn update_targets_on_change(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut Target, Option<&mut TargetingState>),
-        Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>
+        (Entity, &Loc, &Heading, &mut Target, Option<&TierLock>),
+        Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>
     >,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target, mut targeting_state) in &mut query {
+    for (ent, loc, heading, mut target, tier_lock) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
             &mut target,
-            targeting_state.as_deref_mut(),
+            tier_lock,
             &nntree,
             &entity_types,
             &player_controlled,
@@ -79,22 +78,22 @@ pub fn update_targets_on_change(
 /// No work done if no entities moved or turned.
 pub fn update_ally_targets_on_change(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut AllyTarget, Option<&TargetingState>),
-        Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>
+        (Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>),
+        Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>
     >,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut ally_target, targeting_state) in &mut query {
-        // Get tier lock from TargetingState if present
-        let tier_lock = targeting_state.and_then(|ts| ts.get_tier_lock());
+    for (ent, loc, heading, mut ally_target, tier_lock) in &mut query {
+        // Get tier constraint from TierLock if present
+        let tier_constraint = tier_lock.and_then(|tl| tl.get());
 
         // Use select_ally_target to find what ally this entity is facing (with tier lock filter)
         let new_ally_target = select_ally_target(
             ent,
             *loc,
             *heading,
-            tier_lock,
+            tier_constraint,
             &nntree,
             |e| player_controlled.contains(e),
         );

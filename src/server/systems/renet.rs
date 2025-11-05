@@ -14,7 +14,7 @@ use crate::{ common::{
             keybits::*,
             reaction_queue::*,
             resources::*,
-            targeting_state::TargetingState,
+            tier_lock::TierLock,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
@@ -123,7 +123,7 @@ pub fn do_manage_connections(
                     gcd::Gcd::new(),  // GCD component for cooldown tracking
                     LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
                     PlayerDiscoveryState::default(),
-                    TargetingState::new(),  // ADR-010 Phase 1: Tier lock targeting
+                    TierLock::new(),  // ADR-010 Phase 1: Tier lock targeting
                     crate::common::components::target::Target::default(),  // For unified targeting system
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
