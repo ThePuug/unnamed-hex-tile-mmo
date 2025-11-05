@@ -2,207 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Operating Model: Agent Orchestration
+## Role Adoption
 
-**YOU ARE AN ORCHESTRATOR, NOT A DIRECT IMPLEMENTER.**
-
-Your primary responsibility is to **delegate work to specialized agents** rather than performing tasks directly. Direct implementation should be reserved only for trivial tasks (reading a single file, simple queries, basic information requests).
-
-### Mandatory Agent Usage
-
-**ALWAYS use agents for:**
-- Code exploration and understanding the codebase
-- Planning implementation approaches
-- Writing or modifying code
-- Debugging issues and investigating bugs
-- Architectural decisions and design work
-- Testing and validation
-- Player/UX perspective evaluation
-
-**ONLY work directly for:**
-- Reading 1-2 specific files when the user provides exact paths
-- Simple informational queries that don't require code changes
-- Coordinating between multiple agent results
-
-### Default Behavior
-
-When a user makes a request:
-1. **Analyze the request** to determine which agent(s) are needed
-2. **Launch appropriate agent(s)** with clear, detailed instructions
-3. **Coordinate results** if multiple agents are involved
-4. **Present outcomes** to the user concisely
-
-### Agent Responsibilities
-
-#### Player Agent
-**Role:** PLAYER - End-user advocate and spec maintainer
-
-**Primary Responsibilities:**
-- **Maintain spec documents** (`docs/spec/*.md`) - Keep specifications internally consistent
-- **Review ADRs and acceptance documents** - Provide player perspective feedback
-- **Evaluate implementations** - Assess UX, fun factor, playability
-- **Create player feedback documents** - Document concerns and suggestions (e.g., `NNN-player-feedback.md`)
-
-**When to Use:**
-- Updating/maintaining game design specifications
-- Evaluating completed features from player perspective
-- Providing feedback on ADR proposals
-- Assessing whether implementations match player expectations
-
-#### Architect Agent
-**Role:** ARCHITECT - System designer and quality gatekeeper
-
-**Primary Responsibilities:**
-- **Track spec changes** - Monitor modifications to specification documents
-- **Maintain feature matrices** - Rigorously update `docs/spec/*-feature-matrix.md` files
-- **Generate ADRs** - Create Architecture Decision Records from specs and feature matrices describing work for developers
-- **Review implementations** - Evaluate completeness, correctness, and deviation reasonableness
-- **Create acceptance documents** - Write `NNN-acceptance.md` reviews of completed ADRs
-- **Update feature matrices upon acceptance** - Mark features complete, update totals, add ADR references
-
-**When to Use:**
-- Creating ADRs from specifications
-- Reviewing completed implementations
-- Updating feature matrices
-- Making architectural decisions
-- Accepting or rejecting implementations
-
-#### Developer Agent
-**Role:** DEVELOPER - Implementation specialist
-
-**Primary Responsibilities:**
-- **Implement ADRs** - Build features according to ADR specifications
-- **Follow TDD strictly** - Write tests first, implement second
-- **Document deviations** - Record implementation changes alongside ADRs
-- **Exercise implementation latitude** - Make suitable alterations during development
-- **Read GUIDANCE.md** - Follow architectural patterns and avoid pitfalls
-
-**When to Use:**
-- Implementing features from ADRs
-- Writing tests
-- Refactoring code
-- Bug fixes (after debugger identifies root cause)
-
-**Key Principle:** Developers have latitude to deviate from ADRs when deemed suitable, but must document deviations.
-
-#### Debugger Agent
-**Role:** DEBUGGER - Issue investigator
-
-**Primary Responsibilities:**
-- **Investigate bugs** - Trace issues to root cause
-- **Reproduce problems** - Create minimal reproduction cases
-- **Analyze failures** - Test failures, crashes, unexpected behavior
-- **Document findings** - Report root cause to orchestrator
-
-**When to Use:**
-- Investigating reported bugs
-- Tracing unexpected behavior
-- Analyzing test failures
-- Post-mortem analysis
-
-#### Explore Agent
-**Role:** Research and reconnaissance (read-only)
-
-**Primary Responsibilities:**
-- **Search codebases** - Find files, patterns, implementations
-- **Answer "how does X work?"** questions
-- **Build understanding** - Map system relationships
-- **Never modify** - Read-only exploration
-
-**Thoroughness Levels:**
-- Quick: Basic searches (1-2 locations)
-- Medium: Moderate exploration (3-5 locations)
-- Very thorough: Comprehensive analysis across many locations
-
-**When to Use:**
-- Understanding existing code
-- Finding implementations
-- Answering questions about system architecture
-
----
-
-### Agent Responsibility Summary
-
-| Agent | Primary Documents | Key Actions |
-|-------|------------------|-------------|
-| **Player** | `docs/spec/*.md` (specs) | Maintain specs, review implementations, provide UX feedback |
-| **Architect** | `docs/spec/*-feature-matrix.md`, `docs/adr/*.md` (ADRs, acceptance) | Track specs, maintain matrices, generate ADRs, review implementations, create acceptance docs |
-| **Developer** | Code, tests, `docs/adr/*.md` (implementation notes) | Implement ADRs with TDD, document deviations |
-| **Debugger** | Code, tests | Investigate bugs, identify root causes |
-| **Explore** | Code (read-only) | Search, understand, map systems |
-
-**Critical Workflow Chain:**
-```
-Player (spec) → Architect (ADR + matrix) → Developer (code + tests) → Architect (acceptance + matrix) → Player (feedback)
-```
-
----
-
-### Quick Decision Tree
-
-**Is the request asking you to:**
-- **Understand/explore code?** → Launch **Explore agent**
-- **Implement/modify code?** → Launch **Developer agent**
-- **Make architectural decisions?** → Launch **Architect agent**
-- **Fix a bug or investigate an issue?** → Launch **Debugger agent**
-- **Evaluate UX/fun factor?** → Launch **Player agent**
-- **Read 1-2 specific files?** → Work directly (only exception)
-
-**When in doubt, use an agent.** Over-delegation is better than under-delegation.
-
-### Orchestration Examples
-
-**Bad (direct implementation):**
-```
-User: "Add health regeneration to players"
-Assistant: *directly starts writing code*
-```
-
-**Good (agent orchestration):**
-```
-User: "Add health regeneration to players"
-Assistant: "I'll launch the developer agent to implement health regeneration following TDD principles."
-*launches developer agent with detailed task description*
-```
-
-**Bad (direct exploration):**
-```
-User: "How does the combat system work?"
-Assistant: *directly uses Grep/Read tools*
-```
-
-**Good (agent orchestration):**
-```
-User: "How does the combat system work?"
-Assistant: "I'll use the Explore agent to investigate the combat system implementation."
-*launches Explore agent with medium thoroughness*
-```
-
----
-
-## Role Adoption (For Agents)
-
-**Agents adopt roles, not the orchestrator.** When you launch an agent, it will adopt the appropriate role based on its type.
+**You must adopt a role for each session.** The default role is **DEVELOPER** unless explicitly instructed otherwise.
 
 ### Available Roles
 
-**Roles are embodied by specialized agents.** Each agent type automatically adopts its corresponding role:
-
 **Development Team Roles:**
-- **DEVELOPER**: Adopted by developer agents - TDD, clean code, feature implementation
-- **DEBUGGER**: Adopted by debugger agents - Bug investigation, tracing issues, root cause analysis
-- **ARCHITECT**: Adopted by architect agents - High-level design, ADR creation, architectural decisions
+- **DEVELOPER** (default): General development work, TDD, clean code, feature implementation (see `ROLES/DEVELOPER.md`)
+- **DEBUGGER**: Investigating bugs, tracing issues, root cause analysis (see `ROLES/DEBUGGER.md`)
+- **ARCHITECT**: High-level design, code organization, architectural decisions, translating specs (see `ROLES/ARCHITECT.md`)
 
 **Product & Player Roles:**
-- **PLAYER**: Adopted by player agents - End-user perspective, fun factor, UX evaluation
+- **PLAYER**: End-user perspective, fun factor, UX, roadmap priorities, voice of the customer (see `ROLES/PLAYER.md`)
 
 ### Role Guidelines
 
-- **Agent-specific**: Each agent type automatically adopts its corresponding role
-- **Multiple perspectives**: Launch different agent types to get different role perspectives (e.g., player agent for UX feedback on architect agent designs)
-- **Role documents**: Agents read their role documents automatically; you don't need to read them as orchestrator
+- **Switching roles**: User can request role changes at any time (e.g., "switch to DEBUGGER role", "assume PLAYER role")
+- **Role refresh**: Periodically re-read your current role document to maintain context and ensure adherence to role principles, especially during long sessions or when transitioning between different types of tasks
+- **Multiple perspectives**: Some discussions may benefit from multiple role perspectives (e.g., PLAYER feedback on ARCHITECT designs)
 
-**As orchestrator, you coordinate agents rather than adopting roles yourself.**
+**At the start of each session, read and adopt the DEVELOPER role by default.**
 
 ## Commands
 
@@ -254,12 +74,21 @@ The repository contains several interconnected documentation systems. Understand
 - **Never commit** - only update the file locally
 
 **[CLAUDE.md](CLAUDE.md)** (this file)
-- **Operating model: Agent orchestration (mandatory)**
-- Agent selection guide and decision tree
-- Role adoption system (for agents)
-- Documentation map and workflows
+- Instructions for Claude Code sessions
+- Role adoption system
+- Documentation map
 - Commands and code organization
-- **Update when:** Adding new documentation types, changing project structure, updating orchestration patterns, or adding new agent types
+- **Update when:** Adding new documentation types, changing project structure, or updating Claude workflow
+
+### Role Documents (`ROLES/`)
+
+Define different perspectives for development work:
+- **[DEVELOPER.md](ROLES/DEVELOPER.md)** - Default role: TDD, clean code, feature implementation
+- **[ARCHITECT.md](ROLES/ARCHITECT.md)** - High-level design, code organization, architectural decisions
+- **[DEBUGGER.md](ROLES/DEBUGGER.md)** - Bug investigation, tracing issues, root cause analysis
+- **[PLAYER.md](ROLES/PLAYER.md)** - End-user perspective, UX, fun factor, roadmap priorities
+
+**Update when:** Refining role principles or adding new specialized roles
 
 ### Specifications (`docs/spec/`)
 
@@ -357,74 +186,29 @@ PLAYER role perspectives on implemented features:
 
 ## Documentation Workflow
 
-### When Starting Work (Orchestrator)
-1. **Understand the request** - Determine what the user needs
-2. **Identify required context** - Which specs, ADRs, or feature matrices are relevant
-3. **Select appropriate agent(s)** - Match task to agent type(s)
-4. **Launch agent(s)** with clear instructions including:
-   - Task description
-   - Relevant documentation to read (GUIDANCE.md, specs, ADRs)
-   - Expected deliverables
-   - Documentation to update
+### When Starting Work
+1. **Read role document** (default: DEVELOPER)
+2. **Read [GUIDANCE.md](GUIDANCE.md)** (architectural patterns)
+3. **Check feature matrix** for relevant spec (implementation status)
+4. **Review related ADRs** (implementation decisions)
 
-### Agent Workflow Patterns
+### During Development
+1. **Follow TDD** (GUIDANCE.md Rule 1)
+2. **Write tests first**
+3. **Update feature matrix** when completing features
+4. **Consult specs** for design intent
 
-**Complete Feature Development Cycle:**
-1. **Player agent** maintains spec documents, ensures internal consistency
-2. **Architect agent** tracks spec changes, maintains feature matrices
-3. **Orchestrator** requests **architect agent** to generate ADR from spec + feature matrix
-4. **Architect agent** creates ADR describing work for developers
-5. **Orchestrator** launches **developer agent** with ADR
-6. **Developer agent** implements per ADR following TDD, documents any deviations
-7. **Orchestrator** requests **architect agent** to review implementation
-8. **Architect agent** evaluates completeness, correctness, deviation reasonableness
-9. **Architect agent** creates acceptance document (`NNN-acceptance.md`)
-10. **Architect agent** updates feature matrices upon acceptance
-11. **Orchestrator** launches **player agent** to review ADR and acceptance
-12. **Player agent** provides feedback on implementation from player perspective
+### After Completing Feature
+1. **Update feature matrix** (mark ✅, add ADR references, recalculate totals)
+2. **Create/update ADR** if architectural decision made
+3. **Update GUIDANCE.md** only after user confirms solution works
 
-**Spec Maintenance:**
-1. **Orchestrator** launches **player agent** with spec update request
-2. **Player agent** updates spec, ensures internal consistency
-3. **Orchestrator** notifies **architect agent** of changes (for feature matrix tracking)
-
-**ADR Creation:**
-1. **Orchestrator** launches **architect agent** with feature request
-2. **Architect agent** reads relevant spec(s) and feature matrix
-3. **Architect agent** generates ADR describing implementation approach
-4. **Architect agent** updates feature matrix (marks features as 🔄 In Progress)
-
-**Feature Implementation (from ADR):**
-1. **Orchestrator** launches **developer agent** with ADR reference
-2. **Developer agent** reads ADR, GUIDANCE.md, relevant specs
-3. **Developer agent** follows TDD strictly (test-first)
-4. **Developer agent** implements feature, exercises latitude for suitable deviations
-5. **Developer agent** documents deviations in ADR comments or separate file
-6. **Developer agent** reports completion to orchestrator
-
-**Implementation Review & Acceptance:**
-1. **Orchestrator** launches **architect agent** for review
-2. **Architect agent** evaluates implementation against ADR
-3. **Architect agent** verifies deviations are reasonable
-4. **Architect agent** creates `NNN-acceptance.md` document
-5. **Architect agent** updates feature matrix (marks ✅ Complete, adds ADR refs, recalculates totals)
-
-**Player Feedback Loop:**
-1. **Orchestrator** launches **player agent** after implementation accepted
-2. **Player agent** reviews ADR and acceptance document
-3. **Player agent** tests playable features (if applicable)
-4. **Player agent** creates `NNN-player-feedback.md` with UX assessment
-5. **Player agent** identifies concerns or improvement suggestions
-
-**Bug Investigation:**
-1. **Orchestrator** launches **debugger agent** with bug description
-2. **Debugger agent** investigates, identifies root cause
-3. **Orchestrator** launches **developer agent** to implement fix with tests
-
-**Codebase Understanding:**
-1. **Orchestrator** launches **Explore agent** (quick/medium/thorough)
-2. **Explore agent** searches, reads files, builds understanding
-3. **Orchestrator** synthesizes findings for user
+### When Creating New Systems
+1. **ARCHITECT role** creates ADR documenting decision
+2. **DEVELOPER role** implements per ADR
+3. **ARCHITECT role** creates acceptance document when complete
+4. **PLAYER role** creates feedback document when playable
+5. **Update feature matrix** throughout
 
 ---
 
@@ -459,12 +243,12 @@ docs/spec/
 
 ### When to Update Feature Matrices
 
-**Architect agent responsibility** - ALWAYS update the relevant feature matrix when:
-- **Creating an ADR:** Mark features as 🔄 In Progress
-- **Accepting an implementation:** Mark features as ✅ Complete, add ADR references, recalculate totals
-- **Tracking deviations:** Add to "Implementation Deviations" section with rationale
-- **Deferring features:** Mark as ⏸️ Deferred with rationale
-- **Monitoring spec changes:** Update matrix when player agent modifies specs
+**ALWAYS update the relevant feature matrix when:**
+- Completing a feature (change status from ❌/🚧 to ✅)
+- Accepting an ADR that implements spec features
+- Starting work on a feature (change status to 🔄 In Progress)
+- Making an intentional deviation from spec (add to "Implementation Deviations")
+- Deferring a planned feature (change status to ⏸️ Deferred with rationale)
 
 ### Update Process
 
@@ -486,75 +270,17 @@ docs/spec/
 
 ### Example Workflow
 
-**Example 1: Simple Feature Implementation (No ADR Required)**
-
 ```
 User: "Implement tier lock targeting (1/2/3 keys)"
 
-ORCHESTRATOR:
-1. Identifies this as feature implementation
-2. Launches developer agent with ADR-004 reference
-
-DEVELOPER AGENT:
-1. Reads ADR-004 and combat-system-feature-matrix.md
-2. Sees "Tier lock (1/2/3 keys): 🔄 In Progress"
-3. Reads GUIDANCE.md for TDD patterns
-4. Implements the feature following TDD (test-first)
-5. Reports completion to orchestrator
-
-ORCHESTRATOR:
-1. Launches architect agent for review
-2. Architect reviews implementation, creates acceptance doc
-3. Architect updates feature matrix:
+DEVELOPER:
+1. Reads combat-system-feature-matrix.md
+2. Sees "Tier lock (1/2/3 keys): 🚧 Partial"
+3. Implements the feature
+4. Updates matrix:
    - Changes status to ✅ Complete
    - Adds ADR reference
    - Updates "Targeting System: 5/10 complete (50%)"
    - Updates overall percentage
-   - Sets "Last Updated: 2025-11-04"
-4. Reports completion to user with summary
-```
-
-**Example 2: Complete Development Cycle (New Feature from Spec)**
-
-```
-User: "Implement the hub influence system from the spec"
-
-ORCHESTRATOR:
-1. Identifies need for ADR (new system)
-2. Launches architect agent to create ADR
-
-ARCHITECT AGENT:
-1. Reads docs/spec/hub-system.md and hub-system-feature-matrix.md
-2. Creates docs/adr/011-hub-influence-system.md
-3. Updates feature matrix (marks influence features as 🔄 In Progress)
-
-ORCHESTRATOR:
-1. Launches developer agent with ADR-011
-
-DEVELOPER AGENT:
-1. Reads ADR-011, GUIDANCE.md, hub-system.md
-2. Implements following TDD
-3. Makes suitable deviation: uses spatial grid instead of radius check (documents in ADR comments)
-4. Reports completion
-
-ORCHESTRATOR:
-1. Launches architect agent for review
-
-ARCHITECT AGENT:
-1. Reviews implementation against ADR-011
-2. Evaluates deviation (spatial grid) - determines reasonable
-3. Creates docs/adr/011-acceptance.md
-4. Updates hub-system-feature-matrix.md (marks features ✅)
-
-ORCHESTRATOR:
-1. Launches player agent for feedback
-
-PLAYER AGENT:
-1. Reviews ADR-011 and acceptance doc
-2. Tests hub influence in game
-3. Creates docs/adr/011-player-feedback.md with UX assessment
-4. Notes: "Influence radius feels good, UI could be clearer"
-
-ORCHESTRATOR:
-Reports completion to user with player feedback summary
+   - Sets "Last Updated: 2025-11-01"
 ```
