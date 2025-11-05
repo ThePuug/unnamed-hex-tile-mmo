@@ -14,6 +14,7 @@ use crate::{ common::{
             keybits::*,
             reaction_queue::*,
             resources::*,
+            tier_lock::TierLock,
         },
         message::{ Component, Event, * },
         plugins::nntree::*,
@@ -122,6 +123,8 @@ pub fn do_manage_connections(
                     gcd::Gcd::new(),  // GCD component for cooldown tracking
                     LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
                     PlayerDiscoveryState::default(),
+                    TierLock::new(),  // ADR-010 Phase 1: Tier lock targeting
+                    crate::common::components::target::Target::default(),  // For unified targeting system
                 )).id();
                 commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
 
@@ -233,6 +236,10 @@ pub fn write_try(
                         Do { event: Event::Pong { client_time }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                Try { event: Event::SetTierLock { ent: _, tier } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::SetTierLock { ent, tier }});
                 }
                 _ => {}
             }

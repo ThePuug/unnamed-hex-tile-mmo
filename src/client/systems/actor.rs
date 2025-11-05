@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use bevy::{
     prelude::*,
-    scene::SceneInstanceReady
+    scene::SceneInstanceReady,
+    render::primitives::Aabb,
 };
 use qrz::Convert;
 
@@ -95,50 +96,77 @@ pub fn do_spawn(
     mut reader: EventReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
-        let EntityType::Actor(desc) = typ else {
-            continue
-        };
-        let loc = Loc::new(qrz);
 
-        // Initialize reaction queue with capacity based on Focus attribute
-        let attrs_val = attrs.unwrap_or_default();
-        let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
-        let reaction_queue = ReactionQueue::new(queue_capacity);
+        match typ {
+            EntityType::Actor(desc) => {
+                let loc = Loc::new(qrz);
 
-        commands.entity(ent)
-            .insert((
-                loc,
-                typ,
-                // All actors need Behaviour::Controlled on client for movement interpolation
-                // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
-                Behaviour::Controlled,
-                SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
-                Transform {
-                    translation: map.convert(qrz),
-                    scale: Vec3::ONE * map.radius(),
-                    ..default()},
-                AirTime { state: Some(0), step: None },
-                NearestNeighbor::new(ent, loc),
-                Heading::default(),
-                Offset::default(),
-                KeyBits::default(),
-                Visibility::default(),
-                Physics::default(),
-            ))
-            .insert((
-                attrs_val,
-                reaction_queue,
-                crate::common::components::gcd::Gcd::new(),
-                crate::common::components::target::Target::default(), // For targeting system
-                crate::common::components::LastAutoAttack::default(), // For auto-attack cooldown
-            ))
-            .observe(ready);
+                // Initialize reaction queue with capacity based on Focus attribute
+                let attrs_val = attrs.unwrap_or_default();
+                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
+                let reaction_queue = ReactionQueue::new(queue_capacity);
 
-        // Health/Stamina/Mana/CombatState will be inserted by Incremental events from server
-        // (do_incremental handles inserting missing components)
+                commands.entity(ent)
+                    .insert((
+                        loc,
+                        typ,
+                        // All actors need Behaviour::Controlled on client for movement interpolation
+                        // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
+                        Behaviour::Controlled,
+                        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                        Transform {
+                            translation: map.convert(qrz),
+                            scale: Vec3::ONE * map.radius(),
+                            ..default()},
+                        AirTime { state: Some(0), step: None },
+                        NearestNeighbor::new(ent, loc),
+                        Heading::default(),
+                        Offset::default(),
+                        KeyBits::default(),
+                        Visibility::default(),
+                        Physics::default(),
+                    ))
+                    .insert((
+                        attrs_val,
+                        reaction_queue,
+                        crate::common::components::gcd::Gcd::new(),
+                        crate::common::components::target::Target::default(), // For targeting system
+                        crate::common::components::LastAutoAttack::default(), // For auto-attack cooldown
+                        crate::common::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
+                    ))
+                    .observe(ready);
+
+                // Health/Stamina/Mana/CombatState will be inserted by Incremental events from server
+                // (do_incremental handles inserting missing components)
+            }
+            EntityType::Projectile => {
+                let world_pos = map.convert(qrz);
+                let loc = Loc::new(qrz);
+                let mesh = meshes.add(Cuboid::new(0.3, 0.3, 0.3)); // Small cube
+                let material = materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.3, 0.0), // Orange
+                    emissive: LinearRgba::rgb(2.0, 0.6, 0.0), // Glowing
+                    ..default()
+                });
+                commands.entity(ent).insert((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material),
+                    Transform::from_translation(world_pos),
+                    Visibility::default(),
+                    Aabb::default(),
+                    loc,
+                    typ,
+                    Offset::default(),
+                    Heading::default(),
+                ));
+            }
+            _ => continue,
+        }
     }
 }
 
@@ -162,6 +190,7 @@ fn get_asset(typ: EntityType) -> String {
                 ActorIdentity::Player => "actors/player-basic.glb".to_string(),
                 ActorIdentity::Npc(npc_type) => match npc_type {
                     NpcType::WildDog => "actors/dog-basic.glb".to_string(),
+                    NpcType::ForestSprite => "actors/sprite-basic.glb".to_string(),
                     // Future NPCs will have their own model paths
                 }
             }

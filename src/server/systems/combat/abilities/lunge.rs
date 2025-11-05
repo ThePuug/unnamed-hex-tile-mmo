@@ -1,10 +1,9 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, heading::*, resources::*, Loc, reaction_queue::DamageType, gcd::Gcd},
+        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, gcd::Gcd},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-        plugins::nntree::*,
-        systems::{targeting::*, combat::gcd::GcdType},
+        systems::{targeting::get_range_tier, combat::gcd::GcdType},
     },
 };
 
@@ -17,12 +16,11 @@ use crate::{
 pub fn handle_lunge(
     mut commands: Commands,
     mut reader: EventReader<Try>,
-    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    loc_heading_query: Query<(&Loc, &Heading)>,
+    entity_query: Query<&Loc>,
+    loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     mut gcd_query: Query<&mut Gcd>,
     respawn_query: Query<&RespawnTimer>,
-    nntree: Res<NNTree>,
     mut writer: EventWriter<Do>,
     time: Res<Time>,
 ) {
@@ -57,33 +55,42 @@ pub fn handle_lunge(
             continue;
         }
 
-        // Get caster's location and heading
-        let Ok((caster_loc, caster_heading)) = loc_heading_query.get(*ent) else {
+        // Get caster's location, current target, and targeting state
+        let Ok((caster_loc, target, targeting_state_opt)) = loc_target_query.get(*ent) else {
             continue;
         };
 
-        // Use targeting system to find target
-        let target_opt = select_target(
-            *ent,
-            *caster_loc,
-            *caster_heading,
-            None, // No tier lock
-            &nntree,
-            |target_ent| {
-                // Skip dead players
-                if respawn_query.get(target_ent).is_ok() {
-                    return None;
-                }
-                entity_query.get(target_ent).ok().map(|(et, _, _)| *et)
-            },
-            |target_ent| {
-                // Check if entity is player-controlled
-                entity_query.get(target_ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some()
-            },
-        );
+        // Get the current target from Target component
+        let target_ent_opt = target.entity;  // Get the entity field (Option<Entity>)
 
-        let Some(target_ent) = target_opt else {
-            // No valid target in facing cone
+        info!("Lunge activated: caster_loc={:?}, Target={:?}, tier_lock={:?}",
+            caster_loc, target_ent_opt, targeting_state_opt.and_then(|ts| ts.get()));
+
+        // If tier locked, validate target is in correct tier
+        let validated_target = if let (Some(targeting_state), Some(target_ent)) = (targeting_state_opt, target_ent_opt) {
+            if let Some(locked_tier) = targeting_state.get() {
+                // Tier locked - validate target is in the correct tier
+                if let Ok(target_loc) = entity_query.get(target_ent) {
+                    let distance = caster_loc.flat_distance(target_loc) as u32;
+                    let target_tier = get_range_tier(distance);
+
+                    if target_tier == locked_tier {
+                        Some(target_ent) // Target is in correct tier
+                    } else {
+                        None // Target not in locked tier, can't use ability
+                    }
+                } else {
+                    None // Target doesn't exist
+                }
+            } else {
+                target_ent_opt // Not tier locked, use target as-is
+            }
+        } else {
+            target_ent_opt // No targeting state or no target
+        };
+
+        let Some(target_ent) = validated_target else {
+            // No valid target
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -93,7 +100,19 @@ pub fn handle_lunge(
             continue;
         };
 
-        let Some(target_loc) = entity_query.get(target_ent).ok().map(|(_, loc, _)| *loc) else {
+        // Check if target is alive
+        if respawn_query.get(target_ent).is_ok() {
+            // Target is dead
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
+
+        let Some(target_loc) = entity_query.get(target_ent).ok() else {
             continue;
         };
 
@@ -140,12 +159,12 @@ pub fn handle_lunge(
         });
 
         // Find landing position: adjacent to target, closest to caster
-        let target_neighbors = (*target_loc).neighbors();
+        let target_neighbors = (**target_loc).neighbors();
         let landing_loc = target_neighbors
             .iter()
             .min_by_key(|neighbor_loc| caster_loc.flat_distance(neighbor_loc))
             .copied()
-            .unwrap_or(*target_loc); // Fallback to target loc if no neighbors
+            .unwrap_or(**target_loc); // Fallback to target loc if no neighbors
 
         // Update caster's location (teleport)
         commands.entity(*ent).insert(Loc::new(landing_loc));

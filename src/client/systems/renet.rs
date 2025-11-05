@@ -41,6 +41,7 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    locs: Query<&Loc>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -56,6 +57,8 @@ pub fn write_do(
                     Behaviour::Controlled,
                     PlayerControlled,
                     crate::common::components::target::Target::default(), // For unified targeting system
+                    crate::common::components::ally_target::AllyTarget::default(), // For ally targeting
+                    crate::common::components::tier_lock::TierLock::default(), // For tier lock
                 )).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
@@ -76,6 +79,12 @@ pub fn write_do(
                             l2r.insert(loc, ent);
                             loc
                         }
+                    },
+                    EntityType::Projectile => {
+                        // Spawn local entity for projectile visual
+                        let loc = commands.spawn(typ).id();
+                        l2r.insert(loc, ent);
+                        loc
                     },
                     _ => { Entity::PLACEHOLDER }
                 };
@@ -99,13 +108,17 @@ pub fn write_do(
                     // For local player: DON'T despawn the entity, just mark as dead
                     // The entity will be reused on respawn
                     // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
-                    info!("CLIENT: Received Despawn for LOCAL player {:?} - keeping entity alive (hidden)", ent);
                 } else {
                     // For NPCs/other players: remove from EntityMap and despawn
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
-                        // Entity not in map - already despawned or never spawned locally
                         continue
                     };
+
+                    // Spawn hit flash effect for projectiles (capture Loc before despawning)
+                    if let Ok(loc) = locs.get(local_ent) {
+                        do_writer.write(Do { event: Event::SpawnHitFlash { loc: *loc } });
+                    }
+
                     commands.entity(local_ent).despawn();
                 }
             }
@@ -182,14 +195,14 @@ pub fn send_try(
     for &message in reader.read() {
         match message {
             Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) } } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental { 
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
                     ent: *l2r.get_by_left(&ent).unwrap(),
-                    component: Component::KeyBits(keybits) 
+                    component: Component::KeyBits(keybits)
                 }}, bincode::config::legacy()).unwrap());
             }
             Try { event: Event::Gcd { ent, typ, .. } } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 
-                    ent: *l2r.get_by_left(&ent).unwrap(), 
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
                     typ,
                 }}, bincode::config::legacy()).unwrap());
             }
@@ -208,6 +221,12 @@ pub fn send_try(
             Try { event: Event::Ping { client_time } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
                     client_time
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Try { event: Event::SetTierLock { ent, tier } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    tier
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

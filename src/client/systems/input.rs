@@ -8,6 +8,7 @@ use crate::{common::{
         },
         message::{AbilityType, Component, Event},
         resources::*,
+        systems::targeting::RangeTier,
     }, *
 };
 
@@ -55,6 +56,23 @@ pub fn update_keybits(
         // Deflect ability (R key) - Clear all threats
         if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target_loc: None }});
+        }
+
+        // ADR-010 Phase 1: Tier Lock Targeting
+
+        // 1 key: Lock to Close tier (1-2 hexes)
+        if keyboard.just_pressed(KeyCode::Digit1) {
+            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Close }});
+        }
+
+        // 2 key: Lock to Mid tier (3-6 hexes)
+        if keyboard.just_pressed(KeyCode::Digit2) {
+            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Mid }});
+        }
+
+        // 3 key: Lock to Far tier (7+ hexes)
+        if keyboard.just_pressed(KeyCode::Digit3) {
+            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Far }});
         }
 
         let mut keybits = KeyBits::default();

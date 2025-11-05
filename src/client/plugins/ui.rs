@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{action_bar, character_panel, combat_ui, debug_resources, resource_bars, target_frame, target_indicator, threat_icons, ui};
+use crate::client::systems::{action_bar, character_panel, combat_ui, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -16,7 +16,6 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
-        app.init_resource::<target_frame::AllyTarget>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -29,6 +28,7 @@ impl Plugin for UiPlugin {
                 threat_icons::setup.after(crate::client::systems::camera::setup),
                 target_frame::setup.after(crate::client::systems::camera::setup),
                 target_indicator::setup,
+                tier_lock_range_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::client::systems::camera::setup),
             ),
         );
@@ -42,6 +42,7 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, target_frame::update_queue);
         app.add_systems(Update, target_frame::update_ally_queue);
         app.add_systems(Update, target_indicator::update);
+        app.add_systems(Update, tier_lock_range_indicator::update);
 
         // Character panel systems
         app.add_systems(
@@ -59,8 +60,6 @@ impl Plugin for UiPlugin {
             (
                 threat_icons::update,
                 threat_icons::animate_clear,
-                debug_resources::debug_drain_resources, // DEBUG: Remove after testing
-                debug_resources::debug_process_expired_threats, // DEBUG: Remove after server integration
             ),
         );
 

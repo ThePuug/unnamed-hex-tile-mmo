@@ -21,11 +21,11 @@ use crate::{
         message::*,
         plugins::nntree,
         resources::{map::*, *},
-        systems::{physics, targeting}
+        systems::physics
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, combat, input, reaction_queue, renet, spawner, world},
+        systems::{actor, combat, input, projectile, reaction_queue, renet, spawner, targeting, world},
         *
     }
 };
@@ -45,7 +45,7 @@ fn main() {
         LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,".to_owned()
-                    +"server=trace,"
+                    +"unnamed_hex_tile_mmo=trace,"
                     ,
             custom_layer: |_| None,
         },
@@ -80,6 +80,7 @@ fn main() {
         common::systems::combat::resources::regenerate_resources,
         common::systems::combat::state::update_combat_state,
         reaction_queue::process_expired_threats,
+        projectile::update_projectiles, // ADR-010 Phase 5: Projectile movement and hit detection
     ));
 
     // Core combat and actor systems
@@ -87,7 +88,7 @@ fn main() {
         panic_on_error_system,
         actor::do_incremental,
         actor::update,
-        targeting::update_targets_on_change, // Reactive targeting: updates NPC Target when heading/loc changes
+        targeting::update_targets, // Update targets every frame (detects when targets move)
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         combat::validate_ability_prerequisites,
@@ -96,6 +97,7 @@ fn main() {
         combat::abilities::lunge::handle_lunge,
         combat::abilities::knockback::handle_knockback,
         combat::abilities::deflect::handle_deflect,
+        // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
         common::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 
@@ -106,6 +108,7 @@ fn main() {
         input::send_input,
         input::try_gcd,
         input::try_input,
+        input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         renet::do_manage_connections,
         spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
         spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),

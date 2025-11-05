@@ -26,12 +26,9 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    components::{heading::*, entity_type::*, *},
+    components::{heading::*, entity_type::*, tier_lock::TierLock, *},
     plugins::nntree::*,
 };
-
-#[cfg(feature = "server")]
-use crate::server::components::target_lock::TargetLock;
 
 impl Heading {
     /// Convert heading to angle in degrees
@@ -358,14 +355,16 @@ where
 /// 2. Filter to allies (PlayerControlled) only
 /// 3. Skip self (by entity)
 /// 4. Filter to entities within 120° facing cone
-/// 5. Select nearest by distance
-/// 6. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
+/// 5. Apply tier filter if locked (None for automatic targeting)
+/// 6. Select nearest by distance
+/// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
 ///
 /// # Arguments
 ///
 /// * `caster_ent` - Entity of the caster (to skip self)
 /// * `caster_loc` - Location of the caster
 /// * `caster_heading` - Heading direction of the caster
+/// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
 /// * `is_player_controlled` - Function to check if entity is player-controlled
 ///
@@ -376,6 +375,7 @@ pub fn select_ally_target<F>(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
+    tier_lock: Option<RangeTier>,
     nntree: &NNTree,
     is_player_controlled: F,
 ) -> Option<Entity>
@@ -410,6 +410,14 @@ where
 
         // Calculate distance (use flat_distance for 2D hex grid)
         let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+        // Apply tier filter if locked
+        if let Some(required_tier) = tier_lock {
+            let target_tier = get_range_tier(distance);
+            if target_tier != required_tier {
+                continue;
+            }
+        }
 
         // Calculate angle to target for tiebreaker
         let target_angle = angle_between_locs(caster_loc, target_loc);
@@ -459,79 +467,56 @@ where
     Some(best_target)
 }
 
-/// Reactive system that updates Target component when heading or location changes
+/// Shared implementation for updating targets based on heading/location changes
 ///
-/// This system runs whenever an entity's Heading or Loc changes, automatically
-/// recalculating what entity they are facing using select_target().
+/// This is the core logic called by both server and client versions of update_targets_on_change.
+/// The only difference between server and client is the Query filter, which is handled in their
+/// respective modules.
 ///
-/// Used by:
-/// - Players: Target updates as they turn or move
-/// - NPCs WITHOUT TargetLock: Target updates reactively based on FOV
+/// # Arguments
 ///
-/// NPCs with TargetLock are excluded - behavior tree targeting (FindOrKeepTarget)
-/// is the source of truth for their targets, not reactive FOV targeting.
-///
-/// # Performance
-///
-/// Only runs for entities that actually changed (Bevy change detection).
-/// No work done if no entities moved or turned.
-#[cfg(feature = "server")]
-pub fn update_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
-        (Or<(Changed<Heading>, Changed<Loc>)>, Without<TargetLock>)
-    >,
-    entity_types: Query<&EntityType>,
-    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
-    nntree: Res<NNTree>,
+/// * `ent` - The entity being updated
+/// * `loc` - Current location of the entity
+/// * `heading` - Current heading direction
+/// * `target` - Mutable reference to the Target component
+/// * `tier_lock` - Optional reference to TierLock component
+/// * `nntree` - Spatial index for proximity queries
+/// * `entity_types` - Query for EntityType components
+/// * `player_controlled` - Query for PlayerControlled components
+pub fn update_targets_impl(
+    ent: Entity,
+    loc: Loc,
+    heading: Heading,
+    target: &mut crate::common::components::target::Target,
+    tier_lock: Option<&TierLock>,
+    nntree: &NNTree,
+    entity_types: &Query<&EntityType>,
+    player_controlled: &Query<&crate::common::components::behaviour::PlayerControlled>,
 ) {
-    for (ent, loc, heading, mut target) in &mut query {
-        // Use select_target to find what this entity is facing
-        let new_target = select_target(
-            ent,
-            *loc,
-            *heading,
-            None, // No tier lock (automatic targeting)
-            &nntree,
-            |e| entity_types.get(e).ok().copied(),
-            |e| player_controlled.contains(e),
-        );
+    // Get tier constraint from TierLock if present
+    let tier_constraint = tier_lock.and_then(|tl| tl.get());
 
-        // Update the Target component
-        match new_target {
-            Some(target_ent) => target.set(target_ent),
-            None => target.clear(),
+    // Use select_target to find what this entity is facing (with tier lock filter)
+    let new_target = select_target(
+        ent,
+        loc,
+        heading,
+        tier_constraint,
+        nntree,
+        |e| entity_types.get(e).ok().copied(),
+        |e| player_controlled.contains(e),
+    );
+
+    // Update Target fields directly
+    match new_target {
+        Some(target_ent) => {
+            // Target found - update both entity and last_target
+            target.entity = Some(target_ent);
+            target.last_target = Some(target_ent);
         }
-    }
-}
-
-/// Client version: reactive targeting without TargetLock filter (client doesn't have TargetLock)
-#[cfg(not(feature = "server"))]
-pub fn update_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
-        Or<(Changed<Heading>, Changed<Loc>)>
-    >,
-    entity_types: Query<&EntityType>,
-    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
-    nntree: Res<NNTree>,
-) {
-    for (ent, loc, heading, mut target) in &mut query {
-        // Use select_target to find what this entity is facing
-        let new_target = select_target(
-            ent,
-            *loc,
-            *heading,
-            None, // No tier lock (automatic targeting)
-            &nntree,
-            |e| entity_types.get(e).ok().copied(),
-            |e| player_controlled.contains(e),
-        );
-
-        // Update the Target component
-        match new_target {
-            Some(target_ent) => target.set(target_ent),
-            None => target.clear(),
+        None => {
+            // No target found - clear entity but keep last_target for sticky UI
+            target.entity = None;
         }
     }
 }
@@ -540,6 +525,10 @@ pub fn update_targets_on_change(
 mod tests {
     use super::*;
     use qrz::Qrz;
+    use crate::common::components::{
+        behaviour::PlayerControlled,
+        entity_type::{actor::*, *},
+    };
 
     // ===== HEADING TO ANGLE CONVERSION TESTS =====
 
@@ -1103,6 +1092,311 @@ mod tests {
         assert_eq!(
             result, Some(player),
             "NPC should select player and skip other NPC"
+        );
+    }
+
+    // ===== TIER LOCK INTEGRATION TESTS (ADR-010 Phase 5) =====
+
+    /// Test that tier lock filters targets by distance range (ADR-010 Phase 5)
+    ///
+    /// Validation Criteria:
+    /// - Tier 1 (Close): 0-3 hexes
+    /// - Tier 2 (Mid): 4-8 hexes
+    /// - Tier 3 (Far): 9+ hexes
+    #[test]
+    fn test_tier_lock_filters_by_distance() {
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Close target (2 hexes east) - Tier 1
+        let close_target_loc = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let close_target = spawn_actor(&mut world, &mut nntree, close_target_loc);
+
+        // Mid target (5 hexes east) - Tier 2
+        let mid_target_loc = Loc::new(Qrz { q: 5, r: 0, z: 0 });
+        let mid_target = spawn_actor(&mut world, &mut nntree, mid_target_loc);
+
+        // Far target (10 hexes east) - Tier 3
+        let far_target_loc = Loc::new(Qrz { q: 10, r: 0, z: 0 });
+        let far_target = spawn_actor(&mut world, &mut nntree, far_target_loc);
+
+        // Test Tier 1 lock (Close: 0-3 hexes) - should select close_target
+        let tier1_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Close), // Tier 1
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier1_result, Some(close_target), "Tier 1 lock should select close target (2 hexes)");
+
+        // Test Tier 2 lock (Mid: 4-8 hexes) - should select mid_target
+        let tier2_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Mid), // Tier 2
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier2_result, Some(mid_target), "Tier 2 lock should select mid target (5 hexes)");
+
+        // Test Tier 3 lock (Far: 9+ hexes) - should select far_target
+        let tier3_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Far), // Tier 3
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select far target (10 hexes)");
+
+        // Test no tier lock - should default to closest (close_target)
+        let no_lock_result = select_target(
+            caster,
+            caster_loc,
+            heading,
+            None, // No tier lock
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(no_lock_result, Some(close_target), "Without tier lock should default to closest target");
+    }
+
+    /// Test mixed encounter scenario (ADR-010 Phase 5 Validation Criteria)
+    ///
+    /// Scenario: Mixed encounter with different range tiers
+    /// - 1 Forest Sprite at 5 hexes (mid tier: 3-6)
+    /// - 1 Wild Dog at 2 hexes (close tier: 1-2)
+    /// - Default targeting → Wild Dog (closer)
+    /// - Press 2 (Mid tier lock) → Forest Sprite
+    /// - Use Lunge → tier lock drops, targets Wild Dog again
+    #[test]
+    fn test_tier_lock_mixed_encounter() {
+        let (mut world, mut nntree) = setup_test_world();
+
+        let player_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+
+        // Spawn player
+        let player = spawn_actor(&mut world, &mut nntree, player_loc);
+        world.entity_mut(player).insert(PlayerControlled);
+
+        // Wild Dog at 2 hexes (close tier: 1-2)
+        let dog_loc = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let wild_dog = spawn_actor(&mut world, &mut nntree, dog_loc);
+
+        // Forest Sprite at 5 hexes (mid tier: 3-6)
+        let sprite_loc = Loc::new(Qrz { q: 5, r: 0, z: 0 });
+        let forest_sprite = spawn_actor(&mut world, &mut nntree, sprite_loc);
+
+        // 1. Default targeting (no tier lock) → should target Wild Dog (closer)
+        let default_result = select_target(
+            player,
+            player_loc,
+            heading,
+            None, // No tier lock
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            default_result, Some(wild_dog),
+            "Default targeting should target Wild Dog (closer at 2 hexes)"
+        );
+
+        // 2. Press "2" (Tier 2 lock, 4-8 hexes) → should target Forest Sprite
+        let tier2_result = select_target(
+            player,
+            player_loc,
+            heading,
+            Some(RangeTier::Mid), // Tier 2 (Mid: 4-8 hexes)
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            tier2_result, Some(forest_sprite),
+            "Tier 2 lock should target Forest Sprite (5 hexes)"
+        );
+
+        // 3. After ability use, tier lock drops → back to Wild Dog
+        let after_ability_result = select_target(
+            player,
+            player_loc,
+            heading,
+            None, // Tier lock dropped after ability
+            &nntree,
+            |ent| world.get::<EntityType>(ent).copied(),
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+        assert_eq!(
+            after_ability_result, Some(wild_dog),
+            "After tier lock drops, should target Wild Dog again (closest)"
+        );
+    }
+
+    // ===== ALLY TARGETING TIER LOCK TESTS =====
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_close() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances (all players)
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 4, r: 0, z: 0 })); // Distance 4 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        // Test Close tier lock - should select close_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Close),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(close_ally),
+            "Close tier lock should select ally at 1 hex (Close range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_mid() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test Mid tier lock - should select mid_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Mid),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(mid_ally),
+            "Mid tier lock should select ally at 5 hexes (Mid range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_far() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Distance 2 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test Far tier lock - should select far_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Far),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(far_ally),
+            "Far tier lock should select ally at 10 hexes (Far range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_automatic_selects_nearest() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test no tier lock (automatic) - should select nearest (close_ally)
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            None,
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(close_ally),
+            "Automatic (no tier lock) should select nearest ally"
         );
     }
 }

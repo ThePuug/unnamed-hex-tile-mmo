@@ -21,6 +21,7 @@ impl ActorIdentity {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum NpcType {
     WildDog,
+    ForestSprite,
 }
 
 impl NpcType {
@@ -28,7 +29,24 @@ impl NpcType {
     pub fn display_name(&self) -> &'static str {
         match self {
             NpcType::WildDog => "Wild Dog",
+            NpcType::ForestSprite => "Forest Sprite",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_forest_sprite_display_name() {
+        assert_eq!(NpcType::ForestSprite.display_name(), "Forest Sprite");
+    }
+
+    #[test]
+    fn test_forest_sprite_actor_identity() {
+        let identity = ActorIdentity::Npc(NpcType::ForestSprite);
+        assert_eq!(identity.display_name(), "Forest Sprite");
     }
 }
 

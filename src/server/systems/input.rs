@@ -2,9 +2,9 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{ heading::*, * },
+        components::{ tier_lock::TierLock, * },
         message::{Event, *},
-        systems::combat::gcd::*
+        systems::combat::gcd::*,
     },
     *
 };
@@ -66,3 +66,31 @@ pub fn try_gcd(
 
     // This system could be removed entirely if Event::Gcd is not used elsewhere
 }
+
+/// Handle tier lock requests from clients (ADR-010 Phase 1)
+///
+/// Clients send SetTierLock events when pressing 1/2/3 keys.
+/// Server updates the TierLock component to reflect the chosen tier.
+/// Abilities will validate the existing Target component is in the correct tier.
+pub fn try_set_tier_lock(
+    mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
+    mut tier_locks: Query<&mut TierLock>,
+) {
+    for &message in reader.read() {
+        let Try { event } = message;
+        let Event::SetTierLock { ent, tier } = event else { continue };
+
+        if let Ok(mut tier_lock) = tier_locks.get_mut(ent) {
+            tier_lock.set(tier);
+
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: crate::common::message::Component::TierLock(*tier_lock),
+                },
+            });
+        }
+    }
+}
+

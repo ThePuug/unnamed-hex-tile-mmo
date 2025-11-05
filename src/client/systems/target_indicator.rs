@@ -12,8 +12,8 @@
 //!
 //! # How it works
 //!
-//! 1. Query local player's location, heading
-//! 2. Call `select_target()` to get current hostile target
+//! 1. Read hostile/ally targets from Target and AllyTarget components
+//! 2. Target components are updated every frame by targeting system
 //! 3. Update indicator position to match target's location
 //! 4. Show/hide indicator based on target availability
 
@@ -26,10 +26,8 @@ use bevy::{
 use crate::{
     client::{components::TargetIndicator, plugins::diagnostics::DiagnosticsState},
     common::{
-        components::{behaviour::Behaviour, entity_type::*, heading::*, *},
-        plugins::nntree::*,
+        components::{entity_type::*, *},
         resources::map::Map,
-        systems::targeting::{select_target, select_ally_target},
     },
 };
 
@@ -66,6 +64,10 @@ pub fn setup(
         },
     ));
 
+    // TODO: Spawn tier badge as child of hostile indicator (ADR-010 Phase 5)
+    // Tier badge requires proper 3D text setup with Bevy 0.16 API
+    // For now, tier lock functionality works without visual badge (tested in Phase 1)
+
     // Green material for ally targets
     let ally_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.0, 1.0, 0.0, 0.7),
@@ -87,6 +89,10 @@ pub fn setup(
             indicator_type: IndicatorType::Ally,
         },
     ));
+
+    // TODO: Spawn tier badge as child of ally indicator (ADR-010 Phase 5)
+    // Tier badge requires proper 3D text setup with Bevy 0.16 API
+    // For now, tier lock functionality works without visual badge (tested in Phase 1)
 }
 
 /// Update target indicator position every frame
@@ -94,15 +100,14 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(Entity, &Loc, &Heading, &crate::common::components::resources::Health), With<Actor>>,
-    entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<NNTree>,
+    local_player_query: Query<(&crate::common::components::target::Target, &crate::common::components::ally_target::AllyTarget, &crate::common::components::resources::Health), With<Actor>>,
+    entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
     diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    // Get local player
-    let Ok((player_ent, player_loc, player_heading, health)) = local_player_query.get_single() else {
+    // Get local player's targets and health
+    let Ok((player_target, player_ally_target, health)) = local_player_query.get_single() else {
         return;
     };
 
@@ -115,32 +120,19 @@ pub fn update(
         return;
     }
 
-    // Select the current hostile target using Phase 2 targeting system
-    let hostile_target = select_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        None, // No tier lock in MVP
-        &nntree,
-        |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-        |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
-    );
+    // Read hostile target from Target component (updated every frame by update_targets)
+    let hostile_target = player_target.entity;
 
-    // Select the current ally target using directional targeting
-    let ally_target = select_ally_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        &nntree,
-        |ent| entity_query.get(ent).ok().map(|(_, _, player_controlled_opt)| player_controlled_opt.is_some()).unwrap_or(false),
-    );
+    // Read ally target from AllyTarget component (updated every frame by update_ally_targets)
+    // Use entity (current) not last_target (sticky) for target indicators
+    let ally_target = player_ally_target.entity;
 
     // Update both hostile and ally indicators
     for (mut mesh_handle, mut transform, mut visibility, mut aabb, indicator) in &mut indicator_query {
         if matches!(indicator.indicator_type, IndicatorType::Hostile) {
             if let Some(target_ent) = hostile_target {
                 // Get target's location
-                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
+                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
                     // Find the actual terrain tile at target location (handles elevation)
                     if let Some((actual_tile, _)) = map.find(**target_loc, -60) {
                         // Get the vertices for this tile (respecting slope toggle)
@@ -218,7 +210,7 @@ pub fn update(
         } else if matches!(indicator.indicator_type, IndicatorType::Ally) {
             if let Some(ally_ent) = ally_target {
                 // Get ally's location
-                if let Ok((_, ally_loc, _)) = entity_query.get(ally_ent) {
+                if let Ok((_, ally_loc)) = entity_query.get(ally_ent) {
                     // Find the actual terrain tile at ally location (handles elevation)
                     if let Some((actual_tile, _)) = map.find(**ally_loc, -60) {
                         // Get the vertices for this tile (respecting slope toggle)
@@ -295,6 +287,10 @@ pub fn update(
             }
         }
     }
+
+    // TODO: Update tier badges (ADR-010 Phase 5: Tier lock UI feedback)
+    // Tier badge UI deferred - requires proper 3D text component setup
+    // Tier lock functionality is working (tested in Phase 1), just missing visual indicator
 }
 
 /// Indicator types for different targeting modes

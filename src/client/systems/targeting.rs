@@ -1,0 +1,101 @@
+//! Client-specific targeting systems
+//!
+//! This module contains targeting system implementations that are specific to the client.
+//! TierLock is replicated from server, so both client and server have it.
+
+use bevy::prelude::*;
+
+use crate::common::{
+    components::{
+        ally_target::AllyTarget,
+        heading::Heading,
+        Loc,
+        target::Target,
+        tier_lock::TierLock,
+        entity_type::EntityType
+    },
+    plugins::nntree::NNTree,
+    systems::targeting::{update_targets_impl, select_ally_target},
+};
+
+/// Update hostile targets every frame for responsive targeting (CLIENT VERSION)
+///
+/// Runs unconditionally to detect when target entities move out of range/cone.
+/// This ensures targets update immediately when NPCs/players move, not just when
+/// the local player changes heading/location.
+///
+/// # Performance
+///
+/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
+/// alongside target indicator. If performance becomes an issue, can be changed to
+/// run on a timer (e.g., every 100ms).
+pub fn update_targets(
+    mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>)>,
+    entity_types: Query<&EntityType>,
+    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
+    nntree: Res<NNTree>,
+) {
+    for (ent, loc, heading, mut target, tier_lock) in &mut query {
+        update_targets_impl(
+            ent,
+            *loc,
+            *heading,
+            &mut target,
+            tier_lock,
+            &nntree,
+            &entity_types,
+            &player_controlled,
+        );
+    }
+}
+
+/// Update ally targets every frame for responsive targeting (CLIENT VERSION)
+///
+/// Runs unconditionally to detect when ally entities move out of range/cone.
+/// This ensures targets update immediately when allies move, not just when
+/// the local player changes heading/location.
+///
+/// # Architecture
+///
+/// This system mirrors update_targets() but for ally targeting.
+/// Only the targeting system calls select_ally_target() - UI systems should
+/// read from the AllyTarget component, not call selection functions directly.
+///
+/// # Performance
+///
+/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
+/// alongside target indicator. If performance becomes an issue, can be changed to
+/// run on a timer (e.g., every 100ms).
+pub fn update_ally_targets(
+    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>)>,
+    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
+    nntree: Res<NNTree>,
+) {
+    for (ent, loc, heading, mut ally_target, tier_lock) in &mut query {
+        // Get tier constraint from TierLock if present
+        let tier_constraint = tier_lock.and_then(|tl| tl.get());
+
+        // Use select_ally_target to find what ally this entity is facing (with tier lock filter)
+        let new_ally_target = select_ally_target(
+            ent,
+            *loc,
+            *heading,
+            tier_constraint,
+            &nntree,
+            |e| player_controlled.contains(e),
+        );
+
+        // Update AllyTarget fields directly
+        match new_ally_target {
+            Some(target_ent) => {
+                // Ally found - update both entity and last_target
+                ally_target.entity = Some(target_ent);
+                ally_target.last_target = Some(target_ent);
+            }
+            None => {
+                // No ally found - clear entity but leave last_target intact for sticky UI
+                ally_target.entity = None;
+            }
+        }
+    }
+}

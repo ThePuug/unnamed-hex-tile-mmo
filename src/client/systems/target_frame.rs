@@ -12,20 +12,10 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{Actor, behaviour::*, entity_type::*, heading::*, resources::*, reaction_queue::*, Loc},
-        plugins::nntree::NNTree,
-        systems::targeting::{select_target, select_ally_target},
+        components::{Actor, entity_type::*, resources::*, reaction_queue::*, Loc},
     },
     client::resources::Server,
 };
-
-/// Resource tracking the currently selected ally target for sticky targeting
-/// Ally frame shows detailed info about selected ally (HP, resources)
-/// Persists until a new ally is selected or current ally dies/despawns
-#[derive(Resource, Default)]
-pub struct AllyTarget {
-    pub entity: Option<Entity>,
-}
 
 /// Marker component for the target frame container
 #[derive(Component)]
@@ -406,12 +396,11 @@ pub fn update(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
-    mut player_query: Query<(Entity, &Loc, &Heading, &Health, &mut crate::common::components::target::Target), With<Actor>>,
-    target_query: Query<(&EntityType, &Loc, &Health, Option<&ReactionQueue>, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<NNTree>,
+    player_query: Query<(&Health, &crate::common::components::target::Target), With<Actor>>,
+    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>)>,
 ) {
-    // Get local player and target component
-    let Ok((player_ent, player_loc, player_heading, player_health, mut player_target)) = player_query.get_single_mut() else {
+    // Get local player and target
+    let Ok((player_health, target)) = player_query.get_single() else {
         return;
     };
 
@@ -423,43 +412,18 @@ pub fn update(
         return;
     }
 
-    // Select current hostile target using directional targeting
-    let facing_target = select_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        None, // No tier lock in MVP
-        &nntree,
-        |ent| target_query.get(ent).ok().map(|(et, _, _, _, _)| *et),
-        |ent| target_query.get(ent).ok().and_then(|(_, _, _, _, pc_opt)| pc_opt).is_some(),
-    );
-
-    // Sticky targeting: Update target when a new target is found in facing cone
-    if let Some(new_target) = facing_target {
-        player_target.set(new_target);
-    }
-
-    // Validate target is still alive and exists
-    if let Some(target_ent) = **player_target {
-        if let Ok((_, _, target_health, _, _)) = target_query.get(target_ent) {
-            // Clear target if dead
-            if target_health.state <= 0.0 {
-                player_target.clear();
-            }
-        } else {
-            // Target entity no longer exists - clear it
-            player_target.clear();
-        }
-    }
+    // Read sticky target from Target.last_target
+    // This persists even when you turn away (entity field clears but last_target remains)
+    let last_target = target.last_target;
 
     // Show/hide frame and update content based on target
-    if let Some(target_ent) = **player_target {
+    if let Some(target_ent) = last_target {
         // Target exists - show frame and update content
         for mut visibility in &mut frame_query {
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, _target_loc, target_health, _queue_opt, _)) = target_query.get(target_ent) {
+        if let Ok((entity_type, target_health, _queue_opt)) = target_query.get(target_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
@@ -531,7 +495,7 @@ pub fn update_queue(
     };
 
     // Check if we have a target
-    let Some(target_ent) = **player_target else {
+    let Some(target_ent) = player_target.entity else {
         // No target - hide queue
         for mut visibility in &mut queue_container_query {
             *visibility = Visibility::Hidden;
@@ -803,19 +767,17 @@ pub fn update_queue(
 /// Uses sticky targeting - ally target persists until a new ally is selected or current dies/despawns
 /// Mirrors hostile frame logic but for friendly player entities
 pub fn update_ally_frame(
-    mut ally_target: ResMut<AllyTarget>,
     mut frame_query: Query<&mut Visibility, With<AllyFrame>>,
     mut name_text_query: Query<&mut Text, (With<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
     mut name_color_query: Query<&mut TextColor, With<AllyNameText>>,
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<AllyTriumvirateText>, Without<AllyNameText>, Without<AllyHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<AllyHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
-    player_query: Query<(Entity, &Loc, &Heading, &Health), With<Actor>>,
-    ally_query: Query<(&EntityType, &Loc, &Health, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<NNTree>,
+    player_query: Query<(&crate::common::components::ally_target::AllyTarget, &Health), With<Actor>>,
+    ally_query: Query<(&EntityType, &Health)>,
 ) {
-    // Get local player
-    let Ok((player_ent, player_loc, player_heading, player_health)) = player_query.get_single() else {
+    // Get local player's ally target and health
+    let Ok((ally_target, player_health)) = player_query.get_single() else {
         return;
     };
 
@@ -827,41 +789,31 @@ pub fn update_ally_frame(
         return;
     }
 
-    // Select current ally target using directional targeting
-    let facing_ally = select_ally_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        &nntree,
-        |ent| ally_query.get(ent).ok().map(|(_, _, _, player_controlled_opt)| player_controlled_opt.is_some()).unwrap_or(false),
-    );
-
-    // Sticky targeting: Update ally target when a new ally is found in facing cone
-    if let Some(new_ally) = facing_ally {
-        ally_target.entity = Some(new_ally);
-    }
+    // Read from last_target (sticky behavior - shows last ally even when not currently facing)
+    let target_entity = ally_target.last_target;
 
     // Validate ally target is still alive and exists
-    if let Some(ally_ent) = ally_target.entity {
-        if let Ok((_, _, ally_health, _)) = ally_query.get(ally_ent) {
-            // Clear ally target if dead
-            if ally_health.state <= 0.0 {
-                ally_target.entity = None;
-            }
+    let valid_ally = if let Some(ally_ent) = target_entity {
+        if let Ok((_, ally_health)) = ally_query.get(ally_ent) {
+            // Only show if alive
+            ally_health.state > 0.0
         } else {
-            // Ally entity no longer exists - clear it
-            ally_target.entity = None;
+            // Ally entity no longer exists
+            false
         }
-    }
+    } else {
+        false
+    };
 
-    // Show/hide frame and update content based on ally target
-    if let Some(ally_ent) = ally_target.entity {
+    // Show/hide frame and update content based on ally target validity
+    if valid_ally {
+        let ally_ent = target_entity.unwrap();
         // Ally exists - show frame and update content
         for mut visibility in &mut frame_query {
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, _, ally_health, _)) = ally_query.get(ally_ent) {
+        if let Ok((entity_type, ally_health)) = ally_query.get(ally_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
@@ -919,7 +871,7 @@ pub fn update_ally_frame(
 /// Mirrors update_queue but for ally frame
 pub fn update_ally_queue(
     mut commands: Commands,
-    ally_target: Res<AllyTarget>,
+    player_query: Query<&crate::common::components::ally_target::AllyTarget, With<Actor>>,
     mut queue_container_query: Query<&mut Visibility, With<AllyQueueContainer>>,
     queue_children_query: Query<&Children, With<AllyQueueContainer>>,
     dots_container_query: Query<Entity, With<AllyDotsContainer>>,
@@ -929,8 +881,13 @@ pub fn update_ally_queue(
     time: Res<Time>,
     server: Res<Server>,
 ) {
-    // Check if we have an ally target
-    let Some(ally_ent) = ally_target.entity else {
+    // Get local player's ally target
+    let Ok(ally_target) = player_query.get_single() else {
+        return;
+    };
+
+    // Check if we have an ally target (use last_target for sticky behavior)
+    let Some(ally_ent) = ally_target.last_target else {
         // No ally - hide queue
         for mut visibility in &mut queue_container_query {
             *visibility = Visibility::Hidden;

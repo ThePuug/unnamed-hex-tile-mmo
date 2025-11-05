@@ -67,7 +67,7 @@ pub fn chase(
                 // Close enough to spawn - clear returning state, lock, and target
                 commands.entity(npc_entity).remove::<Returning>();
                 commands.entity(npc_entity).remove::<TargetLock>();
-                commands.entity(npc_entity).insert(Target(None));
+                commands.entity(npc_entity).insert(Target::default());
                 continue;
             }
 
@@ -114,7 +114,7 @@ pub fn chase(
             }
 
             // Clear target while returning
-            commands.entity(npc_entity).insert(Target(None));
+            commands.entity(npc_entity).insert(Target::default());
             continue;
         }
 
@@ -199,7 +199,7 @@ pub fn chase(
                         npc_airtime.state = airtime;
                     }
 
-                    commands.entity(npc_entity).insert(Target(None));
+                    commands.entity(npc_entity).insert(Target::default());
                     continue;
                 }
 
@@ -229,7 +229,7 @@ pub fn chase(
                         chase_config.leash_distance,
                         spawner_loc,  // Spawner location is the leash anchor point
                     ));
-                    commands.entity(npc_entity).insert(Target(Some(new_target)));
+                    commands.entity(npc_entity).insert(Target { entity: Some(new_target), last_target: Some(new_target) });
                     new_target
                 } else {
                     // No targets found - stop chasing
@@ -251,7 +251,7 @@ pub fn chase(
             let direction = (**target_loc - **npc_loc).normalize();
             let desired_heading = Heading::new(direction);
             *npc_heading = desired_heading;
-            commands.entity(npc_entity).insert(Target(Some(target_entity)));
+            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             continue;
         }
 
@@ -306,7 +306,7 @@ pub fn chase(
             npc_airtime.state = airtime;
 
             // Update Target component for reactive systems
-            commands.entity(npc_entity).insert(Target(Some(target_entity)));
+            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
         }
 
         // Behavior never "completes" during chase - always running

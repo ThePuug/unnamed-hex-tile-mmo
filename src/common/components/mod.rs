@@ -1,13 +1,16 @@
+pub mod ally_target;
 pub mod behaviour;
 pub mod entity_type;
 pub mod gcd;
 pub mod heading;
 pub mod keybits;
 pub mod offset;
+pub mod projectile;
 pub mod reaction_queue;
 pub mod resources;
 pub mod spawner;
 pub mod target;
+pub mod tier_lock;
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -456,14 +459,20 @@ impl ActorAttributes {
 
     // === DERIVED ATTRIBUTES ===
 
-    /// Movement speed derived from grace_reach
-    /// Higher grace reach = higher max speed potential
-    /// 0 grace_reach = baseline (0.005)
-    /// 100 grace_reach = +15% faster (0.00575)
+    /// Movement speed derived from grace (might_grace position)
+    /// Higher grace = higher movement speed
+    /// Formula from ADR-010: max(75, 100 + (grace / 2))
+    ///
+    /// Grace = -100 (Might specialist): speed = 75% (clamped, 0.00375)
+    /// Grace = 0 (parity): speed = 100% (baseline, 0.005)
+    /// Grace = 50: speed = 125% (+25%, 0.00625)
+    /// Grace = 100 (Grace specialist): speed = 150% (+50%, 0.0075)
     pub fn movement_speed(&self) -> f32 {
-        let base = 0.005;
-        let grace_reach = self.grace_reach() as f32;
-        base * (1.0 + (grace_reach / 100.0) * 0.15)
+        const BASE_SPEED: f32 = 0.005;  // World units per millisecond (MOVEMENT_SPEED from physics.rs)
+
+        let grace = self.might_grace() as f32;  // -100 to +100
+        let speed_percent = (100.0 + (grace / 2.0)).max(75.0);  // 75 to 150
+        BASE_SPEED * (speed_percent / 100.0)
     }
 
     /// Maximum health derived from vitality_reach
@@ -651,6 +660,113 @@ mod tests {
         assert_eq!(attrs.might(), 85);  // abs(-80 + 10/2 - 10) = abs(-85) = 85
         assert_eq!(attrs.grace(), 15);  // 10 + 10/2 = 10 + 5 = 15
         assert_eq!(attrs.grace_reach(), 15);
+    }
+
+    // ===== MOVEMENT SPEED TESTS (ADR-010 Phase 2) =====
+
+    #[test]
+    fn test_movement_speed_formula_baseline() {
+        // Grace = 0 (parity) should give baseline speed (100%)
+        // Formula: max(75, 100 + (grace / 2))
+        // Grace = 0: max(75, 100 + 0) = 100
+        // Speed multiplier: 100 / 100 = 1.0
+        // Final speed: 0.005 * 1.0 = 0.005
+        let attrs = ActorAttributes {
+            might_grace_axis: 0,
+            might_grace_spectrum: 0,
+            might_grace_shift: 0,
+            ..Default::default()
+        };
+
+        let speed = attrs.movement_speed();
+        assert!(
+            (speed - 0.005).abs() < 0.0001,
+            "Grace 0 should give baseline speed 0.005, got {}",
+            speed
+        );
+    }
+
+    #[test]
+    fn test_movement_speed_formula_grace_100() {
+        // Grace = 100 (Grace specialist) should give +50% speed
+        // Formula: max(75, 100 + (100 / 2)) = max(75, 150) = 150
+        // Speed multiplier: 150 / 100 = 1.5
+        // Final speed: 0.005 * 1.5 = 0.0075
+        let attrs = ActorAttributes {
+            might_grace_axis: 100,
+            might_grace_spectrum: 0,
+            might_grace_shift: 0,
+            ..Default::default()
+        };
+
+        let speed = attrs.movement_speed();
+        assert!(
+            (speed - 0.0075).abs() < 0.0001,
+            "Grace 100 should give 150% speed (0.0075), got {}",
+            speed
+        );
+    }
+
+    #[test]
+    fn test_movement_speed_formula_grace_neg100() {
+        // Grace = -100 (Might specialist) should be clamped at 75% speed
+        // Formula: max(75, 100 + (-100 / 2)) = max(75, 50) = 75
+        // Speed multiplier: 75 / 100 = 0.75
+        // Final speed: 0.005 * 0.75 = 0.00375
+        let attrs = ActorAttributes {
+            might_grace_axis: -100,
+            might_grace_spectrum: 0,
+            might_grace_shift: 0,
+            ..Default::default()
+        };
+
+        let speed = attrs.movement_speed();
+        assert!(
+            (speed - 0.00375).abs() < 0.0001,
+            "Grace -100 should be clamped at 75% speed (0.00375), got {}",
+            speed
+        );
+    }
+
+    #[test]
+    fn test_movement_speed_formula_grace_50() {
+        // Grace = 50 should give +25% speed
+        // Formula: max(75, 100 + (50 / 2)) = max(75, 125) = 125
+        // Speed multiplier: 125 / 100 = 1.25
+        // Final speed: 0.005 * 1.25 = 0.00625
+        let attrs = ActorAttributes {
+            might_grace_axis: 50,
+            might_grace_spectrum: 0,
+            might_grace_shift: 0,
+            ..Default::default()
+        };
+
+        let speed = attrs.movement_speed();
+        assert!(
+            (speed - 0.00625).abs() < 0.0001,
+            "Grace 50 should give 125% speed (0.00625), got {}",
+            speed
+        );
+    }
+
+    #[test]
+    fn test_movement_speed_with_axis_and_shift() {
+        // Test that shift affects movement speed via might_grace()
+        // axis = 80, shift = 20 -> might_grace() = 100 (clamped)
+        let attrs = ActorAttributes {
+            might_grace_axis: 80,
+            might_grace_spectrum: 30,
+            might_grace_shift: 20,
+            ..Default::default()
+        };
+
+        // might_grace() = clamp(80 + 20, -100, 100) = 100
+        let speed = attrs.movement_speed();
+        assert!(
+            (speed - 0.0075).abs() < 0.0001,
+            "Grace 100 (via axis+shift) should give 150% speed (0.0075), got {}",
+            speed
+        );
     }
 
 }

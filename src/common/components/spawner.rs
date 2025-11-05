@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use rand::Rng;
 
 use crate::common::components::entity_type::actor::*;
 
@@ -44,6 +45,7 @@ impl Spawner {
 pub enum NpcTemplate {
     Dog,
     Wolf,
+    ForestSprite,
 }
 
 impl NpcTemplate {
@@ -62,6 +64,39 @@ impl NpcTemplate {
                 Resilience::Vital,
                 ActorIdentity::Npc(NpcType::WildDog), // TODO: Add NpcType::Wolf variant
             ),
+            Self::ForestSprite => ActorImpl::new(
+                Origin::Essential,
+                Approach::Distant,  // Ranged enemy that kites
+                Resilience::Primal,
+                ActorIdentity::Npc(NpcType::ForestSprite),
+            ),
         }
+    }
+
+    /// Select a random NPC template with weighted distribution (ADR-010 Phase 4)
+    ///
+    /// ADR-010 specifies 40% Forest Sprites, 60% Wild Dogs for varied encounters.
+    /// This creates tactical variety in spawned encounters.
+    pub fn random_mixed() -> Self {
+        let mut rng = rand::rng();
+        let roll = rng.random_range(0..100);
+        match roll {
+            0..40 => Self::ForestSprite,  // 40% ranged
+            _ => Self::Dog,              // 60% melee
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_forest_sprite_template_actor_impl() {
+        let sprite = NpcTemplate::ForestSprite.actor_impl();
+        assert_eq!(sprite.origin, Origin::Essential);
+        assert_eq!(sprite.approach, Approach::Distant); // Ranged enemy
+        assert_eq!(sprite.resilience, Resilience::Primal);
+        assert_eq!(sprite.identity, ActorIdentity::Npc(NpcType::ForestSprite));
     }
 }

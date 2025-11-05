@@ -2,7 +2,7 @@ pub mod abilities;
 
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, gcd::Gcd, LastAutoAttack, *},
+    components::{entity_type::*, heading::*, reaction_queue::*, resources::*, tier_lock::TierLock, gcd::Gcd, LastAutoAttack, *},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
     systems::{
@@ -178,7 +178,7 @@ pub fn validate_ability_prerequisites(
 // - abilities::lunge::handle_lunge
 // - abilities::knockback::handle_knockback
 // - abilities::deflect::handle_deflect
-// GCD is now set directly by ability systems to prevent race conditions
+// GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
 /// CRITICAL: until we add a new system ... we need this one to bypass a random magic 
 /// number of systems causing scheduling issues
@@ -220,7 +220,7 @@ pub fn process_passive_auto_attack(
 
         // ADR-009: Check if NPC's target (from unified Target component) is adjacent
         // Unwrap Target Option<Entity>
-        let Some(target_ent) = **target else {
+        let Some(target_ent) = target.entity else {
             continue; // No target set
         };
 
