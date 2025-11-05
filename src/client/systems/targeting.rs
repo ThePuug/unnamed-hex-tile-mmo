@@ -7,9 +7,16 @@
 use bevy::prelude::*;
 
 use crate::common::{
-    components::{heading::Heading, Loc, target::Target, targeting_state::TargetingState, entity_type::EntityType},
+    components::{
+        ally_target::AllyTarget,
+        heading::Heading,
+        Loc,
+        target::Target,
+        targeting_state::TargetingState,
+        entity_type::EntityType
+    },
     plugins::nntree::NNTree,
-    systems::targeting::update_targets_impl,
+    systems::targeting::{update_targets_impl, select_ally_target},
 };
 
 /// Reactive system that updates Target component when heading or location changes (CLIENT VERSION)
@@ -47,5 +54,61 @@ pub fn update_targets_on_change(
             &entity_types,
             &player_controlled,
         );
+    }
+}
+
+/// Reactive system that updates AllyTarget component when heading or location changes (CLIENT VERSION)
+///
+/// This system runs whenever an entity's Heading or Loc changes, automatically
+/// recalculating which ally entity they are facing using select_ally_target().
+///
+/// # Architecture
+///
+/// This system mirrors update_targets_on_change() but for ally targeting.
+/// Only the targeting system calls select_ally_target() - UI systems should
+/// read from the AllyTarget component, not call selection functions directly.
+///
+/// # Client-Specific Behavior
+///
+/// Only runs on the client. Ally targeting is client-only since it's purely
+/// for UI/friendly ability targeting, not server game logic.
+///
+/// # Performance
+///
+/// Only runs for entities that actually changed (Bevy change detection).
+/// No work done if no entities moved or turned.
+pub fn update_ally_targets_on_change(
+    mut query: Query<
+        (Entity, &Loc, &Heading, &mut AllyTarget, Option<&TargetingState>),
+        Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>
+    >,
+    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
+    nntree: Res<NNTree>,
+) {
+    for (ent, loc, heading, mut ally_target, targeting_state) in &mut query {
+        // Get tier lock from TargetingState if present
+        let tier_lock = targeting_state.and_then(|ts| ts.get_tier_lock());
+
+        // Use select_ally_target to find what ally this entity is facing (with tier lock filter)
+        let new_ally_target = select_ally_target(
+            ent,
+            *loc,
+            *heading,
+            tier_lock,
+            &nntree,
+            |e| player_controlled.contains(e),
+        );
+
+        // Update AllyTarget based on result
+        match new_ally_target {
+            Some(target_ent) => {
+                // Ally found - update both entity and last_target
+                ally_target.set(target_ent);
+            }
+            None => {
+                // No ally found - clear entity but leave last_target intact for sticky UI
+                ally_target.clear();
+            }
+        }
     }
 }

@@ -355,14 +355,16 @@ where
 /// 2. Filter to allies (PlayerControlled) only
 /// 3. Skip self (by entity)
 /// 4. Filter to entities within 120° facing cone
-/// 5. Select nearest by distance
-/// 6. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
+/// 5. Apply tier filter if locked (None for automatic targeting)
+/// 6. Select nearest by distance
+/// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
 ///
 /// # Arguments
 ///
 /// * `caster_ent` - Entity of the caster (to skip self)
 /// * `caster_loc` - Location of the caster
 /// * `caster_heading` - Heading direction of the caster
+/// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
 /// * `is_player_controlled` - Function to check if entity is player-controlled
 ///
@@ -373,6 +375,7 @@ pub fn select_ally_target<F>(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
+    tier_lock: Option<RangeTier>,
     nntree: &NNTree,
     is_player_controlled: F,
 ) -> Option<Entity>
@@ -407,6 +410,14 @@ where
 
         // Calculate distance (use flat_distance for 2D hex grid)
         let distance = caster_loc.flat_distance(&target_loc) as u32;
+
+        // Apply tier filter if locked
+        if let Some(required_tier) = tier_lock {
+            let target_tier = get_range_tier(distance);
+            if target_tier != required_tier {
+                continue;
+            }
+        }
 
         // Calculate angle to target for tiebreaker
         let target_angle = angle_between_locs(caster_loc, target_loc);
@@ -1236,6 +1247,158 @@ mod tests {
         assert_eq!(
             after_ability_result, Some(wild_dog),
             "After tier lock drops, should target Wild Dog again (closest)"
+        );
+    }
+
+    // ===== ALLY TARGETING TIER LOCK TESTS =====
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_close() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances (all players)
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 4, r: 0, z: 0 })); // Distance 4 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        // Test Close tier lock - should select close_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Close),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(close_ally),
+            "Close tier lock should select ally at 1 hex (Close range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_mid() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test Mid tier lock - should select mid_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Mid),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(mid_ally),
+            "Mid tier lock should select ally at 5 hexes (Mid range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_respects_tier_lock_far() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Distance 2 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test Far tier lock - should select far_ally only
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            Some(RangeTier::Far),
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(far_ally),
+            "Far tier lock should select ally at 10 hexes (Far range)"
+        );
+    }
+
+    #[test]
+    fn test_select_ally_target_automatic_selects_nearest() {
+        use crate::common::components::behaviour::PlayerControlled;
+
+        let (mut world, mut nntree) = setup_test_world();
+
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+
+        // Spawn caster (player)
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+
+        // Spawn allies at different distances
+        let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
+        world.entity_mut(close_ally).insert(PlayerControlled);
+
+        let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
+        world.entity_mut(mid_ally).insert(PlayerControlled);
+
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        world.entity_mut(far_ally).insert(PlayerControlled);
+
+        // Test no tier lock (automatic) - should select nearest (close_ally)
+        let result = select_ally_target(
+            caster,
+            caster_loc,
+            heading,
+            None,
+            &nntree,
+            |ent| world.get::<PlayerControlled>(ent).is_some(),
+        );
+
+        assert_eq!(
+            result, Some(close_ally),
+            "Automatic (no tier lock) should select nearest ally"
         );
     }
 }

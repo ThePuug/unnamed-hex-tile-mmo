@@ -57,6 +57,8 @@ pub fn write_do(
                     Behaviour::Controlled,
                     PlayerControlled,
                     crate::common::components::target::Target::default(), // For unified targeting system
+                    crate::common::components::ally_target::AllyTarget::default(), // For ally targeting
+                    crate::common::components::targeting_state::TargetingState::default(), // For tier lock
                 )).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);

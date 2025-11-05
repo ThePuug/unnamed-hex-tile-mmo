@@ -16,7 +16,6 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
-        app.init_resource::<target_frame::AllyTarget>();
 
         // Setup systems run once at startup
         app.add_systems(

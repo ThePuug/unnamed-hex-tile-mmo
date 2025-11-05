@@ -222,31 +222,25 @@ pub fn update_health_bars(
     mut child_node_query: Query<&mut Node, (Without<crate::client::components::WorldHealthBar>, Without<crate::client::components::HostileHealthBar>, Without<crate::client::components::AllyHealthBar>)>,
     entity_query: Query<(&crate::common::components::resources::Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading, &crate::common::components::target::Target), With<crate::common::components::Actor>>,
-    targeting_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<crate::common::plugins::nntree::NNTree>,
+    player_query: Query<(&crate::common::components::target::Target, &crate::common::components::ally_target::AllyTarget), With<crate::common::components::Actor>>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.get_single() else {
         return;
     };
 
-    // Get local player and its target (set by update_targets_on_change with tier lock filtering)
-    let Ok((player_ent, player_loc, player_heading, player_target)) = player_query.get_single() else {
+    // Get local player's targets (set by update_targets_on_change and update_ally_targets_on_change with tier lock filtering)
+    let Ok((player_target, player_ally_target)) = player_query.get_single() else {
         return;
     };
 
-    // Read target from Target component (reactively maintained with tier lock support)
+    // Read hostile target from Target component (reactively maintained with tier lock support)
     // Don't call select_target here - that would ignore tier lock!
     let hostile_target = **player_target;
 
-    let ally_target = crate::common::systems::targeting::select_ally_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        &nntree,
-        |ent| targeting_query.get(ent).ok().map(|(_, _, pc)| pc.is_some()).unwrap_or(false),
-    );
+    // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
+    // Use entity (current) not last_target (sticky) for combat UI bars
+    let ally_target = player_ally_target.get();
 
     const INTERPOLATION_SPEED: f32 = 5.0;
     const BAR_WIDTH: f32 = 50.0;
@@ -355,30 +349,24 @@ pub fn update_threat_queue_dots(
     >,
     queue_query: Query<(Option<&crate::common::components::reaction_queue::ReactionQueue>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading, &crate::common::components::target::Target), With<crate::common::components::Actor>>,
-    entity_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<crate::common::plugins::nntree::NNTree>,
+    player_query: Query<(&crate::common::components::target::Target, &crate::common::components::ally_target::AllyTarget), With<crate::common::components::Actor>>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.get_single() else {
         return;
     };
 
-    // Get local player and its target (set by update_targets_on_change with tier lock filtering)
-    let Ok((player_ent, player_loc, player_heading, player_target)) = player_query.get_single() else {
+    // Get local player's targets (set by update_targets_on_change and update_ally_targets_on_change with tier lock filtering)
+    let Ok((player_target, player_ally_target)) = player_query.get_single() else {
         return;
     };
 
-    // Read target from Target component (reactively maintained with tier lock support)
+    // Read hostile target from Target component (reactively maintained with tier lock support)
     // Don't call select_target here - that would ignore tier lock!
     let hostile_target = **player_target;
 
-    let ally_target = crate::common::systems::targeting::select_ally_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        &nntree,
-        |ent| entity_query.get(ent).ok().map(|(_, _, pc)| pc.is_some()).unwrap_or(false),
-    );
+    // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
+    // Use entity (current) not last_target (sticky) for combat UI dots
+    let ally_target = player_ally_target.get();
 
     const BAR_WIDTH: f32 = 50.0;
 

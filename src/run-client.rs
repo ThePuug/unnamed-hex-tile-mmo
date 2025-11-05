@@ -112,6 +112,7 @@ fn main() {
         animator::update,
         camera::update,
         targeting::update_targets_on_change, // Reactive targeting: updates Target when heading/loc changes
+        targeting::update_ally_targets_on_change, // Reactive ally targeting: updates AllyTarget when heading/loc changes
         projectile::spawn_hit_flash, // Spawn flash effects when projectiles hit
         projectile::update_hit_flashes, // Update and fade out flash effects
         combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
