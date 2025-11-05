@@ -71,7 +71,7 @@ pub fn setup(mut commands: Commands) {
 pub fn update(
     mut commands: Commands,
     local_player_query: Query<(Entity, &Loc, &TargetingState), With<Actor>>,
-    mut indicator_query: Query<(Entity, &mut TierLockRangeIndicator, &mut Visibility, Option<&Mesh3d>, Option<&MeshMaterial3d<StandardMaterial>>)>,
+    mut indicator_query: Query<(Entity, &mut TierLockRangeIndicator, &mut Visibility, Option<&MeshMaterial3d<StandardMaterial>>)>,
     input_queues: Res<crate::common::resources::InputQueues>,
     map: Res<Map>,
     diagnostics_state: Res<DiagnosticsState>,
@@ -79,7 +79,7 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Get the single indicator entity
-    let Ok((indicator_ent, mut indicator, mut visibility, maybe_mesh, maybe_material)) = indicator_query.get_single_mut() else {
+    let Ok((indicator_ent, mut indicator, mut visibility, maybe_material)) = indicator_query.get_single_mut() else {
         return;
     };
 

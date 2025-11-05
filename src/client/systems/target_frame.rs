@@ -406,12 +406,11 @@ pub fn update(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
-    mut player_query: Query<(Entity, &Loc, &Heading, &Health, Option<&crate::common::components::targeting_state::TargetingState>), With<Actor>>,
-    target_query: Query<(&EntityType, &Loc, &Health, Option<&ReactionQueue>, Option<&crate::common::components::behaviour::PlayerControlled>)>,
-    nntree: Res<NNTree>,
+    player_query: Query<(&Health, Option<&crate::common::components::targeting_state::TargetingState>), With<Actor>>,
+    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>)>,
 ) {
     // Get local player and targeting state
-    let Ok((player_ent, player_loc, player_heading, player_health, targeting_state)) = player_query.get_single() else {
+    let Ok((player_health, targeting_state)) = player_query.get_single() else {
         return;
     };
 
@@ -434,7 +433,7 @@ pub fn update(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, _target_loc, target_health, _queue_opt, _)) = target_query.get(target_ent) {
+        if let Ok((entity_type, target_health, _queue_opt)) = target_query.get(target_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
@@ -786,7 +785,7 @@ pub fn update_ally_frame(
     mut health_bar_query: Query<&mut Node, With<AllyHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
     player_query: Query<(Entity, &Loc, &Heading, &Health), With<Actor>>,
-    ally_query: Query<(&EntityType, &Loc, &Health, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    ally_query: Query<(&EntityType, &Health, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
 ) {
     // Get local player
@@ -808,7 +807,7 @@ pub fn update_ally_frame(
         *player_loc,
         *player_heading,
         &nntree,
-        |ent| ally_query.get(ent).ok().map(|(_, _, _, player_controlled_opt)| player_controlled_opt.is_some()).unwrap_or(false),
+        |ent| ally_query.get(ent).ok().map(|(_, _, player_controlled_opt)| player_controlled_opt.is_some()).unwrap_or(false),
     );
 
     // Sticky targeting: Update ally target when a new ally is found in facing cone
@@ -818,7 +817,7 @@ pub fn update_ally_frame(
 
     // Validate ally target is still alive and exists
     if let Some(ally_ent) = ally_target.entity {
-        if let Ok((_, _, ally_health, _)) = ally_query.get(ally_ent) {
+        if let Ok((_, ally_health, _)) = ally_query.get(ally_ent) {
             // Clear ally target if dead
             if ally_health.state <= 0.0 {
                 ally_target.entity = None;
@@ -836,7 +835,7 @@ pub fn update_ally_frame(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, _, ally_health, _)) = ally_query.get(ally_ent) {
+        if let Ok((entity_type, ally_health, _)) = ally_query.get(ally_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();

@@ -54,7 +54,7 @@ pub fn setup(
     });
 
     // Spawn the hostile indicator (hidden by default)
-    let hostile_indicator = commands.spawn((
+    commands.spawn((
         Mesh3d(indicator_mesh.clone()),
         MeshMaterial3d(hostile_material),
         Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
@@ -64,7 +64,7 @@ pub fn setup(
         TargetIndicator {
             indicator_type: IndicatorType::Hostile,
         },
-    )).id();
+    ));
 
     // TODO: Spawn tier badge as child of hostile indicator (ADR-010 Phase 5)
     // Tier badge requires proper 3D text setup with Bevy 0.16 API
@@ -80,7 +80,7 @@ pub fn setup(
     });
 
     // Spawn the ally indicator (hidden by default)
-    let ally_indicator = commands.spawn((
+    commands.spawn((
         Mesh3d(indicator_mesh),
         MeshMaterial3d(ally_material),
         Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
@@ -90,7 +90,7 @@ pub fn setup(
         TargetIndicator {
             indicator_type: IndicatorType::Ally,
         },
-    )).id();
+    ));
 
     // TODO: Spawn tier badge as child of ally indicator (ADR-010 Phase 5)
     // Tier badge requires proper 3D text setup with Bevy 0.16 API

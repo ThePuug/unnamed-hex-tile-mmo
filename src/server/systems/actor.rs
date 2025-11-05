@@ -254,7 +254,6 @@ pub fn update(
     mut writer: EventWriter<Try>,
     mut query: Query<(Entity, &Loc, &mut Offset, &Heading), Changed<Offset>>,
     map: Res<Map>,
-    time: Res<Time>,
 ) {
     for (ent, &loc0, mut offset, &heading) in &mut query {
         let px = map.convert(*loc0);

@@ -25,9 +25,9 @@ pub struct HitFlash {
 pub fn update_projectiles(
     time: Res<Time>,
     map: Res<Map>,
-    mut projectiles: Query<(Entity, &Projectile, &mut Loc, &mut Offset, &mut Transform)>,
+    mut projectiles: Query<(&Projectile, &mut Loc, &mut Offset, &mut Transform)>,
 ) {
-    for (proj_entity, projectile, mut loc, mut offset, mut transform) in projectiles.iter_mut() {
+    for (projectile, mut loc, mut offset, mut transform) in projectiles.iter_mut() {
         // Calculate how far projectile should move this frame
         let delta_secs = time.delta_secs();
         let move_distance = projectile.calculate_move_distance(delta_secs);
