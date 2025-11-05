@@ -18,26 +18,19 @@ use crate::common::{
     systems::targeting::{update_targets_impl, select_ally_target},
 };
 
-/// Reactive system that updates Target component when heading or location changes (CLIENT VERSION)
+/// Update hostile targets every frame for responsive targeting (CLIENT VERSION)
 ///
-/// This system runs whenever an entity's Heading or Loc changes, automatically
-/// recalculating what entity they are facing using select_target().
-///
-/// # Client-Specific Behavior
-///
-/// TierLock is replicated from server, so client entities have it too.
-/// The client applies reactive targeting to all entities that have changed heading, location, or
-/// tier lock.
+/// Runs unconditionally to detect when target entities move out of range/cone.
+/// This ensures targets update immediately when NPCs/players move, not just when
+/// the local player changes heading/location.
 ///
 /// # Performance
 ///
-/// Only runs for entities that actually changed (Bevy change detection).
-/// No work done if no entities moved or turned.
-pub fn update_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut Target, Option<&TierLock>),
-        Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>
-    >,
+/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
+/// alongside target indicator. If performance becomes an issue, can be changed to
+/// run on a timer (e.g., every 100ms).
+pub fn update_targets(
+    mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>)>,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
@@ -56,31 +49,25 @@ pub fn update_targets_on_change(
     }
 }
 
-/// Reactive system that updates AllyTarget component when heading or location changes (CLIENT VERSION)
+/// Update ally targets every frame for responsive targeting (CLIENT VERSION)
 ///
-/// This system runs whenever an entity's Heading or Loc changes, automatically
-/// recalculating which ally entity they are facing using select_ally_target().
+/// Runs unconditionally to detect when ally entities move out of range/cone.
+/// This ensures targets update immediately when allies move, not just when
+/// the local player changes heading/location.
 ///
 /// # Architecture
 ///
-/// This system mirrors update_targets_on_change() but for ally targeting.
+/// This system mirrors update_targets() but for ally targeting.
 /// Only the targeting system calls select_ally_target() - UI systems should
 /// read from the AllyTarget component, not call selection functions directly.
 ///
-/// # Client-Specific Behavior
-///
-/// Only runs on the client. Ally targeting is client-only since it's purely
-/// for UI/friendly ability targeting, not server game logic.
-///
 /// # Performance
 ///
-/// Only runs for entities that actually changed (Bevy change detection).
-/// No work done if no entities moved or turned.
-pub fn update_ally_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>),
-        Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>
-    >,
+/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
+/// alongside target indicator. If performance becomes an issue, can be changed to
+/// run on a timer (e.g., every 100ms).
+pub fn update_ally_targets(
+    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>)>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {

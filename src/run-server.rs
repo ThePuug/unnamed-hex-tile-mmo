@@ -88,7 +88,7 @@ fn main() {
         panic_on_error_system,
         actor::do_incremental,
         actor::update,
-        targeting::update_targets_on_change, // Reactive targeting: updates NPC Target when heading/loc changes
+        targeting::update_targets, // Update targets every frame (detects when targets move)
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         combat::validate_ability_prerequisites,

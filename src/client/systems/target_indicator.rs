@@ -12,8 +12,8 @@
 //!
 //! # How it works
 //!
-//! 1. Query local player's location, heading
-//! 2. Call `select_target()` to get current hostile target
+//! 1. Read hostile/ally targets from Target and AllyTarget components
+//! 2. Target components are updated every frame by targeting system
 //! 3. Update indicator position to match target's location
 //! 4. Show/hide indicator based on target availability
 
@@ -120,10 +120,10 @@ pub fn update(
         return;
     }
 
-    // Read hostile target from Target component (reactively maintained with tier lock support)
+    // Read hostile target from Target component (updated every frame by update_targets)
     let hostile_target = player_target.entity;
 
-    // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
+    // Read ally target from AllyTarget component (updated every frame by update_ally_targets)
     // Use entity (current) not last_target (sticky) for target indicators
     let ally_target = player_ally_target.entity;
 

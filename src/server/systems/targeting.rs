@@ -12,17 +12,10 @@ use crate::common::{
 };
 use crate::server::components::target_lock::TargetLock as NpcTargetLock;
 
-/// Reactive system that updates Target component when heading or location changes (SERVER VERSION)
+/// Update hostile targets every frame for responsive targeting (SERVER VERSION)
 ///
-/// This system runs whenever an entity's Heading or Loc changes, automatically
-/// recalculating what entity they are facing using select_target().
-///
-/// Used by:
-/// - Players: Target updates as they turn or move
-/// - NPCs WITHOUT TargetLock: Target updates reactively based on FOV
-///
-/// NPCs with TargetLock are excluded - behavior tree targeting (FindOrKeepTarget)
-/// is the source of truth for their targets, not reactive FOV targeting.
+/// Runs unconditionally to detect when target entities move out of range/cone.
+/// Excludes NPCs with NpcTargetLock - behavior tree targeting is their source of truth.
 ///
 /// # Server-Specific Behavior
 ///
@@ -34,12 +27,12 @@ use crate::server::components::target_lock::TargetLock as NpcTargetLock;
 ///
 /// # Performance
 ///
-/// Only runs for entities that actually changed (Bevy change detection).
-/// No work done if no entities moved or turned.
-pub fn update_targets_on_change(
+/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps.
+/// If performance becomes an issue, can be changed to run on a timer (e.g., every 100ms).
+pub fn update_targets(
     mut query: Query<
         (Entity, &Loc, &Heading, &mut Target, Option<&TierLock>),
-        (Or<(Changed<Heading>, Changed<Loc>, Changed<TierLock>)>, Without<NpcTargetLock>)
+        Without<NpcTargetLock>
     >,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
