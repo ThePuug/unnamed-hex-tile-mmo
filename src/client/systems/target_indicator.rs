@@ -121,11 +121,11 @@ pub fn update(
     }
 
     // Read hostile target from Target component (reactively maintained with tier lock support)
-    let hostile_target = **player_target;
+    let hostile_target = player_target.entity;
 
     // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
     // Use entity (current) not last_target (sticky) for target indicators
-    let ally_target = player_ally_target.get();
+    let ally_target = player_ally_target.entity;
 
     // Update both hostile and ally indicators
     for (mut mesh_handle, mut transform, mut visibility, mut aabb, indicator) in &mut indicator_query {

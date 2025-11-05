@@ -507,15 +507,16 @@ pub fn update_targets_impl(
         |e| player_controlled.contains(e),
     );
 
-    // Update Target (which handles both entity and last_target internally)
+    // Update Target fields directly
     match new_target {
         Some(target_ent) => {
-            // Target found - set() updates both entity and last_target
-            target.set(target_ent);
+            // Target found - update both entity and last_target
+            target.entity = Some(target_ent);
+            target.last_target = Some(target_ent);
         }
         None => {
-            // No target found - clear() sets entity to None but keeps last_target for sticky UI
-            target.clear();
+            // No target found - clear entity but keep last_target for sticky UI
+            target.entity = None;
         }
     }
 }

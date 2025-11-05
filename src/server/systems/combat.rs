@@ -220,7 +220,7 @@ pub fn process_passive_auto_attack(
 
         // ADR-009: Check if NPC's target (from unified Target component) is adjacent
         // Unwrap Target Option<Entity>
-        let Some(target_ent) = **target else {
+        let Some(target_ent) = target.entity else {
             continue; // No target set
         };
 

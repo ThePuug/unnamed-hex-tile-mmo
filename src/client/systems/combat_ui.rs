@@ -236,11 +236,11 @@ pub fn update_health_bars(
 
     // Read hostile target from Target component (reactively maintained with tier lock support)
     // Don't call select_target here - that would ignore tier lock!
-    let hostile_target = **player_target;
+    let hostile_target = player_target.entity;
 
     // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
     // Use entity (current) not last_target (sticky) for combat UI bars
-    let ally_target = player_ally_target.get();
+    let ally_target = player_ally_target.entity;
 
     const INTERPOLATION_SPEED: f32 = 5.0;
     const BAR_WIDTH: f32 = 50.0;
@@ -362,11 +362,11 @@ pub fn update_threat_queue_dots(
 
     // Read hostile target from Target component (reactively maintained with tier lock support)
     // Don't call select_target here - that would ignore tier lock!
-    let hostile_target = **player_target;
+    let hostile_target = player_target.entity;
 
     // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
     // Use entity (current) not last_target (sticky) for combat UI dots
-    let ally_target = player_ally_target.get();
+    let ally_target = player_ally_target.entity;
 
     const BAR_WIDTH: f32 = 50.0;
 

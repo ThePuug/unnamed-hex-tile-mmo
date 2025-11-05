@@ -495,7 +495,7 @@ pub fn update_queue(
     };
 
     // Check if we have a target
-    let Some(target_ent) = **player_target else {
+    let Some(target_ent) = player_target.entity else {
         // No target - hide queue
         for mut visibility in &mut queue_container_query {
             *visibility = Visibility::Hidden;

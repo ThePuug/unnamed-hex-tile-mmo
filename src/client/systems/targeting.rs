@@ -98,15 +98,16 @@ pub fn update_ally_targets_on_change(
             |e| player_controlled.contains(e),
         );
 
-        // Update AllyTarget based on result
+        // Update AllyTarget fields directly
         match new_ally_target {
             Some(target_ent) => {
                 // Ally found - update both entity and last_target
-                ally_target.set(target_ent);
+                ally_target.entity = Some(target_ent);
+                ally_target.last_target = Some(target_ent);
             }
             None => {
                 // No ally found - clear entity but leave last_target intact for sticky UI
-                ally_target.clear();
+                ally_target.entity = None;
             }
         }
     }

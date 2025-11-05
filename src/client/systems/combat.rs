@@ -174,7 +174,7 @@ pub fn player_auto_attack(
         }
 
         // Get target entity
-        let Some(target_ent) = **player_target else {
+        let Some(target_ent) = player_target.entity else {
             continue; // No target
         };
 

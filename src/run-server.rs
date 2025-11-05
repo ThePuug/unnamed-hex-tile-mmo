@@ -55,7 +55,7 @@ fn main() {
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
-        // server::plugins::behaviour::BehaviourPlugin,  // TEMPORARY: Disabled for tier lock testing
+        server::plugins::behaviour::BehaviourPlugin,
     ));
 
     app.add_event::<Do>();
