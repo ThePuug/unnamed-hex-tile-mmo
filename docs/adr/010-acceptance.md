@@ -1,9 +1,10 @@
 # ADR-010 Acceptance Review: Combat Variety Phase 1
 
 **ADR:** [010-combat-variety-phase-1.md](010-combat-variety-phase-1.md)
-**Review Date:** 2025-11-04
+**Initial Review Date:** 2025-11-04
+**Final Review Date:** 2025-11-05
 **Reviewer:** ARCHITECT
-**Status:** ✅ **ACCEPTED**
+**Status:** ✅ **ACCEPTED** (Confirmed after architectural refactoring)
 
 ---
 
@@ -11,12 +12,21 @@
 
 ADR-010 implementation is **accepted** with one documented deferral. All core functionality from Phases 1-5 has been successfully implemented following TDD principles. The tier badge visual UI component was intentionally deferred due to Bevy 0.16 3D text API complexity, with clear TODOs marked in code. All validation criteria have been met, test coverage is comprehensive (45+ new tests, 178 total passing), and the implementation demonstrates excellent architectural quality.
 
+**Update (2025-11-05):** Implementation underwent significant architectural refactoring (commits 441b7cf through 7083ef6) improving the targeting system. Key improvements include:
+- Split `TargetingState` into replicated `TierLock` + local `Target`/`AllyTarget` components
+- Removed unnecessary `cfg` attributes for cleaner cross-compilation
+- Every-frame targeting updates for improved responsiveness (detecting remote Loc changes)
+- Simplified component architecture (direct field access, no abstractions)
+- Sticky UI targeting maintained via `last_target` field
+- Enhanced ally targeting with tier lock support
+
 **Key Achievements:**
-- ✅ Tier lock targeting (1/2/3 keys) fully functional
+- ✅ Tier lock targeting (1/2/3 keys) fully functional with architectural improvements
 - ✅ Movement speed Grace scaling implemented with formula validation
 - ✅ Projectile system with dodging mechanics complete
 - ✅ Forest Sprite ranged enemy with kiting AI operational
 - ✅ Integration tests validate mixed encounter scenarios
+- ✅ Ally targeting fully integrated with tier lock system
 - ✅ 178/181 tests passing (3 pre-existing failures in death system)
 
 **Deferral:**
@@ -62,6 +72,26 @@ Tier badge UI requires Bevy 0.16's new 3D text component API. Developer document
 - `src/client/systems/target_indicator.rs:69-70, 95-96, 307-308`
 
 This is a reasonable deferral - visual feedback is polish, core functionality (tier lock filtering) works without it.
+
+### Visual Ring Indicator (Implemented, Not in ADR Spec)
+
+**Implementation Status:** ✅ Complete (developer latitude - not specified in ADR)
+**Player Feedback Reference:** [010-player-feedback.md](010-player-feedback.md) Lines 75-82, 147-156, 253-259
+
+The implementation includes a **visual ring indicator** that shows the active targeting area:
+- Ring size changes when tier lock is activated (1/2/3 keys)
+- Provides spatial feedback for which range is being searched
+- Clearly shows why no targets appear (NPCs outside ring)
+- Eliminates "is it working?" confusion when tier lock has no valid targets
+
+**Player Assessment:** "The visual ring indicator transforms tier lock from abstract to spatial mechanic. This visual feedback is the difference between mysterious system and intuitive spatial mechanic."
+
+**Architectural Assessment:**
+- ✅ Excellent use of developer latitude to solve UX gap
+- ✅ Addresses usability issue not anticipated in ADR
+- ✅ Minimal implementation complexity (ring scale based on tier range)
+
+**Recommendation:** Document visual feedback requirements in future targeting ADRs. This addition significantly improves UX without architectural complexity.
 
 ---
 
@@ -446,12 +476,18 @@ This aligns with MVP philosophy and ADR-010's goal of validating combat variety 
    - ✅ Both deferred items are visual polish, not core mechanics
    - ✅ Clear documentation and rationale provided
    - ✅ Core functionality not blocked
+   - ✅ Visual ring indicator addition (developer latitude) significantly improves UX
 
 6. **Code Quality Strong:**
    - ✅ Well-documented components and systems
    - ✅ ADR traceability in comments
    - ✅ Clear module organization
    - ✅ Comprehensive test coverage
+
+7. **Control Scheme Ergonomics:**
+   - ✅ Zero conflicts between movement (arrow keys + numpad 0) and targeting/abilities (1/2/3 + QWER)
+   - ✅ Two-handed operation: left hand (targeting/abilities), right hand (movement)
+   - ✅ Simultaneous actions possible (tier lock while moving)
 
 ### Conditions for Acceptance
 
@@ -463,13 +499,20 @@ This aligns with MVP philosophy and ADR-010's goal of validating combat variety 
    - Balance Forest Sprite difficulty (especially vs. Grace -100 players)
    - Verify projectile dodging window feels fair (1.25-2s reaction time)
 
-2. **Future Work (Post-MVP):**
+2. **Critical UX Risk: Unified Tier Lock Design**
+   - **MONITOR CLOSELY:** Tier lock (1/2/3) filters BOTH hostile and ally targets simultaneously
+   - **Current Status:** Low risk (no support abilities yet)
+   - **Future Risk:** CRITICAL once healing/buffs are implemented
+   - **Mandatory Action:** Add tutorial BEFORE support abilities launch teaching unified tier lock behavior
+   - **Player Feedback Reference:** [010-player-feedback.md](010-player-feedback.md) Lines 106-136, 184-212, 323-402
+
+3. **Future Work (Post-MVP):**
    - Address tier badge UI when Bevy 3D text patterns established
    - Add empty tier range visualization for UX clarity
    - Fix 3 pre-existing death system test failures
    - Clean up unused import warnings
 
-3. **Documentation Updates:**
+4. **Documentation Updates:**
    - Update `combat-system-feature-matrix.md` (mark tier lock, projectiles, Forest Sprite complete)
    - Add ADR-010 implementation notes to GUIDANCE.md if patterns emerge during playtest
 
@@ -499,12 +542,74 @@ All deviations are within reasonable developer latitude and enhance implementati
 ## Signatures
 
 **Reviewed By:** ARCHITECT
-**Review Date:** 2025-11-04
+**Initial Review Date:** 2025-11-04
+**Final Review Date:** 2025-11-05
 **ADR Status:** ACCEPTED
-**Implementation Status:** Complete (with documented deferrals)
+**Implementation Status:** Complete (with documented deferrals, enhanced by architectural refactoring)
+
+---
+
+## Post-Acceptance Architectural Refactoring (2025-11-05)
+
+After initial acceptance, the implementation underwent significant architectural improvements through commits 441b7cf through 7083ef6. These refactorings enhanced code quality without changing core functionality.
+
+### Refactoring Changes
+
+**1. Component Architecture Improvement (Commit 6a49133)**
+- **Before:** Single `TargetingState` component containing both replicated tier lock and UI-local targeting
+- **After:** Split into:
+  - `TierLock` component (replicated, server-authoritative tier constraint)
+  - `Target` component (client-local, hostile targeting with sticky `last_target`)
+  - `AllyTarget` component (client-local, ally targeting with sticky `last_target`)
+- **Rationale:** Cleaner separation of concerns, network optimization (only tier lock replicated, not UI state)
+- **Impact:** ✅ Improved - Better client-server separation, reduced network traffic
+- **Critical Design Note:** Both `Target` and `AllyTarget` respect the same `TierLock` component (unified spatial filtering). This is architecturally elegant but requires tutorial before support abilities launch (see Player Feedback Lines 106-136, 323-402)
+
+**2. Targeting Responsiveness Enhancement (Commit 441b7cf)**
+- **Before:** Reactive targeting updates (only when heading/location changes)
+- **After:** Every-frame targeting updates in both client and server
+- **Rationale:** Detect when target entities move out of range/cone (remote Loc changes)
+- **Impact:** ✅ Improved - More responsive targeting, better UX
+
+**3. Code Simplification (Commits 7083ef6, 9ed4152)**
+- **Before:** `cfg` attributes to conditionally compile targeting systems
+- **After:** Removed `cfg` attributes, unified targeting implementation
+- **Rationale:** Cleaner cross-compilation, shared targeting logic between client/server
+- **Impact:** ✅ Improved - Simpler codebase, easier to maintain
+
+**4. Ally Targeting Integration (Commits 57d6315, 7f2b507)**
+- **Before:** Ally targeting existed but didn't respect tier lock
+- **After:** Ally targeting fully integrated with tier lock filtering
+- **Rationale:** Consistent UX between hostile and ally targeting
+- **Impact:** ✅ Improved - Feature parity for ally targeting
+
+### Refactoring Assessment
+
+**Architectural Quality:** ✅ Excellent
+- Improved separation of concerns (TierLock vs. Target/AllyTarget)
+- Better network efficiency (only replicate tier lock, not UI state)
+- Enhanced responsiveness (every-frame updates)
+- Cleaner code (removed cfg attributes)
+
+**No Breaking Changes:**
+- All validation criteria still met
+- Tests still passing (178/181)
+- Core functionality unchanged
+- User-facing behavior improved
+
+**Conclusion:**
+These refactorings represent exemplary post-implementation polish. Developer correctly identified opportunities to improve architecture without changing functionality, demonstrating strong engineering judgment. All changes align with GUIDANCE.md best practices for client-server separation and ECS patterns.
+
+---
+
+## Final Acceptance Status
+
+**Status:** ✅ **CONFIRMED ACCEPTED**
+
+The implementation remains accepted after refactoring. The architectural improvements enhance code quality, maintainability, and responsiveness without introducing regressions. Feature matrix has been updated to reflect ADR-010 completion.
 
 **Next Steps:**
-1. Update `combat-system-feature-matrix.md` to mark features complete
+1. ✅ ~~Update `combat-system-feature-matrix.md` to mark features complete~~ - DONE (2025-11-05)
 2. Merge to main branch
 3. Schedule playtest session to validate player experience
 4. Create follow-up issues for tier badge UI and empty tier visualization

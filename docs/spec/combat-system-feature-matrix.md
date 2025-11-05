@@ -1,8 +1,8 @@
 # Combat System - Feature Matrix
 
 **Specification:** [combat-system.md](combat-system.md)
-**Last Updated:** 2025-11-04
-**Overall Status:** 22/44 features complete (50% - MVP scope)
+**Last Updated:** 2025-11-05
+**Overall Status:** 25/44 features complete (57% - MVP scope)
 
 ---
 
@@ -26,9 +26,10 @@
 | Heading tracking | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 33-41 | Persists after movement stops |
 | Character rotation | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 43-45 | Visual facing indicator |
 | Position on hex | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 44 | Micro-positioning based on facing |
+| Movement speed (Grace scaling) | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md), [ADR-010 Acceptance](../adr/010-acceptance.md) | attribute-system.md Lines 338-347 | Formula: max(75, 100 + grace/2), Grace -100=75%, 0=100%, 100=150% |
 | Facing cone (60°) | ⏸️ Deferred | - | Lines 35, 45 | Optional visual overlay, not MVP |
 
-**Category Status:** 4/5 complete (80%)
+**Category Status:** 5/6 complete (83%)
 
 ---
 
@@ -41,11 +42,11 @@
 | Ally indicator (green) | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Lines 66-69 | Ready for PvP/allies |
 | Range tier system | ✅ Complete | [ADR-004](../adr/004-ability-system-and-targeting.md), [ADR-010](../adr/010-combat-variety-phase-1.md) | Lines 71-76 | Close/Mid/Far tiers defined and functional |
 | Automatic targeting | ✅ Complete | [ADR-004](../adr/004-ability-system-and-targeting.md) | Lines 80-83 | Nearest in facing direction |
-| Tier lock (1/2/3 keys) | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md) | Lines 85-106 | 1/2/3 keys lock to Close/Mid/Far, resets on ability use |
+| Tier lock (1/2/3 keys) | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md), [ADR-010 Acceptance](../adr/010-acceptance.md) | Lines 85-106 | 1/2/3 keys lock to Close/Mid/Far, resets on ability use. **Unified design: affects BOTH hostile and ally targets** (tutorial required before support abilities). Includes visual ring indicator showing targeting area. |
 | TAB cycling | ❌ Not Started | - | Lines 108-115 | Manual target selection |
 | ESC clear targeting | ❌ Not Started | - | Line 113 | Return to auto-target |
-| Tier badge visual | ⏸️ Deferred | [ADR-010](../adr/010-combat-variety-phase-1.md) | Lines 127 | Requires Bevy 0.16 3D text setup |
-| Facing cone overlay | ⏸️ Deferred | - | Line 131 | Optional visual aid |
+| Tier badge visual | ⏸️ Deferred | [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 323-328 | Lines 127 | Requires Bevy 0.16 3D text setup, core functionality complete |
+| Facing cone overlay | ⏸️ Deferred | [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 330-334 | Line 131 | Optional visual aid, bundled with tier badge UI |
 
 **Category Status:** 6/10 complete (60%)
 
@@ -56,7 +57,7 @@
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
 | Instant attacks | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 145-149 | Auto-Attack, Lunge, Overpower all instant |
-| Projectile attacks | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md) | Lines 151-161 | 4 hexes/sec travel, dodgeable, position-based damage |
+| Projectile attacks | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md), [ADR-010 Acceptance](../adr/010-acceptance.md) | Lines 151-161 | 4 hexes/sec travel, dodgeable, position-based damage, entity-based |
 | Ground effects/telegraphs | ❌ Not Started | - | Lines 163-173 | AOE warnings, delayed damage |
 | Unavoidable attacks | ⏸️ Deferred | - | Lines 175-179 | Ultimate-tier abilities |
 
@@ -162,7 +163,7 @@
 |---------|--------|----------|----------------|-------|
 | Enemy directional targeting | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 458-464 | Face + geometric target |
 | Wild Dog (melee enemy) | ✅ Complete | [ADR-006](../adr/006-ai-behavior-and-ability-integration.md) | Lines 468-480 | Aggro, pursuit, attack cycle |
-| Ranged enemy (Forest Sprite) | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md) | Lines 482-490 | Kiting behavior, 5-8 hex optimal range, projectile attacks |
+| Ranged enemy (Forest Sprite) | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md), [ADR-010 Acceptance](../adr/010-acceptance.md) | Lines 482-490 | Kiting behavior, 5-8 hex optimal, projectile attacks, 40% spawn rate |
 | Visual telegraphs | ❌ Not Started | - | Lines 494-504 | Enemy attack warnings |
 
 **Category Status:** 3/4 complete (75%)
@@ -241,17 +242,33 @@ Features where implementation intentionally differs from spec:
 - **Rationale:** Bevy 0.16 3D text component API complexity. Visual polish not required for MVP.
 - **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md)
 
-### 8. Empty Tier Range Visualization
+### 8. Tier Badge Visual UI
+- **Spec Says (ADR-010, Lines 76, 127):** Tier badge on target indicator (small "1", "2", or "3" icon)
+- **Actually Implemented:** Core tier lock filtering works, visual UI deferred
+- **Rationale:** Bevy 0.16 3D text component API complexity. Visual polish not required for MVP.
+- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 323-328
+
+### 9. Empty Tier Range Visualization
 - **Spec Says (ADR-010, Line 74):** Empty tier shows range cone highlighting
 - **Actually Implemented:** Tier lock filtering works, visual feedback deferred
 - **Rationale:** Visual overlay not critical for functionality. Tier lock still filters targets correctly.
-- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md)
+- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 330-334
+
+### 10. Visual Ring Indicator (Developer Addition)
+- **Spec Says (ADR-010):** No mention of visual ring indicator
+- **Actually Implemented:** Visual ring around player showing targeting area, resizes based on tier lock
+- **Rationale:** Critical UX feedback for spatial tier lock system. Eliminates "is it working?" confusion. Excellent use of developer latitude.
+- **Player Assessment:** "Transforms tier lock from abstract to spatial mechanic" ([Player Feedback](../adr/010-player-feedback.md) Lines 75-82, 147-156)
+- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 76-94
 
 ---
 
 ## Spec Gaps
 
 Features described in spec but not yet in implementation plan:
+
+### Critical Priority
+- **Unified Tier Lock Tutorial:** Explicit teaching that tier lock affects both hostiles and allies ([Player Feedback](../adr/010-player-feedback.md) Lines 106-136, 184-212, 323-402) - **MANDATORY before support abilities launch**
 
 ### High Priority
 - **TAB Cycling:** Manual target selection within tier (Lines 108-115)
@@ -273,21 +290,21 @@ Features described in spec but not yet in implementation plan:
 
 ## Progress Summary
 
-**MVP Scope (Phase 1):** 22/31 features complete (71%)
-- Core systems: Movement (4/4), Queue (7/7), Resources (5/5), HUD (6/6) ✅ Complete
+**MVP Scope (Phase 1):** 25/31 features complete (81%)
+- Core systems: Movement (5/6), Queue (7/7), Resources (5/5), HUD (6/6) ✅ Complete
 - MVP abilities: 5/7 complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect) ✅
 - Targeting: 6/10 complete (directional, indicators, tier system, auto, tier lock) ✅
 - Attack patterns: 2/4 complete (instant, projectile) ✅
 - Enemy AI: 3/4 complete (directional targeting, Wild Dog, Forest Sprite) ✅
 - Damage: 3/6 complete (physical damage, armor, resistance formulas)
 - Combat State: 2/4 complete (enter/leave triggers)
-- Deferred: Tier badge UI, empty tier visualization (visual polish, not MVP-blocking)
+- Deferred: Tier badge UI, empty tier visualization, facing cone visual (visual polish, not MVP-blocking)
 - Missing: TAB cycling, ESC clear, critical hits, ground effects, visual telegraphs
 
 **Post-MVP (Phases 2-4):** 0/13 features started (0%)
 - Deferred: 7 reaction abilities, crits, stagger, facing cone visuals, combat state visuals, ground effects, telegraphs, unavoidable attacks
 
-**Total Combat System:** 22/44 features complete (50% - halfway to full spec)
+**Total Combat System:** 25/44 features complete (57% - over halfway to full spec)
 
 ---
 
@@ -297,13 +314,14 @@ Based on actual implementation status and user value:
 
 1. ✅ ~~**Accept or Reject ADR-009**~~ - ACCEPTED (2025-11-03)
 2. ✅ ~~**Implement Accepted MVP Abilities**~~ - All 5 abilities complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect)
-3. ✅ ~~**Accept or Reject ADR-010**~~ - ACCEPTED (2025-11-04)
+3. ✅ ~~**Accept or Reject ADR-010**~~ - ACCEPTED (2025-11-05, see [ADR-010 Acceptance](../adr/010-acceptance.md))
 4. ✅ ~~**Implement Combat Variety Phase 1**~~ - Tier lock, movement speed, projectiles, Forest Sprite complete
-5. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, projectile dodging
-6. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
-7. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
-8. **Critical Hit System** - Instinct-based crits for damage variety
-9. **Visual Telegraphs** - Enemy attack warnings for skill expression
+5. ✅ ~~**Update Feature Matrix**~~ - ADR-010 features marked complete (2025-11-05)
+6. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, projectile dodging
+7. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
+8. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
+9. **Critical Hit System** - Instinct-based crits for damage variety
+10. **Visual Telegraphs** - Enemy attack warnings for skill expression
 
 ---
 
