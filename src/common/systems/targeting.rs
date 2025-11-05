@@ -30,9 +30,6 @@ use crate::common::{
     plugins::nntree::*,
 };
 
-#[cfg(feature = "server")]
-use crate::server::components::target_lock::TargetLock;
-
 impl Heading {
     /// Convert heading to angle in degrees
     ///
@@ -459,103 +456,58 @@ where
     Some(best_target)
 }
 
-/// Reactive system that updates Target component when heading or location changes
+/// Shared implementation for updating targets based on heading/location changes
 ///
-/// This system runs whenever an entity's Heading or Loc changes, automatically
-/// recalculating what entity they are facing using select_target().
+/// This is the core logic called by both server and client versions of update_targets_on_change.
+/// The only difference between server and client is the Query filter, which is handled in their
+/// respective modules.
 ///
-/// Used by:
-/// - Players: Target updates as they turn or move
-/// - NPCs WITHOUT TargetLock: Target updates reactively based on FOV
+/// # Arguments
 ///
-/// NPCs with TargetLock are excluded - behavior tree targeting (FindOrKeepTarget)
-/// is the source of truth for their targets, not reactive FOV targeting.
-///
-/// # Performance
-///
-/// Only runs for entities that actually changed (Bevy change detection).
-/// No work done if no entities moved or turned.
-#[cfg(feature = "server")]
-pub fn update_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target, Option<&mut TargetingState>),
-        (Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>, Without<TargetLock>)
-    >,
-    entity_types: Query<&EntityType>,
-    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
-    nntree: Res<NNTree>,
+/// * `ent` - The entity being updated
+/// * `loc` - Current location of the entity
+/// * `heading` - Current heading direction
+/// * `target` - Mutable reference to the Target component
+/// * `targeting_state` - Optional mutable reference to TargetingState component
+/// * `nntree` - Spatial index for proximity queries
+/// * `entity_types` - Query for EntityType components
+/// * `player_controlled` - Query for PlayerControlled components
+pub fn update_targets_impl(
+    ent: Entity,
+    loc: Loc,
+    heading: Heading,
+    target: &mut crate::common::components::target::Target,
+    targeting_state: Option<&mut TargetingState>,
+    nntree: &NNTree,
+    entity_types: &Query<&EntityType>,
+    player_controlled: &Query<&crate::common::components::behaviour::PlayerControlled>,
 ) {
-    for (ent, loc, heading, mut target, mut targeting_state) in &mut query {
-        // Get tier lock from TargetingState if present
-        let tier_lock = targeting_state.as_ref().and_then(|ts| ts.get_tier_lock());
+    // Get tier lock from TargetingState if present
+    let tier_lock = targeting_state.as_ref().and_then(|ts| ts.get_tier_lock());
 
-        // Use select_target to find what this entity is facing (with tier lock filter)
-        let new_target = select_target(
-            ent,
-            *loc,
-            *heading,
-            tier_lock,
-            &nntree,
-            |e| entity_types.get(e).ok().copied(),
-            |e| player_controlled.contains(e),
-        );
+    // Use select_target to find what this entity is facing (with tier lock filter)
+    let new_target = select_target(
+        ent,
+        loc,
+        heading,
+        tier_lock,
+        nntree,
+        |e| entity_types.get(e).ok().copied(),
+        |e| player_controlled.contains(e),
+    );
 
-        // Update Target and last_target based on result
-        match new_target {
-            Some(target_ent) => {
-                // Target found - update both Target and last_target
-                target.set(target_ent);
-                if let Some(ref mut ts) = targeting_state {
-                    ts.last_target = Some(target_ent);
-                }
-            }
-            None => {
-                // No target found - clear Target but leave last_target intact for sticky UI
-                target.clear();
+    // Update Target and last_target based on result
+    match new_target {
+        Some(target_ent) => {
+            // Target found - update both Target and last_target
+            target.set(target_ent);
+            if let Some(ts) = targeting_state {
+                ts.last_target = Some(target_ent);
             }
         }
-    }
-}
-
-/// Client version: reactive targeting without TargetLock filter (client doesn't have TargetLock)
-#[cfg(not(feature = "server"))]
-pub fn update_targets_on_change(
-    mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target, Option<&mut TargetingState>),
-        Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>
-    >,
-    entity_types: Query<&EntityType>,
-    player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
-    nntree: Res<NNTree>,
-) {
-    for (ent, loc, heading, mut target, mut targeting_state) in &mut query {
-        // Get tier lock from TargetingState if present
-        let tier_lock = targeting_state.as_ref().and_then(|ts| ts.get_tier_lock());
-
-        // Use select_target to find what this entity is facing (with tier lock filter)
-        let new_target = select_target(
-            ent,
-            *loc,
-            *heading,
-            tier_lock,
-            &nntree,
-            |e| entity_types.get(e).ok().copied(),
-            |e| player_controlled.contains(e),
-        );
-
-        // Update Target and last_target based on result
-        match new_target {
-            Some(target_ent) => {
-                // Target found - update both Target and last_target
-                target.set(target_ent);
-                if let Some(ref mut ts) = targeting_state {
-                    ts.last_target = Some(target_ent);
-                }
-            }
-            None => {
-                // No target found - clear Target but leave last_target intact for sticky UI
-                target.clear();
-            }
+        None => {
+            // No target found - clear Target but leave last_target intact for sticky UI
+            target.clear();
         }
     }
 }

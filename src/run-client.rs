@@ -25,7 +25,7 @@ use common::{
     message::*,
     plugins::nntree,
     resources::{ map::*,  * },
-    systems::{physics, targeting},
+    systems::physics,
 };
 use client::{
     plugins::{
@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, input, projectile, renet, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, input, projectile, renet, targeting, world}
 };
 
 const PROTOCOL_ID: u64 = 7;

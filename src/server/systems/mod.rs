@@ -7,4 +7,5 @@ pub mod projectile;
 pub mod reaction_queue;
 pub mod renet;
 pub mod spawner;
+pub mod targeting;
 pub mod world;

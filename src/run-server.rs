@@ -21,11 +21,11 @@ use crate::{
         message::*,
         plugins::nntree,
         resources::{map::*, *},
-        systems::{physics, targeting}
+        systems::physics
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, combat, input, projectile, reaction_queue, renet, spawner, world},
+        systems::{actor, combat, input, projectile, reaction_queue, renet, spawner, targeting, world},
         *
     }
 };
