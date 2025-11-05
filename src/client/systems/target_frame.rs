@@ -406,12 +406,12 @@ pub fn update(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
-    mut player_query: Query<(Entity, &Loc, &Heading, &Health, &mut crate::common::components::target::Target), With<Actor>>,
+    mut player_query: Query<(Entity, &Loc, &Heading, &Health, Option<&crate::common::components::targeting_state::TargetingState>), With<Actor>>,
     target_query: Query<(&EntityType, &Loc, &Health, Option<&ReactionQueue>, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
 ) {
-    // Get local player and target component
-    let Ok((player_ent, player_loc, player_heading, player_health, mut player_target)) = player_query.get_single_mut() else {
+    // Get local player and targeting state
+    let Ok((player_ent, player_loc, player_heading, player_health, targeting_state)) = player_query.get_single() else {
         return;
     };
 
@@ -423,26 +423,12 @@ pub fn update(
         return;
     }
 
-    // Read target from Target component (set by update_targets_on_change)
-    // Don't call select_target here - that would override tier lock targeting!
-    // The Target component is reactively maintained by update_targets_on_change
-    // based on Heading, Loc, and TargetingState changes.
-
-    // Validate target is still alive and exists
-    if let Some(target_ent) = **player_target {
-        if let Ok((_, _, target_health, _, _)) = target_query.get(target_ent) {
-            // Clear target if dead
-            if target_health.state <= 0.0 {
-                player_target.clear();
-            }
-        } else {
-            // Target entity no longer exists - clear it
-            player_target.clear();
-        }
-    }
+    // Read sticky target from TargetingState.last_target
+    // This persists even when you turn away (unlike Target component which clears)
+    let last_target = targeting_state.and_then(|ts| ts.last_target);
 
     // Show/hide frame and update content based on target
-    if let Some(target_ent) = **player_target {
+    if let Some(target_ent) = last_target {
         // Target exists - show frame and update content
         for mut visibility in &mut frame_query {
             *visibility = Visibility::Visible;
