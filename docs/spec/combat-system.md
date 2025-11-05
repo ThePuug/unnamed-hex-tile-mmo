@@ -48,11 +48,7 @@
 
 All combat is **directional** - you face a direction and abilities target based on your heading and proximity.
 
-**Player Heading:**
-* Players always face a direction after their first move
-* Heading determines both rotation AND position on hex (tactical positioning)
-* No manual "turn in place" - movement updates heading
-* Your facing is always visually clear (character orientation, position on hex)
+**Player Heading:** Determined by movement (see Movement and Heading section above).
 
 **Target Selection:**
 * Your "target" is determined by direction + proximity
@@ -286,12 +282,11 @@ Clear **first N threats** in queue (leftmost).
 * Audio: Clashing metal
 
 **Deflect (Hardened signature):**
-* Cost: 30 stamina
-* Effect: Negate first queued physical attack
-* Clears: 1 threat (leftmost, physical only)
+* Cost: 50 stamina (MVP simplified version)
+* Effect: Clear all queued threats
 * Visual: Shield block animation
 * Audio: Impact thud
-* Note: MVP version clears ALL threats (50 stamina) as simplified defensive option
+* Note: Post-MVP will be selective (30 stamina, 1 threat, physical only)
 
 **Parry (Primal signature):**
 * Cost: 25 stamina
@@ -334,39 +329,28 @@ All reaction abilities share a **0.5 second global cooldown** to prevent spam.
 
 **Purpose:** Physical actions (dodges, blocks, physical abilities)
 
-**Attributes:**
-* Pool size scales with **Might** (primary) and **Vitality** (secondary)
-* Regeneration rate: Base 10/sec (may scale with attributes later)
-* Regenerates in and out of combat
-
-**Base Values:**
+**Pool Formula:**
 ```
 stamina_pool = 100 + (might * 0.5) + (vitality * 0.3)
-
-Examples:
-- Might=0, Vitality=0: 100 stamina
-- Might=100, Vitality=0: 150 stamina
-- Might=100, Vitality=100: 180 stamina
 ```
+
+**Regeneration:** Base 10/sec in and out of combat
 
 ### Mana
 
 **Purpose:** Magic actions (spells, wards, mental abilities)
 
-**Attributes:**
-* Pool size scales with **Focus** (primary) and **Presence** (secondary)
-* Regeneration rate: Base 8/sec (may scale with attributes later)
-* Regenerates in and out of combat
-
-**Base Values:**
+**Pool Formula:**
 ```
 mana_pool = 100 + (focus * 0.5) + (presence * 0.3)
-
-Examples:
-- Focus=0, Presence=0: 100 mana
-- Focus=100, Presence=0: 150 mana
-- Focus=100, Presence=100: 180 mana
 ```
+
+**Regeneration:** Base 8/sec in and out of combat
+
+**Scaling Examples:**
+- Base (0 attributes): 100 pool
+- Primary=100: 150 pool
+- Primary=100, Secondary=100: 180 pool
 
 ---
 
@@ -526,15 +510,135 @@ Enemies broadcast intent before major attacks:
 
 ---
 
+## Player Combat Build System
+
+### Core Philosophy
+
+Your build is defined by **3 systems working together**: Weapons (offense), Armor (defense), and Attributes (power/scaling).
+
+**Key Principle:** Gear determines WHICH skills you have access to. Attributes determine HOW POWERFUL those skills are.
+
+---
+
+### Weapons = Approach Skills (Offense)
+
+**2 Weapon Slots:** Main Hand + Off Hand
+
+**Main Hand Options (2 approaches each):**
+* **Mace:** Direct + Binding
+* **Sword:** Direct + Evasive
+* **Whip:** Distant + Binding
+* **Revolver:** Distant + Evasive
+
+**Off Hand Options (1 approach each):**
+* **Shield:** Patient
+* **Dagger:** Ambushing
+
+**Total Combinations:** 4 main weapons × 2 off-hands = 8 unique loadouts covering all 8 approach combinations
+
+**Skills Available:** 6 approach skills total (4 from main hand's 2 approaches + 2 from off-hand's 1 approach)
+
+**Design Intent:**
+* Changing weapons = different offensive toolkit with unique 3-approach combinations
+* No skill explosion - fixed 6 approach skills per loadout
+* Horizontal progression - collect weapons for different situations
+
+---
+
+### Armor = Resilience Skills (Defense)
+
+**3 Armor Slots:** Binary choices between opposing pairs
+
+**Helm: Mental OR Primal**
+* **Mental** → Focus, Dispel (clarity-based defense)
+* **Primal** → Enrage, Attune (instinct-based defense)
+
+**Armor (chest): Shielded OR Hardened**
+* **Shielded** → Ward, Repel (magic barrier defense)
+* **Hardened** → Fortify, Deflect (physical armor defense)
+
+**Accessory: Blessed OR Vital**
+* **Blessed** → Heal, Cleanse (restorative magic)
+* **Vital** → Regenerate, Endure (physical resilience)
+
+**Total Combinations:** 2³ = 8 defensive loadouts
+
+**Skills Available:** 6 resilience skills (2 per armor slot)
+
+**Design Intent:** Binary choices create meaningful tradeoffs with clear defensive identity (magic vs physical vs hybrid). Swap armor to counter different threats.
+
+---
+
+### Attributes = Power Scaling
+
+**Fluid spectrum/axis sliders** (not locked by gear):
+
+* **Might** - Physical damage scaling, stamina pool size
+* **Grace** - Movement speed, hit chance, dodge recovery
+* **Vitality** - Health pool, armor rating, stagger resistance
+* **Focus** - Magic damage scaling, mana pool size, reaction queue capacity
+* **Instinct** - Critical hit chance, reaction window duration
+* **Presence** - Threat generation, AoE radius, CC duration
+
+**Attributes scale your skills but don't gate access.** Same gear with different attributes creates different playstyles. Respec-friendly system encourages experimentation.
+
+---
+
+### Complete Build Example
+
+**Gear Loadout:**
+* **Weapons:** Sword (Direct/Evasive) + Dagger (Ambushing)
+* **Armor:** Mental Helm + Hardened Chest + Vital Accessory
+
+**Available Skills (12 total):**
+* **Approach (6):** 2 Direct skills, 2 Evasive skills, 2 Ambushing skills
+* **Resilience (6):** Focus, Dispel (Mental), Fortify, Deflect (Hardened), Regenerate, Endure (Vital)
+
+**Slotted Abilities (4 at launch):**
+* **Q:** Charge (Direct approach skill)
+* **W:** Ambush (Ambushing approach skill)
+* **E:** Fortify (Hardened resilience skill)
+* **R:** Regenerate (Vital resilience skill)
+
+**Attribute Spread:**
+* High Vitality + Moderate Instinct = Durable with good reaction windows
+
+**Build Identity:** Mobile melee assassin with physical resilience and self-healing
+
+---
+
+### Design Benefits
+
+✓ Gear determines skills → Clear build identity and counter-building opportunities
+✓ Fixed skill pools → No overwhelming choice paralysis
+✓ 8 weapon + 8 armor combinations → Complete coverage without gaps
+✓ Horizontal progression → Collect situational loadouts, not power tiers
+✓ Manageable MVP scope → 4 main weapons + 2 off-hands + 6 armor types
+
+---
+
 ## MVP Scope (Phase 1)
 
-**Goal:** Playable combat loop with one enemy type and minimal abilities.
+**Goal:** Playable combat loop with one enemy type and minimal abilities. Demonstrate the gear-based skill system.
 
-### Player Abilities
+### Player Starting Loadout
 
-**Design Note:** All MVP abilities cost stamina only (no mana). Stamina pool scales with Might (primary) and Vitality (secondary), while Direct abilities (Lunge) scale damage with Vitality. This creates build diversity: Might specialists have large stamina pools for more ability casts, Vitality specialists deal more damage per cast but have smaller resource pools.
+**Design Note:** MVP focuses on one complete build to validate the gear-skill system. All abilities cost stamina only (no mana). This simplified starting loadout demonstrates how weapons and armor determine skill access.
 
-**Passive:**
+**Starting Gear:**
+* **Main Hand:** Sword (Direct + Evasive approaches)
+* **Off Hand:** Shield (Patient approach)
+* **Helm:** Mental (Focus, Dispel skills)
+* **Armor:** Hardened (Fortify, Deflect skills)
+* **Accessory:** Vital (Regenerate, Endure skills)
+
+**Available Skills from Gear:**
+* **Approach Skills:** Direct (x2), Evasive (x2), Patient (x2) = 6 available
+* **Resilience Skills:** Focus, Dispel, Fortify, Deflect, Regenerate, Endure = 6 available
+
+**MVP Slotted Abilities (4 total):**
+
+**Auto-Attack (Passive):**
 * **Auto-Attack**
   - Automatic, no cost, no cooldown
   - Range: Adjacent hex (1 hex away)
@@ -546,56 +650,52 @@ Enemies broadcast intent before major attacks:
   - Audio: Weapon swoosh + impact sound
   - Player interaction: Passive - triggers automatically when adjacent to hostile target
 
-**Offensive:**
-* **Lunge (Q key)**
+**Slotted Approach Skills:**
+* **Lunge (Q key)** - Direct approach skill (from Sword main hand)
   - Instant gap closer with damage
   - Range: 4 hexes (mid tier)
   - Cost: 20 stamina
   - Cooldown: None
   - Targeting: Nearest hostile in facing direction (60° cone) within range
   - Effect: Instantly teleport adjacent to target, deal 40 physical damage (200% base)
-  - Damage scales with Vitality (Direct approach primary attribute)
+  - Damage scales with Might (Direct approach scales with physical power)
   - Visual: Quick dash to target, attack animation on arrival
   - Audio: Dash sound + impact
   - Player interaction: Face enemy, press Q to close distance and attack
 
-* **Overpower (W key)**
-  - Heavy melee strike
-  - Range: Adjacent hex (1 hex away, close tier)
+* **Counter (W key)** - Patient approach skill (from Shield off-hand)
+  - Defensive reaction skill
+  - Range: Self-target
+  - Cost: 35 stamina
+  - Cooldown: 0.5s GCD (shared with other reactions)
+  - Targeting: Self (clears first queued threat)
+  - Effect: Reflect first queued threat back to attacker
+  - Clears 1 threat (leftmost in queue)
+  - Visual: Parry animation, attack bounces back
+  - Audio: Clashing metal
+  - Player interaction: Press W when threats in queue to reflect damage back
+
+**Slotted Resilience Skills:**
+* **Fortify (E key)** - Hardened armor skill
+  - Full queue clear with damage mitigation
+  - Range: Self-target
   - Cost: 40 stamina
-  - Cooldown: 2 seconds
-  - Targeting: Nearest hostile in facing direction (60° cone) within range
-  - Effect: Deal 80 physical damage (400% base) to target
-  - Damage scales with Presence (Overwhelming approach primary attribute)
-  - Visual: Heavy wind-up animation, devastating impact effect
-  - Audio: Heavy swing + crushing impact
-  - Player interaction: Face enemy when adjacent, press W for finishing blow
+  - Cooldown: 0.5s GCD (shared with other reactions)
+  - Effect: Reduce all queued physical damage by 50%, then apply
+  - Visual: Character braces, metallic sheen
+  - Audio: Metal clang
+  - Player interaction: Press E when multiple threats in queue to tank damage
 
-**Utility:**
-* **Knockback (E key)**
-  - Defensive positioning tool
-  - Range: 2 hexes
-  - Cost: 30 stamina
-  - Cooldown: 1.5 seconds
-  - Targeting: Nearest hostile in facing direction (60° cone) within range
-  - Effect: Push target back 1 hex (away from caster)
-  - Does not deal damage
-  - If target blocked by terrain/obstacle, push fails but still costs stamina
-  - Visual: Force push animation, target slides backward
-  - Audio: Impact thud + knockback sound
-  - Player interaction: Face enemy within 2 hexes, press E to create space
-
-**Defensive:**
-* **Deflect (R key)**
-  - Full queue clear (MVP version - simplified from Hardened signature)
+* **Deflect (R key)** - Hardened armor skill
+  - Full queue clear (MVP simplified version)
   - Range: Self-target
   - Cost: 50 stamina
   - Cooldown: 0.5s GCD
-  - Effect: Clear all queued threats, preventing all damage
-  - Visual: Shield block animation with defensive posture
-  - Audio: Multiple shield impacts (one per threat blocked)
-  - Player interaction: Press R when threats in queue to block all incoming damage
-  - Note: Expensive resource cost forces careful usage and positioning as alternative
+  - Effect: Clear all queued threats completely
+  - Visual: Shield block animation
+  - Audio: Impact thud
+  - Player interaction: Press R when multiple threats queued to clear entire queue
+  - Note: Post-MVP will be selective (30 stamina, 1 threat, physical only)
 
 ### Enemy Type
 
@@ -614,14 +714,7 @@ Enemies broadcast intent before major attacks:
    - Position on hex indicates facing direction
    - Visual facing indicator (optional arrow/cone)
 
-2. **Directional Targeting:**
-   - Target indicator system (red hostile, green ally)
-   - Geometric target selection (nearest in facing direction + angle tiebreaker)
-   - Range tier system (close 1-2, mid 3-6, far 7+)
-   - Tier lock with number keys (1/2/3, drops after 1 ability)
-   - TAB cycling through valid targets
-   - ESC to clear manual targeting
-   - Target indicator visual feedback (tier badges, lock markers)
+2. **Directional Targeting:** Target indicator system with geometric selection, tier lock (1/2/3 keys), and TAB cycling (see Targeting System section)
 
 3. **Combat State Management:**
    - Enter/exit combat triggers
@@ -657,43 +750,97 @@ Enemies broadcast intent before major attacks:
 
 ### Success Criteria
 
-* Player can move with Arrow Keys and heading updates correctly
+**Core Mechanics:**
+* Movement with arrow keys updates heading correctly
 * Target indicator shows nearest hostile in facing direction
-* Player can face Wild Dog and see red indicator on it
-* **Auto-Attack activates automatically when adjacent to target**
-* Player can Lunge (Q) to close distance and deal 200% damage
-* Player can Overpower (W) when adjacent for heavy 400% damage
-* Player can Knockback (E) to push target away and create space
+* Auto-Attack activates automatically when adjacent to target
 * Dog's attacks enter player's reaction queue with visible timer
-* Player can Deflect (R) to clear entire queue (expensive stamina cost)
-* If player doesn't react, damage applies with armor reduction
-* **Positioning matters: staying in melee provides free DPS but exposes to danger**
-* **Resource management critical: all abilities cost stamina, must balance offense and defense**
-* Target indicator updates smoothly as player moves/rotates
-* Combat feels responsive and clear (no confusion about what's happening)
-* Player can win or lose based on resource management, reactions, AND positioning
-* **Removing Dodge forces tactical positioning rather than panic-button spam**
+* Damage applies with armor reduction if player doesn't react
+
+**Abilities Work:**
+* Lunge (Q) - Gap closer with damage (Direct skill from Sword)
+* Counter (W) - Reflect queued damage (Patient skill from Shield)
+* Fortify (E) - Reduce queued damage by 50% (Hardened armor skill)
+* Deflect (R) - Clear all queued threats (Hardened armor skill)
+
+**Skill Expression:**
+* Gear determines available skills (Sword+Shield warrior with physical defense)
+* Resource management matters (stamina balances offense and defense)
+* Positioning matters (melee range provides DPS but exposes to danger)
+* Combat feels responsive and clear (no confusion about state)
 
 ---
 
 ## Post-MVP Extensions
 
-### Phase 2: Build Diversity
-* Add 2-3 more reaction abilities (Counter, Fortify, Ward)
-* Add 2-3 offensive abilities (Trap, Volley, Mark)
-* Add magic damage type and mana-based abilities
-* Multiple enemy types (ranged, tank, fast)
-* Note: MVP abilities (Lunge, Overpower) are from Direct and Overwhelming approaches
+### Phase 2: Complete Gear System
+* **Add remaining weapons:**
+  - Main Hand: Mace, Whip, Revolver (3 more weapons)
+  - Off Hand: Dagger (1 more weapon)
+* **Add remaining armor:**
+  - Helm: Primal option (Enrage, Attune skills)
+  - Armor: Shielded option (Ward, Repel skills)
+  - Accessory: Blessed option (Heal, Cleanse skills)
+* **Gear acquisition:**
+  - Loot drops from enemies
+  - Crafting system (basic)
+  - Vendor purchases
+* **Gear swapping UI:**
+  - Inventory screen showing equipped gear
+  - Ability bar updates when gear changes
+  - Visual feedback showing which skills come from which gear
 
-### Phase 3: Tactical Depth
-* Positional modifiers (flanking bonus, terrain advantage)
-* Status effects (stun, root, DoT)
-* Enemy telegraphs for major attacks
+### Phase 3: Build Depth and Variety
+* **Full approach skill sets:**
+  - Define 2 skills per approach (Direct, Evasive, Binding, Distant, Patient, Ambushing)
+  - Total: 12 approach skills across 6 approaches
+* **Full resilience skill sets:**
+  - Define 2 skills per armor archetype (Mental, Primal, Shielded, Hardened, Blessed, Vital)
+  - Total: 12 resilience skills across 6 archetypes
+* **Ability slotting system:**
+  - Choose which 4 abilities to slot from available pool (based on equipped gear)
+  - Save/load ability bar configurations per gear set
+* **Magic damage and mana:**
+  - Add magic-based weapons (Revolver uses mana, Whip uses stamina)
+  - Magic-based armor skills (Ward, Dispel, Heal use mana)
+  - Hybrid builds (stamina + mana management)
+* **Multiple enemy types:**
+  - Ranged enemies (test Distant approach effectiveness)
+  - Tank enemies (test armor-piercing mechanics)
+  - Fast enemies (test reaction timing)
+  - Magic enemies (test Ward/Dispel armor skills)
 
-### Phase 4: Advanced Systems
-* Full Triumvirate ability sets (2 Approach + 2 Resilience per build)
-* Boss encounters (multi-phase, complex patterns)
-* PvP combat (flagging system, duels)
+### Phase 4: Tactical Depth
+* **Positional modifiers:**
+  - Flanking bonus (attacking from behind)
+  - Terrain advantage (high ground, cover)
+* **Status effects:**
+  - Stun, root, DoT (damage over time)
+  - Buffs/debuffs from abilities
+* **Enemy telegraphs:**
+  - Major attacks with ground indicators
+  - Pattern recognition (boss mechanics)
+* **Boss encounters:**
+  - Multi-phase fights
+  - Gear-check mechanics (requires specific defensive skills)
+  - Pattern-based challenges
+
+### Phase 5: Player Progression
+* **Horizontal gear progression:**
+  - Collect multiple gear sets for different situations
+  - Sidegrade weapons/armor (same tier, different approaches)
+  - Situational loadouts (anti-magic set, anti-physical set, AoE set, single-target set)
+* **Attribute respeccing:**
+  - Allow players to respec attributes freely or with low cost
+  - Experiment with different attribute spreads on same gear
+* **Gear enhancement:**
+  - Upgrade gear quality (better base stats, not new skills)
+  - Enchantments (modify skill effectiveness)
+  - Visual customization (skins, dyes)
+* **PvP combat:**
+  - Flagging system for opt-in PvP
+  - Arena/duel systems
+  - Gear-based counter-building (swap to anti-player loadout)
 
 ---
 
@@ -710,12 +857,12 @@ Enemies broadcast intent before major attacks:
 * Your character faces the direction you last moved
 
 ### Combat Abilities (Left Hand)
-* **Q**: Lunge - Gap closer + 200% damage (range 4)
-* **W**: Overpower - Heavy 400% damage strike (range 1)
-* **E**: Knockback - Push target back 1 hex (range 2)
-* **R**: Deflect - Clear all queued threats (self-target, expensive)
+* **Q**: Lunge - Gap closer + damage (Direct skill, range 4, 20 stamina)
+* **W**: Counter - Reflect first queued threat (Patient skill, self-target, 35 stamina)
+* **E**: Fortify - Reduce all queued damage by 50% (Hardened skill, self-target, 40 stamina)
+* **R**: Deflect - Clear all queued threats (Hardened skill, self-target, 50 stamina)
 * **Auto-Attack**: Passive - Automatically attacks adjacent hostile every 1.5s
-* Abilities target current hostile/ally indicator or self (depending on ability)
+* Abilities target current hostile/ally indicator or self (depending on ability type)
 
 ### Targeting (Left Hand)
 * **Automatic:** Target indicator shows nearest hostile in facing direction (60° cone)
@@ -741,6 +888,16 @@ Enemies broadcast intent before major attacks:
 
 ## Open Questions
 
+**Gear System:**
+* **How does gear acquisition work in MVP?** (start with fixed loadout? loot? vendor?)
+* **Can players swap gear mid-combat?** (should there be combat lockout or cooldown?)
+* **How is equipped gear displayed?** (paper doll UI? character model shows visual changes?)
+* **How many skills per approach/archetype?** (2 per approach = 12 total approach skills?)
+* **Do weapons have stat differences beyond skills?** (damage ranges? attack speed? or just skill access?)
+* **How does ability slotting work?** (drag-drop UI? numbered slots? saved loadouts?)
+* **Should gear have level/tier requirements?** (or purely horizontal sidegrades?)
+* **How do players know which skills come from which gear?** (tooltips? color-coding? gear icons on ability bar?)
+
 **UI/UX:**
 * Where should reaction queue display on screen? (above character? bottom center?)
 * How prominent should target indicators be? (subtle outline vs big icon vs ground marker?)
@@ -751,6 +908,8 @@ Enemies broadcast intent before major attacks:
 * Should target indicators be color-coded AND have symbols? (colorblind accessibility)
 * How to distinguish unavoidable attacks visually? (different color? sound?)
 * Should abilities show "out of range" warning before cast? (indicator dims if too far)
+* **Gear UI:** How to show equipped gear clearly? (always-visible icons? character sheet?)
+* **Skill source clarity:** Should ability tooltips show "From: Sword (Direct)" to indicate source?
 
 **Balance:**
 * Are base resource pools (100 stamina/mana) correct?
@@ -759,9 +918,7 @@ Enemies broadcast intent before major attacks:
 * Are range tiers correct? (1-2 close, 3-6 mid, 7+ far)
 * Should enemies get facing bonus/penalty? (backstab damage, frontal armor)
 * **Auto-attack timing:** Is 1.5s attack speed correct? Too fast/slow?
-* **Ability costs:** Are 20/30/40/50 stamina costs balanced for MVP?
-* **Deflect cost:** Is 50 stamina (expensive) sufficient to force positioning gameplay?
-* **Knockback mechanics:** Should failed knockback (terrain blocked) still cost stamina?
+* **Ability costs:** Are MVP stamina costs balanced (Lunge 20, Counter 35, Fortify 40, Deflect 50)?
 * **Lunge range:** Is 4 hexes correct or should it be shorter/longer?
 
 **Directional Combat:**
@@ -779,6 +936,7 @@ Enemies broadcast intent before major attacks:
 * Should stamina regen be visible (floating numbers) or just bar fill?
 * Should MVP include target indicators? (yes - critical for directional combat)
 * Should MVP include tier lock system? (or just auto-target for simplicity)
+* **Gear swapping in MVP?** (should players be able to change gear, or fixed loadout only?)
 
 ---
 
@@ -787,10 +945,15 @@ Enemies broadcast intent before major attacks:
 * ✅ **Conscious but decisive** - Reaction windows give time to think, GCD demands commitment
 * ✅ **No twitch mechanics** - Directional targeting and timed reactions, not pixel-perfect aiming
 * ✅ **Positioning matters** - Facing, heading, and geometric targeting reward tactical positioning
-* ✅ **Build identity matters** - Instinct/Focus directly shape defensive playstyle
+* ✅ **Build identity matters** - Gear determines skills, attributes shape effectiveness
 * ✅ **Resource management is tactical** - Stamina/mana costs create meaningful decisions
 * ✅ **Mutual destruction possible** - Emergent drama from simultaneous lethal damage
 * ✅ **Clear feedback** - Queue UI and target indicators show exactly what's happening
 * ✅ **Skill expression** - Mastery comes from reading fights, managing resources, and positioning
 * ✅ **No cursor required** - Fully playable with keyboard, controller-friendly design
 * ✅ **Emergent tactics** - Tier lock and geometric targeting create depth without complexity
+* ✅ **Gear-driven builds** - Equipment choices fundamentally change playstyle and available tactics
+* ✅ **Horizontal progression** - Collect situational gear sets rather than vertical power tiers
+* ✅ **Counter-building** - Swap gear to adapt to different threats (magic vs physical, ranged vs melee)
+* ✅ **Manageable complexity** - Fixed skill pools per gear piece prevent overwhelming choice paralysis
+* ✅ **Thematic coherence** - Weapon/armor archetypes create clear fantasy (sword+shield warrior, whip+dagger assassin)

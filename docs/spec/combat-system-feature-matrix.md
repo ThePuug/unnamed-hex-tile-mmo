@@ -2,7 +2,7 @@
 
 **Specification:** [combat-system.md](combat-system.md)
 **Last Updated:** 2025-11-05
-**Overall Status:** 25/44 features complete (57% - MVP scope)
+**Overall Status:** 45/91 features complete (49%)
 
 ---
 
@@ -101,17 +101,22 @@
 
 ### MVP Abilities (Phase 1)
 
+**Spec MVP Loadout (Lines 624-698):** Sword+Shield warrior with Hardened armor. Starting gear demonstrates gear-skill system.
+
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| BasicAttack (Q) | ⏸️ Deferred | Implemented (replaced) | Lines 538-548 | Replaced by Auto-Attack + Lunge |
-| Dodge (E) | ⏸️ Deferred | Implemented (replaced) | Lines 260-264 | Replaced by Knockback + Deflect |
-| Auto-Attack (passive) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [auto_attack.rs](../../src/server/systems/combat/abilities/auto_attack.rs) | Lines 73-92 | 20 dmg, adjacent, manual trigger |
-| Lunge (Q) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [lunge.rs](../../src/server/systems/combat/abilities/lunge.rs) | Lines 93-110 | 40 dmg, 20 stam, 4 hex, gap closer |
-| Overpower (W) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [overpower.rs](../../src/server/systems/combat/abilities/overpower.rs) | Lines 111-128 | 80 dmg, 40 stam, 1 hex |
-| Knockback (E) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [knockback.rs](../../src/server/systems/combat/abilities/knockback.rs) | Lines 130-149 | 30 stam, reactive counter, push 1 hex |
-| Deflect (R) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [deflect.rs](../../src/server/systems/combat/abilities/deflect.rs) | Lines 150-165 | 50 stam, clears all threats |
+| Auto-Attack (passive) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [auto_attack.rs](../../src/server/systems/combat/abilities/auto_attack.rs) | Lines 641-651 | 20 dmg, adjacent, auto-triggers |
+| Lunge (Q) - Direct approach | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [lunge.rs](../../src/server/systems/combat/abilities/lunge.rs) | Lines 654-664 | 40 dmg, 20 stam, 4 hex, gap closer (from Sword) |
+| Counter (W) - Patient approach | ❌ Not Started | - | Lines 666-676 | 35 stam, reflect first queued threat (from Shield) |
+| Fortify (E) - Hardened resilience | ❌ Not Started | - | Lines 679-687 | 40 stam, reduce all queued damage 50% (from Hardened armor) |
+| Deflect (R) - Hardened resilience | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [deflect.rs](../../src/server/systems/combat/abilities/deflect.rs) | Lines 689-698 | 50 stam, clear all queued threats (from Hardened armor) |
 
-**Category Status:** 5/7 complete (71% - MVP abilities fully implemented, legacy abilities deferred)
+**Implementation Deviations:**
+- **Overpower (W)** and **Knockback (E)** were implemented instead of Counter/Fortify per ADR-009
+- Spec now specifies Counter/Fortify to better demonstrate gear-skill system
+- Overpower/Knockback remain functional but don't align with updated spec's build philosophy
+
+**Category Status:** 3/5 complete (60% - Auto-Attack, Lunge, Deflect match spec; Counter and Fortify not implemented)
 
 ---
 
@@ -140,7 +145,7 @@
 | Resistance (magic reduction) | 🚧 Partial | [ADR-005](../adr/005-damage-pipeline.md) | Lines 409-417 | Formula exists, no magic damage yet |
 | Stagger resist | ⏸️ Deferred | - | Lines 419-424 | Cast interruption system |
 
-**Category Status:** 3/6 complete (50%)
+**Category Status:** 2/6 complete (33%)
 
 ---
 
@@ -167,6 +172,56 @@
 | Visual telegraphs | ❌ Not Started | - | Lines 494-504 | Enemy attack warnings |
 
 **Category Status:** 3/4 complete (75%)
+
+---
+
+### Player Combat Build System
+
+**Core Philosophy (Lines 513-583):** Gear determines skills, attributes scale them. 3 systems: Weapons (offense), Armor (defense), Attributes (scaling).
+
+#### Weapons System (Approach Skills)
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Main Hand: Sword (Direct+Evasive) | 🚧 Partial | Implemented (no gear system) | Lines 529 | Skills exist, gear gating not implemented |
+| Main Hand: Mace (Direct+Binding) | ❌ Not Started | - | Lines 528 | Post-MVP |
+| Main Hand: Whip (Distant+Binding) | ❌ Not Started | - | Lines 530 | Post-MVP |
+| Main Hand: Revolver (Distant+Evasive) | ❌ Not Started | - | Lines 531 | Post-MVP |
+| Off Hand: Shield (Patient) | 🚧 Partial | Implemented (no gear system) | Lines 534 | Skills exist, gear gating not implemented |
+| Off Hand: Dagger (Ambushing) | ❌ Not Started | - | Lines 535 | Post-MVP |
+| Weapon skill gating | ❌ Not Started | - | Lines 539 | 6 approach skills per loadout |
+| Weapon swapping | ❌ Not Started | - | Lines 542 | Change offensive toolkit |
+
+**Category Status:** 0/8 complete (0% - gear system not implemented, skills exist but not gated)
+
+#### Armor System (Resilience Skills)
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Helm: Mental (Focus, Dispel) | 🚧 Partial | Implemented (no gear system) | Lines 553 | Skills planned, gear gating not implemented |
+| Helm: Primal (Enrage, Attune) | ❌ Not Started | - | Lines 554 | Post-MVP |
+| Chest: Hardened (Fortify, Deflect) | 🚧 Partial | Implemented (no gear system) | Lines 558 | Deflect exists, Fortify planned, no gear gating |
+| Chest: Shielded (Ward, Repel) | ❌ Not Started | - | Lines 557 | Post-MVP |
+| Accessory: Vital (Regenerate, Endure) | ❌ Not Started | - | Lines 562 | Post-MVP |
+| Accessory: Blessed (Heal, Cleanse) | ❌ Not Started | - | Lines 561 | Post-MVP |
+| Armor skill gating | ❌ Not Started | - | Lines 566 | 6 resilience skills per loadout |
+| Armor swapping | ❌ Not Started | - | Lines 568 | Counter different threats |
+
+**Category Status:** 0/8 complete (0% - gear system not implemented, some skills exist but not gated)
+
+#### Attributes System
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Might (damage, stamina pool) | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 576 | Scales physical damage and stamina |
+| Grace (movement, hit, dodge) | 🚧 Partial | [ADR-010](../adr/010-combat-variety-phase-1.md) | Line 577 | Movement speed implemented, hit/dodge TBD |
+| Vitality (HP, armor, stagger) | 🚧 Partial | [ADR-002](../adr/002-combat-foundation.md) | Line 578 | HP and armor complete, stagger TBD |
+| Focus (magic, mana, queue) | 🚧 Partial | [ADR-003](../adr/003-reaction-queue-system.md) | Line 579 | Queue capacity implemented, magic scaling exists but unused |
+| Instinct (crit, reaction window) | 🚧 Partial | [ADR-003](../adr/003-reaction-queue-system.md) | Line 580 | Reaction window implemented, crits TBD |
+| Presence (threat, AoE, CC) | ❌ Not Started | - | Line 581 | Post-MVP |
+| Attribute respeccing | ❌ Not Started | - | Line 583 | Post-MVP |
+
+**Category Status:** 1/7 complete (14% - MVP attributes functional, full system incomplete)
 
 ---
 
@@ -261,6 +316,13 @@ Features where implementation intentionally differs from spec:
 - **Player Assessment:** "Transforms tier lock from abstract to spatial mechanic" ([Player Feedback](../adr/010-player-feedback.md) Lines 75-82, 147-156)
 - **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 76-94
 
+### 9. MVP Ability Set vs Updated Spec
+- **Spec Says (combat-system.md, Lines 666-687):** Counter (W) and Fortify (E) as MVP abilities
+- **Actually Implemented:** Overpower (W) and Knockback (E) per ADR-009
+- **Rationale:** ADR-009 predates updated spec's build system philosophy. Overpower/Knockback functional but don't demonstrate gear-skill relationships as clearly as Counter/Fortify would.
+- **ADR Reference:** [ADR-009](../adr/009-mvp-ability-set.md)
+- **Status:** Implementation complete, spec evolved. Future alignment needed if demonstrating build system becomes priority.
+
 ---
 
 ## Spec Gaps
@@ -272,14 +334,21 @@ Features described in spec but not yet in implementation plan:
 
 ### High Priority
 - **TAB Cycling:** Manual target selection within tier (Lines 108-115)
-- **Tier Badge UI:** Visual feedback for tier lock (Lines 76, 127)
-- **Empty Tier Visualization:** Facing cone range highlighting (Line 74)
+- **Counter Ability:** Patient approach skill from Shield (Lines 666-676)
+- **Fortify Ability:** Hardened resilience skill from armor (Lines 679-687)
+- **Build System Foundation:** Gear-based skill gating system (Lines 513-617)
 
 ### Medium Priority
+- **Tier Badge UI:** Visual feedback for tier lock (Lines 76, 127)
+- **Empty Tier Visualization:** Facing cone range highlighting (Line 74)
 - **Critical Hit System:** Instinct-based crits (Lines 387-393)
 - **Visual Telegraphs:** Enemy attack warnings (Lines 494-504)
 
 ### Low Priority (Post-MVP)
+- **Full Weapon System:** 4 main hands + 2 off-hands with skill gating (Lines 523-545)
+- **Full Armor System:** 3 armor slots with binary choices and skill gating (Lines 548-569)
+- **Gear Acquisition:** Loot, crafting, vendors (Lines 784-791)
+- **Ability Slotting:** Choose 4 from available 12 skills (Lines 797-802)
 - **Full Reaction Ability Set:** 7 additional reaction abilities (Lines 260-320)
 - **Ground Effects:** AOE telegraphs with delayed damage (Lines 163-173)
 - **Unavoidable Attacks:** Ultimate-tier mechanics (Lines 175-179)
@@ -290,21 +359,47 @@ Features described in spec but not yet in implementation plan:
 
 ## Progress Summary
 
-**MVP Scope (Phase 1):** 25/31 features complete (81%)
-- Core systems: Movement (5/6), Queue (7/7), Resources (5/5), HUD (6/6) ✅ Complete
-- MVP abilities: 5/7 complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect) ✅
-- Targeting: 6/10 complete (directional, indicators, tier system, auto, tier lock) ✅
-- Attack patterns: 2/4 complete (instant, projectile) ✅
-- Enemy AI: 3/4 complete (directional targeting, Wild Dog, Forest Sprite) ✅
-- Damage: 3/6 complete (physical damage, armor, resistance formulas)
-- Combat State: 2/4 complete (enter/leave triggers)
-- Deferred: Tier badge UI, empty tier visualization, facing cone visual (visual polish, not MVP-blocking)
-- Missing: TAB cycling, ESC clear, critical hits, ground effects, visual telegraphs
+**Total Combat System:** 45/91 features complete (49%)
 
-**Post-MVP (Phases 2-4):** 0/13 features started (0%)
-- Deferred: 7 reaction abilities, crits, stagger, facing cone visuals, combat state visuals, ground effects, telegraphs, unavoidable attacks
+**Fully Complete Categories (100%):**
+- Reaction Queue System: 7/7 ✅
+- Resources: 5/5 ✅
+- Special Mechanics: 1/1 ✅
 
-**Total Combat System:** 25/44 features complete (57% - over halfway to full spec)
+**Strong Progress (80%+):**
+- Movement and Heading: 5/6 (83%)
+- Combat HUD: 6/7 (86%)
+
+**Solid Foundation (50-79%):**
+- Targeting System: 6/10 (60%)
+- Enemy AI: 3/4 (75%)
+- MVP Abilities: 3/5 (60%)
+
+**Partial Implementation (25-49%):**
+- Attack Execution Patterns: 2/4 (50%)
+- Combat State: 2/4 (50%)
+- Damage Calculation: 2/6 (33%)
+
+**Early Stages (1-24%):**
+- Reaction Abilities: 2/9 (22%)
+- Attributes System: 1/7 (14%)
+
+**Not Started (0%):**
+- Weapons System: 0/8
+- Armor System: 0/8
+
+**Key Achievements:**
+- Core combat loop functional (movement, targeting, abilities, reactions, HUD)
+- ADR-010 complete: Tier lock, movement speed scaling, projectiles, ranged enemies
+- 5 abilities implemented: Auto-Attack, Lunge, Overpower, Knockback, Deflect
+- Reaction queue system fully operational
+
+**Major Gaps:**
+- Build system (gear-skill gating): 0/23 features
+- TAB cycling and manual target selection
+- Counter and Fortify abilities (spec-defined MVP)
+- Critical hit system, visual telegraphs
+- 7 additional reaction abilities (post-MVP)
 
 ---
 
@@ -316,12 +411,16 @@ Based on actual implementation status and user value:
 2. ✅ ~~**Implement Accepted MVP Abilities**~~ - All 5 abilities complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect)
 3. ✅ ~~**Accept or Reject ADR-010**~~ - ACCEPTED (2025-11-05, see [ADR-010 Acceptance](../adr/010-acceptance.md))
 4. ✅ ~~**Implement Combat Variety Phase 1**~~ - Tier lock, movement speed, projectiles, Forest Sprite complete
-5. ✅ ~~**Update Feature Matrix**~~ - ADR-010 features marked complete (2025-11-05)
-6. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, projectile dodging
+5. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, projectile dodging
+6. **Decide: Spec alignment vs implementation continuity**
+   - Option A: Implement Counter/Fortify to match updated spec (demonstrates build system philosophy)
+   - Option B: Keep Overpower/Knockback, update spec to match implementation (maintains working code)
+   - Option C: Defer until full build system ADR created (comprehensive approach)
 7. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
-8. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
-9. **Critical Hit System** - Instinct-based crits for damage variety
-10. **Visual Telegraphs** - Enemy attack warnings for skill expression
+8. **Build System Foundation ADR** - Design gear-based skill gating, weapon/armor components, ability slotting
+9. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
+10. **Critical Hit System** - Instinct-based crits for damage variety
+11. **Visual Telegraphs** - Enemy attack warnings for skill expression
 
 ---
 
