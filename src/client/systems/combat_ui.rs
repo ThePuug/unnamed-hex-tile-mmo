@@ -222,7 +222,7 @@ pub fn update_health_bars(
     mut child_node_query: Query<&mut Node, (Without<crate::client::components::WorldHealthBar>, Without<crate::client::components::HostileHealthBar>, Without<crate::client::components::AllyHealthBar>)>,
     entity_query: Query<(&crate::common::components::resources::Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading), With<crate::common::components::Actor>>,
+    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading, &crate::common::components::target::Target), With<crate::common::components::Actor>>,
     targeting_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<crate::common::plugins::nntree::NNTree>,
     time: Res<Time>,
@@ -231,21 +231,14 @@ pub fn update_health_bars(
         return;
     };
 
-    // Get local player for targeting
-    let Ok((player_ent, player_loc, player_heading)) = player_query.get_single() else {
+    // Get local player and its target (set by update_targets_on_change with tier lock filtering)
+    let Ok((player_ent, player_loc, player_heading, player_target)) = player_query.get_single() else {
         return;
     };
 
-    // Get currently facing targets (non-sticky)
-    let hostile_target = crate::common::systems::targeting::select_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        None,
-        &nntree,
-        |ent| targeting_query.get(ent).ok().map(|(et, _, _)| *et),
-        |ent| targeting_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
-    );
+    // Read target from Target component (reactively maintained with tier lock support)
+    // Don't call select_target here - that would ignore tier lock!
+    let hostile_target = **player_target;
 
     let ally_target = crate::common::systems::targeting::select_ally_target(
         player_ent,
@@ -362,7 +355,7 @@ pub fn update_threat_queue_dots(
     >,
     queue_query: Query<(Option<&crate::common::components::reaction_queue::ReactionQueue>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading), With<crate::common::components::Actor>>,
+    player_query: Query<(Entity, &crate::common::components::Loc, &crate::common::components::heading::Heading, &crate::common::components::target::Target), With<crate::common::components::Actor>>,
     entity_query: Query<(&crate::common::components::entity_type::EntityType, &crate::common::components::Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<crate::common::plugins::nntree::NNTree>,
 ) {
@@ -370,21 +363,14 @@ pub fn update_threat_queue_dots(
         return;
     };
 
-    // Get local player for targeting
-    let Ok((player_ent, player_loc, player_heading)) = player_query.get_single() else {
+    // Get local player and its target (set by update_targets_on_change with tier lock filtering)
+    let Ok((player_ent, player_loc, player_heading, player_target)) = player_query.get_single() else {
         return;
     };
 
-    // Get currently facing targets (non-sticky)
-    let hostile_target = crate::common::systems::targeting::select_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        None,
-        &nntree,
-        |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-        |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
-    );
+    // Read target from Target component (reactively maintained with tier lock support)
+    // Don't call select_target here - that would ignore tier lock!
+    let hostile_target = **player_target;
 
     let ally_target = crate::common::systems::targeting::select_ally_target(
         player_ent,

@@ -97,8 +97,6 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
             }
             Do { event: Event::Despawn { ent } } => {
-                debug!("[CLIENT DESPAWN] Received Despawn event for entity {:?}", ent);
-
                 // Check if this is the local player (has InputQueue)
                 let is_local_player = l2r.get_by_right(&ent)
                     .and_then(|&local_ent| buffers.get(&local_ent))
@@ -108,18 +106,14 @@ pub fn write_do(
                     // For local player: DON'T despawn the entity, just mark as dead
                     // The entity will be reused on respawn
                     // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
-                    info!("CLIENT: Received Despawn for LOCAL player {:?} - keeping entity alive (hidden)", ent);
                 } else {
                     // For NPCs/other players: remove from EntityMap and despawn
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
-                        debug!("[CLIENT DESPAWN] Entity {:?} not in EntityMap - already despawned or never spawned", ent);
                         continue
                     };
-                    debug!("[CLIENT DESPAWN] Despawning local entity {:?} (remote {:?})", local_ent, ent);
 
                     // Spawn hit flash effect for projectiles (capture Loc before despawning)
                     if let Ok(loc) = locs.get(local_ent) {
-                        info!("[CLIENT DESPAWN] Writing SpawnHitFlash event at loc {:?}", **loc);
                         do_writer.write(Do { event: Event::SpawnHitFlash { loc: *loc } });
                     }
 
@@ -199,14 +193,14 @@ pub fn send_try(
     for &message in reader.read() {
         match message {
             Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) } } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental { 
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
                     ent: *l2r.get_by_left(&ent).unwrap(),
-                    component: Component::KeyBits(keybits) 
+                    component: Component::KeyBits(keybits)
                 }}, bincode::config::legacy()).unwrap());
             }
             Try { event: Event::Gcd { ent, typ, .. } } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd { 
-                    ent: *l2r.get_by_left(&ent).unwrap(), 
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
                     typ,
                 }}, bincode::config::legacy()).unwrap());
             }
@@ -225,6 +219,12 @@ pub fn send_try(
             Try { event: Event::Ping { client_time } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
                     client_time
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Try { event: Event::SetTierLock { ent, tier } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    tier
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

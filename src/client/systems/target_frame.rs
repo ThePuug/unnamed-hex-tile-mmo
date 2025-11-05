@@ -423,21 +423,10 @@ pub fn update(
         return;
     }
 
-    // Select current hostile target using directional targeting
-    let facing_target = select_target(
-        player_ent,
-        *player_loc,
-        *player_heading,
-        None, // No tier lock in MVP
-        &nntree,
-        |ent| target_query.get(ent).ok().map(|(et, _, _, _, _)| *et),
-        |ent| target_query.get(ent).ok().and_then(|(_, _, _, _, pc_opt)| pc_opt).is_some(),
-    );
-
-    // Sticky targeting: Update target when a new target is found in facing cone
-    if let Some(new_target) = facing_target {
-        player_target.set(new_target);
-    }
+    // Read target from Target component (set by update_targets_on_change)
+    // Don't call select_target here - that would override tier lock targeting!
+    // The Target component is reactively maintained by update_targets_on_change
+    // based on Heading, Loc, and TargetingState changes.
 
     // Validate target is still alive and exists
     if let Some(target_ent) = **player_target {

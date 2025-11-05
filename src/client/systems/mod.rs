@@ -15,5 +15,6 @@ pub mod resource_bars;
 pub mod target_frame;
 pub mod target_indicator;
 pub mod threat_icons;
+pub mod tier_lock_range_indicator;
 pub mod ui;
 pub mod world;

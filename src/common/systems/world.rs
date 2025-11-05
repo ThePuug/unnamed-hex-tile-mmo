@@ -34,7 +34,8 @@ pub fn do_incremental(
         Option<&mut Stamina>,
         Option<&mut Mana>,
         Option<&mut CombatState>,
-        Option<&mut PlayerControlled>)>,
+        Option<&mut PlayerControlled>,
+        Option<&mut crate::common::components::targeting_state::TargetingState>)>,
     map: Res<Map>,
     buffers: Res<crate::common::resources::InputQueues>,
 ) {
@@ -43,12 +44,11 @@ pub fn do_incremental(
 
         // Handle Component::Projectile separately - projectiles don't have all the components in the main query
         if let Component::Projectile(projectile) = component {
-            debug!("[INCREMENTAL] Inserting Projectile component on entity {:?}: {:?}", ent, projectile);
             commands.entity(ent).insert(projectile);
             continue;
         }
 
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_targeting_state)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -216,6 +216,13 @@ pub fn do_incremental(
                     commands.entity(ent).insert(player_controlled);
                 }
                 // PlayerControlled is a marker - if already present, no update needed
+            }
+            Component::TargetingState(targeting_state) => {
+                if let Some(mut targeting_state0) = o_targeting_state {
+                    *targeting_state0 = targeting_state;
+                } else {
+                    commands.entity(ent).insert(targeting_state);
+                }
             }
             Component::Projectile(_) => {
                 // Handled at top of function before query (projectiles don't match main query)

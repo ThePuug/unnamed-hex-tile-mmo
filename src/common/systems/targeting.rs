@@ -26,7 +26,7 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    components::{heading::*, entity_type::*, *},
+    components::{heading::*, entity_type::*, targeting_state::TargetingState, *},
     plugins::nntree::*,
 };
 
@@ -478,20 +478,23 @@ where
 #[cfg(feature = "server")]
 pub fn update_targets_on_change(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
-        (Or<(Changed<Heading>, Changed<Loc>)>, Without<TargetLock>)
+        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target, Option<&TargetingState>),
+        (Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>, Without<TargetLock>)
     >,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target) in &mut query {
+    for (ent, loc, heading, mut target, targeting_state) in &mut query {
+        // Get tier lock from TargetingState if present
+        let tier_lock = targeting_state.and_then(|ts| ts.get_tier_lock());
+
         // Use select_target to find what this entity is facing
         let new_target = select_target(
             ent,
             *loc,
             *heading,
-            None, // No tier lock (automatic targeting)
+            tier_lock, // Pass tier lock so selection respects tier constraints
             &nntree,
             |e| entity_types.get(e).ok().copied(),
             |e| player_controlled.contains(e),
@@ -509,20 +512,23 @@ pub fn update_targets_on_change(
 #[cfg(not(feature = "server"))]
 pub fn update_targets_on_change(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target),
-        Or<(Changed<Heading>, Changed<Loc>)>
+        (Entity, &Loc, &Heading, &mut crate::common::components::target::Target, Option<&TargetingState>),
+        Or<(Changed<Heading>, Changed<Loc>, Changed<TargetingState>)>
     >,
     entity_types: Query<&EntityType>,
     player_controlled: Query<&crate::common::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target) in &mut query {
+    for (ent, loc, heading, mut target, targeting_state) in &mut query {
+        // Get tier lock from TargetingState if present
+        let tier_lock = targeting_state.and_then(|ts| ts.get_tier_lock());
+
         // Use select_target to find what this entity is facing
         let new_target = select_target(
             ent,
             *loc,
             *heading,
-            None, // No tier lock (automatic targeting)
+            tier_lock, // Pass tier lock so selection respects tier constraints
             &nntree,
             |e| entity_types.get(e).ok().copied(),
             |e| player_controlled.contains(e),

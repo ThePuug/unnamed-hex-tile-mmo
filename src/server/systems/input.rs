@@ -2,9 +2,9 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{ heading::*, targeting_state::TargetingState, * },
+        components::{ targeting_state::TargetingState, * },
         message::{Event, *},
-        systems::combat::gcd::*
+        systems::combat::gcd::*,
     },
     *
 };
@@ -71,17 +71,26 @@ pub fn try_gcd(
 ///
 /// Clients send SetTierLock events when pressing 1/2/3 keys.
 /// Server updates the TargetingState component to reflect the chosen tier.
+/// Abilities will validate the existing Target component is in the correct tier.
 pub fn try_set_tier_lock(
     mut reader: EventReader<Try>,
+    mut writer: EventWriter<Do>,
     mut targeting_states: Query<&mut TargetingState>,
 ) {
     for &message in reader.read() {
         let Try { event } = message;
         let Event::SetTierLock { ent, tier } = event else { continue };
 
-        // Update the targeting state to tier locked mode
         if let Ok(mut targeting_state) = targeting_states.get_mut(ent) {
             targeting_state.set_tier_lock(tier);
+
+            writer.write(Do {
+                event: Event::Incremental {
+                    ent,
+                    component: crate::common::message::Component::TargetingState(*targeting_state),
+                },
+            });
         }
     }
 }
+

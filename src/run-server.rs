@@ -45,7 +45,7 @@ fn main() {
         LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,bevy=warn,".to_owned()
-                    +"server=trace,"
+                    +"unnamed_hex_tile_mmo=trace,"
                     ,
             custom_layer: |_| None,
         },
@@ -55,7 +55,7 @@ fn main() {
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
-        server::plugins::behaviour::BehaviourPlugin,
+        // server::plugins::behaviour::BehaviourPlugin,  // TEMPORARY: Disabled for tier lock testing
     ));
 
     app.add_event::<Do>();
@@ -92,12 +92,12 @@ fn main() {
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         combat::validate_ability_prerequisites,
-        combat::reset_tier_lock_on_ability_use, // ADR-010 Phase 1: Reset tier lock after ability use
         combat::abilities::auto_attack::handle_auto_attack,
         combat::abilities::overpower::handle_overpower,
         combat::abilities::lunge::handle_lunge,
         combat::abilities::knockback::handle_knockback,
         combat::abilities::deflect::handle_deflect,
+        // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
         common::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 

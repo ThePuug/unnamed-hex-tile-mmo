@@ -111,6 +111,7 @@ pub enum Component {
     PlayerControlled(PlayerControlled),
     Projectile(Projectile),
     Stamina(Stamina),
+    TargetingState(crate::common::components::targeting_state::TargetingState),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
