@@ -75,16 +75,37 @@ pub fn do_incremental(
                 }
 
                 if is_local {
-                    // Local players only: preserve world-space positions for smooth visual transitions
-                    // Convert all offset fields to world positions, then re-express in new tile's coordinate system
-                    let state_world = map.convert(**loc0) + offset0.state;
-                    let prev_world = map.convert(**loc0) + offset0.prev_step;
-                    let step_world = map.convert(**loc0) + offset0.step;
+                    // Teleport detection: Check if this Loc update is a smooth tile crossing or a teleport.
+                    //
+                    // Local player movement is client-predicted and crosses adjacent tiles (distance=1).
+                    // Server-initiated teleports (Lunge, dev console) jump multiple hexes (distance>=2).
+                    //
+                    // We detect teleports to avoid preserving world-space offsets, which would cause
+                    // the character to appear stuck at the old position (client prediction conflict).
+                    const TELEPORT_THRESHOLD_HEXES: i16 = 2; // Jumps of 2+ hexes are non-adjacent (teleports)
 
-                    let new_tile_center = map.convert(*loc);
-                    offset0.state = state_world - new_tile_center;
-                    offset0.prev_step = prev_world - new_tile_center;
-                    offset0.step = step_world - new_tile_center;
+                    let hex_distance = loc0.flat_distance(&loc);
+
+                    if hex_distance >= TELEPORT_THRESHOLD_HEXES {
+                        // Teleport: Clear offset for instant visual snap (no interpolation)
+                        // Server has moved us multiple hexes non-adjacently
+                        offset0.state = Vec3::ZERO;
+                        offset0.step = Vec3::ZERO;
+                        offset0.prev_step = Vec3::ZERO;
+                        offset0.interp_elapsed = 0.0;
+                        offset0.interp_duration = 0.0;
+                    } else {
+                        // Smooth tile crossing: Preserve world-space position for visual continuity
+                        // Convert offset from old tile's coordinate system to new tile's
+                        let state_world = map.convert(**loc0) + offset0.state;
+                        let prev_world = map.convert(**loc0) + offset0.prev_step;
+                        let step_world = map.convert(**loc0) + offset0.step;
+
+                        let new_tile_center = map.convert(*loc);
+                        offset0.state = state_world - new_tile_center;
+                        offset0.prev_step = prev_world - new_tile_center;
+                        offset0.step = step_world - new_tile_center;
+                    }
                 } else {
                     // Remote players and NPCs: use heading-based positioning for smooth transitions
                     // Calculate current visual position to preserve for interpolation
