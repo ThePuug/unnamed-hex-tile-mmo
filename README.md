@@ -7,77 +7,41 @@
 
 # Play
 
-**Combat MVP Prototype** - The tactical reaction-based combat loop is fully playable.
+An early prototype testing a reaction-based combat system for a future MMO. The core loop is playable - explore a procedural hex world, engage enemies, and manage incoming attacks through a visible threat queue.
 
 ## What's Actually Working
 
-**Movement & Positioning**
-- Hex-based movement with persistent facing direction (you keep looking the direction you last moved)
-- Directional targeting - enemies in front of you are automatically targeted based on where you're facing
-- Terrain discovery with procedural generation and day/night cycles
+**The Reaction Queue** (the unique hook)
+You see incoming attacks before they hit. Circular timers appear above your health bar showing when each attack will land. This creates a decision window: do you spend stamina to clear threats defensively, or tank the damage and counter-attack while your enemy is vulnerable?
 
-**The Combat Loop**
-- Fight Wild Dogs using 5 distinct abilities with clear tactical roles
-- **Threat Queue System** (the unique part) - incoming attacks appear as circular timers above your health bar. You have 1-2 seconds to decide: clear the queue with a defensive ability, or take the hits and counter-attack
-- Resource management - balance stamina costs across offensive abilities (Lunge/Overpower) and defensive reactions (Knockback/Deflect)
-- Mutual destruction - both you and your enemy can die simultaneously if attacks are already in-flight
+Both you and enemies can die simultaneously if attacks are in-flight. Stamina management matters - run dry and you can't react.
 
-**Combat HUD**
-- Action bar shows ability cooldowns and resource costs
-- Threat icons display incoming attacks with countdown timers
-- World-space health bars and target indicators (red for hostile, green for allies)
-- Resource bars for health, stamina, and mana
+**Combat That Feels Responsive**
+Movement uses client-side prediction so there's no perceived lag. Arrow keys move you on the hex grid and set your facing direction. Enemies in front of you are automatically targeted. The combat HUD shows ability cooldowns, resource bars, and those critical threat timers.
 
-## Controls
-**Movement:** Arrow keys - Move and set facing direction
-**Abilities:**
-- Q - Lunge (40 dmg, 20 stam, 4 hex range) - Gap closer
-- W - Overpower (80 dmg, 40 stam, 1 hex range) - Big hit
-- E - Knockback (30 stam) - Counter the most recent attacker, push them away, clear that threat
-- R - Deflect (50 stam) - Panic button, clears ALL queued threats
-- Spacebar - Auto-Attack (20 dmg, adjacent only) - Basic attack
+You have abilities - a gap closer, a heavy hit, a counter-punch that removes specific threats, and a panic button that clears everything. Enemies include melee Wild Dogs and ranged Forest Sprites that force you to close distance or kite.
 
-**Other:**
-- G - Toggle hex grid visualization
-- ` (backtick) - Developer console
+**A Procedural World**
+Hex-based terrain generation with organic slopes, day/night cycles, and streaming chunks. Exploration reveals the map as you move. The world feels bigger than it is.
 
 ## What to Expect
 
-You spawn, Wild Dogs aggro you, combat begins. Watch the threat queue - those circular icons show incoming attacks. Let threats resolve and you take damage. Use Knockback to counter-punch specific attackers. Use Deflect when overwhelmed. Run out of stamina and you're in trouble.
+This is a combat prototype, not a full game. You spawn, enemies aggro, you fight. Death respawns you nearby with no penalty. There's no progression system, no gear to find, no quests.
 
-**The Core Question:** Does having time to react to incoming damage create interesting tactical decisions, or does it just delay the inevitable? That's what this prototype tests.
+The question being tested: **Does seeing attacks coming and choosing how to respond create interesting moment-to-moment decisions?** If you find yourself thinking "should I deflect now or save stamina?" then it's working.
 
-**Death:** You die, you respawn nearby. No penalties yet - this is about testing combat feel.
+Build with `cargo build`, then run `cargo run --bin server` and `cargo run --bin client` in separate terminals.
 
-# Game features
-## Currently Implemented
-- **Client-side prediction** - Movement feels instant, zero perceived lag
-- **Tactical reaction-based combat** - Designed for conscious decisions over twitch reflexes
-  - Reaction queue with visible threat timers (1-2 second windows to respond)
-  - Mutual destruction mechanics (both combatants can die simultaneously)
-  - Five-ability MVP set with offensive/defensive/reactive options
-- **Directional keyboard combat** - No mouse required, automatic targeting based on facing direction
-- **Hex movement system** - Persistent heading, 4-key directional movement
-- **Combat HUD** - Action bar, threat queue display, target indicators, resource bars
-- **Enemy AI** - Wild Dogs with aggro detection, pursuit behavior, and attack cycles
-- **Procedural terrain** - Perlin noise generation with organic slope transitions
-- **Day/night cycles** - Dynamic sun/moon with seasonal lighting
-- **Chunk-based world** - Terrain streaming with smart caching
+# Technical Notes
 
-## Architectural Foundations (for MMO scale)
-- Authoritative server with client-side prediction
-- R*-tree spatial indexing for O(log n) entity queries
-- Custom hexagonal coordinate system (`qrz` library)
-- Chunk-based terrain discovery with LRU world cache
-- Boundary-triggered fog-of-war (not per-movement)
-- Input stream isolation (streaming vs GCD)
-- A* pathfinding on hex grid
-- Do/Try event pattern for client-server authority
-- Four-stage damage pipeline: Deal → Insert → Resolve → Apply
-- Hybrid damage timing: outgoing at attack time, mitigation at resolution
-- ECS architecture (Bevy engine)
-- Network protocol with client prediction and rollback
-- Contextual developer console
-- Shared game logic in `common/` (client and server use identical physics/behavior)
+**What's Built So Far:**
+- Reaction-based combat with visible threat timers
+- Responsive movement (client-side prediction eliminates lag feel)
+- Directional targeting system (face enemies to target them)
+- Combat HUD with ability tracking and resource management
+- Enemy AI (Wild Dogs that pursue and attack, Forest Sprites that kite and shoot)
+- Procedural hex-based terrain with day/night cycles
+- Networked client-server architecture
 
-**Scale Target:** 1000+ concurrent players, 100 km² world (designed for it, not yet proven)
+**Design Target:**
+Eventually MMO-scale (1000+ concurrent players, large shared world). Current prototype validates core combat mechanics before scaling up. Built on authoritative server architecture with client prediction, ECS (Bevy engine), and custom hex coordinate system (`qrz` library).
