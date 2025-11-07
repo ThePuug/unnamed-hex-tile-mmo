@@ -1,8 +1,8 @@
 # Combat System - Feature Matrix
 
 **Specification:** [combat-system.md](combat-system.md)
-**Last Updated:** 2025-11-06
-**Overall Status:** 47/98 features complete (48%)
+**Last Updated:** 2025-11-07
+**Overall Status:** 49/98 features complete (50%)
 
 ---
 
@@ -75,10 +75,10 @@
 | Local player prediction | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md), [GUIDANCE.md](../../GUIDANCE.md) | Lines 7-17 (philosophy) | Input queue, offset.step prediction, server confirmation |
 | Movement intent broadcasting | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 1 | Lines 147-158 (ranged) | Server broadcasts destination when movement starts ([actor.rs:533+](../../src/server/systems/actor.rs)) |
 | Relevance filtering | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 2 | - | 30 hex radius spatial filtering via NNTree, per-client messaging ([renet.rs:398-422](../../src/server/systems/renet.rs)) |
-| Remote entity prediction | 🔄 In Progress | [ADR-011](../adr/011-movement-intent-system.md) | Lines 7-17 (responsive) | Client predicts NPC/player movement using intent (validation pending) |
-| Intent validation | 🔄 In Progress | [ADR-011](../adr/011-movement-intent-system.md) | - | Loc confirmations validate predictions, snap on desync (validation pending) |
+| Remote entity prediction | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 1, [ADR-011 Acceptance](../adr/011-acceptance.md) | Lines 7-17 (responsive) | Client predicts NPC/player movement using intent ([actor.rs:185-248](../../src/client/systems/actor.rs)) |
+| Intent validation | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 4, [ADR-011 Acceptance](../adr/011-acceptance.md) | - | Self-correcting interpolation via Unreliable channel, heading tracking prevents redundant broadcasts |
 
-**Category Status:** 3/5 complete (60% - ADR-011 Phases 1-2 complete)
+**Category Status:** 5/5 complete (100% - ADR-011 Phases 1, 2, 4 complete; Phase 3 obsolete; Phase 5 deferred)
 
 **Impact:** Solves "ghost targeting" and "teleporting NPC" problems. Reduces perceived lag from 175ms to 50ms. Enables smooth remote entity movement.
 
@@ -391,87 +391,6 @@ Features described in spec but not yet in implementation plan:
 
 ---
 
-## Progress Summary
-
-**Total Combat System:** 47/98 features complete (48%)
-
-**Fully Complete Categories (100%):**
-- Reaction Queue System: 7/7 ✅
-- Resources: 5/5 ✅
-- Special Mechanics: 1/1 ✅
-
-**Strong Progress (80%+):**
-- Movement and Heading: 5/6 (83%)
-- Combat HUD: 6/7 (86%)
-
-**Partial Implementation (25-49%):**
-- Combat State: 2/4 (50%)
-- Damage Calculation: 2/6 (33%)
-
-**Solid Foundation (50-79%):**
-- Targeting System: 6/10 (60%)
-- Enemy AI: 3/4 (75%)
-- Attack Execution Patterns: 3/5 (60%)
-- MVP Abilities: 3/5 (60%)
-- Network & Prediction: 3/5 (60% - ADR-011 Phases 1-2 complete)
-
-**Early Stages (1-24%):**
-- Reaction Abilities: 2/9 (22%)
-- Attributes System: 1/7 (14%)
-
-**Not Started (0%):**
-- Weapons System: 0/8
-- Armor System: 0/8
-
-**Key Achievements:**
-- Core combat loop functional (movement, targeting, abilities, reactions, HUD)
-- ADR-010 complete: Tier lock, movement speed scaling, ranged enemies
-- ADR-011 Phases 1-2 complete: Movement intent broadcasting + relevance filtering (30 hex radius)
-- Instant hit combat + attack telegraphs (eliminates bullet hell gameplay)
-- 5 abilities implemented: Auto-Attack, Lunge, Overpower, Knockback, Deflect (Volley NPC-only)
-- Reaction queue system fully operational
-- Network bandwidth optimized: Per-client intent filtering via spatial queries
-
-**Major Gaps:**
-- Build system (gear-skill gating): 0/23 features
-- TAB cycling and manual target selection
-- Counter and Fortify abilities (spec-defined MVP)
-- Critical hit system
-- Ground effect telegraphs (delayed AOE dodging)
-- 7 additional reaction abilities (post-MVP)
-
----
-
-## Next Priorities
-
-Based on actual implementation status and user value:
-
-1. ✅ ~~**Accept or Reject ADR-009**~~ - ACCEPTED (2025-11-03)
-2. ✅ ~~**Implement Accepted MVP Abilities**~~ - All 5 abilities complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect)
-3. ✅ ~~**Accept or Reject ADR-010**~~ - ACCEPTED (2025-11-05, see [ADR-010 Acceptance](../adr/010-acceptance.md))
-4. ✅ ~~**Implement Combat Variety Phase 1**~~ - Tier lock, movement speed, projectiles, Forest Sprite complete
-5. 🔄 **Complete ADR-011 Movement Intent System** - PHASES 1-2 COMPLETE
-   - ✅ Phase 1: Core intent broadcasting ([actor.rs:533+](../../src/server/systems/actor.rs))
-   - ✅ Phase 2: Relevance filtering - 30 hex radius, NNTree spatial query ([renet.rs:398-422](../../src/server/systems/renet.rs))
-   - ⏸️ Phase 3: ~~Projectile targeting integration~~ (obsolete - instant hit combat)
-   - 🔄 Phase 4: Edge case handling (sequence validation, packet loss, teleports) - **PARTIAL**
-   - **Impact:** Fixes "ghost targeting" and teleporting NPCs, enables smooth remote entity movement
-   - **Combat Refinement:** Instant hit + attack telegraphs eliminates bullet hell gameplay
-   - **Bandwidth:** Optimized via relevance filtering, metrics tracking for high-traffic areas
-6. **Create ADR-011 Acceptance Document** - Capture Phase 1 implementation + combat system refinement
-7. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, instant hit mechanics
-8. **Decide: Spec alignment vs implementation continuity**
-   - Option A: Implement Counter/Fortify to match updated spec (demonstrates build system philosophy)
-   - Option B: Keep Overpower/Knockback, update spec to match implementation (maintains working code)
-   - Option C: Defer until full build system ADR created (comprehensive approach)
-9. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
-10. **Build System Foundation ADR** - Design gear-based skill gating, weapon/armor components, ability slotting
-11. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
-12. **Critical Hit System** - Instinct-based crits for damage variety
-13. **Ground Effect Telegraphs** - Delayed AOE with dodging windows (Eruption, Trap abilities)
-
----
-
-**Document Version:** 1.0
+**Document Version:** 1.1
+**Last Updated:** 2025-11-07
 **Maintained By:** Development team
-**Review Cadence:** Update after each ADR acceptance or spec change
