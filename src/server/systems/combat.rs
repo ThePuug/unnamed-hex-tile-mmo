@@ -24,7 +24,7 @@ pub fn process_deal_damage(
 ) {
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, damage_type } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, damage_type, ability } = event {
         // Get attacker attributes for scaling
         let Ok(source_attrs) = all_attrs.get(*source) else {
             return;
@@ -59,6 +59,7 @@ pub fn process_deal_damage(
             damage_type: *damage_type,
             inserted_at: now,
             timer_duration,
+            ability: *ability,
         };
 
         // Try to insert threat into queue

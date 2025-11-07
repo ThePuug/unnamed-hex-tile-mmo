@@ -2,6 +2,7 @@
 mod config;
 pub mod grid;
 pub mod perf_ui;
+pub mod network_ui;
 mod toggles;
 
 use bevy::{
@@ -35,11 +36,14 @@ impl Plugin for DiagnosticsPlugin {
             PerfUiPlugin,
         ));
 
-        // Register custom perf UI entry type
+        // Register custom perf UI entry types
         app.add_perf_ui_simple_entry::<perf_ui::PerfUiTerrainTiles>();
+        app.add_perf_ui_simple_entry::<network_ui::PerfUiNetworkBandwidth>();
+        app.add_perf_ui_simple_entry::<network_ui::PerfUiNetworkMessages>();
 
         // Initialize shared diagnostic resources
         app.init_resource::<DiagnosticsState>();
+        app.init_resource::<network_ui::NetworkMetrics>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -47,6 +51,7 @@ impl Plugin for DiagnosticsPlugin {
             (
                 grid::setup_grid_overlay,
                 perf_ui::setup_performance_ui,
+                network_ui::setup_network_ui,
             ),
         );
 
@@ -56,6 +61,8 @@ impl Plugin for DiagnosticsPlugin {
             (
                 // Mesh update systems (no direct input handlers - use dev console)
                 grid::update_grid_mesh,
+                // Network metrics update (end of frame)
+                network_ui::update_network_metrics,
             ),
         );
     }

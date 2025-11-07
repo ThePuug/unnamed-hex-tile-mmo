@@ -24,6 +24,8 @@ pub struct QueuedThreat {
     pub inserted_at: Duration,
     /// How long this threat has before it resolves
     pub timer_duration: Duration,
+    /// Optional ability that caused this threat (for visual effects/telegraphs)
+    pub ability: Option<crate::common::message::AbilityType>,
 }
 
 /// Reaction queue component that holds incoming threats
@@ -83,6 +85,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
         assert_eq!(queue.len(), 1);
         assert!(!queue.is_full());
@@ -94,6 +97,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
         assert_eq!(queue.len(), 2);
         assert!(queue.is_full());

@@ -25,7 +25,7 @@ use crate::{
     },
     server::{
         resources::{terrain::*, *},
-        systems::{actor, combat, input, projectile, reaction_queue, renet, spawner, targeting, world},
+        systems::{actor, combat, input, reaction_queue, renet, spawner, targeting, world},
         *
     }
 };
@@ -70,17 +70,20 @@ fn main() {
         world::setup,
     ));
 
-    app.add_systems(PreUpdate, (
-        renet::write_try,
-    ));
-
     app.add_systems(FixedUpdate, (
         physics::update,
-        common::systems::actor::update,
         common::systems::combat::resources::regenerate_resources,
         common::systems::combat::state::update_combat_state,
         reaction_queue::process_expired_threats,
-        projectile::update_projectiles, // ADR-010 Phase 5: Projectile movement and hit detection
+    ));
+
+    app.add_systems(FixedPostUpdate, (
+        input::broadcast_player_movement_intent, // ADR-011: Broadcast player movement intents AFTER physics has processed all inputs
+        actor::broadcast_heading_changes, // ADR-011: Broadcast heading changes to clients
+    ));
+
+    app.add_systems(PreUpdate, (
+        renet::write_try,
     ));
 
     // Core combat and actor systems
@@ -97,6 +100,7 @@ fn main() {
         combat::abilities::lunge::handle_lunge,
         combat::abilities::knockback::handle_knockback,
         combat::abilities::deflect::handle_deflect,
+        combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
         common::systems::combat::resources::check_death, // Check for death from ANY source
     ));

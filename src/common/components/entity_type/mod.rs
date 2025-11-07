@@ -14,7 +14,6 @@ pub enum EntityType {
     #[default] Unset,
     Actor(ActorImpl),
     Decorator(Decorator),
-    Projectile,
 }
 
 impl EntityType {
@@ -25,7 +24,6 @@ impl EntityType {
             EntityType::Unset => "Unknown",
             EntityType::Actor(actor_impl) => actor_impl.identity.display_name(),
             EntityType::Decorator(_) => "Object",
-            EntityType::Projectile => "Projectile",
         }
     }
 }

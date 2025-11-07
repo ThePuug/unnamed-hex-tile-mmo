@@ -163,6 +163,7 @@ pub fn handle_overpower(
                     target: target_ent,
                     base_damage,
                     damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::Overpower),
                 },
             },
             target_ent,

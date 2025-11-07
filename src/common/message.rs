@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::common::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, projectile::*, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, reaction_queue::*, resources::*, * },
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
@@ -15,11 +15,11 @@ pub enum Event {
     Discover { ent: Entity, qrz: Qrz },
     /// Server-side only: request to discover a chunk
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
-    /// Server → Client: chunk data containing up to 64 tiles (8x8)
+    /// Server → Client: chunk data containing up to 256 tiles (16x16)
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
-        tiles: ArrayVec<[(Qrz, EntityType); 64]>,
+        tiles: ArrayVec<[(Qrz, EntityType); 256]>,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
@@ -35,6 +35,7 @@ pub enum Event {
         target: Entity,
         base_damage: f32,
         damage_type: DamageType,
+        ability: Option<AbilityType>,
     },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
@@ -55,8 +56,13 @@ pub enum Event {
     Pong { client_time: u128 },
     /// Client → Server: Set tier lock for targeting (ADR-010 Phase 1)
     SetTierLock { ent: Entity, tier: RangeTier },
-    /// Client-only: Spawn hit flash effect at location (projectile hit visual)
-    SpawnHitFlash { loc: Loc },
+    /// Server → Client: Entity intends to move to destination (ADR-011)
+    /// Sent when movement starts (before completion) to enable client-side prediction
+    MovementIntent {
+        ent: Entity,
+        destination: Qrz,   // Target tile
+        duration_ms: u16,   // Expected travel time (for speed scaling)
+    },
 }
 
 /// Types of abilities that can be used (ADR-009 MVP ability set)
@@ -72,6 +78,8 @@ pub enum AbilityType {
     Deflect,
     /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
     AutoAttack,
+    /// NPC: Ranged attack with telegraph (20 dmg, 3s CD, 5-8 hex range)
+    Volley,
 }
 
 /// Reasons why an ability usage might fail
@@ -109,7 +117,6 @@ pub enum Component {
     Mana(Mana),
     Offset(Offset),
     PlayerControlled(PlayerControlled),
-    Projectile(Projectile),
     Stamina(Stamina),
     TierLock(crate::common::components::tier_lock::TierLock),
 }

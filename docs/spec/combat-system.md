@@ -144,16 +144,18 @@ Scenario: Warrior fighting NPC dog (range 1), hostile player approaches (range 7
 * Typically melee/adjacent hex abilities or gap closers
 * Example: Lunge (Direct signature), Overpower (Overwhelming signature)
 
-**Projectile Attacks:**
-* Projectile spawns and travels toward target hex
+**Ranged Attacks:**
+* Resolve instantly on cast (no projectile travel time)
+* Damage applied immediately to target's reaction queue
 * Targets the hostile/ally indicated at moment of cast
-* Projectile travels in straight line toward target's location (snapshot)
-* If target moves after cast, projectile continues to original hex (dodgeable!)
-* Provides visual warning before impact (see it coming)
-* Speed varies by ability (arrow fast, fireball slow)
-* Hit detection: Damages entities at impact hex when projectile arrives
-* Example: Volley (Distant signature), basic ranged attack
-* **Player Interaction:** Face target, press ability → projectile fires at indicated target
+* **Attack telegraphs** provide visual feedback (not dodge warnings):
+  - Yellow ball appears over attacker when ability activates
+  - On hit: Line draws from attacker to target showing damage trajectory
+  - Telegraphs show what happened, not what will happen (damage already queued)
+* Cannot be dodged by movement (instant hit at cast moment)
+* Skill expression comes from **reaction queue management** and positioning, not twitch dodging
+* Example: Volley (Forest Sprite ranged attack)
+* **Player Interaction:** Face target, press ability → instant damage to target's queue + visual feedback
 
 **Ground Effects:**
 * Telegraph appears on target hexes before damage resolves
@@ -173,6 +175,39 @@ Scenario: Warrior fighting NPC dog (range 1), hostile player approaches (range 7
 * Rare, expensive, ultimate-tier abilities
 * Distinct visual/audio cues (cannot be mistaken for normal attacks)
 * Example: True Strike, Piercing Shot
+
+**Attack Telegraphs (Visual Feedback System):**
+
+Attack telegraphs provide **combat clarity** without requiring twitch-based dodging. They show what happened, not what will happen.
+
+**Visual System:**
+* **Yellow ball** appears over attacker when ranged ability activates
+* **Line trajectory** draws from attacker to target on successful hit
+* Telegraphs appear **after damage is queued** (not a dodge warning)
+* Duration: Brief visual feedback (0.5-1.0 seconds), then fades
+
+**Purpose:**
+* Combat clarity - Players understand who attacked and from where
+* Source identification - Track multiple ranged enemies in chaotic fights
+* Damage attribution - Know which enemy to prioritize or flee from
+* **Not a dodging mechanic** - By the time you see the telegraph, damage is already queued
+
+**Differentiation from Ground Effects:**
+* **Attack telegraphs** = Instant hit feedback (ranged attacks like Volley)
+  - Damage already in your reaction queue
+  - Shows combat history, not future threat
+  - Cannot be avoided by movement
+* **Ground effects** = Delayed AOE warnings (abilities like Eruption, Trap)
+  - Telegraphs appear **before** damage resolves
+  - Fixed delay (1-3 seconds) before damage applies
+  - **Can be dodged** by moving off telegraphed hexes
+  - Intentional skill expression through positioning
+
+**Design Rationale:**
+* Instant hit combat eliminates bullet hell / twitch mechanics at scale
+* Attack telegraphs preserve combat readability without requiring pixel-perfect reflexes
+* Skill expression comes from reaction queue management and positioning, not projectile dodging
+* Ground effects (delayed AOE) still provide positioning-based counterplay for appropriate abilities
 
 ---
 
@@ -466,12 +501,14 @@ Enemies use simplified directional targeting:
 1. Detect player within aggro radius (15 hexes)
 2. Face toward player
 3. Maintain distance of 5-8 hexes (kite if player approaches)
-4. Attack every 3-4 seconds (projectile with travel time)
+4. Attack every 3-4 seconds (instant hit ranged attack with visual telegraph)
 5. If player closes within 3 hexes, disengage (move away while maintaining facing)
 
 **AI Behavior:**
 * Kiting enemies back-pedal while maintaining facing (harder to flank)
-* Projectiles snapshot player position (player can dodge by moving)
+* Instant hit mechanics - damage enters player's reaction queue immediately
+* Attack telegraphs provide visual feedback (yellow ball → hit line) for combat clarity
+* Cannot be dodged by movement - player must use reaction abilities to defend
 
 ### Telegraph System
 
@@ -501,12 +538,12 @@ Enemies broadcast intent before major attacks:
 * No arbitrary "tie-breaker" rules
 
 **Example:**
-1. Player A casts Fireball at Player B (lethal damage)
-2. Player B casts Lightning at Player A (lethal damage)
-3. Both projectiles travel and hit simultaneously
-4. Both enter reaction queues
+1. Player A casts ranged ability at Player B (lethal damage)
+2. Player B casts ranged ability at Player A (lethal damage)
+3. Both attacks hit instantly, damage enters reaction queues simultaneously
+4. Attack telegraphs show both hits (yellow ball → line feedback)
 5. Neither player reacts (out of resources or committed to trade)
-6. Both die
+6. Both queue timers expire, both die
 
 ---
 

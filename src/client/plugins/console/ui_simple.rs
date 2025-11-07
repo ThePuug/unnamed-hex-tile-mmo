@@ -131,21 +131,9 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
-                        Text::new("2. Combat"),
+                        Text::new("2. Performance"),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(Color::WHITE),
-                    ));
-
-                    parent.spawn((
-                        Text::new("3. Performance"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::WHITE),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Tools        [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
                     ));
 
                     parent.spawn((
@@ -199,49 +187,6 @@ pub fn update_console_menu(
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
-                MenuPath::Combat => {
-                    // Combat menu
-                    parent.spawn((
-                        Text::new("1. Queue 20 Damage Threat   [Action]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("2. Drain 30 Stamina         [Action]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("3. Drain 25 Mana            [Action]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Clear Reaction Queue     [Action]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("5. Refill Resources         [Action]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.2, 0.8, 0.2)),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
-                    ));
-                }
                 MenuPath::Performance => {
                     // Performance menu
                     parent.spawn((
@@ -251,58 +196,9 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
-                        Text::new("2. Toggle FPS Counter       [Future]"),
+                        Text::new(format!("2. Toggle Network UI        [{}]", on_off(diagnostics_state.network_ui_visible))),
                         TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("3. Toggle Detailed Stats    [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Log Frame Report         [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
-                    ));
-                }
-                MenuPath::Tools => {
-                    // Tools menu
-                    parent.spawn((
-                        Text::new("1. Teleport to Cursor       [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("2. Spawn NPC at Cursor      [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("3. Clear All Entities       [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Place Test Spawner       [Future]"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                        TextColor(state_color(diagnostics_state.network_ui_visible)),
                     ));
 
                     parent.spawn((

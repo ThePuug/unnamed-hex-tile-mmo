@@ -80,6 +80,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
 
         let attrs = ActorAttributes::default();

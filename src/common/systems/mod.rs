@@ -1,4 +1,3 @@
-pub mod actor;
 pub mod behaviour;
 pub mod combat;
 pub mod physics;

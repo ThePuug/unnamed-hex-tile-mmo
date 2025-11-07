@@ -104,6 +104,7 @@ pub fn setup(
             Some(AbilityType::Knockback) => "💨",  // Push effect
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
+            Some(AbilityType::Volley) => "🏹",     // NPC ranged attack (not on bar)
             None => "🔒",
         };
 
@@ -146,6 +147,7 @@ pub fn setup(
                 AbilityType::Knockback => "30".to_string(),   // 30 stamina
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
+                AbilityType::Volley => String::new(),         // NPC-only (not on player bar)
             };
 
             if !cost_text.is_empty() {
@@ -342,6 +344,10 @@ fn get_ability_state(
         }
         AbilityType::AutoAttack => {
             // Passive ability - not on action bar, always "ready" but not shown
+            AbilityState::Ready
+        }
+        AbilityType::Volley => {
+            // NPC-only ability - not on player action bar
             AbilityState::Ready
         }
     }

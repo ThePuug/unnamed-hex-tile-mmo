@@ -73,16 +73,15 @@ impl NpcTemplate {
         }
     }
 
-    /// Select a random NPC template with weighted distribution (ADR-010 Phase 4)
+    /// Select a random NPC template with 50/50 distribution
     ///
-    /// ADR-010 specifies 40% Forest Sprites, 60% Wild Dogs for varied encounters.
-    /// This creates tactical variety in spawned encounters.
+    /// Equal split between ranged (Forest Sprites) and melee (Wild Dogs).
     pub fn random_mixed() -> Self {
         let mut rng = rand::rng();
         let roll = rng.random_range(0..100);
         match roll {
-            0..40 => Self::ForestSprite,  // 40% ranged
-            _ => Self::Dog,              // 60% melee
+            0..50 => Self::ForestSprite,  // 50% ranged
+            _ => Self::Dog,              // 50% melee
         }
     }
 }

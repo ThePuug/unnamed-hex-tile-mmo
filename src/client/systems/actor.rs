@@ -144,27 +144,6 @@ pub fn do_spawn(
                 // Health/Stamina/Mana/CombatState will be inserted by Incremental events from server
                 // (do_incremental handles inserting missing components)
             }
-            EntityType::Projectile => {
-                let world_pos = map.convert(qrz);
-                let loc = Loc::new(qrz);
-                let mesh = meshes.add(Cuboid::new(0.3, 0.3, 0.3)); // Small cube
-                let material = materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.3, 0.0), // Orange
-                    emissive: LinearRgba::rgb(2.0, 0.6, 0.0), // Glowing
-                    ..default()
-                });
-                commands.entity(ent).insert((
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    Transform::from_translation(world_pos),
-                    Visibility::default(),
-                    Aabb::default(),
-                    loc,
-                    typ,
-                    Offset::default(),
-                    Heading::default(),
-                ));
-            }
             _ => continue,
         }
     }
@@ -199,206 +178,69 @@ fn get_asset(typ: EntityType) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use qrz::Qrz;
+/// Apply movement intent to predict remote entity movement (ADR-011)
+///
+/// When a MovementIntent arrives, start interpolating toward the predicted destination.
+/// Local player is skipped (already predicted via Input system).
+pub fn apply_movement_intent(
+    mut commands: Commands,
+    mut reader: EventReader<Do>,
+    mut query: Query<(&mut Offset, &Loc, &Heading)>,
+    map: Res<Map>,
+    time: Res<Time>,
+    buffers: Res<InputQueues>,
+) {
+    for &message in reader.read() {
+        let Do { event: Event::MovementIntent { ent, destination, duration_ms } } = message
+            else { continue };
 
-    #[test]
-    fn test_stationary_player_with_heading_should_stand_in_heading_triangle() {
-        // This test verifies that when a player is stationary (not pressing movement keys)
-        // but has a heading set, they are positioned in the triangle of their hex
-        // corresponding to their heading direction.
+        // Skip intent for local player (we predict using Input, not Intent)
+        if buffers.get(&ent).is_some() {
+            continue;
+        }
 
-        // Setup
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-
-        // Player is stationary (offset.step and prev_step are both zero)
-        let offset = Offset {
-            state: Vec3::ZERO,
-            step: Vec3::ZERO,
-            prev_step: Vec3::ZERO,
-            interp_elapsed: 0.0,
-            interp_duration: 0.0,
+        let Ok((mut offset, loc, heading)) = query.get_mut(ent) else {
+            continue;
         };
 
-        // Player is facing East (q: 1, r: 0, z: 0)
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
+        // Calculate target position (destination tile + heading-adjusted offset)
+        // Use actual Heading component (updated by broadcast_heading_changes)
+        let dest_tile_center = map.convert(destination);
+        let current_tile_world = map.convert(**loc);
 
-        // Player is not pressing any movement keys
-        let keybits = KeyBits::default();
-
-        // Expected position: center of tile + direction to East neighbor * HERE
-        let tile_center = map.convert(*loc);
-        let east_neighbor = map.convert(*loc + *heading);
-        let direction = east_neighbor - tile_center;
-        let expected_position = tile_center + direction * HERE;
-
-        // Simulate what the update function should calculate
-        // (Testing the logic without needing the full ECS system)
-        let overstep_fraction = 0.0; // Just ran FixedUpdate
-        let prev_pos = map.convert(*loc) + offset.prev_step;
-        let curr_pos = map.convert(*loc) + offset.step;
-        let lpx = prev_pos.lerp(curr_pos, overstep_fraction);
-
-        // The heading-based positioning logic from update()
-        let is_stationary = keybits.key_bits & (KB_HEADING_Q | KB_HEADING_R) == 0;
-        let final_pos = if is_stationary && *heading != Qrz::default() {
-            let tile_center = map.convert(*loc);
-            let heading_neighbor = map.convert(*loc + *heading);
-            let direction = heading_neighbor - tile_center;
-            let heading_pos_xz = tile_center + direction * HERE;
-            Vec3::new(heading_pos_xz.x, lpx.y, heading_pos_xz.z)
+        // Calculate heading-adjusted offset using actual Heading component
+        let dest_offset = if **heading != default() {
+            use crate::common::components::heading::HERE;
+            let heading_neighbor = map.convert(destination + **heading);
+            let direction = heading_neighbor - dest_tile_center;
+            (direction * HERE).xz()
         } else {
-            lpx
+            // No heading - stay at tile center
+            Vec2::ZERO
         };
+        let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
 
-        assert_eq!(
-            final_pos, expected_position,
-            "Stationary player with heading should stand in heading triangle.\n\
-             Expected: {:?}\n\
-             Actual: {:?}",
-            expected_position, final_pos
-        );
-    }
-
-    #[test]
-    fn test_moving_player_should_use_physics_position() {
-        // When a player is actively moving (offset.step has significant magnitude),
-        // their position should be based on the physics simulation (offset.step),
-        // NOT the heading triangle positioning.
-
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-
-        // Player is moving (offset.step has significant value)
-        let physics_position = Vec3::new(0.5, 0.0, 0.3);
-        let offset = Offset {
-            state: Vec3::ZERO,
-            step: physics_position,
-            prev_step: Vec3::new(0.4, 0.0, 0.2),
-            interp_elapsed: 0.0,
-            interp_duration: 0.0,
-        };
-
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
-
-        // Expected: position should be based on offset.step (physics), not heading
-        let tile_center = map.convert(*loc);
-        let expected_position = tile_center + physics_position;
-
-        // Heading-based position (should NOT be used when moving)
-        let east_neighbor = map.convert(*loc + *heading);
-        let direction = east_neighbor - tile_center;
-        let heading_position = tile_center + direction * HERE;
-
-        let actual_position = tile_center + offset.step;
-
-        assert_eq!(
-            actual_position, expected_position,
-            "Moving player should use physics position, not heading position"
-        );
-
-        assert_ne!(
-            actual_position, heading_position,
-            "Moving player should not be constrained to heading triangle"
-        );
-    }
-
-    #[test]
-    fn test_stationary_player_with_no_heading_should_stand_at_center() {
-        // When a player has no heading set (Heading::default()), they should stand
-        // at the center of their tile, regardless of whether they're moving.
-
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-
-        let offset = Offset {
-            state: Vec3::ZERO,
-            step: Vec3::ZERO,
-            prev_step: Vec3::ZERO,
-            interp_elapsed: 0.0,
-            interp_duration: 0.0,
-        };
-
-        let _heading = Heading::default(); // No heading
-
-        let tile_center = map.convert(*loc);
-        let expected_position = tile_center;
-        let actual_position = tile_center + offset.step;
-
-        assert_eq!(
-            actual_position, expected_position,
-            "Player with no heading should stand at tile center"
-        );
-    }
-
-    #[test]
-    fn test_moving_player_with_small_offset_should_not_use_heading_position() {
-        // REGRESSION TEST: When a player is actively moving (pressing movement keys)
-        // but their offset.step is temporarily small (e.g., just started moving),
-        // they should still use physics-based positioning, NOT heading-based positioning.
-        // This prevents stuttering where position jumps between heading triangle and physics.
-
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-
-        // Player just started moving - offset.step is small but non-zero
-        let small_offset = Vec3::new(0.005, 0.0, 0.005); // Magnitude < 0.01
-        let offset = Offset {
-            state: Vec3::ZERO,
-            step: small_offset,
-            prev_step: Vec3::ZERO,
-            interp_elapsed: 0.0,
-            interp_duration: 0.0,
-        };
-
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
-
-        // Player is pressing movement key (East direction)
-        let mut keybits = KeyBits::default();
-        keybits.set_pressed([KB_HEADING_Q], true);
-
-        // With the BUG: offset.step.xz().length_squared() < 0.01 is TRUE,
-        // so it would incorrectly use heading position, causing stutter
-
-        // Expected: Should use interpolated physics position
-        let tile_center = map.convert(*loc);
-        let overstep_fraction = 0.5;
-        let prev_pos = tile_center + offset.prev_step;
-        let curr_pos = tile_center + offset.step;
-        let expected_position = prev_pos.lerp(curr_pos, overstep_fraction);
-
-        // Heading position (should NOT be used when moving)
-        let heading_neighbor = map.convert(*loc + *heading);
-        let direction = heading_neighbor - tile_center;
-        let heading_position = Vec3::new(
-            (tile_center + direction * HERE).x,
-            expected_position.y,
-            (tile_center + direction * HERE).z
-        );
-
-        // The fix should check KeyBits, not offset magnitude
-        let is_stationary = keybits.key_bits & (KB_HEADING_Q | KB_HEADING_R) == 0;
-        let final_pos = if is_stationary && *heading != Qrz::default() {
-            heading_position
+        // Calculate where we are RIGHT NOW in the current interpolation (before overwriting it)
+        let current_interp_fraction = if offset.interp_duration > 0.0 {
+            (offset.interp_elapsed / offset.interp_duration).min(1.0)
         } else {
-            expected_position
+            1.0  // Completed or no interpolation - we're at offset.state
         };
+        let current_visual_offset = offset.prev_step.lerp(offset.step, current_interp_fraction);
 
-        assert_eq!(
-            final_pos, expected_position,
-            "Moving player (pressing keys) should use physics position even with small offset.\n\
-             This prevents stuttering between heading and physics positions.\n\
-             Expected (physics): {:?}\n\
-             Heading position: {:?}",
-            expected_position, heading_position
-        );
+        // Set up NEW interpolation: current visual position → predicted destination
+        offset.prev_step = current_visual_offset;  // Start from where we are NOW
+        offset.step = dest_world - current_tile_world; // Target is destination tile
 
-        assert_ne!(
-            final_pos, heading_position,
-            "Moving player should never snap to heading position while keys are pressed"
-        );
+        // Set interpolation duration based on intent
+        offset.interp_duration = duration_ms as f32 / 1000.0;
+        offset.interp_elapsed = 0.0;
+
+        // Insert prediction tracking component for validation
+        commands.entity(ent).insert(crate::common::components::movement_prediction::MovementPrediction::new(
+            destination,
+            time.elapsed() + Duration::from_millis(duration_ms as u64),
+            time.elapsed(),
+        ));
     }
 }

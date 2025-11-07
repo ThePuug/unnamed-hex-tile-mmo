@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, input, projectile, renet, targeting, world}
+    systems::{actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -95,7 +95,6 @@ fn main() {
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
         physics::update,
-        projectile::update_projectiles, // Client-side projectile movement simulation
         common::systems::combat::resources::regenerate_resources,
     ));
 
@@ -106,6 +105,7 @@ fn main() {
     app.add_systems(Update, (
         panic_on_error_system,
         actor::do_spawn,
+        actor::apply_movement_intent, // ADR-011: Apply movement intent predictions
         actor::try_gcd,
         actor::update,
         actor_dead_visibility::update_dead_visibility,
@@ -113,8 +113,6 @@ fn main() {
         camera::update,
         targeting::update_targets, // Update hostile targets every frame (detects when targets move)
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)
-        projectile::spawn_hit_flash, // Spawn flash effects when projectiles hit
-        projectile::update_hit_flashes, // Update and fade out flash effects
         combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
         combat::apply_gcd,
         // REMOVED: Client-side attack prediction - all combat is server-authoritative
@@ -124,6 +122,17 @@ fn main() {
         combat::handle_ability_failed,
         common::systems::world::try_incremental,
         common::systems::world::do_incremental,
+    ));
+
+    // Attack telegraph systems
+    app.add_systems(Update, (
+        attack_telegraph::on_insert_threat,
+        // CRITICAL: on_apply_damage MUST run before on_clear_queue
+        // When damage is applied, server sends both ApplyDamage and ClearQueue events
+        // We need to spawn the line before clearing the ball
+        attack_telegraph::on_apply_damage.before(attack_telegraph::on_clear_queue),
+        attack_telegraph::on_clear_queue,
+        attack_telegraph::update_telegraphs,
     ));
 
     app.add_systems(Update, (

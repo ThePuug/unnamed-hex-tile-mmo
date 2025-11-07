@@ -5,11 +5,12 @@ use crate::common::{
     plugins::nntree::*,
 };
 
-/// Handle AutoAttack ability
-/// - Passive ability (no stamina cost, no GCD)
-/// - Attacks ALL hostile entities on target hex
-/// - Requires target_loc to be adjacent (distance == 1)
-pub fn handle_auto_attack(
+/// Handle Volley ability (NPC ranged attack)
+/// - NPC-only ability (typically used by Kite behavior)
+/// - Ranged attack (optimal 5-8 hex range)
+/// - No stamina cost, cooldown tracked in Kite component
+/// - Attacks single hostile target
+pub fn handle_volley(
     mut commands: Commands,
     mut reader: EventReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
@@ -23,16 +24,16 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Filter for AutoAttack only
-        let Some(AbilityType::AutoAttack) = (ability == &AbilityType::AutoAttack).then_some(ability) else {
+        // Filter for Volley only
+        let Some(AbilityType::Volley) = (ability == &AbilityType::Volley).then_some(ability) else {
             continue;
         };
 
         // Check if caster is dead (has RespawnTimer)
         if respawn_query.get(*ent).is_ok() {
-            // Dead players can't use abilities - silently ignore
+            // Dead NPCs can't use abilities - silently ignore
             continue;
-        }
+        };
 
         // Validate target_loc is provided
         let Some(target_qrz) = ability_target_loc else {
@@ -50,11 +51,12 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Validate target hex is adjacent (considering slopes)
-        // Adjacent means 1 hex away horizontally with at most 1 z-level difference
+        // Validate target is within range (optimal 5-8 hexes for kite behavior)
+        // Allow slightly wider range (1-10 hexes) for flexibility
         let target_loc = Loc::new(*target_qrz);
+        let distance = caster_loc.flat_distance(&target_loc);
 
-        if !caster_loc.is_adjacent(&target_loc) {
+        if distance < 1 || distance > 10 {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -71,8 +73,8 @@ pub fn handle_auto_attack(
             .and_then(|(_, _, pc_opt)| pc_opt)
             .is_some();
 
-        // Find ALL hostile entities on target hex using NNTree
-        let target_entities: Vec<Entity> = nntree
+        // Find single hostile target on target hex using NNTree
+        let target_entity: Option<Entity> = nntree
             .locate_within_distance(target_loc, 0) // Distance 0 = exact location match
             .filter_map(|nn| {
                 let target_ent = nn.ent;
@@ -95,18 +97,18 @@ pub fn handle_auto_attack(
                     }
 
                     let target_is_player = player_controlled_opt.is_some();
-                    // Asymmetric targeting: can only attack entities on opposite "team"
+                    // Asymmetric targeting: NPCs can only attack players
                     if caster_is_player != target_is_player {
                         Some(target_ent)
                     } else {
-                        None  // Same team - no friendly fire
+                        None
                     }
                 })
             })
-            .collect();
+            .next(); // Take first valid target
 
-        // If no valid targets on the hex, fail
-        if target_entities.is_empty() {
+        // If no valid target found, fail the ability
+        let Some(target) = target_entity else {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -114,25 +116,21 @@ pub fn handle_auto_attack(
                 },
             });
             continue;
-        }
+        };
 
-        // Deal damage to ALL hostile entities on the target hex
-        let base_damage = 20.0;
-        for target_ent in target_entities {
-            commands.trigger_targets(
-                Try {
-                    event: GameEvent::DealDamage {
-                        source: *ent,
-                        target: target_ent,
-                        base_damage,
-                        damage_type: DamageType::Physical,
-                        ability: Some(AbilityType::AutoAttack),
-                    },
+        // Send DealDamage event for this target
+        // Volley: 20 damage, Physical type
+        commands.trigger_targets(
+            Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target,
+                    base_damage: 20.0,
+                    damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::Volley),
                 },
-                target_ent,
-            );
-        }
-
-        // AutoAttack does NOT trigger GCD (passive ability) - no event emitted
+            },
+            target,
+        );
     }
 }

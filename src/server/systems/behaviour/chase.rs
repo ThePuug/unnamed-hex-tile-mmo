@@ -1,5 +1,6 @@
 use bevy::{prelude::*, ecs::hierarchy::ChildOf};
 use rand::seq::IteratorRandom;
+use qrz::{Convert, Qrz};
 
 use crate::{
     common::{
@@ -7,6 +8,7 @@ use crate::{
             Loc, heading::Heading, offset::Offset, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
         },
+        message::{Event, Do},
         plugins::nntree::*,
         resources::map::Map,
         systems::physics,
@@ -16,6 +18,64 @@ use crate::{
         target_lock::TargetLock,
     },
 };
+
+/// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
+fn broadcast_intent(
+    commands: &mut Commands,
+    writer: &mut EventWriter<Do>,
+    map: &Map,
+    npc_entity: Entity,
+    npc_loc: &Loc,
+    next_tile: Qrz,
+    heading: &Heading,
+    movement_speed: f32,
+    intent_state_opt: Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,
+) {
+    // Get or initialize MovementIntentState
+    let mut intent_state = if let Some(state) = intent_state_opt {
+        state
+    } else {
+        // First time - add component and skip (will process next frame)
+        commands.entity(npc_entity).insert(crate::common::components::movement_intent_state::MovementIntentState::default());
+        return;
+    };
+
+    // Skip if already broadcast for this destination and heading
+    if next_tile == intent_state.last_broadcast_dest && *heading == intent_state.last_broadcast_heading {
+        return;
+    }
+
+    // Calculate distance and duration (to heading-adjusted destination position)
+    let current_world = map.convert(**npc_loc) + Vec3::ZERO; // At tile center when deciding
+    let dest_tile_center = map.convert(next_tile);
+
+    // Calculate heading-adjusted offset at destination (movement direction)
+    let movement_direction = next_tile - **npc_loc;
+    let dest_offset = if movement_direction != qrz::Qrz::default() {
+        use crate::common::components::heading::HERE;
+        let heading_neighbor = map.convert(next_tile + movement_direction);
+        let direction = heading_neighbor - dest_tile_center;
+        (direction * HERE).xz()
+    } else {
+        Vec2::ZERO
+    };
+    let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
+
+    let distance = (dest_world - current_world).length();
+    let duration_ms = (distance / movement_speed) as u16;
+
+    // Update state and broadcast
+    intent_state.last_broadcast_dest = next_tile;
+    intent_state.last_broadcast_heading = *heading;
+
+    writer.write(Do {
+        event: Event::MovementIntent {
+            ent: npc_entity,
+            destination: next_tile + qrz::Qrz::Z, // Entity stands ON terrain (one tile above)
+            duration_ms,
+        }
+    });
+}
 
 /// Chase behavior - unified hostile pursuit and engagement
 ///
@@ -34,6 +94,7 @@ pub struct Chase {
 
 pub fn chase(
     mut commands: Commands,
+    mut writer: EventWriter<Do>,  // ADR-011: Broadcast movement intents
     mut query: Query<(
         Entity,
         &Chase,
@@ -44,6 +105,7 @@ pub fn chase(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
+        Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &ChildOf,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
@@ -52,7 +114,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, child_of) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -96,6 +158,9 @@ pub fn chase(
 
                 let dt_ms = dt.delta().as_millis() as i16;
                 let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+                // ADR-011: Broadcast intent BEFORE physics computes movement
+                broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                 let (offset, airtime) = physics::apply(
                     Loc::new(*next_tile),
@@ -182,6 +247,9 @@ pub fn chase(
 
                         let dt_ms = dt.delta().as_millis() as i16;
                         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+                        // ADR-011: Broadcast intent BEFORE physics computes movement
+                        broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                         let (offset, airtime) = physics::apply(
                             Loc::new(*next_tile),
@@ -289,6 +357,9 @@ pub fn chase(
             // Apply physics
             let dt_ms = dt.delta().as_millis() as i16;
             let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+            // ADR-011: Broadcast intent BEFORE physics computes movement
+            broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
             let (offset, airtime) = physics::apply(
                 Loc::new(*next_tile),

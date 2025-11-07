@@ -185,6 +185,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         // Insert into empty queue - should not overflow
@@ -205,6 +206,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
         let threat2 = QueuedThreat {
             source: entity,
@@ -212,6 +214,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
@@ -226,6 +229,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         let overflow = insert_threat(&mut queue, threat3.clone(), Duration::from_secs(2));
@@ -247,6 +251,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         queue.threats.push_back(threat);
@@ -268,6 +273,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         queue.threats.push_back(threat.clone());
@@ -291,6 +297,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         // Threat 2: inserted at 0.5s, expires at 1.5s
@@ -300,6 +307,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_millis(500),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         };
 
         queue.threats.push_back(threat1);
@@ -328,6 +336,7 @@ mod tests {
                 damage_type: DamageType::Physical,
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
+            ability: None,
             });
         }
 
@@ -352,6 +361,7 @@ mod tests {
                 damage_type: DamageType::Physical,
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
+            ability: None,
             });
         }
 
@@ -376,6 +386,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -383,6 +394,7 @@ mod tests {
             damage_type: DamageType::Magic,
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -390,6 +402,7 @@ mod tests {
             damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -397,6 +410,7 @@ mod tests {
             damage_type: DamageType::Magic,
             inserted_at: Duration::from_secs(3),
             timer_duration: Duration::from_secs(1),
+            ability: None,
         });
 
         assert_eq!(queue.len(), 4);

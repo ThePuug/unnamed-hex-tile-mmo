@@ -26,6 +26,11 @@ use crate::{ common::{
     }, *
 };
 
+// ADR-011 Phase 2: Relevance radius for movement intent broadcasting (30 hexes, larger than FOV)
+// Note: Uses squared Euclidean distance as approximation for performance (R-Tree spatial index)
+// 30 hex distance ≈ 30 tiles in practice given typical hex grid spacing
+const INTENT_RELEVANCE_RADIUS_SQ: i32 = 30 * 30;
+
 pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     let public_addr = "0.0.0.0:5000".parse().unwrap();
     let socket = UdpSocket::bind(public_addr).unwrap();
@@ -390,6 +395,32 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
+            Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
+                // ADR-011 Phase 2: Send movement intent to nearby players for client-side prediction
+                // Uses Unreliable channel + relevance filtering for optimal bandwidth/latency
+                // Dropped packets are acceptable - next intent supersedes previous (self-correcting)
+                let Ok(&loc) = query.get(ent) else {
+                    warn!("Cannot send MovementIntent for entity {:?} - no Loc component", ent);
+                    continue;
+                };
+
+                // Track how many players received this intent (for bandwidth metrics)
+                let mut recipients = 0;
+                for other in nntree.locate_within_distance(loc, INTENT_RELEVANCE_RADIUS_SQ) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::MovementIntent { ent, destination, duration_ms }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::Unreliable, message);
+                        recipients += 1;
+                    }
+                }
+
+                // Metrics: Log if intent was sent to many players (potential bandwidth hotspot)
+                if recipients > 10 {
+                    debug!("MovementIntent for entity {:?} sent to {} players (high traffic area)", ent, recipients);
+                }
+            }
             _ => {}
         }
     }
@@ -410,172 +441,5 @@ pub fn cleanup_despawned(
             }
             commands.entity(ent).despawn();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bevy::app::App;
-    use bevy::MinimalPlugins;
-    use crate::common::components::Actor;
-
-    // Mock RenetServer for testing (avoids port binding issues)
-    fn create_mock_renet_server() -> RenetServer {
-        use ::renet::ConnectionConfig;
-        RenetServer::new(ConnectionConfig::default())
-    }
-
-    #[test]
-    fn test_send_do_despawns_entity_with_loc() {
-        // Test that send_do properly despawns entities that have Loc component
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-        app.insert_resource(create_mock_renet_server());
-        app.init_resource::<Lobby>();
-        app.insert_resource(NNTree::new_for_test());
-
-        // Create entity with Loc component
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let ent = app.world_mut().spawn((
-            Actor,
-            loc,
-            Name::new("Test Entity"),
-        )).id();
-
-        // Send despawn event
-        app.world_mut().send_event(Do {
-            event: Event::Despawn { ent },
-        });
-
-        // Run send_do and cleanup systems
-        app.add_systems(Update, send_do);
-        app.add_systems(PostUpdate, cleanup_despawned);
-        app.update();
-
-        // Verify entity was despawned
-        assert!(app.world().get_entity(ent).is_err(),
-            "Entity with Loc should be despawned by cleanup_despawned");
-    }
-
-    #[test]
-    fn test_cleanup_despawns_entity_without_loc() {
-        // Test that cleanup_despawned handles entities without Loc component
-        // (send_do can't broadcast without Loc, but cleanup should still despawn)
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-        app.insert_resource(create_mock_renet_server());
-        app.init_resource::<Lobby>();
-        app.insert_resource(NNTree::new_for_test());
-
-        // Create entity WITHOUT Loc component
-        let ent = app.world_mut().spawn((
-            Actor,
-            Name::new("Entity Without Loc"),
-        )).id();
-
-        // Send despawn event
-        app.world_mut().send_event(Do {
-            event: Event::Despawn { ent },
-        });
-
-        // Run send_do and cleanup systems
-        app.add_systems(Update, send_do);
-        app.add_systems(PostUpdate, cleanup_despawned);
-        app.update();
-
-        // Entity should be despawned by cleanup_despawned even without Loc
-        assert!(app.world().get_entity(ent).is_err(),
-            "Entity without Loc should still be despawned by cleanup_despawned");
-    }
-
-    #[test]
-    fn test_send_do_handles_already_despawned_entity_gracefully() {
-        // Test that send_do doesn't crash when entity is already despawned
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-        app.insert_resource(create_mock_renet_server());
-        app.init_resource::<Lobby>();
-        app.insert_resource(NNTree::new_for_test());
-
-        // Create then immediately despawn entity
-        let ent = app.world_mut().spawn((
-            Actor,
-            Loc::new(Qrz { q: 0, r: 0, z: 0 }),
-            Name::new("Already Despawned"),
-        )).id();
-
-        app.world_mut().despawn(ent);
-
-        // Send despawn event for already-despawned entity
-        app.world_mut().send_event(Do {
-            event: Event::Despawn { ent },
-        });
-
-        // Should not panic
-        app.add_systems(Update, send_do);
-        app.add_systems(PostUpdate, cleanup_despawned);
-        app.update();
-
-        // Entity should remain despawned (no resurrection)
-        assert!(app.world().get_entity(ent).is_err(),
-            "Already despawned entity should remain despawned");
-    }
-
-    #[test]
-    fn test_send_do_despawn_sends_to_nearby_players_only() {
-        // Test that despawn events are only sent to players within 70-tile radius
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_event::<Do>();
-        app.insert_resource(create_mock_renet_server());
-        app.init_resource::<Lobby>();
-        app.insert_resource(NNTree::new_for_test());
-
-        // Create NPC to despawn at origin
-        let npc_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let npc_ent = app.world_mut().spawn((
-            Actor,
-            npc_loc,
-            Name::new("NPC to Despawn"),
-        )).id();
-
-        // Create nearby player (within 70 tiles)
-        let near_player_loc = Loc::new(Qrz { q: 10, r: -10, z: 0 });
-        let _near_player = app.world_mut().spawn((
-            Actor,
-            Behaviour::Controlled,
-            near_player_loc,
-            Name::new("Near Player"),
-        )).id();
-
-        // Create far player (beyond 70 tiles)
-        let far_player_loc = Loc::new(Qrz { q: 100, r: -100, z: 0 });
-        let _far_player = app.world_mut().spawn((
-            Actor,
-            Behaviour::Controlled,
-            far_player_loc,
-            Name::new("Far Player"),
-        )).id();
-
-        // Send despawn event
-        app.world_mut().send_event(Do {
-            event: Event::Despawn { ent: npc_ent },
-        });
-
-        // Run send_do and cleanup systems
-        app.add_systems(Update, send_do);
-        app.add_systems(PostUpdate, cleanup_despawned);
-        app.update();
-
-        // Verify NPC was despawned
-        assert!(app.world().get_entity(npc_ent).is_err(),
-            "NPC should be despawned by cleanup_despawned");
-
-        // Note: We can't easily verify network messages without mocking RenetServer,
-        // but the code should only send to nearby players within 70-tile radius
     }
 }

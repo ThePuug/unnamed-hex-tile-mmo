@@ -1,15 +1,16 @@
 use bevy::{prelude::*, ecs::hierarchy::ChildOf};
 use rand::seq::IteratorRandom;
-use qrz::Convert;
+use qrz::{Convert, Qrz};
 
 use crate::{
     common::{
         components::{
             Loc, heading::Heading, offset::Offset, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
-            projectile::Projectile, reaction_queue::DamageType,
+            reaction_queue::DamageType,
             entity_type::EntityType,
         },
+        message::{Event, Do, Try, Event as GameEvent},
         plugins::nntree::*,
         resources::map::Map,
         systems::physics,
@@ -20,6 +21,64 @@ use crate::{
     },
 };
 
+/// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
+fn broadcast_intent(
+    commands: &mut Commands,
+    writer: &mut EventWriter<Do>,
+    map: &Map,
+    npc_entity: Entity,
+    npc_loc: &Loc,
+    next_tile: Qrz,
+    heading: &Heading,
+    movement_speed: f32,
+    intent_state_opt: Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,
+) {
+    // Get or initialize MovementIntentState
+    let mut intent_state = if let Some(state) = intent_state_opt {
+        state
+    } else {
+        // First time - add component and skip (will process next frame)
+        commands.entity(npc_entity).insert(crate::common::components::movement_intent_state::MovementIntentState::default());
+        return;
+    };
+
+    // Skip if already broadcast for this destination and heading
+    if next_tile == intent_state.last_broadcast_dest && *heading == intent_state.last_broadcast_heading {
+        return;
+    }
+
+    // Calculate distance and duration (to heading-adjusted destination position)
+    let current_world = map.convert(**npc_loc) + Vec3::ZERO; // At tile center when deciding
+    let dest_tile_center = map.convert(next_tile);
+
+    // Calculate heading-adjusted offset at destination (movement direction)
+    let movement_direction = next_tile - **npc_loc;
+    let dest_offset = if movement_direction != qrz::Qrz::default() {
+        use crate::common::components::heading::HERE;
+        let heading_neighbor = map.convert(next_tile + movement_direction);
+        let direction = heading_neighbor - dest_tile_center;
+        (direction * HERE).xz()
+    } else {
+        Vec2::ZERO
+    };
+    let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
+
+    let distance = (dest_world - current_world).length();
+    let duration_ms = (distance / movement_speed) as u16;
+
+    // Update state and broadcast
+    intent_state.last_broadcast_dest = next_tile;
+    intent_state.last_broadcast_heading = *heading;
+
+    writer.write(Do {
+        event: Event::MovementIntent {
+            ent: npc_entity,
+            destination: next_tile + qrz::Qrz::Z, // Entity stands ON terrain (one tile above)
+            duration_ms,
+        }
+    });
+}
+
 /// Kite behavior - ranged hostile that maintains optimal distance (ADR-010 Phase 4)
 ///
 /// Implements distance-based state machine for ranged kiting enemies:
@@ -27,7 +86,7 @@ use crate::{
 /// - Maintains sticky targeting via TargetLock
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
 /// - **Repositions** when target is 3-5 hexes away (moves to optimal zone 6-7 hexes)
-/// - **Attacks** when target is in optimal_distance range (5-8 hexes) - projectile every attack_interval seconds
+/// - **Attacks** when target is in optimal_distance range (5-8 hexes) - instant hit every attack_interval seconds
 /// - **Advances** when target is beyond optimal range (> 8 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
 ///
@@ -41,9 +100,8 @@ pub struct Kite {
     pub optimal_distance_min: i16,   // Min optimal attack range (e.g., 5 hexes)
     pub optimal_distance_max: i16,   // Max optimal attack range (e.g., 8 hexes)
     pub disengage_distance: i16,     // Flee threshold when target too close (e.g., 3 hexes)
-    pub attack_interval_ms: u32,     // Cooldown between projectile attacks (e.g., 3000ms)
-    pub projectile_speed: f32,       // Projectile travel speed in hexes/second (e.g., 4.0)
-    pub projectile_damage: f32,      // Base damage per projectile hit (e.g., 20.0)
+    pub attack_interval_ms: u32,     // Cooldown between attacks (e.g., 3000ms)
+    pub attack_damage: f32,          // Base damage per attack (e.g., 20.0)
     pub last_attack_time: u128,      // Server-side state: timestamp of last attack (default 0)
 }
 
@@ -57,8 +115,7 @@ impl Kite {
             optimal_distance_max: 8,
             disengage_distance: 3,        // Flee if < 3 hexes
             attack_interval_ms: 3000,     // 3 second attack speed
-            projectile_speed: 8.0,        // 8 hexes/second (fast enough to be dodgeable but threatening)
-            projectile_damage: 20.0,      // 20 damage per hit
+            attack_damage: 20.0,          // 20 damage per hit
             last_attack_time: 0,
         }
     }
@@ -105,6 +162,7 @@ pub fn kite(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
+        Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &ChildOf,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
@@ -113,10 +171,11 @@ pub fn kite(
     map: Res<Map>,
     dt: Res<Time>,
     mut writer: EventWriter<crate::common::message::Do>,
+    mut try_writer: EventWriter<crate::common::message::Try>,
 ) {
     let current_time = dt.elapsed().as_millis();
 
-    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, child_of) in &mut query {
+    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -160,6 +219,9 @@ pub fn kite(
 
                 let dt_ms = dt.delta().as_millis() as i16;
                 let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+                // ADR-011: Broadcast intent BEFORE physics computes movement
+                broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                 let (offset, airtime) = physics::apply(
                     Loc::new(*next_tile),
@@ -244,6 +306,9 @@ pub fn kite(
 
                         let dt_ms = dt.delta().as_millis() as i16;
                         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+                        // ADR-011: Broadcast intent BEFORE physics computes movement
+                        broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                         let (offset, airtime) = physics::apply(
                             Loc::new(*next_tile),
@@ -341,6 +406,9 @@ pub fn kite(
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
+                    // ADR-011: Broadcast intent BEFORE physics computes movement
+                    broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
+
                     let (offset, airtime) = physics::apply(
                         Loc::new(*next_tile),
                         dt_ms,
@@ -362,54 +430,12 @@ pub fn kite(
             KiteAction::Attack => {
                 // Stay in place and attack if cooldown ready
                 if kite_config.can_attack(current_time) {
-                    // Find ground level for projectile spawn (like pathfinding does)
-                    let Some((ground_tile, _)) = map.find(**npc_loc, -60) else {
-                        continue; // Can't fire projectile if no ground found
-                    };
-
-                    // Fire projectile at target (ADR-010 Phase 5: Integration)
-                    let ground_world_pos = map.convert(ground_tile);
-
-                    let projectile_component = Projectile {
-                        source: npc_entity,
-                        damage: kite_config.projectile_damage,
-                        target_loc: *target_loc,  // Projectile calculates target_pos from this (chest height)
-                        speed: kite_config.projectile_speed,
-                        damage_type: DamageType::Physical,
-                    };
-
-                    // Calculate NPC's visual world position and projectile offset relative to ground tile
-                    let npc_world_pos = map.convert(**npc_loc) + npc_offset.state;
-                    let projectile_offset = npc_world_pos - ground_world_pos;
-
-                    let proj_entity = commands.spawn((
-                        projectile_component,
-                        Loc::new(ground_tile), // Projectile Loc at ground level
-                        Offset {
-                            state: projectile_offset,  // Offset relative to ground tile (makes it spawn from NPC's visual position)
-                            step: projectile_offset,
-                            prev_step: projectile_offset,
-                            interp_elapsed: 0.0,
-                            interp_duration: 0.0,
-                        },
-                    )).id();
-
-                    // Broadcast projectile spawn to nearby players
-                    // IMPORTANT: Use actual proj_entity ID so client can match Incremental event
-                    writer.write(crate::common::message::Do {
-                        event: crate::common::message::Event::Spawn {
-                            ent: proj_entity,  // Use actual entity ID (not PLACEHOLDER)
-                            typ: EntityType::Projectile,
-                            qrz: ground_tile,  // Use ground level, not elevated npc_loc
-                            attrs: None,
-                        },
-                    });
-
-                    // Broadcast projectile data so clients can simulate movement
-                    writer.write(crate::common::message::Do {
-                        event: crate::common::message::Event::Incremental {
-                            ent: proj_entity,  // Match the spawn event's entity ID
-                            component: crate::common::message::Component::Projectile(projectile_component),
+                    // Use Volley ability - ranged attack with telegraph
+                    try_writer.write(Try {
+                        event: GameEvent::UseAbility {
+                            ent: npc_entity,
+                            ability: crate::common::message::AbilityType::Volley,
+                            target_loc: Some(**target_loc),
                         },
                     });
 
@@ -440,6 +466,9 @@ pub fn kite(
 
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+                    // ADR-011: Broadcast intent BEFORE physics computes movement
+                    broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                     let (offset, airtime) = physics::apply(
                         Loc::new(*next_tile),
@@ -476,8 +505,7 @@ mod tests {
         assert_eq!(kite.optimal_distance_max, 8);
         assert_eq!(kite.disengage_distance, 3);
         assert_eq!(kite.attack_interval_ms, 3000);
-        assert_eq!(kite.projectile_speed, 4.0);
-        assert_eq!(kite.projectile_damage, 20.0);
+        assert_eq!(kite.attack_damage, 20.0);
     }
 
     #[test]
@@ -584,17 +612,17 @@ mod tests {
 
     // ===== INTEGRATION TESTS (ADR-010 Phase 5) =====
 
-    /// Test that Forest Sprite fires projectiles when in optimal range (ADR-010 Phase 5)
+    /// Test that Forest Sprite attacks when in optimal range (ADR-010 Phase 5)
     ///
     /// Validation Criteria:
     /// - Sprite kites to 5-8 hex range
-    /// - Sprite fires projectile every 3 seconds
-    /// - Projectile spawns at caster position
+    /// - Sprite attacks every 3 seconds
+    /// - Attacks are instant hit
     #[test]
-    fn test_forest_sprite_fires_projectiles_at_optimal_range() {
+    fn test_forest_sprite_attacks_at_optimal_range() {
         // This test validates the integration of:
         // - Kite behavior state machine
-        // - Projectile spawning in Attack state
+        // - Instant hit attacks in Attack state
         // - Attack cooldown timing
 
         let kite = Kite::forest_sprite();
@@ -621,14 +649,13 @@ mod tests {
         assert!(kite_after_attack.can_attack(current_time + 3000), "Should attack after 3 second cooldown");
     }
 
-    /// Test that Kite behavior integrates with projectile damage type (ADR-010 Phase 5)
+    /// Test that Kite behavior uses instant hit damage (ADR-010 Phase 5)
     #[test]
-    fn test_forest_sprite_projectile_stats() {
+    fn test_forest_sprite_attack_stats() {
         let kite = Kite::forest_sprite();
 
-        // Verify projectile stats match ADR-010 specifications
-        assert_eq!(kite.projectile_damage, 20.0, "Forest Sprite should deal 20 damage");
-        assert_eq!(kite.projectile_speed, 4.0, "Projectile should travel at 4 hexes/sec");
+        // Verify attack stats match ADR-010 specifications
+        assert_eq!(kite.attack_damage, 20.0, "Forest Sprite should deal 20 damage");
         assert_eq!(kite.attack_interval_ms, 3000, "Should attack every 3 seconds");
     }
 
@@ -652,28 +679,4 @@ mod tests {
         assert_eq!(kite.determine_action(10), KiteAction::Advance, "Should advance at 10 hexes");
     }
 
-    /// Test that projectile spawn events use Entity::PLACEHOLDER for client-side spawning
-    ///
-    /// Validates that projectiles are spawned with Entity::PLACEHOLDER instead of server entity ID
-    /// because clients don't have entity ID mapping for server-side projectiles. Clients spawn
-    /// their own local visual entities identified by PLACEHOLDER.
-    #[test]
-    fn test_projectile_spawn_uses_placeholder_for_clients() {
-        // This test validates the network protocol:
-        // - Server spawns projectile with server entity ID (proj_entity)
-        // - Server broadcasts to clients with Entity::PLACEHOLDER
-        // - Clients spawn local visual-only entity with PLACEHOLDER ID
-        // - Server tracks projectile with actual entity ID for damage/physics
-
-        // Verify that Entity::PLACEHOLDER is the expected sentinel value for client-side entities
-        // Projectiles are server-side logic entities that clients should not track by ID
-        assert_eq!(Entity::PLACEHOLDER, Entity::PLACEHOLDER,
-            "PLACEHOLDER should be stable sentinel value for client-spawned visual entities");
-
-        // The actual broadcast in kite.rs should send Entity::PLACEHOLDER, not proj_entity
-        // This ensures clients can spawn local projectiles without server ID mapping
-        let server_entity_id = Entity::from_raw(42);
-        assert_ne!(server_entity_id, Entity::PLACEHOLDER,
-            "Server entity IDs should never equal PLACEHOLDER");
-    }
 }

@@ -1,10 +1,12 @@
 use bevy::prelude::*;
+use qrz::Convert;
 
 use crate::{
     common::{
-        components::{ tier_lock::TierLock, * },
+        components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, offset::Offset, * },
         message::{Event, *},
         systems::combat::gcd::*,
+        resources::map::Map,
     },
     *
 };
@@ -91,6 +93,96 @@ pub fn try_set_tier_lock(
                 },
             });
         }
+    }
+}
+
+/// Broadcast movement intent for player inputs (ADR-011)
+///
+/// Runs in FixedPostUpdate after physics has processed all inputs.
+/// At this point Heading and offset.state are up-to-date, so we can accurately
+/// broadcast where players are heading, enabling client-side prediction of remote players.
+pub fn broadcast_player_movement_intent(
+    mut commands: Commands,
+    mut writer: EventWriter<Do>,
+    buffers: Res<InputQueues>,
+    mut query: Query<(&Loc, &Heading, &Offset, Option<&ActorAttributes>, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>)>,
+    map: Res<Map>,
+) {
+    for (ent, buffer) in buffers.iter() {
+        // Queue invariant: all queues must have at least 1 input
+        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
+
+        let Ok((loc, heading, offset, attrs, o_intent_state)) = query.get_mut(ent) else { continue; };
+
+        // Get the first input (the accumulating one that physics will process next)
+        let Some(input) = buffer.queue.back() else { continue; };
+        let Event::Input { key_bits, .. } = input else { unreachable!() };
+
+        // Get or initialize MovementIntentState first (needed for reset logic)
+        let mut intent_state = if let Some(state) = o_intent_state {
+            state
+        } else {
+            // First time - add component and skip (will process next frame)
+            commands.entity(ent).insert(crate::common::components::movement_intent_state::MovementIntentState::default());
+            continue;
+        };
+
+        // Check if moving (any movement keys pressed)
+        let is_moving = key_bits.is_pressed(KB_HEADING_Q) || key_bits.is_pressed(KB_HEADING_R);
+
+        // Calculate destination tile
+        let destination = if is_moving {
+            // Moving: destination is next tile in movement direction (use Heading component, not key_bits)
+            **heading + **loc
+        } else {
+            // Stopped: destination is current tile (to snap back to heading position)
+            **loc
+        };
+
+        // Skip if already broadcast for this destination and heading
+        if destination == intent_state.last_broadcast_dest && *heading == intent_state.last_broadcast_heading {
+            continue;
+        }
+
+        // Calculate distance and duration
+        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+        let distance = if is_moving {
+            // Moving: distance from current position to destination heading-adjusted position
+            let current_world = map.convert(**loc) + offset.state;
+            let dest_tile_center = map.convert(destination);
+
+            // Calculate destination heading-adjusted offset (use Heading component, not key_bits)
+            let dest_heading_neighbor = map.convert(destination + **heading);
+            let dest_direction = dest_heading_neighbor - dest_tile_center;
+            let dest_offset = (dest_direction * HERE).xz();
+            let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
+
+            (dest_world - current_world).length()
+        } else {
+            // Stopped: distance from current position to current tile heading-adjusted position
+            let current_world = map.convert(**loc) + offset.state;
+            let tile_center = map.convert(**loc);
+            let heading_neighbor = map.convert(**loc + **heading);
+            let direction = heading_neighbor - tile_center;
+            let heading_offset = (direction * HERE).xz();
+            let dest_world = tile_center + Vec3::new(heading_offset.x, 0.0, heading_offset.y);
+            (dest_world - current_world).length()
+        };
+
+        let duration_ms = (distance / movement_speed) as u16;
+
+        // Update state and broadcast
+        intent_state.last_broadcast_dest = destination;
+        intent_state.last_broadcast_heading = *heading;
+
+        writer.write(Do {
+            event: Event::MovementIntent {
+                ent,
+                destination, // Players stand ON terrain (already at correct Z)
+                duration_ms,
+            }
+        });
     }
 }
 

@@ -35,20 +35,15 @@ pub fn do_incremental(
         Option<&mut Mana>,
         Option<&mut CombatState>,
         Option<&mut PlayerControlled>,
-        Option<&mut crate::common::components::tier_lock::TierLock>)>,
+        Option<&mut crate::common::components::tier_lock::TierLock>,
+        Option<&crate::common::components::movement_prediction::MovementPrediction>)>,
     map: Res<Map>,
     buffers: Res<crate::common::resources::InputQueues>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
 
-        // Handle Component::Projectile separately - projectiles don't have all the components in the main query
-        if let Component::Projectile(projectile) = component {
-            commands.entity(ent).insert(projectile);
-            continue;
-        }
-
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -107,20 +102,17 @@ pub fn do_incremental(
                         offset0.step = step_world - new_tile_center;
                     }
                 } else {
-                    // Remote players and NPCs: use heading-based positioning for smooth transitions
-                    // Calculate current visual position to preserve for interpolation
-                    // Use actual interpolated position (not just step target) in case update arrives mid-interpolation
+                    // Calculate current visual position from interpolation
+                    // (offset.state is authoritative combat position, NOT visual position)
                     let current_interp_fraction = if offset0.interp_duration > 0.0 {
                         (offset0.interp_elapsed / offset0.interp_duration).min(1.0)
                     } else {
-                        1.0
+                        1.0  // Completed or no interpolation
                     };
                     let current_visual_offset = offset0.prev_step.lerp(offset0.step, current_interp_fraction);
-                    let prev_world = map.convert(**loc0) + current_visual_offset;
 
+                    // Calculate server's actual authoritative position (heading-adjusted on new tile)
                     let new_tile_center = map.convert(*loc);
-
-                    // Calculate heading-based target position
                     let Some(ref heading0) = o_heading else { panic!("no heading for remote player/NPC") };
                     let target_offset = if ***heading0 != default() {
                         let heading_neighbor_world = map.convert(*loc + ***heading0);
@@ -130,27 +122,26 @@ pub fn do_incremental(
                         Vec2::ZERO
                     };
 
-                    let target_offset_3d = Vec3::new(target_offset.x, 0.0, target_offset.y);
-
-                    // Set up interpolation: prev_step (current visual) -> step (heading target)
-                    offset0.prev_step = prev_world - new_tile_center;
-                    offset0.step = target_offset_3d;
-                    offset0.state = target_offset_3d;
-
-                    // Calculate expected travel time based on distance and movement speed
-                    // Used for time-based interpolation of remote players and NPCs
-                    let distance = (offset0.step - offset0.prev_step).length();
-                    const MOVEMENT_SPEED: f32 = 0.005; // units per millisecond
-                    const MIN_INTERP_DISTANCE: f32 = 0.01; // Don't interpolate tiny movements (spawns/teleports)
-
-                    if distance > MIN_INTERP_DISTANCE {
-                        offset0.interp_duration = distance / MOVEMENT_SPEED / 1000.0; // convert ms to seconds
-                        offset0.interp_elapsed = 0.0;
-                    } else {
-                        // Distance too small - snap instantly (no interpolation)
-                        offset0.interp_duration = 0.0;
-                        offset0.interp_elapsed = 0.0;
+                    // ADR-011: Validate movement prediction if it exists
+                    if let Some(_prediction) = o_prediction {
+                        // Clear prediction component
+                        commands.entity(ent).remove::<crate::common::components::movement_prediction::MovementPrediction>();
                     }
+
+                    // ADR-011: Preserve ongoing MovementIntent interpolation, just convert coordinate system
+                    // When Loc arrives, the entity is crossing tile boundaries mid-interpolation
+                    // We need to convert all offsets from old tile's coordinates to new tile's coordinates
+                    let prev_world = map.convert(**loc0) + offset0.prev_step;
+                    let step_world = map.convert(**loc0) + offset0.step;
+
+                    // Convert to new tile's coordinate system (preserve interpolation!)
+                    offset0.prev_step = prev_world - new_tile_center;
+                    offset0.step = step_world - new_tile_center;
+
+                    // Update authoritative combat position (already calculated above for gap measurement)
+                    offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
+
+                    // NOTE: Do NOT reset interp_duration/interp_elapsed - let MovementIntent interpolation continue!
                 }
 
                 *loc0 = loc;
@@ -170,25 +161,6 @@ pub fn do_incremental(
                 }
 
                 *heading0 = heading;
-
-                // Only update offset.state for remote PLAYERS on heading change
-                // NPCs get Heading+Loc updates together, so skip standalone heading adjustments
-                if !is_local && is_player {
-                    if let Some(mut offset0) = o_offset {
-                        let Some(ref loc0) = o_loc else { panic!("no loc") };
-                        let tile_center = map.convert(***loc0);
-
-                        let target_offset = if *heading != default() {
-                            let heading_neighbor_world = map.convert(***loc0 + *heading);
-                            let direction = heading_neighbor_world - tile_center;
-                            (direction * HERE).xz()
-                        } else {
-                            Vec2::ZERO
-                        };
-
-                        offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
-                    }
-                }
             }
             Component::Behaviour(behaviour) => {
                 if let Some(mut behaviour0) = o_behaviour {
@@ -244,10 +216,6 @@ pub fn do_incremental(
                 } else {
                     commands.entity(ent).insert(tier_lock);
                 }
-            }
-            Component::Projectile(_) => {
-                // Handled at top of function before query (projectiles don't match main query)
-                unreachable!("Component::Projectile should be handled before query");
             }
             _ => {}
         }

@@ -59,7 +59,7 @@ const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
 const MAX_ENTITIES_PER_TILE: usize = 7;
 
 pub fn update(
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>), With<Physics>>,
+    mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>), With<Physics>>,
     map: Res<Map>,
     buffers: Res<InputQueues>,
     nntree: Res<NNTree>,
@@ -68,16 +68,24 @@ pub fn update(
         // Queue invariant: all queues must have at least 1 input
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
 
-        let Ok((&loc, &heading, mut offset0, mut airtime0, attrs)) = query.get_mut(ent) else { continue; };
+        let Ok((&loc, mut heading, mut offset0, mut airtime0, attrs)) = query.get_mut(ent) else { continue; };
         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(MOVEMENT_SPEED);
 
         let (mut offset, mut airtime) = (offset0.state, airtime0.state);
+        let mut new_heading = *heading;
         for input in buffer.queue.iter().rev() {
             let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
-            let dest = Loc::new(*Heading::from(*key_bits) + *loc);
+            let heading = Heading::from(*key_bits);
+            if *heading != default() {
+                new_heading = heading;
+            }
+            let dest = Loc::new(*heading + *loc);
             if key_bits.is_pressed(KB_JUMP) && airtime.is_none() { airtime = Some(JUMP_DURATION_MS); }
-            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, movement_speed, heading, &map, &nntree);
+            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, movement_speed, new_heading, &map, &nntree);
         }
+
+        // Update heading component to last non-default heading
+        *heading = new_heading;
 
         offset0.prev_step = offset0.step;
         (offset0.step, airtime0.step) = (offset,airtime);
@@ -160,16 +168,24 @@ pub fn apply(
             }
         }
 
-        let rel_px = map.convert(*dest)-px0;                                // destination px relative to current px
-
-        // When at destination (stationary) with a heading, move toward heading-based position
-        let target_px = if *dest == *loc0 && *heading != Default::default() {
-            // Player is stationary - move toward heading position at HERE distance
-            let tile_center_world = map.convert(*loc0);
-            let heading_neighbor_world = map.convert(*loc0 + *heading);
-            let direction = heading_neighbor_world - tile_center_world;
+        // Calculate destination with heading offset
+        let dest_px = if *heading != Default::default() {
+            // Use heading to offset from tile center
+            let dest_center = map.convert(*dest);
+            let dest_heading_neighbor = map.convert(*dest + *heading);
+            let direction = dest_heading_neighbor - dest_center;
             let heading_offset_xz = (direction * HERE).xz();
-            Vec3::new(heading_offset_xz.x, offset0.y, heading_offset_xz.y)
+            dest_center + Vec3::new(heading_offset_xz.x, 0.0, heading_offset_xz.y)
+        } else {
+            // No heading - use tile center
+            map.convert(*dest)
+        };
+
+        let rel_px = dest_px - px0;                                             // destination px relative to current px
+
+        // When at destination (stationary), target is the heading-offset position
+        let target_px = if *dest == *loc0 {
+            rel_px
         } else {
             // Player is moving - use normal movement logic
             let rel_hx = map.convert(rel_px);                                   // destination tile relative to loc
@@ -221,8 +237,14 @@ pub fn apply(
 
             let is_blocked = is_cliff_transition || is_blocked_by_solid;
 
-            // set target px HERE when blocked, otherwise THERE
-            if is_blocked { rel_px * HERE } else { rel_px * THERE }
+            // With heading offset, target exact position (no scaling)
+            // Without heading, use HERE/THERE scaling for tile-center targeting
+            if *heading != Default::default() {
+                rel_px  // Target exact heading-offset position
+            } else {
+                // Legacy tile-center targeting: scale by HERE/THERE
+                if is_blocked { rel_px * HERE } else { rel_px * THERE }
+            }
         };
 
         let delta_px = offset0.distance(target_px);

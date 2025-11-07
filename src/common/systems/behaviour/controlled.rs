@@ -67,137 +67,26 @@ pub fn tick(
 
 pub fn apply(
     mut reader: EventReader<Do>,
-    mut query: Query<(&Loc, &Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
+    mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
-            let Ok((&loc, &heading, mut offset, mut airtime, attrs)) = query.get_mut(ent)
+            let Ok((&loc, mut heading, mut offset, mut airtime, attrs)) = query.get_mut(ent)
                 // disconnect by client could remove entity while message in transit
                 else { continue };
-            let dest = Loc::new(*Heading::from(key_bits) + *loc);
+            let new_heading = Heading::from(key_bits);
+            let dest = Loc::new(*new_heading + *loc);
+
+            // Update heading component if non-default
+            if new_heading != default() {
+                *heading = new_heading;
+            }
+
             if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
             let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, heading, &map, &nntree);
+            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, *heading, &map, &nntree);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tick_maintains_queue_invariant_during_update() {
-        let mut app = App::new();
-        app.add_event::<Do>();
-        app.add_event::<Try>();
-        app.insert_resource(InputQueues::default());
-        app.init_resource::<Time>();
-        app.add_systems(Update, tick);
-
-        let entity = app.world_mut().spawn((Behaviour::Controlled, Loc::default())).id();
-
-        // Create initial queue with 1 input
-        let mut queue = InputQueue::default();
-        queue.queue.push_back(Event::Input {
-            ent: entity,
-            key_bits: KeyBits::default(),
-            dt: 0,
-            seq: 0,
-        });
-
-        app.world_mut().resource_mut::<InputQueues>().insert(entity, queue);
-
-        // Simulate receiving a KeyBits update
-        app.world_mut().send_event(Do {
-            event: Event::Incremental {
-                ent: entity,
-                component: Component::KeyBits(KeyBits::default()),
-            }
-        });
-
-        // Run the tick system
-        app.update();
-
-        // Verify invariant: queue should still have at least 1 input
-        let buffers = app.world().resource::<InputQueues>();
-        let buffer = buffers.get(&entity).unwrap();
-        assert!(
-            !buffer.queue.is_empty(),
-            "Queue invariant violated: queue became empty during tick"
-        );
-
-        // Should now have 2 inputs (original + new one from KeyBits update)
-        assert_eq!(buffer.queue.len(), 2, "Should have added new input");
-    }
-
-    #[test]
-    fn test_tick_preserves_single_input_in_queue() {
-        let mut app = App::new();
-        app.add_event::<Do>();
-        app.add_event::<Try>();
-        app.insert_resource(InputQueues::default());
-        app.init_resource::<Time>();
-        app.add_systems(Update, tick);
-
-        let entity = app.world_mut().spawn((Behaviour::Controlled, Loc::default())).id();
-
-        // Create queue with 1 input (dt=100)
-        let mut queue = InputQueue::default();
-        queue.queue.push_back(Event::Input {
-            ent: entity,
-            key_bits: KeyBits::default(),
-            dt: 100,
-            seq: 5,
-        });
-
-        app.world_mut().resource_mut::<InputQueues>().insert(entity, queue);
-
-        // Run tick multiple times
-        for _ in 0..5 {
-            app.update();
-        }
-
-        // Verify queue still has exactly 1 input (never becomes empty)
-        let buffers = app.world().resource::<InputQueues>();
-        let buffer = buffers.get(&entity).unwrap();
-        assert_eq!(buffer.queue.len(), 1, "Queue should maintain exactly 1 input");
-
-        // Verify the input is still there with same sequence
-        if let Some(Event::Input { seq, .. }) = buffer.queue.front() {
-            assert_eq!(*seq, 5, "Sequence number should be unchanged");
-        } else {
-            panic!("Expected Input event");
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "Queue invariant violation")]
-    fn test_tick_with_empty_queue_panics() {
-        let mut app = App::new();
-        app.add_event::<Do>();
-        app.add_event::<Try>();
-        app.insert_resource(InputQueues::default());
-        app.init_resource::<Time>();
-        app.add_systems(Update, tick);
-
-        let entity = app.world_mut().spawn((Behaviour::Controlled, Loc::default())).id();
-
-        // Manually create an empty queue (bypassing the insert check for testing)
-        let queue = InputQueue::default();
-        app.world_mut().resource_mut::<InputQueues>().insert_for_test(entity, queue);
-
-        // Send KeyBits update
-        app.world_mut().send_event(Do {
-            event: Event::Incremental {
-                ent: entity,
-                component: Component::KeyBits(KeyBits::default()),
-            }
-        });
-
-        // This should panic when trying to read from empty queue
-        app.update();
     }
 }

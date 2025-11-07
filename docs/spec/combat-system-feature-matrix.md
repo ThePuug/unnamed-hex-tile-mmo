@@ -1,8 +1,8 @@
 # Combat System - Feature Matrix
 
 **Specification:** [combat-system.md](combat-system.md)
-**Last Updated:** 2025-11-05
-**Overall Status:** 45/91 features complete (49%)
+**Last Updated:** 2025-11-06
+**Overall Status:** 47/98 features complete (48%)
 
 ---
 
@@ -56,12 +56,33 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Instant attacks | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 145-149 | Auto-Attack, Lunge, Overpower all instant |
-| Projectile attacks | ✅ Complete | [ADR-010](../adr/010-combat-variety-phase-1.md), [ADR-010 Acceptance](../adr/010-acceptance.md) | Lines 151-161 | 4 hexes/sec travel, dodgeable, position-based damage, entity-based |
-| Ground effects/telegraphs | ❌ Not Started | - | Lines 163-173 | AOE warnings, delayed damage |
-| Unavoidable attacks | ⏸️ Deferred | - | Lines 175-179 | Ultimate-tier abilities |
+| Instant attacks | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 141-145 | Auto-Attack, Lunge, Overpower all instant |
+| Ranged attacks (instant hit) | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) | Lines 147-158 | Instant damage to reaction queue, no travel time, not dodgeable by movement (Volley ability) |
+| Attack telegraphs | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) | Lines 177-208 | Yellow ball → hit line visual feedback system for ranged attacks |
+| Ground effects/telegraphs | ❌ Not Started | - | Lines 160-169 | AOE warnings, delayed damage (planned) |
+| Unavoidable attacks | ⏸️ Deferred | - | Lines 170-175 | Ultimate-tier abilities |
 
-**Category Status:** 2/4 complete (50%)
+**Category Status:** 3/5 complete (60%)
+
+---
+
+### Network & Prediction
+
+**Core Philosophy:** "Conscious but Decisive" requires responsive combat even at network scale. Client-side prediction eliminates perceived latency for tactical decision-making.
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Local player prediction | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md), [GUIDANCE.md](../../GUIDANCE.md) | Lines 7-17 (philosophy) | Input queue, offset.step prediction, server confirmation |
+| Movement intent broadcasting | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 1 | Lines 147-158 (ranged) | Server broadcasts destination when movement starts ([actor.rs:533+](../../src/server/systems/actor.rs)) |
+| Relevance filtering | ✅ Complete | [ADR-011](../adr/011-movement-intent-system.md) Phase 2 | - | 30 hex radius spatial filtering via NNTree, per-client messaging ([renet.rs:398-422](../../src/server/systems/renet.rs)) |
+| Remote entity prediction | 🔄 In Progress | [ADR-011](../adr/011-movement-intent-system.md) | Lines 7-17 (responsive) | Client predicts NPC/player movement using intent (validation pending) |
+| Intent validation | 🔄 In Progress | [ADR-011](../adr/011-movement-intent-system.md) | - | Loc confirmations validate predictions, snap on desync (validation pending) |
+
+**Category Status:** 3/5 complete (60% - ADR-011 Phases 1-2 complete)
+
+**Impact:** Solves "ghost targeting" and "teleporting NPC" problems. Reduces perceived lag from 175ms to 50ms. Enables smooth remote entity movement.
+
+**Note:** ADR-011 Phase 3 (Projectile Integration) obsolete due to combat system pivot to instant hit mechanics (see "Attack Execution Patterns" and "Implementation Deviations" sections).
 
 ---
 
@@ -106,7 +127,7 @@
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
 | Auto-Attack (passive) | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [auto_attack.rs](../../src/server/systems/combat/abilities/auto_attack.rs) | Lines 641-651 | 20 dmg, adjacent, auto-triggers |
-| Lunge (Q) - Direct approach | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [lunge.rs](../../src/server/systems/combat/abilities/lunge.rs) | Lines 654-664 | 40 dmg, 20 stam, 4 hex, gap closer (from Sword) |
+| Lunge (Q) - Direct approach | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [lunge.rs](../../src/server/systems/combat/abilities/lunge.rs) | Lines 654-664 | 40 dmg, 20 stam, 4 hex, teleports adjacent to target (gap closer from Sword) |
 | Counter (W) - Patient approach | ❌ Not Started | - | Lines 666-676 | 35 stam, reflect first queued threat (from Shield) |
 | Fortify (E) - Hardened resilience | ❌ Not Started | - | Lines 679-687 | 40 stam, reduce all queued damage 50% (from Hardened armor) |
 | Deflect (R) - Hardened resilience | ✅ Complete | [ADR-009](../adr/009-mvp-ability-set.md) + [deflect.rs](../../src/server/systems/combat/abilities/deflect.rs) | Lines 689-698 | 50 stam, clear all queued threats (from Hardened armor) |
@@ -303,25 +324,38 @@ Features where implementation intentionally differs from spec:
 - **Rationale:** Bevy 0.16 3D text component API complexity. Visual polish not required for MVP.
 - **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 323-328
 
-### 9. Empty Tier Range Visualization
-- **Spec Says (ADR-010, Line 74):** Empty tier shows range cone highlighting
-- **Actually Implemented:** Tier lock filtering works, visual feedback deferred
-- **Rationale:** Visual overlay not critical for functionality. Tier lock still filters targets correctly.
-- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 330-334
-
-### 10. Visual Ring Indicator (Developer Addition)
+### 9. Visual Ring Indicator (Developer Addition)
 - **Spec Says (ADR-010):** No mention of visual ring indicator
 - **Actually Implemented:** Visual ring around player showing targeting area, resizes based on tier lock
 - **Rationale:** Critical UX feedback for spatial tier lock system. Eliminates "is it working?" confusion. Excellent use of developer latitude.
 - **Player Assessment:** "Transforms tier lock from abstract to spatial mechanic" ([Player Feedback](../adr/010-player-feedback.md) Lines 75-82, 147-156)
 - **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 76-94
 
-### 9. MVP Ability Set vs Updated Spec
+### 10. Empty Tier Range Visualization
+- **Spec Says (ADR-010, Line 74):** Empty tier shows range cone highlighting
+- **Actually Implemented:** Tier lock filtering works, visual feedback deferred
+- **Rationale:** Visual overlay not critical for functionality. Tier lock still filters targets correctly.
+- **ADR Reference:** [ADR-010 Acceptance](../adr/010-acceptance.md) Lines 330-334
+
+### 11. MVP Ability Set vs Updated Spec
 - **Spec Says (combat-system.md, Lines 666-687):** Counter (W) and Fortify (E) as MVP abilities
 - **Actually Implemented:** Overpower (W) and Knockback (E) per ADR-009
 - **Rationale:** ADR-009 predates updated spec's build system philosophy. Overpower/Knockback functional but don't demonstrate gear-skill relationships as clearly as Counter/Fortify would.
 - **ADR Reference:** [ADR-009](../adr/009-mvp-ability-set.md)
 - **Status:** Implementation complete, spec evolved. Future alignment needed if demonstrating build system becomes priority.
+
+### 12. Projectile System Removal → Instant Hit Combat
+- **Spec Originally Said (ADR-010):** Entity-based projectiles with 4 hexes/sec travel time, dodgeable by moving off target hex
+- **Actually Implemented (ADR-011):** Instant hit ranged attacks with attack telegraph visual feedback
+- **Rationale:** Physics-based projectile dodging created bullet hell gameplay at scale (multiple ranged enemies firing simultaneously), violating core design pillar "Conscious but Decisive - No twitch mechanics required"
+- **Implementation Details:**
+  - Removed: Projectile component, projectile systems (750+ lines deleted)
+  - Added: Instant damage to reaction queue on cast
+  - Added: Attack telegraph system (yellow ball over attacker → hit line on damage apply)
+  - Updated: Volley ability uses instant hit mechanics
+- **Design Impact:** Skill expression shifted from twitch dodging to reaction queue management (existing, tested system). Positioning still matters (range, kiting, gap closers) without requiring pixel-perfect reflexes.
+- **Spec Updated:** combat-system.md Lines 147-208 (Ranged Attacks + Attack Telegraphs sections)
+- **ADR Reference:** [ADR-011](../adr/011-movement-intent-system.md) - Combat system refinement during movement intent implementation
 
 ---
 
@@ -359,7 +393,7 @@ Features described in spec but not yet in implementation plan:
 
 ## Progress Summary
 
-**Total Combat System:** 45/91 features complete (49%)
+**Total Combat System:** 47/98 features complete (48%)
 
 **Fully Complete Categories (100%):**
 - Reaction Queue System: 7/7 ✅
@@ -370,15 +404,16 @@ Features described in spec but not yet in implementation plan:
 - Movement and Heading: 5/6 (83%)
 - Combat HUD: 6/7 (86%)
 
+**Partial Implementation (25-49%):**
+- Combat State: 2/4 (50%)
+- Damage Calculation: 2/6 (33%)
+
 **Solid Foundation (50-79%):**
 - Targeting System: 6/10 (60%)
 - Enemy AI: 3/4 (75%)
+- Attack Execution Patterns: 3/5 (60%)
 - MVP Abilities: 3/5 (60%)
-
-**Partial Implementation (25-49%):**
-- Attack Execution Patterns: 2/4 (50%)
-- Combat State: 2/4 (50%)
-- Damage Calculation: 2/6 (33%)
+- Network & Prediction: 3/5 (60% - ADR-011 Phases 1-2 complete)
 
 **Early Stages (1-24%):**
 - Reaction Abilities: 2/9 (22%)
@@ -390,15 +425,19 @@ Features described in spec but not yet in implementation plan:
 
 **Key Achievements:**
 - Core combat loop functional (movement, targeting, abilities, reactions, HUD)
-- ADR-010 complete: Tier lock, movement speed scaling, projectiles, ranged enemies
-- 5 abilities implemented: Auto-Attack, Lunge, Overpower, Knockback, Deflect
+- ADR-010 complete: Tier lock, movement speed scaling, ranged enemies
+- ADR-011 Phases 1-2 complete: Movement intent broadcasting + relevance filtering (30 hex radius)
+- Instant hit combat + attack telegraphs (eliminates bullet hell gameplay)
+- 5 abilities implemented: Auto-Attack, Lunge, Overpower, Knockback, Deflect (Volley NPC-only)
 - Reaction queue system fully operational
+- Network bandwidth optimized: Per-client intent filtering via spatial queries
 
 **Major Gaps:**
 - Build system (gear-skill gating): 0/23 features
 - TAB cycling and manual target selection
 - Counter and Fortify abilities (spec-defined MVP)
-- Critical hit system, visual telegraphs
+- Critical hit system
+- Ground effect telegraphs (delayed AOE dodging)
 - 7 additional reaction abilities (post-MVP)
 
 ---
@@ -411,16 +450,25 @@ Based on actual implementation status and user value:
 2. ✅ ~~**Implement Accepted MVP Abilities**~~ - All 5 abilities complete (Auto-Attack, Lunge, Overpower, Knockback, Deflect)
 3. ✅ ~~**Accept or Reject ADR-010**~~ - ACCEPTED (2025-11-05, see [ADR-010 Acceptance](../adr/010-acceptance.md))
 4. ✅ ~~**Implement Combat Variety Phase 1**~~ - Tier lock, movement speed, projectiles, Forest Sprite complete
-5. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, projectile dodging
-6. **Decide: Spec alignment vs implementation continuity**
+5. 🔄 **Complete ADR-011 Movement Intent System** - PHASES 1-2 COMPLETE
+   - ✅ Phase 1: Core intent broadcasting ([actor.rs:533+](../../src/server/systems/actor.rs))
+   - ✅ Phase 2: Relevance filtering - 30 hex radius, NNTree spatial query ([renet.rs:398-422](../../src/server/systems/renet.rs))
+   - ⏸️ Phase 3: ~~Projectile targeting integration~~ (obsolete - instant hit combat)
+   - 🔄 Phase 4: Edge case handling (sequence validation, packet loss, teleports) - **PARTIAL**
+   - **Impact:** Fixes "ghost targeting" and teleporting NPCs, enables smooth remote entity movement
+   - **Combat Refinement:** Instant hit + attack telegraphs eliminates bullet hell gameplay
+   - **Bandwidth:** Optimized via relevance filtering, metrics tracking for high-traffic areas
+6. **Create ADR-011 Acceptance Document** - Capture Phase 1 implementation + combat system refinement
+7. **Playtest MVP Combat Loop** - Validate tier lock UX, Grace scaling, Forest Sprite balance, instant hit mechanics
+8. **Decide: Spec alignment vs implementation continuity**
    - Option A: Implement Counter/Fortify to match updated spec (demonstrates build system philosophy)
    - Option B: Keep Overpower/Knockback, update spec to match implementation (maintains working code)
    - Option C: Defer until full build system ADR created (comprehensive approach)
-7. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
-8. **Build System Foundation ADR** - Design gear-based skill gating, weapon/armor components, ability slotting
-9. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
-10. **Critical Hit System** - Instinct-based crits for damage variety
-11. **Visual Telegraphs** - Enemy attack warnings for skill expression
+9. **TAB Cycling** - Required for equidistant target selection (next targeting feature)
+10. **Build System Foundation ADR** - Design gear-based skill gating, weapon/armor components, ability slotting
+11. **Tier Badge UI & Empty Tier Visualization** - Visual polish for tier lock (deferred, revisit after playtest)
+12. **Critical Hit System** - Instinct-based crits for damage variety
+13. **Ground Effect Telegraphs** - Delayed AOE with dodging windows (Eruption, Trap abilities)
 
 ---
 

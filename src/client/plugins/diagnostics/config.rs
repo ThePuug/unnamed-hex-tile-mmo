@@ -14,6 +14,8 @@ pub struct DiagnosticsState {
     pub fixed_lighting_enabled: bool,
     /// Performance UI visibility
     pub perf_ui_visible: bool,
+    /// Network diagnostics UI visibility
+    pub network_ui_visible: bool,
 }
 
 impl Default for DiagnosticsState {
@@ -23,6 +25,7 @@ impl Default for DiagnosticsState {
             slope_rendering_enabled: true, // Required for proper physics
             fixed_lighting_enabled: true,  // Start in debug mode
             perf_ui_visible: true,         // Start visible
+            network_ui_visible: true,      // Start visible
         }
     }
 }

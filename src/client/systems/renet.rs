@@ -4,13 +4,50 @@ use qrz::Qrz;
 use ::renet::{DefaultChannel, RenetClient};
 
 use crate::{
-    client::resources::{EntityMap, LoadedChunks},
+    client::{
+        plugins::diagnostics::network_ui::NetworkMetrics,
+        resources::{EntityMap, LoadedChunks},
+    },
     common::{
-        components::{behaviour::*, entity_type::*},
+        components::{behaviour::*, entity_type::*, reaction_queue::QueuedThreat},
         message::{Component, Event, *},
         resources::*
     }, *
 };
+
+// Helper function to get human-readable message type name
+fn get_message_type_name(message: &Do) -> String {
+    match &message.event {
+        Event::Init { .. } => "Init".to_string(),
+        Event::Spawn { .. } => "Spawn".to_string(),
+        Event::Input { .. } => "Input".to_string(),
+        Event::Despawn { .. } => "Despawn".to_string(),
+        Event::Incremental { component, .. } => {
+            match component {
+                Component::Loc(_) => "Inc:Loc".to_string(),
+                Component::Heading(_) => "Inc:Heading".to_string(),
+                Component::Health(_) => "Inc:Health".to_string(),
+                Component::Mana(_) => "Inc:Mana".to_string(),
+                Component::Stamina(_) => "Inc:Stamina".to_string(),
+                Component::TierLock(_) => "Inc:TierLock".to_string(),
+                Component::CombatState(_) => "Inc:Combat".to_string(),
+                Component::Behaviour(_) => "Inc:Behaviour".to_string(),
+                Component::KeyBits(_) => "Inc:KeyBits".to_string(),
+                Component::Offset(_) => "Inc:Offset".to_string(),
+                Component::PlayerControlled(_) => "Inc:PlayerControlled".to_string(),
+            }
+        },
+        Event::Gcd { .. } => "Gcd".to_string(),
+        Event::ChunkData { .. } => "ChunkData".to_string(),
+        Event::InsertThreat { .. } => "InsertThreat".to_string(),
+        Event::ApplyDamage { .. } => "ApplyDamage".to_string(),
+        Event::ClearQueue { .. } => "ClearQueue".to_string(),
+        Event::AbilityFailed { .. } => "AbilityFailed".to_string(),
+        Event::Pong { .. } => "Pong".to_string(),
+        Event::MovementIntent { .. } => "MovementIntent".to_string(),
+        _ => "Other".to_string(),
+    }
+}
 
 pub fn setup(
     mut commands: Commands,
@@ -41,10 +78,15 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    mut network_metrics: ResMut<NetworkMetrics>,
     locs: Query<&Loc>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+
+        // Track network metrics (received from server)
+        let message_type = get_message_type_name(&message);
+        network_metrics.record_received(message_type, serialized.len());
 
         match message {
 
@@ -80,12 +122,6 @@ pub fn write_do(
                             loc
                         }
                     },
-                    EntityType::Projectile => {
-                        // Spawn local entity for projectile visual
-                        let loc = commands.spawn(typ).id();
-                        l2r.insert(loc, ent);
-                        loc
-                    },
                     _ => { Entity::PLACEHOLDER }
                 };
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
@@ -113,11 +149,6 @@ pub fn write_do(
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
                         continue
                     };
-
-                    // Spawn hit flash effect for projectiles (capture Loc before despawning)
-                    if let Ok(loc) = locs.get(local_ent) {
-                        do_writer.write(Do { event: Event::SpawnHitFlash { loc: *loc } });
-                    }
 
                     commands.entity(local_ent).despawn();
                 }
@@ -148,14 +179,22 @@ pub fn write_do(
             }
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
+                    warn!("Client: InsertThreat target {:?} not in l2r map, requesting spawn", ent);
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
+                // Map threat source entity too
+                let mapped_source = l2r.get_by_right(&threat.source).copied().unwrap_or(threat.source);
+                let mapped_threat = QueuedThreat {
+                    source: mapped_source,
+                    ..threat
+                };
                 // Forward to Do writer for systems to handle
-                do_writer.write(Do { event: Event::InsertThreat { ent, threat } });
+                do_writer.write(Do { event: Event::InsertThreat { ent, threat: mapped_threat } });
             }
             Do { event: Event::ApplyDamage { ent, damage, source } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
+                    warn!("Client: ApplyDamage target {:?} not in l2r map, requesting spawn", ent);
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
@@ -183,6 +222,31 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Pong { client_time } });
             }
             _ => {}
+        }
+    }
+
+    // ADR-011: Listen for MovementIntent on Unreliable channel for bandwidth efficiency
+    // Unreliable channel is used for frequent, self-correcting messages (latest wins)
+    while let Some(serialized) = conn.receive_message(DefaultChannel::Unreliable) {
+        let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+
+        // Track network metrics (received from server)
+        let message_type = get_message_type_name(&message);
+        network_metrics.record_received(message_type, serialized.len());
+
+        match message {
+            Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
+                // Map entity ID and forward for prediction system
+                let Some(&local_ent) = l2r.get_by_right(&ent) else {
+                    // Entity not yet spawned on client - ignore intent silently
+                    continue
+                };
+                do_writer.write(Do { event: Event::MovementIntent { ent: local_ent, destination, duration_ms } });
+            }
+            _ => {
+                // Only MovementIntent should be sent on Unreliable channel
+                warn!("Unexpected message type on Unreliable channel: {:?}", message);
+            }
         }
     }
 }

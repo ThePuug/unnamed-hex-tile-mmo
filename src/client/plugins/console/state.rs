@@ -26,9 +26,7 @@ impl Default for DevConsole {
 pub enum MenuPath {
     Root,
     Terrain,
-    Combat,
     Performance,
-    Tools,
 }
 
 impl MenuPath {
@@ -37,9 +35,7 @@ impl MenuPath {
         match self {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
-            MenuPath::Combat => "Combat Testing",
             MenuPath::Performance => "Performance Monitoring",
-            MenuPath::Tools => "Developer Tools",
         }
     }
 }

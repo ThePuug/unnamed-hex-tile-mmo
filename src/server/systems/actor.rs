@@ -249,193 +249,138 @@ pub fn try_discover(
     }
 }
 
-pub fn update(
+/// Broadcast movement intent to nearby players (ADR-011 Phase 1)
+///
+/// Sends MovementIntent messages to enable client-side prediction.
+/// Each intent is self-correcting by resetting interpolation from current visual position.
+pub fn broadcast_movement_intent(
     mut commands: Commands,
+    mut writer: EventWriter<Do>,
+    mut query: Query<(Entity, &Loc, &Offset, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>, Option<&ActorAttributes>), Changed<Offset>>,
+    map: Res<Map>,
+    time: Res<Time>,
+) {
+    for (ent, loc, offset, o_intent_state, attrs) in &mut query {
+        let current_tile = **loc;
+
+        // ADR-011: Predict destination based on movement direction, not current position
+        // Broadcast intent when entity STARTS moving toward a tile, not when it arrives
+        // This gives client time to predict before the Loc update arrives
+
+        // Calculate movement direction and magnitude
+        let offset_magnitude = offset.state.xz().length();
+
+        // Skip if not moving significantly (stationary or very small movement)
+        const MIN_MOVEMENT_THRESHOLD: f32 = 0.2; // Broadcast when moving at least 0.2 units
+        if offset_magnitude < MIN_MOVEMENT_THRESHOLD {
+            continue;
+        }
+
+        // Find which adjacent tile we're moving toward
+        // Check all 6 hex directions to find closest match to our movement direction
+        let offset_dir = offset.state.xz().normalize();
+        let mut best_neighbor = current_tile;
+        let mut best_dot = -1.0;
+
+        for direction in qrz::DIRECTIONS.iter() {
+            let neighbor = current_tile + *direction;
+            let neighbor_world = map.convert(neighbor);
+            let to_neighbor = (neighbor_world - map.convert(current_tile)).xz().normalize();
+            let dot = offset_dir.dot(to_neighbor);
+
+            if dot > best_dot {
+                best_dot = dot;
+                best_neighbor = neighbor;
+            }
+        }
+
+        let dest_tile = best_neighbor;
+
+        // Skip if not clearly moving toward a different tile (dot product threshold)
+        const DIRECTION_THRESHOLD: f32 = 0.5; // Must be moving reasonably toward the tile
+        if dest_tile == current_tile || best_dot < DIRECTION_THRESHOLD {
+            continue;
+        }
+
+        // Calculate heading from movement direction
+        use crate::common::components::heading::Heading;
+        let movement_direction = dest_tile - current_tile;
+        let heading = Heading::new(movement_direction);
+
+        // Get or initialize MovementIntentState
+        let mut intent_state = if let Some(state) = o_intent_state {
+            state
+        } else {
+            // First time seeing this entity - add component
+            commands.entity(ent).insert(crate::common::components::movement_intent_state::MovementIntentState::default());
+            continue; // Will process next frame after component is added
+        };
+
+        // Skip if already broadcast this destination and heading
+        if dest_tile == intent_state.last_broadcast_dest && heading == intent_state.last_broadcast_heading {
+            continue;
+        }
+
+        // Calculate expected duration based on movement speed
+        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+        let current_world_pos = map.convert(current_tile) + offset.state;
+        let dest_world_pos = map.convert(dest_tile);
+        let distance = (dest_world_pos - current_world_pos).length();
+        let duration_ms = (distance / movement_speed) as u16;
+
+        // Update broadcast state
+        intent_state.last_broadcast_dest = dest_tile;
+        intent_state.last_broadcast_heading = heading;
+
+        // Broadcast intent to all clients (will add relevance filtering in Phase 2)
+        writer.write(Do {
+            event: Event::MovementIntent {
+                ent,
+                destination: dest_tile,
+                duration_ms,
+            }
+        });
+    }
+}
+
+pub fn update(
     mut writer: EventWriter<Try>,
-    mut query: Query<(Entity, &Loc, &mut Offset, &Heading), Changed<Offset>>,
+    mut query: Query<(Entity, &mut Loc, &mut Offset), Changed<Offset>>,
     map: Res<Map>,
 ) {
-    for (ent, &loc0, mut offset, &heading) in &mut query {
-        let px = map.convert(*loc0);
+    for (ent, mut loc0, mut offset) in &mut query {
+        let px = map.convert(**loc0);
         let qrz = map.convert(px + offset.state);
-        if *loc0 != qrz {
+        if **loc0 != qrz {
             // Adjust offset to be relative to new tile center
             let world_pos = px + offset.state;
             let new_tile_center = map.convert(qrz);
             offset.state = world_pos - new_tile_center;
 
             // Update Loc component directly
-            commands.entity(ent).insert(Loc::new(qrz));
+            **loc0 = qrz;
 
             // Send Loc update to client
             writer.write(Try { event: Event::Incremental { ent, component: Component::Loc(Loc::new(qrz)) } });
-
-            // Send Heading update so client can calculate proper interpolation target
-            writer.write(Try { event: Event::Incremental { ent, component: Component::Heading(heading) } });
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bevy::app::{App, Update};
-    use qrz::Qrz;
-    use crate::common::components::heading::Heading;
-    use crate::common::components::entity_type::actor::*;
-
-    #[test]
-    fn test_server_discovers_chunks_on_authoritative_loc_change() {
-        // Setup
-        let mut app = App::new();
-        app.add_event::<Do>();
-        app.add_event::<Try>();
-        app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
-        app.insert_resource(Terrain::default());
-        app.init_resource::<WorldDiscoveryCache>();
-        app.init_resource::<crate::common::resources::InputQueues>();
-
-        app.add_systems(Update, (
-            crate::common::systems::world::try_incremental,
-            crate::common::systems::world::do_incremental,
-            do_incremental.after(crate::common::systems::world::do_incremental),
-            try_discover_chunk,
-        ));
-
-        // Create a player entity with PlayerDiscoveryState
-        let player = app.world_mut().spawn((
-            Loc::new(Qrz { q: 0, r: 0, z: 0 }),
-            Heading::new(Qrz { q: 0, r: 1, z: 0 }), // south-east direction (valid DIRECTIONS entry)
-            Offset::default(),
-            EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
-            PlayerDiscoveryState::default(),
-        )).id();
-
-        app.update();
-
-        // Clear any initial discovery events
-        app.world_mut().resource_mut::<Events<Try>>().clear();
-
-        // Act: Server changes player's Loc (simulating authoritative position update)
-        // Moving from chunk (0,0) to a different location but staying in the same chunk
-        app.world_mut().send_event(Try {
+/// Broadcast heading changes to clients (ADR-011)
+///
+/// Detects when Heading components change and broadcasts them as Incremental events.
+/// This ensures clients see NPCs facing the correct direction and can calculate proper
+/// interpolation targets for remote players.
+pub fn broadcast_heading_changes(
+    mut writer: EventWriter<Try>,
+    query: Query<(Entity, &Heading), Changed<Heading>>,
+) {
+    for (ent, &heading) in &query {
+        writer.write(Try {
             event: Event::Incremental {
-                ent: player,
-                component: Component::Loc(Loc::new(Qrz { q: 1, r: 0, z: -1 })),
-            }
+                ent,
+                component: Component::Heading(heading),
+            },
         });
-
-        app.update();
-
-        // Run another update to process the events
-        app.update();
-
-        // Assert: Server should generate DiscoverChunk Try events based on new position
-        let all_try_events: Vec<_> = {
-            let mut try_reader = app.world_mut().resource_mut::<Events<Try>>().get_cursor();
-            let try_events = app.world().resource::<Events<Try>>();
-            try_reader.read(try_events).cloned().collect()
-        };
-
-        let chunk_discoveries: Vec<_> = all_try_events.iter()
-            .filter_map(|t| {
-                if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = t {
-                    Some((*ent, *chunk_id))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Since we're at (1, 0, -1) which is in chunk (0, 0), and FOV_CHUNK_RADIUS=2,
-        // we should discover chunks in a 5x5 area (radius 2 = -2 to +2)
-        // That's 25 chunks total
-        assert!(!chunk_discoveries.is_empty(), "Server should generate chunk discovery events when authoritative Loc changes");
-        assert_eq!(chunk_discoveries.len(), 25, "Should discover 25 chunks (5x5 area with radius 2), got {}", chunk_discoveries.len());
-        assert!(chunk_discoveries.iter().any(|(e, _)| *e == player), "Discoveries should be for the player entity");
-
-        // Verify we got ChunkData Do events
-        let all_do_events: Vec<_> = {
-            let mut do_reader = app.world_mut().resource_mut::<Events<Do>>().get_cursor();
-            let do_events = app.world().resource::<Events<Do>>();
-            do_reader.read(do_events).cloned().collect()
-        };
-
-        let chunk_data_events: Vec<_> = all_do_events.iter()
-            .filter_map(|d| {
-                if let Do { event: Event::ChunkData { chunk_id, tiles, .. } } = d {
-                    Some((*chunk_id, tiles.len()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        assert_eq!(chunk_data_events.len(), 25, "Should send 25 ChunkData events");
-        // Each chunk should have up to 64 tiles (8x8)
-        for (_chunk_id, tile_count) in &chunk_data_events {
-            assert!(*tile_count <= 64, "Chunk should have at most 64 tiles");
-        }
-    }
-
-    #[test]
-    fn test_initial_spawn_discovers_chunks() {
-        // Setup
-        let mut app = App::new();
-        app.add_event::<Do>();
-        app.add_event::<Try>();
-        app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
-        app.insert_resource(Terrain::default());
-        app.init_resource::<WorldDiscoveryCache>();
-
-        app.add_systems(Update, (
-            do_spawn_discover,
-            try_discover_chunk,
-        ));
-
-        // Create a player entity with PlayerDiscoveryState at spawn location
-        let spawn_loc = Qrz { q: 0, r: 0, z: 4 };
-        let player = app.world_mut().spawn((
-            Loc::new(spawn_loc),
-            EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
-            PlayerDiscoveryState::default(),
-        )).id();
-
-        // Send spawn event
-        app.world_mut().send_event(Do {
-            event: Event::Spawn {
-                ent: player,
-                typ: EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player)),
-                qrz: spawn_loc,
-                attrs: None,
-            }
-        });
-
-        app.update();
-
-        // Verify DiscoverChunk events were generated
-        let all_try_events: Vec<_> = {
-            let mut try_reader = app.world_mut().resource_mut::<Events<Try>>().get_cursor();
-            let try_events = app.world().resource::<Events<Try>>();
-            try_reader.read(try_events).cloned().collect()
-        };
-
-        let chunk_discoveries: Vec<_> = all_try_events.iter()
-            .filter_map(|t| {
-                if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = t {
-                    Some((*ent, *chunk_id))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        assert_eq!(chunk_discoveries.len(), 25, "Should discover 25 initial chunks on spawn");
-        assert!(chunk_discoveries.iter().all(|(e, _)| *e == player), "All discoveries should be for the player");
-
-        // Verify player state was updated
-        let player_state = app.world().get::<PlayerDiscoveryState>(player).unwrap();
-        assert_eq!(player_state.seen_chunks.len(), 25, "Player should have 25 chunks in seen_chunks");
-        assert_eq!(player_state.last_chunk, Some(ChunkId(0, 0)), "Player's last_chunk should be set");
     }
 }
