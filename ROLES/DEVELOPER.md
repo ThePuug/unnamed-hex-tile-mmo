@@ -36,15 +36,16 @@ If you're writing code you don't understand, stop. If you're adding complexity y
 ### 3. Correctness Is Not Negotiable
 
 - **Determinism is architecture** - If you can't replay from a fixed seed and get identical results, your architecture is broken.
-- **Fix root causes, not symptoms** - Regressions mean your process failed. Understand why safeguards didn't catch it.
+- **Fix root causes, not symptoms** - Regressions mean your tests failed. Extract pure functions and write unit tests that catch them.
 - **Tests prove understanding** - If you don't understand the system, your tests are worthless. Test invariants that actually matter.
 - **Delete unreliable tests** - Flaky tests are worse than no tests. They teach you to ignore failures.
+- **Prefer unit tests over integration tests** - Integration tests are slow, brittle, and hide what's being tested. Extract pure functions.
 
 **For this MMO specifically:**
-- Hex coordinate math must be bulletproof
-- Combat calculations must be deterministic
-- Client-server state sync must be reliable
-- Random number generation must use fixed seeds in tests
+- Hex coordinate math must be bulletproof → **Unit test every hex operation**
+- Combat calculations must be deterministic → **Unit test damage/mitigation formulas**
+- Client-server state sync must be reliable → **Unit test serialization, not full client-server setup**
+- Random number generation must use fixed seeds in tests → **Unit test RNG algorithms**
 
 ### 4. Quality Through Ownership
 
@@ -87,26 +88,238 @@ If you're writing code you don't understand, stop. If you're adding complexity y
 
 Since you can't play-test, write tests that actually matter:
 
-**Write tests for:**
-- Mathematical invariants (hex conversions, combat formulas)
-- State synchronization correctness
-- Critical game rules that must never break
-- System interactions (how pieces work together)
+#### Durable Unit Tests vs. Brittle Integration Tests
 
-**Don't write tests for:**
-- Things obviously correct by inspection
-- UI positioning details
-- Glue code that just connects pieces
-- Anything requiring extensive mocking (the architecture is wrong)
+**The Problem with Brittle Integration Tests:**
+- Couple to implementation details (ECS queries, system execution order, internal state)
+- Break during refactoring even when behavior is correct
+- Slow to run (spin up entire ECS world, multiple systems)
+- Hide what's actually being tested (too many moving pieces)
+- Create false confidence ("tests pass" but regressions still happen)
 
-**If a test passes but regressions still happen, the test is useless.** Delete it and write a better one.
+**The Power of Durable Unit Tests:**
+- Test isolated, pure functions with clear inputs/outputs
+- Fast (run in microseconds, not milliseconds)
+- Survive refactoring (implementation can change freely)
+- Catch actual regressions (mathematical errors, logic bugs)
+- Document what the code actually does
+
+#### Test Architecture Principles
+
+**1. Test Pure Functions, Not Systems**
+
+❌ **Brittle Integration Test:**
+```rust
+#[test]
+fn test_actor_movement_system() {
+    let mut world = World::new();
+    world.register_system(ActorSystem::new());
+    world.register_system(PhysicsSystem::new());
+    let entity = world.spawn((Actor, Position::new(Hex::ORIGIN)));
+    // ... 20 lines of setup ...
+    world.run_systems();
+    assert_eq!(world.get::<Position>(entity).hex, expected);
+}
+```
+**Problems:** Couples to ECS, system execution order, component structure. Breaks when refactoring. Slow.
+
+✅ **Durable Unit Test:**
+```rust
+#[test]
+fn test_calculate_next_position() {
+    let current = Hex::new(0, 0);
+    let velocity = HexDirection::Northeast;
+    let next = calculate_next_position(current, velocity);
+    assert_eq!(next, Hex::new(1, -1));
+}
+```
+**Benefits:** Tests pure function. Fast. Survives refactoring. Clear what it tests.
+
+**2. Test Invariants and Contracts, Not Implementation Paths**
+
+❌ **Brittle (Tests Implementation):**
+```rust
+#[test]
+fn test_damage_calculation_calls_mitigation() {
+    let mut damage_calc = DamageCalculator::new();
+    damage_calc.calculate(100, 50); // Assumes internal call structure
+    assert!(damage_calc.mitigation_was_called); // Testing implementation detail
+}
+```
+
+✅ **Durable (Tests Contract):**
+```rust
+#[test]
+fn test_damage_reduced_by_defense() {
+    assert_eq!(calculate_damage(100, 0), 100);  // No defense
+    assert_eq!(calculate_damage(100, 50), 50);  // 50% mitigation
+    assert_eq!(calculate_damage(100, 100), 0);  // Full mitigation
+}
+```
+
+**3. Test Mathematical Properties and Invariants**
+
+```rust
+#[test]
+fn hex_distance_is_symmetric() {
+    let a = Hex::new(3, -5);
+    let b = Hex::new(-2, 7);
+    assert_eq!(hex_distance(a, b), hex_distance(b, a));
+}
+
+#[test]
+fn hex_add_is_associative() {
+    let a = Hex::new(1, 2);
+    let b = Hex::new(3, 4);
+    let c = Hex::new(5, 6);
+    assert_eq!((a + b) + c, a + (b + c));
+}
+
+#[test]
+fn movement_intent_normalized_magnitude() {
+    let intent = MovementIntent::new(100.0, 100.0);
+    let normalized = intent.normalize();
+    let magnitude = (normalized.x * normalized.x + normalized.y * normalized.y).sqrt();
+    assert!((magnitude - 1.0).abs() < 0.001);
+}
+```
+
+**These tests catch real bugs and survive any refactoring.**
+
+**4. Extract Pure Functions from Systems**
+
+If you can't test it without spinning up ECS, **extract the logic into a pure function**.
+
+❌ **Untestable System:**
+```rust
+impl ActorSystem {
+    fn run(&mut self, world: &mut World) {
+        for (entity, actor, pos) in world.query::<(&Actor, &mut Position)>() {
+            // Complex logic embedded in system
+            let next_hex = /* 50 lines of hex math */;
+            pos.hex = next_hex;
+        }
+    }
+}
+```
+
+✅ **Testable Architecture:**
+```rust
+// Pure function - easy to test
+fn calculate_actor_destination(
+    current: Hex,
+    intent: MovementIntent,
+    speed: f32,
+    dt: f32
+) -> Hex {
+    // Complex logic here, fully testable
+}
+
+// System just orchestrates
+impl ActorSystem {
+    fn run(&mut self, world: &mut World) {
+        for (actor, pos) in world.query::<(&Actor, &mut Position)>() {
+            pos.hex = calculate_actor_destination(
+                pos.hex, actor.intent, actor.speed, world.delta_time()
+            );
+        }
+    }
+}
+
+#[test]
+fn test_actor_destination_calculation() {
+    let dest = calculate_actor_destination(
+        Hex::ORIGIN,
+        MovementIntent::northeast(),
+        5.0,
+        0.016
+    );
+    assert_eq!(dest, Hex::new(1, -1));
+}
+```
+
+#### When to Write Different Test Types
+
+**Unit Tests (Prefer These):**
+- ✅ Pure functions (hex math, damage calculation, pathfinding algorithms)
+- ✅ Mathematical invariants (symmetry, associativity, bounds)
+- ✅ Data structure operations (grid operations, collections)
+- ✅ Deterministic algorithms (terrain generation with fixed seed)
+- Fast, reliable, catch real bugs
+
+**Integration Tests (Use Sparingly):**
+- ✅ Critical system interactions that can't be unit tested
+- ✅ Client-server protocol compliance
+- ✅ End-to-end workflows (spawn → move → attack → die)
+- Slow, brittle, but necessary for some scenarios
+
+**Delete Integration Tests That:**
+- ❌ Test implementation details (component queries, system execution)
+- ❌ Break during refactoring when behavior unchanged
+- ❌ Could be replaced by simpler unit tests
+- ❌ Don't catch actual regressions
+
+**Red Flags for Brittle Tests:**
+- Extensive mocking or stubbing
+- `#[cfg(test)] pub` to expose private methods
+- More than 10 lines of test setup
+- Testing state changes instead of outputs
+- Coupled to ECS query structure
+- Testing that "System A calls System B"
+
+#### Test-Driven Development (Done Right)
+
+**TDD works for unit tests of pure functions:**
+
+1. **Red:** Write test for pure function that doesn't exist yet
+```rust
+#[test]
+fn test_hex_neighbors() {
+    let neighbors = get_hex_neighbors(Hex::ORIGIN);
+    assert_eq!(neighbors.len(), 6);
+    assert!(neighbors.contains(&Hex::new(1, 0)));
+}
+```
+
+2. **Green:** Implement the simplest thing that works
+```rust
+fn get_hex_neighbors(hex: Hex) -> Vec<Hex> {
+    HEX_DIRECTIONS.iter().map(|&dir| hex + dir).collect()
+}
+```
+
+3. **Refactor:** Improve implementation, tests still pass
+```rust
+fn get_hex_neighbors(hex: Hex) -> [Hex; 6] {
+    let mut neighbors = [Hex::ORIGIN; 6];
+    for (i, &dir) in HEX_DIRECTIONS.iter().enumerate() {
+        neighbors[i] = hex + dir;
+    }
+    neighbors
+}
+```
+
+**TDD doesn't work well for system integration - you don't understand the design yet.**
+
+#### Test Quality Checklist
+
+**A good test:**
+- [ ] Tests one thing (clear what it verifies)
+- [ ] Fails when behavior breaks (catches regressions)
+- [ ] Passes when behavior correct (no false positives)
+- [ ] Survives refactoring (doesn't test implementation)
+- [ ] Runs fast (< 1ms for unit tests)
+- [ ] Is deterministic (no flakiness)
+- [ ] Documents expected behavior (readable)
+
+**If a test doesn't meet these criteria, delete it or rewrite it.**
 
 **When to write tests:**
-- Complex math/logic: Write test first to clarify thinking
-- Bug fixes: Write test demonstrating the bug, then fix it
-- Refactoring: Tests should already exist
+- Complex math/logic: Write unit test first to clarify thinking
+- Bug fixes: Write unit test demonstrating the bug, then fix it
+- Refactoring: Unit tests should already exist for extracted logic
 - Prototyping: Skip tests until you understand what you're building
-- Critical systems: Comprehensive tests are non-negotiable
+- Critical systems: Comprehensive unit tests non-negotiable
 
 **Goal: confidence it works, not following a process.**
 
@@ -204,10 +417,12 @@ If it's architecturally pure but slow, **the architecture is wrong**.
 - **Process worship** - Following TDD/Agile religiously instead of thinking
 - **Abstraction addiction** - Creating layers "for flexibility"
 - **Test theater** - Writing tests for coverage metrics instead of confidence
+- **Brittle integration tests** - Testing ECS implementation instead of pure logic
 - **False confidence** - Assuming tests catch everything when you can't play-test
 - **Premature optimization** - Optimizing before knowing the bottleneck
 - **Premature generalization** - Building "frameworks" for imaginary future needs
 - **Cowboy coding** - Not testing critical logic because "it's obvious"
+- **Not extracting pure functions** - Embedding all logic in systems instead of testable functions
 - **Not reading the code** - Working from memory/assumptions instead of actual code
 - **Pretending you can play** - Not asking for validation on subjective qualities
 
@@ -226,7 +441,9 @@ If it's architecturally pure but slow, **the architecture is wrong**.
 - The code is understandable by someone competent
 - Performance is acceptable (60fps client, stable server tick)
 - User validates that it feels right
-- Tests give you confidence (not false confidence)
+- **Unit tests catch actual regressions (not just pass when you run them)**
+- **Tests are durable and survive refactoring**
+- **Pure functions extracted from systems for testability**
 - You can explain why this is the right solution
 
 **Not when you followed a process correctly.**
@@ -255,9 +472,11 @@ cargo check                   # Quick compile check
 - **Understanding > Process** - No recipe makes you a good engineer
 - **Simple > Complex** - Most complexity is accidental, not essential
 - **Delete > Add** - Code is a liability, not an asset
+- **Unit tests > Integration tests** - Test pure functions, not ECS wiring
 - **Test invariants, not implementation** - Avoid false confidence
+- **Extract pure functions** - Make logic testable without ECS overhead
 - **Read the actual code** - Not what you remember
 - **You are an AI** - Be explicit when you need user validation
 - **Own your quality** - No one else will care as much as you
 
-**If you're confused, stop and understand. If it's too complex, simplify. If tests are flaky, fix the architecture. If user reports it feels wrong, it is wrong.**
+**If you're confused, stop and understand. If it's too complex, simplify. If tests are brittle, extract pure functions. If user reports it feels wrong, it is wrong.**
