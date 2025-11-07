@@ -2,7 +2,7 @@
 
 **Specification:** [combat-system.md](combat-system.md)
 **Last Updated:** 2025-11-07
-**Overall Status:** 48/112 features complete (43%)
+**Overall Status:** 61/114 features complete (54%)
 
 ---
 
@@ -121,45 +121,45 @@
 
 ### Ability Recovery System
 
-**Core Mechanic (Lines 352-381):** Individual ability recovery timers replace GCD. Each ability has independent recovery period after use, creating natural commitment without artificial delays between different abilities.
+**Core Mechanic (Lines 352-381):** Universal lockout system where using an ability locks ALL abilities for that ability's recovery duration. Replaces GCD with per-ability lockout periods creating tactical commitment.
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Individual recovery timers per ability | ❌ Not Started | - | Lines 352-370 | Each ability has independent recovery, not universal delay |
-| Recovery timer UI (circular fill) | ❌ Not Started | - | Lines 371-377 | Matches reaction window UI pattern |
-| Quick utility recovery (0.2-0.3s) | ❌ Not Started | - | Lines 364-366 | Defensive reactions, gap closers |
-| Tactical choice recovery (0.4-0.6s) | ❌ Not Started | - | Lines 367-368 | Standard offensive abilities |
-| High-impact recovery (0.8-1.2s) | ❌ Not Started | - | Lines 369-370 | Major abilities, channeled attacks |
-| Recovery happens after animation | ❌ Not Started | - | Line 361 | No overlap with cast time |
-| Other abilities remain available | ❌ Not Started | - | Line 360 | No universal delay between different abilities |
+| Universal lockout component (GlobalRecovery) | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 352-370 | Single component tracks lockout: remaining, duration, triggered_by |
+| Per-ability lockout durations | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 364-370 | MVP values: Lunge 1s, Overpower 2s, Knockback 0.5s, Deflect 1s |
+| Global recovery system (tick down) | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 352-381 | Ticks down lockout timer, removes component when expired |
+| All abilities locked during recovery | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 352-363 | Universal lockout prevents any ability use |
+| Integration with all MVP abilities | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | - | Lunge, Overpower, Knockback, Deflect all create GlobalRecovery |
+| Recovery timer UI (circular fill) | ❌ Not Started | [ADR-012 Acceptance](../adr/012-acceptance.md) | Lines 371-377 | Deferred: matches reaction window UI pattern (non-blocking) |
+| Client-side prediction | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | - | Both server and client apply recovery locally |
 
-**Category Status:** 0/7 complete (0% - replaces GCD system)
-
-**Design Intent:** Each ability's recovery reflects commitment weight. No artificial pause between different abilities creates fluid combos. Natural pacing through resource costs + recovery periods.
+**Category Status:** 6/7 complete (86%)
 
 ---
 
 ### Tactical Synergies
 
-**Core Mechanic (Lines 383-456):** Certain ability sequences that make tactical sense receive recovery reductions. Using one ability creates "window of opportunity" where follow-up abilities glow and become available faster.
+**Core Mechanic (Lines 383-456):** Certain ability sequences unlock follow-up abilities early during recovery lockout. Using one ability creates "window of opportunity" where tactical follow-ups glow and become available before full lockout expires.
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Synergy detection system | ❌ Not Started | - | Lines 388-395 | Detect tactical ability sequences (gap closer → strike, interrupt → exploit, etc.) |
-| Recovery reduction on synergy | ❌ Not Started | - | Lines 392-395 | Synergizing abilities recover faster (example: 0.5s → 0.2s) |
-| Visual glow on synergy activation | ❌ Not Started | - | Lines 418-423 | Glowing ability icons with bright borders, particle effects |
-| Synergy window duration | ❌ Not Started | - | Lines 422-423 | Glow persists until non-synergized abilities recover ("on fire" window) |
-| Audio feedback on synergy | ❌ Not Started | - | Lines 425-428 | Satisfying "ding" or "whoosh" when synergy triggers, extra impact sound on use |
-| Synergy chaining | ❌ Not Started | - | Lines 443-447 | Using glowing ability may trigger new synergies (limited by resources) |
-| Build-specific synergy patterns | ❌ Not Started | - | Lines 453-454 | Different weapons/armor unlock different synergy opportunities |
-| Discovery through play | ❌ Not Started | - | Lines 430-441 | Self-teaching system, no tutorials required, glowing abilities guide learning |
+| Synergy detection system | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 388-395 | MVP hardcoded rules: gapcloser→heavy, heavy→push |
+| Early unlock during recovery | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 392-395 | SynergyUnlock component marks abilities available before full recovery |
+| Visual glow on synergy activation | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md), [action_bar.rs](../../src/client/systems/action_bar.rs) | Lines 418-423 | Bright gold overlay (intentionally VERY bright for testing) |
+| Immediate glow appearance | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 418-423 | Glow appears when triggering ability used (not when unlock arrives) |
+| Additive glow layer | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 418-423 | Overlay preserves base colors (grey/green/yellow), doesn't replace |
+| Synergy window duration | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 422-423 | Glow persists until full recovery, supports future queued input |
+| Audio feedback on synergy | ❌ Not Started | [ADR-012 Acceptance](../adr/012-acceptance.md) | Lines 425-428 | Deferred: sound on synergy trigger (non-blocking) |
+| Synergy chaining | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 443-447 | MVP chain: Lunge → Overpower (0.5s) → Knockback (instant at 1s) |
+| Build-specific synergy patterns | ⏸️ Deferred | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 453-454 | Phase 4: data-driven synergies, needs gear system |
+| Discovery through play | ✅ Complete | [ADR-012](../adr/012-ability-recovery-and-synergies.md) | Lines 430-441 | Visual feedback guides learning, glowing abilities self-teach |
 
-**Category Status:** 0/8 complete (0% - new mechanic, not implemented)
+**Category Status:** 7/10 complete (70%)
 
-**Example Synergies (Lines 397-414):**
-- Gap Closer → Strike (Lunge glows Overpower)
-- Interrupt → Exploit (Knockback glows Lunge)
-- Ranged → Reposition (Volley glows Flank)
+**MVP Synergies Implemented (ADR-012):**
+- Gap Closer → Heavy Strike: Lunge unlocks Overpower 0.5s early (at 0.5s remaining instead of 1.0s)
+- Heavy Strike → Push: Overpower unlocks Knockback 1.0s early (at 1.0s remaining instead of 2.0s)
+- Full chain: Lunge → Overpower (0.5s wait) → Knockback (instant at 1s mark)
 
 **Design Benefits (Lines 449-456):** Rewards tactical thinking over memorized rotations. Self-teaching through visual feedback. Build diversity through different synergy patterns. Accessible depth (works without synergies, better with them).
 
@@ -401,6 +401,19 @@ Features where implementation intentionally differs from spec:
 - **Design Impact:** Skill expression shifted from twitch dodging to reaction queue management (existing, tested system). Positioning still matters (range, kiting, gap closers) without requiring pixel-perfect reflexes.
 - **Spec Updated:** combat-system.md Lines 147-208 (Ranged Attacks + Attack Telegraphs sections)
 - **ADR Reference:** [ADR-011](../adr/011-movement-intent-system.md) - Combat system refinement during movement intent implementation
+
+### 13. Recovery System: Universal Lockout vs Per-Ability Timers
+- **Spec Says (combat-system.md, Lines 352-381):** "Individual ability recovery timers" where "each ability has independent recovery period" and "other abilities remain available"
+- **Actually Implemented (ADR-012):** Universal lockout system where using ANY ability locks ALL abilities for that ability's recovery duration
+- **Rationale:** Universal lockout creates stronger tactical commitment and weight to ability choices. Each ability's lockout duration reflects its power/impact (Lunge 1s, Overpower 2s, Knockback 0.5s, Deflect 1s). Tactical synergies provide early unlocks during lockout for specific ability sequences, adding skill expression without reducing commitment weight.
+- **Implementation Details:**
+  - GlobalRecovery component (single per player): `remaining`, `duration`, `triggered_by`
+  - SynergyUnlock component (multiple per player): `ability`, `unlock_at`, `triggered_by`
+  - MVP synergy chain: Lunge → Overpower (0.5s early) → Knockback (instant at 1s)
+  - All 33 tests passing (26 recovery + 7 synergy)
+- **Design Impact:** Creates rhythmic combat pacing with meaningful ability choice. Synergies reward tactical sequences without eliminating commitment. Clearer mental model (one global timer vs tracking multiple timers).
+- **ADR Reference:** [ADR-012](../adr/012-ability-recovery-and-synergies.md), [ADR-012 Acceptance](../adr/012-acceptance.md)
+- **Status:** Accepted and deployed, spec needs update to reflect implementation
 
 ---
 

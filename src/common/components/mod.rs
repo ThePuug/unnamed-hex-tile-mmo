@@ -8,6 +8,7 @@ pub mod movement_intent_state;
 pub mod movement_prediction;
 pub mod offset;
 pub mod reaction_queue;
+pub mod recovery;
 pub mod resources;
 pub mod spawner;
 pub mod target;

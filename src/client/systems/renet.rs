@@ -43,6 +43,7 @@ fn get_message_type_name(message: &Do) -> String {
         Event::ApplyDamage { .. } => "ApplyDamage".to_string(),
         Event::ClearQueue { .. } => "ClearQueue".to_string(),
         Event::AbilityFailed { .. } => "AbilityFailed".to_string(),
+        Event::UseAbility { .. } => "UseAbility".to_string(),
         Event::Pong { .. } => "Pong".to_string(),
         Event::MovementIntent { .. } => "MovementIntent".to_string(),
         _ => "Other".to_string(),
@@ -216,6 +217,14 @@ pub fn write_do(
                     continue
                 };
                 do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
+            }
+            Do { event: Event::UseAbility { ent, ability, target_loc } } => {
+                // Map entity ID and forward to ability_prediction system (ADR-012)
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::UseAbility { ent, ability, target_loc } });
             }
             Do { event: Event::Pong { client_time } } => {
                 // Forward Pong to Do writer for handle_pong system

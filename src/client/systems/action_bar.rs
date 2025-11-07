@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     common::{
-        components::{Actor, gcd::Gcd, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
+        components::{Actor, gcd::Gcd, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
         message::AbilityType,
         plugins::nntree::NNTree,
         systems::targeting::select_target,
@@ -40,6 +40,10 @@ pub struct SlotCost;
 /// Marker for ability slot cooldown overlay
 #[derive(Component)]
 pub struct SlotCooldown;
+
+/// Marker for ability slot synergy glow overlay (ADR-012)
+#[derive(Component)]
+pub struct SynergyGlow;
 
 /// Setup action bar UI below resource bars
 /// Creates 4 ability slots (Q, W, E, R)
@@ -168,30 +172,54 @@ pub fn setup(
                 ));
             }
         }
+
+        // Synergy glow overlay (ADR-012: BRIGHT gold glow when synergy unlocked)
+        // Positioned absolutely to cover the entire slot, hidden by default
+        // INTENTIONALLY VERY BRIGHT for testing - will tone down once confirmed working
+        parent.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.),
+                height: Val::Percent(100.),
+                top: Val::Px(0.),
+                left: Val::Px(0.),
+                border: UiRect::all(Val::Px(8.)),  // THICK border
+                ..default()
+            },
+            BorderColor(Color::srgb(1.0, 1.0, 0.0)),  // BRIGHT YELLOW (impossible to miss)
+            BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),  // BRIGHT semi-transparent yellow fill
+            Visibility::Hidden,  // Hidden by default
+            SynergyGlow,
+        ));
     });  // Close .with_children from line 97 (slot children)
             }  // Close for loop from line 82
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }
 
-/// Update action bar states based on player's resources and GCD
-/// Updates border colors to indicate ability states (ready/cooldown/insufficient resources)
+/// Update action bar states based on player's resources, recovery, and synergies
+/// Updates border colors AND synergy glow visibility
 pub fn update(
-    mut slot_query: Query<(&AbilitySlot, &mut BorderColor)>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>), With<Actor>>,
+    mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
+    mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
     // Get player resources and position
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt)) = player_query.get_single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt)) = player_query.get_single() else {
         return;  // No player yet
     };
 
     let now = time.elapsed();
     let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(now));
 
-    for (slot, mut border_color) in &mut slot_query {
+    // Check recovery lockout and synergy state
+    let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
+    let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
+
+    for (slot, mut border_color, children) in &mut slot_query {
         if let Some(ability) = slot.ability {
             // Determine ability state
             let state = get_ability_state(
@@ -199,6 +227,9 @@ pub fn update(
                 stamina,
                 mana,
                 gcd_active,
+                recovery_active,
+                recovery_remaining,
+                synergy_opt,
                 player_ent,
                 *player_loc,
                 *player_heading,
@@ -207,16 +238,36 @@ pub fn update(
                 &entity_query,
             );
 
-            // Update border color based on state
-            *border_color = match state {
-                AbilityState::Ready => BorderColor(Color::srgb(0.3, 0.8, 0.3)),           // Green
-                AbilityState::OnCooldown => BorderColor(Color::srgb(0.5, 0.5, 0.5)),      // Gray
-                AbilityState::InsufficientResources => BorderColor(Color::srgb(0.9, 0.1, 0.1)), // Red
-                AbilityState::OutOfRange => BorderColor(Color::srgb(0.8, 0.5, 0.1)),      // Orange
+            // Update border color based on state (keep meaningful colors)
+            let (border, show_synergy_glow) = match state {
+                AbilityState::Ready => (BorderColor(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
+                AbilityState::OnCooldown => (BorderColor(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
+                AbilityState::SynergyUnlocked => {
+                    (BorderColor(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
+                },
+                AbilityState::InsufficientResources => (BorderColor(Color::srgb(0.9, 0.1, 0.1)), false), // Red
+                AbilityState::OutOfRange => (BorderColor(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
             };
+            *border_color = border;
+
+            // Update synergy glow visibility (ADR-012: Show gold glow when synergy unlocked)
+            for child in children.iter() {
+                if let Ok(mut visibility) = glow_query.get_mut(child) {
+                    *visibility = if show_synergy_glow {
+                        Visibility::Visible
+                    } else {
+                        Visibility::Hidden
+                    };
+                }
+            }
         } else {
-            // Empty slot: dark gray
+            // Empty slot: dark gray, no glow
             *border_color = BorderColor(Color::srgb(0.2, 0.2, 0.2));
+            for child in children.iter() {
+                if let Ok(mut visibility) = glow_query.get_mut(child) {
+                    *visibility = Visibility::Hidden;
+                }
+            }
         }
     }
 }
@@ -226,16 +277,20 @@ pub fn update(
 enum AbilityState {
     Ready,
     OnCooldown,
+    SynergyUnlocked,  // ADR-012: Ability unlocked early via synergy (gold glow)
     InsufficientResources,
     OutOfRange,
 }
 
-/// Determine ability state based on resources, GCD, and targeting
+/// Determine ability state based on resources, recovery, synergies, and targeting
 fn get_ability_state(
     ability: AbilityType,
     stamina: &Stamina,
     _mana: &Mana,
     gcd_active: bool,
+    recovery_active: bool,
+    recovery_remaining: f32,
+    synergy_opt: Option<&SynergyUnlock>,
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
@@ -243,7 +298,20 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
-    // Check GCD first
+    // Check recovery lockout (ADR-012: Universal lockout, can be synergy-unlocked)
+    if recovery_active {
+        // Check if this ability has a synergy active (show glow immediately)
+        if let Some(synergy) = synergy_opt {
+            if synergy.ability == ability {
+                // Synergy active for this ability! Show gold glow immediately
+                return AbilityState::SynergyUnlocked;
+            }
+        }
+        // Still locked (no synergy)
+        return AbilityState::OnCooldown;
+    }
+
+    // Also check legacy GCD (will be removed in Phase 1 cleanup)
     if gcd_active {
         return AbilityState::OnCooldown;
     }

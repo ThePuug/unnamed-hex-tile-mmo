@@ -34,7 +34,7 @@ use client::{
         ui::UiPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -115,7 +115,16 @@ fn main() {
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)
         combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
         combat::apply_gcd,
-        // REMOVED: Client-side attack prediction - all combat is server-authoritative
+    ));
+
+    // ADR-012: Client-side recovery (authoritative server, no prediction)
+    app.add_systems(Update, (
+        ability_prediction::handle_ability_used, // Apply recovery/synergies when server confirms ability use
+        common::systems::combat::recovery::global_recovery_system, // Tick down recovery timer
+        common::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
+    ));
+
+    app.add_systems(Update, (
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,

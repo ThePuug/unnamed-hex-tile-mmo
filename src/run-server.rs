@@ -74,6 +74,8 @@ fn main() {
         physics::update,
         common::systems::combat::resources::regenerate_resources,
         common::systems::combat::state::update_combat_state,
+        common::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
+        common::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies
         reaction_queue::process_expired_threats,
     ));
 

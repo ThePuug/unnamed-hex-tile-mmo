@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, gcd::Gcd},
+        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-        systems::{targeting::get_range_tier, combat::gcd::GcdType},
+        systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
     },
 };
 
@@ -12,17 +12,15 @@ use crate::{
 /// - 40 base damage
 /// - 4 hex range
 /// - Teleports caster adjacent to target
-/// - Triggers Attack GCD
 pub fn handle_lunge(
     mut commands: Commands,
     mut reader: EventReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
-    mut gcd_query: Query<&mut Gcd>,
+    recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     mut writer: EventWriter<Do>,
-    time: Res<Time>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -40,19 +38,17 @@ pub fn handle_lunge(
             continue;
         }
 
-        // Check GCD (must not be on cooldown)
-        let Ok(gcd) = gcd_query.get(*ent) else {
-            continue;
-        };
-
-        if gcd.is_active(time.elapsed()) {
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::OnCooldown,
-                },
-            });
-            continue;
+        // Check recovery lockout (universal lockout for all abilities)
+        if let Ok(recovery) = recovery_query.get(*ent) {
+            if recovery.is_active() {
+                writer.write(Do {
+                    event: GameEvent::AbilityFailed {
+                        ent: *ent,
+                        reason: AbilityFailReason::OnCooldown,
+                    },
+                });
+                continue;
+            }
         }
 
         // Get caster's location, current target, and targeting state
@@ -190,10 +186,21 @@ pub fn handle_lunge(
             target_ent,
         );
 
-        // Trigger Attack GCD immediately (prevents race conditions)
-        if let Ok(mut gcd) = gcd_query.get_mut(*ent) {
-            let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
-            gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
-        }
+        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        writer.write(Do {
+            event: GameEvent::UseAbility {
+                ent: *ent,
+                ability: AbilityType::Lunge,
+                target_loc: Some(**target_loc),
+            },
+        });
+
+        // Trigger recovery lockout (server-side state)
+        let recovery_duration = get_ability_recovery_duration(AbilityType::Lunge);
+        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Lunge);
+        commands.entity(*ent).insert(recovery);
+
+        // Apply synergies (server-side state)
+        apply_synergies(*ent, AbilityType::Lunge, &recovery, &mut commands);
     }
 }

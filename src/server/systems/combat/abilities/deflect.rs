@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{reaction_queue::*, resources::*, gcd::Gcd},
+        components::{reaction_queue::*, resources::*, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-        systems::combat::{gcd::GcdType, queue as queue_utils},
+        systems::combat::{queue as queue_utils, synergies::apply_synergies},
     },
 };
 
@@ -11,12 +11,12 @@ use crate::{
 /// - 50 stamina cost
 /// - Clears ALL queued threats
 /// - Requires at least one threat in queue
-/// - Triggers Attack GCD
 pub fn handle_deflect(
+    mut commands: Commands,
     mut reader: EventReader<Try>,
-    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina, &mut Gcd)>,
+    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
+    recovery_query: Query<&GlobalRecovery>,
     mut writer: EventWriter<Do>,
-    time: Res<Time>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -28,8 +28,21 @@ pub fn handle_deflect(
             continue;
         };
 
-        // Get caster's queue, stamina, and GCD
-        let Ok((mut queue, mut stamina, mut gcd)) = queue_query.get_mut(*ent) else {
+        // Check recovery lockout (Deflect has no synergies, so simple check)
+        if let Ok(recovery) = recovery_query.get(*ent) {
+            if recovery.is_active() {
+                writer.write(Do {
+                    event: GameEvent::AbilityFailed {
+                        ent: *ent,
+                        reason: AbilityFailReason::OnCooldown,
+                    },
+                });
+                continue;
+            }
+        }
+
+        // Get caster's queue and stamina
+        let Ok((mut queue, mut stamina)) = queue_query.get_mut(*ent) else {
             continue;
         };
 
@@ -89,8 +102,21 @@ pub fn handle_deflect(
             },
         });
 
-        // Trigger Attack GCD immediately (prevents race conditions)
-        let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
-        gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
+        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        writer.write(Do {
+            event: GameEvent::UseAbility {
+                ent: *ent,
+                ability: AbilityType::Deflect,
+                target_loc: None, // Deflect doesn't use target_loc
+            },
+        });
+
+        // Trigger recovery lockout (server-side state)
+        let recovery_duration = get_ability_recovery_duration(AbilityType::Deflect);
+        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Deflect);
+        commands.entity(*ent).insert(recovery);
+
+        // Apply synergies (server-side state)
+        apply_synergies(*ent, AbilityType::Deflect, &recovery, &mut commands);
     }
 }

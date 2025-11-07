@@ -3,9 +3,9 @@ use qrz::Qrz;
 use std::ops::Deref;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, Loc, gcd::Gcd, reaction_queue::ReactionQueue},
+        components::{entity_type::*, resources::*, Loc, reaction_queue::ReactionQueue, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-        systems::combat::gcd::GcdType,
+        systems::combat::synergies::apply_synergies,
     },
     server::resources::RunTime,
 };
@@ -17,18 +17,17 @@ use crate::{
 /// - Only works while threat is still in queue (1-1.75s window based on Instinct)
 /// - Pushes attacker 1 hex directly away from you (using direction vector)
 /// - Removes the threat from queue (cancels the incoming attack)
-/// - Triggers Attack GCD
 pub fn handle_knockback(
     mut commands: Commands,
     mut reader: EventReader<Try>,
     entity_query: Query<(&EntityType, &Loc)>,
     mut caster_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
-    mut gcd_query: Query<&mut Gcd>,
+    recovery_query: Query<&GlobalRecovery>,
+    synergy_query: Query<&crate::common::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
     _runtime: Res<RunTime>,
     mut writer: EventWriter<Do>,
-    time: Res<Time>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -46,19 +45,29 @@ pub fn handle_knockback(
             continue;
         }
 
-        // Check GCD (must not be on cooldown)
-        let Ok(gcd) = gcd_query.get(*ent) else {
-            continue;
-        };
+        // Check recovery lockout (unless synergy-unlocked)
+        if let Ok(recovery) = recovery_query.get(*ent) {
+            if recovery.is_active() {
+                // Check if Knockback is synergy-unlocked (Overpower → Knockback)
+                let is_synergy_unlocked = synergy_query
+                    .get(*ent)
+                    .ok()
+                    .map(|synergy| {
+                        synergy.ability == AbilityType::Knockback
+                            && synergy.is_unlocked(recovery.remaining)
+                    })
+                    .unwrap_or(false);
 
-        if gcd.is_active(time.elapsed()) {
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::OnCooldown,
-                },
-            });
-            continue;
+                if !is_synergy_unlocked {
+                    writer.write(Do {
+                        event: GameEvent::AbilityFailed {
+                            ent: *ent,
+                            reason: AbilityFailReason::OnCooldown,
+                        },
+                    });
+                    continue;
+                }
+            }
         }
 
         // Get caster's location and reaction queue
@@ -194,10 +203,21 @@ pub fn handle_knockback(
             },
         });
 
-        // Trigger Attack GCD immediately (prevents race conditions)
-        if let Ok(mut gcd) = gcd_query.get_mut(*ent) {
-            let gcd_duration = std::time::Duration::from_secs(1); // 1s for Attack GCD (ADR-006)
-            gcd.activate(GcdType::Attack, gcd_duration, time.elapsed());
-        }
+        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        writer.write(Do {
+            event: GameEvent::UseAbility {
+                ent: *ent,
+                ability: AbilityType::Knockback,
+                target_loc: None, // Knockback doesn't use target_loc
+            },
+        });
+
+        // Trigger recovery lockout (server-side state)
+        let recovery_duration = get_ability_recovery_duration(AbilityType::Knockback);
+        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Knockback);
+        commands.entity(*ent).insert(recovery);
+
+        // Apply synergies (server-side state)
+        apply_synergies(*ent, AbilityType::Knockback, &recovery, &mut commands);
     }
 }

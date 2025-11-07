@@ -8,7 +8,7 @@
 * Directional combat (face your enemies, position matters, no cursor required)
 * Hex-based resolution (abilities affect hexes, not pixel-perfect hitboxes)
 * Reaction-based defense (incoming damage enters a queue with time to respond)
-* Tactical ability flow (individual recovery timers + synergies reward smart sequencing, not memorized rotations)
+* Tactical ability flow (universal lockout with variable duration + synergies reward smart sequencing, not memorized rotations)
 * Resource management over cooldown juggling (stamina/mana costs are primary throttle)
 * Build identity shapes playstyle (gear determines abilities, attributes determine power)
 
@@ -351,75 +351,77 @@ Do **not clear queue**, but modify outcome.
 
 ### Ability Recovery System
 
-**Individual ability recovery timers replace global cooldown (GCD).** Each ability has its own recovery period after use, creating natural commitment without artificial delays between different abilities.
+**Universal lockout with variable duration replaces fixed global cooldown (GCD).** When you use an ability, ALL abilities lock for that ability's recovery duration. Each ability has a different lockout time, creating weighted commitment per choice.
 
-**Recovery Timer Mechanics:**
-* Each ability has an independent recovery timer (shown as circular fill, like reaction window)
-* Recovery represents the commitment cost of using that ability
-* During recovery, that specific ability cannot be reused
-* Other abilities remain available (no universal delay)
+**Recovery Lockout Mechanics:**
+* Using ANY ability locks ALL abilities for that ability's recovery duration
+* Lockout duration varies by ability (represents commitment weight)
+* All ability icons grey out during lockout
 * Recovery happens AFTER ability animation completes
+* **Synergies allow specific abilities to unlock early** during lockout (see Tactical Synergies section)
 
-**Recovery Duration by Role:**
-* **Quick utility** (0.2-0.3s): Defensive reactions, gap closers
-  - Example: Knockback, Lunge
-* **Tactical choices** (0.4-0.6s): Standard offensive abilities
-  - Example: Overpower, Counter
-* **High-impact** (0.8-1.2s): Major abilities, channeled attacks
-  - Example: Volley (after release), Charge
+**Recovery Duration by Commitment:**
+* **Light Commitment** (0.5s lockout): Quick reactions
+  - Example: Knockback
+* **Medium Commitment** (1.0s lockout): Tactical positioning
+  - Example: Lunge, Deflect
+* **Heavy Commitment** (2.0s lockout): Powerful strikes
+  - Example: Overpower
 
 **Visual Feedback:**
-* Circular timer fills around ability icon (matches reaction window UI pattern)
-* Ability icon greys out during recovery
-* Timer fills from empty to full as ability becomes available
+* Circular timer fills around ALL ability icons during lockout
+* Timer shows remaining lockout duration
+* Icons grey out = locked
+* **Gold glow = synergy available** (ability will unlock early)
+* Gold glow appears IMMEDIATELY when triggering ability fires, not when window opens
 
 **Design Intent:**
-* Each ability's recovery reflects its commitment weight
-* No artificial pause between DIFFERENT abilities (fluid combos)
-* Natural pacing through resource costs + recovery periods
-* Players can chain different abilities smoothly
+* Heavier abilities create longer lockouts (more commitment = more risk)
+* Synergies break lockout for smart sequencing (reward tactical adaptation)
+* No memorized rotations - multiple paths to early unlock
+* Rhythmic pacing with tactical depth through synergy choices
 
 ---
 
 ### Tactical Synergies
 
-**Certain ability sequences that make tactical sense receive recovery reductions.** Using one ability can create a "window of opportunity" where follow-up abilities become available faster, rewarded through visual feedback.
+**Certain ability sequences that make tactical sense allow early unlock during universal lockout.** Using one ability can create a "window of opportunity" where specific follow-up abilities become available before the full lockout expires.
 
 **How Synergies Work:**
 
 When you use an ability that sets up a tactical opportunity, synergizing abilities:
-* **Recover faster** (reduced recovery time)
-* **Glow/highlight** immediately (visual "use me now!" indicator)
-* **Stay highlighted** until non-synergized abilities also recover ("on fire" window)
-* **Create urgency** - capitalize on the window before it closes
+* **Unlock early** during the universal lockout (break the lockout for specific abilities)
+* **Glow/highlight** immediately when trigger fires (visual "this will unlock early" indicator)
+* **Stay highlighted** through early unlock until full recovery completes
+* **Create urgency** - capitalize on the opening before other enemies react
 
 **Example Synergies:**
 
 **Gap Closer → Strike:**
-* Use Lunge (closes distance to enemy)
-* Overpower **glows immediately** (AoE benefits from close positioning)
-* Overpower recovery reduced: 0.5s → 0.2s
+* Use Lunge (creates 1s universal lockout)
+* Overpower **glows immediately** (gold border appears right away)
+* Overpower unlocks at 0.5s instead of 1s (available during lockout)
 * Tactical logic: You closed the gap, now capitalize while enemies are grouped
 
 **Interrupt → Exploit:**
-* Use Knockback (interrupts enemy, creates distance)
-* Lunge **glows immediately** (gap closer exploits their recovery)
-* Lunge recovery reduced: 0.3s → 0.1s
+* Use Knockback (creates 0.5s universal lockout)
+* Lunge **glows immediately**
+* Lunge unlocks at 0.25s instead of 0.5s (available during lockout)
 * Tactical logic: You created an opening, close back in before they recover
 
-**Ranged → Reposition:**
-* Use Volley (ranged pressure forces enemy reaction)
-* Flank **glows immediately** (mobility ability)
-* Flank cost reduced: 30 stamina → 20 stamina
-* Tactical logic: Attacking from range creates repositioning opportunity
+**Heavy Strike → Reposition:**
+* Use Overpower (creates 2s universal lockout)
+* Knockback **glows immediately**
+* Knockback unlocks at 1s instead of 2s (available during lockout)
+* Tactical logic: After committing to heavy strike, can escape early if needed
 
 **Visual Feedback System:**
 
 **When synergy activates:**
-1. Synergizing ability icon **lights up with bright glow** (particle effects, bright border)
-2. Recovery timer for that ability completes **faster than normal**
-3. Ability remains "on fire" until other abilities finish their base recovery
-4. Glow fades when the window closes (other abilities become available)
+1. Synergizing ability icon **lights up with bright gold glow** (particle effects, gold border)
+2. Glow appears IMMEDIATELY when triggering ability fires (not when window opens)
+3. Ability unlocks early (turns green while others still grey)
+4. Glow persists until full universal recovery completes (shows "special unlock")
 
 **Audio feedback:**
 * Satisfying "ding" or "whoosh" when synergy triggers

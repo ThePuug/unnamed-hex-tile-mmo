@@ -395,6 +395,18 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
+            Do { event: Event::UseAbility { ent, ability, target_loc } } => {
+                // Send ability success to nearby players (ADR-012: client applies recovery/synergies)
+                let Ok(&loc) = query.get(ent) else { continue; };
+                for other in nntree.locate_within_distance(loc, 20*20) {
+                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::UseAbility { ent, ability, target_loc }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    }
+                }
+            }
             Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
                 // ADR-011 Phase 2: Send movement intent to nearby players for client-side prediction
                 // Uses Unreliable channel + relevance filtering for optimal bandwidth/latency
