@@ -8,8 +8,9 @@
 * Directional combat (face your enemies, position matters, no cursor required)
 * Hex-based resolution (abilities affect hexes, not pixel-perfect hitboxes)
 * Reaction-based defense (incoming damage enters a queue with time to respond)
-* Resource management over cooldown juggling (stamina/mana costs, minimal cooldowns)
-* Build identity shapes playstyle (attributes determine reaction capacity and offensive power)
+* Tactical ability flow (individual recovery timers + synergies reward smart sequencing, not memorized rotations)
+* Resource management over cooldown juggling (stamina/mana costs are primary throttle)
+* Build identity shapes playstyle (gear determines abilities, attributes determine power)
 
 **Inspiration:** MOBA-style ability targeting meets Monster Hunter's deliberate combat pacing, adapted for hex grid MMO.
 
@@ -348,13 +349,111 @@ Do **not clear queue**, but modify outcome.
 * Visual: Shimmering aura cleanses status effects
 * Audio: Purifying tone
 
-### Global Cooldown (GCD)
+### Ability Recovery System
 
-All reaction abilities share a **0.5 second global cooldown** to prevent spam.
+**Individual ability recovery timers replace global cooldown (GCD).** Each ability has its own recovery period after use, creating natural commitment without artificial delays between different abilities.
 
-* Using any reaction ability triggers GCD
-* During GCD, no other reaction abilities can be used
-* Queue timers continue during GCD (risk of overflow)
+**Recovery Timer Mechanics:**
+* Each ability has an independent recovery timer (shown as circular fill, like reaction window)
+* Recovery represents the commitment cost of using that ability
+* During recovery, that specific ability cannot be reused
+* Other abilities remain available (no universal delay)
+* Recovery happens AFTER ability animation completes
+
+**Recovery Duration by Role:**
+* **Quick utility** (0.2-0.3s): Defensive reactions, gap closers
+  - Example: Knockback, Lunge
+* **Tactical choices** (0.4-0.6s): Standard offensive abilities
+  - Example: Overpower, Counter
+* **High-impact** (0.8-1.2s): Major abilities, channeled attacks
+  - Example: Volley (after release), Charge
+
+**Visual Feedback:**
+* Circular timer fills around ability icon (matches reaction window UI pattern)
+* Ability icon greys out during recovery
+* Timer fills from empty to full as ability becomes available
+
+**Design Intent:**
+* Each ability's recovery reflects its commitment weight
+* No artificial pause between DIFFERENT abilities (fluid combos)
+* Natural pacing through resource costs + recovery periods
+* Players can chain different abilities smoothly
+
+---
+
+### Tactical Synergies
+
+**Certain ability sequences that make tactical sense receive recovery reductions.** Using one ability can create a "window of opportunity" where follow-up abilities become available faster, rewarded through visual feedback.
+
+**How Synergies Work:**
+
+When you use an ability that sets up a tactical opportunity, synergizing abilities:
+* **Recover faster** (reduced recovery time)
+* **Glow/highlight** immediately (visual "use me now!" indicator)
+* **Stay highlighted** until non-synergized abilities also recover ("on fire" window)
+* **Create urgency** - capitalize on the window before it closes
+
+**Example Synergies:**
+
+**Gap Closer → Strike:**
+* Use Lunge (closes distance to enemy)
+* Overpower **glows immediately** (AoE benefits from close positioning)
+* Overpower recovery reduced: 0.5s → 0.2s
+* Tactical logic: You closed the gap, now capitalize while enemies are grouped
+
+**Interrupt → Exploit:**
+* Use Knockback (interrupts enemy, creates distance)
+* Lunge **glows immediately** (gap closer exploits their recovery)
+* Lunge recovery reduced: 0.3s → 0.1s
+* Tactical logic: You created an opening, close back in before they recover
+
+**Ranged → Reposition:**
+* Use Volley (ranged pressure forces enemy reaction)
+* Flank **glows immediately** (mobility ability)
+* Flank cost reduced: 30 stamina → 20 stamina
+* Tactical logic: Attacking from range creates repositioning opportunity
+
+**Visual Feedback System:**
+
+**When synergy activates:**
+1. Synergizing ability icon **lights up with bright glow** (particle effects, bright border)
+2. Recovery timer for that ability completes **faster than normal**
+3. Ability remains "on fire" until other abilities finish their base recovery
+4. Glow fades when the window closes (other abilities become available)
+
+**Audio feedback:**
+* Satisfying "ding" or "whoosh" when synergy triggers
+* Extra impact sound when using glowing ability
+* Creates immediate, positive reinforcement
+
+**Discovery Through Play:**
+
+**No explicit combo tutorials required:**
+* New players see glowing abilities and press them (feels good)
+* Experimenting reveals which sequences create glows
+* Natural learning: "Lunge makes Overpower glow - I should use them together"
+* No wiki or guide needed to understand the system
+
+**Multiple valid approaches:**
+* Different situations call for different synergies
+* Against ranged enemies: Gap closer synergies matter
+* Against melee swarms: AoE → crowd control synergies matter
+* No "one true rotation" - adapt to the fight
+
+**Chaining synergies:**
+* Using a glowing ability may trigger new synergies
+* Example: Lunge (glows Overpower) → Overpower (glows Knockback) → Knockback (glows Lunge)
+* Resource costs prevent infinite loops (stamina depletes)
+* Creates satisfying burst → recovery → burst rhythm
+
+**Design Benefits:**
+
+✓ **Rewards tactical thinking** - Right sequence for the situation, not memorized rotation
+✓ **Feels decisive** - Once you spot the opportunity, execution flows smoothly
+✓ **Self-teaching** - Glowing abilities guide learning without tutorials
+✓ **Build diversity** - Different weapons/armor unlock different synergy patterns
+✓ **Accessible depth** - Works without synergies (base recovery acceptable), better with them
+✓ **Visible mastery** - Skilled players chain glowing abilities, creating flow state
 
 ---
 
@@ -950,13 +1049,27 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 
 **Balance:**
 * Are base resource pools (100 stamina/mana) correct?
-* Is 0.5s GCD too punishing or too lenient?
 * Should armor cap at 75% reduction or lower/higher?
 * Are range tiers correct? (1-2 close, 3-6 mid, 7+ far)
 * Should enemies get facing bonus/penalty? (backstab damage, frontal armor)
 * **Auto-attack timing:** Is 1.5s attack speed correct? Too fast/slow?
 * **Ability costs:** Are MVP stamina costs balanced (Lunge 20, Counter 35, Fortify 40, Deflect 50)?
 * **Lunge range:** Is 4 hexes correct or should it be shorter/longer?
+* **Recovery timers:** Are base recovery durations correct (0.2-0.3s quick, 0.4-0.6s tactical, 0.8-1.2s high-impact)?
+* **Synergy strength:** Are recovery reductions balanced (0.5s → 0.2s feels significant enough)?
+* **Synergy window clarity:** Is "on fire" visual obvious enough during combat chaos?
+
+**Tactical Synergies:**
+* **Which abilities should synergize?** (need to define synergy pairs/chains per weapon combo)
+* **Synergy tagging system:** How are synergies defined? (ability tags like "gap_closer", "aoe"? explicit pairs?)
+* **Synergy discovery pacing:** Should early game have fewer synergies to avoid overwhelming new players?
+* **Multiple synergy sources:** If two abilities both trigger synergy on same follow-up, do both glow?
+* **Synergy feedback intensity:** How bright/obvious should glow be? (particle effects? border only? animation?)
+* **Synergy audio:** What sound plays when synergy triggers? (ding? whoosh? ability-specific?)
+* **Synergy chains depth:** How many abilities can chain before resources run out? (intended burst length?)
+* **Weapon-specific synergies:** Does each weapon combo have unique synergy patterns?
+* **Build diversity:** Do different Triumvirate approaches create different synergy opportunities?
+* **Enemy AI synergies:** Should enemies also have ability synergies, or player-only mechanic?
 
 **Directional Combat:**
 * ✅ **Facing cone: 60 degrees** (decided - one hex-face direction)
@@ -979,14 +1092,15 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 
 ## Design Goals Achieved
 
-* ✅ **Conscious but decisive** - Reaction windows give time to think, GCD demands commitment
+* ✅ **Conscious but decisive** - Reaction windows give time to think, recovery timers create natural commitment without artificial delays
+* ✅ **Tactical synergies reward adaptation** - Ability sequences that make tactical sense flow smoothly with glowing visual feedback, no forced rotations
 * ✅ **No twitch mechanics** - Directional targeting and timed reactions, not pixel-perfect aiming
 * ✅ **Positioning matters** - Facing, heading, and geometric targeting reward tactical positioning
 * ✅ **Build identity matters** - Gear determines skills, attributes shape effectiveness
 * ✅ **Resource management is tactical** - Stamina/mana costs create meaningful decisions
 * ✅ **Mutual destruction possible** - Emergent drama from simultaneous lethal damage
-* ✅ **Clear feedback** - Queue UI and target indicators show exactly what's happening
-* ✅ **Skill expression** - Mastery comes from reading fights, managing resources, and positioning
+* ✅ **Clear feedback** - Queue UI, target indicators, and synergy glows show exactly what's happening
+* ✅ **Skill expression** - Mastery comes from reading fights, managing resources, positioning, and chaining tactical sequences
 * ✅ **No cursor required** - Fully playable with keyboard, controller-friendly design
 * ✅ **Emergent tactics** - Tier lock and geometric targeting create depth without complexity
 * ✅ **Gear-driven builds** - Equipment choices fundamentally change playstyle and available tactics

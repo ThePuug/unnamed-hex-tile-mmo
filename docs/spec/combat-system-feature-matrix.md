@@ -2,7 +2,7 @@
 
 **Specification:** [combat-system.md](combat-system.md)
 **Last Updated:** 2025-11-07
-**Overall Status:** 49/98 features complete (50%)
+**Overall Status:** 48/112 features complete (43%)
 
 ---
 
@@ -114,9 +114,54 @@
 | Parry (Primal) | ⏸️ Deferred | - | Lines 296-302 | Post-MVP |
 | Endure (Vital) | ⏸️ Deferred | - | Lines 308-313 | Post-MVP |
 | Dispel (Mental) | ⏸️ Deferred | - | Lines 315-320 | Post-MVP |
-| Global Cooldown (0.5s) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 323-328 | Prevents spam |
 
-**Category Status:** 2/9 complete (22% - MVP scope intentional)
+**Category Status:** 1/8 complete (13% - MVP scope intentional)
+
+---
+
+### Ability Recovery System
+
+**Core Mechanic (Lines 352-381):** Individual ability recovery timers replace GCD. Each ability has independent recovery period after use, creating natural commitment without artificial delays between different abilities.
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Individual recovery timers per ability | ❌ Not Started | - | Lines 352-370 | Each ability has independent recovery, not universal delay |
+| Recovery timer UI (circular fill) | ❌ Not Started | - | Lines 371-377 | Matches reaction window UI pattern |
+| Quick utility recovery (0.2-0.3s) | ❌ Not Started | - | Lines 364-366 | Defensive reactions, gap closers |
+| Tactical choice recovery (0.4-0.6s) | ❌ Not Started | - | Lines 367-368 | Standard offensive abilities |
+| High-impact recovery (0.8-1.2s) | ❌ Not Started | - | Lines 369-370 | Major abilities, channeled attacks |
+| Recovery happens after animation | ❌ Not Started | - | Line 361 | No overlap with cast time |
+| Other abilities remain available | ❌ Not Started | - | Line 360 | No universal delay between different abilities |
+
+**Category Status:** 0/7 complete (0% - replaces GCD system)
+
+**Design Intent:** Each ability's recovery reflects commitment weight. No artificial pause between different abilities creates fluid combos. Natural pacing through resource costs + recovery periods.
+
+---
+
+### Tactical Synergies
+
+**Core Mechanic (Lines 383-456):** Certain ability sequences that make tactical sense receive recovery reductions. Using one ability creates "window of opportunity" where follow-up abilities glow and become available faster.
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Synergy detection system | ❌ Not Started | - | Lines 388-395 | Detect tactical ability sequences (gap closer → strike, interrupt → exploit, etc.) |
+| Recovery reduction on synergy | ❌ Not Started | - | Lines 392-395 | Synergizing abilities recover faster (example: 0.5s → 0.2s) |
+| Visual glow on synergy activation | ❌ Not Started | - | Lines 418-423 | Glowing ability icons with bright borders, particle effects |
+| Synergy window duration | ❌ Not Started | - | Lines 422-423 | Glow persists until non-synergized abilities recover ("on fire" window) |
+| Audio feedback on synergy | ❌ Not Started | - | Lines 425-428 | Satisfying "ding" or "whoosh" when synergy triggers, extra impact sound on use |
+| Synergy chaining | ❌ Not Started | - | Lines 443-447 | Using glowing ability may trigger new synergies (limited by resources) |
+| Build-specific synergy patterns | ❌ Not Started | - | Lines 453-454 | Different weapons/armor unlock different synergy opportunities |
+| Discovery through play | ❌ Not Started | - | Lines 430-441 | Self-teaching system, no tutorials required, glowing abilities guide learning |
+
+**Category Status:** 0/8 complete (0% - new mechanic, not implemented)
+
+**Example Synergies (Lines 397-414):**
+- Gap Closer → Strike (Lunge glows Overpower)
+- Interrupt → Exploit (Knockback glows Lunge)
+- Ranged → Reposition (Volley glows Flank)
+
+**Design Benefits (Lines 449-456):** Rewards tactical thinking over memorized rotations. Self-teaching through visual feedback. Build diversity through different synergy patterns. Accessible depth (works without synergies, better with them).
 
 ---
 
@@ -373,6 +418,8 @@ Features described in spec but not yet in implementation plan:
 - **Build System Foundation:** Gear-based skill gating system (Lines 513-617)
 
 ### Medium Priority
+- **Ability Recovery System:** Individual per-ability timers (Lines 352-381)
+- **Tactical Synergies:** Recovery reductions + visual glow on tactical sequences (Lines 383-456)
 - **Tier Badge UI:** Visual feedback for tier lock (Lines 76, 127)
 - **Empty Tier Visualization:** Facing cone range highlighting (Line 74)
 - **Critical Hit System:** Instinct-based crits (Lines 387-393)
@@ -391,6 +438,31 @@ Features described in spec but not yet in implementation plan:
 
 ---
 
-**Document Version:** 1.1
+## Open Design Questions
+
+**Spec Reference:** Lines 1025-1072
+
+**Recovery Timers (Lines 1058-1061):**
+- Are base recovery durations correct (0.2-0.3s quick, 0.4-0.6s tactical, 0.8-1.2s high-impact)?
+- Synergy strength balance (recovery reductions significant enough)?
+- Synergy window clarity (is "on fire" visual obvious during combat)?
+
+**Tactical Synergies (Lines 1062-1072):**
+- Which abilities should synergize? (need to define synergy pairs/chains per weapon combo)
+- Synergy tagging system (ability tags like "gap_closer", "aoe"? explicit pairs?)
+- Synergy discovery pacing (should early game have fewer synergies?)
+- Multiple synergy sources (if two abilities both trigger synergy, do both glow?)
+- Synergy feedback intensity (how bright/obvious should glow be?)
+- Synergy audio (what sound plays? ding? whoosh? ability-specific?)
+- Synergy chains depth (how many abilities can chain before resources run out?)
+- Weapon-specific synergies (does each weapon combo have unique patterns?)
+- Build diversity (do different Triumvirate approaches create different synergy opportunities?)
+- Enemy AI synergies (should enemies also have synergies, or player-only mechanic?)
+
+**Design Note:** These questions should be answered during implementation of Ability Recovery System and Tactical Synergies features. May require playtesting and iteration.
+
+---
+
+**Document Version:** 1.2
 **Last Updated:** 2025-11-07
 **Maintained By:** Development team
