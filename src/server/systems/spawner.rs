@@ -231,6 +231,33 @@ fn spawn_npc(
     writer.write(Do { event: crate::common::message::Event::Incremental { ent, component: crate::common::message::Component::CombatState(combat_state) }});
 }
 
+/// Calculate health regeneration rate for leashing NPCs
+/// Returns 100 HP/sec when Returning (leashing), 0 otherwise
+pub fn calculate_leash_health_regen_rate(is_returning: bool) -> f32 {
+    if is_returning {
+        100.0
+    } else {
+        0.0
+    }
+}
+
+/// Regenerate health for NPCs with Returning component (leashing back to spawn)
+/// Runs at 100 HP/sec to quickly reset NPCs that broke leash
+/// Server-only system, runs in FixedUpdate (125ms ticks = 0.125s)
+/// At 100 HP/s: 100 * 0.125 = 12.5 HP per tick = 8 ticks per 100 HP (1 second)
+pub fn leash_health_regen(
+    mut query: Query<&mut Health, (With<crate::common::components::returning::Returning>, Without<crate::common::components::behaviour::PlayerControlled>)>,
+    fixed_time: Res<Time<Fixed>>,
+) {
+    let dt = fixed_time.delta_secs();
+    let regen_rate = calculate_leash_health_regen_rate(true);
+
+    for mut health in &mut query {
+        health.state = (health.state + regen_rate * dt).min(health.max);
+        health.step = health.state;
+    }
+}
+
 /// Helper function to generate a random hex within a radius
 /// Only randomizes horizontal position (q, r), keeps center's Z for terrain lookup
 fn random_hex_within_radius(center: impl Into<Qrz>, radius: u8) -> Qrz {
@@ -299,5 +326,22 @@ pub fn despawn_out_of_range(
                 // Don't despawn here - let the send_do system handle it after sending the message
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_leash_health_regen_rate_when_returning() {
+        let rate = calculate_leash_health_regen_rate(true);
+        assert_eq!(rate, 100.0, "NPCs should regenerate at 100 HP/sec when returning to spawn");
+    }
+
+    #[test]
+    fn test_leash_health_regen_rate_when_not_returning() {
+        let rate = calculate_leash_health_regen_rate(false);
+        assert_eq!(rate, 0.0, "NPCs should not regenerate health when not returning");
     }
 }

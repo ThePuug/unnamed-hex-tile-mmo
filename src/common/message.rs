@@ -118,6 +118,7 @@ pub enum Component {
     Mana(Mana),
     Offset(Offset),
     PlayerControlled(PlayerControlled),
+    Returning(crate::common::components::returning::Returning),
     Stamina(Stamina),
     TierLock(crate::common::components::tier_lock::TierLock),
 }

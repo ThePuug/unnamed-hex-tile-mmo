@@ -217,6 +217,10 @@ pub fn do_incremental(
                     commands.entity(ent).insert(tier_lock);
                 }
             }
+            Component::Returning(returning) => {
+                // Always insert Returning (it's a marker component for leash regen prediction)
+                commands.entity(ent).insert(returning);
+            }
             _ => {}
         }
     }

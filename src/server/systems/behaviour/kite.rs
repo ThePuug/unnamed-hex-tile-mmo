@@ -9,14 +9,14 @@ use crate::{
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             reaction_queue::DamageType,
             entity_type::EntityType,
+            returning::Returning,
         },
-        message::{Event, Do, Try, Event as GameEvent},
+        message::{Event, Do, Try, Event as GameEvent, Component as MessageComponent},
         plugins::nntree::*,
         resources::map::Map,
         systems::physics,
     },
     server::components::{
-        returning::Returning,
         target_lock::TargetLock,
     },
 };
@@ -255,6 +255,13 @@ pub fn kite(
                     } else {
                         // Leash broken - NPC went too far from origin
                         commands.entity(npc_entity).insert(Returning);
+                        // Broadcast Returning to clients for leash health regen prediction
+                        writer.write(Do {
+                            event: Event::Incremental {
+                                ent: npc_entity,
+                                component: MessageComponent::Returning(Returning),
+                            },
+                        });
                         None
                     }
                 } else {

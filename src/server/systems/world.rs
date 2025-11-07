@@ -113,7 +113,7 @@ pub fn setup(
             2,      // max_count: 2 NPCs per spawner
             4,      // spawn_radius: 4 hexes (tight group)
             35,     // player_activation_range: 35 hexes (wide activation)
-            20,     // leash_distance: 20 hexes
+            15,     // leash_distance: 15 hexes
             35,     // despawn_distance: 35 hexes (cleanup when far away)
             5000,   // respawn_timer_ms: 5 seconds (breathing room between waves)
         );

@@ -35,6 +35,7 @@ fn get_message_type_name(message: &Do) -> String {
                 Component::KeyBits(_) => "Inc:KeyBits".to_string(),
                 Component::Offset(_) => "Inc:Offset".to_string(),
                 Component::PlayerControlled(_) => "Inc:PlayerControlled".to_string(),
+                Component::Returning(_) => "Inc:Returning".to_string(),
             }
         },
         Event::Gcd { .. } => "Gcd".to_string(),

@@ -7,14 +7,14 @@ use crate::{
         components::{
             Loc, heading::Heading, offset::Offset, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
+            returning::Returning,
         },
-        message::{Event, Do},
+        message::{Event, Do, Component as MessageComponent},
         plugins::nntree::*,
         resources::map::Map,
         systems::physics,
     },
     server::components::{
-        returning::Returning,
         target_lock::TargetLock,
     },
 };
@@ -196,6 +196,13 @@ pub fn chase(
                         // Add Returning component to initiate return to spawn
                         // Keep TargetLock to prevent re-acquisition during return
                         commands.entity(npc_entity).insert(Returning);
+                        // Broadcast Returning to clients for leash health regen prediction
+                        writer.write(Do {
+                            event: Event::Incremental {
+                                ent: npc_entity,
+                                component: MessageComponent::Returning(Returning),
+                            },
+                        });
                         None
                     }
                 } else {

@@ -1,13 +1,16 @@
 use bevy::{
-    prelude::*, 
+    prelude::*,
     render::camera::ScalingMode
 };
 
-use crate::common::{
-    components::{ *, 
-        offset::*,
-    }, 
-    resources::map::Map
+use crate::{
+    client::plugins::vignette::VignetteSettings,
+    common::{
+        components::{ *,
+            offset::*,
+        },
+        resources::map::Map
+    }
 };
 
 pub fn setup(
@@ -23,7 +26,8 @@ pub fn setup(
         }),
         Transform::default(),
         Offset { state: Vec3::new(0., 30., 40.), ..default() },
-        Actor
+        Actor,
+        VignetteSettings::default(), // Add vignette post-processing
     ));
 }
 

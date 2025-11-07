@@ -16,7 +16,8 @@ use crate::common::{
 pub fn process_deal_damage(
     trigger: Trigger<Try>,
     mut commands: Commands,
-    mut query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
+    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
+    mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
@@ -38,7 +39,7 @@ pub fn process_deal_damage(
         let outgoing_with_crit = outgoing * crit_mult;
 
         // Get target's queue, attributes, and health
-        let Ok((mut queue, attrs, health)) = query.get_mut(*target) else {
+        let Ok((mut queue, attrs, health)) = target_query.get_mut(*target) else {
             return;
         };
 
@@ -64,6 +65,23 @@ pub fn process_deal_damage(
 
         // Try to insert threat into queue
         let overflow = queue_utils::insert_threat(&mut queue, threat, now);
+
+        // Enter combat for both attacker and target AFTER threat is successfully inserted
+        // Handle case where source == target (self-damage)
+        if source == target {
+            if let Ok(mut combat_state) = combat_query.get_mut(*source) {
+                crate::common::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
+            }
+        } else {
+            // Enter combat for attacker (put threat in queue)
+            if let Ok(mut attacker_combat) = combat_query.get_mut(*source) {
+                crate::common::systems::combat::state::enter_combat(*source, &mut attacker_combat, &time, &mut writer);
+            }
+            // Enter combat for target (received threat in queue)
+            if let Ok(mut target_combat) = combat_query.get_mut(*target) {
+                crate::common::systems::combat::state::enter_combat(*target, &mut target_combat, &time, &mut writer);
+            }
+        }
 
         // Send InsertThreat event to clients
         writer.write(Do {

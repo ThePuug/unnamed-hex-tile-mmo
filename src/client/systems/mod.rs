@@ -8,6 +8,7 @@ pub mod camera;
 pub mod character_panel;
 pub mod combat;
 pub mod combat_ui;
+// pub mod combat_vignette; // REPLACED: Moved to post-processing plugin (vignette.rs)
 // pub mod effect;
 pub mod input;
 // pub mod prediction; // REMOVED: Client-side attack prediction removed

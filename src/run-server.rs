@@ -73,6 +73,7 @@ fn main() {
     app.add_systems(FixedUpdate, (
         physics::update,
         common::systems::combat::resources::regenerate_resources,
+        spawner::leash_health_regen, // Rapidly regenerate health for leashing NPCs (100 HP/sec)
         common::systems::combat::state::update_combat_state,
         common::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
         common::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies

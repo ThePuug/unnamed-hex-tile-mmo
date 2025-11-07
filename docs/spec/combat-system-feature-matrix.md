@@ -2,7 +2,7 @@
 
 **Specification:** [combat-system.md](combat-system.md)
 **Last Updated:** 2025-11-07
-**Overall Status:** 61/114 features complete (54%)
+**Overall Status:** 66/118 features complete (56%)
 
 ---
 
@@ -190,13 +190,16 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Stamina pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 334-350 | Scales with Might/Vitality |
-| Stamina regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 340 | 10/sec base rate |
-| Mana pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 352-369 | Scales with Focus/Presence |
-| Mana regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 359 | 8/sec base rate |
+| Stamina pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 468-471 | Scales with Might/Vitality |
+| Stamina regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 473 | 10/sec base rate |
+| Mana pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 480-482 | Scales with Focus/Presence |
+| Mana regeneration | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 484 | 8/sec base rate |
+| Health pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 496-499 | Scales with Vitality (via ActorAttributes) |
+| Health regeneration (out of combat) | ✅ Complete | [resources.rs:62-75](../../src/common/systems/combat/resources.rs) | Lines 501-515 | 5 HP/sec when out of combat (flat rate), 0 HP/sec in combat |
+| Health regeneration (NPC leashing) | ✅ Complete | [spawner.rs:176-201](../../src/server/systems/spawner.rs) | Line 504 | 100 HP/sec while leashing (prevents kiting), network-synced Returning component |
 | Resource bars UI | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Phase 1 | Stamina/Health/Mana display |
 
-**Category Status:** 5/5 complete (100%)
+**Category Status:** 8/8 complete (100%)
 
 ---
 
@@ -219,12 +222,14 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Enter combat triggers | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 432-436 | Damage/aggro/ability use |
-| Combat state effects | 🚧 Partial | [ADR-002](../adr/002-combat-foundation.md) | Lines 440-445 | UI shows, other effects TBD |
-| Leave combat conditions | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 449-452 | Distance/time based |
-| Combat music | ❌ Not Started | - | Line 443 | Audio system |
+| Enter combat triggers | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 577-582 | Damage/aggro/ability use |
+| Combat state effects | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 586-595 | UI shows, health regen stops, vignette active |
+| Red vignette indicator | ✅ Complete | [vignette.rs](../../src/client/plugins/vignette.rs), [vignette.wgsl](../../assets/shaders/vignette.wgsl) | Lines 592-595 | Post-processing shader with radial effect, pulsing at 4 Hz (±10%), smooth gradient at screen edges |
+| Leave combat conditions | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Lines 599-602 | Distance/time based (5s timeout) |
+| Post-combat effects | ✅ Complete | [resources.rs:62-75](../../src/common/systems/combat/resources.rs), [vignette.rs:86-99](../../src/client/plugins/vignette.rs) | Lines 604-608 | Vignette fades (3.0 fade speed), health regen resumes (5 HP/sec) |
+| Combat music | ❌ Not Started | - | Line 589 | Audio system |
 
-**Category Status:** 2/4 complete (50%)
+**Category Status:** 5/6 complete (83%)
 
 ---
 

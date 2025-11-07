@@ -32,6 +32,7 @@ use client::{
         console::DevConsolePlugin,
         diagnostics::DiagnosticsPlugin,
         ui::UiPlugin,
+        vignette::VignettePlugin,
     },
     resources::*,
     systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
@@ -73,6 +74,7 @@ fn main() {
         DevConsolePlugin,
         DiagnosticsPlugin,
         UiPlugin,
+        VignettePlugin,
     ));
 
     app.add_event::<Do>();

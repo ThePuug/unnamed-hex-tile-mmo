@@ -33,6 +33,16 @@ pub fn calculate_mana_regen_rate(_attrs: &ActorAttributes) -> f32 {
     8.0
 }
 
+/// Calculate health regeneration rate
+/// Returns 5 HP/sec when out of combat, 0 HP/sec when in combat
+pub fn calculate_health_regen_rate(in_combat: bool) -> f32 {
+    if in_combat {
+        0.0
+    } else {
+        5.0
+    }
+}
+
 /// Calculate armor (physical damage reduction) from actor attributes
 /// Formula: base_armor + (vitality / 66.0)
 /// Capped at 75% max
@@ -51,11 +61,14 @@ pub fn calculate_resistance(attrs: &ActorAttributes, base_resistance: f32) -> f3
     resistance.min(0.75)
 }
 
-/// Regenerate stamina and mana for all entities with resources
+/// Regenerate stamina, mana, and health for all entities with resources
 /// Runs in FixedUpdate schedule (125ms ticks)
-/// Does NOT regenerate health (per spec - healing abilities only)
+/// Health regenerates at:
+/// - 100 HP/sec when Returning (leashing NPCs)
+/// - 5 HP/sec when out of combat (normal regen)
+/// - 0 HP/sec when in combat
 pub fn regenerate_resources(
-    mut query: Query<(&mut Stamina, &mut Mana)>,
+    mut query: Query<(&mut Health, &mut Stamina, &mut Mana, &CombatState, Option<&crate::common::components::returning::Returning>)>,
     time: Res<Time>,
 ) {
     let current_time = time.elapsed();
@@ -63,9 +76,8 @@ pub fn regenerate_resources(
     // (e.g., after network updates where last_update gets reset to Duration::ZERO)
     const MAX_DT_SECS: f32 = 1.0;
 
-    for (mut stamina, mut mana) in &mut query {
-        // Calculate time since last update (in seconds), using saturating_sub to avoid panics
-        // Cap to MAX_DT_SECS to prevent instant regeneration from stale timestamps
+    for (mut health, mut stamina, mut mana, combat_state, returning_opt) in &mut query {
+        // Calculate time delta for this tick
         let dt_stamina = current_time.saturating_sub(stamina.last_update).as_secs_f32().min(MAX_DT_SECS);
         let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
 
@@ -78,6 +90,21 @@ pub fn regenerate_resources(
         mana.state = (mana.state + mana.regen_rate * dt_mana).min(mana.max);
         mana.step = mana.state;
         mana.last_update = current_time;
+
+        // Regenerate health
+        // Priority: Returning (100 HP/s) > Out of combat (5 HP/s) > In combat (0 HP/s)
+        let health_regen_rate = if returning_opt.is_some() {
+            100.0  // Leashing NPC - rapid reset
+        } else if !combat_state.in_combat {
+            5.0    // Out of combat - normal regen
+        } else {
+            0.0    // In combat - no regen
+        };
+
+        if health_regen_rate > 0.0 {
+            health.state = (health.state + health_regen_rate * dt_stamina).min(health.max);
+            health.step = health.state;
+        }
     }
 }
 
@@ -423,5 +450,17 @@ mod tests {
         // Verify NO Despawn event was emitted
         let events = emitted_events.lock().unwrap();
         assert_eq!(events.len(), 0, "Should not emit Despawn event for alive entities");
+    }
+
+    #[test]
+    fn test_health_regen_out_of_combat() {
+        let rate = calculate_health_regen_rate(false);
+        assert_eq!(rate, 5.0, "Health should regenerate at 5 HP/sec when out of combat");
+    }
+
+    #[test]
+    fn test_health_regen_in_combat() {
+        let rate = calculate_health_regen_rate(true);
+        assert_eq!(rate, 0.0, "Health should not regenerate when in combat");
     }
 }

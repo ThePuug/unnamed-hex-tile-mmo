@@ -488,6 +488,32 @@ mana_pool = 100 + (focus * 0.5) + (presence * 0.3)
 - Primary=100: 150 pool
 - Primary=100, Secondary=100: 180 pool
 
+### Health
+
+**Purpose:** Survivability pool (reaching 0 = death)
+
+**Pool Formula:**
+```
+max_health = ActorAttributes::max_health()
+```
+*(Calculated from vitality attribute - see attribute system spec)*
+
+**Regeneration:**
+- **Out of combat:** 5 HP/sec (flat rate, no attribute scaling)
+- **In combat:** No regeneration
+- **NPC leashing:** 100 HP/sec while returning to leash origin (rapid reset)
+
+**Design Rationale:**
+- Out-of-combat regen creates retreat/recovery tactical gameplay
+- No in-combat regen ensures fights have stakes (can't face-tank and outheal)
+- Leash regen prevents chip-damage kiting exploits
+- Flat rate keeps regeneration time predictable (no scaling complexity)
+
+**Player Experience:**
+- Take damage → retreat from combat → wait 5s for combat to drop → health regenerates at 5 HP/sec
+- 100 max HP player at 50 HP = 10 seconds to full heal after leaving combat
+- Creates "push deeper vs pull back" exploration decision-making
+
 ---
 
 ## Damage Calculation
@@ -559,10 +585,14 @@ Entity enters "in combat" state when:
 
 While "in combat":
 * Cannot mount/fast travel
-* Stamina/mana regen rates apply
+* Stamina/mana regen rates apply (health does NOT regenerate)
 * Combat music plays
 * Cannot interact with friendly NPCs/vendors
 * UI shows combat elements (reaction queue, resource bars)
+* **Visual indicator: Red vignette** - Screen edges darken with red tint (15-20% opacity)
+  - Purpose: Clear visual feedback that health regeneration is paused
+  - Fade-in transition (0.3s) when entering combat
+  - Answers "Am I safe to heal?" at a glance
 
 ### Leaving Combat
 
@@ -570,6 +600,12 @@ Combat state ends when:
 * No hostile entities within 20 hex radius
 * 5 seconds have passed since last damage dealt/taken
 * Entity dies
+
+**Post-Combat Effects:**
+* Red vignette fades out (0.3s transition)
+* Health regeneration begins at 5 HP/sec
+* Player can mount/interact with NPCs again
+* Combat music fades to exploration theme
 
 ---
 
