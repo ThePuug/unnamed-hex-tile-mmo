@@ -334,8 +334,11 @@ impl ActorAttributes {
 
     /// Maximum Might reach with full spectrum shift
     pub fn might_reach(&self) -> u8 {
-        if self.might_grace_axis <= 0 {
-            // On might side or balanced: abs(axis - spectrum * 1.5)
+        if self.might_grace_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.might_grace_spectrum / 2) + (self.might_grace_spectrum / 2)
+        } else if self.might_grace_axis < 0 {
+            // On might side: abs(axis - spectrum * 1.5)
             ((self.might_grace_axis as i16 - (self.might_grace_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On grace side: spectrum * 1.5
@@ -345,8 +348,11 @@ impl ActorAttributes {
 
     /// Maximum Grace reach with full spectrum shift
     pub fn grace_reach(&self) -> u8 {
-        if self.might_grace_axis >= 0 {
-            // On grace side or balanced: abs(axis + spectrum * 1.5)
+        if self.might_grace_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.might_grace_spectrum / 2) + (self.might_grace_spectrum / 2)
+        } else if self.might_grace_axis > 0 {
+            // On grace side: abs(axis + spectrum * 1.5)
             ((self.might_grace_axis as i16 + (self.might_grace_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On might side: spectrum * 1.5
@@ -356,23 +362,37 @@ impl ActorAttributes {
 
     /// Current available Might
     pub fn might(&self) -> u8 {
-        if self.might_grace_axis <= 0 {
-            // On might side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.might_grace_axis as i16 + (self.might_grace_shift as i16 / 2) - self.might_grace_spectrum as i16).abs()).max(0) as u8
+        if self.might_grace_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.might_grace_spectrum as i16 / 2) - self.might_grace_shift as i16;
+            value.max(0) as u8
+        } else if self.might_grace_axis < 0 {
+            // On might side: abs(axis) + spectrum - shift
+            let value = self.might_grace_axis.abs() as i16
+                + self.might_grace_spectrum as i16
+                - self.might_grace_shift as i16;
+            value.max(0) as u8
         } else {
-            // On grace side: spectrum - shift * 0.5
-            (self.might_grace_spectrum as i16 - (self.might_grace_shift as i16 / 2)).max(0) as u8
+            // On grace side: max(0, -shift)
+            (-self.might_grace_shift as i16).max(0) as u8
         }
     }
 
     /// Current available Grace
     pub fn grace(&self) -> u8 {
-        if self.might_grace_axis >= 0 {
-            // On grace side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.might_grace_axis as i16 + (self.might_grace_shift as i16 / 2) + self.might_grace_spectrum as i16).abs()).max(0) as u8
+        if self.might_grace_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.might_grace_spectrum as i16 / 2) + self.might_grace_shift as i16;
+            value.max(0) as u8
+        } else if self.might_grace_axis > 0 {
+            // On grace side: axis + spectrum + shift
+            let value = self.might_grace_axis as i16
+                + self.might_grace_spectrum as i16
+                + self.might_grace_shift as i16;
+            value.max(0) as u8
         } else {
-            // On might side: spectrum + shift * 0.5
-            (self.might_grace_spectrum as i16 + (self.might_grace_shift as i16 / 2)).max(0) as u8
+            // On might side: max(0, shift)
+            (self.might_grace_shift as i16).max(0) as u8
         }
     }
 
@@ -380,8 +400,11 @@ impl ActorAttributes {
 
     /// Maximum Vitality reach with full spectrum shift
     pub fn vitality_reach(&self) -> u8 {
-        if self.vitality_focus_axis <= 0 {
-            // On vitality side or balanced: abs(axis - spectrum * 1.5)
+        if self.vitality_focus_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.vitality_focus_spectrum / 2) + (self.vitality_focus_spectrum / 2)
+        } else if self.vitality_focus_axis < 0 {
+            // On vitality side: abs(axis - spectrum * 1.5)
             ((self.vitality_focus_axis as i16 - (self.vitality_focus_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On focus side: spectrum * 1.5
@@ -391,8 +414,11 @@ impl ActorAttributes {
 
     /// Maximum Focus reach with full spectrum shift
     pub fn focus_reach(&self) -> u8 {
-        if self.vitality_focus_axis >= 0 {
-            // On focus side or balanced: abs(axis + spectrum * 1.5)
+        if self.vitality_focus_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.vitality_focus_spectrum / 2) + (self.vitality_focus_spectrum / 2)
+        } else if self.vitality_focus_axis > 0 {
+            // On focus side: abs(axis + spectrum * 1.5)
             ((self.vitality_focus_axis as i16 + (self.vitality_focus_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On vitality side: spectrum * 1.5
@@ -402,23 +428,37 @@ impl ActorAttributes {
 
     /// Current available Vitality
     pub fn vitality(&self) -> u8 {
-        if self.vitality_focus_axis <= 0 {
-            // On vitality side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.vitality_focus_axis as i16 + (self.vitality_focus_shift as i16 / 2) - self.vitality_focus_spectrum as i16).abs()).max(0) as u8
+        if self.vitality_focus_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.vitality_focus_spectrum as i16 / 2) - self.vitality_focus_shift as i16;
+            value.max(0) as u8
+        } else if self.vitality_focus_axis < 0 {
+            // On vitality side: abs(axis) + spectrum - shift
+            let value = self.vitality_focus_axis.abs() as i16
+                + self.vitality_focus_spectrum as i16
+                - self.vitality_focus_shift as i16;
+            value.max(0) as u8
         } else {
-            // On focus side: spectrum - shift * 0.5
-            (self.vitality_focus_spectrum as i16 - (self.vitality_focus_shift as i16 / 2)).max(0) as u8
+            // On focus side: max(0, -shift)
+            (-self.vitality_focus_shift as i16).max(0) as u8
         }
     }
 
     /// Current available Focus
     pub fn focus(&self) -> u8 {
-        if self.vitality_focus_axis >= 0 {
-            // On focus side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.vitality_focus_axis as i16 + (self.vitality_focus_shift as i16 / 2) + self.vitality_focus_spectrum as i16).abs()).max(0) as u8
+        if self.vitality_focus_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.vitality_focus_spectrum as i16 / 2) + self.vitality_focus_shift as i16;
+            value.max(0) as u8
+        } else if self.vitality_focus_axis > 0 {
+            // On focus side: axis + spectrum + shift
+            let value = self.vitality_focus_axis as i16
+                + self.vitality_focus_spectrum as i16
+                + self.vitality_focus_shift as i16;
+            value.max(0) as u8
         } else {
-            // On vitality side: spectrum + shift * 0.5
-            (self.vitality_focus_spectrum as i16 + (self.vitality_focus_shift as i16 / 2)).max(0) as u8
+            // On vitality side: max(0, shift)
+            (self.vitality_focus_shift as i16).max(0) as u8
         }
     }
 
@@ -426,8 +466,11 @@ impl ActorAttributes {
 
     /// Maximum Instinct reach with full spectrum shift
     pub fn instinct_reach(&self) -> u8 {
-        if self.instinct_presence_axis <= 0 {
-            // On instinct side or balanced: abs(axis - spectrum * 1.5)
+        if self.instinct_presence_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.instinct_presence_spectrum / 2) + (self.instinct_presence_spectrum / 2)
+        } else if self.instinct_presence_axis < 0 {
+            // On instinct side: abs(axis - spectrum * 1.5)
             ((self.instinct_presence_axis as i16 - (self.instinct_presence_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On presence side: spectrum * 1.5
@@ -437,8 +480,11 @@ impl ActorAttributes {
 
     /// Maximum Presence reach with full spectrum shift
     pub fn presence_reach(&self) -> u8 {
-        if self.instinct_presence_axis >= 0 {
-            // On presence side or balanced: abs(axis + spectrum * 1.5)
+        if self.instinct_presence_axis == 0 {
+            // Balanced (axis=0): max reach = (spectrum/2) + (spectrum/2) - rounds down twice
+            (self.instinct_presence_spectrum / 2) + (self.instinct_presence_spectrum / 2)
+        } else if self.instinct_presence_axis > 0 {
+            // On presence side: abs(axis + spectrum * 1.5)
             ((self.instinct_presence_axis as i16 + (self.instinct_presence_spectrum as i16 * 3 / 2)).abs()) as u8
         } else {
             // On instinct side: spectrum * 1.5
@@ -448,23 +494,37 @@ impl ActorAttributes {
 
     /// Current available Instinct
     pub fn instinct(&self) -> u8 {
-        if self.instinct_presence_axis <= 0 {
-            // On instinct side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.instinct_presence_axis as i16 + (self.instinct_presence_shift as i16 / 2) - self.instinct_presence_spectrum as i16).abs()).max(0) as u8
+        if self.instinct_presence_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.instinct_presence_spectrum as i16 / 2) - self.instinct_presence_shift as i16;
+            value.max(0) as u8
+        } else if self.instinct_presence_axis < 0 {
+            // On instinct side: abs(axis) + spectrum - shift
+            let value = self.instinct_presence_axis.abs() as i16
+                + self.instinct_presence_spectrum as i16
+                - self.instinct_presence_shift as i16;
+            value.max(0) as u8
         } else {
-            // On presence side: spectrum - shift * 0.5
-            (self.instinct_presence_spectrum as i16 - (self.instinct_presence_shift as i16 / 2)).max(0) as u8
+            // On presence side: max(0, -shift)
+            (-self.instinct_presence_shift as i16).max(0) as u8
         }
     }
 
     /// Current available Presence
     pub fn presence(&self) -> u8 {
-        if self.instinct_presence_axis >= 0 {
-            // On presence side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.instinct_presence_axis as i16 + (self.instinct_presence_shift as i16 / 2) + self.instinct_presence_spectrum as i16).abs()).max(0) as u8
+        if self.instinct_presence_axis == 0 {
+            // Balanced (axis=0): split spectrum evenly, both round down (punishment!)
+            let value = (self.instinct_presence_spectrum as i16 / 2) + self.instinct_presence_shift as i16;
+            value.max(0) as u8
+        } else if self.instinct_presence_axis > 0 {
+            // On presence side: axis + spectrum + shift
+            let value = self.instinct_presence_axis as i16
+                + self.instinct_presence_spectrum as i16
+                + self.instinct_presence_shift as i16;
+            value.max(0) as u8
         } else {
-            // On instinct side: spectrum + shift * 0.5
-            (self.instinct_presence_spectrum as i16 + (self.instinct_presence_shift as i16 / 2)).max(0) as u8
+            // On instinct side: max(0, shift)
+            (self.instinct_presence_shift as i16).max(0) as u8
         }
     }
 

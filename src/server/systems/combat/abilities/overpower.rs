@@ -15,7 +15,7 @@ use crate::{
 
 /// Handle Overpower ability (W key)
 /// - 40 stamina cost
-/// - 80 base damage
+/// - 20 base damage + Presence (×4) + Might (×1.5)
 /// - Melee range (adjacent hex)
 pub fn handle_overpower(
     mut commands: Commands,
@@ -188,8 +188,8 @@ pub fn handle_overpower(
         let damage = calculate_magnitude_value(
             base,
             caster_attrs.total_level,
-            caster_attrs.might() as i8,
-            0, // Overpower doesn't use reach
+            caster_attrs.presence() as i8,  // Primary: Presence
+            caster_attrs.might() as u32,    // Secondary: Might (via reach scalar)
             scalars,
         );
 

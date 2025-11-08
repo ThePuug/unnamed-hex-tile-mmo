@@ -73,13 +73,13 @@ pub fn do_manage_connections(
                     ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // Level 10: Full spectrum distribution (4+3+3=10 points)
-                // Balanced axis (0) allows players to shift in any direction for skill balance testing
+                // Level 18: axis/2 + spectrum = (0+4+0)/2 + (4+1+13) = 0 + 18 = 18
+                // 5 Focus for 2 queue slots (25% commitment: 5/20 at level 10)
                 let attrs = ActorAttributes::new(
                     0, 4, 0,       // might_grace: 4 spectrum
-                    0, 3, 0,       // vitality_focus: 3 spectrum
-                    0, 3, 0,       // instinct_presence: 3 spectrum
-                    10,            // total_level: sum of spectrum points
+                    4, 1, 0,       // vitality_focus: 4 Focus axis, 1 spectrum, 0 shift → focus=5, vit=0
+                    0, 13, 0,      // instinct_presence: 13 spectrum (reach should be 12, not 13)
+                    18,            // total_level: (axis/2) + spectrum
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();

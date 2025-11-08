@@ -363,18 +363,43 @@ pub fn handle_shift_drag(
                 let new_shift_f32 = drag_state.initial_shift as f32 + delta_units;
 
                 // Update the appropriate shift value based on attribute type
+                // Shift range depends on which side of axis:
+                // - When axis = 0: shift in [-spectrum/2, spectrum/2] (symmetric, split penalty)
+                // - When axis > 0: shift in [-(spectrum+1)/2, spectrum/2] (asymmetric toward opposite)
+                // - When axis < 0: shift in [-spectrum/2, (spectrum+1)/2] (asymmetric toward opposite)
                 match drag_state.attribute {
                     AttributeType::MightGrace => {
                         let spectrum = attrs.might_grace_spectrum as i8;
-                        attrs.might_grace_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        let (min_shift, max_shift) = if attrs.might_grace_axis == 0 {
+                            (-spectrum / 2, spectrum / 2)
+                        } else if attrs.might_grace_axis > 0 {
+                            (-(spectrum + 1) / 2, spectrum / 2)
+                        } else {
+                            (-spectrum / 2, (spectrum + 1) / 2)
+                        };
+                        attrs.might_grace_shift = new_shift_f32.clamp(min_shift as f32, max_shift as f32) as i8;
                     }
                     AttributeType::VitalityFocus => {
                         let spectrum = attrs.vitality_focus_spectrum as i8;
-                        attrs.vitality_focus_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        let (min_shift, max_shift) = if attrs.vitality_focus_axis == 0 {
+                            (-spectrum / 2, spectrum / 2)
+                        } else if attrs.vitality_focus_axis > 0 {
+                            (-(spectrum + 1) / 2, spectrum / 2)
+                        } else {
+                            (-spectrum / 2, (spectrum + 1) / 2)
+                        };
+                        attrs.vitality_focus_shift = new_shift_f32.clamp(min_shift as f32, max_shift as f32) as i8;
                     }
                     AttributeType::InstinctPresence => {
                         let spectrum = attrs.instinct_presence_spectrum as i8;
-                        attrs.instinct_presence_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        let (min_shift, max_shift) = if attrs.instinct_presence_axis == 0 {
+                            (-spectrum / 2, spectrum / 2)
+                        } else if attrs.instinct_presence_axis > 0 {
+                            (-(spectrum + 1) / 2, spectrum / 2)
+                        } else {
+                            (-spectrum / 2, (spectrum + 1) / 2)
+                        };
+                        attrs.instinct_presence_shift = new_shift_f32.clamp(min_shift as f32, max_shift as f32) as i8;
                     }
                 }
             }

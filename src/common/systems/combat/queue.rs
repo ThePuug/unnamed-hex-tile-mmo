@@ -1,26 +1,45 @@
 use crate::common::components::reaction_queue::{QueuedThreat, ReactionQueue};
 use crate::common::components::ActorAttributes;
 use crate::common::message::ClearType;
+use crate::common::systems::combat::scaling::{
+    calculate_commitment_modifier, CommitmentCurve, CurveFunction, CurveMode,
+};
 use bevy::prelude::*;
 use std::time::Duration;
 
 #[cfg(test)]
 use crate::common::components::reaction_queue::DamageType;
 
-/// Calculate queue capacity based on Focus attribute
-/// Formula: base_capacity + floor(focus / 33.0)
-/// - Focus = 0: 1 slot (base=1, bonus=0)
-/// - Focus = 33: 2 slots (base=1, bonus=1)
-/// - Focus = 66: 3 slots (base=1, bonus=2)
-/// - Focus = 99: 4 slots (base=1, bonus=3)
-/// - Focus = 150: 5 slots (base=1, bonus=4)
+/// Calculate queue capacity based on Focus attribute (ADR-016 commitment scaling)
+/// Uses commitment curve: 1 additional slot per 25% Focus investment
+/// - 0% commitment (0 Focus at any level): 1 slot
+/// - 25% commitment: 2 slots
+/// - 50% commitment: 3 slots
+/// - 75% commitment: 4 slots
+/// - 100% commitment: 5 slots
+///
+/// Example at level 10:
+/// - 0 Focus: 1 slot
+/// - 5 Focus (2.5 points = 25%): 2 slots
+/// - 10 Focus (5 points = 50%): 3 slots
+/// - 15 Focus (7.5 points = 75%): 4 slots
+/// - 20 Focus (10 points = 100%): 5 slots
 pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
-    // Use focus() which returns u8 (0-150 range)
-    let focus = attrs.focus() as usize;
+    const QUEUE_CURVE: CommitmentCurve = CommitmentCurve {
+        base: 1.0,           // 1 slot base
+        scale: 4.0,          // Up to 4 additional slots
+        max_ratio: 1.0,      // Cap at 100% investment
+        function: CurveFunction::Linear,
+        mode: CurveMode::Additive,  // 1 + (ratio * 4)
+    };
 
-    let base_capacity = 1;
-    let bonus = focus / 33;
-    (base_capacity + bonus).min(10) // Cap at 10 for sanity
+    let capacity_float = calculate_commitment_modifier(
+        attrs.focus() as i8,
+        attrs.total_level,
+        QUEUE_CURVE,
+    );
+
+    capacity_float.floor() as usize
 }
 
 /// Calculate timer duration based on Instinct attribute
@@ -114,47 +133,47 @@ mod tests {
     use super::*;
 
     // Helper to create test attributes
-    fn create_test_attrs(focus_axis: i8, instinct_axis: i8) -> ActorAttributes {
+    fn create_test_attrs(focus_axis: i8, instinct_axis: i8, total_level: u32) -> ActorAttributes {
         ActorAttributes::new(
             0, 0, 0,          // might_grace: axis, spectrum, shift
             focus_axis, 0, 0, // vitality_focus: axis, spectrum, shift
             instinct_axis, 0, 0, // instinct_presence: axis, spectrum, shift
-            1,                // total_level (test placeholder)
+            total_level,
         )
     }
 
     #[test]
     fn test_calculate_queue_capacity_zero_focus() {
-        // Focus = 0 (axis on vitality side) should give 1 slot (base=1, bonus=0)
-        let attrs = create_test_attrs(-100, 0);
+        // Focus = 0 (0% commitment at level 10) should give 1 slot
+        let attrs = create_test_attrs(-100, 0, 10);
         assert_eq!(calculate_queue_capacity(&attrs), 1);
     }
 
     #[test]
     fn test_calculate_queue_capacity_low_focus() {
-        // Focus = 33 (axis = 33 on focus side) should give 2 slots (base=1, bonus=1)
-        let attrs = create_test_attrs(33, 0);
+        // Focus = 5 (25% commitment at level 10: 5/20) should give 2 slots
+        let attrs = create_test_attrs(5, 0, 10);
         assert_eq!(calculate_queue_capacity(&attrs), 2);
     }
 
     #[test]
     fn test_calculate_queue_capacity_mid_focus() {
-        // Focus = 66 (axis = 66 on focus side) should give 3 slots (base=1, bonus=2)
-        let attrs = create_test_attrs(66, 0);
+        // Focus = 10 (50% commitment at level 10: 10/20) should give 3 slots
+        let attrs = create_test_attrs(10, 0, 10);
         assert_eq!(calculate_queue_capacity(&attrs), 3);
     }
 
     #[test]
     fn test_calculate_queue_capacity_high_focus() {
-        // Focus = 100 (axis = 100 on focus side) should give 4 slots (base=1, bonus=3)
-        let attrs = create_test_attrs(100, 0);
+        // Focus = 15 (75% commitment at level 10: 15/20) should give 4 slots
+        let attrs = create_test_attrs(15, 0, 10);
         assert_eq!(calculate_queue_capacity(&attrs), 4);
     }
 
     #[test]
     fn test_calculate_timer_duration_zero_instinct() {
         // Instinct = 0 (axis on presence side) should give 1.0s
-        let attrs = create_test_attrs(0, 100);
+        let attrs = create_test_attrs(0, 100, 10);
         let duration = calculate_timer_duration(&attrs);
         assert_eq!(duration, Duration::from_secs(1));
     }
@@ -162,7 +181,7 @@ mod tests {
     #[test]
     fn test_calculate_timer_duration_mid_instinct() {
         // Instinct = 50 (axis = -50 on instinct side) should give 1.25s
-        let attrs = create_test_attrs(0, -50);
+        let attrs = create_test_attrs(0, -50, 10);
         let duration = calculate_timer_duration(&attrs);
         assert_eq!(duration, Duration::from_millis(1250));
     }
@@ -170,7 +189,7 @@ mod tests {
     #[test]
     fn test_calculate_timer_duration_high_instinct() {
         // Instinct = 100 (axis = -100 on instinct side) should give 1.5s
-        let attrs = create_test_attrs(0, -100);
+        let attrs = create_test_attrs(0, -100, 10);
         let duration = calculate_timer_duration(&attrs);
         assert_eq!(duration, Duration::from_millis(1500));
     }

@@ -130,23 +130,24 @@ pub const LUNGE: AbilityDefinition = AbilityDefinition {
     ],
 };
 
-/// Overpower: Heavy strike
-/// - Damage: Magnitude only (high base + Might)
+/// Overpower: Overwhelming strike (Triumvirate signature)
+/// - Damage: Magnitude (Presence primary, Might secondary)
+/// - Scales with both dominance (Presence) and physical power (Might)
 pub const OVERPOWER: AbilityDefinition = AbilityDefinition {
     ability_type: AbilityType::Overpower,
     components: &[
         AbilityComponent {
             name: "damage",
             scaling: ComponentScaling::Magnitude {
-                base: 80.0,
+                base: 20.0,
                 scalars: MagnitudeScalars {
                     level: 1.5,   // +1.5 damage per level
-                    stat: 3.0,    // +3 damage per Might
-                    reach: 0.0,
+                    stat: 4.0,    // +4 damage per Presence (primary)
+                    reach: 1.5,   // +1.5 damage per Might (secondary, using reach slot)
                 },
             },
-            primary_stat: AttributeStat::Might,
-            secondary_stat: None,
+            primary_stat: AttributeStat::Presence,
+            secondary_stat: Some(AttributeStat::Might),
         },
     ],
 };
