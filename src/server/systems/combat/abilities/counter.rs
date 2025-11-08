@@ -2,9 +2,12 @@ use bevy::prelude::*;
 use std::time::Duration;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+        components::{entity_type::*, resources::*, ActorAttributes, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-        systems::combat::synergies::apply_synergies,
+        systems::combat::{
+            synergies::apply_synergies,
+            scaling::{calculate_commitment_modifier, calculate_ratio_effectiveness, ComponentScaling, COUNTER},
+        },
     },
     server::resources::RunTime,
 };
@@ -22,6 +25,7 @@ pub fn handle_counter(
     entity_query: Query<(&EntityType, &Loc)>,
     mut queue_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
+    attrs_query: Query<&ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&crate::common::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
@@ -166,8 +170,45 @@ pub fn handle_counter(
             },
         });
 
-        // Calculate reflected damage (50% of the threat's damage)
-        let reflected_damage = threat.damage * 0.5;
+        // Get caster and target attributes for reflection scaling
+        let Ok(caster_attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+        let Ok(target_attrs) = attrs_query.get(target_ent) else {
+            continue;
+        };
+
+        // Calculate reflection percentage using new scaling system (ADR-016)
+        let reflection_component = COUNTER.components
+            .iter()
+            .find(|c| c.name == "reflection")
+            .expect("COUNTER must have reflection component");
+
+        let ComponentScaling::CommitmentAndRatio { commitment, ratio } = reflection_component.scaling else {
+            panic!("COUNTER reflection must use CommitmentAndRatio scaling");
+        };
+
+        // Commitment modifier based on caster's Grace investment
+        let skill_modifier = calculate_commitment_modifier(
+            caster_attrs.grace() as i8,
+            caster_attrs.total_level,
+            commitment,
+        );
+
+        // Ratio effectiveness: caster's Grace vs target's Might
+        let ratio_modifier = calculate_ratio_effectiveness(
+            caster_attrs.grace() as i8,
+            caster_attrs.total_level,
+            target_attrs.might() as i8,
+            target_attrs.total_level,
+            ratio,
+        );
+
+        // Combined reflection percentage (clamped to 25-90% range)
+        let reflection_percent = (skill_modifier * ratio_modifier).clamp(0.25, 0.90);
+
+        // Calculate reflected damage
+        let reflected_damage = threat.damage * reflection_percent;
 
         // Queue reflected damage as a NEW threat in the attacker's ReactionQueue
         if let Ok((_, mut target_queue)) = queue_query.get_mut(target_ent) {
