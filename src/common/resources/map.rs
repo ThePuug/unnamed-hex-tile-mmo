@@ -177,68 +177,10 @@ impl Map {
 
     /// Calculate smooth normal for a vertex by averaging face normals of adjacent triangles
     /// This version considers neighboring hexes for truly smooth lighting
-    fn calculate_vertex_normal(&self, qrz: Qrz, vertex_idx: usize, verts: &[Vec3], apply_slopes: bool) -> Vec3 {
-        let center = verts[6]; // Center vertex
-        let vertex = verts[vertex_idx];
-
-        // Accumulate normals from all adjacent triangles
-        let mut normal_sum = Vec3::ZERO;
-        let mut count = 0;
-
-        // Get the two adjacent vertices within this hex
-        let prev_idx = if vertex_idx == 0 { 5 } else { vertex_idx - 1 };
-        let next_idx = if vertex_idx == 5 { 0 } else { vertex_idx + 1 };
-        let prev_vertex = verts[prev_idx];
-        let next_vertex = verts[next_idx];
-
-        // Triangle 1: center -> next -> vertex (clockwise from above)
-        let edge1 = next_vertex - center;
-        let edge2 = vertex - center;
-        let normal1 = edge1.cross(edge2).normalize_or_zero();
-        if normal1.length_squared() > 0.001 {
-            normal_sum += normal1;
-            count += 1;
-        }
-
-        // Triangle 2: center -> vertex -> prev (clockwise from above)
-        let edge3 = vertex - center;
-        let edge4 = prev_vertex - center;
-        let normal2 = edge3.cross(edge4).normalize_or_zero();
-        if normal2.length_squared() > 0.001 {
-            normal_sum += normal2;
-            count += 1;
-        }
-
-        // Also consider the neighbor hex that shares this vertex
-        // Each vertex corresponds to a direction (0=North, 1=NE, 2=SE, 3=South, 4=SW, 5=NW)
-        let neighbor_direction = qrz::DIRECTIONS[vertex_idx];
-        let neighbor_qrz_search = qrz + neighbor_direction + Qrz{q:0,r:0,z:30};
-
-        if let Some((neighbor_qrz, _)) = self.find(neighbor_qrz_search, -60) {
-            let (neighbor_verts, _) = self.vertices_and_colors_with_slopes(neighbor_qrz, apply_slopes);
-            let neighbor_center = neighbor_verts[6];
-
-            // The vertex is shared between hexes, so we need to find corresponding vertices
-            // in the neighbor to form triangles
-            let opposite_vertex_idx = (vertex_idx + 3) % 6; // Opposite side of neighbor hex
-            let neighbor_next_idx = if opposite_vertex_idx == 5 { 0 } else { opposite_vertex_idx + 1 };
-
-            // Triangle from neighbor: neighbor_center -> neighbor_adjacent -> vertex (clockwise from above)
-            let edge5 = neighbor_verts[neighbor_next_idx] - neighbor_center;
-            let edge6 = vertex - neighbor_center;
-            let normal3 = edge5.cross(edge6).normalize_or_zero();
-            if normal3.length_squared() > 0.001 {
-                normal_sum += normal3;
-                count += 1;
-            }
-        }
-
-        // Average all the normals
-        if count > 0 {
-            (normal_sum / count as f32).normalize_or_zero()
-        } else {
-            Vec3::new(0., 1., 0.) // Default to up if calculation failed
-        }
+    fn calculate_vertex_normal(&self, _qrz: Qrz, _vertex_idx: usize, _verts: &[Vec3], _apply_slopes: bool) -> Vec3 {
+        // For smooth terrain appearance, use flat upward normals
+        // This prevents each hex from showing as a distinct bump
+        Vec3::new(0., 1., 0.)
     }
 
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
