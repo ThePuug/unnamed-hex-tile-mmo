@@ -276,21 +276,135 @@ fn handle_death(
 mod tests {
     use super::*;
 
-    // Helper to create test attributes
-    fn test_attrs(
-        might_grace: (i8, u8, i8),
-        vitality_focus: (i8, u8, i8),
-        instinct_presence: (i8, u8, i8),
+    // Helper to create test attributes with simple values
+    // Axes: might/grace (negative/positive), vitality/focus (negative/positive)
+    fn test_attrs_simple(
+        might_grace_axis: i8,     // Negative for might, positive for grace
+        vitality_focus_axis: i8,  // Negative for vitality, positive for focus
     ) -> ActorAttributes {
         ActorAttributes::new(
-            might_grace.0, might_grace.1, might_grace.2,
-            vitality_focus.0, vitality_focus.1, vitality_focus.2,
-            instinct_presence.0, instinct_presence.1, instinct_presence.2,
+            might_grace_axis, 0, 0,      // might_grace: axis, spectrum, shift
+            vitality_focus_axis, 0, 0,   // vitality_focus: axis, spectrum, shift
+            0, 0, 0,                      // instinct_presence: axis, spectrum, shift
         )
     }
 
-    // Resource calculation formulas are expected to change during balancing.
-    // No detailed formula tests - systems tests verify the pipeline works.
+    // ===== INVARIANT TESTS =====
+    // These tests verify critical architectural invariants (ADR-015)
+
+    /// INV-007: Armor 75% Cap
+    /// Armor (physical damage reduction) MUST cap at 75% to prevent invulnerability.
+    /// Even with extreme vitality stacking, minimum 25% damage always goes through.
+    #[test]
+    fn test_armor_caps_at_75_percent() {
+        // Use axis=-100 to get vitality=100 (on vitality side)
+        let extreme_vitality = test_attrs_simple(
+            0,      // might_grace_axis
+            -100,   // vitality=100 (vitality_focus_axis=-100)
+        );
+        let base_armor = 0.0;
+
+        let armor = calculate_armor(&extreme_vitality, base_armor);
+
+        // Formula: armor = base + (vitality/66) = 0 + (100/66) = 1.51
+        // Should cap at 0.75 despite exceeding cap
+        assert_eq!(armor, 0.75, "Armor did not cap at 75%");
+
+        // Verify minimum 25% damage always goes through
+        // If incoming damage is 100, final should be 25 after 75% mitigation
+        let incoming_damage = 100.0;
+        let final_damage = incoming_damage * (1.0 - armor);
+        assert_eq!(final_damage, 25.0, "Damage reduction exceeded 75% cap");
+    }
+
+    /// INV-007: Resistance 75% Cap
+    /// Resistance (magic damage reduction) MUST cap at 75% to prevent invulnerability.
+    /// Even with extreme focus stacking, minimum 25% damage always goes through.
+    #[test]
+    fn test_resistance_caps_at_75_percent() {
+        // Use axis=100 to get focus=100 (on focus side)
+        let extreme_focus = test_attrs_simple(
+            0,      // might_grace_axis
+            100,    // focus=100 (vitality_focus_axis=100)
+        );
+        let base_resistance = 0.0;
+
+        let resistance = calculate_resistance(&extreme_focus, base_resistance);
+
+        // Formula: resistance = base + (focus/66) = 0 + (100/66) = 1.51
+        // Should cap at 0.75 despite exceeding cap
+        assert_eq!(resistance, 0.75, "Resistance did not cap at 75%");
+
+        // Verify minimum 25% damage always goes through
+        let incoming_damage = 100.0;
+        let final_damage = incoming_damage * (1.0 - resistance);
+        assert_eq!(final_damage, 25.0, "Magic damage reduction exceeded 75% cap");
+    }
+
+    /// INV-007: Armor Below Cap
+    /// Verify armor calculation works correctly when below the cap.
+    #[test]
+    fn test_armor_below_cap() {
+        // Use axis=-33 to get vitality=33
+        let moderate_vitality = test_attrs_simple(
+            0,      // might_grace_axis
+            -33,    // vitality=33 (vitality_focus_axis=-33)
+        );
+        let base_armor = 0.0;
+
+        let armor = calculate_armor(&moderate_vitality, base_armor);
+
+        // Formula: 0 + (33/66) = 0.5 (50%)
+        assert!((armor - 0.5).abs() < 0.01, "Armor calculation incorrect: expected ~0.5, got {}", armor);
+    }
+
+    /// INV-007: Resistance Below Cap
+    /// Verify resistance calculation works correctly when below the cap.
+    #[test]
+    fn test_resistance_below_cap() {
+        // Use axis=33 to get focus=33
+        let moderate_focus = test_attrs_simple(
+            0,      // might_grace_axis
+            33,     // focus=33 (vitality_focus_axis=33)
+        );
+        let base_resistance = 0.0;
+
+        let resistance = calculate_resistance(&moderate_focus, base_resistance);
+
+        // Formula: 0 + (33/66) = 0.5 (50%)
+        assert!((resistance - 0.5).abs() < 0.01, "Resistance calculation incorrect: expected ~0.5, got {}", resistance);
+    }
+
+    /// INV-008: Resource Regeneration During Combat
+    /// Stamina and mana MUST regenerate during combat.
+    /// Health MUST NOT regenerate during combat (except when Returning).
+    #[test]
+    fn test_stamina_regenerates_in_combat() {
+        let regen_rate = calculate_stamina_regen_rate(&test_attrs_simple(0, 0));
+        assert!(regen_rate > 0.0, "Stamina should regenerate in combat");
+    }
+
+    #[test]
+    fn test_mana_regenerates_in_combat() {
+        let regen_rate = calculate_mana_regen_rate(&test_attrs_simple(0, 0));
+        assert!(regen_rate > 0.0, "Mana should regenerate in combat");
+    }
+
+    #[test]
+    fn test_health_does_not_regenerate_in_combat() {
+        let in_combat = true;
+        let regen_rate = calculate_health_regen_rate(in_combat);
+        assert_eq!(regen_rate, 0.0, "Health must NOT regenerate in combat");
+    }
+
+    #[test]
+    fn test_health_regenerates_out_of_combat() {
+        let in_combat = false;
+        let regen_rate = calculate_health_regen_rate(in_combat);
+        assert!(regen_rate > 0.0, "Health should regenerate out of combat");
+    }
+
+    // ===== SYSTEM TESTS =====
 
     #[test]
     fn test_check_death_emits_event_when_health_zero() {

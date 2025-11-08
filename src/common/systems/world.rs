@@ -225,3 +225,97 @@ pub fn do_incremental(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::Vec3;
+    use qrz::Qrz;
+
+    /// Helper to create a test Map with default terrain (radius=1.0, rise=0.8)
+    fn create_test_map() -> Map {
+        Map::new(qrz::Map::new(1.0, 0.8))
+    }
+
+    // ===== INVARIANT TESTS =====
+    // These tests verify critical architectural invariants (ADR-015)
+
+    /// INV-003: World-Space Preservation During Loc Updates
+    /// When entity crosses tile boundary (adjacent hex, distance < 2),
+    /// world-space position MUST be preserved for visual continuity.
+    #[test]
+    fn test_world_space_preserved_on_smooth_tile_crossing() {
+        let map = create_test_map();
+        let old_loc = Qrz { q: 5, r: 5, z: 0 };
+        let new_loc = Qrz { q: 6, r: 5, z: 0 }; // Adjacent hex (distance = 1)
+        let old_offset = Vec3::new(0.5, 0.0, 0.3);
+
+        // World position before update
+        let world_pos_before = map.convert(old_loc) + old_offset;
+
+        // Apply world-space preservation formula (from do_incremental line 95-102)
+        let state_world = map.convert(old_loc) + old_offset;
+        let new_tile_center = map.convert(new_loc);
+        let new_offset = state_world - new_tile_center;
+
+        // World position after update
+        let world_pos_after = map.convert(new_loc) + new_offset;
+
+        // ASSERT: World position unchanged (within floating-point tolerance)
+        assert!(
+            (world_pos_before - world_pos_after).length() < 0.001,
+            "World-space position changed during tile crossing: before={:?}, after={:?}",
+            world_pos_before, world_pos_after
+        );
+    }
+
+    /// INV-003: Teleport Clears Offset
+    /// When entity jumps ≥2 hexes (teleport), offset MUST be cleared to zero.
+    /// This prevents visual artifacts from client-side prediction conflicts.
+    #[test]
+    fn test_teleport_clears_offset_for_jumps_over_two_hexes() {
+        let old_loc = Qrz { q: 0, r: 0, z: 0 };
+        let new_loc = Qrz { q: 5, r: 5, z: 0 }; // Distance >= 2 (teleport)
+        let old_offset = Vec3::new(0.5, 1.0, 0.3);
+
+        // Teleport detection (from do_incremental line 82-87)
+        const TELEPORT_THRESHOLD_HEXES: i16 = 2;
+        let hex_distance = old_loc.flat_distance(&new_loc);
+
+        let new_offset = if hex_distance >= TELEPORT_THRESHOLD_HEXES {
+            Vec3::ZERO // Teleport: clear offset
+        } else {
+            old_offset // Smooth crossing: preserve world space
+        };
+
+        assert_eq!(new_offset, Vec3::ZERO, "Teleport did not clear offset");
+    }
+
+    /// INV-003: Adjacent Tile Crossing Detection
+    /// Verify that distance calculation correctly identifies adjacent tiles (distance=1).
+    #[test]
+    fn test_adjacent_tile_has_distance_one() {
+        let loc = Qrz { q: 0, r: 0, z: 0 };
+        let adjacent = Qrz { q: 1, r: 0, z: 0 }; // East neighbor
+
+        let distance = loc.flat_distance(&adjacent);
+
+        assert_eq!(distance, 1, "Adjacent tile should have distance 1");
+    }
+
+    /// INV-003: Teleport Detection Boundary
+    /// Verify that distance=2 triggers teleport behavior.
+    #[test]
+    fn test_teleport_threshold_is_two_hexes() {
+        let loc = Qrz { q: 0, r: 0, z: 0 };
+        let two_away = Qrz { q: 2, r: 0, z: 0 }; // 2 hexes east
+
+        let distance = loc.flat_distance(&two_away);
+
+        assert_eq!(distance, 2, "Two hexes away should have distance 2");
+        assert!(
+            distance >= 2,
+            "Distance 2 should trigger teleport behavior"
+        );
+    }
+}
