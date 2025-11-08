@@ -104,7 +104,6 @@ pub fn do_spawn(
 
         match typ {
             EntityType::Actor(desc) => {
-                debug!("[CLIENT SPAWN] Spawning actor {:?} ({:?}) at {:?}", ent, desc, qrz);
                 let loc = Loc::new(qrz);
 
                 // Initialize reaction queue with capacity based on Focus attribute
@@ -116,7 +115,6 @@ pub fn do_spawn(
                 let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {
                     e
                 } else {
-                    debug!("[CLIENT SPAWN] Entity {:?} doesn't exist (was evicted), spawning new", ent);
                     commands.spawn_empty()
                 };
 

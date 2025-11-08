@@ -92,7 +92,6 @@ pub fn render_do_gcd(
                 },
                 ..default()
             }).id();
-            debug!("spawned gcd effect: {:?} at {:?}", it, pos);
         }
     }
 }

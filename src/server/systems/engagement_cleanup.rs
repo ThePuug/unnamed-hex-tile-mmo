@@ -71,23 +71,15 @@ pub fn cleanup_engagements(
         }
 
         if should_cleanup {
-            let reason = if all_npcs_dead { "all NPCs dead" } else { "abandoned" };
-            debug!("[SERVER CLEANUP] Cleaning up engagement {:?} at {:?} - reason: {}, alive NPCs: {}",
-                engagement_entity, **engagement_loc, reason, alive_count);
-
             // Unregister from budget
             budget.unregister_engagement(engagement.zone_id);
 
             // Despawn all NPCs (server-side cleanup, no broadcast needed since clients evict chunks first)
-            let mut despawned = 0;
             for &npc_entity in &engagement.spawned_npcs {
                 if npc_query.get(npc_entity).is_ok() {
-                    debug!("[SERVER CLEANUP] Despawning NPC {:?}", npc_entity);
                     commands.entity(npc_entity).despawn_recursive();
-                    despawned += 1;
                 }
             }
-            debug!("[SERVER CLEANUP] Despawned {} NPCs from engagement {:?}", despawned, engagement_entity);
 
             // Despawn engagement entity
             commands.entity(engagement_entity).despawn();

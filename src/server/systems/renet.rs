@@ -433,10 +433,6 @@ pub fn write_try(
                     }
                 }
 
-                // Metrics: Log if intent was sent to many players (potential bandwidth hotspot)
-                if recipients > 10 {
-                    debug!("MovementIntent for entity {:?} sent to {} players (high traffic area)", ent, recipients);
-                }
             }
             _ => {}
         }

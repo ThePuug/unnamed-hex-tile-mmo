@@ -299,16 +299,11 @@ fn spawn_engagement_at(
 
         // Track NPC in engagement
         engagement.add_npc(npc_entity);
-        debug!("[SERVER SPAWN] Created NPC {:?} at {:?} for engagement {:?}",
-            npc_entity, npc_location, engagement_entity);
 
         // NOTE: NPCs are NOT broadcast immediately - they're sent when clients discover the chunk
         // See try_discover_chunk in actor.rs which sends all actors when chunk is discovered
         // This prevents "ghost NPCs" when engagements are abandoned but not yet cleaned up
     }
-
-    debug!("[SERVER SPAWN] Engagement {:?} spawned with {} NPCs",
-        engagement_entity, engagement.spawned_npcs.len());
 
     // Update engagement with tracked NPCs
     commands.entity(engagement_entity).insert(engagement);

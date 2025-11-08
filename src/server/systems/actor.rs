@@ -197,12 +197,8 @@ pub fn try_discover_chunk(
             });
 
             // Send all actors (NPCs and players) that are in this chunk
-            let mut actors_sent = 0;
             for (actor_ent, actor_loc, actor_type, attrs, player_controlled, heading, health, stamina, mana, combat_state) in actors_query.iter() {
                 if is_loc_in_chunk(**actor_loc, chunk_id) {
-                    debug!("[CHUNK DISCOVERY] Sending actor {:?} ({:?}) at {:?} to player {:?}",
-                        actor_ent, actor_type, **actor_loc, ent);
-
                     // Send Spawn + all actor components using shared helper
                     use crate::server::systems::world::generate_actor_spawn_events;
                     let spawn_events = generate_actor_spawn_events(
@@ -221,11 +217,7 @@ pub fn try_discover_chunk(
                     for event in spawn_events {
                         writer.write(event);
                     }
-                    actors_sent += 1;
                 }
-            }
-            if actors_sent > 0 {
-                debug!("[CHUNK DISCOVERY] Sent {} actors in chunk {:?} to player {:?}", actors_sent, chunk_id, ent);
             }
         }
     }
