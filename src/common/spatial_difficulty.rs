@@ -247,7 +247,7 @@ pub fn calculate_enemy_attributes(
         instinct_presence,
         0,
         0,
-        1,  // TODO: Calculate proper total_level for NPCs based on difficulty
+        level as u32,
     )
 }
 
