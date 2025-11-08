@@ -23,6 +23,12 @@ impl ChunkId {
     pub fn new(chunk_q: i16, chunk_r: i16) -> Self {
         ChunkId(chunk_q, chunk_r)
     }
+
+    /// Get the center tile of this chunk (for spawning engagements)
+    pub fn center(&self) -> Qrz {
+        // Center is at offset (8, 8) in a 16x16 chunk
+        chunk_to_tile(*self, 8, 8)
+    }
 }
 
 /// A chunk of terrain containing up to 256 tiles (16x16)

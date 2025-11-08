@@ -22,6 +22,8 @@ impl ActorIdentity {
 pub enum NpcType {
     WildDog,
     ForestSprite,
+    Juggernaut,
+    Defender,
 }
 
 impl NpcType {
@@ -30,6 +32,8 @@ impl NpcType {
         match self {
             NpcType::WildDog => "Wild Dog",
             NpcType::ForestSprite => "Forest Sprite",
+            NpcType::Juggernaut => "Juggernaut",
+            NpcType::Defender => "Defender",
         }
     }
 }

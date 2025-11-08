@@ -89,41 +89,42 @@ pub fn setup(
         + secs_since_midnight as u128 * 1000
         - elapsed;
 
+    // ADR-014: Static spawners disabled in favor of dynamic engagement system
     // ADR-009: Amp up combat - spawn Wild Dog spawners for isolated encounters
     // Player spawns at Qrz { q: 0, r: 0, z: 4 }
     // Place spawners 30+ hexes away on hex plane (q,r), at actual terrain elevation
     // Spread in different hex directions for isolated 1v1 encounters
-    let spawner_hex_positions = vec![
-        (30, 0),      // ~30 hexes in +q direction
-        (0, 30),      // ~30 hexes in +r direction
-        (-30, 0),     // ~30 hexes in -q direction
-        (0, -30),     // ~30 hexes in -r direction
-    ];
+    // let spawner_hex_positions = vec![
+    //     (30, 0),      // ~30 hexes in +q direction
+    //     (0, 30),      // ~30 hexes in +r direction
+    //     (-30, 0),     // ~30 hexes in -q direction
+    //     (0, -30),     // ~30 hexes in -r direction
+    // ];
 
-    for (q, r) in spawner_hex_positions {
-        // Convert hex position to world space to query terrain height
-        let world_pos = map.convert(Qrz { q, r, z: 0 });
-        let terrain_height = terrain.get(world_pos.x, world_pos.y);
+    // for (q, r) in spawner_hex_positions {
+    //     // Convert hex position to world space to query terrain height
+    //     let world_pos = map.convert(Qrz { q, r, z: 0 });
+    //     let terrain_height = terrain.get(world_pos.x, world_pos.y);
 
-        // Create spawner at terrain height
-        let spawn_qrz = Qrz { q, r, z: terrain_height };
+    //     // Create spawner at terrain height
+    //     let spawn_qrz = Qrz { q, r, z: terrain_height };
 
-        let spawner = Spawner::new(
-            NpcTemplate::random_mixed(),
-            2,      // max_count: 2 NPCs per spawner
-            4,      // spawn_radius: 4 hexes (tight group)
-            35,     // player_activation_range: 35 hexes (wide activation)
-            15,     // leash_distance: 15 hexes
-            35,     // despawn_distance: 35 hexes (cleanup when far away)
-            5000,   // respawn_timer_ms: 5 seconds (breathing room between waves)
-        );
+    //     let spawner = Spawner::new(
+    //         NpcTemplate::random_mixed(),
+    //         2,      // max_count: 2 NPCs per spawner
+    //         4,      // spawn_radius: 4 hexes (tight group)
+    //         35,     // player_activation_range: 35 hexes (wide activation)
+    //         15,     // leash_distance: 15 hexes
+    //         35,     // despawn_distance: 35 hexes (cleanup when far away)
+    //         5000,   // respawn_timer_ms: 5 seconds (breathing room between waves)
+    //     );
 
-        commands.spawn((
-            spawner,
-            Loc::new(spawn_qrz),
-            Name::new(format!("Mixed NPC Spawner {:?}", spawn_qrz)),
-        ));
-    }
+    //     commands.spawn((
+    //         spawner,
+    //         Loc::new(spawn_qrz),
+    //         Name::new(format!("Mixed NPC Spawner {:?}", spawn_qrz)),
+    //     ));
+    // }
 }
 
 pub fn try_spawn(

@@ -1,5 +1,6 @@
 pub mod ally_target;
 pub mod behaviour;
+pub mod engagement;
 pub mod entity_type;
 pub mod gcd;
 pub mod heading;

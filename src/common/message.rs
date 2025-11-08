@@ -28,6 +28,8 @@ pub enum Event {
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
     Death { ent: Entity },
+    /// Server-internal: Request to spawn engagement at location (Try event - ADR-014)
+    SpawnEngagement { location: Qrz },
     /// Server-internal: Deal damage (Try event)
     /// Triggers damage calculation and queue insertion
     DealDamage {
@@ -66,7 +68,7 @@ pub enum Event {
     },
 }
 
-/// Types of abilities that can be used (ADR-009 MVP ability set)
+/// Types of abilities that can be used (ADR-009 MVP ability set + ADR-014 Counter)
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityType {
     /// Q: Gap closer - teleport adjacent to target (4 hex range, 20 stam, 40 dmg)
@@ -81,6 +83,8 @@ pub enum AbilityType {
     AutoAttack,
     /// NPC: Ranged attack with telegraph (20 dmg, 3s CD, 5-8 hex range)
     Volley,
+    /// ADR-014: Counter - Negate front threat and reflect 50% damage back (30 stam, 1.2s recovery)
+    Counter,
 }
 
 /// Reasons why an ability usage might fail

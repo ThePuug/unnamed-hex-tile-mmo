@@ -77,11 +77,11 @@ pub fn setup(
             },
         ))
         .with_children(|parent| {
-            // Define ability slots: Q, W, E, R (ADR-009 MVP ability set)
+            // Define ability slots: Q, W, E, R (ADR-014: Counter replaces Knockback)
             let slots = vec![
                 (0, KeyCode::KeyQ, Some(AbilityType::Lunge)),      // Q = Lunge (gap closer)
                 (1, KeyCode::KeyW, Some(AbilityType::Overpower)),  // W = Overpower (heavy strike)
-                (2, KeyCode::KeyE, Some(AbilityType::Knockback)),  // E = Knockback (push enemy)
+                (2, KeyCode::KeyE, Some(AbilityType::Counter)),    // E = Counter (reactive counter-attack)
                 (3, KeyCode::KeyR, Some(AbilityType::Deflect)),    // R = Deflect (clear queue)
             ];
 
@@ -109,6 +109,7 @@ pub fn setup(
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
             Some(AbilityType::Volley) => "🏹",     // NPC ranged attack (not on bar)
+            Some(AbilityType::Counter) => "↩",     // Counter / reflect (NPC-only)
             None => "🔒",
         };
 
@@ -152,6 +153,7 @@ pub fn setup(
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Volley => String::new(),         // NPC-only (not on player bar)
+                AbilityType::Counter => String::new(),        // NPC-only (not on player bar)
             };
 
             if !cost_text.is_empty() {
@@ -415,6 +417,10 @@ fn get_ability_state(
             AbilityState::Ready
         }
         AbilityType::Volley => {
+            // NPC-only ability - not on player action bar
+            AbilityState::Ready
+        }
+        AbilityType::Counter => {
             // NPC-only ability - not on player action bar
             AbilityState::Ready
         }

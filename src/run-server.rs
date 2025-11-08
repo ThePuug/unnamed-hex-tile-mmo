@@ -24,8 +24,8 @@ use crate::{
         systems::physics
     },
     server::{
-        resources::{terrain::*, *},
-        systems::{actor, combat, input, reaction_queue, renet, spawner, targeting, world},
+        resources::{engagement_budget::EngagementBudget, terrain::*, *},
+        systems::{actor, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, spawner, targeting, world},
         *
     }
 };
@@ -97,11 +97,13 @@ fn main() {
         targeting::update_targets, // Update targets every frame (detects when targets move)
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
+        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(2000))), // ADR-014 Phase 3B: NPCs use signature abilities (check every 2s)
         combat::validate_ability_prerequisites,
         combat::abilities::auto_attack::handle_auto_attack,
         combat::abilities::overpower::handle_overpower,
         combat::abilities::lunge::handle_lunge,
         combat::abilities::knockback::handle_knockback,
+        combat::abilities::counter::handle_counter,  // ADR-014: Counter ability
         combat::abilities::deflect::handle_deflect,
         combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
@@ -117,8 +119,11 @@ fn main() {
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         renet::do_manage_connections,
-        spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
-        spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
+        // ADR-014: Static spawners disabled in favor of dynamic engagement system
+        // spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
+        // spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
+        engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
+        engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
         world::do_spawn,
         world::try_spawn,
     ));
@@ -126,6 +131,8 @@ fn main() {
     app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
         actor::try_discover_chunk,  // New chunk-based discovery
+        engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
+        engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         server::systems::diagnostics::check_duplicate_tiles,
         common::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
@@ -148,6 +155,7 @@ fn main() {
     app.init_resource::<Terrain>();
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
+    app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone
     app.init_resource::<server::systems::diagnostics::TerrainTracker>();
 
     app.run();

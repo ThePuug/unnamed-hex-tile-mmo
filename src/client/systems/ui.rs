@@ -5,7 +5,11 @@ use crate::{
         components::*,
         resources::Server
     },
-    common::systems::*,
+    common::{
+        components::{Actor, Loc},
+        spatial_difficulty::*,
+        systems::*,
+    },
 };
 
 pub fn setup(
@@ -32,15 +36,29 @@ pub fn setup(
             },
             Info::Time,
         ));
+
+        // Distance indicator (ADR-014 Phase 4) - shows below time display
+        parent.spawn((
+            Text::new(""),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(32.),  // Below time display (20px gap)
+                left: Val::Px(12.),
+                ..default()
+            },
+            TextColor(Color::srgb(0.9, 0.9, 0.9)),
+            Info::DistanceIndicator,
+        ));
     });
 }
 
 pub fn update(
     mut query: Query<(&mut Text, &Info)>,
+    player_query: Query<&Loc, With<Actor>>,
     server: Res<Server>,
     time: Res<Time>,
 ) {
-    for (mut span, info) in &mut query { 
+    for (mut span, info) in &mut query {
         **span = match info {
             Info::Time => {
                 let dt = server.current_time(time.elapsed().as_millis());
@@ -62,7 +80,26 @@ pub fn update(
                 let day = dt % WEEK_MS / DAY_MS;
                 let hour = dt % DAY_MS / HOUR_MS;
                 let minute = dt % HOUR_MS / MINUTE_MS;
-                format!("{hour:02}:{minute:02} {day}.{week}.{season}") 
+                format!("{hour:02}:{minute:02} {day}.{week}.{season}")
+            }
+            Info::DistanceIndicator => {
+                // ADR-014 Phase 4: Distance indicator showing haven distance, zone, and enemy level
+                if let Ok(player_loc) = player_query.get_single() {
+                    let distance = HAVEN_LOCATION.flat_distance(&**player_loc);
+                    let zone = get_directional_zone(**player_loc, HAVEN_LOCATION);
+                    let level = calculate_enemy_level(**player_loc, HAVEN_LOCATION);
+
+                    let zone_name = match zone {
+                        DirectionalZone::North => "North",
+                        DirectionalZone::East => "East",
+                        DirectionalZone::South => "South",
+                        DirectionalZone::West => "West",
+                    };
+
+                    format!("Haven: {} tiles | Zone: {} | Enemy Lv. {}", distance, zone_name, level)
+                } else {
+                    String::from("Haven: -- tiles | Zone: -- | Enemy Lv. --")
+                }
             }
         };
     }

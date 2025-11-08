@@ -104,6 +104,7 @@ pub fn do_spawn(
 
         match typ {
             EntityType::Actor(desc) => {
+                debug!("[CLIENT SPAWN] Spawning actor {:?} ({:?}) at {:?}", ent, desc, qrz);
                 let loc = Loc::new(qrz);
 
                 // Initialize reaction queue with capacity based on Focus attribute
@@ -111,7 +112,15 @@ pub fn do_spawn(
                 let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
                 let reaction_queue = ReactionQueue::new(queue_capacity);
 
-                commands.entity(ent)
+                // Handle entities that may have been evicted - spawn if needed
+                let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {
+                    e
+                } else {
+                    debug!("[CLIENT SPAWN] Entity {:?} doesn't exist (was evicted), spawning new", ent);
+                    commands.spawn_empty()
+                };
+
+                entity_cmd
                     .insert((
                         loc,
                         typ,
@@ -170,7 +179,8 @@ fn get_asset(typ: EntityType) -> String {
                 ActorIdentity::Npc(npc_type) => match npc_type {
                     NpcType::WildDog => "actors/dog-basic.glb".to_string(),
                     NpcType::ForestSprite => "actors/sprite-basic.glb".to_string(),
-                    // Future NPCs will have their own model paths
+                    NpcType::Juggernaut => "actors/juggernaut-basic.glb".to_string(),
+                    NpcType::Defender => "actors/player-basic.glb".to_string(), // Reuse player model
                 }
             }
         },
@@ -236,11 +246,13 @@ pub fn apply_movement_intent(
         offset.interp_duration = duration_ms as f32 / 1000.0;
         offset.interp_elapsed = 0.0;
 
-        // Insert prediction tracking component for validation
-        commands.entity(ent).insert(crate::common::components::movement_prediction::MovementPrediction::new(
-            destination,
-            time.elapsed() + Duration::from_millis(duration_ms as u64),
-            time.elapsed(),
-        ));
+        // Insert prediction tracking component for validation (only if entity exists)
+        if let Ok(mut entity_cmd) = commands.get_entity(ent) {
+            entity_cmd.insert(crate::common::components::movement_prediction::MovementPrediction::new(
+                destination,
+                time.elapsed() + Duration::from_millis(duration_ms as u64),
+                time.elapsed(),
+            ));
+        }
     }
 }

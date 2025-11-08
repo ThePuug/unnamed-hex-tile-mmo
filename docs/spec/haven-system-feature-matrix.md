@@ -1,8 +1,9 @@
 # Haven System - Feature Matrix
 
 **Specification:** [haven-system.md](haven-system.md)
-**Last Updated:** 2025-11-01
-**Overall Status:** 0/18 features complete (0% - not yet implemented)
+**Last Updated:** 2025-11-08
+**Overall Status:** 3/18 features complete (17% - MVP subset via ADR-014)
+**ADR-014 Implementation:** Simplified spatial difficulty system as MVP foundation
 
 ---
 
@@ -22,18 +23,18 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Bootstrap problem solution | ❌ Not Started | - | Lines 7-8 | Safe zones at launch |
-| Mountain Stronghold | ❌ Not Started | - | Line 12 | Cold/mountain biome haven |
-| Prairie Fortress | ❌ Not Started | - | Line 13 | Grassland/plains biome haven |
-| Forest Village | ❌ Not Started | - | Line 14 | Forest/woodland biome haven |
-| 1000 city-level influence | ❌ Not Started | - | Lines 19-24 | Full encroachment suppression |
-| 50 town-level anger | ❌ Not Started | - | Line 23 | Minimal siege pressure |
-| 30 tile urban core | ❌ Not Started | - | Line 24 | Close building allowed |
-| Indestructible property | ❌ Not Started | - | Line 27 | Cannot be destroyed |
-| Permanent respawn point | ❌ Not Started | - | Line 28 | New/defeated player spawn |
-| Basic services | ❌ Not Started | - | Line 29 | Starter vendors, crafting |
+| Bootstrap problem solution | 🚧 Partial | ADR-014 | Lines 7-8 | Single haven at origin (not 3 havens) |
+| Mountain Stronghold | ❌ Not Started | - | Line 12 | Deferred to post-MVP |
+| Prairie Fortress | ❌ Not Started | - | Line 13 | Deferred to post-MVP |
+| Forest Village | ❌ Not Started | - | Line 14 | Deferred to post-MVP |
+| 1000 city-level influence | ❌ Not Started | - | Lines 19-24 | Deferred (using distance instead) |
+| 50 town-level anger | ❌ Not Started | - | Line 23 | Deferred to post-MVP |
+| 30 tile urban core | ❌ Not Started | - | Line 24 | Deferred to post-MVP |
+| Indestructible property | ❌ Not Started | - | Line 27 | No havens to destroy yet |
+| Permanent respawn point | ✅ Complete | ADR-014 | Line 28 | Players spawn at HAVEN_LOCATION (0,0) |
+| Basic services | ❌ Not Started | - | Line 29 | Deferred to post-MVP |
 
-**Category Status:** 0/10 complete (0%)
+**Category Status:** 1/10 complete (10%) - ADR-014 MVP foundation
 
 ---
 
@@ -66,15 +67,32 @@
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Zone definitions | ❌ Not Started | - | Lines 96-104 | 0-300 core to 3000+ wilderness |
+| Zone definitions | 🚧 Partial | ADR-014 | Lines 96-104 | Distance-based difficulty (0-10 levels per 100 tiles) + directional zones |
 
-**Category Status:** 0/1 complete (0%)
+**Category Status:** 0.5/1 complete (50%) - Simplified MVP implementation
 
 ---
 
 ## Implementation Deviations
 
-None - system is entirely unimplemented.
+**ADR-014 MVP Subset (Intentional Simplification for Combat Prototyping):**
+
+### Implemented
+- ✅ **Single Haven** instead of three (Mountain/Prairie/Forest) - Origin (0,0) as spawn point
+- ✅ **Distance-based difficulty** instead of influence radius - 100 tiles per level (0-10)
+- ✅ **Directional zones** instead of biome placement - N/E/S/W archetype zones
+- ✅ **Permanent respawn** - Players spawn at haven location
+- ✅ **UI feedback** - Distance indicator shows haven distance, zone, enemy level
+
+### Deferred to Full Haven System
+- ❌ Three distinct havens (Mountain/Prairie/Forest at 7000+ tile spacing)
+- ❌ Influence radius system (1000 pop, 3000 tile radius)
+- ❌ Encroachment formula (anger-based siege pressure)
+- ❌ Haven services (vendors, crafting)
+- ❌ Indestructible property mechanics
+- ❌ Tutorial sieges
+
+**Rationale:** Combat systems (ADR-002 through ADR-012) needed spatial variety for playtesting. ADR-014 provides foundation while deferring hub/siege/influence dependencies (~40 hours saved).
 
 ---
 
@@ -101,13 +119,20 @@ Features described in spec but not yet in implementation plan:
 
 ## Progress Summary
 
-**Starter Havens:** 0/10 complete (0%)
-- No havens exist in game
+**Starter Havens:** 1/10 complete (10%)
+- ✅ Permanent respawn point (single haven at origin)
+- 🚧 Bootstrap solution (simplified - one haven vs. three)
+- ❌ Mountain/Prairie/Forest havens deferred
+- ❌ Influence, anger, services deferred
 
-**Haven Mechanics:** 0/4 complete (0%)
-- Placement, sieges, zones not implemented
+**Haven Mechanics:** 0.5/4 complete (13%)
+- 🚧 Territory zones (distance-based MVP instead of influence)
+- ❌ Haven placement (three distinct locations) deferred
+- ❌ Siege behavior deferred
 
-**Total Haven System:** 0/18 features complete (0%)
+**Total Haven System:** 3/18 features complete (17%)
+- **ADR-014 MVP:** Single haven + distance-based difficulty + directional zones
+- **Full Haven System:** Deferred pending hub/siege/influence systems
 
 ---
 
@@ -123,18 +148,30 @@ Haven system depends on:
 
 ## Next Priorities
 
-Haven system is critical for launch (bootstrap problem). Suggested implementation order:
+**MVP Foundation Complete (ADR-014):**
+- ✅ Single haven respawn point
+- ✅ Distance-based difficulty
+- ✅ Directional archetype zones
+- ✅ UI feedback (distance indicator, level display)
 
-1. **Three Fixed Haven Locations** - Mountain, Prairie, Forest at specified coords
-2. **Haven Influence** - 1000 pop equivalent, 3000 tile radius, 1.0 max influence
-3. **Haven Respawn** - Players spawn at nearest haven on death/join
-4. **Basic Services** - Starter vendor NPCs at each haven
-5. **Indestructible Property** - Havens immune to siege destruction
-6. **Tutorial Sieges** - Small weak waves for new player experience
-7. **Territory Zone Visualization** - Distance-based difficulty indicators
+**Full Haven System (Post-MVP):**
+
+Haven system full implementation requires hub/siege/influence systems. Suggested order:
+
+1. **Hub System Foundation** - Influence radius, population mechanics
+2. **Siege System Foundation** - Encroachment formula, anger calculation
+3. **Three Fixed Haven Locations** - Mountain (-5000,-5000), Prairie (5000,-5000), Forest (0,5000)
+4. **Haven Influence** - 1000 pop equivalent, 3000 tile radius, 1.0 max influence
+5. **Multi-Haven Respawn** - Players spawn at nearest haven on death/join
+6. **Basic Services** - Starter vendor NPCs at each haven
+7. **Indestructible Property** - Havens immune to siege destruction
+8. **Tutorial Sieges** - Small weak waves for new player experience
+
+**Current Priority:** Continue combat/attribute system prototyping with ADR-014 foundation
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0 (Updated for ADR-014 acceptance)
 **Maintained By:** Development team
 **Review Cadence:** Update after each ADR acceptance or spec change
+**Last Major Update:** ADR-014 spatial difficulty MVP subset (2025-11-08)

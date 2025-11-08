@@ -273,8 +273,13 @@ pub fn write_try(
                 // Also send to nearby players
                 // Range must be at least 35 tiles to cover all chunks within FOV_CHUNK_RADIUS=2
                 // (5x5 chunks, worst-case actor at corner chunk edge ≈ 34 tiles from center)
-                for other in nntree.locate_within_distance(Loc::new(qrz), 35*35) {
-                    let Some(client_id) = lobby.get_by_right(&other.ent) else { continue; };
+                // PLUS buffer for Z-level differences (NNTree uses 3D distance = hex_dist + |z_diff|)
+                // Max terrain Z ~20, player spawns at Z=4, so max Z diff ~16 → use 55 tile radius
+                let nearby = nntree.locate_within_distance(Loc::new(qrz), 55*55).collect::<Vec<_>>();
+                for other in nearby {
+                    let Some(client_id) = lobby.get_by_right(&other.ent) else {
+                        continue;
+                    };
                     // Skip if already sent above
                     if other.ent == ent { continue; }
                     let message = bincode::serde::encode_to_vec(
@@ -299,9 +304,9 @@ pub fn write_try(
 
                 // Also send to nearby players (skip owning client to avoid duplicate)
                 // Entity might have been despawned in the same frame, so handle gracefully
-                // Range must match Spawn events (35 tiles) to ensure component updates reach all discovering players
+                // Range must match Spawn events (55 tiles) to ensure component updates reach all discovering players
                 let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 35*35) {
+                for other in nntree.locate_within_distance(loc, 55*55) {
                     if let Some(client_id) = lobby.get_by_right(&other.ent) {
                         // Skip if we already sent to this client above
                         if other.ent == ent { continue; }

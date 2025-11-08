@@ -196,7 +196,9 @@ pub fn validate_ability_prerequisites(
 // - abilities::overpower::handle_overpower
 // - abilities::lunge::handle_lunge
 // - abilities::knockback::handle_knockback
+// - abilities::counter::handle_counter (ADR-014)
 // - abilities::deflect::handle_deflect
+// - abilities::volley::handle_volley
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
 /// CRITICAL: until we add a new system ... we need this one to bypass a random magic 

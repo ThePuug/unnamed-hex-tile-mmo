@@ -17,6 +17,7 @@ pub struct AnimatedBy(Entity);
 #[derive(Component)]
 pub enum Info {
     Time,
+    DistanceIndicator,  // ADR-014 Phase 4: Shows distance from haven, zone, and expected enemy level
 }
 
 #[derive(Component, Default)]

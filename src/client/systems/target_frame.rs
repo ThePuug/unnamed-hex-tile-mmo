@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use crate::{
     common::{
         components::{Actor, entity_type::*, resources::*, reaction_queue::*, Loc},
+        spatial_difficulty::*,
     },
     client::resources::Server,
 };
@@ -69,6 +70,10 @@ pub struct TargetThreatAttackIcon {
 #[derive(Component)]
 pub struct TargetTriumvirateText;
 
+/// Marker component for the target's level hexagon indicator (ADR-014 Phase 4B)
+#[derive(Component)]
+pub struct TargetLevelHex;
+
 /// Marker component for the ally frame container
 #[derive(Component)]
 pub struct AllyFrame;
@@ -109,6 +114,10 @@ pub struct AllyCapacityDot {
     pub index: usize,
 }
 
+/// Marker component for the ally's level hexagon indicator (ADR-014 Phase 4B)
+#[derive(Component)]
+pub struct AllyLevelHex;
+
 /// Setup the target detail frame in top-right corner
 /// Frame is hidden by default and shown when a target is selected
 pub fn setup(
@@ -137,16 +146,53 @@ pub fn setup(
         TargetFrame,
     ))
     .with_children(|parent| {
-        // Header: Entity name
+        // Header row: Level hexagon + Entity name (ADR-014 Phase 4B)
         parent.spawn((
-            Text::new("Enemy Name"),
-            TextFont {
-                font_size: 14.0,
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(6.),
+                align_items: AlignItems::Center,
                 ..default()
             },
-            TextColor(Color::WHITE),
-            TargetNameText,
-        ));
+        ))
+        .with_children(|parent| {
+            // Level hexagon indicator
+            parent.spawn((
+                Node {
+                    width: Val::Px(24.),
+                    height: Val::Px(24.),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(2.)),
+                    ..default()
+                },
+                BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+                BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
+                BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
+                TargetLevelHex,
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Text::new("0"),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+
+            // Entity name
+            parent.spawn((
+                Text::new("Enemy Name"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                TargetNameText,
+            ));
+        });
 
         // Triumvirate row: Approach / Resilience (centered below name, colored by origin)
         parent.spawn((
@@ -272,16 +318,53 @@ pub fn setup(
         AllyFrame,
     ))
     .with_children(|parent| {
-        // Header: Ally name
+        // Header row: Level hexagon + Ally name (ADR-014 Phase 4B)
         parent.spawn((
-            Text::new("Ally Name"),
-            TextFont {
-                font_size: 14.0,
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(6.),
+                align_items: AlignItems::Center,
                 ..default()
             },
-            TextColor(Color::srgb(0.8, 1.0, 0.8)),  // Light green tint
-            AllyNameText,
-        ));
+        ))
+        .with_children(|parent| {
+            // Level hexagon indicator
+            parent.spawn((
+                Node {
+                    width: Val::Px(24.),
+                    height: Val::Px(24.),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(2.)),
+                    ..default()
+                },
+                BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+                BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
+                BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
+                AllyLevelHex,
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Text::new("0"),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+
+            // Ally name
+            parent.spawn((
+                Text::new("Ally Name"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 1.0, 0.8)),  // Light green tint
+                AllyNameText,
+            ));
+        });
 
         // Triumvirate row: Approach / Resilience
         parent.spawn((
@@ -396,8 +479,10 @@ pub fn update(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
+    mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<TargetLevelHex>>,
+    mut level_text_query: Query<&mut Text, (Without<TargetNameText>, Without<TargetHealthText>, Without<TargetTriumvirateText>)>,
     player_query: Query<(&Health, &crate::common::components::target::Target), With<Actor>>,
-    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>)>,
+    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, &Loc)>,
 ) {
     // Get local player and target
     let Ok((player_health, target)) = player_query.get_single() else {
@@ -423,10 +508,51 @@ pub fn update(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, target_health, _queue_opt)) = target_query.get(target_ent) {
-            // Update entity name
+        if let Ok((entity_type, target_health, _queue_opt, target_loc)) = target_query.get(target_ent) {
+            // Update entity name (ADR-014 Phase 4B)
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
+            }
+
+            // Update level hexagon (ADR-014 Phase 4B)
+            if let EntityType::Actor(actor_impl) = entity_type {
+                if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
+                    // Player level is static at 10 for now
+                    const PLAYER_LEVEL: u8 = 10;
+
+                    // Calculate enemy level from enemy location
+                    let enemy_level = calculate_enemy_level(**target_loc, HAVEN_LOCATION);
+
+                    // Calculate level difference (enemy - player)
+                    let level_diff = enemy_level as i8 - PLAYER_LEVEL as i8;
+
+                    // Color hexagon based on level difference
+                    // >5 levels lower = gray
+                    // 2-5 levels lower = green
+                    // 1 level less or greater = yellow
+                    // >1 level higher = red
+                    let hex_color = if level_diff < -5 {
+                        Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
+                    } else if level_diff <= -2 {
+                        Color::srgb(0.2, 0.8, 0.2) // Green - easy
+                    } else if level_diff.abs() <= 1 {
+                        Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
+                    } else {
+                        Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
+                    };
+
+                    // Update hexagon color and level text
+                    for (mut bg_color, children) in &mut level_hex_query {
+                        bg_color.0 = hex_color;
+
+                        // Update the level number text (child of hexagon)
+                        for child in children.iter() {
+                            if let Ok(mut level_text) = level_text_query.get_mut(child) {
+                                **level_text = enemy_level.to_string();
+                            }
+                        }
+                    }
+                }
             }
 
             // Update triumvirate display (only for actors)
@@ -773,8 +899,10 @@ pub fn update_ally_frame(
     mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<AllyTriumvirateText>, Without<AllyNameText>, Without<AllyHealthText>)>,
     mut health_bar_query: Query<&mut Node, With<AllyHealthBar>>,
     mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
+    mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<AllyLevelHex>>,
+    mut level_text_query: Query<&mut Text, (Without<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
     player_query: Query<(&crate::common::components::ally_target::AllyTarget, &Health), With<Actor>>,
-    ally_query: Query<(&EntityType, &Health)>,
+    ally_query: Query<(&EntityType, &Health, &Loc)>,
 ) {
     // Get local player's ally target and health
     let Ok((ally_target, player_health)) = player_query.get_single() else {
@@ -794,7 +922,7 @@ pub fn update_ally_frame(
 
     // Validate ally target is still alive and exists
     let valid_ally = if let Some(ally_ent) = target_entity {
-        if let Ok((_, ally_health)) = ally_query.get(ally_ent) {
+        if let Ok((_, ally_health, _)) = ally_query.get(ally_ent) {
             // Only show if alive
             ally_health.state > 0.0
         } else {
@@ -813,10 +941,47 @@ pub fn update_ally_frame(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, ally_health)) = ally_query.get(ally_ent) {
-            // Update entity name
+        if let Ok((entity_type, ally_health, ally_loc)) = ally_query.get(ally_ent) {
+            // Update entity name (ADR-014 Phase 4B)
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
+            }
+
+            // Update level hexagon (ADR-014 Phase 4B)
+            if let EntityType::Actor(actor_impl) = entity_type {
+                if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
+                    // Player level is static at 10 for now
+                    const PLAYER_LEVEL: u8 = 10;
+
+                    // Calculate enemy level from enemy location
+                    let enemy_level = calculate_enemy_level(**ally_loc, HAVEN_LOCATION);
+
+                    // Calculate level difference (enemy - player)
+                    let level_diff = enemy_level as i8 - PLAYER_LEVEL as i8;
+
+                    // Color hexagon based on level difference
+                    let hex_color = if level_diff < -5 {
+                        Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
+                    } else if level_diff <= -2 {
+                        Color::srgb(0.2, 0.8, 0.2) // Green - easy
+                    } else if level_diff.abs() <= 1 {
+                        Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
+                    } else {
+                        Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
+                    };
+
+                    // Update hexagon color and level text
+                    for (mut bg_color, children) in &mut level_hex_query {
+                        bg_color.0 = hex_color;
+
+                        // Update the level number text (child of hexagon)
+                        for child in children.iter() {
+                            if let Ok(mut level_text) = level_text_query.get_mut(child) {
+                                **level_text = enemy_level.to_string();
+                            }
+                        }
+                    }
+                }
             }
 
             // Update triumvirate display (only for actors)

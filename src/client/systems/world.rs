@@ -19,7 +19,7 @@ use crate::{
     common::{
         chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
         components::{ *,
-            behaviour::Behaviour,
+            behaviour::{Behaviour, PlayerControlled},
             entity_type::*,
         },
         message::{Event, *},
@@ -208,14 +208,20 @@ pub fn update(
 
 /// Evict chunks that are outside the player's FOV radius
 /// This prevents unlimited memory growth as the player explores
+/// Also despawns any actors (NPCs/players) on evicted chunks
 pub fn evict_distant_chunks(
+    mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut map: ResMut<Map>,
     mut terrain: Query<&mut Terrain>,
-    player_query: Query<&Loc, With<Behaviour>>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
+    actor_query: Query<(Entity, &Loc, &EntityType)>,
 ) {
     // Only evict if we have a player
-    let Ok(player_loc) = player_query.single() else {return };
+    let Ok(player_loc) = player_query.single() else {
+        debug!("[CLIENT EVICTION] No player - skipping eviction");
+        return;
+    };
 
     // Calculate which chunks should be kept (FOV + 1 buffer to prevent flickering)
     let player_chunk = loc_to_chunk(**player_loc);
@@ -223,11 +229,49 @@ pub fn evict_distant_chunks(
         .into_iter()
         .collect();
 
+    debug!("[CLIENT EVICTION] Player at chunk {:?}, active chunks: {}, loaded chunks: {}",
+        player_chunk, active_chunks.len(), loaded_chunks.chunks.len());
+
     // Find chunks to evict
     let evictable = loaded_chunks.get_evictable(&active_chunks);
     if evictable.is_empty() {
+        debug!("[CLIENT EVICTION] No chunks to evict");
         return;
     }
+
+    debug!("[CLIENT EVICTION] Evicting {} chunks at player chunk {:?}", evictable.len(), player_chunk);
+
+    // Despawn all actors on evicted chunks (prevents "ghost NPCs")
+    let mut despawned_count = 0;
+    let mut skipped_players = 0;
+    let mut total_actors_checked = 0;
+
+    for (entity, loc, entity_type) in actor_query.iter() {
+        total_actors_checked += 1;
+        let actor_chunk = loc_to_chunk(**loc);
+        if evictable.contains(&actor_chunk) {
+            // Only despawn non-player actors (players handle their own despawn)
+            let is_player = matches!(
+                entity_type,
+                EntityType::Actor(actor_impl) if matches!(
+                    actor_impl.identity,
+                    crate::common::components::entity_type::actor::ActorIdentity::Player
+                )
+            );
+
+            if !is_player {
+                debug!("[CLIENT EVICTION] Despawning NPC {:?} at chunk {:?} (loc: {:?})", entity, actor_chunk, **loc);
+                commands.entity(entity).despawn_recursive();
+                despawned_count += 1;
+            } else {
+                debug!("[CLIENT EVICTION] Skipping player {:?} at chunk {:?}", entity, actor_chunk);
+                skipped_players += 1;
+            }
+        }
+    }
+
+    debug!("[CLIENT EVICTION] Summary: checked {} actors, despawned {} NPCs, skipped {} players",
+        total_actors_checked, despawned_count, skipped_players);
 
     // Remove all tiles belonging to evicted chunks from the map
     let tiles_to_remove: Vec<_> = map.iter_tiles()

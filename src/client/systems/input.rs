@@ -48,9 +48,9 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target_loc: None }});
         }
 
-        // Knockback ability (E key) - Push enemy
+        // Counter ability (E key) - Reactive counter-attack (ADR-014)
         if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Knockback, target_loc: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target_loc: None }});
         }
 
         // Deflect ability (R key) - Clear all threats

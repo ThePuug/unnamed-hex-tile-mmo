@@ -23,11 +23,14 @@ pub fn handle_ability_used(
         }
 
         // Insert GlobalRecovery component (same as server)
+        // Only insert if entity exists (may have been evicted)
         let recovery_duration = get_ability_recovery_duration(*ability);
         let recovery = GlobalRecovery::new(recovery_duration, *ability);
-        commands.entity(*ent).insert(recovery);
+        if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
+            entity_cmd.insert(recovery);
 
-        // Apply synergies (same as server)
-        apply_synergies(*ent, *ability, &recovery, &mut commands);
+            // Apply synergies (same as server)
+            apply_synergies(*ent, *ability, &recovery, &mut commands);
+        }
     }
 }

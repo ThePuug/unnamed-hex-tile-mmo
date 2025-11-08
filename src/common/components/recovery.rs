@@ -67,6 +67,7 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
         AbilityType::Volley => 3.0,     // NPC ranged: 3s lockout
+        AbilityType::Counter => 1.2,    // ADR-014: Counter-attack: 1.2s lockout
     }
 }
 

@@ -11,6 +11,7 @@ pub enum SynergyTrigger {
     GapCloser,   // Lunge
     HeavyStrike, // Overpower
     Push,        // Knockback
+    Mitigate,    // Counter (ADR-014)
     Defensive,   // Deflect
 }
 
@@ -30,11 +31,11 @@ pub const MVP_SYNERGIES: &[SynergyRule] = &[
         target: AbilityType::Overpower,
         unlock_reduction: 0.5, // Overpower available at 0.5s instead of 1.0s
     },
-    // Heavy Strike → Push: Knockback unlocks 1.0s early during Overpower recovery
+    // Heavy Strike → Mitigate: Counter unlocks 1.0s early during Overpower recovery (ADR-014)
     SynergyRule {
         trigger: SynergyTrigger::HeavyStrike,
-        target: AbilityType::Knockback,
-        unlock_reduction: 1.0, // Knockback available at 1.0s instead of 2.0s
+        target: AbilityType::Counter,
+        unlock_reduction: 1.0, // Counter available at 1.0s instead of 2.2s (0.2s window)
     },
 ];
 
@@ -44,6 +45,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Lunge => Some(SynergyTrigger::GapCloser),
         AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
         AbilityType::Knockback => Some(SynergyTrigger::Push),
+        AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // ADR-014: Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
         AbilityType::AutoAttack | AbilityType::Volley => None, // No synergies
     }
@@ -72,8 +74,11 @@ pub fn apply_synergies(
             let unlock_at = (recovery.remaining - rule.unlock_reduction).max(0.0);
 
             // Insert synergy unlock component (both server and client do this locally)
+            // Only insert if entity exists (may have been evicted client-side)
             let synergy = SynergyUnlock::new(rule.target, unlock_at, used_ability);
-            commands.entity(entity).insert(synergy);
+            if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+                entity_cmd.insert(synergy);
+            }
         }
     }
 }
@@ -140,6 +145,10 @@ mod tests {
             Some(SynergyTrigger::Push)
         );
         assert_eq!(
+            get_synergy_trigger(AbilityType::Counter),
+            Some(SynergyTrigger::Mitigate)
+        );
+        assert_eq!(
             get_synergy_trigger(AbilityType::Deflect),
             Some(SynergyTrigger::Defensive)
         );
@@ -157,10 +166,10 @@ mod tests {
         assert_eq!(lunge_synergy.target, AbilityType::Overpower);
         assert_eq!(lunge_synergy.unlock_reduction, 0.5);
 
-        // Overpower → Knockback
+        // Overpower → Counter (ADR-014: replaces Knockback)
         let overpower_synergy = &MVP_SYNERGIES[1];
         assert_eq!(overpower_synergy.trigger, SynergyTrigger::HeavyStrike);
-        assert_eq!(overpower_synergy.target, AbilityType::Knockback);
+        assert_eq!(overpower_synergy.target, AbilityType::Counter);
         assert_eq!(overpower_synergy.unlock_reduction, 1.0);
     }
 
@@ -221,9 +230,9 @@ mod tests {
 
     #[test]
     fn test_overpower_synergy_timing() {
-        // Test Overpower → Knockback synergy timing
+        // Test Overpower → Counter synergy timing (ADR-014: replaces Knockback)
         let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
-        let synergy = SynergyUnlock::new(AbilityType::Knockback, 1.0, AbilityType::Overpower);
+        let synergy = SynergyUnlock::new(AbilityType::Counter, 1.0, AbilityType::Overpower);
 
         // At start (2.0s remaining): locked
         assert!(recovery.is_active());
@@ -239,7 +248,7 @@ mod tests {
         recovery_mid.tick(1.0);
         assert!(
             synergy.is_unlocked(recovery_mid.remaining),
-            "Knockback should unlock at 1.0s remaining"
+            "Counter should unlock at 1.0s remaining"
         );
     }
 }
