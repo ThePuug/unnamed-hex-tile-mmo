@@ -194,11 +194,9 @@ pub fn handle_lunge(
             panic!("LUNGE damage must use Magnitude scaling");
         };
 
-        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
-        let level = 1;
         let damage = calculate_magnitude_value(
             base,
-            level,
+            caster_attrs.total_level,
             caster_attrs.might() as i8,
             0, // Lunge doesn't use reach
             scalars,
@@ -237,11 +235,9 @@ pub fn handle_lunge(
             panic!("LUNGE recovery must use Commitment scaling");
         };
 
-        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
-        let level = 1;
         let recovery_time_seconds = calculate_commitment_modifier(
             caster_attrs.presence() as i8,
-            level,
+            caster_attrs.total_level,
             curve,
         );
 

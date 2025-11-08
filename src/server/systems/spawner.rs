@@ -133,6 +133,7 @@ fn spawn_npc(
         grace_axis, 2, 0,  // might_grace: varied for movement speed
         0, 0, 0,           // vitality_focus: no investment (0 levels)
         -6, 2, 0,          // instinct_presence: instinct-focused (5 levels)
+        10,                // total_level: sum of attribute investments
     );
 
     // Calculate initial resources from attributes

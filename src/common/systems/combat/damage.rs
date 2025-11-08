@@ -142,6 +142,7 @@ mod tests {
             might_grace_axis, 0, 0,      // might_grace: axis, spectrum, shift
             vitality_focus_axis, 0, 0,   // vitality_focus: axis, spectrum, shift
             0, 0, 0,                      // instinct_presence: axis, spectrum, shift
+            1,                            // total_level (test placeholder)
         )
     }
 

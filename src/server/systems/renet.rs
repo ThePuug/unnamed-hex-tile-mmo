@@ -79,6 +79,7 @@ pub fn do_manage_connections(
                     0, 4, 0,       // might_grace: 4 spectrum
                     0, 3, 0,       // vitality_focus: 3 spectrum
                     0, 3, 0,       // instinct_presence: 3 spectrum
+                    10,            // total_level: sum of spectrum points
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();

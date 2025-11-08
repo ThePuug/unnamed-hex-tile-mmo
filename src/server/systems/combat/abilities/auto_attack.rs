@@ -133,11 +133,9 @@ pub fn handle_auto_attack(
             panic!("AUTO_ATTACK damage must use Magnitude scaling");
         };
 
-        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
-        let level = 1;
         let damage = calculate_magnitude_value(
             base,
-            level,
+            caster_attrs.total_level,
             caster_attrs.might() as i8,
             0, // Auto-attack doesn't use reach
             scalars,

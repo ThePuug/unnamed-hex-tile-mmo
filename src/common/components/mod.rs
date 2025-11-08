@@ -281,6 +281,11 @@ pub struct ActorAttributes {
     pub instinct_presence_axis: i8,
     pub instinct_presence_spectrum: u8,
     pub instinct_presence_shift: i8,
+
+    // LEVEL (ADR-016 Phase 4)
+    // Total level - sum of all attribute point expenditures
+    // Used for scaling calculations (magnitude, commitment, ratio)
+    pub total_level: u32,
 }
 
 impl ActorAttributes {
@@ -295,6 +300,7 @@ impl ActorAttributes {
         instinct_presence_axis: i8,
         instinct_presence_spectrum: u8,
         instinct_presence_shift: i8,
+        total_level: u32,
     ) -> Self {
         Self {
             might_grace_axis,
@@ -306,6 +312,7 @@ impl ActorAttributes {
             instinct_presence_axis,
             instinct_presence_spectrum,
             instinct_presence_shift,
+            total_level,
         }
     }
 
@@ -511,6 +518,7 @@ impl Default for ActorAttributes {
             instinct_presence_axis: 0,
             instinct_presence_spectrum: 0,
             instinct_presence_shift: 0,
+            total_level: 1,  // Default to level 1
         }
     }
 }

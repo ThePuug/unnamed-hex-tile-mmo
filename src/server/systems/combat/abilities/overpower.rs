@@ -185,11 +185,9 @@ pub fn handle_overpower(
             panic!("OVERPOWER damage must use Magnitude scaling");
         };
 
-        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
-        let level = 1;
         let damage = calculate_magnitude_value(
             base,
-            level,
+            caster_attrs.total_level,
             caster_attrs.might() as i8,
             0, // Overpower doesn't use reach
             scalars,
