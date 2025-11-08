@@ -24,20 +24,20 @@ use crate::{
 /// - Berserker (Lunge): Use when target is 2-4 hexes away (gap closer)
 /// - Juggernaut (Overpower): Use when adjacent to target (heavy strike)
 /// - Kiter (Volley): Use when at optimal distance 5-8 hexes (ranged attack)
-/// - Defender (Counter): Reactive - only when threat in queue (handled by Counter ability itself)
+/// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 ///
-/// Cooldown: 3-5 seconds between ability uses (varies by archetype)
+/// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&crate::common::components::reaction_queue::ReactionQueue>),
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<crate::common::components::behaviour::PlayerControlled>>,
     time: Res<Time>,
     mut writer: EventWriter<Try>,
 ) {
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt) in npc_query.iter_mut() {
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt) in npc_query.iter_mut() {
         // Skip if in recovery (ability lockout)
         if let Some(recovery) = recovery_opt {
             if recovery.is_active() {
@@ -66,9 +66,25 @@ pub fn npc_ability_usage(
         // Get signature ability for this archetype
         let ability = archetype.ability();
 
-        // Skip Counter for Defender - it's reactive, not proactive
+        // Handle Defender Counter specially - reactive ability triggered by threats in queue
         if ability == AbilityType::Counter {
-            continue;
+            // Defender uses Counter when threats are in reaction queue
+            if let Some(queue) = queue_opt {
+                if !queue.threats.is_empty() {
+                    // Has threats to counter - check stamina
+                    let counter_stamina_cost = 30.0;
+                    if stamina.state >= counter_stamina_cost {
+                        writer.write(Try {
+                            event: Event::UseAbility {
+                                ent: npc_entity,
+                                ability: AbilityType::Counter,
+                                target_loc: None,
+                            },
+                        });
+                    }
+                }
+            }
+            continue; // Skip rest of logic for Defenders
         }
 
         // Check if we have a valid target

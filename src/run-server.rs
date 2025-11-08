@@ -97,7 +97,7 @@ fn main() {
         targeting::update_targets, // Update targets every frame (detects when targets move)
         combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
-        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(2000))), // ADR-014 Phase 3B: NPCs use signature abilities (check every 2s)
+        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // ADR-014 Phase 3B: NPCs use signature abilities (check every 0.5s for responsive Defender counters)
         combat::validate_ability_prerequisites,
         combat::abilities::auto_attack::handle_auto_attack,
         combat::abilities::overpower::handle_overpower,
