@@ -34,9 +34,9 @@ pub fn process_deal_damage(
         // Roll for critical hit
         let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs);
 
-        // Calculate outgoing damage (Phase 1)
-        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
-        let outgoing_with_crit = outgoing * crit_mult;
+        // ADR-016: Abilities now calculate their own scaled damage using the new scaling system
+        // base_damage is already scaled by magnitude/commitment/ratio, just apply critical hit
+        let outgoing_with_crit = base_damage * crit_mult;
 
         // Get target's queue, attributes, and health
         let Ok((mut queue, attrs, health)) = target_query.get_mut(*target) else {

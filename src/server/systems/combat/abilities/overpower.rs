@@ -1,9 +1,15 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+        components::{resources::*, tier_lock::TierLock, target::Target, ActorAttributes, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-        systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
+        systems::{
+            targeting::get_range_tier,
+            combat::{
+                synergies::apply_synergies,
+                scaling::{calculate_magnitude_value, ComponentScaling, OVERPOWER},
+            },
+        },
     },
 };
 
@@ -16,6 +22,7 @@ pub fn handle_overpower(
     mut reader: EventReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
+    attrs_query: Query<&ActorAttributes>,
     mut stamina_query: Query<&mut Stamina>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&crate::common::components::recovery::SynergyUnlock>,
@@ -137,7 +144,6 @@ pub fn handle_overpower(
 
         // Check stamina cost (40)
         let stamina_cost = 40.0;
-        let base_damage = 80.0;
 
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
@@ -164,13 +170,38 @@ pub fn handle_overpower(
             },
         });
 
+        // Get caster attributes for damage scaling
+        let Ok(caster_attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+
+        // Calculate damage using new scaling system (ADR-016)
+        let damage_component = OVERPOWER.components
+            .iter()
+            .find(|c| c.name == "damage")
+            .expect("OVERPOWER must have damage component");
+
+        let ComponentScaling::Magnitude { base, scalars } = damage_component.scaling else {
+            panic!("OVERPOWER damage must use Magnitude scaling");
+        };
+
+        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
+        let level = 1;
+        let damage = calculate_magnitude_value(
+            base,
+            level,
+            caster_attrs.might() as i8,
+            0, // Overpower doesn't use reach
+            scalars,
+        );
+
         // Emit DealDamage event
         commands.trigger_targets(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
                     target: target_ent,
-                    base_damage,
+                    base_damage: damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Overpower),
                 },

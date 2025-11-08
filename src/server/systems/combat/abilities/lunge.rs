@@ -1,9 +1,15 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, ActorAttributes, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-        systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
+        systems::{
+            targeting::get_range_tier,
+            combat::{
+                synergies::apply_synergies,
+                scaling::{calculate_magnitude_value, calculate_commitment_modifier, ComponentScaling, LUNGE},
+            },
+        },
     },
 };
 
@@ -17,6 +23,7 @@ pub fn handle_lunge(
     mut reader: EventReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
+    attrs_query: Query<&ActorAttributes>,
     mut stamina_query: Query<&mut Stamina>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
@@ -172,13 +179,38 @@ pub fn handle_lunge(
             },
         });
 
-        // Deal damage (40 base damage)
+        // Get caster attributes for damage and recovery scaling
+        let Ok(caster_attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+
+        // Calculate damage using new scaling system (ADR-016)
+        let damage_component = LUNGE.components
+            .iter()
+            .find(|c| c.name == "damage")
+            .expect("LUNGE must have damage component");
+
+        let ComponentScaling::Magnitude { base, scalars } = damage_component.scaling else {
+            panic!("LUNGE damage must use Magnitude scaling");
+        };
+
+        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
+        let level = 1;
+        let damage = calculate_magnitude_value(
+            base,
+            level,
+            caster_attrs.might() as i8,
+            0, // Lunge doesn't use reach
+            scalars,
+        );
+
+        // Deal damage
         commands.trigger_targets(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
                     target: target_ent,
-                    base_damage: 40.0,
+                    base_damage: damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Lunge),
                 },
@@ -195,9 +227,26 @@ pub fn handle_lunge(
             },
         });
 
+        // Calculate recovery duration using commitment scaling (ADR-016)
+        let recovery_component = LUNGE.components
+            .iter()
+            .find(|c| c.name == "recovery")
+            .expect("LUNGE must have recovery component");
+
+        let ComponentScaling::Commitment { curve } = recovery_component.scaling else {
+            panic!("LUNGE recovery must use Commitment scaling");
+        };
+
+        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
+        let level = 1;
+        let recovery_time_seconds = calculate_commitment_modifier(
+            caster_attrs.presence() as i8,
+            level,
+            curve,
+        );
+
         // Trigger recovery lockout (server-side state)
-        let recovery_duration = get_ability_recovery_duration(AbilityType::Lunge);
-        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Lunge);
+        let recovery = GlobalRecovery::new(recovery_time_seconds, AbilityType::Lunge);
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state)

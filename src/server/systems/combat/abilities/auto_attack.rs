@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{entity_type::*, Loc, reaction_queue::DamageType},
+    components::{entity_type::*, ActorAttributes, Loc, reaction_queue::DamageType},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     plugins::nntree::*,
+    systems::combat::scaling::{calculate_magnitude_value, ComponentScaling, AUTO_ATTACK},
 };
 
 /// Handle AutoAttack ability
@@ -14,6 +15,7 @@ pub fn handle_auto_attack(
     mut reader: EventReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
+    attrs_query: Query<&ActorAttributes>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
     mut writer: EventWriter<Do>,
@@ -116,15 +118,39 @@ pub fn handle_auto_attack(
             continue;
         }
 
+        // Get caster attributes for damage scaling
+        let Ok(caster_attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+
+        // Calculate damage using new scaling system (ADR-016)
+        let damage_component = AUTO_ATTACK.components
+            .iter()
+            .find(|c| c.name == "damage")
+            .expect("AUTO_ATTACK must have damage component");
+
+        let ComponentScaling::Magnitude { base, scalars } = damage_component.scaling else {
+            panic!("AUTO_ATTACK damage must use Magnitude scaling");
+        };
+
+        // TODO(ADR-016 Phase 4): Replace hardcoded level=1 with caster_attrs.total_level()
+        let level = 1;
+        let damage = calculate_magnitude_value(
+            base,
+            level,
+            caster_attrs.might() as i8,
+            0, // Auto-attack doesn't use reach
+            scalars,
+        );
+
         // Deal damage to ALL hostile entities on the target hex
-        let base_damage = 20.0;
         for target_ent in target_entities {
             commands.trigger_targets(
                 Try {
                     event: GameEvent::DealDamage {
                         source: *ent,
                         target: target_ent,
-                        base_damage,
+                        base_damage: damage,
                         damage_type: DamageType::Physical,
                         ability: Some(AbilityType::AutoAttack),
                     },
