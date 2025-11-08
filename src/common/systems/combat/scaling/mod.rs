@@ -61,11 +61,17 @@ pub mod magnitude;
 pub mod ratio;
 pub mod types;
 
+// Phase 3: Example helper functions for derived stats
+pub mod derived;
+
 // Re-export commonly used items for convenience
 pub use commitment::calculate_commitment_modifier;
 pub use definitions::{
     AbilityComponent, AbilityDefinition, AttributeStat, ComponentScaling,
     AUTO_ATTACK, COUNTER, LUNGE, OVERPOWER, PHYSICAL_MITIGATION,
+};
+pub use derived::{
+    calculate_max_health_scaled, calculate_physical_mitigation_scaled,
 };
 pub use magnitude::calculate_magnitude_value;
 pub use ratio::calculate_ratio_effectiveness;
