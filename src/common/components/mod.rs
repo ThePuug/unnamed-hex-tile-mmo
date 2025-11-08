@@ -461,6 +461,15 @@ impl ActorAttributes {
         }
     }
 
+    /// Calculate total level from invested attribute points
+    /// Each level grants 2 attribute points that can be invested in axis (2 points per axis movement) or spectrum (1 point per spectrum)
+    pub fn total_level(&self) -> u32 {
+        let mg_points = (self.might_grace_axis.unsigned_abs() / 2) as u32 + self.might_grace_spectrum as u32;
+        let vf_points = (self.vitality_focus_axis.unsigned_abs() / 2) as u32 + self.vitality_focus_spectrum as u32;
+        let ip_points = (self.instinct_presence_axis.unsigned_abs() / 2) as u32 + self.instinct_presence_spectrum as u32;
+        mg_points + vf_points + ip_points
+    }
+
     // === DERIVED ATTRIBUTES ===
 
     /// Movement speed derived from grace (might_grace position)

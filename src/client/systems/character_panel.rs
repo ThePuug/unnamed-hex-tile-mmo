@@ -347,12 +347,16 @@ pub fn handle_shift_drag(
             if let Ok((_entity, _bar_type, _interaction, _bar_transform, bar_node)) = bar_query.get(drag_state.bar_entity) {
                 let bar_width = if let Val::Px(w) = bar_node.width { w } else { 250.0 };
 
+                // Calculate max attribute value based on current level
+                let level = attrs.total_level();
+                let max_attr = (level * 2) as f32;
+
                 // Calculate mouse delta in pixels
                 let mouse_delta_pixels = cursor_pos.x - drag_state.initial_mouse_x;
 
                 // Convert pixel delta to attribute units
-                // Bar width (250px) represents 240 attribute units (-120 to +120)
-                let pixels_per_unit = bar_width / 240.0;
+                // Bar width represents the full attribute range (-max_attr to +max_attr)
+                let pixels_per_unit = bar_width / (max_attr * 2.0);
                 let delta_units = mouse_delta_pixels / pixels_per_unit;
 
                 // Calculate new shift based on initial shift + delta
@@ -402,6 +406,11 @@ pub fn update_attributes(
     let Ok(attrs) = player_query.single() else {
         return;
     };
+
+    // Calculate max attribute value based on current level
+    // Each level grants 2 attribute points, so at level 10, max is ±20
+    let level = attrs.total_level();
+    let max_attr = (level * 2) as i8;
 
     // Update title rows (reach values)
     for (title_entity, attr_type) in &title_query {
@@ -477,25 +486,28 @@ pub fn update_attributes(
             for child in bar_children.iter() {
                 // Update spectrum range (blue bar - shows reach values)
                 if let Ok(mut node) = spectrum_query.get_mut(child) {
-                    update_reach_display(&mut node, left_reach, right_reach);
+                    update_reach_display(&mut node, left_reach, right_reach, max_attr);
                 }
                 // Update axis bar (yellow bar - shows current available values)
                 if let Ok((_, mut node)) = axis_query.get_mut(child) {
-                    update_axis_bar(&mut node, left_current, right_current);
+                    update_axis_bar(&mut node, left_current, right_current, max_attr);
                 }
             }
         }
     }
 }
 
-/// Convert attribute value to percentage position on bar (range -120 to +120 mapped to 0% to 100%)
-fn attr_to_percent(value: i8) -> f32 {
-    ((value as f32 + 120.0) / 240.0 * 100.0).clamp(0.0, 100.0)
+/// Convert attribute value to percentage position on bar
+/// Range is -max_attr to +max_attr mapped to 0% to 100%
+/// max_attr is calculated as level * 2 (e.g., at level 10, range is -20 to +20)
+fn attr_to_percent(value: i8, max_attr: i8) -> f32 {
+    let range = max_attr as f32 * 2.0;
+    ((value as f32 + max_attr as f32) / range * 100.0).clamp(0.0, 100.0)
 }
 
-fn update_reach_display(node: &mut Node, left_reach: u8, right_reach: u8) {
+fn update_reach_display(node: &mut Node, left_reach: u8, right_reach: u8, max_attr: i8) {
     // The reach values represent the maximum value achievable in each direction
-    // They are absolute attribute values on the -100 to +100 scale
+    // They are absolute attribute values scaled to the current level max
     //
     // For might_grace with axis=-20:
     //   might_reach=30 means the value "30 might" which is at position -30 on the scale
@@ -512,15 +524,15 @@ fn update_reach_display(node: &mut Node, left_reach: u8, right_reach: u8) {
     // Right reach is on the positive side (grace, focus, presence)
     let right_bound = right_reach as i8;
 
-    let left_percent = attr_to_percent(left_bound);
-    let right_percent = attr_to_percent(right_bound);
+    let left_percent = attr_to_percent(left_bound, max_attr);
+    let right_percent = attr_to_percent(right_bound, max_attr);
     let width_percent = right_percent - left_percent;
 
     node.left = Val::Percent(left_percent);
     node.width = Val::Percent(width_percent);
 }
 
-fn update_axis_bar(node: &mut Node, left_current: u8, right_current: u8) {
+fn update_axis_bar(node: &mut Node, left_current: u8, right_current: u8, max_attr: i8) {
     // The yellow bar shows the current available values on each side
     // For might_grace: might=25, grace=5
     //   Left bound at -25 (might value)
@@ -529,8 +541,8 @@ fn update_axis_bar(node: &mut Node, left_current: u8, right_current: u8) {
     let left_bound = -(left_current as i8);
     let right_bound = right_current as i8;
 
-    let left_percent = attr_to_percent(left_bound);
-    let right_percent = attr_to_percent(right_bound);
+    let left_percent = attr_to_percent(left_bound, max_attr);
+    let right_percent = attr_to_percent(right_bound, max_attr);
     let width_percent = right_percent - left_percent;
 
     node.left = Val::Percent(left_percent);
