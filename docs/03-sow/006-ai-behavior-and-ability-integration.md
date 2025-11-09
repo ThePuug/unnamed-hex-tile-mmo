@@ -2,7 +2,7 @@
 
 ## Status
 
-**Ready for Implementation** - 2025-10-30
+**Merged** - 2025-10-30
 
 ## References
 

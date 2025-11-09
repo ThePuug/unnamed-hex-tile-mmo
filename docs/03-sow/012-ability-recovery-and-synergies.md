@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted** - 2025-11-07
+**Merged** - 2025-11-07
 
 ## References
 

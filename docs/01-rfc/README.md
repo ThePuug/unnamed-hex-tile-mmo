@@ -6,18 +6,18 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 
 | # | Title | Category | Status | Created | Has ADR |
 |---|-------|----------|--------|---------|---------|
-| 001 | Chunk-Based Terrain Discovery | 🌍 World/Terrain | ✅ Approved | 2025-11-03 | Yes (ADR-001) |
-| 002 | Combat Foundation | ⚔️ Combat | ✅ Approved | 2025-11-03 | Yes (ADR-002/003/004/005) |
-| 003 | Reaction Queue System | ⚔️ Combat | ✅ Approved | 2025-11-03 | Yes (ADR-006/007/008) |
-| 004 | Ability System and Directional Targeting | ⚔️ Combat | ✅ Approved | 2025-11-03 | Yes (ADR-009) |
-| 005 | Damage Pipeline | ⚔️ Combat | ✅ Approved | 2025-11-03 | Yes (ADR-010) |
-| 006 | AI Behavior and Ability Integration | 🤖 AI | ✅ Approved | 2025-11-03 | Yes (ADR-011/012) |
-| 007 | Developer Console | 🛠️ Dev Tools | ✅ Approved | 2025-11-03 | Yes (ADR-013) |
-| 008 | Combat HUD | 🎨 UI/HUD | ✅ Approved | 2025-11-03 | Yes (ADR-014) |
-| 009 | MVP Ability Set | ⚔️ Combat | ✅ Approved | 2025-11-03 | No (design scope) |
-| 010 | Combat Variety Phase 1 | ⚔️ Combat | ✅ Approved | 2025-11-03 | Yes (ADR-015) |
-| 011 | Movement Intent System | 🌐 Network | ✅ Approved | 2025-11-05 | Yes (ADR-016) |
-| 012 | Ability Recovery and Synergies | ⚔️ Combat | ✅ Approved | 2025-11-07 | Yes (ADR-017) |
+| 001 | Chunk-Based Terrain Discovery | 🌍 World/Terrain | ✅ Implemented | 2025-11-03 | Yes (ADR-001) |
+| 002 | Combat Foundation | ⚔️ Combat | ✅ Implemented | 2025-11-03 | Yes (ADR-002/003/004/005) |
+| 003 | Reaction Queue System | ⚔️ Combat | ✅ Implemented | 2025-11-03 | Yes (ADR-006/007/008) |
+| 004 | Ability System and Directional Targeting | ⚔️ Combat | ✅ Implemented | 2025-11-03 | Yes (ADR-009) |
+| 005 | Damage Pipeline | ⚔️ Combat | ✅ Implemented | 2025-11-03 | Yes (ADR-010) |
+| 006 | AI Behavior and Ability Integration | 🤖 AI | ✅ Implemented | 2025-11-03 | Yes (ADR-011/012) |
+| 007 | Developer Console | 🛠️ Dev Tools | ✅ Implemented | 2025-11-03 | Yes (ADR-013) |
+| 008 | Combat HUD | 🎨 UI/HUD | ✅ Implemented | 2025-11-03 | Yes (ADR-014) |
+| 009 | MVP Ability Set | ⚔️ Combat | ✅ Implemented | 2025-11-03 | No (design scope) |
+| 010 | Combat Variety Phase 1 | ⚔️ Combat | ✅ Implemented | 2025-11-03 | Yes (ADR-015) |
+| 011 | Movement Intent System | 🌐 Network | ✅ Implemented | 2025-11-05 | Yes (ADR-016) |
+| 012 | Ability Recovery and Synergies | ⚔️ Combat | ✅ Implemented | 2025-11-07 | Yes (ADR-017) |
 | 013 | Ability Execution Pipeline | 🔧 Code Quality | 📝 Proposed | 2025-11-07 | Yes (ADR-018) |
 | 014 | Spatial Difficulty System | 📊 Progression | ✅ Implemented | 2025-11-07 | No (design scope) |
 | 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Implemented | 2025-11-08 | No (testing strategy) |

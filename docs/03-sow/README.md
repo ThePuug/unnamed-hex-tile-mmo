@@ -6,18 +6,18 @@ SOWs are work orders for developers. Each SOW defines what needs to be built, wh
 
 | # | Title | Category | Status | Created | Estimated | Actual |
 |---|-------|----------|--------|---------|-----------|--------|
-| 001 | Chunk-Based Terrain Discovery | 🌍 World/Terrain | ✅ Accepted | 2025-11-03 | 4-6 hours | - |
-| 002 | Combat Foundation | ⚔️ Combat | ✅ Accepted | 2025-11-03 | 8-12 hours | - |
-| 003 | Reaction Queue System | ⚔️ Combat | ✅ Accepted | 2025-11-03 | 6-9 hours | - |
-| 004 | Ability System and Directional Targeting | ⚔️ Combat | 📝 Proposed | 2025-11-03 | 7-10 hours | - |
-| 005 | Damage Pipeline | ⚔️ Combat | ✅ Accepted | 2025-11-03 | 8-12 hours | - |
-| 006 | AI Behavior and Ability Integration | 🤖 AI | 📝 Proposed | 2025-11-03 | 8-11 hours | - |
-| 007 | Developer Console | 🛠️ Dev Tools | ✅ Accepted | 2025-11-03 | 6-9 hours | - |
-| 008 | Combat HUD | 🎨 UI/HUD | 📝 Proposed | 2025-11-03 | 17-23 days | - |
-| 009 | MVP Ability Set | ⚔️ Combat | ✅ Accepted | 2025-11-03 | 6-8 days | - |
-| 010 | Combat Variety Phase 1 | ⚔️ Combat | 📝 Proposed | 2025-11-03 | 7-11 days | - |
-| 011 | Movement Intent System | 🌐 Network | 📝 Proposed | 2025-11-05 | 6-9 days | - |
-| 012 | Ability Recovery and Synergies | ⚔️ Combat | ✅ Accepted | 2025-11-07 | 5-8 days | - |
+| 001 | Chunk-Based Terrain Discovery | 🌍 World/Terrain | ✅ Merged | 2025-11-03 | 4-6 hours | - |
+| 002 | Combat Foundation | ⚔️ Combat | ✅ Merged | 2025-11-03 | 8-12 hours | - |
+| 003 | Reaction Queue System | ⚔️ Combat | ✅ Merged | 2025-11-03 | 6-9 hours | - |
+| 004 | Ability System and Directional Targeting | ⚔️ Combat | ✅ Merged | 2025-11-03 | 7-10 hours | - |
+| 005 | Damage Pipeline | ⚔️ Combat | ✅ Merged | 2025-11-03 | 8-12 hours | - |
+| 006 | AI Behavior and Ability Integration | 🤖 AI | ✅ Merged | 2025-11-03 | 8-11 hours | - |
+| 007 | Developer Console | 🛠️ Dev Tools | ✅ Merged | 2025-11-03 | 6-9 hours | - |
+| 008 | Combat HUD | 🎨 UI/HUD | ✅ Merged | 2025-11-03 | 17-23 days | - |
+| 009 | MVP Ability Set | ⚔️ Combat | ✅ Merged | 2025-11-03 | 6-8 days | - |
+| 010 | Combat Variety Phase 1 | ⚔️ Combat | ✅ Merged | 2025-11-03 | 7-11 days | - |
+| 011 | Movement Intent System | 🌐 Network | ✅ Merged | 2025-11-05 | 6-9 days | - |
+| 012 | Ability Recovery and Synergies | ⚔️ Combat | ✅ Merged | 2025-11-07 | 5-8 days | - |
 | 013 | Ability Execution Pipeline | 🔧 Code Quality | 📝 Proposed | 2025-11-07 | 3-4 days | - |
 | 014 | Spatial Difficulty System | 📊 Progression | ✅ Merged | 2025-11-07 | 6.5-9.5 hours | ~8 hours |
 | 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Merged | 2025-11-08 | 2.5 days | ~2 days |
