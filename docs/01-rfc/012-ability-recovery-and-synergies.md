@@ -2,7 +2,7 @@
 
 ## Status
 
-**Approved** - 2025-11-07
+**Implemented** - 2025-11-07
 
 ## Feature Request
 
