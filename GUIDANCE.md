@@ -26,7 +26,7 @@ Client-server MMO built with Bevy ECS:
 
 ## Game Design Specifications
 
-**Location:** `docs/spec/` - Authoritative game design (what systems should do)
+**Location:** `docs/00-spec/` - Authoritative game design (what systems should do)
 **Location:** `GUIDANCE/` - Plugin implementation details
 **Location:** `lib/qrz/GUIDANCE.md` - Hex coordinate system
 

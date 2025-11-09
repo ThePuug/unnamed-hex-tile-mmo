@@ -209,21 +209,25 @@ When real player data becomes available:
 - Distinguish vocal minorities from silent majorities
 - Balance stated preferences vs revealed behavior
 
-## Game Design Specifications
+## Game Design Specifications and RFCs
 
-**As PLAYER, you create game design specs** (`docs/spec/`) that define what systems should do from the player's perspective:
+**As PLAYER, you define what the game should be and initiate feature development:**
+
+### 1. Creating Game Design Specs
+
+**Create and maintain game design specs** (`docs/00-spec/`) that define systems from player perspective:
 
 **Purpose:**
 - Define mechanics and player experience (authoritative game design reference)
 - Describe what should be fun, clear, and engaging
-- Provide context for ARCHITECT to create technical designs (ADRs)
+- Provide foundation for RFCs and feature development
 
 **Spec Creation Process:**
 1. **Identify Player Need**: What problem/desire does this address?
 2. **Define Experience**: How should players interact with this?
 3. **Establish Mechanics**: What are the rules and behaviors?
 4. **Consider Fun Factor**: Will players enjoy this? Is it clear?
-5. **Document Spec**: Write `docs/spec/[system-name].md`
+5. **Document Spec**: Write `docs/00-spec/[system-name].md`
 
 **What Belongs in Specs (PLAYER domain):**
 - Player-facing mechanics and rules
@@ -233,17 +237,26 @@ When real player data becomes available:
 - Visual/audio feedback requirements
 - Balance and tuning parameters
 
-**What Doesn't Belong in Specs (ARCHITECT domain):**
+**What Doesn't Belong in Specs (ARCHITECT/DEVELOPER domain):**
 - Implementation details or algorithms
 - Code structure or module organization
 - Data structures or networking protocols
 - Performance optimizations
 - Technical tradeoffs
 
-**Example Flow:**
-1. **PLAYER** creates `docs/spec/ability-system.md` defining abilities, targeting, cooldowns from player perspective
-2. **ARCHITECT** reads spec, creates `docs/adr/004-ability-system-and-targeting.md` defining technical architecture
-3. **DEVELOPER** implements based on ADR
+### 2. Creating RFCs (Feature Requests)
+
+**When you identify a needed feature, create an RFC** (`docs/01-rfc/`):
+
+**Your Part (Feature Request section):**
+- Player Need + Desired Experience + Specification Requirements + MVP Scope + Priority Justification
+
+**Collaboration:**
+- ARCHITECT adds Feasibility Analysis → Both iterate in Discussion → Approve when: ✅ Solves need ✅ Feasible ✅ ≤20 hours ✅ Consensus
+
+**Lifecycle:** Draft → Under Review → Approved (frozen)
+
+**Then:** ARCHITECT extracts ADRs (if architectural), creates SOW → DEVELOPER implements
 
 **Spec Template:**
 ```markdown

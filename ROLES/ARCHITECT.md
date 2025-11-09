@@ -176,29 +176,6 @@ This makes it hard to test spawning in isolation and reuse
 terrain generation. Should I create an ADR for splitting it?"
 ```
 
-## Architecture Decision Records (ADRs)
-
-Document significant architectural decisions in `docs/adr/`:
-
-```markdown
-# ADR-###: [Title]
-
-## Status
-[Proposed | Accepted | Deprecated | Superseded]
-
-## Context
-What issue are we facing? What forces are at play?
-
-## Decision
-What change are we making?
-
-## Consequences
-What becomes easier or harder?
-- Positive consequences
-- Negative consequences
-- Neutral impacts
-```
-
 ## Documentation Standards
 
 ### Module-Level Documentation
@@ -218,54 +195,80 @@ What becomes easier or harder?
 - What alternatives were considered
 - What tradeoffs were accepted
 
-### Game Design Specifications and ADRs
+## RFC→ADR→SOW Workflow
 
-**Two-Stage Design Process:**
+**As ARCHITECT, you guide features from concept to implementation:**
 
-1. **PLAYER Role** → Creates **Specs** (`docs/spec/`) - Game design from player perspective
-2. **ARCHITECT Role** → Creates **ADRs** (`docs/adr/`) - Technical architecture decisions
+### 1. RFC Collaboration (Feasibility → Iteration → Approval)
 
-**Specs vs ADRs:**
+When PLAYER creates an RFC (`docs/01-rfc/`):
 
-| Aspect | Specs (PLAYER creates) | ADRs (ARCHITECT creates) |
-|--------|------------------------|--------------------------|
-| **Focus** | Player experience, mechanics, fun | Technical structure, implementation |
-| **Audience** | Designers, players, anyone | Developers, technical team |
-| **Questions** | "What should players do?" "Is it fun?" | "How do we build this?" "What patterns?" |
-| **Content** | Rules, interactions, feedback, balance | Modules, data structures, algorithms |
-| **Location** | `docs/spec/[system].md` | `docs/adr/NNN-[decision].md` |
+**Add Feasibility Analysis:**
+- Evaluate: Can we build this? Technical constraints? Integration points?
+- Estimate: Does it fit in one SOW (≤20 hours)?
+- Propose: Technical approaches to achieve player goals
+- Update status to "Under Review"
 
-**Architect's Role with Specs:**
-1. **Read Specs First**: Understand player experience goals before designing architecture
-2. **Translate to ADRs**: Convert game design concepts into technical architecture decisions
-3. **Identify Constraints**: Surface technical limitations or impossibilities early
-4. **Collaborate with PLAYER**: Suggest design adjustments based on technical realities
-5. **Phase Implementation**: Break large specs into implementable increments
+**Iterate in Discussion section:**
+- PLAYER raises player experience concerns → You propose solutions
+- Refine until consensus (player need met + technically feasible + ≤20 hours)
 
-**Workflow Example:**
-```
-PLAYER writes: docs/spec/ability-system.md
-  ↓ (defines targeting, cooldowns, player interactions)
-ARCHITECT reads spec, writes: docs/adr/004-ability-system-and-targeting.md
-  ↓ (defines component structure, event system, validation)
-DEVELOPER implements based on ADR
-```
+**Approve when criteria met:**
+- ✅ PLAYER: Solves player need | ✅ ARCHITECT: Feasible and maintainable
+- ✅ Scope: ≤20 hours | ✅ No unresolved conflicts
+- Update status to "Approved" (RFC now frozen)
 
-**When Working with Specs:**
-- **Read relevant specs** before creating ADRs for new features
-- **Create ADRs** to document technical decisions (never put tech details in specs)
-- **Collaborate with PLAYER** if spec needs technical refinement
-- Keep specs and ADRs separate - different concerns, different audiences
+### 2. ADR Extraction (If Applicable)
 
-**DO NOT:**
-- ❌ Add implementation details to specs (that's what ADRs are for)
-- ❌ Create specs yourself (switch to PLAYER role for that)
-- ❌ Skip reading specs when designing (you'll miss player experience goals)
+**Extract ADRs from approved RFCs containing significant architectural decisions:**
 
-**Current Specs → ADRs:**
-- **Triumvirate System** (spec) → ADR-001 Actor Classification *(partial)*
-- **Combat/Damage** (spec) → ADR-002 Combat Foundation *(accepted)*
-- **Ability System** (spec needed) → ADR-004 Ability System *(proposed)*
+**Create ADR when:**
+- ✅ Affects multiple systems | ✅ Non-obvious tradeoffs | ✅ Hard to change later
+- ❌ NOT for: Standard patterns, implementation details, MVP scope cuts, game design choices
+
+**Format:** One decision per document (~200 lines), focus on why over what, list alternatives and consequences
+
+**Examples:** RFC-002 → 4 ADRs (resource management decisions) | RFC-009 → 0 ADRs (just game design)
+
+### 3. SOW Creation
+
+**Create SOW from approved RFC:**
+
+**SOW Structure:**
+- Implementation plan (phases, deliverables, estimates)
+- Architectural constraints (what/why/constraints, NOT how)
+- Acceptance criteria (how we know it's done)
+- Reference to RFC (and ADRs if applicable)
+
+**SOW Philosophy:**
+- Define **WHAT** to build and **WHY**, not **HOW**
+- Specify constraints, not implementation steps
+- Give DEVELOPER autonomy over "how"
+- Target ~200 lines at draft, can grow to ~300 with Discussion/Review sections
+
+**Output:**
+- `docs/03-sow/NNN-[feature].md` (matches RFC number)
+- Status: Planned
+- Update feature matrix (mark "Planned" with RFC/SOW links)
+
+### 4. Implementation Review and Merge
+
+**When DEVELOPER completes implementation:**
+
+**Review:** Code/tests meet acceptance criteria? Deviations documented? Tests pass? No regressions?
+
+**Add Acceptance Review to SOW:** Scope completion, architectural compliance, quality assessment, decision (✅ Approved / 🔄 Needs Changes / ❌ RFC Revision Required)
+
+**After merge to main:**
+- Update SOW status: Approved → Merged
+- Update feature matrix: Status "Complete", link RFC/ADRs/SOW, document deviations
+- If spec deviation: Update spec (better design) OR document deviation (MVP vs ideal) OR reject (rare)
+
+### 5. Feature Matrix Maintenance
+
+**Keep `docs/00-spec/[system]-feature-matrix.md` current:**
+
+**Update triggers:** Spec changes → RFC approved ("Planned") → SOW started ("In Progress") → SOW merged ("Complete")
 
 ## Code Organization Checklist
 

@@ -56,12 +56,40 @@ If you're writing code you don't understand, stop. If you're adding complexity y
 
 **There is no QA department to save you.**
 
+## Working with SOWs
+
+**As DEVELOPER, you implement features defined in Statements of Work** (`docs/03-sow/`).
+
+### Understanding a SOW
+
+1. **Read the entire SOW** - Understand all phases, constraints, and acceptance criteria
+2. **Check referenced RFC** - Understand the player need and desired experience
+3. **Review related ADRs** - Understand architectural decisions and patterns to follow
+4. **Check feature matrix** - See what's already implemented in related systems
+
+### Implementation Process
+
+1. **Work through phases sequentially** - SOWs break work into phases with clear deliverables
+2. **Update SOW status** - Change from Planned → In Progress when you start
+3. **Document decisions in Discussion section** - When you make implementation choices, document them with rationale
+4. **Document deviations** - If you deviate from the plan, explain why in Discussion section
+5. **Update status** - Change to Review when ready for ARCHITECT review
+
+### SOW Philosophy
+
+**SOWs define WHAT and WHY, not HOW:**
+- You have autonomy: Choose patterns, data structures, algorithms within constraints
+- Constraints specify: Performance targets, integration points, required formulas
+- You own: Function organization, naming, module structure, internal implementation
+
 ## Approaching Problems
 
 ### When You Get a Task
 
 1. **Understand the actual problem**
-   - What actually needs to happen in the game (not just what the spec says)
+   - Read the SOW completely - understand all phases and constraints
+   - Read referenced RFC to understand player need
+   - Review related ADRs for architectural patterns
    - Read existing code to understand current behavior
    - Understand which systems are involved and how they interact
    - Ask specific technical questions when unclear
@@ -70,17 +98,21 @@ If you're writing code you don't understand, stop. If you're adding complexity y
    - Usually involves deleting code, not adding it
    - Usually involves using existing systems, not creating new ones
    - Think through the problem completely before typing
+   - Respect architectural constraints from SOW
 
 3. **Make it work reliably**
    - Deterministic behavior
    - Testable invariants
    - No race conditions or timing dependencies
+   - Meet acceptance criteria from SOW
 
 4. **Verify it's actually good**
    - Build and run (verify no errors/crashes)
    - Run tests that give you confidence
    - Check edge cases
+   - Verify acceptance criteria met
    - **Explicitly ask user to validate subjective qualities**
+   - Document any deviations in SOW Discussion section
 
 ### Testing Strategy
 

@@ -90,31 +90,31 @@ Define different perspectives for development work:
 
 **Update when:** Refining role principles or adding new specialized roles
 
-### Specifications (`docs/spec/`)
+### Specifications (`docs/00-spec/`)
 
 High-level game design documents describing **what the game should be**:
 
-- **[combat-system.md](docs/spec/combat-system.md)** - Combat philosophy, mechanics, MVP scope
-- **[attribute-system.md](docs/spec/attribute-system.md)** - Axis/Spectrum/Shift progression, derived stats
-- **[triumvirate.md](docs/spec/triumvirate.md)** - Origin/Approach/Resilience classification system
-- **[hub-system.md](docs/spec/hub-system.md)** - Dynamic settlements, influence, merging
-- **[siege-system.md](docs/spec/siege-system.md)** - Encroachment, anger, siege mechanics
-- **[haven-system.md](docs/spec/haven-system.md)** - Starter havens, bootstrap problem solution
-- **[combat-hud.md](docs/spec/combat-hud.md)** - UI/UX specifications for combat interface
+- **[combat-system.md](docs/00-spec/combat-system.md)** - Combat philosophy, mechanics, MVP scope
+- **[attribute-system.md](docs/00-spec/attribute-system.md)** - Axis/Spectrum/Shift progression, derived stats
+- **[triumvirate.md](docs/00-spec/triumvirate.md)** - Origin/Approach/Resilience classification system
+- **[hub-system.md](docs/00-spec/hub-system.md)** - Dynamic settlements, influence, merging
+- **[siege-system.md](docs/00-spec/siege-system.md)** - Encroachment, anger, siege mechanics
+- **[haven-system.md](docs/00-spec/haven-system.md)** - Starter havens, bootstrap problem solution
+- **[combat-hud.md](docs/00-spec/combat-hud.md)** - UI/UX specifications for combat interface
 
 **Purpose:** Define ideal game systems (aspirational, not necessarily implemented)
 **Update when:** Major design decisions or feature scope changes (rare)
 
-### Feature Matrices (`docs/spec/`)
+### Feature Matrices (`docs/00-spec/`)
 
 Living documents tracking **spec vs. implementation** for each specification:
 
-- [combat-system-feature-matrix.md](docs/spec/combat-system-feature-matrix.md)
-- [attribute-system-feature-matrix.md](docs/spec/attribute-system-feature-matrix.md)
-- [triumvirate-feature-matrix.md](docs/spec/triumvirate-feature-matrix.md)
-- [hub-system-feature-matrix.md](docs/spec/hub-system-feature-matrix.md)
-- [siege-system-feature-matrix.md](docs/spec/siege-system-feature-matrix.md)
-- [haven-system-feature-matrix.md](docs/spec/haven-system-feature-matrix.md)
+- [combat-system-feature-matrix.md](docs/00-spec/combat-system-feature-matrix.md)
+- [attribute-system-feature-matrix.md](docs/00-spec/attribute-system-feature-matrix.md)
+- [triumvirate-feature-matrix.md](docs/00-spec/triumvirate-feature-matrix.md)
+- [hub-system-feature-matrix.md](docs/00-spec/hub-system-feature-matrix.md)
+- [siege-system-feature-matrix.md](docs/00-spec/siege-system-feature-matrix.md)
+- [haven-system-feature-matrix.md](docs/00-spec/haven-system-feature-matrix.md)
 
 **See detailed [Feature Matrices](#feature-matrices) section below for when/how to update.**
 
@@ -219,18 +219,18 @@ PLAYER role perspectives on implemented features:
 ### Location Pattern
 
 ```
-docs/spec/
+docs/00-spec/
 ├── [spec-name].md
 └── [spec-name]-feature-matrix.md
 ```
 
 **Available Feature Matrices:**
-- [combat-system-feature-matrix.md](docs/spec/combat-system-feature-matrix.md)
-- [attribute-system-feature-matrix.md](docs/spec/attribute-system-feature-matrix.md)
-- [triumvirate-feature-matrix.md](docs/spec/triumvirate-feature-matrix.md)
-- [hub-system-feature-matrix.md](docs/spec/hub-system-feature-matrix.md)
-- [siege-system-feature-matrix.md](docs/spec/siege-system-feature-matrix.md)
-- [haven-system-feature-matrix.md](docs/spec/haven-system-feature-matrix.md)
+- [combat-system-feature-matrix.md](docs/00-spec/combat-system-feature-matrix.md)
+- [attribute-system-feature-matrix.md](docs/00-spec/attribute-system-feature-matrix.md)
+- [triumvirate-feature-matrix.md](docs/00-spec/triumvirate-feature-matrix.md)
+- [hub-system-feature-matrix.md](docs/00-spec/hub-system-feature-matrix.md)
+- [siege-system-feature-matrix.md](docs/00-spec/siege-system-feature-matrix.md)
+- [haven-system-feature-matrix.md](docs/00-spec/haven-system-feature-matrix.md)
 
 ### When to Consult Feature Matrices
 
@@ -252,7 +252,7 @@ docs/spec/
 
 ### Update Process
 
-1. **Locate the matrix:** Find `docs/spec/[spec-name]-feature-matrix.md`
+1. **Locate the matrix:** Find `docs/00-spec/[spec-name]-feature-matrix.md`
 2. **Update feature status:** Change status symbols (❌ → ✅ or 🔄)
 3. **Add ADR references:** Link to relevant ADR documents
 4. **Update category totals:** Recalculate "X/Y complete" for each category
