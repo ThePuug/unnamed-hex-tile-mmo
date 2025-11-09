@@ -19,11 +19,11 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 | 011 | Movement Intent System | 🌐 Network | ✅ Approved | 2025-11-05 | Yes (ADR-016) |
 | 012 | Ability Recovery and Synergies | ⚔️ Combat | ✅ Approved | 2025-11-07 | Yes (ADR-017) |
 | 013 | Ability Execution Pipeline | 🔧 Code Quality | 📝 Proposed | 2025-11-07 | Yes (ADR-018) |
-| 014 | Spatial Difficulty System | 📊 Progression | 📝 Proposed | 2025-11-07 | No (design scope) |
-| 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Approved | 2025-11-08 | No (testing strategy) |
+| 014 | Spatial Difficulty System | 📊 Progression | ✅ Implemented | 2025-11-07 | No (design scope) |
+| 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Implemented | 2025-11-08 | No (testing strategy) |
 
 **Legend:**
-- **Status:** ✅ Approved | 🔄 Under Review | 📝 Draft/Proposed
+- **Status:** ✅ Implemented (merged to main) | ✅ Approved (ready for implementation) | 🔄 Under Review | 📝 Draft/Proposed
 - **Category:** ⚔️ Combat | 🌍 World | 🤖 AI | 🎨 UI | 🛠️ Dev Tools | 🌐 Network | 📊 Progression | 🧪 Testing | 🔧 Code Quality
 
 ---
