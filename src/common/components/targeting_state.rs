@@ -148,7 +148,7 @@ mod tests {
         let mut state = TargetingState::new();
         assert_eq!(state.last_target, None);
 
-        let entity = Entity::from_raw(42);
+        let entity = Entity::from_raw_u32(42).unwrap();
         state.last_target = Some(entity);
         assert_eq!(state.last_target, Some(entity));
     }

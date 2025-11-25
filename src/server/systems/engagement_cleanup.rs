@@ -77,7 +77,7 @@ pub fn cleanup_engagements(
             // Despawn all NPCs (server-side cleanup, no broadcast needed since clients evict chunks first)
             for &npc_entity in &engagement.spawned_npcs {
                 if npc_query.get(npc_entity).is_ok() {
-                    commands.entity(npc_entity).despawn_recursive();
+                    commands.entity(npc_entity).despawn();
                 }
             }
 

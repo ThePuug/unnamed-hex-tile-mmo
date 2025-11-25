@@ -240,7 +240,7 @@ pub fn setup(
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
-            BorderColor(Color::srgb(0.4, 0.4, 0.4)),
+            BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
             BorderRadius::all(Val::Px(8.)),
             Visibility::Hidden,
         ))

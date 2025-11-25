@@ -12,7 +12,6 @@ pub mod reaction_queue;
 pub mod recovery;
 pub mod resources;
 pub mod returning;
-pub mod spawner;
 pub mod target;
 pub mod tier_lock;
 

@@ -360,6 +360,6 @@ pub fn periodic_ping(
     // Check if it's time to send another ping
     if client_now.saturating_sub(server.last_ping_time) >= PING_INTERVAL_MS {
         server.last_ping_time = client_now;
-        try_writer.send(Try { event: Event::Ping { client_time: client_now } });
+        try_writer.write(Try { event: Event::Ping { client_time: client_now } });
     }
 }

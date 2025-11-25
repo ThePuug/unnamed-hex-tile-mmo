@@ -127,12 +127,12 @@ pub enum Component {
     TierLock(crate::common::components::tier_lock::TierLock),
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
 pub struct Do {
     pub event: Event
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
 pub struct Try {
     pub event: Event
 }

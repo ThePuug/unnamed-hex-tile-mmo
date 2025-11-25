@@ -120,7 +120,7 @@ pub fn handle_volley(
 
         // Send DealDamage event for this target
         // Volley: 20 damage, Physical type
-        commands.trigger_targets(
+        commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
@@ -130,7 +130,6 @@ pub fn handle_volley(
                     ability: Some(AbilityType::Volley),
                 },
             },
-            target,
         );
     }
 }

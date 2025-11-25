@@ -114,12 +114,12 @@ pub fn update(
             // Update colors
             if is_filled {
                 commands.entity(*entity).insert((
-                    BorderColor(Color::srgb(0.8, 0.2, 0.2)),
+                    BorderColor::all(Color::srgb(0.8, 0.2, 0.2)),
                     BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
                 ));
             } else {
                 commands.entity(*entity).insert((
-                    BorderColor(Color::srgba(0.6, 0.3, 0.1, 0.5)),
+                    BorderColor::all(Color::srgba(0.6, 0.3, 0.1, 0.5)),
                     BackgroundColor(Color::srgba(0.15, 0.1, 0.05, 0.5)),
                 ));
             }
@@ -147,7 +147,7 @@ pub fn update(
                             border: UiRect::all(Val::Px(3.)),
                             ..default()
                         },
-                        BorderColor(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow
+                        BorderColor::all(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow
                         BorderRadius::all(Val::Percent(50.)), // Make circular
                         BackgroundColor(Color::NONE),
                         ThreatTimerRing { index: icon.index },
@@ -212,7 +212,7 @@ pub fn update(
             node.left = Val::Percent(offset_percent);
             node.top = Val::Percent(offset_percent);
 
-            commands.entity(entity).insert(BorderColor(color));
+            commands.entity(entity).insert(BorderColor::all(color));
         }
     }
 }
@@ -260,7 +260,7 @@ fn spawn_threat_icon(
                 border: UiRect::all(Val::Px(3.)),
                 ..default()
             },
-            BorderColor(border_color),
+            BorderColor::all(border_color),
             BorderRadius::all(Val::Percent(50.)), // Make circular
             BackgroundColor(background_color),
             ThreatIcon { index },
@@ -279,7 +279,7 @@ fn spawn_threat_icon(
                         border: UiRect::all(Val::Px(3.)),
                         ..default()
                     },
-                    BorderColor(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow, will transition to red
+                    BorderColor::all(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow, will transition to red
                     BorderRadius::all(Val::Percent(50.)), // Make circular
                     BackgroundColor(Color::NONE),
                     ThreatTimerRing { index },

@@ -173,7 +173,7 @@ pub fn handle_lunge(
         });
 
         // Deal damage (40 base damage)
-        commands.trigger_targets(
+        commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
@@ -183,7 +183,6 @@ pub fn handle_lunge(
                     ability: Some(AbilityType::Lunge),
                 },
             },
-            target_ent,
         );
 
         // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)

@@ -119,7 +119,7 @@ pub fn handle_auto_attack(
         // Deal damage to ALL hostile entities on the target hex
         let base_damage = 20.0;
         for target_ent in target_entities {
-            commands.trigger_targets(
+            commands.trigger(
                 Try {
                     event: GameEvent::DealDamage {
                         source: *ent,
@@ -129,7 +129,6 @@ pub fn handle_auto_attack(
                         ability: Some(AbilityType::AutoAttack),
                     },
                 },
-                target_ent,
             );
         }
 

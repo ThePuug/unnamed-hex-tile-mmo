@@ -6,9 +6,9 @@
 
 use bevy::{
     ecs::{
-        component::HookContext, 
+        lifecycle::HookContext,
         world::DeferredWorld
-    }, 
+    },
     prelude::*
 };
 use rstar::{DefaultParams, Point, PointDistance, RTree, RTreeObject, AABB};

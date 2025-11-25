@@ -165,7 +165,7 @@ pub fn handle_overpower(
         });
 
         // Emit DealDamage event
-        commands.trigger_targets(
+        commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
@@ -175,7 +175,6 @@ pub fn handle_overpower(
                     ability: Some(AbilityType::Overpower),
                 },
             },
-            target_ent,
         );
 
         // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)

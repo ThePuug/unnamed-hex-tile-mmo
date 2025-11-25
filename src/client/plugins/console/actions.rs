@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Events that can be triggered from the developer console
-#[derive(Event, Debug)]
+#[derive(Event, Message, Debug)]
 pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,

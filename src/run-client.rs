@@ -65,6 +65,7 @@ fn main() {
                     +"bevy=warn,cosmic_text=warn,client=trace,"
                     ,
             custom_layer: |_| None,
+            ..default()
         }),
         RenetClientPlugin,
         NetcodeClientPlugin,

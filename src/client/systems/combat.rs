@@ -70,7 +70,7 @@ pub fn handle_apply_damage(
                         ..default()
                     },
                     TextColor(Color::WHITE),
-                    TextLayout::new_with_justify(JustifyText::Center),
+                    TextLayout::new_with_justify(Justify::Center),
                     crate::client::components::FloatingText {
                         spawn_time: time.elapsed(),
                         world_position: world_pos,

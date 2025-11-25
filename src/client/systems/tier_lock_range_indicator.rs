@@ -18,11 +18,9 @@
 //! Uses a SINGLE entity with a combined mesh for all hex tiles to avoid entity churn.
 //! Only recreates the mesh when the tier actually changes.
 
-use bevy::{
-    prelude::*,
-    pbr::NotShadowCaster,
-    render::primitives::Aabb,
-};
+use bevy::prelude::*;
+use bevy_camera::primitives::Aabb;
+use bevy_light::NotShadowCaster;
 
 use crate::{
     client::plugins::diagnostics::DiagnosticsState,
@@ -79,7 +77,7 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Get the single indicator entity
-    let Ok((indicator_ent, mut indicator, mut visibility, maybe_material)) = indicator_query.get_single_mut() else {
+    let Ok((indicator_ent, mut indicator, mut visibility, maybe_material)) = indicator_query.single_mut() else {
         return;
     };
 
@@ -194,11 +192,11 @@ pub fn update(
     // Create the combined mesh
     let mut mesh = Mesh::new(
         bevy::render::render_resource::PrimitiveTopology::TriangleList,
-        bevy::render::render_asset::RenderAssetUsages::default()
+        bevy_asset::RenderAssetUsages::default()
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+    mesh.insert_indices(bevy_mesh::Indices::U32(indices));
 
     let mesh_handle = meshes.add(mesh);
 

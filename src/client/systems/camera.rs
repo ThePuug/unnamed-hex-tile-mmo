@@ -1,7 +1,5 @@
-use bevy::{
-    prelude::*,
-    render::camera::ScalingMode
-};
+use bevy::prelude::*;
+use bevy_camera::ScalingMode;
 
 use crate::{
     client::plugins::vignette::VignetteSettings,
@@ -19,9 +17,7 @@ pub fn setup(
     commands.spawn((
         Camera3d::default(),
         Projection::from(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: 40.0,
-            },
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: 40.0 },
             ..OrthographicProjection::default_3d()
         }),
         Transform::default(),

@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_insert_threat_with_capacity() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         let threat1 = QueuedThreat {
             source: entity,
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_insert_threat_overflow() {
         let mut queue = ReactionQueue::new(2);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Fill queue to capacity
         let threat1 = QueuedThreat {
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_check_expired_threats_none_expired() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         let threat = QueuedThreat {
             source: entity,
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_check_expired_threats_one_expired() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         let threat = QueuedThreat {
             source: entity,
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn test_check_expired_threats_multiple() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Threat 1: inserted at 0s, expires at 1s
         let threat1 = QueuedThreat {
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_clear_threats_all() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Add 3 threats
         for i in 0..3 {
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn test_clear_threats_first_n() {
         let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Add 3 threats
         for i in 0..3 {
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn test_clear_threats_by_type() {
         let mut queue = ReactionQueue::new(4);
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Add mix of Physical and Magic threats
         queue.threats.push_back(QueuedThreat {

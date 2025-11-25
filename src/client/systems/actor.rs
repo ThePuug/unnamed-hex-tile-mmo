@@ -1,10 +1,7 @@
 use std::time::Duration;
 
-use bevy::{
-    prelude::*,
-    scene::SceneInstanceReady,
-    render::primitives::Aabb,
-};
+use bevy::{prelude::*, scene::SceneInstanceReady};
+use bevy_camera::primitives::Aabb;
 use qrz::Convert;
 
 use crate::{

@@ -3,9 +3,9 @@ use std::f32::consts::PI;
 use bevy::{
     math::ops::*,
     prelude::*,
-    render::primitives::Aabb, 
     tasks::{block_on, futures_lite::future, AsyncComputeTaskPool}
 };
+use bevy_camera::primitives::Aabb;
 
 pub const TILE_RISE: f32 = 0.8;
 pub const TILE_SIZE: f32 = 1.;
@@ -86,7 +86,7 @@ pub fn do_init(
         server.last_ping_time = client_now; // Track when we sent initial ping
 
         // Send initial Ping to measure actual network latency
-        try_writer.send(Try { event: Event::Ping { client_time: client_now } });
+        try_writer.write(Try { event: Event::Ping { client_time: client_now } });
     }
 }
 
@@ -248,7 +248,7 @@ pub fn evict_distant_chunks(
             );
 
             if !is_player {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
         }
     }

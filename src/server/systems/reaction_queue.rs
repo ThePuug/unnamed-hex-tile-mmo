@@ -44,14 +44,13 @@ pub fn process_expired_threats(
                 });
 
                 // Emit ResolveThreat event to trigger damage application
-                commands.trigger_targets(
+                commands.trigger(
                     Try {
                         event: GameEvent::ResolveThreat {
                             ent,
                             threat: *expired_threat,
                         },
                     },
-                    ent,
                 );
             }
         }
@@ -70,8 +69,8 @@ mod tests {
         world.init_resource::<Time>();
 
         // Create entity with queue and one threat
-        let entity = Entity::from_raw(0);
-        let threat_entity = Entity::from_raw(1);
+        let entity = Entity::from_raw_u32(0).unwrap();
+        let threat_entity = Entity::from_raw_u32(1).unwrap();
 
         let mut queue = ReactionQueue::new(3);
         queue.threats.push_back(QueuedThreat {

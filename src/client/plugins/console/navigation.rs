@@ -80,16 +80,16 @@ fn handle_terrain_menu(
     let mut consumed = None;
 
     if keyboard.just_pressed(KeyCode::Numpad1) {
-        action_writer.send(DevConsoleAction::ToggleGrid);
+        action_writer.write(DevConsoleAction::ToggleGrid);
         consumed = Some(KeyCode::Numpad1);
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
-        action_writer.send(DevConsoleAction::ToggleSlopeRendering);
+        action_writer.write(DevConsoleAction::ToggleSlopeRendering);
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) {
-        action_writer.send(DevConsoleAction::ToggleFixedLighting);
+        action_writer.write(DevConsoleAction::ToggleFixedLighting);
         consumed = Some(KeyCode::Numpad3);
     } else if keyboard.just_pressed(KeyCode::Numpad4) {
-        action_writer.send(DevConsoleAction::RegenerateMesh);
+        action_writer.write(DevConsoleAction::RegenerateMesh);
         consumed = Some(KeyCode::Numpad4);
     }
 
@@ -105,10 +105,10 @@ fn handle_performance_menu(
     let mut consumed = None;
 
     if keyboard.just_pressed(KeyCode::Numpad1) {
-        action_writer.send(DevConsoleAction::TogglePerfUI);
+        action_writer.write(DevConsoleAction::TogglePerfUI);
         consumed = Some(KeyCode::Numpad1);
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
-        action_writer.send(DevConsoleAction::ToggleNetworkUI);
+        action_writer.write(DevConsoleAction::ToggleNetworkUI);
         consumed = Some(KeyCode::Numpad2);
     }
 
