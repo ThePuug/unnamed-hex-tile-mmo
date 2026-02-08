@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use qrz::Convert;
 
 use crate::common::{
-    components::{behaviour::*, heading::*, keybits::*, offset::*, resources::*, *},
+    components::{behaviour::*, heading::*, keybits::*, offset::*, position::{Position, VisualPosition}, resources::*, *},
     message::{Component, Event, *},
     resources::map::*
 };
@@ -36,14 +36,16 @@ pub fn do_incremental(
         Option<&mut CombatState>,
         Option<&mut PlayerControlled>,
         Option<&mut crate::common::components::tier_lock::TierLock>,
-        Option<&crate::common::components::movement_prediction::MovementPrediction>)>,
+        Option<&crate::common::components::movement_prediction::MovementPrediction>,
+        Option<&mut Position>,
+        Option<&mut VisualPosition>)>,
     map: Res<Map>,
     buffers: Res<crate::common::resources::InputQueues>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
 
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -89,6 +91,16 @@ pub fn do_incremental(
                         offset0.prev_step = Vec3::ZERO;
                         offset0.interp_elapsed = 0.0;
                         offset0.interp_duration = 0.0;
+
+                        // ADR-019: Snap VisualPosition on teleport
+                        if let Some(mut vis) = o_visual {
+                            let teleport_world: Vec3 = map.convert(*loc);
+                            vis.snap_to(teleport_world);
+                        }
+                        if let Some(mut pos) = o_position {
+                            pos.tile = *loc;
+                            pos.offset = Vec3::ZERO;
+                        }
                     } else {
                         // Smooth tile crossing: Preserve world-space position for visual continuity
                         // Convert offset from old tile's coordinate system to new tile's
@@ -96,52 +108,51 @@ pub fn do_incremental(
                         let prev_world = map.convert(**loc0) + offset0.prev_step;
                         let step_world = map.convert(**loc0) + offset0.step;
 
-                        let new_tile_center = map.convert(*loc);
+                        let new_tile_center: Vec3 = map.convert(*loc);
                         offset0.state = state_world - new_tile_center;
                         offset0.prev_step = prev_world - new_tile_center;
                         offset0.step = step_world - new_tile_center;
+
+                        // ADR-019: Update Position tile (offset preserved from physics)
+                        if let Some(mut pos) = o_position {
+                            pos.tile = *loc;
+                            pos.offset = offset0.step;
+                        }
+                        // Note: VisualPosition continues interpolating - no snap needed for smooth crossing
                     }
                 } else {
-                    // Calculate current visual position from interpolation
-                    // (offset.state is authoritative combat position, NOT visual position)
-                    let current_interp_fraction = if offset0.interp_duration > 0.0 {
-                        (offset0.interp_elapsed / offset0.interp_duration).min(1.0)
-                    } else {
-                        1.0  // Completed or no interpolation
-                    };
-                    let current_visual_offset = offset0.prev_step.lerp(offset0.step, current_interp_fraction);
+                    // Remote entity: tile boundary crossing
 
-                    // Calculate server's actual authoritative position (heading-adjusted on new tile)
-                    let new_tile_center = map.convert(*loc);
+                    // Calculate server's authoritative position (heading-adjusted on new tile)
+                    let new_tile_center: Vec3 = map.convert(*loc);
                     let Some(ref heading0) = o_heading else { panic!("no heading for remote player/NPC") };
                     let target_offset = if ***heading0 != default() {
-                        let heading_neighbor_world = map.convert(*loc + ***heading0);
+                        let heading_neighbor_world: Vec3 = map.convert(*loc + ***heading0);
                         let direction = heading_neighbor_world - new_tile_center;
                         (direction * HERE).xz()
                     } else {
                         Vec2::ZERO
                     };
 
-                    // ADR-011: Validate movement prediction if it exists
+                    // ADR-011: Clear movement prediction if it exists
                     if let Some(_prediction) = o_prediction {
-                        // Clear prediction component
                         commands.entity(ent).remove::<crate::common::components::movement_prediction::MovementPrediction>();
                     }
 
-                    // ADR-011: Preserve ongoing MovementIntent interpolation, just convert coordinate system
-                    // When Loc arrives, the entity is crossing tile boundaries mid-interpolation
-                    // We need to convert all offsets from old tile's coordinates to new tile's coordinates
+                    // Preserve ongoing MovementIntent interpolation, convert coordinate system
                     let prev_world = map.convert(**loc0) + offset0.prev_step;
                     let step_world = map.convert(**loc0) + offset0.step;
 
-                    // Convert to new tile's coordinate system (preserve interpolation!)
                     offset0.prev_step = prev_world - new_tile_center;
                     offset0.step = step_world - new_tile_center;
-
-                    // Update authoritative combat position (already calculated above for gap measurement)
                     offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
 
-                    // NOTE: Do NOT reset interp_duration/interp_elapsed - let MovementIntent interpolation continue!
+                    // ADR-019: Update Position (VisualPosition is world-space, no conversion needed)
+                    if let Some(mut pos) = o_position {
+                        pos.tile = *loc;
+                        pos.offset = Vec3::new(target_offset.x, 0.0, target_offset.y);
+                    }
+                    // VisualPosition continues interpolating in world space - no adjustment needed
                 }
 
                 *loc0 = loc;

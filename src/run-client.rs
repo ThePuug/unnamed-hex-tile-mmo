@@ -34,7 +34,7 @@ use client::{
         vignette::VignettePlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
@@ -100,6 +100,12 @@ fn main() {
         common::systems::combat::resources::regenerate_resources,
     ));
 
+    // ADR-019: Sync Position from physics, then update VisualPosition target
+    app.add_systems(FixedPostUpdate, (
+        prediction::sync_position,
+        prediction::update_visual_target.after(prediction::sync_position),
+    ));
+
     app.add_systems(PreUpdate, (
         renet::write_do,
     ));
@@ -109,6 +115,7 @@ fn main() {
         actor::do_spawn,
         actor::apply_movement_intent, // ADR-011: Apply movement intent predictions
         actor::try_gcd,
+        prediction::advance_interpolation.before(actor::update), // ADR-019: Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         animator::update,

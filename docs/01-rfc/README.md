@@ -21,6 +21,7 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 | 013 | Ability Execution Pipeline | 🔧 Code Quality | 📝 Proposed | 2025-11-07 | Yes (ADR-018) |
 | 014 | Spatial Difficulty System | 📊 Progression | ✅ Implemented | 2025-11-07 | No (design scope) |
 | 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Implemented | 2025-11-08 | No (testing strategy) |
+| 016 | Movement System Rewrite | 🌐 Network | ✅ Approved | 2025-02-08 | Yes (ADR-019) |
 
 **Legend:**
 - **Status:** ✅ Implemented (merged to main) | ✅ Approved (ready for implementation) | 🔄 Under Review | 📝 Draft/Proposed
