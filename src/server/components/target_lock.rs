@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_target_lock_new() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn test_target_valid_within_leash() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_target_invalid_beyond_leash() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_target_valid_exactly_at_leash() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_target_invalid_when_despawned() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_infinite_leash_always_valid() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 0, origin);  // 0 = infinite leash
 
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_infinite_leash_invalid_when_despawned() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 0, origin);  // 0 = infinite leash
 
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_target_valid_with_vertical_distance() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 50, origin);
 
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_target_invalid_with_vertical_distance_beyond_leash() {
-        let target_ent = Entity::from_raw(42);
+        let target_ent = Entity::from_raw_u32(42).unwrap();
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 25, origin);
 

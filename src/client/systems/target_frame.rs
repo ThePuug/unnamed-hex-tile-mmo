@@ -140,7 +140,7 @@ pub fn setup(
             row_gap: Val::Px(6.),
             ..default()
         },
-        BorderColor(Color::srgba(0.5, 0.5, 0.5, 0.8)),
+        BorderColor::all(Color::srgba(0.5, 0.5, 0.5, 0.8)),
         BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.85)),
         Visibility::Hidden,  // Hidden by default
         TargetFrame,
@@ -166,7 +166,7 @@ pub fn setup(
                     border: UiRect::all(Val::Px(2.)),
                     ..default()
                 },
-                BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+                BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
                 BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
                 BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                 TargetLevelHex,
@@ -216,7 +216,7 @@ pub fn setup(
                 padding: UiRect::all(Val::Px(2.)),
                 ..default()
             },
-            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.2, 0.1, 0.0)),  // Dark orange/brown background
         ))
         .with_children(|parent| {
@@ -312,7 +312,7 @@ pub fn setup(
             row_gap: Val::Px(6.),
             ..default()
         },
-        BorderColor(Color::srgba(0.0, 0.6, 0.0, 0.8)),  // Green border
+        BorderColor::all(Color::srgba(0.0, 0.6, 0.0, 0.8)),  // Green border
         BackgroundColor(Color::srgba(0.0, 0.15, 0.0, 0.85)),  // Dark green background
         Visibility::Hidden,  // Hidden by default
         AllyFrame,
@@ -338,7 +338,7 @@ pub fn setup(
                     border: UiRect::all(Val::Px(2.)),
                     ..default()
                 },
-                BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+                BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
                 BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
                 BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                 AllyLevelHex,
@@ -388,7 +388,7 @@ pub fn setup(
                 padding: UiRect::all(Val::Px(2.)),
                 ..default()
             },
-            BorderColor(Color::srgb(0.0, 0.4, 0.0)),  // Dark green border
+            BorderColor::all(Color::srgb(0.0, 0.4, 0.0)),  // Dark green border
             BackgroundColor(Color::srgb(0.0, 0.15, 0.0)),  // Dark green background
         ))
         .with_children(|parent| {
@@ -485,7 +485,7 @@ pub fn update(
     target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, &Loc)>,
 ) {
     // Get local player and target
-    let Ok((player_health, target)) = player_query.get_single() else {
+    let Ok((player_health, target)) = player_query.single() else {
         return;
     };
 
@@ -616,7 +616,7 @@ pub fn update_queue(
     server: Res<Server>,
 ) {
     // Get player's target
-    let Ok(player_target) = player_query.get_single() else {
+    let Ok(player_target) = player_query.single() else {
         return;
     };
 
@@ -635,7 +635,7 @@ pub fn update_queue(
     };
 
     // Update queue container visibility and content
-    if let Ok(mut queue_visibility) = queue_container_query.get_single_mut() {
+    if let Ok(mut queue_visibility) = queue_container_query.single_mut() {
         if let Some(queue) = queue_opt {
             // Target has a queue - show it
             *queue_visibility = Visibility::Visible;
@@ -652,11 +652,11 @@ pub fn update_queue(
             if dots_need_rebuild {
                 // Capacity changed - despawn all and respawn with correct count
                 for (dot_ent, _) in &current_dots {
-                    commands.entity(*dot_ent).despawn_recursive();
+                    commands.entity(*dot_ent).despawn();
                 }
 
                 // Spawn capacity dots in the dots container
-                if let Ok(dots_container_ent) = dots_container_query.get_single() {
+                if let Ok(dots_container_ent) = dots_container_query.single() {
                     commands.entity(dots_container_ent).with_children(|parent| {
                         for i in 0..queue_capacity {
                             let is_filled = i < filled_slots;
@@ -680,7 +680,7 @@ pub fn update_queue(
                                     border: UiRect::all(Val::Px(1.)),
                                     ..default()
                                 },
-                                BorderColor(border_color),
+                                BorderColor::all(border_color),
                                 BorderRadius::all(Val::Percent(50.)), // Make circular
                                 BackgroundColor(bg_color),
                                 CapacityDot { index: i },
@@ -706,13 +706,13 @@ pub fn update_queue(
                         };
 
                         bg_color.0 = new_bg;
-                        border_color.0 = new_border;
+                        *border_color = BorderColor::all(new_border);
                     }
                 }
             }
 
             // Update threat icons (LIMIT TO FIRST 3)
-            if let Ok(queue_children) = queue_children_query.get_single() {
+            if let Ok(queue_children) = queue_children_query.single() {
                 let threat_icons_container = queue_children.get(1).copied();
 
                 if let Some(icons_ent) = threat_icons_container {
@@ -736,7 +736,7 @@ pub fn update_queue(
                     if icons_need_rebuild {
                         // Icon count changed - despawn all and respawn with correct count
                         for (icon_ent, _, _) in threat_icon_query.iter() {
-                            commands.entity(icon_ent).despawn_recursive();
+                            commands.entity(icon_ent).despawn();
                         }
 
                         // Spawn new threat icons
@@ -782,7 +782,7 @@ pub fn update_queue(
                                         align_items: AlignItems::Center,
                                         ..default()
                                     },
-                                    BorderColor(if is_full {
+                                    BorderColor::all(if is_full {
                                         Color::srgb(1.0, 0.2, 0.2)  // Brighter red when full
                                     } else {
                                         Color::srgb(0.8, 0.2, 0.2)  // Normal red
@@ -803,7 +803,7 @@ pub fn update_queue(
                                             border: UiRect::all(Val::Px(3.)),
                                             ..default()
                                         },
-                                        BorderColor(timer_color),
+                                        BorderColor::all(timer_color),
                                         BorderRadius::all(Val::Percent(50.)),
                                         BackgroundColor(Color::NONE),
                                         TargetThreatTimerRing { index: *index },
@@ -853,7 +853,7 @@ pub fn update_queue(
                                     node.height = Val::Percent(size_percent);
                                     node.left = Val::Percent(offset_percent);
                                     node.top = Val::Percent(offset_percent);
-                                    border_color.0 = timer_color;
+                                    *border_color = BorderColor::all(timer_color);
                                 }
                             }
 
@@ -871,11 +871,11 @@ pub fn update_queue(
                             // Update threat icon border color based on queue fullness
                             for (_icon_ent, icon, mut border_color) in threat_icon_query.iter_mut() {
                                 if icon.index == *index {
-                                    border_color.0 = if is_full {
+                                    *border_color = BorderColor::all(if is_full {
                                         Color::srgb(1.0, 0.2, 0.2)
                                     } else {
                                         Color::srgb(0.8, 0.2, 0.2)
-                                    };
+                                    });
                                 }
                             }
                         }
@@ -905,7 +905,7 @@ pub fn update_ally_frame(
     ally_query: Query<(&EntityType, &Health, &Loc)>,
 ) {
     // Get local player's ally target and health
-    let Ok((ally_target, player_health)) = player_query.get_single() else {
+    let Ok((ally_target, player_health)) = player_query.single() else {
         return;
     };
 
@@ -1047,7 +1047,7 @@ pub fn update_ally_queue(
     server: Res<Server>,
 ) {
     // Get local player's ally target
-    let Ok(ally_target) = player_query.get_single() else {
+    let Ok(ally_target) = player_query.single() else {
         return;
     };
 
@@ -1066,17 +1066,17 @@ pub fn update_ally_queue(
     };
 
     // Update queue container visibility and content
-    if let Ok(mut queue_visibility) = queue_container_query.get_single_mut() {
+    if let Ok(mut queue_visibility) = queue_container_query.single_mut() {
         if let Some(queue) = queue_opt {
             // Ally has a queue - show it
             *queue_visibility = Visibility::Visible;
 
             // Despawn old capacity dots and threat icons
             for dot_ent in &capacity_dot_query {
-                commands.entity(dot_ent).despawn_recursive();
+                commands.entity(dot_ent).despawn();
             }
             for icon_ent in &threat_icon_query {
-                commands.entity(icon_ent).despawn_recursive();
+                commands.entity(icon_ent).despawn();
             }
 
             // Get actual queue capacity from the component
@@ -1085,7 +1085,7 @@ pub fn update_ally_queue(
             let is_full = queue.is_full();
 
             // Spawn capacity dots in the dots container
-            if let Ok(dots_container_ent) = dots_container_query.get_single() {
+            if let Ok(dots_container_ent) = dots_container_query.single() {
                 commands.entity(dots_container_ent).with_children(|parent| {
                     for i in 0..queue_capacity {
                         let is_filled = i < filled_slots;
@@ -1110,7 +1110,7 @@ pub fn update_ally_queue(
                                 border: UiRect::all(Val::Px(1.)),
                                 ..default()
                             },
-                            BorderColor(border_color),
+                            BorderColor::all(border_color),
                             BorderRadius::all(Val::Percent(50.)), // Make circular
                             BackgroundColor(bg_color),
                             AllyCapacityDot { index: i },
@@ -1120,7 +1120,7 @@ pub fn update_ally_queue(
             }
 
             // Spawn threat icons (LIMIT TO FIRST 3)
-            if let Ok(queue_children) = queue_children_query.get_single() {
+            if let Ok(queue_children) = queue_children_query.single() {
                 let threat_icons_container = queue_children.get(1).copied();
 
                 if let Some(icons_ent) = threat_icons_container {
@@ -1179,7 +1179,7 @@ pub fn update_ally_queue(
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                BorderColor(if is_full {
+                                BorderColor::all(if is_full {
                                     Color::srgb(0.2, 1.0, 0.2)  // Bright green when full
                                 } else {
                                     Color::srgb(0.2, 0.8, 0.2)  // Normal green
@@ -1200,7 +1200,7 @@ pub fn update_ally_queue(
                                         border: UiRect::all(Val::Px(3.)),
                                         ..default()
                                     },
-                                    BorderColor(timer_color),
+                                    BorderColor::all(timer_color),
                                     BorderRadius::all(Val::Percent(50.)),
                                     BackgroundColor(Color::NONE),
                                 ));

@@ -76,7 +76,7 @@ mod tests {
         let mut queue = ReactionQueue::new(2);
 
         // Create dummy entity for testing
-        let entity = Entity::from_raw(0);
+        let entity = Entity::from_raw_u32(0).unwrap();
 
         // Add first threat
         queue.threats.push_back(QueuedThreat {

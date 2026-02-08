@@ -1,8 +1,6 @@
-use bevy::{
-    prelude::*,
-    pbr::NotShadowCaster,
-    render::primitives::Aabb,
-};
+use bevy::prelude::*;
+use bevy_camera::primitives::Aabb;
+use bevy_light::NotShadowCaster;
 
 use crate::{
     client::{
@@ -101,10 +99,10 @@ pub fn update(
                 
                 // Create new mesh
                 let mut new_mesh = Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, 
-                                            bevy::render::render_asset::RenderAssetUsages::default());
+                                            bevy_asset::RenderAssetUsages::default());
                 new_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
                 new_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                new_mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+                new_mesh.insert_indices(bevy_mesh::Indices::U32(indices));
                 
                 // Replace the mesh
                 mesh_handle.0 = meshes.add(new_mesh);

@@ -14,14 +14,14 @@ use crate::common::{
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
 /// Rolls for crit, calculates outgoing damage, inserts into reaction queue
 pub fn process_deal_damage(
-    trigger: Trigger<Try>,
+    trigger: On<Try>,
     mut commands: Commands,
     mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
@@ -94,14 +94,13 @@ pub fn process_deal_damage(
         // If queue overflowed, immediately resolve the overflow threat
         if let Some(overflow_threat) = overflow {
             // Emit ResolveThreat event for the overflow
-            commands.trigger_targets(
+            commands.trigger(
                 Try {
                     event: GameEvent::ResolveThreat {
                         ent: *target,
                         threat: overflow_threat,
                     },
                 },
-                *target,
             );
         }
     }
@@ -110,10 +109,10 @@ pub fn process_deal_damage(
 /// System to resolve threats (Phase 2: Apply passive modifiers and apply to health)
 /// Processes ResolveThreat events emitted by expiry system or overflow
 pub fn resolve_threat(
-    trigger: Trigger<Try>,
+    trigger: On<Try>,
     _commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes)>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
@@ -156,11 +155,11 @@ pub fn resolve_threat(
 /// Runs before individual ability systems
 /// Emits AbilityFailed for invalid attempts
 pub fn validate_ability_prerequisites(
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     caster_respawn_query: Query<&RespawnTimer>,
     gcd_query: Query<&Gcd>,
     time: Res<Time>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         if let GameEvent::UseAbility { ent, ability: _, target_loc: _ } = event.event {
@@ -216,7 +215,7 @@ pub fn process_passive_auto_attack(
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
 ) {
     // Use game world time (server uptime + offset) for consistent time base
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;

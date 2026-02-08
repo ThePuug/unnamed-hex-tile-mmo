@@ -72,7 +72,7 @@ mod tests {
     #[should_panic(expected = "Queue invariant violation: attempted to insert empty queue")]
     fn test_insert_empty_queue_panics() {
         let mut buffers = InputQueues::default();
-        let entity = Entity::from_raw(1);
+        let entity = Entity::from_raw_u32(1).unwrap();
         let empty_queue = InputQueue::default(); // Empty queue
 
         // This should panic due to invariant violation
@@ -83,7 +83,7 @@ mod tests {
     #[should_panic(expected = "Queue invariant violation: attempted to insert empty queue")]
     fn test_extend_one_empty_queue_panics() {
         let mut buffers = InputQueues::default();
-        let entity = Entity::from_raw(1);
+        let entity = Entity::from_raw_u32(1).unwrap();
         let empty_queue = InputQueue::default(); // Empty queue
 
         // This should panic due to invariant violation
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn test_insert_non_empty_queue_succeeds() {
         let mut buffers = InputQueues::default();
-        let entity = Entity::from_raw(1);
+        let entity = Entity::from_raw_u32(1).unwrap();
         let mut queue = InputQueue::default();
         queue.queue.push_back(Event::Input {
             ent: entity,
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn test_extend_one_non_empty_queue_succeeds() {
         let mut buffers = InputQueues::default();
-        let entity = Entity::from_raw(1);
+        let entity = Entity::from_raw_u32(1).unwrap();
         let mut queue = InputQueue::default();
         queue.queue.push_back(Event::Input {
             ent: entity,

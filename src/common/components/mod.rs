@@ -7,12 +7,11 @@ pub mod heading;
 pub mod keybits;
 pub mod movement_intent_state;
 pub mod movement_prediction;
-pub mod offset;
+pub mod position;
 pub mod reaction_queue;
 pub mod recovery;
 pub mod resources;
 pub mod returning;
-pub mod spawner;
 pub mod target;
 pub mod tier_lock;
 
@@ -262,240 +261,357 @@ pub struct AirTime {
 pub struct Actor;
 
 /// Attributes for actor entities that affect gameplay mechanics
+///
+/// Fields store RAW INVESTMENT COUNTS (levels invested):
+/// - Axis: negative = left side, positive = right side (max ±127 levels)
+/// - Spectrum: flexibility range (max 255 levels)
+/// - Shift: tactical position within spectrum range (±spectrum)
+///
+/// Access scaled values via methods:
+/// - Axis: 1 level → 10 reach
+/// - Spectrum: 1 level → 7 reach (each direction)
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
 pub struct ActorAttributes {
     // MIGHT ↔ GRACE (Physical Expression)
-    // -100 = pure Might, 0 = balanced, +100 = pure Grace
-    pub might_grace_axis: i8,
-    pub might_grace_spectrum: u8,
-    pub might_grace_shift: i8,  // Player's chosen shift from axis (within ±spectrum)
+    // Negative axis = Might specialist, Positive axis = Grace specialist
+    might_grace_axis: i8,
+    might_grace_spectrum: i8,  // Raw investment count (max 127 levels)
+    might_grace_shift: i8,     // Player's chosen shift from axis (within ±spectrum)
 
     // VITALITY ↔ FOCUS (Endurance Type)
-    // -100 = pure Vitality, 0 = balanced, +100 = pure Focus
-    pub vitality_focus_axis: i8,
-    pub vitality_focus_spectrum: u8,
-    pub vitality_focus_shift: i8,
+    // Negative axis = Vitality specialist, Positive axis = Focus specialist
+    vitality_focus_axis: i8,
+    vitality_focus_spectrum: i8,
+    vitality_focus_shift: i8,
 
     // INSTINCT ↔ PRESENCE (Engagement Style)
-    // -100 = pure Instinct, 0 = balanced, +100 = pure Presence
-    pub instinct_presence_axis: i8,
-    pub instinct_presence_spectrum: u8,
-    pub instinct_presence_shift: i8,
+    // Negative axis = Instinct specialist, Positive axis = Presence specialist
+    instinct_presence_axis: i8,
+    instinct_presence_spectrum: i8,
+    instinct_presence_shift: i8,
 }
 
 impl ActorAttributes {
-    /// Create new ActorAttributes with raw axis, spectrum, and shift values
+    /// Create new ActorAttributes with raw investment counts
+    ///
+    /// # Arguments
+    /// * axis: negative = left attribute, positive = right attribute (-127 to 127)
+    /// * spectrum: flexibility investment (0 to 127)
+    /// * shift: tactical adjustment within spectrum range (-spectrum to +spectrum)
     pub fn new(
         might_grace_axis: i8,
-        might_grace_spectrum: u8,
+        might_grace_spectrum: i8,
         might_grace_shift: i8,
         vitality_focus_axis: i8,
-        vitality_focus_spectrum: u8,
+        vitality_focus_spectrum: i8,
         vitality_focus_shift: i8,
         instinct_presence_axis: i8,
-        instinct_presence_spectrum: u8,
+        instinct_presence_spectrum: i8,
         instinct_presence_shift: i8,
     ) -> Self {
         Self {
             might_grace_axis,
-            might_grace_spectrum,
+            might_grace_spectrum: might_grace_spectrum.max(0),  // Clamp spectrum to non-negative
             might_grace_shift,
             vitality_focus_axis,
-            vitality_focus_spectrum,
+            vitality_focus_spectrum: vitality_focus_spectrum.max(0),
             vitality_focus_shift,
             instinct_presence_axis,
-            instinct_presence_spectrum,
+            instinct_presence_spectrum: instinct_presence_spectrum.max(0),
             instinct_presence_shift,
         }
     }
 
-    // === Private: Get current position (axis + shift) ===
+    // === Raw field accessors (for testing and debugging) ===
 
-    fn might_grace(&self) -> i8 {
-        (self.might_grace_axis as i16 + self.might_grace_shift as i16).clamp(-100, 100) as i8
+    pub fn might_grace_axis(&self) -> i8 { self.might_grace_axis }
+    pub fn might_grace_spectrum(&self) -> i8 { self.might_grace_spectrum }
+    pub fn might_grace_shift(&self) -> i8 { self.might_grace_shift }
+
+    pub fn vitality_focus_axis(&self) -> i8 { self.vitality_focus_axis }
+    pub fn vitality_focus_spectrum(&self) -> i8 { self.vitality_focus_spectrum }
+    pub fn vitality_focus_shift(&self) -> i8 { self.vitality_focus_shift }
+
+    pub fn instinct_presence_axis(&self) -> i8 { self.instinct_presence_axis }
+    pub fn instinct_presence_spectrum(&self) -> i8 { self.instinct_presence_spectrum }
+    pub fn instinct_presence_shift(&self) -> i8 { self.instinct_presence_shift }
+
+    // === Mutators for shift values (tactical adjustments) ===
+
+    pub fn set_might_grace_shift(&mut self, shift: i8) {
+        let max_shift = self.might_grace_spectrum.max(0);
+        self.might_grace_shift = shift.clamp(-max_shift, max_shift);
     }
 
-    fn vitality_focus(&self) -> i8 {
-        (self.vitality_focus_axis as i16 + self.vitality_focus_shift as i16).clamp(-100, 100) as i8
+    pub fn set_vitality_focus_shift(&mut self, shift: i8) {
+        let max_shift = self.vitality_focus_spectrum.max(0);
+        self.vitality_focus_shift = shift.clamp(-max_shift, max_shift);
     }
 
-    fn instinct_presence(&self) -> i8 {
-        (self.instinct_presence_axis as i16 + self.instinct_presence_shift as i16).clamp(-100, 100) as i8
+    pub fn set_instinct_presence_shift(&mut self, shift: i8) {
+        let max_shift = self.instinct_presence_spectrum.max(0);
+        self.instinct_presence_shift = shift.clamp(-max_shift, max_shift);
+    }
+
+    // === Private: Get current scaled position (for derived stats like movement speed) ===
+    // These calculate the NET position (might vs grace) factoring in both axis and shift
+    // Positive = grace side, Negative = might side
+    // Returns scaled value based on investment
+
+    fn might_grace_position(&self) -> i16 {
+        let axis_scaled = (self.might_grace_axis as i16) * 10;
+        let shift_scaled = (self.might_grace_shift as i16) * 7;
+        axis_scaled + shift_scaled
+    }
+
+    fn vitality_focus_position(&self) -> i16 {
+        let axis_scaled = (self.vitality_focus_axis as i16) * 10;
+        let shift_scaled = (self.vitality_focus_shift as i16) * 7;
+        axis_scaled + shift_scaled
+    }
+
+    fn instinct_presence_position(&self) -> i16 {
+        let axis_scaled = (self.instinct_presence_axis as i16) * 10;
+        let shift_scaled = (self.instinct_presence_shift as i16) * 7;
+        axis_scaled + shift_scaled
     }
 
     // === MIGHT ↔ GRACE ===
 
-    /// Maximum Might reach with full spectrum shift
-    pub fn might_reach(&self) -> u8 {
+    /// Maximum Might reach
+    /// Formula: axis investment * 10 (on might side) + spectrum investment * 7
+    pub fn might_reach(&self) -> u16 {
+        let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 7;
+
         if self.might_grace_axis <= 0 {
-            // On might side or balanced: abs(axis - spectrum * 1.5)
-            ((self.might_grace_axis as i16 - (self.might_grace_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On might side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On grace side: spectrum * 1.5
-            (self.might_grace_spectrum as i16 * 3 / 2) as u8
+            // On grace side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Maximum Grace reach with full spectrum shift
-    pub fn grace_reach(&self) -> u8 {
+    /// Maximum Grace reach
+    /// Formula: axis investment * 10 (on grace side) + spectrum investment * 7
+    pub fn grace_reach(&self) -> u16 {
+        let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 7;
+
         if self.might_grace_axis >= 0 {
-            // On grace side or balanced: abs(axis + spectrum * 1.5)
-            ((self.might_grace_axis as i16 + (self.might_grace_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On grace side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On might side: spectrum * 1.5
-            (self.might_grace_spectrum as i16 * 3 / 2) as u8
+            // On might side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Current available Might
-    pub fn might(&self) -> u8 {
+    /// Current available Might (scaled)
+    /// Shift moves spectrum reach between might and grace
+    /// Formula: axis×10 + spectrum×7 - shift×7
+    pub fn might(&self) -> u16 {
+        let spectrum_reach = (self.might_grace_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.might_grace_shift as i16) * 7;
+
         if self.might_grace_axis <= 0 {
-            // On might side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.might_grace_axis as i16 + (self.might_grace_shift as i16 / 2) - self.might_grace_spectrum as i16).abs()).max(0) as u8
+            // On might side: axis reach + spectrum - shift adjustment
+            let axis_reach = (self.might_grace_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach - shift_scaled).max(0) as u16
         } else {
-            // On grace side: spectrum - shift * 0.5
-            (self.might_grace_spectrum as i16 - (self.might_grace_shift as i16 / 2)).max(0) as u8
+            // On grace side: spectrum - shift adjustment only
+            (spectrum_reach - shift_scaled).max(0) as u16
         }
     }
 
-    /// Current available Grace
-    pub fn grace(&self) -> u8 {
+    /// Current available Grace (scaled)
+    /// Shift moves spectrum reach between might and grace
+    /// Formula: spectrum×7 + shift×7 (on might side) or axis×10 + spectrum×7 + shift×7 (on grace side)
+    pub fn grace(&self) -> u16 {
+        let spectrum_reach = (self.might_grace_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.might_grace_shift as i16) * 7;
+
         if self.might_grace_axis >= 0 {
-            // On grace side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.might_grace_axis as i16 + (self.might_grace_shift as i16 / 2) + self.might_grace_spectrum as i16).abs()).max(0) as u8
+            // On grace side: axis reach + spectrum + shift adjustment
+            let axis_reach = (self.might_grace_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach + shift_scaled).max(0) as u16
         } else {
-            // On might side: spectrum + shift * 0.5
-            (self.might_grace_spectrum as i16 + (self.might_grace_shift as i16 / 2)).max(0) as u8
+            // On might side: spectrum + shift adjustment only
+            (spectrum_reach + shift_scaled).max(0) as u16
         }
     }
 
     // === VITALITY ↔ FOCUS ===
 
-    /// Maximum Vitality reach with full spectrum shift
-    pub fn vitality_reach(&self) -> u8 {
+    /// Maximum Vitality reach
+    /// Formula: axis investment * 10 (on vitality side) + spectrum investment * 7
+    pub fn vitality_reach(&self) -> u16 {
+        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 7;
+
         if self.vitality_focus_axis <= 0 {
-            // On vitality side or balanced: abs(axis - spectrum * 1.5)
-            ((self.vitality_focus_axis as i16 - (self.vitality_focus_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On vitality side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On focus side: spectrum * 1.5
-            (self.vitality_focus_spectrum as i16 * 3 / 2) as u8
+            // On focus side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Maximum Focus reach with full spectrum shift
-    pub fn focus_reach(&self) -> u8 {
+    /// Maximum Focus reach
+    /// Formula: axis investment * 10 (on focus side) + spectrum investment * 7
+    pub fn focus_reach(&self) -> u16 {
+        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 7;
+
         if self.vitality_focus_axis >= 0 {
-            // On focus side or balanced: abs(axis + spectrum * 1.5)
-            ((self.vitality_focus_axis as i16 + (self.vitality_focus_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On focus side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On vitality side: spectrum * 1.5
-            (self.vitality_focus_spectrum as i16 * 3 / 2) as u8
+            // On vitality side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Current available Vitality
-    pub fn vitality(&self) -> u8 {
+    /// Current available Vitality (scaled)
+    /// Shift moves spectrum reach between vitality and focus
+    /// Formula: axis×10 + spectrum×7 - shift×7
+    pub fn vitality(&self) -> u16 {
+        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.vitality_focus_shift as i16) * 7;
+
         if self.vitality_focus_axis <= 0 {
-            // On vitality side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.vitality_focus_axis as i16 + (self.vitality_focus_shift as i16 / 2) - self.vitality_focus_spectrum as i16).abs()).max(0) as u8
+            // On vitality side: axis reach + spectrum - shift adjustment
+            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach - shift_scaled).max(0) as u16
         } else {
-            // On focus side: spectrum - shift * 0.5
-            (self.vitality_focus_spectrum as i16 - (self.vitality_focus_shift as i16 / 2)).max(0) as u8
+            // On focus side: spectrum - shift adjustment only
+            (spectrum_reach - shift_scaled).max(0) as u16
         }
     }
 
-    /// Current available Focus
-    pub fn focus(&self) -> u8 {
+    /// Current available Focus (scaled)
+    /// Shift moves spectrum reach between vitality and focus
+    /// Formula: spectrum×7 + shift×7 (on vitality side) or axis×10 + spectrum×7 + shift×7 (on focus side)
+    pub fn focus(&self) -> u16 {
+        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.vitality_focus_shift as i16) * 7;
+
         if self.vitality_focus_axis >= 0 {
-            // On focus side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.vitality_focus_axis as i16 + (self.vitality_focus_shift as i16 / 2) + self.vitality_focus_spectrum as i16).abs()).max(0) as u8
+            // On focus side: axis reach + spectrum + shift adjustment
+            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach + shift_scaled).max(0) as u16
         } else {
-            // On vitality side: spectrum + shift * 0.5
-            (self.vitality_focus_spectrum as i16 + (self.vitality_focus_shift as i16 / 2)).max(0) as u8
+            // On vitality side: spectrum + shift adjustment only
+            (spectrum_reach + shift_scaled).max(0) as u16
         }
     }
 
     // === INSTINCT ↔ PRESENCE ===
 
-    /// Maximum Instinct reach with full spectrum shift
-    pub fn instinct_reach(&self) -> u8 {
+    /// Maximum Instinct reach
+    /// Formula: axis investment * 10 (on instinct side) + spectrum investment * 7
+    pub fn instinct_reach(&self) -> u16 {
+        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 7;
+
         if self.instinct_presence_axis <= 0 {
-            // On instinct side or balanced: abs(axis - spectrum * 1.5)
-            ((self.instinct_presence_axis as i16 - (self.instinct_presence_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On instinct side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On presence side: spectrum * 1.5
-            (self.instinct_presence_spectrum as i16 * 3 / 2) as u8
+            // On presence side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Maximum Presence reach with full spectrum shift
-    pub fn presence_reach(&self) -> u8 {
+    /// Maximum Presence reach
+    /// Formula: axis investment * 10 (on presence side) + spectrum investment * 7
+    pub fn presence_reach(&self) -> u16 {
+        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 7;
+
         if self.instinct_presence_axis >= 0 {
-            // On presence side or balanced: abs(axis + spectrum * 1.5)
-            ((self.instinct_presence_axis as i16 + (self.instinct_presence_spectrum as i16 * 3 / 2)).abs()) as u8
+            // On presence side or balanced: |axis| * 10 + spectrum * 7
+            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 10;
+            axis_reach + spectrum_reach
         } else {
-            // On instinct side: spectrum * 1.5
-            (self.instinct_presence_spectrum as i16 * 3 / 2) as u8
+            // On instinct side: spectrum * 7 only
+            spectrum_reach
         }
     }
 
-    /// Current available Instinct
-    pub fn instinct(&self) -> u8 {
+    /// Current available Instinct (scaled)
+    /// Shift moves spectrum reach between instinct and presence
+    /// Formula: axis×10 + spectrum×7 - shift×7
+    pub fn instinct(&self) -> u16 {
+        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.instinct_presence_shift as i16) * 7;
+
         if self.instinct_presence_axis <= 0 {
-            // On instinct side or balanced: abs(axis + shift * 0.5 - spectrum)
-            ((self.instinct_presence_axis as i16 + (self.instinct_presence_shift as i16 / 2) - self.instinct_presence_spectrum as i16).abs()).max(0) as u8
+            // On instinct side: axis reach + spectrum - shift adjustment
+            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach - shift_scaled).max(0) as u16
         } else {
-            // On presence side: spectrum - shift * 0.5
-            (self.instinct_presence_spectrum as i16 - (self.instinct_presence_shift as i16 / 2)).max(0) as u8
+            // On presence side: spectrum - shift adjustment only
+            (spectrum_reach - shift_scaled).max(0) as u16
         }
     }
 
-    /// Current available Presence
-    pub fn presence(&self) -> u8 {
+    /// Current available Presence (scaled)
+    /// Shift moves spectrum reach between instinct and presence
+    /// Formula: spectrum×7 + shift×7 (on instinct side) or axis×10 + spectrum×7 + shift×7 (on presence side)
+    pub fn presence(&self) -> u16 {
+        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as i16) * 7;
+        let shift_scaled = (self.instinct_presence_shift as i16) * 7;
+
         if self.instinct_presence_axis >= 0 {
-            // On presence side or balanced: abs(axis + shift * 0.5 + spectrum)
-            ((self.instinct_presence_axis as i16 + (self.instinct_presence_shift as i16 / 2) + self.instinct_presence_spectrum as i16).abs()).max(0) as u8
+            // On presence side: axis reach + spectrum + shift adjustment
+            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as i16) * 10;
+            (axis_reach + spectrum_reach + shift_scaled).max(0) as u16
         } else {
-            // On instinct side: spectrum + shift * 0.5
-            (self.instinct_presence_spectrum as i16 + (self.instinct_presence_shift as i16 / 2)).max(0) as u8
+            // On instinct side: spectrum + shift adjustment only
+            (spectrum_reach + shift_scaled).max(0) as u16
         }
     }
 
     /// Calculate total level from invested attribute points
-    /// Each level grants 2 attribute points that can be invested in axis (2 points per axis movement) or spectrum (1 point per spectrum)
+    /// Each level grants 1 point to invest in any axis or spectrum
+    /// Fields store raw investment counts, so sum directly
     pub fn total_level(&self) -> u32 {
-        let mg_points = (self.might_grace_axis.unsigned_abs() / 2) as u32 + self.might_grace_spectrum as u32;
-        let vf_points = (self.vitality_focus_axis.unsigned_abs() / 2) as u32 + self.vitality_focus_spectrum as u32;
-        let ip_points = (self.instinct_presence_axis.unsigned_abs() / 2) as u32 + self.instinct_presence_spectrum as u32;
+        let mg_points = self.might_grace_axis.unsigned_abs() as u32 + self.might_grace_spectrum.max(0) as u32;
+        let vf_points = self.vitality_focus_axis.unsigned_abs() as u32 + self.vitality_focus_spectrum.max(0) as u32;
+        let ip_points = self.instinct_presence_axis.unsigned_abs() as u32 + self.instinct_presence_spectrum.max(0) as u32;
         mg_points + vf_points + ip_points
     }
 
     // === DERIVED ATTRIBUTES ===
 
-    /// Movement speed derived from grace (might_grace position)
+    /// Movement speed derived from grace position (axis + shift)
     /// Higher grace = higher movement speed
-    /// Formula from ADR-010: max(75, 100 + (grace / 2))
+    /// Scaled formula: max(75, 100 + (position / 10))
     ///
-    /// Grace = -100 (Might specialist): speed = 75% (clamped, 0.00375)
-    /// Grace = 0 (parity): speed = 100% (baseline, 0.005)
-    /// Grace = 50: speed = 125% (+25%, 0.00625)
-    /// Grace = 100 (Grace specialist): speed = 150% (+50%, 0.0075)
+    /// Position = -500 (level 50 Might specialist): speed = 75% (clamped, 0.00375)
+    /// Position = 0 (parity): speed = 100% (baseline, 0.005)
+    /// Position = 250: speed = 125% (+25%, 0.00625)
+    /// Position = 500 (level 50 Grace specialist): speed = 150% (+50%, 0.0075)
     pub fn movement_speed(&self) -> f32 {
         const BASE_SPEED: f32 = 0.005;  // World units per millisecond (MOVEMENT_SPEED from physics.rs)
 
-        let grace = self.might_grace() as f32;  // -100 to +100
-        let speed_percent = (100.0 + (grace / 2.0)).max(75.0);  // 75 to 150
+        let position = self.might_grace_position() as f32;  // Scaled: -500 to +500 for level 50
+        let speed_percent = (100.0 + (position / 10.0)).max(75.0);  // 75 to 150
         BASE_SPEED * (speed_percent / 100.0)
     }
 
     /// Maximum health derived from vitality_reach
     /// Higher vitality reach = higher max health potential
+    /// Scaled formula: 100 + (vitality_reach * 3.8)
+    ///
     /// 0 vitality_reach = 100 HP
-    /// 100 vitality_reach = 2000 HP
+    /// 500 vitality_reach (level 50 pure vitality) = 2000 HP
     pub fn max_health(&self) -> f32 {
         let base = 100.0;
         let vitality_reach = self.vitality_reach() as f32;
-        base + (vitality_reach * 19.0)
+        base + (vitality_reach * 3.8)
     }
 }
 

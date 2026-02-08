@@ -1,8 +1,5 @@
-use bevy::{
-    prelude::*,
-    render::primitives::Aabb,
-    tasks::Task
-};
+use bevy::{prelude::*, tasks::Task};
+use bevy_camera::primitives::Aabb;
 
 use crate::common::chunk::ChunkId;
 

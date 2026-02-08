@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 #![feature(more_float_constants)]
 #![feature(extend_one)]
 
@@ -25,7 +24,6 @@ use common::{
     message::*,
     plugins::nntree,
     resources::{ map::*,  * },
-    systems::physics,
 };
 use client::{
     plugins::{
@@ -35,13 +33,13 @@ use client::{
         vignette::VignettePlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
 };
 
 const PROTOCOL_ID: u64 = 7;
 
 fn panic_on_error_system(
-    mut renet_error: EventReader<NetcodeTransportError>
+    mut renet_error: MessageReader<NetcodeTransportError>
 ) {
     if let Some(e) = renet_error.read().next() {
         panic!("{:?}", e);
@@ -65,6 +63,7 @@ fn main() {
                     +"bevy=warn,cosmic_text=warn,client=trace,"
                     ,
             custom_layer: |_| None,
+            ..default()
         }),
         RenetClientPlugin,
         NetcodeClientPlugin,
@@ -77,8 +76,8 @@ fn main() {
         VignettePlugin,
     ));
 
-    app.add_event::<Do>();
-    app.add_event::<Try>();
+    app.add_message::<Do>();
+    app.add_message::<Try>();
 
     app.add_systems(Startup, (
         setup,
@@ -96,8 +95,12 @@ fn main() {
 
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
-        physics::update,
         common::systems::combat::resources::regenerate_resources,
+    ));
+
+    // ADR-019: Predict local player position by replaying InputQueue from confirmed state
+    app.add_systems(FixedPostUpdate, (
+        prediction::predict_local_player,
     ));
 
     app.add_systems(PreUpdate, (
@@ -109,6 +112,7 @@ fn main() {
         actor::do_spawn,
         actor::apply_movement_intent, // ADR-011: Apply movement intent predictions
         actor::try_gcd,
+        prediction::advance_interpolation.before(actor::update), // ADR-019: Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         animator::update,

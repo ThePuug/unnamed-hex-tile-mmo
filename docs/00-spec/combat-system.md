@@ -254,11 +254,6 @@ Examples:
 **Focus (Mental Clarity):**
 ```
 queue_capacity = base_capacity + floor(focus / 33.0)
-
-Examples:
-- Focus = -100: 1 threat capacity (everything else instant)
-- Focus = 0: 3 threat capacity
-- Focus = 100: 6 threat capacity
 ```
 
 ### Queue Resolution

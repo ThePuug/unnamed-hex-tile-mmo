@@ -13,10 +13,10 @@ use crate::{
 /// - Requires at least one threat in queue
 pub fn handle_deflect(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
     recovery_query: Query<&GlobalRecovery>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {

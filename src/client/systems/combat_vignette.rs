@@ -92,7 +92,7 @@ pub fn update(
     player_query: Query<&CombatState, With<PlayerControlled>>,
     time: Res<Time>,
 ) {
-    let Ok(combat_state) = player_query.get_single() else {
+    let Ok(combat_state) = player_query.single() else {
         return;
     };
 

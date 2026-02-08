@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::components::behaviour::*;
 
-#[derive(Clone, Copy, Debug, Deserialize, Event, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
 pub struct Tick {
     pub ent: Entity,
     pub behaviour: Behaviour,

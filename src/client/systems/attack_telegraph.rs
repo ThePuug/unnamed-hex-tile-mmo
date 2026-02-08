@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use qrz::Convert;
 use crate::common::{
-    components::{Loc, offset::Offset},
     message::{Do, Event as GameEvent},
-    resources::map::Map,
 };
 
 /// Component for attack telegraph visual (ball over attacker's head)
@@ -31,7 +29,7 @@ pub struct HitLine {
 /// Spawn attack ball when a threat is inserted into the queue (Volley ability only)
 pub fn on_insert_threat(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -69,13 +67,11 @@ pub fn on_insert_threat(
 /// Replace attack ball with hit line when damage is applied (Volley ability only)
 pub fn on_apply_damage(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     time: Res<Time>,
-    map: Res<Map>,
-    locs: Query<&Loc>,
-    offsets: Query<&Offset>,
+    transforms: Query<&Transform>,
     balls: Query<(Entity, &AttackBall)>,
 ) {
     for message in reader.read() {
@@ -88,16 +84,12 @@ pub fn on_apply_damage(
                 // Despawn the ball
                 commands.entity(ball_entity).despawn();
 
-                // Get positions for line (connects from player to ball position)
-                let Ok(source_loc) = locs.get(*source) else { continue };
-                let Ok(target_loc) = locs.get(*target) else { continue };
+                // Get positions for line from Transform (already includes VisualPosition)
+                let Ok(source_transform) = transforms.get(*source) else { continue };
+                let Ok(target_transform) = transforms.get(*target) else { continue };
 
-                let source_offset = offsets.get(*source).map(|o| o.step).unwrap_or(Vec3::ZERO);
-                let target_offset = offsets.get(*target).map(|o| o.step).unwrap_or(Vec3::ZERO);
-
-                // Source is the attacker (ball position), target is the player
-                let source_world = map.convert(**source_loc) + source_offset + Vec3::new(0.0, 1.5, 0.0); // Ball height
-                let target_world = map.convert(**target_loc) + target_offset + Vec3::new(0.0, 0.5, 0.0); // Player center
+                let source_world = source_transform.translation + Vec3::new(0.0, 1.5, 0.0); // Ball height
+                let target_world = target_transform.translation + Vec3::new(0.0, 0.5, 0.0); // Player center
 
                 // Spawn hit line
                 let direction = target_world - source_world;
@@ -132,7 +124,7 @@ pub fn on_apply_damage(
 /// Despawn attack ball when threat is cleared (deflect/knockback)
 pub fn on_clear_queue(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     balls: Query<(Entity, &AttackBall)>,
 ) {
     for message in reader.read() {

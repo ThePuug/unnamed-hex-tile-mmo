@@ -1,5 +1,6 @@
 pub mod behaviour;
 pub mod combat;
+pub mod movement;
 pub mod physics;
 pub mod targeting;
 pub mod world;

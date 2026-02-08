@@ -84,7 +84,7 @@ pub fn update(
             }
             Info::DistanceIndicator => {
                 // ADR-014 Phase 4: Distance indicator showing haven distance, zone, and enemy level
-                if let Ok(player_loc) = player_query.get_single() {
+                if let Ok(player_loc) = player_query.single() {
                     let distance = HAVEN_LOCATION.flat_distance(&**player_loc);
                     let zone = get_directional_zone(**player_loc, HAVEN_LOCATION);
                     let level = calculate_enemy_level(**player_loc, HAVEN_LOCATION);

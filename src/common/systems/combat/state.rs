@@ -13,7 +13,7 @@ use crate::common::{
 /// - 5 seconds since last_action AND
 /// - No hostile entities within 20 hexes
 pub fn update_combat_state(
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Behaviour>)>,
     entity_query: Query<(Entity, &Loc, Option<&Behaviour>)>,
     nntree: Res<NNTree>,
@@ -114,7 +114,7 @@ pub fn enter_combat(
     ent: Entity,
     combat_state: &mut CombatState,
     time: &Time,
-    writer: &mut EventWriter<Do>,
+    writer: &mut MessageWriter<Do>,
 ) {
     let was_in_combat = combat_state.in_combat;
 

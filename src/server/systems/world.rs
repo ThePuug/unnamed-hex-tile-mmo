@@ -11,9 +11,8 @@ use crate::{
             entity_type::*,
             heading::Heading,
             keybits::KeyBits,
-            offset::Offset,
+            position::Position,
             resources::*,
-            spawner::*,
         },
         message::{ Component, Event, * },
         systems::*
@@ -128,8 +127,8 @@ pub fn setup(
 }
 
 pub fn try_spawn(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     query: Query<(
         &Loc,
         &EntityType,
@@ -171,7 +170,7 @@ pub fn try_spawn(
 
 pub fn do_spawn(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut map: ResMut<crate::Map>,
     entities: &Entities,
     existing_actors: Query<(), With<Actor>>,
@@ -194,7 +193,7 @@ pub fn do_spawn(
                             AirTime { state: Some(125), step: None },
                             KeyBits::default(),
                             Heading::default(),
-                            Offset::default(),
+                            Position::at_tile(qrz),
                             LastAutoAttack::default(), // ADR-009: Track auto-attack cooldown
                             Transform {
                                 translation: map.convert(qrz),

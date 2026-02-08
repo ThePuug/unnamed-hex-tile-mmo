@@ -1,10 +1,6 @@
 use std::time::Duration;
 
-use bevy::{
-    prelude::*,
-    scene::SceneInstanceReady,
-    render::primitives::Aabb,
-};
+use bevy::{prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
 use crate::{
@@ -13,7 +9,8 @@ use crate::{
         components::{
             behaviour::Behaviour,
             entity_type::{ actor::*, * },
-            heading::*, keybits::*, offset::*,
+            heading::*, keybits::*,
+            position::{Position, VisualPosition},
             reaction_queue::ReactionQueue,
             *
         },
@@ -27,7 +24,7 @@ use crate::{
 pub fn setup() {}
 
 fn ready(
-    trigger: Trigger<SceneInstanceReady>,
+    trigger: On<SceneInstanceReady>,
     mut commands: Commands,
     query: Query<&EntityType>,
     mut q_player: Query<&mut AnimationPlayer>,
@@ -35,11 +32,12 @@ fn ready(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
-    for child in q_child.iter_descendants(trigger.target()) {
+    let entity = trigger.entity;
+    for child in q_child.iter_descendants(entity) {
         if let Ok(mut player) = q_player.get_mut(child) {
-            commands.entity(trigger.target()).insert(Animates(child));
+            commands.entity(entity).insert(Animates(child));
 
-            let &typ = query.get(trigger.target()).expect("couldn't get entity type");
+            let &typ = query.get(entity).expect("couldn't get entity type");
             let asset = get_asset(typ);
             let (graph, _) = AnimationGraph::from_clips([
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset(asset.clone())),
@@ -56,35 +54,17 @@ fn ready(
 }
 
 pub fn update(
-    fixed_time: Res<Time<Fixed>>,
-    time: Res<Time>,
-    mut query: Query<(Entity, &Loc, &mut Offset, &Heading, &mut Transform)>,
+    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>)>,
     map: Res<Map>,
-    buffers: Res<InputQueues>,
 ) {
-    let delta = time.delta_secs();
-
-    for (ent, &loc, mut offset, &heading, mut transform0) in &mut query {
-        let is_local = buffers.get(&ent).is_some();
-
-        let interp_fraction = if is_local {
-            // Local players: use FixedUpdate overstep fraction
-            fixed_time.overstep_fraction()
+    for (&loc, &heading, mut transform0, vis_pos) in &mut query {
+        let final_pos = if let Some(vis) = vis_pos {
+            // ADR-019: Use VisualPosition for smooth, jitter-free rendering
+            vis.current()
         } else {
-            // NPCs and remote players: use time-based interpolation
-            offset.interp_elapsed += delta;
-            if offset.interp_duration > 0.0 {
-                (offset.interp_elapsed / offset.interp_duration).min(1.0)
-            } else {
-                1.0
-            }
+            // Fallback: tile center for entities without VisualPosition
+            map.convert(*loc)
         };
-
-        let prev_pos = map.convert(*loc) + offset.prev_step;
-        let curr_pos = map.convert(*loc) + offset.step;
-
-        // Interpolate between previous and current physics positions
-        let final_pos = prev_pos.lerp(curr_pos, interp_fraction);
 
         transform0.translation = final_pos;
         transform0.rotation = heading.into();
@@ -93,7 +73,7 @@ pub fn update(
 
 pub fn do_spawn(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -118,6 +98,8 @@ pub fn do_spawn(
                     commands.spawn_empty()
                 };
 
+                let spawn_world: Vec3 = map.convert(qrz);
+
                 entity_cmd
                     .insert((
                         loc,
@@ -127,16 +109,18 @@ pub fn do_spawn(
                         Behaviour::Controlled,
                         SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
                         Transform {
-                            translation: map.convert(qrz),
+                            translation: spawn_world,
                             scale: Vec3::ONE * map.radius(),
                             ..default()},
                         AirTime { state: Some(0), step: None },
                         NearestNeighbor::new(ent, loc),
                         Heading::default(),
-                        Offset::default(),
                         KeyBits::default(),
                         Visibility::default(),
                         Physics::default(),
+                        // ADR-019: New position and visual interpolation components
+                        Position::at_tile(qrz),
+                        VisualPosition::at(spawn_world),
                     ))
                     .insert((
                         attrs_val,
@@ -157,8 +141,8 @@ pub fn do_spawn(
 }
 
 pub fn try_gcd(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ } } = message {
@@ -186,14 +170,14 @@ fn get_asset(typ: EntityType) -> String {
     }
 }
 
-/// Apply movement intent to predict remote entity movement (ADR-011)
+/// Apply movement intent to predict remote entity movement (ADR-011 + ADR-019)
 ///
 /// When a MovementIntent arrives, start interpolating toward the predicted destination.
 /// Local player is skipped (already predicted via Input system).
 pub fn apply_movement_intent(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
-    mut query: Query<(&mut Offset, &Loc, &Heading)>,
+    mut reader: MessageReader<Do>,
+    mut query: Query<(&Loc, &Heading, &mut VisualPosition)>,
     map: Res<Map>,
     time: Res<Time>,
     buffers: Res<InputQueues>,
@@ -207,44 +191,26 @@ pub fn apply_movement_intent(
             continue;
         }
 
-        let Ok((mut offset, loc, heading)) = query.get_mut(ent) else {
+        let Ok((loc, heading, mut visual)) = query.get_mut(ent) else {
             continue;
         };
 
         // Calculate target position (destination tile + heading-adjusted offset)
-        // Use actual Heading component (updated by broadcast_heading_changes)
-        let dest_tile_center = map.convert(destination);
-        let current_tile_world = map.convert(**loc);
+        let dest_tile_center: Vec3 = map.convert(destination);
 
-        // Calculate heading-adjusted offset using actual Heading component
         let dest_offset = if **heading != default() {
             use crate::common::components::heading::HERE;
-            let heading_neighbor = map.convert(destination + **heading);
+            let heading_neighbor: Vec3 = map.convert(destination + **heading);
             let direction = heading_neighbor - dest_tile_center;
             (direction * HERE).xz()
         } else {
-            // No heading - stay at tile center
             Vec2::ZERO
         };
         let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
+        let duration_secs = duration_ms as f32 / 1000.0;
 
-        // Calculate where we are RIGHT NOW in the current interpolation (before overwriting it)
-        let current_interp_fraction = if offset.interp_duration > 0.0 {
-            (offset.interp_elapsed / offset.interp_duration).min(1.0)
-        } else {
-            1.0  // Completed or no interpolation - we're at offset.state
-        };
-        let current_visual_offset = offset.prev_step.lerp(offset.step, current_interp_fraction);
+        visual.interpolate_toward(dest_world, duration_secs);
 
-        // Set up NEW interpolation: current visual position → predicted destination
-        offset.prev_step = current_visual_offset;  // Start from where we are NOW
-        offset.step = dest_world - current_tile_world; // Target is destination tile
-
-        // Set interpolation duration based on intent
-        offset.interp_duration = duration_ms as f32 / 1000.0;
-        offset.interp_elapsed = 0.0;
-
-        // Insert prediction tracking component for validation (only if entity exists)
         if let Ok(mut entity_cmd) = commands.get_entity(ent) {
             entity_cmd.insert(crate::common::components::movement_prediction::MovementPrediction::new(
                 destination,

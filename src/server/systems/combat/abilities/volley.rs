@@ -12,12 +12,12 @@ use crate::common::{
 /// - Attacks single hostile target
 pub fn handle_volley(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: ability_target_loc } } = event else {
@@ -120,7 +120,7 @@ pub fn handle_volley(
 
         // Send DealDamage event for this target
         // Volley: 20 damage, Physical type
-        commands.trigger_targets(
+        commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
@@ -130,7 +130,6 @@ pub fn handle_volley(
                     ability: Some(AbilityType::Volley),
                 },
             },
-            target,
         );
     }
 }

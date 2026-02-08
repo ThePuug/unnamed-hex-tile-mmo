@@ -73,7 +73,7 @@ pub fn setup(
 
 pub fn render_do_gcd(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     query: Query<(&Loc, &Heading)>,
     map: Res<EffectMap>,
 ) {

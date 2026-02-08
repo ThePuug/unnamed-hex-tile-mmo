@@ -1,17 +1,16 @@
-use bevy::{
-    prelude::*,
-    render::camera::ScalingMode
-};
+use bevy::prelude::*;
+use bevy_camera::ScalingMode;
 
 use crate::{
     client::plugins::vignette::VignetteSettings,
     common::{
-        components::{ *,
-            offset::*,
-        },
+        components::*,
         resources::map::Map
     }
 };
+
+/// Fixed camera displacement above/behind the player.
+const CAMERA_OFFSET: Vec3 = Vec3::new(0., 30., 40.);
 
 pub fn setup(
     mut commands: Commands,
@@ -19,13 +18,10 @@ pub fn setup(
     commands.spawn((
         Camera3d::default(),
         Projection::from(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: 40.0,
-            },
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: 40.0 },
             ..OrthographicProjection::default_3d()
         }),
         Transform::default(),
-        Offset { state: Vec3::new(0., 30., 40.), ..default() },
         Actor,
         VignetteSettings::default(), // Add vignette post-processing
     ));
@@ -33,12 +29,12 @@ pub fn setup(
 
 pub fn update(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera: Query<(&mut Projection, &mut Transform, &Offset), With<Camera3d>>,
+    mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
     actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
 ) {
     if let Ok(a_transform) = actor.single() {
-        if let Ok((c_projection, mut c_transform, c_offset)) = camera.single_mut() {
+        if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
             match c_projection.into_inner() {
                 Projection::Perspective(c_perspective) => {
                     const MIN: f32 = 6_f32.to_radians();
@@ -62,7 +58,7 @@ pub fn update(
                 }
                 _ => {}
             }
-            c_transform.translation = a_transform.translation + c_offset.state;
+            c_transform.translation = a_transform.translation + CAMERA_OFFSET;
             c_transform.look_at(a_transform.translation + Vec3::Y * map.radius(), Vec3::Y);
         }
     }

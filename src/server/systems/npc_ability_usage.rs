@@ -35,7 +35,7 @@ pub fn npc_ability_usage(
     >,
     target_query: Query<&Loc, With<crate::common::components::behaviour::PlayerControlled>>,
     time: Res<Time>,
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
 ) {
     for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt) in npc_query.iter_mut() {
         // Skip if in recovery (ability lockout)

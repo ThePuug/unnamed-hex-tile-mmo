@@ -1,16 +1,16 @@
 use bevy::prelude::*;
 
 use crate::common::{
-        components::{behaviour::*, heading::*, keybits::*, offset::*, *}, 
-        message::{Component, Event, *}, 
-        plugins::nntree::*, 
-        resources::{map::*, *}, 
+        components::{behaviour::*, heading::*, keybits::*, position::Position, *},
+        message::{Component, Event, *},
+        plugins::nntree::*,
+        resources::{map::*, *},
         systems::physics,
     };
 
 pub fn tick(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
+    mut reader: MessageReader<Do>,
+    mut writer: MessageWriter<Try>,
     query: Query<&Behaviour>,
     time: Res<Time>,
     mut buffers: ResMut<InputQueues>,
@@ -66,14 +66,14 @@ pub fn tick(
 }
 
 pub fn apply(
-    mut reader: EventReader<Do>,
-    mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
+    mut reader: MessageReader<Do>,
+    mut query: Query<(&Loc, &mut Heading, &mut Position, &mut AirTime, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
     for &message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
-            let Ok((&loc, mut heading, mut offset, mut airtime, attrs)) = query.get_mut(ent)
+            let Ok((&loc, mut heading, mut position, mut airtime, attrs)) = query.get_mut(ent)
                 // disconnect by client could remove entity while message in transit
                 else { continue };
             let new_heading = Heading::from(key_bits);
@@ -86,7 +86,7 @@ pub fn apply(
 
             if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() { airtime.state = Some(125); }
             let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-            (offset.state, airtime.state) = physics::apply(dest, dt as i16, loc, offset.state, airtime.state, movement_speed, *heading, &map, &nntree);
+            (position.offset, airtime.state) = physics::apply(dest, dt as i16, loc, position.offset, airtime.state, movement_speed, *heading, &map, &nntree);
         }
     }
 }

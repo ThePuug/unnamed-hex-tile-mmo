@@ -33,6 +33,7 @@ This directory contains technical architecture decisions for the unnamed hex-til
 | 016 | ✅ | Movement Intent Architecture | ⚔️ | 2025-11-05 |
 | 017 | ✅ | Universal Lockout + Synergy Architecture | ⚔️ | 2025-11-07 |
 | 018 | 📋 | Ability Execution Pipeline | ⚔️ | 2025-11-07 |
+| 019 | ✅ | Unified Interpolation Model | 🌐 | 2025-02-08 |
 
 ### When to Read Each ADR
 
@@ -57,6 +58,7 @@ This directory contains technical architecture decisions for the unnamed hex-til
 - **016 - Movement Intent Architecture:** Broadcast movement destinations before completion for remote entity prediction. Read when working with movement, network sync, or remote entity rendering.
 - **017 - Universal Lockout + Synergy Architecture:** Variable recovery durations with early unlock synergies. Read when implementing ability pacing, combat flow, or synergy systems.
 - **018 - Ability Execution Pipeline:** Three-stage pipeline (validation → execution → broadcasting) with pure function extraction. Read when implementing new abilities or refactoring ability systems.
+- **019 - Unified Interpolation Model:** Separate authoritative position from visual interpolation, unified local/remote handling. Read when working with movement, position, or entity rendering.
 
 **UI & Developer Tools:**
 - **013 - Developer Console Architecture:** Hierarchical menu with event-based actions. Read when adding debug features or console commands.

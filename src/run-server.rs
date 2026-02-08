@@ -21,18 +21,17 @@ use crate::{
         message::*,
         plugins::nntree,
         resources::{map::*, *},
-        systems::physics
     },
     server::{
         resources::{engagement_budget::EngagementBudget, terrain::*, *},
-        systems::{actor, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, spawner, targeting, world},
+        systems::{actor, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
         *
     }
 };
 
 const PROTOCOL_ID: u64 = 7;
 
-fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
+fn panic_on_error_system(mut renet_error: MessageReader<NetcodeTransportError>) {
     if let Some(e) = renet_error.read().next() {
         panic!("{:?}", e);
     }
@@ -48,6 +47,7 @@ fn main() {
                     +"unnamed_hex_tile_mmo=trace,"
                     ,
             custom_layer: |_| None,
+            ..default()
         },
         TransformPlugin,
         RenetServerPlugin,
@@ -58,9 +58,9 @@ fn main() {
         server::plugins::behaviour::BehaviourPlugin,
     ));
 
-    app.add_event::<Do>();
-    app.add_event::<Try>();
-    app.add_event::<Tick>();
+    app.add_message::<Do>();
+    app.add_message::<Try>();
+    app.add_message::<Tick>();
 
     // Add observers for triggered events
     app.add_observer(combat::process_deal_damage);
@@ -71,9 +71,7 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        physics::update,
-        common::systems::combat::resources::regenerate_resources,
-        spawner::leash_health_regen, // Rapidly regenerate health for leashing NPCs (100 HP/sec)
+        common::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
         common::systems::combat::state::update_combat_state,
         common::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
         common::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies
@@ -119,9 +117,6 @@ fn main() {
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         renet::do_manage_connections,
-        // ADR-014: Static spawners disabled in favor of dynamic engagement system
-        // spawner::tick_spawners.run_if(on_timer(Duration::from_secs(1))),
-        // spawner::despawn_out_of_range.run_if(on_timer(Duration::from_secs(3))),
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
         world::do_spawn,

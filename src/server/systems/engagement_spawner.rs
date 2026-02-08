@@ -19,7 +19,7 @@ use crate::{
             },
             gcd::Gcd,
             heading::Heading,
-            offset::Offset,
+            position::Position,
             reaction_queue::ReactionQueue,
             resources::{CombatState, Health, Mana, Stamina},
             AirTime, LastAutoAttack, Physics, Loc,
@@ -54,8 +54,8 @@ const MIN_DISTANCE_FROM_ENGAGEMENT: u32 = 50;
 ///
 /// If all pass, sends Try::SpawnEngagement event
 pub fn try_spawn_engagement(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<crate::common::message::Try>,
+    mut reader: MessageReader<Do>,
+    mut writer: MessageWriter<crate::common::message::Try>,
     budget: Res<EngagementBudget>,
     player_query: Query<(&Loc, &Behaviour)>,
     engagement_query: Query<&Loc, With<Engagement>>,
@@ -72,8 +72,8 @@ pub fn try_spawn_engagement(
 
 /// System that processes Try::SpawnEngagement events and creates actual engagements
 pub fn do_spawn_engagement(
-    mut reader: EventReader<crate::common::message::Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<crate::common::message::Try>,
+    mut writer: MessageWriter<Do>,
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
     time: Res<Time>,
@@ -99,7 +99,7 @@ pub fn do_spawn_engagement(
 /// Helper function to attempt spawning engagement at a chunk
 fn try_spawn_engagement_at_chunk(
     chunk_id: ChunkId,
-    writer: &mut EventWriter<crate::common::message::Try>,
+    writer: &mut MessageWriter<crate::common::message::Try>,
     budget: &EngagementBudget,
     player_query: &Query<(&Loc, &Behaviour)>,
     engagement_query: &Query<&Loc, With<Engagement>>,
@@ -149,7 +149,7 @@ fn try_spawn_engagement_at_chunk(
 fn spawn_engagement_at(
     location: Qrz,
     commands: &mut Commands,
-    writer: &mut EventWriter<Do>,
+    writer: &mut MessageWriter<Do>,
     budget: &mut EngagementBudget,
     time: &Time,
     terrain: &crate::server::resources::terrain::Terrain,
@@ -277,7 +277,7 @@ fn spawn_engagement_at(
                     chase,
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
-                    Offset::default(),
+                    Position::at_tile(npc_location),
                     AirTime::default(),
                     bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));
@@ -290,7 +290,7 @@ fn spawn_engagement_at(
                     kite,
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
-                    Offset::default(),
+                    Position::at_tile(npc_location),
                     AirTime::default(),
                     bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));

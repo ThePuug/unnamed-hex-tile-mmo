@@ -1,11 +1,10 @@
 use bevy::{
-    asset::RenderAssetUsages, 
-    prelude::*, 
-    render::{
-        mesh::{Indices, PrimitiveTopology}, 
-        primitives::Aabb
-    },
+    asset::RenderAssetUsages,
+    prelude::*,
+    render::render_resource::PrimitiveTopology,
 };
+use bevy_camera::primitives::Aabb;
+use bevy_mesh::Indices;
 
 use qrz::{self, Convert, Qrz};
 
@@ -457,7 +456,7 @@ mod tests {
             .expect("Mesh should have colors");
 
         let colors = match color_attr {
-            bevy::render::mesh::VertexAttributeValues::Float32x4(colors) => colors,
+            bevy_mesh::VertexAttributeValues::Float32x4(colors) => colors,
             _ => panic!("Expected Float32x4 color attribute"),
         };
 

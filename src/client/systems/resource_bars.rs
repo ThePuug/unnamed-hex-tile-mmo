@@ -79,7 +79,7 @@ pub fn setup(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {
@@ -122,7 +122,7 @@ pub fn setup(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {
@@ -165,7 +165,7 @@ pub fn setup(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
             BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         ))
         .with_children(|parent| {

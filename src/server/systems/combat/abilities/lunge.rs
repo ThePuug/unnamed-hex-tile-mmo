@@ -14,13 +14,13 @@ use crate::{
 /// - Teleports caster adjacent to target
 pub fn handle_lunge(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -163,8 +163,7 @@ pub fn handle_lunge(
         commands.entity(*ent).insert(Loc::new(landing_loc));
 
         // Broadcast Loc update to clients
-        // NOTE: Client detects teleport by hex distance (>=2 hexes) and clears Offset automatically
-        // Offset is client-side interpolation state - server doesn't need to manage it
+        // NOTE: Client detects teleport by hex distance (>=2 hexes) and snaps VisualPosition automatically
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
@@ -173,7 +172,7 @@ pub fn handle_lunge(
         });
 
         // Deal damage (40 base damage)
-        commands.trigger_targets(
+        commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
@@ -183,7 +182,6 @@ pub fn handle_lunge(
                     ability: Some(AbilityType::Lunge),
                 },
             },
-            target_ent,
         );
 
         // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)

@@ -3,7 +3,7 @@ use qrz::Convert;
 
 use crate::{
     common::{
-        components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, offset::Offset, * },
+        components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, position::Position, * },
         message::{Event, *},
         systems::combat::gcd::*,
         resources::map::Map,
@@ -12,8 +12,8 @@ use crate::{
 };
 
 pub fn try_input(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
 ) {
     for &message in reader.read() {
@@ -61,7 +61,7 @@ pub fn send_input(
 /// This function exists to satisfy the event pipeline but does nothing.
 /// Event::Gcd { typ: GcdType::Attack } is sent but not processed here.
 pub fn try_gcd(
-    mut _reader: EventReader<Try>,
+    mut _reader: MessageReader<Try>,
 ) {
     // GcdType::Attack is handled by ability systems (auto_attack, lunge, etc.)
     // PlaceSpawner and Spawn were removed - spawners are placed during terrain generation
@@ -75,8 +75,8 @@ pub fn try_gcd(
 /// Server updates the TierLock component to reflect the chosen tier.
 /// Abilities will validate the existing Target component is in the correct tier.
 pub fn try_set_tier_lock(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     mut tier_locks: Query<&mut TierLock>,
 ) {
     for &message in reader.read() {
@@ -103,16 +103,16 @@ pub fn try_set_tier_lock(
 /// broadcast where players are heading, enabling client-side prediction of remote players.
 pub fn broadcast_player_movement_intent(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     buffers: Res<InputQueues>,
-    mut query: Query<(&Loc, &Heading, &Offset, Option<&ActorAttributes>, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>)>,
+    mut query: Query<(&Loc, &Heading, &Position, Option<&ActorAttributes>, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>)>,
     map: Res<Map>,
 ) {
     for (ent, buffer) in buffers.iter() {
         // Queue invariant: all queues must have at least 1 input
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
 
-        let Ok((loc, heading, offset, attrs, o_intent_state)) = query.get_mut(ent) else { continue; };
+        let Ok((loc, heading, position, attrs, o_intent_state)) = query.get_mut(ent) else { continue; };
 
         // Get the first input (the accumulating one that physics will process next)
         let Some(input) = buffer.queue.back() else { continue; };
@@ -149,7 +149,7 @@ pub fn broadcast_player_movement_intent(
 
         let distance = if is_moving {
             // Moving: distance from current position to destination heading-adjusted position
-            let current_world = map.convert(**loc) + offset.state;
+            let current_world = map.convert(**loc) + position.offset;
             let dest_tile_center = map.convert(destination);
 
             // Calculate destination heading-adjusted offset (use Heading component, not key_bits)
@@ -161,7 +161,7 @@ pub fn broadcast_player_movement_intent(
             (dest_world - current_world).length()
         } else {
             // Stopped: distance from current position to current tile heading-adjusted position
-            let current_world = map.convert(**loc) + offset.state;
+            let current_world = map.convert(**loc) + position.offset;
             let tile_center = map.convert(**loc);
             let heading_neighbor = map.convert(**loc + **heading);
             let direction = heading_neighbor - tile_center;

@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Events that can be triggered from the developer console
-#[derive(Event, Debug)]
+#[derive(Event, Message, Debug)]
 pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,
@@ -25,7 +25,7 @@ pub enum DevConsoleAction {
 /// System that executes console actions
 pub fn execute_console_actions(
     mut diagnostics_state: ResMut<DiagnosticsState>,
-    mut reader: EventReader<DevConsoleAction>,
+    mut reader: MessageReader<DevConsoleAction>,
     mut map: ResMut<Map>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
     mut terrain_query: Query<&mut Terrain>,

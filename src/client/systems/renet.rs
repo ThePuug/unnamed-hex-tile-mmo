@@ -33,7 +33,6 @@ fn get_message_type_name(message: &Do) -> String {
                 Component::CombatState(_) => "Inc:Combat".to_string(),
                 Component::Behaviour(_) => "Inc:Behaviour".to_string(),
                 Component::KeyBits(_) => "Inc:KeyBits".to_string(),
-                Component::Offset(_) => "Inc:Offset".to_string(),
                 Component::PlayerControlled(_) => "Inc:PlayerControlled".to_string(),
                 Component::Returning(_) => "Inc:Returning".to_string(),
             }
@@ -74,8 +73,8 @@ pub fn setup(
 
 pub fn write_do(
     mut commands: Commands,
-    mut do_writer: EventWriter<Do>,
-    mut try_writer: EventWriter<Try>,
+    mut do_writer: MessageWriter<Do>,
+    mut try_writer: MessageWriter<Try>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
@@ -263,7 +262,7 @@ pub fn write_do(
 
 pub fn send_try(
     mut conn: ResMut<RenetClient>,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     l2r: Res<EntityMap>,
 ) {
     for &message in reader.read() {
@@ -310,7 +309,7 @@ pub fn send_try(
 
 /// Handle Pong response to refine time sync with measured network latency
 pub fn handle_pong(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut server: ResMut<crate::client::resources::Server>,
     time: Res<Time>,
 ) {
@@ -350,7 +349,7 @@ pub fn handle_pong(
 /// Sends a ping every 5 seconds to measure network conditions
 pub fn periodic_ping(
     mut server: ResMut<crate::client::resources::Server>,
-    mut try_writer: EventWriter<Try>,
+    mut try_writer: MessageWriter<Try>,
     time: Res<Time>,
 ) {
     const PING_INTERVAL_MS: u128 = 5000; // Ping every 5 seconds
@@ -360,6 +359,6 @@ pub fn periodic_ping(
     // Check if it's time to send another ping
     if client_now.saturating_sub(server.last_ping_time) >= PING_INTERVAL_MS {
         server.last_ping_time = client_now;
-        try_writer.send(Try { event: Event::Ping { client_time: client_now } });
+        try_writer.write(Try { event: Event::Ping { client_time: client_now } });
     }
 }

@@ -240,7 +240,7 @@ pub fn setup(
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
-            BorderColor(Color::srgb(0.4, 0.4, 0.4)),
+            BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
             BorderRadius::all(Val::Px(8.)),
             Visibility::Hidden,
         ))
@@ -324,9 +324,9 @@ pub fn handle_shift_drag(
 
                 // Get the current shift value for this attribute
                 let current_shift = match attr_type {
-                    AttributeType::MightGrace => attrs.might_grace_shift,
-                    AttributeType::VitalityFocus => attrs.vitality_focus_shift,
-                    AttributeType::InstinctPresence => attrs.instinct_presence_shift,
+                    AttributeType::MightGrace => attrs.might_grace_shift(),
+                    AttributeType::VitalityFocus => attrs.vitality_focus_shift(),
+                    AttributeType::InstinctPresence => attrs.instinct_presence_shift(),
                 };
 
                 state.dragging = Some(DragState {
@@ -363,18 +363,16 @@ pub fn handle_shift_drag(
                 let new_shift_f32 = drag_state.initial_shift as f32 + delta_units;
 
                 // Update the appropriate shift value based on attribute type
+                let new_shift = new_shift_f32.round() as i8;
                 match drag_state.attribute {
                     AttributeType::MightGrace => {
-                        let spectrum = attrs.might_grace_spectrum as i8;
-                        attrs.might_grace_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        attrs.set_might_grace_shift(new_shift);
                     }
                     AttributeType::VitalityFocus => {
-                        let spectrum = attrs.vitality_focus_spectrum as i8;
-                        attrs.vitality_focus_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        attrs.set_vitality_focus_shift(new_shift);
                     }
                     AttributeType::InstinctPresence => {
-                        let spectrum = attrs.instinct_presence_spectrum as i8;
-                        attrs.instinct_presence_shift = new_shift_f32.clamp(-spectrum as f32, spectrum as f32) as i8;
+                        attrs.set_instinct_presence_shift(new_shift);
                     }
                 }
             }
@@ -407,10 +405,11 @@ pub fn update_attributes(
         return;
     };
 
-    // Calculate max attribute value based on current level
-    // Each level grants 2 attribute points, so at level 10, max is ±20
+    // Calculate max scaled attribute value based on current level
+    // Each level grants 1 point. Max scaled value if all points → one axis: level × 10
+    // At level 10: max is ±100 (10 points × 10 scaling)
     let level = attrs.total_level();
-    let max_attr = (level * 2) as i8;
+    let max_attr_scaled = (level * 10) as i16;
 
     // Update title rows (reach values)
     for (title_entity, attr_type) in &title_query {
@@ -486,11 +485,11 @@ pub fn update_attributes(
             for child in bar_children.iter() {
                 // Update spectrum range (blue bar - shows reach values)
                 if let Ok(mut node) = spectrum_query.get_mut(child) {
-                    update_reach_display(&mut node, left_reach, right_reach, max_attr);
+                    update_reach_display(&mut node, left_reach, right_reach, max_attr_scaled);
                 }
                 // Update axis bar (yellow bar - shows current available values)
                 if let Ok((_, mut node)) = axis_query.get_mut(child) {
-                    update_axis_bar(&mut node, left_current, right_current, max_attr);
+                    update_axis_bar(&mut node, left_current, right_current, max_attr_scaled);
                 }
             }
         }
@@ -500,49 +499,50 @@ pub fn update_attributes(
 /// Convert attribute value to percentage position on bar
 /// Range is -max_attr to +max_attr mapped to 0% to 100%
 /// max_attr is calculated as level * 2 (e.g., at level 10, range is -20 to +20)
-fn attr_to_percent(value: i8, max_attr: i8) -> f32 {
-    let range = max_attr as f32 * 2.0;
-    ((value as f32 + max_attr as f32) / range * 100.0).clamp(0.0, 100.0)
+fn attr_to_percent(value: i16, max_attr_scaled: i16) -> f32 {
+    // Map value from [-max_attr_scaled, +max_attr_scaled] to [0%, 100%]
+    let range = max_attr_scaled as f32 * 2.0;
+    ((value as f32 + max_attr_scaled as f32) / range * 100.0).clamp(0.0, 100.0)
 }
 
-fn update_reach_display(node: &mut Node, left_reach: u8, right_reach: u8, max_attr: i8) {
+fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_attr_scaled: i16) {
     // The reach values represent the maximum value achievable in each direction
-    // They are absolute attribute values scaled to the current level max
+    // They are scaled attribute values (axis×10 + spectrum×7)
     //
-    // For might_grace with axis=-20:
-    //   might_reach=30 means the value "30 might" which is at position -30 on the scale
-    //   grace_reach=20 means the value "20 grace" which is at position +20 on the scale
+    // For might_grace with axis=-2, spectrum=3:
+    //   might_reach=41 (20+21) at position -41 on the scale
+    //   grace_reach=21 at position +21 on the scale
     //
-    // For instinct_presence with axis=0:
-    //   instinct_reach=20 means value "20 instinct" at position -20
-    //   presence_reach=20 means value "20 presence" at position +20
+    // For instinct_presence with axis=0, spectrum=3:
+    //   instinct_reach=21 at position -21
+    //   presence_reach=21 at position +21
     //
     // The bar should show from the leftmost reach to the rightmost reach
 
     // Left reach is on the negative side (might, vitality, instinct)
-    let left_bound = -(left_reach as i8);
+    let left_bound = -(left_reach as i16);
     // Right reach is on the positive side (grace, focus, presence)
-    let right_bound = right_reach as i8;
+    let right_bound = right_reach as i16;
 
-    let left_percent = attr_to_percent(left_bound, max_attr);
-    let right_percent = attr_to_percent(right_bound, max_attr);
+    let left_percent = attr_to_percent(left_bound, max_attr_scaled);
+    let right_percent = attr_to_percent(right_bound, max_attr_scaled);
     let width_percent = right_percent - left_percent;
 
     node.left = Val::Percent(left_percent);
     node.width = Val::Percent(width_percent);
 }
 
-fn update_axis_bar(node: &mut Node, left_current: u8, right_current: u8, max_attr: i8) {
+fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_attr_scaled: i16) {
     // The yellow bar shows the current available values on each side
-    // For might_grace: might=25, grace=5
-    //   Left bound at -25 (might value)
-    //   Right bound at +5 (grace value)
+    // For might_grace: might=250, grace=50 (scaled values)
+    //   Left bound at -250 (might value, scaled)
+    //   Right bound at +50 (grace value, scaled)
 
-    let left_bound = -(left_current as i8);
-    let right_bound = right_current as i8;
+    let left_bound = -(left_current as i16);
+    let right_bound = right_current as i16;
 
-    let left_percent = attr_to_percent(left_bound, max_attr);
-    let right_percent = attr_to_percent(right_bound, max_attr);
+    let left_percent = attr_to_percent(left_bound, max_attr_scaled);
+    let right_percent = attr_to_percent(right_bound, max_attr_scaled);
     let width_percent = right_percent - left_percent;
 
     node.left = Val::Percent(left_percent);

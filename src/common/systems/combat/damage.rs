@@ -43,18 +43,20 @@ pub fn calculate_outgoing_damage(
         DamageType::Magic => attrs.focus() as f32,
     };
 
-    base_damage * (1.0 + scaling_attribute / 33.0)
+    // Scaled for u16 values: divide by 165 instead of 33 (5x multiplier)
+    // might/focus=165 → 2x damage, might/focus=500 → ~4x damage
+    base_damage * (1.0 + scaling_attribute / 165.0)
 }
 
 /// Roll for critical hit and calculate multiplier
 ///
-/// Formula (from combat-system.md spec):
-/// - Crit chance: base (5%) + (instinct / 200)
+/// Formula (scaled for u16 values):
+/// - Crit chance: base (5%) + (instinct / 1000)
 ///   - At instinct=0: 5% crit chance
-///   - At instinct=100: 55% crit chance
-/// - Crit multiplier: 1.5 + (instinct / 200)
+///   - At instinct=500 (level 50): 55% crit chance
+/// - Crit multiplier: 1.5 + (instinct / 1000)
 ///   - At instinct=0: 1.5x damage
-///   - At instinct=100: 2.0x damage
+///   - At instinct=500 (level 50): 2.0x damage
 ///
 /// # Arguments
 /// * `attrs` - Attacker's attributes
@@ -72,13 +74,13 @@ pub fn calculate_outgoing_damage(
 pub fn roll_critical(attrs: &ActorAttributes) -> (bool, f32) {
     let instinct = attrs.instinct() as f32;
     let base_crit_chance = 0.05; // 5%
-    let crit_chance = base_crit_chance + (instinct / 200.0);
+    let crit_chance = base_crit_chance + (instinct / 1000.0);
 
     let mut rng = rand::rng();
     let was_crit = rng.random::<f32>() < crit_chance;
 
     let crit_multiplier = if was_crit {
-        1.5 + (instinct / 200.0)
+        1.5 + (instinct / 1000.0)
     } else {
         1.0
     };
@@ -88,12 +90,12 @@ pub fn roll_critical(attrs: &ActorAttributes) -> (bool, f32) {
 
 /// Apply passive defensive modifiers to damage
 ///
-/// Formula (from combat-system.md spec):
-/// - Physical: mitigation = vitality / 66 (capped at 75%)
-/// - Magic: mitigation = focus / 66 (capped at 75%)
+/// Formula (scaled for u16 values):
+/// - Physical: mitigation = vitality / 330 (capped at 75%)
+/// - Magic: mitigation = focus / 330 (capped at 75%)
 /// - Final damage = outgoing * (1 - mitigation)
 ///
-/// Scaling: 20 vitality = 30% mitigation, 50 vitality = 75% (cap)
+/// Scaling: vitality=100 → 30% mitigation, vitality=250 → 75% (cap)
 ///
 /// # Arguments
 /// * `outgoing_damage` - Damage after attacker scaling
@@ -116,11 +118,11 @@ pub fn apply_passive_modifiers(
     let mitigation = match damage_type {
         DamageType::Physical => {
             let vitality = attrs.vitality() as f32;
-            (vitality / 66.0).min(0.75) // Cap at 75% reduction
+            (vitality / 330.0).min(0.75) // Cap at 75% reduction
         }
         DamageType::Magic => {
             let focus = attrs.focus() as f32;
-            (focus / 66.0).min(0.75) // Cap at 75% reduction
+            (focus / 330.0).min(0.75) // Cap at 75% reduction
         }
     };
 

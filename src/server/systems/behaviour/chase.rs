@@ -5,7 +5,7 @@ use qrz::{Convert, Qrz};
 use crate::{
     common::{
         components::{
-            Loc, heading::Heading, offset::Offset, resources::Health,
+            Loc, heading::Heading, position::Position, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             returning::Returning,
         },
@@ -22,7 +22,7 @@ use crate::{
 /// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
 fn broadcast_intent(
     commands: &mut Commands,
-    writer: &mut EventWriter<Do>,
+    writer: &mut MessageWriter<Do>,
     map: &Map,
     npc_entity: Entity,
     npc_loc: &Loc,
@@ -94,13 +94,13 @@ pub struct Chase {
 
 pub fn chase(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,  // ADR-011: Broadcast movement intents
+    mut writer: MessageWriter<Do>,  // ADR-011: Broadcast movement intents
     mut query: Query<(
         Entity,
         &Chase,
         &Loc,
         &mut Heading,
-        &mut Offset,
+        &mut Position,
         &mut AirTime,
         Option<&ActorAttributes>,
         Option<&TargetLock>,
@@ -114,7 +114,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -166,7 +166,7 @@ pub fn chase(
                     Loc::new(*next_tile),
                     dt_ms,
                     *npc_loc,
-                    npc_offset.state,
+                    npc_position.offset,
                     npc_airtime.state,
                     movement_speed,
                     *npc_heading,
@@ -174,7 +174,7 @@ pub fn chase(
                     &nntree,
                 );
 
-                npc_offset.state = offset;
+                npc_position.offset = offset;
                 npc_airtime.state = airtime;
             }
 
@@ -262,7 +262,7 @@ pub fn chase(
                             Loc::new(*next_tile),
                             dt_ms,
                             *npc_loc,
-                            npc_offset.state,
+                            npc_position.offset,
                             npc_airtime.state,
                             movement_speed,
                             *npc_heading,
@@ -270,7 +270,7 @@ pub fn chase(
                             &nntree,
                         );
 
-                        npc_offset.state = offset;
+                        npc_position.offset = offset;
                         npc_airtime.state = airtime;
                     }
 
@@ -372,7 +372,7 @@ pub fn chase(
                 Loc::new(*next_tile),
                 dt_ms,
                 *npc_loc,
-                npc_offset.state,
+                npc_position.offset,
                 npc_airtime.state,
                 movement_speed,
                 *npc_heading,
@@ -380,7 +380,7 @@ pub fn chase(
                 &nntree,
             );
 
-            npc_offset.state = offset;
+            npc_position.offset = offset;
             npc_airtime.state = airtime;
 
             // Update Target component for reactive systems

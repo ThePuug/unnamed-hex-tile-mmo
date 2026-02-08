@@ -35,7 +35,7 @@ impl Plugin for DevConsolePlugin {
         app.init_resource::<DevConsole>();
 
         // Register console events
-        app.add_event::<DevConsoleAction>();
+        app.add_message::<DevConsoleAction>();
 
         // Setup systems (run once at startup)
         app.add_systems(Startup, ui::setup_dev_console);

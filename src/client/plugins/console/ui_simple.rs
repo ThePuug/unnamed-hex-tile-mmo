@@ -40,7 +40,7 @@ pub fn setup_dev_console(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
-            BorderColor(Color::srgb(0.3, 0.6, 0.9)),
+            BorderColor::all(Color::srgb(0.3, 0.6, 0.9)),
             BorderRadius::all(Val::Px(8.0)),
             Visibility::Hidden,
             ZIndex(1000),

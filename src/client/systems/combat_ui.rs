@@ -162,7 +162,7 @@ pub fn setup_health_bars(mut commands: Commands) {
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+            BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
             BorderRadius::all(Val::Percent(50.0)),
             BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
             Visibility::Hidden, // Start hidden, will be shown based on capacity
@@ -196,7 +196,7 @@ pub fn setup_health_bars(mut commands: Commands) {
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BorderColor(Color::srgb(0.5, 0.5, 0.5)),
+            BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
             BorderRadius::all(Val::Percent(50.0)),
             BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
             Visibility::Hidden, // Start hidden, will be shown based on capacity
@@ -225,12 +225,12 @@ pub fn update_health_bars(
     player_query: Query<(&crate::common::components::target::Target, &crate::common::components::ally_target::AllyTarget), With<crate::common::components::Actor>>,
     time: Res<Time>,
 ) {
-    let Ok((camera, camera_transform)) = camera_query.get_single() else {
+    let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
     };
 
     // Get local player's targets (set by update_targets_on_change and update_ally_targets_on_change with tier lock filtering)
-    let Ok((player_target, player_ally_target)) = player_query.get_single() else {
+    let Ok((player_target, player_ally_target)) = player_query.single() else {
         return;
     };
 
@@ -247,7 +247,7 @@ pub fn update_health_bars(
     let delta = time.delta_secs();
 
     // Update hostile health bar
-    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = hostile_query.get_single_mut() {
+    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = hostile_query.single_mut() {
         if let Some(target_ent) = hostile_target {
             // Target exists - show and update bar
             if let Ok((health, transform)) = entity_query.get(target_ent) {
@@ -289,7 +289,7 @@ pub fn update_health_bars(
     }
 
     // Update ally health bar
-    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = ally_query.get_single_mut() {
+    if let Ok((mut health_bar, children, mut container_node, mut visibility)) = ally_query.single_mut() {
         if let Some(target_ent) = ally_target {
             // Target exists - show and update bar
             if let Ok((health, transform)) = entity_query.get(target_ent) {
@@ -351,12 +351,12 @@ pub fn update_threat_queue_dots(
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     player_query: Query<(&crate::common::components::target::Target, &crate::common::components::ally_target::AllyTarget), With<crate::common::components::Actor>>,
 ) {
-    let Ok((camera, camera_transform)) = camera_query.get_single() else {
+    let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
     };
 
     // Get local player's targets (set by update_targets_on_change and update_ally_targets_on_change with tier lock filtering)
-    let Ok((player_target, player_ally_target)) = player_query.get_single() else {
+    let Ok((player_target, player_ally_target)) = player_query.single() else {
         return;
     };
 
@@ -371,7 +371,7 @@ pub fn update_threat_queue_dots(
     const BAR_WIDTH: f32 = 50.0;
 
     // Update hostile dots container
-    if let Ok((children, mut container_node, mut visibility)) = hostile_query.get_single_mut() {
+    if let Ok((children, mut container_node, mut visibility)) = hostile_query.single_mut() {
         if let Some(target_ent) = hostile_target {
             // Target exists - check if it has a queue
             if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
@@ -413,7 +413,7 @@ pub fn update_threat_queue_dots(
                                         };
 
                                         *dot_bg = BackgroundColor(bg_color);
-                                        *dot_border = BorderColor(border_color);
+                                        *dot_border = BorderColor::all(border_color);
                                     } else {
                                         *dot_vis = Visibility::Hidden;
                                     }
@@ -462,7 +462,7 @@ pub fn update_threat_queue_dots(
     }
 
     // Update ally dots container
-    if let Ok((children, mut container_node, mut visibility)) = ally_query.get_single_mut() {
+    if let Ok((children, mut container_node, mut visibility)) = ally_query.single_mut() {
         if let Some(target_ent) = ally_target {
             // Target exists - check if it has a queue
             if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
@@ -504,7 +504,7 @@ pub fn update_threat_queue_dots(
                                         };
 
                                         *dot_bg = BackgroundColor(bg_color);
-                                        *dot_border = BorderColor(border_color);
+                                        *dot_border = BorderColor::all(border_color);
                                     } else {
                                         *dot_vis = Visibility::Hidden;
                                     }

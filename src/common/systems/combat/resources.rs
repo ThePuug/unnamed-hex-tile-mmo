@@ -1,24 +1,33 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, Loc, offset::Offset, resources::*, entity_type::EntityType},
+    components::{ActorAttributes, Loc, position::Position, resources::*, entity_type::EntityType},
     message::{Component as MessageComponent, Event, *},
 };
 
 /// Calculate maximum stamina from actor attributes
-/// Formula: 100 + (might * 1.0) + (vitality * 0.3)
-/// 50 might = 150 stamina, 100 might = 200 stamina, 150 might = 250 stamina
+/// Formula (scaled for u16 values): 100 + (might * 0.2) + (vitality * 0.06)
+///
+/// Examples (level 50 specialist = 500 reach):
+/// - might=250: 100 + 50 = 150 stamina
+/// - might=500: 100 + 100 = 200 stamina
+/// - might=500, vitality=500: 100 + 100 + 30 = 230 stamina
 pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
     let might = attrs.might() as f32;
     let vitality = attrs.vitality() as f32;
-    100.0 + (might * 1.0) + (vitality * 0.3)
+    100.0 + (might * 0.2) + (vitality * 0.06)
 }
 
 /// Calculate maximum mana from actor attributes
-/// Formula: 100 + (focus * 0.5) + (presence * 0.3)
+/// Formula (scaled for u16 values): 100 + (focus * 0.1) + (presence * 0.06)
+///
+/// Examples (level 50 specialist = 500 reach):
+/// - focus=250: 100 + 25 = 125 mana
+/// - focus=500: 100 + 50 = 150 mana
+/// - focus=500, presence=500: 100 + 50 + 30 = 180 mana
 pub fn calculate_max_mana(attrs: &ActorAttributes) -> f32 {
     let focus = attrs.focus() as f32;
     let presence = attrs.presence() as f32;
-    100.0 + (focus * 0.5) + (presence * 0.3)
+    100.0 + (focus * 0.1) + (presence * 0.06)
 }
 
 /// Calculate stamina regeneration rate
@@ -44,20 +53,30 @@ pub fn calculate_health_regen_rate(in_combat: bool) -> f32 {
 }
 
 /// Calculate armor (physical damage reduction) from actor attributes
-/// Formula: base_armor + (vitality / 66.0)
+/// Formula (scaled for u16): base_armor + (vitality / 330.0)
 /// Capped at 75% max
+///
+/// Examples (level 50 specialist = 500 reach):
+/// - vitality=165: +0.5 armor (50% reduction)
+/// - vitality=330: +1.0 armor (capped at 75%)
+/// - vitality=500: +1.51 armor (capped at 75%)
 pub fn calculate_armor(attrs: &ActorAttributes, base_armor: f32) -> f32 {
     let vitality = attrs.vitality() as f32;
-    let armor = base_armor + (vitality / 66.0);
+    let armor = base_armor + (vitality / 330.0);
     armor.min(0.75)
 }
 
 /// Calculate resistance (magic damage reduction) from actor attributes
-/// Formula: base_resistance + (focus / 66.0)
+/// Formula (scaled for u16): base_resistance + (focus / 330.0)
 /// Capped at 75% max
+///
+/// Examples (level 50 specialist = 500 reach):
+/// - focus=165: +0.5 resistance (50% reduction)
+/// - focus=330: +1.0 resistance (capped at 75%)
+/// - focus=500: +1.51 resistance (capped at 75%)
 pub fn calculate_resistance(attrs: &ActorAttributes, base_resistance: f32) -> f32 {
     let focus = attrs.focus() as f32;
-    let resistance = base_resistance + (focus / 66.0);
+    let resistance = base_resistance + (focus / 330.0);
     resistance.min(0.75)
 }
 
@@ -114,7 +133,7 @@ pub fn regenerate_resources(
 /// For players: adds RespawnTimer and emits Despawn
 pub fn check_death(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     time: Res<Time>,
     mut query: Query<(Entity, Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana), Without<RespawnTimer>>,
 ) {
@@ -151,25 +170,21 @@ pub fn check_death(
 /// Runs on server only
 pub fn process_respawn(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) {
     use qrz::Qrz;
-    use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type, player_controlled) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
 
-            // Clear offset to snap to new position (no interpolation)
-            offset.state = Vec3::ZERO;
-            offset.step = Vec3::ZERO;
-            offset.prev_step = Vec3::ZERO;
-            offset.interp_elapsed = 0.0;
-            offset.interp_duration = 0.0;
+            // Reset position to snap to new location
+            position.tile = spawn_qrz;
+            position.offset = Vec3::ZERO;
 
             // Restore resources to full
             health.state = health.max;
@@ -230,9 +245,9 @@ pub fn process_respawn(
 /// This observer is no longer registered or used
 #[allow(dead_code)]
 fn handle_death(
-    trigger: Trigger<Try>,
+    trigger: On<Try>,
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     time: Res<Time>,
     mut query: Query<(Option<&crate::common::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
 ) {
@@ -412,13 +427,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_event::<Do>();
+        app.add_message::<Do>();
 
         // Track emitted events using a system
         let emitted_events: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
         let emitted_events_clone = emitted_events.clone();
 
-        app.add_systems(Update, move |mut reader: EventReader<Do>| {
+        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
             for event in reader.read() {
                 if let Event::Despawn { ent } = event.event {
                     emitted_events_clone.lock().unwrap().push(ent);
@@ -466,13 +481,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_event::<Do>();
+        app.add_message::<Do>();
 
         // Track emitted events using a system
         let emitted_events: Arc<Mutex<Vec<()>>> = Arc::new(Mutex::new(Vec::new()));
         let emitted_events_clone = emitted_events.clone();
 
-        app.add_systems(Update, move |mut reader: EventReader<Do>| {
+        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
             for event in reader.read() {
                 if let Event::Despawn { ent: _ } = event.event {
                     emitted_events_clone.lock().unwrap().push(());
@@ -520,13 +535,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_event::<Do>();
+        app.add_message::<Do>();
 
         // Track emitted events using a system
         let emitted_events: Arc<Mutex<Vec<()>>> = Arc::new(Mutex::new(Vec::new()));
         let emitted_events_clone = emitted_events.clone();
 
-        app.add_systems(Update, move |mut reader: EventReader<Do>| {
+        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
             for event in reader.read() {
                 if let Event::Despawn { ent: _ } = event.event {
                     emitted_events_clone.lock().unwrap().push(());

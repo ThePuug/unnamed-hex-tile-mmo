@@ -96,7 +96,7 @@ pub fn setup(
             align_items: AlignItems::Center,
             ..default()
         },
-        BorderColor(Color::srgb(0.3, 0.8, 0.3)),  // Default: Green (ready)
+        BorderColor::all(Color::srgb(0.3, 0.8, 0.3)),  // Default: Green (ready)
         BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
         AbilitySlot { slot_index, ability, keybind },
     ))
@@ -188,7 +188,7 @@ pub fn setup(
                 border: UiRect::all(Val::Px(8.)),  // THICK border
                 ..default()
             },
-            BorderColor(Color::srgb(1.0, 1.0, 0.0)),  // BRIGHT YELLOW (impossible to miss)
+            BorderColor::all(Color::srgb(1.0, 1.0, 0.0)),  // BRIGHT YELLOW (impossible to miss)
             BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),  // BRIGHT semi-transparent yellow fill
             Visibility::Hidden,  // Hidden by default
             SynergyGlow,
@@ -210,7 +210,7 @@ pub fn update(
     time: Res<Time>,
 ) {
     // Get player resources and position
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt)) = player_query.get_single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt)) = player_query.single() else {
         return;  // No player yet
     };
 
@@ -242,13 +242,13 @@ pub fn update(
 
             // Update border color based on state (keep meaningful colors)
             let (border, show_synergy_glow) = match state {
-                AbilityState::Ready => (BorderColor(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
-                AbilityState::OnCooldown => (BorderColor(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
+                AbilityState::Ready => (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
+                AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
                 AbilityState::SynergyUnlocked => {
-                    (BorderColor(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
+                    (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
                 },
-                AbilityState::InsufficientResources => (BorderColor(Color::srgb(0.9, 0.1, 0.1)), false), // Red
-                AbilityState::OutOfRange => (BorderColor(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
+                AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
+                AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
             };
             *border_color = border;
 
@@ -264,7 +264,7 @@ pub fn update(
             }
         } else {
             // Empty slot: dark gray, no glow
-            *border_color = BorderColor(Color::srgb(0.2, 0.2, 0.2));
+            *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
             for child in children.iter() {
                 if let Ok(mut visibility) = glow_query.get_mut(child) {
                     *visibility = Visibility::Hidden;

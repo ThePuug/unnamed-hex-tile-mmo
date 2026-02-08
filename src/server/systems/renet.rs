@@ -53,8 +53,8 @@ pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 pub fn do_manage_connections(
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
-    mut reader: EventReader<ServerEvent>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<ServerEvent>,
+    mut writer: MessageWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
     query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>, Option<&PlayerControlled>, Option<&Heading>)>,
@@ -75,10 +75,11 @@ pub fn do_manage_connections(
                 let loc = Loc::new(qrz);
                 // Level 10: Full spectrum distribution (4+3+3=10 points)
                 // Balanced axis (0) allows players to shift in any direction for skill balance testing
+                // New system: raw investment counts (axis ×10, spectrum ×7 for reach)
                 let attrs = ActorAttributes::new(
-                    0, 4, 0,       // might_grace: 4 spectrum
-                    0, 3, 0,       // vitality_focus: 3 spectrum
-                    0, 3, 0,       // instinct_presence: 3 spectrum
+                    0, 4, 0,       // might_grace: 0 axis, 4 spectrum, 0 shift
+                    0, 3, 0,       // vitality_focus: 0 axis, 3 spectrum, 0 shift
+                    0, 3, 0,       // instinct_presence: 0 axis, 3 spectrum, 0 shift
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
@@ -212,7 +213,7 @@ pub fn do_manage_connections(
  }
 
 pub fn write_try(
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
     mut conn: ResMut<RenetServer>,
     lobby: Res<Lobby>,
 ) {
@@ -255,7 +256,7 @@ pub fn write_try(
  pub fn send_do(
     query: Query<&Loc>,
     mut conn: ResMut<RenetServer>,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     nntree: Res<NNTree>,
     lobby: Res<Lobby>,
 ) {
@@ -443,7 +444,7 @@ pub fn write_try(
 /// This runs in PostUpdate after send_do to avoid race conditions
 pub fn cleanup_despawned(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     respawn_query: Query<&RespawnTimer>,
 ) {
     for &message in reader.read() {

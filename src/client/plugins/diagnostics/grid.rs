@@ -1,12 +1,10 @@
 use bevy::{
     prelude::*,
-    pbr::NotShadowCaster,
-    render::{
-        mesh::PrimitiveTopology,
-        render_asset::RenderAssetUsages,
-        primitives::Aabb,
-    },
+    render::render_resource::PrimitiveTopology,
 };
+use bevy_asset::RenderAssetUsages;
+use bevy_camera::primitives::Aabb;
+use bevy_light::NotShadowCaster;
 
 use crate::common::resources::map::Map;
 use super::config::DiagnosticsState;

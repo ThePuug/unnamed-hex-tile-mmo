@@ -31,7 +31,7 @@ impl Plugin for DiagnosticsPlugin {
         // Add performance monitoring plugins from Bevy and third-party
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
-            EntityCountDiagnosticsPlugin,
+            EntityCountDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
             PerfUiPlugin,
         ));
@@ -185,15 +185,15 @@ mod tests {
         // Create mesh assets storage
         let mut meshes = Assets::<Mesh>::default();
         let mesh_handle = meshes.add(Mesh::new(
-            bevy::render::mesh::PrimitiveTopology::LineList,
-            bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD,
+            bevy_mesh::PrimitiveTopology::LineList,
+            bevy_asset::RenderAssetUsages::MAIN_WORLD,
         ));
         app.insert_resource(meshes);
 
         // Spawn grid overlay with mesh
         app.world_mut().spawn((
             bevy::prelude::Mesh3d(mesh_handle),
-            bevy::render::primitives::Aabb::default(),
+            bevy_camera::primitives::Aabb::default(),
             HexGridOverlay {
                 needs_regeneration: false,
             },
@@ -233,15 +233,15 @@ mod tests {
         // Create mesh assets
         let mut meshes = Assets::<Mesh>::default();
         let mesh_handle = meshes.add(Mesh::new(
-            bevy::render::mesh::PrimitiveTopology::LineList,
-            bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD,
+            bevy_mesh::PrimitiveTopology::LineList,
+            bevy_asset::RenderAssetUsages::MAIN_WORLD,
         ));
         app.insert_resource(meshes);
 
         // Spawn grid overlay with regeneration requested
         app.world_mut().spawn((
             bevy::prelude::Mesh3d(mesh_handle),
-            bevy::render::primitives::Aabb::default(),
+            bevy_camera::primitives::Aabb::default(),
             HexGridOverlay {
                 needs_regeneration: true,
             },
