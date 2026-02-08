@@ -44,17 +44,21 @@ Client-server MMO built with Bevy ECS:
 
 ---
 
-## Position & Movement System
+## Position & Movement System (ADR-019)
 
-**Offset Component:**
-- `state`: Server authority (confirmed for local, heading-based for remote)
-- `step`: Visual position (predicted for local, interpolated for remote)
-- `prev_step`: Previous `step` for smooth rendering
+**Components:**
+- `Position { tile: Qrz, offset: Vec3 }` — Authoritative position (physics/server truth)
+- `VisualPosition { from, to, progress, duration }` — Visual interpolation (rendering only)
 
-**Formula:** `WORLD_POS = map.convert(Loc) + Offset.step`
+**Formula:** `WORLD_POS = map.convert(Position.tile) + Position.offset`
 
-**Local:** Input → queue → physics updates `step` → server confirms → dequeue
-**Remote:** Server sends `Loc`/`Heading` → `state` recalculated → `step` interpolates toward `state`
+**Canonical physics:** `movement::calculate_movement()` in `common/systems/movement.rs`
+- `physics::apply()` is a thin delegation wrapper
+- Pure function: `(MovementInput, dt, map, nntree) -> MovementOutput`
+- Terrain following uses `blended_terrain_y` for smooth slopes, skips cliff neighbors (elevation_diff > 1)
+
+**Local:** Input → queue → `controlled::apply` calls `physics::apply` → server confirms → dequeue
+**Remote:** Server sends `Loc`/`Heading` → Position updated → VisualPosition interpolates toward new world pos
 
 ---
 
@@ -64,20 +68,22 @@ Client-server MMO built with Bevy ECS:
 
 **Flow:** Keys change/1-sec periodic → push front → `controlled::tick` accumulates dt on front → server pops back → client dequeues by `seq`
 
+**Prediction:** `predict_local_player` (client/systems/prediction.rs) replays InputQueue from Position.offset → VisualPosition
+
 **Network Events:** `Try` (client→server), `Do` (server→client broadcast)
 
 ---
 
 ## Key Components & Resources
 
-**Components:** `Loc` (hex tile), `Offset` (sub-tile), `Behaviour::Controlled` (player), `KeyBits`, `Heading`, `AirTime`, `Physics`, `ActorAttributes`
+**Components:** `Loc` (hex tile), `Position` (tile + sub-tile offset), `VisualPosition` (interpolation), `Behaviour::Controlled` (player), `KeyBits`, `Heading`, `AirTime`, `Physics`, `ActorAttributes`
 
 **Resources:** `InputQueues`, `EntityMap` (client), `Map` (hex↔world), `NNTree` (spatial queries)
 
 ## System Execution Order
 
-**FixedUpdate (125ms):** `controlled::apply` → `tick` → `interpolate_remote` → `physics::update`
-**Update (frame):** `renet` → `world::do_incremental` → `input::do_input` → `actor::update` → `camera`
+**FixedUpdate (125ms):** `controlled::apply` → `tick` → `interpolate_remote`
+**Update (frame):** `renet` → `world::do_incremental` → `input::do_input` → `predict_local_player` → `advance_interpolation` → `actor::update` → `camera`
 
 ---
 
@@ -95,9 +101,9 @@ Client-server MMO built with Bevy ECS:
 
 ### Position/Movement Pitfalls
 
-5. **Confuse `state` vs `step`**: `state`=server authority, `step`=prediction/interpolation
+5. **Confuse Position vs VisualPosition**: Position=server authority, VisualPosition=visual interpolation only
 6. **Forget world-space preservation during Loc updates**: Causes teleporting/falling
-7. **Set remote `state` to Vec3::ZERO**: Must be heading-based position
+7. **Use blended terrain near cliffs**: `blended_terrain_y` must skip neighbors with elevation_diff > 1 to avoid bypassing cliff blocking
 8. **Apply heading positioning in rendering**: It's physics concern (`physics::apply`)
 
 ### Other Common Mistakes
@@ -148,7 +154,7 @@ When adding Events/Components that need network sync:
 
 ## Physics Constants
 
-See `common/systems/physics.rs` for values (GRAVITY, JUMP_*, MOVEMENT_SPEED, etc.)
+See `common/systems/movement.rs` for values (GRAVITY, JUMP_*, MOVEMENT_SPEED, SLOPE_FOLLOW_SPEED, etc.)
 
 ---
 

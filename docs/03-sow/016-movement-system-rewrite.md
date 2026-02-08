@@ -2,14 +2,14 @@
 
 ## Status
 
-**In Progress** - 2025-02-08
+**Complete** - 2026-02-08
 
 ## References
 
 - **RFC-016:** [Movement System Rewrite](../01-rfc/016-movement-system-rewrite.md)
 - **ADR-019:** [Unified Interpolation Model](../02-adr/019-unified-interpolation-model.md)
 - **Supersedes:** ADR-016 (Movement Intent Architecture) - intent protocol preserved, implementation unified
-- **Branch:** (proposed)
+- **Branch:** `refactor/bevy-0.17-and-attribute-scaling`
 - **Implementation Time:** 14-20 hours
 
 ---
@@ -247,15 +247,55 @@
 
 ---
 
+### Phase 5 Implementation Note: Physics Delegation Complete
+
+**Modified files:**
+- `common/systems/movement.rs` - Became canonical physics implementation with `calculate_movement()` inlining the full physics loop (vertical movement with apex splitting, blocking, terrain following)
+- `common/systems/physics.rs` - Reduced to thin delegation wrapper (`apply` calls `movement::calculate_movement`)
+
+**Key decisions:**
+
+1. **Inlined physics loop** - `calculate_movement_step` was removed as dead code. The full physics loop (including jump apex splitting, which needs to modify the outer `dt0`) was inlined into `calculate_movement` to match physics.rs exactly.
+
+2. **Cliff-safe terrain blending** - `blended_terrain_y` only blends with neighbors whose floor elevation differs by at most 1 z-level. Cliff neighbors (elevation_diff > 1) are skipped to prevent the entity's Y from being artificially raised near cliff edges, which would bypass cliff blocking on the next tick.
+
+3. **Boundary-continuous blend factor** - Blend factor reaches 0.5 at tile boundaries (not 1.0), ensuring both sides of a boundary agree on the same interpolated height. This eliminates Y-value bouncing at tile crossings.
+
+4. **Cross-implementation determinism test** - `test_movement_matches_physics_apply` validates 8 scenarios produce identical results through both paths (now trivially true since both call the same function, but serves as regression test).
+
+---
+
 ## Acceptance Review
 
-*This section is populated after implementation is complete.*
+### Scope Completion: 100%
+
+**Phases Complete:**
+- ✅ Phase 1: Core Model (Position, VisualPosition components + pure movement functions)
+- ✅ Phase 2: Local Player Movement (prediction via VisualPosition, spawn + rendering integration)
+- ✅ Phase 3: Remote Entity Movement (unified VisualPosition rendering path)
+- ✅ Phase 4: Visual Polish and Cleanup (camera const, animator uses VisualPosition, Offset removal from client path)
+- ✅ Phase 5: Physics Delegation (movement.rs canonical, physics.rs thin wrapper)
+
+### Architectural Compliance
+
+- Position + VisualPosition separation per ADR-019: ✅
+- Pure physics function (deterministic): ✅
+- Unified local/remote interpolation: ✅
+- Offset component fully removed: ✅
+- Cliff blocking preserved with terrain blending: ✅
+- Smooth slope following for gentle terrain: ✅
+
+### Performance
+
+- Per-entity overhead: ~48 bytes (Position + VisualPosition)
+- No additional network bandwidth (same MovementIntent protocol)
+- Physics delegation has zero overhead (same calculation, different call site)
 
 ---
 
 ## Sign-Off
 
-**Reviewed By:** (pending)
-**Date:** (pending)
-**Decision:** (pending)
-**Status:** Planned
+**Reviewed By:** ARCHITECT
+**Date:** 2026-02-08
+**Decision:** ✅ ACCEPTED
+**Status:** Merged

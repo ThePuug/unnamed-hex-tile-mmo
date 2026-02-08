@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -126,16 +126,17 @@ The key insight: interpolation always starts from **current visual position**, n
 ## Implementation Notes
 
 **File Locations:**
-- `common/components/position.rs` - New Position, VisualPosition components
-- `common/systems/physics.rs` - Refactored to output Position changes
-- `client/systems/interpolation.rs` - New system for visual updates
-- `client/systems/actor.rs` - Simplified Transform sync
+- `common/components/position.rs` - Position + VisualPosition components
+- `common/systems/movement.rs` - Canonical physics implementation (calculate_movement + helpers)
+- `common/systems/physics.rs` - Thin delegation wrapper (apply → movement::calculate_movement)
+- `client/systems/prediction.rs` - Local player prediction (predict_local_player + advance_interpolation)
+- `client/systems/actor.rs` - Simplified Transform sync (VisualPosition.current() → Transform)
 
 **System Ordering:**
 ```
-FixedUpdate: physics::calculate → physics::apply_local
-Update:      network::receive → interpolation::update_targets →
-             interpolation::advance → actor::sync_transforms
+FixedUpdate: controlled::apply → tick → interpolate_remote
+Update:      renet → world::do_incremental → input::do_input →
+             predict_local_player → advance_interpolation → actor::update → camera
 ```
 
 **Migration Strategy:**
