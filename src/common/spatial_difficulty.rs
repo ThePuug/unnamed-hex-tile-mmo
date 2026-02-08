@@ -345,8 +345,8 @@ mod tests {
     #[test]
     fn test_berserker_level_0() {
         let attrs = calculate_enemy_attributes(0, EnemyArchetype::Berserker);
-        assert_eq!(attrs.might_grace_axis, 0);
-        assert_eq!(attrs.instinct_presence_axis, 0);
+        assert_eq!(attrs.might_grace_axis(), 0);
+        assert_eq!(attrs.instinct_presence_axis(), 0);
     }
 
     #[test]
@@ -355,9 +355,9 @@ mod tests {
         //          even levels 2,4 = 2 points to Instinct (secondary)
         // Berserker goes -1 on both
         let attrs = calculate_enemy_attributes(5, EnemyArchetype::Berserker);
-        assert_eq!(attrs.might_grace_axis, -3);
-        assert_eq!(attrs.instinct_presence_axis, -2);
-        assert_eq!(attrs.vitality_focus_axis, 0);
+        assert_eq!(attrs.might_grace_axis(), -3);
+        assert_eq!(attrs.instinct_presence_axis(), -2);
+        assert_eq!(attrs.vitality_focus_axis(), 0);
     }
 
     #[test]
@@ -365,9 +365,9 @@ mod tests {
         // Level 5: 3 points to Vitality (primary, -1)
         //          2 points to Presence (secondary, +1)
         let attrs = calculate_enemy_attributes(5, EnemyArchetype::Juggernaut);
-        assert_eq!(attrs.vitality_focus_axis, -3);
-        assert_eq!(attrs.instinct_presence_axis, 2);  // +2 (right direction)
-        assert_eq!(attrs.might_grace_axis, 0);
+        assert_eq!(attrs.vitality_focus_axis(), -3);
+        assert_eq!(attrs.instinct_presence_axis(), 2);  // +2 (right direction)
+        assert_eq!(attrs.might_grace_axis(), 0);
     }
 
     #[test]
@@ -375,9 +375,9 @@ mod tests {
         // Level 5: 3 points to Grace (primary, +1)
         //          2 points to Focus (secondary, +1)
         let attrs = calculate_enemy_attributes(5, EnemyArchetype::Kiter);
-        assert_eq!(attrs.might_grace_axis, 3);  // Grace is +
-        assert_eq!(attrs.vitality_focus_axis, 2);  // Focus is +
-        assert_eq!(attrs.instinct_presence_axis, 0);
+        assert_eq!(attrs.might_grace_axis(), 3);  // Grace is +
+        assert_eq!(attrs.vitality_focus_axis(), 2);  // Focus is +
+        assert_eq!(attrs.instinct_presence_axis(), 0);
     }
 
     #[test]
@@ -385,20 +385,20 @@ mod tests {
         // Level 5: 3 points to Focus (primary, +1)
         //          2 points to Instinct (secondary, -1)
         let attrs = calculate_enemy_attributes(5, EnemyArchetype::Defender);
-        assert_eq!(attrs.vitality_focus_axis, 3);  // Focus is +
-        assert_eq!(attrs.instinct_presence_axis, -2);  // Instinct is -
-        assert_eq!(attrs.might_grace_axis, 0);
+        assert_eq!(attrs.vitality_focus_axis(), 3);  // Focus is +
+        assert_eq!(attrs.instinct_presence_axis(), -2);  // Instinct is -
+        assert_eq!(attrs.might_grace_axis(), 0);
     }
 
     #[test]
     fn test_npc_has_zero_spectrum_shift() {
         // All NPCs should have 0 spectrum and 0 shift
         let attrs = calculate_enemy_attributes(10, EnemyArchetype::Berserker);
-        assert_eq!(attrs.might_grace_spectrum, 0);
-        assert_eq!(attrs.might_grace_shift, 0);
-        assert_eq!(attrs.vitality_focus_spectrum, 0);
-        assert_eq!(attrs.vitality_focus_shift, 0);
-        assert_eq!(attrs.instinct_presence_spectrum, 0);
-        assert_eq!(attrs.instinct_presence_shift, 0);
+        assert_eq!(attrs.might_grace_spectrum(), 0);
+        assert_eq!(attrs.might_grace_shift(), 0);
+        assert_eq!(attrs.vitality_focus_spectrum(), 0);
+        assert_eq!(attrs.vitality_focus_shift(), 0);
+        assert_eq!(attrs.instinct_presence_spectrum(), 0);
+        assert_eq!(attrs.instinct_presence_shift(), 0);
     }
 }

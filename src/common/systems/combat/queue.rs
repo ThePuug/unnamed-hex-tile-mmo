@@ -7,35 +7,57 @@ use std::time::Duration;
 #[cfg(test)]
 use crate::common::components::reaction_queue::DamageType;
 
-/// Calculate queue capacity based on Focus attribute
-/// Formula: base_capacity + floor(focus / 33.0)
-/// - Focus = 0: 1 slot (base=1, bonus=0)
-/// - Focus = 33: 2 slots (base=1, bonus=1)
-/// - Focus = 66: 3 slots (base=1, bonus=2)
-/// - Focus = 99: 4 slots (base=1, bonus=3)
-/// - Focus = 150: 5 slots (base=1, bonus=4)
+/// Calculate queue capacity based on Focus reach investment ratio
+///
+/// Formula: Slots based on investment ratio (focus_reach / max_efficient_reach)
+/// - Max efficient reach = total_level × 7 (all points to spectrum)
+/// - < 33% investment: 1 slot
+/// - 33-49% investment: 2 slots (base)
+/// - 50-65% investment: 3 slots
+/// - 66%+ investment: 4 slots
+///
+/// Examples at level 9:
+/// - 3 spectrum (21 reach / 63 max = 33.3%): 2 slots
+/// - 5 spectrum (35 reach / 63 max = 55.6%): 3 slots
+/// - 6 spectrum (42 reach / 63 max = 66.7%): 4 slots
 pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
-    // Use focus() which returns u8 (0-150 range)
-    let focus = attrs.focus() as usize;
+    let focus_reach = attrs.focus_reach() as f32;
+    let total_level = attrs.total_level() as f32;
 
-    let base_capacity = 1;
-    let bonus = focus / 33;
-    (base_capacity + bonus).min(10) // Cap at 10 for sanity
+    if total_level == 0.0 {
+        return 1; // No investment = minimum slots
+    }
+
+    // Max efficient reach if all points went to spectrum
+    let max_efficient_reach = total_level * 7.0;
+    let investment_ratio = focus_reach / max_efficient_reach;
+
+    if investment_ratio < 0.33 {
+        1  // Below minimum investment
+    } else if investment_ratio < 0.50 {
+        2  // Base capacity (33-49% investment)
+    } else if investment_ratio < 0.66 {
+        3  // +1 slot (50-65% investment)
+    } else {
+        4  // +2 slots (66%+ investment)
+    }
 }
 
 /// Calculate timer duration based on Instinct attribute
-/// Formula: base_window * (1.0 + instinct / 200.0)
+/// Formula: base_window * (1.0 + instinct / 1000.0)
+///
+/// With new scaling (instinct returns u16):
 /// - Instinct = 0: 1.0s (base * 1.0)
-/// - Instinct = 50: 1.25s (base * 1.25)
-/// - Instinct = 100: 1.5s (base * 1.5)
-/// - Instinct = 150: 1.75s (base * 1.75)
+/// - Instinct = 250: 1.25s (base * 1.25)
+/// - Instinct = 500 (level 50 pure specialist): 1.5s (base * 1.5)
+///
 /// Minimum 250ms to prevent instant resolution
 pub fn calculate_timer_duration(attrs: &ActorAttributes) -> Duration {
-    // Use instinct() which returns u8 (0-150 range)
+    // Use instinct() which returns u16 (scaled: 0-500+ range)
     let instinct = attrs.instinct() as f32;
 
     let base_window = 1.0;
-    let multiplier = 1.0 + (instinct / 200.0); // 0: 1.0x, 100: 1.5x, 150: 1.75x
+    let multiplier = 1.0 + (instinct / 1000.0); // 0: 1.0x, 500: 1.5x, 1000: 2.0x
     let duration_secs = base_window * multiplier;
 
     Duration::from_secs_f32(duration_secs).max(Duration::from_millis(250))
