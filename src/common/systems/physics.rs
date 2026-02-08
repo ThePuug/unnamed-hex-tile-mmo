@@ -1,65 +1,19 @@
-use std::cmp::min;
-
 use bevy::prelude::*;
-use qrz::{Convert, Qrz};
 
 use crate::common::{
     components::{
-        entity_type::{decorator::*, *},
         heading::*,
-        keybits::*,
         position::Position,
         *
     },
     plugins::nntree::*,
     resources::map::*,
+    systems::movement,
 };
-
-// ===== Physics Constants =====
-
-/// Gravity acceleration in world units per millisecond²
-/// Applied as velocity change per tick when falling
-const GRAVITY: f32 = 0.005;
-
-/// Jump ascent multiplier - jumping is 5x faster than falling
-/// This creates the characteristic jump arc
-const JUMP_ASCENT_MULTIPLIER: f32 = 5.0;
-
-/// Jump duration in milliseconds
-/// Entity ascends for this duration, then begins falling
-const JUMP_DURATION_MS: i16 = 125;
-
-/// Physics update timestep in milliseconds
-/// Physics is simulated in discrete 125ms chunks
-const PHYSICS_TIMESTEP_MS: i16 = 125;
-
-/// Movement speed in world units per millisecond
-/// Controls how quickly entities move horizontally
-const MOVEMENT_SPEED: f32 = 0.005;
-
-/// Terrain slope following speed (0.0 = no following, 1.0 = instant)
-/// Higher values make entities snap to terrain more quickly
-const SLOPE_FOLLOW_SPEED: f32 = 0.95;
-
-/// Ledge grab threshold in world units
-/// Set to 0.0 to disable ledge grabbing - entities must be exactly at or above the target floor
-const LEDGE_GRAB_THRESHOLD: f32 = 0.0;
-
-/// Vertical search range for floor detection (downward)
-/// How many Z levels to search below when finding floor
-const FLOOR_SEARCH_RANGE_DOWN: i8 = -60;
-
-/// Vertical search offset for floor detection (upward)
-/// Initial Z offset added before searching for floor
-const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
-
-/// Maximum entity count per tile before considering it solid
-/// Prevents excessive entity stacking
-const MAX_ENTITIES_PER_TILE: usize = 7;
 
 pub fn apply(
     dest: Loc,
-    mut dt0: i16,
+    dt0: i16,
     loc0: Loc,
     offset0: Vec3,
     airtime0: Option<i16>,
@@ -68,152 +22,23 @@ pub fn apply(
     map: &Map,
     nntree: &NNTree,
 ) -> (Vec3, Option<i16>) {
-    let mut offset0 = offset0;
-    let mut airtime0 = airtime0;
-
-    while dt0 >= 0 {
-        // step physics forward in PHYSICS_TIMESTEP_MS chunks
-        dt0 -= PHYSICS_TIMESTEP_MS;
-        let mut dt = min(PHYSICS_TIMESTEP_MS + dt0, PHYSICS_TIMESTEP_MS);
-
-        let px0 = map.convert(*loc0);                                       // current px of loc
-        let step_hx = map.convert(px0 + offset0);                           // current offset from loc
-        let floor = map.find(step_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
-        
-        if airtime0.is_none() {
-            if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * offset0.y).z > floor.unwrap().0.z+1 {
-                airtime0 = Some(0); 
-            }
-        }
-            
-        if let Some(mut airtime) = airtime0 {
-            if airtime > 0 {
-                // ensure we ascend to the apex
-                if airtime < dt {
-                    dt0 += dt-airtime;
-                    dt = airtime;
-                }
-                airtime -= dt;
-                airtime0 = Some(airtime);
-                offset0.y += dt as f32 * GRAVITY * JUMP_ASCENT_MULTIPLIER;
-            } else {
-                // falling
-                airtime -= dt;
-                airtime0 = Some(airtime);
-                let dy = -dt as f32 * GRAVITY;
-                if floor.is_none() || map.convert(map.convert(*loc0) + Vec3::Y * (offset0.y + dy)).z > floor.unwrap().0.z+1 {
-                    offset0.y += dy;
-                } else {
-                    offset0.y = map.convert(floor.unwrap().0 + Qrz { z: 1-loc0.z, ..*loc0 }).y;
-                    airtime0 = None;
-                }
-            }
-        }
-
-        // Calculate destination with heading offset
-        let dest_px = if *heading != Default::default() {
-            // Use heading to offset from tile center
-            let dest_center = map.convert(*dest);
-            let dest_heading_neighbor = map.convert(*dest + *heading);
-            let direction = dest_heading_neighbor - dest_center;
-            let heading_offset_xz = (direction * HERE).xz();
-            dest_center + Vec3::new(heading_offset_xz.x, 0.0, heading_offset_xz.y)
-        } else {
-            // No heading - use tile center
-            map.convert(*dest)
-        };
-
-        let rel_px = dest_px - px0;                                             // destination px relative to current px
-
-        // When at destination (stationary), target is the heading-offset position
-        let target_px = if *dest == *loc0 {
-            rel_px
-        } else {
-            // Player is moving - use normal movement logic
-            let rel_hx = map.convert(rel_px);                                   // destination tile relative to loc
-            let move_heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));   // direction towards destination tile
-            let next_hx = step_hx + *move_heading;                                   // next tile towards destination
-
-            // Search for next floor tile
-            let next_floor = map.find(next_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
-
-            // Check if trying to walk UP a cliff (elevation diff > 1 going upward)
-            // Allow walking off cliffs (downward) - player will fall
-            // Now also considers player's current vertical position to allow jumping up small cliffs
-            let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
-                let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
-
-                if elevation_diff > 1 {
-                    // Only allow traversal if player is jumping AND high enough
-                    if airtime0.is_some() {
-                        // Calculate actual world Y positions
-                        let current_y = map.convert(*loc0).y + offset0.y;
-                        let target_floor_y = map.convert(next_floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
-
-                        // Block if player's current Y position cannot reach the target floor
-                        // Allow a small threshold for ledge grabbing
-                        current_y + LEDGE_GRAB_THRESHOLD < target_floor_y
-                    } else {
-                        // On ground - block all cliff traversal
-                        true
-                    }
-                } else {
-                    false  // Not a cliff or downward - allow movement
-                }
-            } else {
-                false  // Can't determine elevation, allow movement
-            };
-
-            // Check if next tile has a solid obstacle
-            let exact_is_solid = match map.get(next_hx) {
-                Some(EntityType::Decorator(Decorator{is_solid, .. })) => *is_solid,
-                _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= MAX_ENTITIES_PER_TILE
-            };
-
-            let is_blocked_by_solid = if exact_is_solid {
-                // If solid, check if there's a valid floor nearby
-                next_floor.is_none()
-            } else {
-                false
-            };
-
-            let is_blocked = is_cliff_transition || is_blocked_by_solid;
-
-            if is_blocked {
-                rel_px * HERE  // Blocked: limit movement to HERE distance (wall bump)
-            } else if *heading != Default::default() {
-                rel_px  // Heading: target exact heading-offset position
-            } else {
-                rel_px * THERE  // Legacy tile-center targeting
-            }
-        };
-
-        let delta_px = offset0.distance(target_px);
-        let ratio = 0_f32.max((delta_px - movement_speed * dt as f32) / delta_px);
-        let lerp_xz = offset0.xz().lerp(target_px.xz(), 1. - ratio);
-        offset0 = Vec3::new(lerp_xz.x, offset0.y, lerp_xz.y);
-        
-        // IMPORTANT: Always clamp Y position to at least terrain height + 1.
-        // This prevents entities from ever clipping below the terrain surface.
-        // DO NOT REVERT - this is intentional behavior for both grounded and airborne entities.
-        let current_hx = map.convert(px0 + offset0);
-        let current_floor = map.find(current_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
-
-        if let Some((floor_qrz, _)) = current_floor {
-            let terrain_y = map.convert(floor_qrz + Qrz { z: 1-loc0.z, ..*loc0 }).y;
-            // Always enforce minimum height above terrain (no interpolation, direct clamp)
-            offset0.y = offset0.y.max(terrain_y);
-        }
-    }
-
-    (offset0, airtime0)
+    let input = movement::MovementInput {
+        position: Position::new(*loc0, offset0),
+        heading,
+        destination: *dest,
+        airtime: airtime0,
+        movement_speed,
+    };
+    let output = movement::calculate_movement(input, dt0, map, nntree);
+    (output.position.offset, output.airtime)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bevy::app::App;
-    use qrz::Qrz;
+    use qrz::{Convert, Qrz};
+    use crate::common::systems::movement::{GRAVITY, JUMP_DURATION_MS, MOVEMENT_SPEED};
 
     /// Helper to create a test Map with default terrain (radius=1.0, rise=0.8)
     fn create_test_map() -> Map {

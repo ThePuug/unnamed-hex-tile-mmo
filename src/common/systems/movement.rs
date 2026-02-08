@@ -1,7 +1,7 @@
 //! Pure Movement Calculation Functions
 //!
-//! This module contains pure functions for calculating movement physics.
-//! These functions are deterministic: same inputs always produce same outputs.
+//! This module contains the canonical physics implementation as pure functions.
+//! `physics::apply` delegates to `calculate_movement` in this module.
 //!
 //! # Architecture (ADR-019)
 //!
@@ -10,16 +10,25 @@
 //! 2. Return explicit outputs (no side effects)
 //! 3. Are easily unit tested
 //!
-//! The ECS systems call these pure functions and apply results to components.
+//! Standalone helpers (`apply_horizontal_movement`, `apply_vertical_movement`, etc.)
+//! are decomposed building blocks used in tests and available for future callers.
+
+// Many public helpers/constants are currently only consumed by tests in this
+// module and in physics.rs; suppress warnings until additional callers exist.
+#![allow(dead_code)]
 
 use bevy::prelude::*;
 use qrz::{Convert, Qrz};
 
 use crate::common::{
     components::{
+        entity_type::{decorator::*, EntityType},
         heading::{Heading, HERE, THERE},
+        keybits::*,
         position::Position,
+        Loc,
     },
+    plugins::nntree::NNTree,
     resources::map::Map,
 };
 
@@ -45,6 +54,87 @@ pub const FLOOR_SEARCH_RANGE_DOWN: i8 = -60;
 
 /// Vertical search offset for floor detection (upward)
 pub const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
+
+/// Terrain slope following speed (0.0 = no following, 1.0 = instant)
+pub const SLOPE_FOLLOW_SPEED: f32 = 0.95;
+
+/// Ledge grab threshold in world units
+/// Set to 0.0 to disable ledge grabbing
+pub const LEDGE_GRAB_THRESHOLD: f32 = 0.0;
+
+/// Maximum entity count per tile before considering it solid
+pub const MAX_ENTITIES_PER_TILE: usize = 7;
+
+// ===== Terrain Helpers =====
+
+/// Compute terrain height at the entity's tile, given the floor Qrz.
+/// Extracts the repeated `map.convert(floor_qrz + Qrz { z: 1 - tile.z, ..tile }).y` pattern.
+pub fn terrain_y_at(floor_qrz: Qrz, entity_tile: Qrz, map: &Map) -> f32 {
+    let adjusted: Vec3 = map.convert(floor_qrz + Qrz { z: 1 - entity_tile.z, ..entity_tile });
+    adjusted.y
+}
+
+/// Compute terrain height blended between the current tile and the nearest neighbor.
+/// Produces a smoothly-varying height as the entity moves between tiles, preventing
+/// discrete "stepping" at tile boundaries on gentle slopes.
+///
+/// Only blends with neighbors whose floor elevation differs by at most 1 z-level.
+/// Cliff neighbors (elevation_diff > 1) are skipped to prevent the entity's Y from
+/// being artificially raised, which would bypass cliff blocking on the next tick.
+pub fn blended_terrain_y(world_xz: Vec2, current_hx: Qrz, terrain_y: f32, entity_tile: Qrz, current_floor_qrz: Qrz, map: &Map) -> f32 {
+    let tile_center: Vec3 = map.convert(current_hx);
+    let offset_xz = world_xz - tile_center.xz();
+
+    if offset_xz.length_squared() < 0.001 {
+        return terrain_y;
+    }
+
+    // Find the neighbor whose direction best matches the entity's offset from tile center
+    let mut best_alignment = 0.0_f32;
+    let mut best_neighbor = None;
+    for neighbor in current_hx.neighbors() {
+        let nc: Vec3 = map.convert(neighbor);
+        let to_neighbor = nc.xz() - tile_center.xz();
+        let alignment = offset_xz.dot(to_neighbor);
+        if alignment > best_alignment {
+            best_alignment = alignment;
+            best_neighbor = Some((neighbor, to_neighbor));
+        }
+    }
+
+    let Some((neighbor, to_neighbor)) = best_neighbor else {
+        return terrain_y;
+    };
+
+    let to_neighbor_len = to_neighbor.length();
+    if to_neighbor_len < 0.001 {
+        return terrain_y;
+    }
+
+    // Blend from 0 at tile center to 0.5 at boundary. Using the full center-to-center
+    // distance ensures both tiles agree on the same height at the crossing point:
+    // from A's side: A + (B-A)*0.5, from B's side: B + (A-B)*0.5 — both equal (A+B)/2.
+    let projection = offset_xz.dot(to_neighbor / to_neighbor_len);
+    let blend = (projection / to_neighbor_len).clamp(0.0, 0.5);
+
+    if blend < 0.01 {
+        return terrain_y;
+    }
+
+    let Some((nf_qrz, _)) = map.find(neighbor + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN) else {
+        return terrain_y;
+    };
+
+    // Skip blending with cliff neighbors (elevation_diff > 1) to prevent
+    // gradual Y raise that bypasses cliff blocking
+    let elevation_diff = (nf_qrz.z - current_floor_qrz.z).abs();
+    if elevation_diff > 1 {
+        return terrain_y;
+    }
+
+    let neighbor_y = terrain_y_at(nf_qrz, entity_tile, map);
+    terrain_y + (neighbor_y - terrain_y) * blend
+}
 
 // ===== Movement Input =====
 
@@ -164,18 +254,21 @@ pub fn apply_vertical_movement(
     (new_y, Some(air))
 }
 
-/// Clamp Y position to terrain floor.
+/// Clamp Y position to terrain floor with slope following.
 ///
-/// Ensures entity never clips below terrain.
+/// - Grounded: blends terrain height with nearest non-cliff neighbor for smooth slopes
+/// - Airborne: hard clamps against actual floor height
 ///
 /// # Returns
 /// (clamped_y, should_land) where should_land is true if entity landed
 pub fn clamp_to_floor(
     current_tile: Qrz,
     offset: Vec3,
+    airtime: Option<i16>,
     map: &Map,
 ) -> (f32, bool) {
-    let world_pos = map.convert(current_tile) + offset;
+    let px0: Vec3 = map.convert(current_tile);
+    let world_pos = px0 + offset;
     let current_hex: Qrz = map.convert(world_pos);
 
     let floor = map.find(
@@ -184,138 +277,229 @@ pub fn clamp_to_floor(
     );
 
     if let Some((floor_qrz, _)) = floor {
-        let terrain_y: f32 = map.convert(floor_qrz + Qrz { z: 1 - current_tile.z, ..current_tile }).y;
-        if offset.y < terrain_y {
-            return (terrain_y, true);
+        let terrain_y = terrain_y_at(floor_qrz, current_tile, map);
+
+        if airtime.is_none() {
+            let slope_y = blended_terrain_y(world_pos.xz(), current_hex, terrain_y, current_tile, floor_qrz, map);
+            let mut y = offset.y + (slope_y - offset.y) * SLOPE_FOLLOW_SPEED;
+            y = y.max(slope_y);
+            return (y, false);
+        } else {
+            return (offset.y.max(terrain_y), false);
         }
     }
 
     (offset.y, false)
 }
 
-/// Check if destination tile is blocked.
+/// Check if the next tile toward a destination is blocked.
+///
+/// Computes `step_hx` from the entity's world position (not just tile), then
+/// `next_hx = step_hx + move_heading` to find the immediate next tile.
 ///
 /// Returns true if the tile is blocked by:
-/// - Elevation difference > 1 (cliff)
-/// - Solid obstacle with no valid floor nearby
+/// - Cliff transition (elevation diff > 1 going upward, unless jumping high enough)
+/// - Solid decorator with no valid floor nearby
+/// - Entity stacking (>= MAX_ENTITIES_PER_TILE entities)
 pub fn is_tile_blocked(
     current_tile: Qrz,
     current_offset: Vec3,
     destination: Qrz,
     airtime: Option<i16>,
     map: &Map,
+    nntree: &NNTree,
 ) -> bool {
-    // Get current and destination floor positions
-    let current_world = map.convert(current_tile) + current_offset;
-    let current_hex: Qrz = map.convert(current_world);
+    let px0: Vec3 = map.convert(current_tile);
+    let step_hx: Qrz = map.convert(px0 + current_offset);
+    let floor = map.find(step_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
 
-    let current_floor = map.find(
-        current_hex + Qrz::Z * FLOOR_SEARCH_OFFSET_UP,
-        FLOOR_SEARCH_RANGE_DOWN,
-    );
-    let dest_floor = map.find(
-        destination + Qrz::Z * FLOOR_SEARCH_OFFSET_UP,
-        FLOOR_SEARCH_RANGE_DOWN,
-    );
+    // Compute direction toward destination as a move heading
+    let rel_px: Vec3 = map.convert(destination) - px0;
+    let rel_hx: Qrz = map.convert(rel_px);
+    let move_heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));
+    let next_hx = step_hx + *move_heading;
+
+    let next_floor = map.find(next_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
 
     // Check cliff transition (elevation diff > 1 going upward)
-    if let (Some((current_qrz, _)), Some((dest_qrz, _))) = (current_floor, dest_floor) {
-        let elevation_diff = dest_qrz.z - current_qrz.z;
+    let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
+        let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
 
         if elevation_diff > 1 {
-            // Allow if jumping and high enough
             if airtime.is_some() {
-                let current_y = map.convert(current_tile).y + current_offset.y;
-                let target_floor_y: f32 = map.convert(dest_qrz + Qrz { z: 1 - current_tile.z, ..current_tile }).y;
-                if current_y < target_floor_y {
-                    return true; // Can't reach
-                }
+                let current_y = px0.y + current_offset.y;
+                let target_floor_y = terrain_y_at(next_floor_qrz, current_tile, map);
+                current_y + LEDGE_GRAB_THRESHOLD < target_floor_y
             } else {
-                return true; // On ground, can't climb cliff
+                true
             }
-        }
-    }
-
-    false
-}
-
-/// Calculate one physics step of movement.
-///
-/// This is the core pure function that processes a single physics timestep.
-/// It handles horizontal movement, vertical movement (jumping/falling),
-/// and terrain collision.
-///
-/// # Arguments
-/// * `input` - Movement input state
-/// * `dt` - Delta time in milliseconds (typically PHYSICS_TIMESTEP_MS)
-/// * `map` - Game map for terrain queries
-///
-/// # Returns
-/// MovementOutput with updated position and airtime
-pub fn calculate_movement_step(
-    input: MovementInput,
-    dt: i16,
-    map: &Map,
-) -> MovementOutput {
-    let mut offset = input.position.offset;
-    let mut airtime = input.airtime;
-    let tile = input.position.tile;
-
-    // Check if we should start falling (no floor below)
-    if airtime.is_none() {
-        let world_pos = map.convert(tile) + offset;
-        let current_hex: Qrz = map.convert(world_pos);
-        let floor = map.find(
-            current_hex + Qrz::Z * FLOOR_SEARCH_OFFSET_UP,
-            FLOOR_SEARCH_RANGE_DOWN,
-        );
-
-        if floor.is_none() {
-            airtime = Some(0); // Start falling
-        } else if let Some((floor_qrz, _)) = floor {
-            let floor_z = floor_qrz.z;
-            let current_z: Qrz = map.convert(map.convert(tile) + Vec3::Y * offset.y);
-            if current_z.z > floor_z + 1 {
-                airtime = Some(0); // Too high above floor, start falling
-            }
-        }
-    }
-
-    // Apply vertical movement
-    let (new_y, new_airtime) = apply_vertical_movement(offset.y, airtime, dt);
-    offset.y = new_y;
-    airtime = new_airtime;
-
-    // Calculate movement target
-    let is_stationary = input.destination == tile;
-    let target = if is_stationary {
-        // Stationary: move toward heading-based position
-        calculate_movement_target(tile, tile, input.heading, map)
-    } else {
-        // Moving: check if destination is blocked
-        let blocked = is_tile_blocked(tile, offset, input.destination, airtime, map);
-        let effective_dest = if blocked { tile } else { input.destination };
-
-        // Calculate target with HERE/THERE scaling for tile-center targeting
-        let target = calculate_movement_target(tile, effective_dest, input.heading, map);
-
-        if *input.heading != Qrz::default() {
-            target // Use exact heading-offset position
-        } else if blocked {
-            target * HERE // Blocked: stay at HERE distance
         } else {
-            target * THERE // Moving: allow THERE distance (cross tile)
+            false
         }
+    } else {
+        false
     };
 
-    // Apply horizontal movement
-    offset = apply_horizontal_movement(offset, target, input.movement_speed, dt);
+    // Check if next tile has a solid obstacle
+    let exact_is_solid = match map.get(next_hx) {
+        Some(EntityType::Decorator(Decorator { is_solid, .. })) => *is_solid,
+        _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= MAX_ENTITIES_PER_TILE,
+    };
 
-    // Clamp to floor
-    let (clamped_y, landed) = clamp_to_floor(tile, offset, map);
-    offset.y = clamped_y;
-    if landed {
-        airtime = None;
+    let is_blocked_by_solid = if exact_is_solid {
+        next_floor.is_none()
+    } else {
+        false
+    };
+
+    is_cliff_transition || is_blocked_by_solid
+}
+
+/// Process multiple physics timesteps.
+///
+/// Breaks total_dt into PHYSICS_TIMESTEP_MS chunks and processes each.
+/// Uses `while dt0 >= 0` with jump apex splitting to match physics.rs exactly.
+///
+/// # Arguments
+/// * `input` - Initial movement input state
+/// * `total_dt` - Total delta time in milliseconds
+/// * `map` - Game map for terrain queries
+/// * `nntree` - Nearest neighbor tree for entity stacking checks
+///
+/// # Returns
+/// Final MovementOutput after all timesteps
+pub fn calculate_movement(
+    input: MovementInput,
+    mut dt0: i16,
+    map: &Map,
+    nntree: &NNTree,
+) -> MovementOutput {
+    let tile = input.position.tile;
+    let mut offset = input.position.offset;
+    let mut airtime = input.airtime;
+
+    while dt0 >= 0 {
+        dt0 -= PHYSICS_TIMESTEP_MS;
+        let mut dt = std::cmp::min(PHYSICS_TIMESTEP_MS + dt0, PHYSICS_TIMESTEP_MS);
+
+        let px0: Vec3 = map.convert(tile);
+        let step_hx: Qrz = map.convert(px0 + offset);
+        let floor = map.find(step_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+
+        // Check if we should start falling
+        if airtime.is_none() {
+            if floor.is_none() || map.convert(map.convert(tile) + Vec3::Y * offset.y).z > floor.unwrap().0.z + 1 {
+                airtime = Some(0);
+            }
+        }
+
+        // Vertical movement with jump apex splitting
+        if let Some(mut air) = airtime {
+            if air > 0 {
+                // Ascending — split at apex
+                if air < dt {
+                    dt0 += dt - air;
+                    dt = air;
+                }
+                air -= dt;
+                airtime = Some(air);
+                offset.y += dt as f32 * GRAVITY * JUMP_ASCENT_MULTIPLIER;
+            } else {
+                // Falling
+                air -= dt;
+                airtime = Some(air);
+                let dy = -dt as f32 * GRAVITY;
+                if floor.is_none() || map.convert(map.convert(tile) + Vec3::Y * (offset.y + dy)).z > floor.unwrap().0.z + 1 {
+                    offset.y += dy;
+                } else {
+                    offset.y = terrain_y_at(floor.unwrap().0, tile, map);
+                    airtime = None;
+                }
+            }
+        }
+
+        // Calculate destination with heading offset
+        let dest_px = if *input.heading != Qrz::default() {
+            let dest_center: Vec3 = map.convert(input.destination);
+            let dest_heading_neighbor: Vec3 = map.convert(input.destination + *input.heading);
+            let direction = dest_heading_neighbor - dest_center;
+            let heading_offset_xz = (direction * HERE).xz();
+            dest_center + Vec3::new(heading_offset_xz.x, 0.0, heading_offset_xz.y)
+        } else {
+            map.convert(input.destination)
+        };
+
+        let rel_px = dest_px - px0;
+
+        // Calculate movement target
+        let target_px = if input.destination == tile {
+            rel_px
+        } else {
+            let rel_hx: Qrz = map.convert(rel_px);
+            let move_heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));
+            let next_hx = step_hx + *move_heading;
+
+            let next_floor = map.find(next_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+
+            let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
+                let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
+                if elevation_diff > 1 {
+                    if airtime.is_some() {
+                        let current_y = px0.y + offset.y;
+                        let target_floor_y = terrain_y_at(next_floor_qrz, tile, map);
+                        current_y + LEDGE_GRAB_THRESHOLD < target_floor_y
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let exact_is_solid = match map.get(next_hx) {
+                Some(EntityType::Decorator(Decorator { is_solid, .. })) => *is_solid,
+                _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= MAX_ENTITIES_PER_TILE,
+            };
+
+            let is_blocked_by_solid = exact_is_solid && next_floor.is_none();
+            let is_blocked = is_cliff_transition || is_blocked_by_solid;
+
+            if is_blocked {
+                rel_px * HERE
+            } else if *input.heading != Qrz::default() {
+                rel_px
+            } else {
+                rel_px * THERE
+            }
+        };
+
+        // Apply horizontal movement
+        let delta_px = offset.distance(target_px);
+        let ratio = 0_f32.max((delta_px - input.movement_speed * dt as f32) / delta_px);
+        let lerp_xz = offset.xz().lerp(target_px.xz(), 1.0 - ratio);
+        offset = Vec3::new(lerp_xz.x, offset.y, lerp_xz.y);
+
+        // Terrain following / floor clamping
+        let current_hx: Qrz = map.convert(px0 + offset);
+        let current_floor = map.find(current_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+
+        if let Some((floor_qrz, _)) = current_floor {
+            let terrain_y = terrain_y_at(floor_qrz, tile, map);
+
+            if airtime.is_none() {
+                // Grounded: blend terrain height for smooth slopes.
+                // blended_terrain_y skips cliff neighbors (elevation_diff > 1)
+                // so we don't artificially raise Y near cliff edges.
+                let slope_y = blended_terrain_y((px0 + offset).xz(), current_hx, terrain_y, tile, floor_qrz, map);
+                offset.y += (slope_y - offset.y) * SLOPE_FOLLOW_SPEED;
+                offset.y = offset.y.max(slope_y);
+            } else {
+                // Airborne: hard clamp against raw terrain height
+                offset.y = offset.y.max(terrain_y);
+            }
+        }
     }
 
     MovementOutput {
@@ -324,44 +508,17 @@ pub fn calculate_movement_step(
     }
 }
 
-/// Process multiple physics timesteps.
-///
-/// Breaks total_dt into PHYSICS_TIMESTEP_MS chunks and processes each.
-/// This ensures consistent physics regardless of frame rate.
-///
-/// # Arguments
-/// * `input` - Initial movement input state
-/// * `total_dt` - Total delta time in milliseconds
-/// * `map` - Game map for terrain queries
-///
-/// # Returns
-/// Final MovementOutput after all timesteps
-pub fn calculate_movement(
-    mut input: MovementInput,
-    mut total_dt: i16,
-    map: &Map,
-) -> MovementOutput {
-    while total_dt > 0 {
-        let dt = total_dt.min(PHYSICS_TIMESTEP_MS);
-        total_dt -= PHYSICS_TIMESTEP_MS;
-
-        let output = calculate_movement_step(input, dt, map);
-        input.position = output.position;
-        input.airtime = output.airtime;
-    }
-
-    MovementOutput {
-        position: input.position,
-        airtime: input.airtime,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::systems::physics;
 
     fn create_test_map() -> Map {
         Map::new(qrz::Map::new(1.0, 0.8))
+    }
+
+    fn create_test_nntree() -> NNTree {
+        NNTree::new_for_test()
     }
 
     // ===== Determinism Tests =====
@@ -369,6 +526,7 @@ mod tests {
     #[test]
     fn test_movement_is_deterministic() {
         let map = create_test_map();
+        let nntree = create_test_nntree();
 
         let input = MovementInput {
             position: Position::new(Qrz { q: 0, r: 0, z: 0 }, Vec3::new(0.5, 1.0, 0.3)),
@@ -378,10 +536,68 @@ mod tests {
             movement_speed: MOVEMENT_SPEED,
         };
 
-        let output1 = calculate_movement(input, 125, &map);
-        let output2 = calculate_movement(input, 125, &map);
+        let output1 = calculate_movement(input, 125, &map, &nntree);
+        let output2 = calculate_movement(input, 125, &map, &nntree);
 
         assert_eq!(output1, output2, "Movement calculation must be deterministic");
+    }
+
+    /// Cross-implementation determinism test:
+    /// physics::apply and movement::calculate_movement must produce identical results.
+    #[test]
+    fn test_movement_matches_physics_apply() {
+        let map = create_test_map();
+        let nntree = create_test_nntree();
+
+        // Test multiple scenarios
+        let test_cases: Vec<(Qrz, Vec3, Qrz, Option<i16>, Heading, i16)> = vec![
+            // Stationary, no heading
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO, Qrz { q: 0, r: 0, z: 0 }, None, Heading::default(), 125),
+            // Moving east
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO, Qrz { q: 1, r: 0, z: 0 }, None, Heading::default(), 125),
+            // Moving with heading
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO, Qrz { q: 1, r: 0, z: 0 }, None, Heading::new(Qrz { q: 1, r: 0, z: 0 }), 125),
+            // Jumping
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO, Qrz { q: 0, r: 0, z: 0 }, Some(JUMP_DURATION_MS), Heading::default(), 125),
+            // Falling
+            (Qrz { q: 0, r: 0, z: 5 }, Vec3::new(0.0, 5.0, 0.0), Qrz { q: 0, r: 0, z: 5 }, Some(-100), Heading::default(), 125),
+            // Stationary with heading
+            (Qrz { q: 5, r: 5, z: 0 }, Vec3::ZERO, Qrz { q: 5, r: 5, z: 0 }, None, Heading::new(Qrz { q: 1, r: 0, z: 0 }), 125),
+            // Multi-step (250ms)
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO, Qrz { q: 1, r: 0, z: 0 }, None, Heading::default(), 250),
+            // With offset
+            (Qrz { q: 0, r: 0, z: 0 }, Vec3::new(0.5, 0.0, 0.3), Qrz { q: 1, r: 0, z: 0 }, None, Heading::default(), 125),
+        ];
+
+        for (i, (tile, offset, dest, airtime, heading, dt)) in test_cases.iter().enumerate() {
+            let loc = Loc::new(*tile);
+
+            // physics::apply
+            let (phys_offset, phys_airtime) = physics::apply(
+                Loc::new(*dest), *dt, loc, *offset, *airtime, MOVEMENT_SPEED, *heading, &map, &nntree,
+            );
+
+            // movement::calculate_movement
+            let input = MovementInput {
+                position: Position::new(*tile, *offset),
+                heading: *heading,
+                destination: *dest,
+                airtime: *airtime,
+                movement_speed: MOVEMENT_SPEED,
+            };
+            let output = calculate_movement(input, *dt, &map, &nntree);
+
+            assert_eq!(
+                phys_offset, output.position.offset,
+                "Case {}: offset mismatch. physics={:?}, movement={:?}",
+                i, phys_offset, output.position.offset
+            );
+            assert_eq!(
+                phys_airtime, output.airtime,
+                "Case {}: airtime mismatch. physics={:?}, movement={:?}",
+                i, phys_airtime, output.airtime
+            );
+        }
     }
 
     // ===== Horizontal Movement Tests =====
@@ -410,6 +626,7 @@ mod tests {
     #[test]
     fn test_stationary_entity_moves_toward_heading() {
         let map = create_test_map();
+        let nntree = create_test_nntree();
 
         let input = MovementInput {
             position: Position::at_tile(Qrz { q: 0, r: 0, z: 0 }),
@@ -419,7 +636,7 @@ mod tests {
             movement_speed: MOVEMENT_SPEED,
         };
 
-        let output = calculate_movement(input, 125, &map);
+        let output = calculate_movement(input, 125, &map, &nntree);
 
         assert!(
             output.position.offset.x > 0.0,
@@ -488,6 +705,7 @@ mod tests {
     #[test]
     fn test_full_movement_cycle() {
         let map = create_test_map();
+        let nntree = create_test_nntree();
 
         // Start at origin, move east
         let input = MovementInput {
@@ -498,7 +716,7 @@ mod tests {
             movement_speed: MOVEMENT_SPEED,
         };
 
-        let output = calculate_movement(input, 250, &map);
+        let output = calculate_movement(input, 250, &map, &nntree);
 
         // Should have moved in positive X direction
         assert!(
@@ -511,6 +729,7 @@ mod tests {
     #[test]
     fn test_airtime_decrements_each_step() {
         let map = create_test_map();
+        let nntree = create_test_nntree();
 
         let input = MovementInput {
             position: Position::new(Qrz { q: 0, r: 0, z: 5 }, Vec3::new(0.0, 10.0, 0.0)),
@@ -520,7 +739,7 @@ mod tests {
             movement_speed: MOVEMENT_SPEED,
         };
 
-        let output = calculate_movement(input, 125, &map);
+        let output = calculate_movement(input, 125, &map, &nntree);
 
         assert!(
             output.airtime.is_some(),
