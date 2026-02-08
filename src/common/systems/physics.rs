@@ -179,13 +179,12 @@ pub fn apply(
 
             let is_blocked = is_cliff_transition || is_blocked_by_solid;
 
-            // With heading offset, target exact position (no scaling)
-            // Without heading, use HERE/THERE scaling for tile-center targeting
-            if *heading != Default::default() {
-                rel_px  // Target exact heading-offset position
+            if is_blocked {
+                rel_px * HERE  // Blocked: limit movement to HERE distance (wall bump)
+            } else if *heading != Default::default() {
+                rel_px  // Heading: target exact heading-offset position
             } else {
-                // Legacy tile-center targeting: scale by HERE/THERE
-                if is_blocked { rel_px * HERE } else { rel_px * THERE }
+                rel_px * THERE  // Legacy tile-center targeting
             }
         };
 
