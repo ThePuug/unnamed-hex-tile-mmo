@@ -81,8 +81,11 @@ pub fn predict_local_player(
         airtime.step = air;
 
         // Write predicted world position to VisualPosition (NOT Position)
+        // Use 2x tick duration so interpolation spans ~2 frames, providing real smoothing.
+        // At 1x, interpolation completes in a single frame (tick≈15.6ms < frame≈16.7ms),
+        // causing visible jitter on direction changes as prediction targets shift abruptly.
         let predicted_world = map.convert(*loc) + offset;
-        visual.interpolate_toward(predicted_world, tick_duration);
+        visual.interpolate_toward(predicted_world, tick_duration * 2.0);
     }
 }
 
