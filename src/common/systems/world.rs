@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use qrz::Convert;
 
 use crate::common::{
-    components::{behaviour::*, heading::*, keybits::*, offset::*, position::{Position, VisualPosition}, resources::*, *},
+    components::{behaviour::*, heading::*, keybits::*, position::{Position, VisualPosition}, resources::*, *},
     message::{Component, Event, *},
     resources::map::*
 };
@@ -20,13 +20,12 @@ pub fn try_incremental(
 
 /// Process incremental component updates from server.
 /// Updates existing components or inserts them if missing (late-binding for NPCs).
-/// Exceptions: Loc/Offset/Heading require all related components and skip if dependencies missing.
+/// Exceptions: Loc/Heading require all related components and skip if dependencies missing.
 pub fn do_incremental(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut query: Query<(
         Option<&mut Loc>,
-        Option<&mut Offset>,
         Option<&mut Heading>,
         Option<&mut KeyBits>,
         Option<&mut Behaviour>,
@@ -45,7 +44,7 @@ pub fn do_incremental(
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
 
-        let Ok((o_loc, o_offset, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -54,45 +53,24 @@ pub fn do_incremental(
                 let Some(mut loc0) = o_loc else {
                     continue;
                 };
-                let Some(mut offset0) = o_offset else {
-                    continue;
-                };
 
                 // Check if this is a local player (has input buffer) or remote player
                 let is_local = buffers.get(&ent).is_some();
                 let is_player = o_player_controlled.is_some();
 
-                // On server: skip offset adjustments for NPCs (server is authoritative for NPC physics)
-                // On client: process all Loc updates (both players and NPCs come from server)
-                // We detect "server authoritative NPC" by: not a player, and Loc is already up-to-date
-                // (server's actor::update already set Loc and adjusted offset before sending this event)
+                // On server: skip adjustments for NPCs (server is authoritative for NPC physics)
+                // (server's actor::update already set Loc and adjusted Position before sending this event)
                 if !is_player && **loc0 == *loc {
-                    // NPC Loc update on server - offset was already adjusted by server/actor::update
                     continue;
                 }
 
                 if is_local {
                     // Teleport detection: Check if this Loc update is a smooth tile crossing or a teleport.
-                    //
-                    // Local player movement is client-predicted and crosses adjacent tiles (distance=1).
-                    // Server-initiated teleports (Lunge, dev console) jump multiple hexes (distance>=2).
-                    //
-                    // We detect teleports to avoid preserving world-space offsets, which would cause
-                    // the character to appear stuck at the old position (client prediction conflict).
-                    const TELEPORT_THRESHOLD_HEXES: i16 = 2; // Jumps of 2+ hexes are non-adjacent (teleports)
-
+                    const TELEPORT_THRESHOLD_HEXES: i16 = 2;
                     let hex_distance = loc0.flat_distance(&loc);
 
                     if hex_distance >= TELEPORT_THRESHOLD_HEXES {
-                        // Teleport: Clear offset for instant visual snap (no interpolation)
-                        // Server has moved us multiple hexes non-adjacently
-                        offset0.state = Vec3::ZERO;
-                        offset0.step = Vec3::ZERO;
-                        offset0.prev_step = Vec3::ZERO;
-                        offset0.interp_elapsed = 0.0;
-                        offset0.interp_duration = 0.0;
-
-                        // ADR-019: Snap VisualPosition on teleport
+                        // Teleport: snap to new position
                         if let Some(mut vis) = o_visual {
                             let teleport_world: Vec3 = map.convert(*loc);
                             vis.snap_to(teleport_world);
@@ -102,28 +80,18 @@ pub fn do_incremental(
                             pos.offset = Vec3::ZERO;
                         }
                     } else {
-                        // Smooth tile crossing: Preserve world-space position for visual continuity
-                        // Convert offset from old tile's coordinate system to new tile's
-                        let state_world = map.convert(**loc0) + offset0.state;
-                        let prev_world = map.convert(**loc0) + offset0.prev_step;
-                        let step_world = map.convert(**loc0) + offset0.step;
-
-                        let new_tile_center: Vec3 = map.convert(*loc);
-                        offset0.state = state_world - new_tile_center;
-                        offset0.prev_step = prev_world - new_tile_center;
-                        offset0.step = step_world - new_tile_center;
-
-                        // ADR-019: Update Position tile (offset preserved from physics)
+                        // Smooth tile crossing: update Position tile, adjust offset for new coordinate system
                         if let Some(mut pos) = o_position {
+                            let old_tile_center: Vec3 = map.convert(**loc0);
+                            let new_tile_center: Vec3 = map.convert(*loc);
+                            let world_pos = old_tile_center + pos.offset;
                             pos.tile = *loc;
-                            pos.offset = offset0.step;
+                            pos.offset = world_pos - new_tile_center;
                         }
-                        // Note: VisualPosition continues interpolating - no snap needed for smooth crossing
+                        // VisualPosition continues interpolating in world space - no adjustment needed
                     }
                 } else {
                     // Remote entity: tile boundary crossing
-
-                    // Calculate server's authoritative position (heading-adjusted on new tile)
                     let new_tile_center: Vec3 = map.convert(*loc);
                     let Some(ref heading0) = o_heading else { panic!("no heading for remote player/NPC") };
                     let target_offset = if ***heading0 != default() {
@@ -139,15 +107,7 @@ pub fn do_incremental(
                         commands.entity(ent).remove::<crate::common::components::movement_prediction::MovementPrediction>();
                     }
 
-                    // Preserve ongoing MovementIntent interpolation, convert coordinate system
-                    let prev_world = map.convert(**loc0) + offset0.prev_step;
-                    let step_world = map.convert(**loc0) + offset0.step;
-
-                    offset0.prev_step = prev_world - new_tile_center;
-                    offset0.step = step_world - new_tile_center;
-                    offset0.state = Vec3::new(target_offset.x, 0.0, target_offset.y);
-
-                    // ADR-019: Update Position (VisualPosition is world-space, no conversion needed)
+                    // Update Position for remote entity
                     if let Some(mut pos) = o_position {
                         pos.tile = *loc;
                         pos.offset = Vec3::new(target_offset.x, 0.0, target_offset.y);
@@ -160,14 +120,10 @@ pub fn do_incremental(
             Component::Heading(heading) => {
                 let Some(mut heading0) = o_heading else { continue; };
 
-                // Update offset.state for remote players when heading changes
-                let is_local = buffers.get(&ent).is_some();
                 let is_player = o_player_controlled.is_some();
 
-                // On server: skip offset adjustments for NPCs (server is authoritative for NPC physics)
-                // Check before assignment to detect if this is a server NPC update
+                // On server: skip adjustments for NPCs (server is authoritative)
                 if !is_player && *heading0 == heading {
-                    // NPC Heading update on server - heading already set, don't reset offset.state
                     continue;
                 }
 
@@ -219,7 +175,6 @@ pub fn do_incremental(
                 if o_player_controlled.is_none() {
                     commands.entity(ent).insert(player_controlled);
                 }
-                // PlayerControlled is a marker - if already present, no update needed
             }
             Component::TierLock(tier_lock) => {
                 if let Some(mut tier_lock0) = o_tier_lock {
@@ -229,7 +184,6 @@ pub fn do_incremental(
                 }
             }
             Component::Returning(returning) => {
-                // Always insert Returning (it's a marker component for leash regen prediction)
                 commands.entity(ent).insert(returning);
             }
             _ => {}

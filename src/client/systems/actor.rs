@@ -9,7 +9,7 @@ use crate::{
         components::{
             behaviour::Behaviour,
             entity_type::{ actor::*, * },
-            heading::*, keybits::*, offset::*,
+            heading::*, keybits::*,
             position::{Position, VisualPosition},
             reaction_queue::ReactionQueue,
             *
@@ -115,7 +115,6 @@ pub fn do_spawn(
                         AirTime { state: Some(0), step: None },
                         NearestNeighbor::new(ent, loc),
                         Heading::default(),
-                        Offset::default(),
                         KeyBits::default(),
                         Visibility::default(),
                         Physics::default(),
@@ -178,7 +177,7 @@ fn get_asset(typ: EntityType) -> String {
 pub fn apply_movement_intent(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut Offset, &Loc, &Heading, Option<&mut VisualPosition>)>,
+    mut query: Query<(&Loc, &Heading, &mut VisualPosition)>,
     map: Res<Map>,
     time: Res<Time>,
     buffers: Res<InputQueues>,
@@ -192,13 +191,12 @@ pub fn apply_movement_intent(
             continue;
         }
 
-        let Ok((mut offset, loc, heading, vis_pos)) = query.get_mut(ent) else {
+        let Ok((loc, heading, mut visual)) = query.get_mut(ent) else {
             continue;
         };
 
         // Calculate target position (destination tile + heading-adjusted offset)
         let dest_tile_center: Vec3 = map.convert(destination);
-        let current_tile_world: Vec3 = map.convert(**loc);
 
         let dest_offset = if **heading != default() {
             use crate::common::components::heading::HERE;
@@ -211,26 +209,7 @@ pub fn apply_movement_intent(
         let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
         let duration_secs = duration_ms as f32 / 1000.0;
 
-        if let Some(mut vis) = vis_pos {
-            // ADR-019: Use VisualPosition for smooth interpolation
-            vis.interpolate_toward(dest_world, duration_secs);
-        } else {
-            // Legacy fallback: Offset-based interpolation
-            let current_interp_fraction = if offset.interp_duration > 0.0 {
-                (offset.interp_elapsed / offset.interp_duration).min(1.0)
-            } else {
-                1.0
-            };
-            let current_visual_offset = offset.prev_step.lerp(offset.step, current_interp_fraction);
-
-            offset.prev_step = current_visual_offset;
-            offset.step = dest_world - current_tile_world;
-            offset.interp_duration = duration_secs;
-            offset.interp_elapsed = 0.0;
-        }
-
-        // Keep Offset.state updated for combat distance calculations
-        offset.state = dest_world - current_tile_world;
+        visual.interpolate_toward(dest_world, duration_secs);
 
         if let Ok(mut entity_cmd) = commands.get_entity(ent) {
             entity_cmd.insert(crate::common::components::movement_prediction::MovementPrediction::new(

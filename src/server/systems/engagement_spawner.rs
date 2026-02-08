@@ -19,7 +19,7 @@ use crate::{
             },
             gcd::Gcd,
             heading::Heading,
-            offset::Offset,
+            position::Position,
             reaction_queue::ReactionQueue,
             resources::{CombatState, Health, Mana, Stamina},
             AirTime, LastAutoAttack, Physics, Loc,
@@ -277,7 +277,7 @@ fn spawn_engagement_at(
                     chase,
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
-                    Offset::default(),
+                    Position::at_tile(npc_location),
                     AirTime::default(),
                     bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));
@@ -290,7 +290,7 @@ fn spawn_engagement_at(
                     kite,
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
-                    Offset::default(),
+                    Position::at_tile(npc_location),
                     AirTime::default(),
                     bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));

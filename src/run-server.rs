@@ -21,7 +21,6 @@ use crate::{
         message::*,
         plugins::nntree,
         resources::{map::*, *},
-        systems::physics
     },
     server::{
         resources::{engagement_budget::EngagementBudget, terrain::*, *},
@@ -72,7 +71,6 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        physics::update,
         common::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
         common::systems::combat::state::update_combat_state,
         common::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout

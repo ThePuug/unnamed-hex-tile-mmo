@@ -8,7 +8,7 @@ use crate::{
         components::{
             entity_type::{ decorator::*, *},
             heading::Heading,
-            offset::Offset,
+            position::Position,
             resources::RespawnTimer,
             *
         },
@@ -256,11 +256,11 @@ pub fn try_discover(
 pub fn broadcast_movement_intent(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &Offset, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>, Option<&ActorAttributes>), Changed<Offset>>,
+    mut query: Query<(Entity, &Loc, &Position, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>, Option<&ActorAttributes>), Changed<Position>>,
     map: Res<Map>,
     time: Res<Time>,
 ) {
-    for (ent, loc, offset, o_intent_state, attrs) in &mut query {
+    for (ent, loc, position, o_intent_state, attrs) in &mut query {
         let current_tile = **loc;
 
         // ADR-011: Predict destination based on movement direction, not current position
@@ -268,7 +268,7 @@ pub fn broadcast_movement_intent(
         // This gives client time to predict before the Loc update arrives
 
         // Calculate movement direction and magnitude
-        let offset_magnitude = offset.state.xz().length();
+        let offset_magnitude = position.offset.xz().length();
 
         // Skip if not moving significantly (stationary or very small movement)
         const MIN_MOVEMENT_THRESHOLD: f32 = 0.2; // Broadcast when moving at least 0.2 units
@@ -278,7 +278,7 @@ pub fn broadcast_movement_intent(
 
         // Find which adjacent tile we're moving toward
         // Check all 6 hex directions to find closest match to our movement direction
-        let offset_dir = offset.state.xz().normalize();
+        let offset_dir = position.offset.xz().normalize();
         let mut best_neighbor = current_tile;
         let mut best_dot = -1.0;
 
@@ -323,7 +323,7 @@ pub fn broadcast_movement_intent(
 
         // Calculate expected duration based on movement speed
         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-        let current_world_pos = map.convert(current_tile) + offset.state;
+        let current_world_pos = map.convert(current_tile) + position.offset;
         let dest_world_pos = map.convert(dest_tile);
         let distance = (dest_world_pos - current_world_pos).length();
         let duration_ms = (distance / movement_speed) as u16;
@@ -345,17 +345,18 @@ pub fn broadcast_movement_intent(
 
 pub fn update(
     mut writer: MessageWriter<Try>,
-    mut query: Query<(Entity, &mut Loc, &mut Offset), Changed<Offset>>,
+    mut query: Query<(Entity, &mut Loc, &mut Position), Changed<Position>>,
     map: Res<Map>,
 ) {
-    for (ent, mut loc0, mut offset) in &mut query {
+    for (ent, mut loc0, mut position) in &mut query {
         let px = map.convert(**loc0);
-        let qrz = map.convert(px + offset.state);
+        let qrz = map.convert(px + position.offset);
         if **loc0 != qrz {
             // Adjust offset to be relative to new tile center
-            let world_pos = px + offset.state;
+            let world_pos = px + position.offset;
             let new_tile_center = map.convert(qrz);
-            offset.state = world_pos - new_tile_center;
+            position.offset = world_pos - new_tile_center;
+            position.tile = qrz;
 
             // Update Loc component directly
             **loc0 = qrz;

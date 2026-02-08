@@ -5,7 +5,7 @@ use qrz::{Convert, Qrz};
 use crate::{
     common::{
         components::{
-            Loc, heading::Heading, offset::Offset, resources::Health,
+            Loc, heading::Heading, position::Position, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             reaction_queue::DamageType,
             entity_type::EntityType,
@@ -157,7 +157,7 @@ pub fn kite(
         &mut Kite,
         &Loc,
         &mut Heading,
-        &mut Offset,
+        &mut Position,
         &mut AirTime,
         Option<&ActorAttributes>,
         Option<&TargetLock>,
@@ -175,7 +175,7 @@ pub fn kite(
 ) {
     let current_time = dt.elapsed().as_millis();
 
-    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_offset, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
+    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -227,7 +227,7 @@ pub fn kite(
                     Loc::new(*next_tile),
                     dt_ms,
                     *npc_loc,
-                    npc_offset.state,
+                    npc_position.offset,
                     npc_airtime.state,
                     movement_speed,
                     *npc_heading,
@@ -235,7 +235,7 @@ pub fn kite(
                     &nntree,
                 );
 
-                npc_offset.state = offset;
+                npc_position.offset = offset;
                 npc_airtime.state = airtime;
             }
 
@@ -321,7 +321,7 @@ pub fn kite(
                             Loc::new(*next_tile),
                             dt_ms,
                             *npc_loc,
-                            npc_offset.state,
+                            npc_position.offset,
                             npc_airtime.state,
                             movement_speed,
                             *npc_heading,
@@ -329,7 +329,7 @@ pub fn kite(
                             &nntree,
                         );
 
-                        npc_offset.state = offset;
+                        npc_position.offset = offset;
                         npc_airtime.state = airtime;
                     }
 
@@ -420,7 +420,7 @@ pub fn kite(
                         Loc::new(*next_tile),
                         dt_ms,
                         *npc_loc,
-                        npc_offset.state,
+                        npc_position.offset,
                         npc_airtime.state,
                         movement_speed,
                         *npc_heading,
@@ -428,7 +428,7 @@ pub fn kite(
                         &nntree,
                     );
 
-                    npc_offset.state = offset;
+                    npc_position.offset = offset;
                     npc_airtime.state = airtime;
                 }
 
@@ -481,7 +481,7 @@ pub fn kite(
                         Loc::new(*next_tile),
                         dt_ms,
                         *npc_loc,
-                        npc_offset.state,
+                        npc_position.offset,
                         npc_airtime.state,
                         movement_speed,
                         *npc_heading,
@@ -489,7 +489,7 @@ pub fn kite(
                         &nntree,
                     );
 
-                    npc_offset.state = offset;
+                    npc_position.offset = offset;
                     npc_airtime.state = airtime;
                 }
 

@@ -24,7 +24,6 @@ use common::{
     message::*,
     plugins::nntree,
     resources::{ map::*,  * },
-    systems::physics,
 };
 use client::{
     plugins::{
@@ -96,14 +95,12 @@ fn main() {
 
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
-        physics::update,
         common::systems::combat::resources::regenerate_resources,
     ));
 
-    // ADR-019: Sync Position from physics, then update VisualPosition target
+    // ADR-019: Predict local player position by replaying InputQueue from confirmed state
     app.add_systems(FixedPostUpdate, (
-        prediction::sync_position,
-        prediction::update_visual_target.after(prediction::sync_position),
+        prediction::predict_local_player,
     ));
 
     app.add_systems(PreUpdate, (

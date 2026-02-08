@@ -11,7 +11,7 @@ use crate::{
             entity_type::*,
             heading::Heading,
             keybits::KeyBits,
-            offset::Offset,
+            position::Position,
             resources::*,
         },
         message::{ Component, Event, * },
@@ -193,7 +193,7 @@ pub fn do_spawn(
                             AirTime { state: Some(125), step: None },
                             KeyBits::default(),
                             Heading::default(),
-                            Offset::default(),
+                            Position::at_tile(qrz),
                             LastAutoAttack::default(), // ADR-009: Track auto-attack cooldown
                             Transform {
                                 translation: map.convert(qrz),

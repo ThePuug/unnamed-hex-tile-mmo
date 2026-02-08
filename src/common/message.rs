@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::common::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, offset::*, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, reaction_queue::*, resources::*, * },
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
@@ -120,7 +120,6 @@ pub enum Component {
     KeyBits(KeyBits),
     Loc(Loc),
     Mana(Mana),
-    Offset(Offset),
     PlayerControlled(PlayerControlled),
     Returning(crate::common::components::returning::Returning),
     Stamina(Stamina),

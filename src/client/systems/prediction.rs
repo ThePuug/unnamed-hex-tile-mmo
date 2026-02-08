@@ -1,15 +1,16 @@
 //! Movement Prediction and Visual Interpolation Systems (ADR-019)
 //!
-//! This module manages Position and VisualPosition components. It bridges
-//! the existing physics system (Offset) with the new interpolation model.
+//! This module manages Position and VisualPosition components for local player
+//! prediction and visual interpolation.
 //!
 //! # System Execution Order
 //!
 //! ```text
 //! FixedUpdate:
-//!   physics::update      → writes to Offset.step (local player)
-//!   sync_position        → copies Offset.step → Position (local player)
-//!   update_visual_target → VisualPosition.interpolate_toward(Position world pos) (local player)
+//!   controlled::apply     → writes confirmed state to Position.offset
+//!
+//! FixedPostUpdate:
+//!   predict_local_player  → replays InputQueue from Position.offset → VisualPosition
 //!
 //! Update (every frame):
 //!   apply_movement_intent → VisualPosition.interpolate_toward(dest) (remote entities)
@@ -22,55 +23,66 @@ use qrz::Convert;
 
 use crate::common::{
     components::{
-        offset::Offset,
+        heading::*,
+        keybits::*,
         position::{Position, VisualPosition},
-        Loc,
+        AirTime, ActorAttributes, Loc,
     },
+    message::Event,
+    plugins::nntree::*,
     resources::{map::Map, InputQueues},
+    systems::physics,
 };
 
-/// Sync Position component from physics state after each FixedUpdate tick.
+/// Predict local player position by replaying the InputQueue from confirmed state.
 ///
-/// Runs in FixedPostUpdate so physics::update has already written to Offset.step.
-/// Only updates local player entities (those with InputQueues entries).
-pub fn sync_position(
-    mut query: Query<(Entity, &Loc, &Offset, &mut Position)>,
-    buffers: Res<InputQueues>,
-) {
-    for (ent, loc, offset, mut position) in &mut query {
-        // Only sync for local player (entities with input buffers)
-        if buffers.get(&ent).is_none() {
-            continue;
-        }
-
-        position.tile = **loc;
-        position.offset = offset.step;
-    }
-}
-
-/// Update VisualPosition target when Position changes after physics.
+/// Runs in FixedPostUpdate after controlled::apply has written confirmed state
+/// to Position.offset and do_input has popped confirmed inputs.
 ///
-/// Runs in FixedPostUpdate after sync_position. Sets up a new interpolation
-/// from current visual location toward the new authoritative position.
-///
-/// The duration matches the FixedUpdate timestep so interpolation completes
-/// just as the next physics tick arrives.
-pub fn update_visual_target(
+/// Replays the entire queue from Position.offset (confirmed) to produce a
+/// predicted world position, then writes that to VisualPosition for smooth rendering.
+/// Position.offset is NEVER overwritten — it stays authoritative/confirmed.
+pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
-    mut query: Query<(Entity, &Position, &mut VisualPosition)>,
+    mut query: Query<(&Loc, &Position, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>)>,
     map: Res<Map>,
+    nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
 ) {
     let tick_duration = fixed_time.timestep().as_secs_f32();
 
-    for (ent, position, mut visual) in &mut query {
-        // Only update for local player
-        if buffers.get(&ent).is_none() {
-            continue;
+    for (ent, buffer) in buffers.iter() {
+        // Queue invariant: all queues must have at least 1 input
+        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
+
+        let Ok((&loc, position, mut heading, mut airtime, mut visual, attrs)) = query.get_mut(ent) else { continue; };
+        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+
+        // Start from confirmed state
+        let (mut offset, mut air) = (position.offset, airtime.state);
+        let mut new_heading = *heading;
+
+        // Replay entire queue from confirmed state to produce predicted state
+        for input in buffer.queue.iter().rev() {
+            let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
+            let input_heading = Heading::from(*key_bits);
+            if *input_heading != default() {
+                new_heading = input_heading;
+            }
+            let dest = Loc::new(*input_heading + *loc);
+            if key_bits.is_pressed(KB_JUMP) && air.is_none() { air = Some(125); }
+            (offset, air) = physics::apply(dest, *dt as i16, loc, offset, air, movement_speed, new_heading, &map, &nntree);
         }
 
-        let target = position.to_world(&map);
-        visual.interpolate_toward(target, tick_duration);
+        // Update heading to last non-default heading from prediction
+        *heading = new_heading;
+
+        // Store predicted airtime for animation (step field used by animator)
+        airtime.step = air;
+
+        // Write predicted world position to VisualPosition (NOT Position)
+        let predicted_world = map.convert(*loc) + offset;
+        visual.interpolate_toward(predicted_world, tick_duration);
     }
 }
 

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{ActorAttributes, Loc, offset::Offset, resources::*, entity_type::EntityType},
+    components::{ActorAttributes, Loc, position::Position, resources::*, entity_type::EntityType},
     message::{Component as MessageComponent, Event, *},
 };
 
@@ -172,23 +172,19 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Offset, &ActorAttributes, &EntityType, Option<&crate::common::components::behaviour::PlayerControlled>)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::common::components::behaviour::PlayerControlled>)>,
 ) {
     use qrz::Qrz;
-    use bevy::math::Vec3;
 
-    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut offset, attrs, entity_type, player_controlled) in &mut query {
+    for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             // Teleport to origin
             let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
             *loc = Loc::new(spawn_qrz);
 
-            // Clear offset to snap to new position (no interpolation)
-            offset.state = Vec3::ZERO;
-            offset.step = Vec3::ZERO;
-            offset.prev_step = Vec3::ZERO;
-            offset.interp_elapsed = 0.0;
-            offset.interp_duration = 0.0;
+            // Reset position to snap to new location
+            position.tile = spawn_qrz;
+            position.offset = Vec3::ZERO;
 
             // Restore resources to full
             health.state = health.max;

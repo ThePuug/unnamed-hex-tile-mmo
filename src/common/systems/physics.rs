@@ -8,12 +8,11 @@ use crate::common::{
         entity_type::{decorator::*, *},
         heading::*,
         keybits::*,
-        offset::*,
+        position::Position,
         *
     },
-    message::Event,
     plugins::nntree::*,
-    resources::{map::*, *}
+    resources::{map::*, InputQueues},
 };
 
 // ===== Physics Constants =====
@@ -58,63 +57,21 @@ const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
 /// Prevents excessive entity stacking
 const MAX_ENTITIES_PER_TILE: usize = 7;
 
-/// Position smoothing factor for prev_step updates
-/// Higher values = more smoothing (reduces jitter when changing directions)
-/// Lower values = more responsive (closer to direct assignment)
-/// Range: 0.0 (no smoothing) to 1.0 (maximum smoothing)
-const PREV_STEP_SMOOTHING: f32 = 0.5;
-
-pub fn update(
-    mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>), With<Physics>>,
-    map: Res<Map>,
-    buffers: Res<InputQueues>,
-    nntree: Res<NNTree>,
-) {
-    for (ent, buffer) in buffers.iter() {
-        // Queue invariant: all queues must have at least 1 input
-        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-
-        let Ok((&loc, mut heading, mut offset0, mut airtime0, attrs)) = query.get_mut(ent) else { continue; };
-        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(MOVEMENT_SPEED);
-
-        let (mut offset, mut airtime) = (offset0.state, airtime0.state);
-        let mut new_heading = *heading;
-        for input in buffer.queue.iter().rev() {
-            let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
-            let heading = Heading::from(*key_bits);
-            if *heading != default() {
-                new_heading = heading;
-            }
-            let dest = Loc::new(*heading + *loc);
-            if key_bits.is_pressed(KB_JUMP) && airtime.is_none() { airtime = Some(JUMP_DURATION_MS); }
-            (offset, airtime) = apply(dest, *dt as i16, loc, offset, airtime, movement_speed, new_heading, &map, &nntree);
-        }
-
-        // Update heading component to last non-default heading
-        *heading = new_heading;
-
-        // Smooth prev_step transition to reduce jitter when changing directions
-        // Instead of snapping prev_step to step, lerp it for smoother interpolation
-        offset0.prev_step = offset0.prev_step.lerp(offset0.step, 1.0 - PREV_STEP_SMOOTHING);
-        (offset0.step, airtime0.step) = (offset,airtime);
-    }
-}
-
 /// Updates Loc for entities that have crossed tile boundaries
 /// This handles NPCs and other non-player entities that don't have InputQueues
 pub fn update_tile_crossings(
-    mut query: Query<(Entity, &mut Loc, &Offset), With<Physics>>,
+    mut query: Query<(Entity, &mut Loc, &Position), With<Physics>>,
     map: Res<Map>,
     buffers: Res<InputQueues>,
 ) {
-    for (ent, mut loc, offset) in &mut query {
-        // Skip entities with input queues (handled by main physics::update)
+    for (ent, mut loc, position) in &mut query {
+        // Skip entities with input queues (handled by controlled::apply + prediction)
         if buffers.get(&ent).is_some() {
             continue;
         }
 
         // Calculate world position and check if it's on a different tile
-        let world_pos = map.convert(**loc) + offset.state;
+        let world_pos = map.convert(**loc) + position.offset;
         let new_tile = map.convert(world_pos);
 
         if new_tile != **loc {
@@ -297,7 +254,7 @@ mod tests {
         app.world_mut().spawn((
             Loc::new(qrz),
             Heading::default(),
-            Offset { state: offset, step: offset, prev_step: offset, interp_elapsed: 0.0, interp_duration: 0.0 },
+            Position::new(qrz, offset),
             AirTime { state: None, step: None },
             Physics,
         )).id()
@@ -305,33 +262,6 @@ mod tests {
 
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants (ADR-015)
-
-    /// INV-002: InputQueue Never Empty
-    /// All InputQueues MUST contain ≥1 input at all times.
-    /// Empty queue causes panic in physics system.
-    #[test]
-    #[should_panic(expected = "Queue invariant violation")]
-    fn test_physics_panics_on_empty_queue() {
-        use crate::common::resources::InputQueues;
-
-        let mut app = App::new();
-        app.insert_resource(create_test_map());
-        app.insert_resource(create_test_nntree());
-
-        let entity = spawn_physics_entity(&mut app, Qrz { q: 0, r: 0, z: 0 }, Vec3::ZERO);
-
-        // Create empty queue (violates invariant)
-        let mut queues = InputQueues::default();
-        let queue = crate::common::resources::InputQueue {
-            queue: std::collections::VecDeque::new(), // EMPTY - violates invariant
-        };
-        queues.insert(entity, queue);
-        app.insert_resource(queues);
-
-        // Run physics update - should panic
-        app.add_systems(bevy::app::Update, update);
-        app.update();
-    }
 
     /// INV-001: Client-Side Prediction Correctness (Determinism)
     /// Physics apply() MUST produce identical results for identical inputs.

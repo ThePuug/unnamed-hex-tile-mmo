@@ -33,7 +33,6 @@ fn get_message_type_name(message: &Do) -> String {
                 Component::CombatState(_) => "Inc:Combat".to_string(),
                 Component::Behaviour(_) => "Inc:Behaviour".to_string(),
                 Component::KeyBits(_) => "Inc:KeyBits".to_string(),
-                Component::Offset(_) => "Inc:Offset".to_string(),
                 Component::PlayerControlled(_) => "Inc:PlayerControlled".to_string(),
                 Component::Returning(_) => "Inc:Returning".to_string(),
             }

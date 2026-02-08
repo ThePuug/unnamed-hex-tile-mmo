@@ -163,8 +163,7 @@ pub fn handle_lunge(
         commands.entity(*ent).insert(Loc::new(landing_loc));
 
         // Broadcast Loc update to clients
-        // NOTE: Client detects teleport by hex distance (>=2 hexes) and clears Offset automatically
-        // Offset is client-side interpolation state - server doesn't need to manage it
+        // NOTE: Client detects teleport by hex distance (>=2 hexes) and snaps VisualPosition automatically
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,

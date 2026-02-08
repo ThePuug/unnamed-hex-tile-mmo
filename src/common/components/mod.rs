@@ -7,7 +7,6 @@ pub mod heading;
 pub mod keybits;
 pub mod movement_intent_state;
 pub mod movement_prediction;
-pub mod offset;
 pub mod position;
 pub mod reaction_queue;
 pub mod recovery;
