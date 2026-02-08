@@ -24,7 +24,7 @@ use crate::{
 /// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
 fn broadcast_intent(
     commands: &mut Commands,
-    writer: &mut EventWriter<Do>,
+    writer: &mut MessageWriter<Do>,
     map: &Map,
     npc_entity: Entity,
     npc_loc: &Loc,
@@ -170,8 +170,8 @@ pub fn kite(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
-    mut writer: EventWriter<crate::common::message::Do>,
-    mut try_writer: EventWriter<crate::common::message::Try>,
+    mut writer: MessageWriter<crate::common::message::Do>,
+    mut try_writer: MessageWriter<crate::common::message::Try>,
 ) {
     let current_time = dt.elapsed().as_millis();
 

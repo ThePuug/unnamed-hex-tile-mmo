@@ -20,8 +20,8 @@ use crate::{
 
 /// Discover initial chunks when a player first spawns
 pub fn do_spawn_discover(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
+    mut reader: MessageReader<Do>,
+    mut writer: MessageWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
     query: Query<&Loc>,
 ) {
@@ -58,8 +58,8 @@ pub fn do_spawn_discover(
 /// Server-side system: Generates Try::DiscoverChunk events when the server authoritatively changes an entity's Loc
 /// Uses chunk-based boundary detection to reduce discovery events dramatically
 pub fn do_incremental(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
+    mut reader: MessageReader<Do>,
+    mut writer: MessageWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
     _query: Query<(&Loc, &Heading)>,
 ) {
@@ -132,8 +132,8 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
 
 /// New chunk-based discovery system
 pub fn try_discover_chunk(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
     terrain: Res<Terrain>,
     mut map: ResMut<Map>,
@@ -225,8 +225,8 @@ pub fn try_discover_chunk(
 
 /// Legacy tile-based discovery system (kept for compatibility, may be removed later)
 pub fn try_discover(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     mut map: ResMut<Map>,
     terrain: Res<Terrain>,
     query: Query<(&Loc, &EntityType)>,
@@ -255,7 +255,7 @@ pub fn try_discover(
 /// Each intent is self-correcting by resetting interpolation from current visual position.
 pub fn broadcast_movement_intent(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &Offset, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>, Option<&ActorAttributes>), Changed<Offset>>,
     map: Res<Map>,
     time: Res<Time>,
@@ -344,7 +344,7 @@ pub fn broadcast_movement_intent(
 }
 
 pub fn update(
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
     mut query: Query<(Entity, &mut Loc, &mut Offset), Changed<Offset>>,
     map: Res<Map>,
 ) {
@@ -372,7 +372,7 @@ pub fn update(
 /// This ensures clients see NPCs facing the correct direction and can calculate proper
 /// interpolation targets for remote players.
 pub fn broadcast_heading_changes(
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
     query: Query<(Entity, &Heading), Changed<Heading>>,
 ) {
     for (ent, &heading) in &query {

@@ -24,7 +24,7 @@ pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&crate::common::components::gcd::Gcd>), With<Actor>>,
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
     dt: Res<Time>,
 ) {
     if let Ok((ent, &heading, mut keybits0, gcd_opt)) = query.single_mut() {
@@ -118,7 +118,7 @@ pub fn update_keybits(
 }
 
 pub fn do_input(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
 ) {
     for &message in reader.read() {

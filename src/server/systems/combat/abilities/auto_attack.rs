@@ -11,12 +11,12 @@ use crate::common::{
 /// - Requires target_loc to be adjacent (distance == 1)
 pub fn handle_auto_attack(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: ability_target_loc } } = event else {

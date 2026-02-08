@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 #![feature(more_float_constants)]
 #![feature(extend_one)]
 
@@ -41,7 +40,7 @@ use client::{
 const PROTOCOL_ID: u64 = 7;
 
 fn panic_on_error_system(
-    mut renet_error: EventReader<NetcodeTransportError>
+    mut renet_error: MessageReader<NetcodeTransportError>
 ) {
     if let Some(e) = renet_error.read().next() {
         panic!("{:?}", e);
@@ -78,8 +77,8 @@ fn main() {
         VignettePlugin,
     ));
 
-    app.add_event::<Do>();
-    app.add_event::<Try>();
+    app.add_message::<Do>();
+    app.add_message::<Try>();
 
     app.add_systems(Startup, (
         setup,

@@ -24,7 +24,7 @@ use crate::{
 pub fn setup() {}
 
 fn ready(
-    trigger: Trigger<SceneInstanceReady>,
+    trigger: On<SceneInstanceReady>,
     mut commands: Commands,
     query: Query<&EntityType>,
     mut q_player: Query<&mut AnimationPlayer>,
@@ -32,11 +32,12 @@ fn ready(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
-    for child in q_child.iter_descendants(trigger.target()) {
+    let entity = trigger.entity;
+    for child in q_child.iter_descendants(entity) {
         if let Ok(mut player) = q_player.get_mut(child) {
-            commands.entity(trigger.target()).insert(Animates(child));
+            commands.entity(entity).insert(Animates(child));
 
-            let &typ = query.get(trigger.target()).expect("couldn't get entity type");
+            let &typ = query.get(entity).expect("couldn't get entity type");
             let asset = get_asset(typ);
             let (graph, _) = AnimationGraph::from_clips([
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset(asset.clone())),
@@ -90,7 +91,7 @@ pub fn update(
 
 pub fn do_spawn(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -154,8 +155,8 @@ pub fn do_spawn(
 }
 
 pub fn try_gcd(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ } } = message {
@@ -189,7 +190,7 @@ fn get_asset(typ: EntityType) -> String {
 /// Local player is skipped (already predicted via Input system).
 pub fn apply_movement_intent(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<(&mut Offset, &Loc, &Heading)>,
     map: Res<Map>,
     time: Res<Time>,

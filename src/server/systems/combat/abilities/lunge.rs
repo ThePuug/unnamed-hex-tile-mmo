@@ -14,13 +14,13 @@ use crate::{
 /// - Teleports caster adjacent to target
 pub fn handle_lunge(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {

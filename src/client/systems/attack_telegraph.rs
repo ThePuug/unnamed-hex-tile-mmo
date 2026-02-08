@@ -31,7 +31,7 @@ pub struct HitLine {
 /// Spawn attack ball when a threat is inserted into the queue (Volley ability only)
 pub fn on_insert_threat(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -69,7 +69,7 @@ pub fn on_insert_threat(
 /// Replace attack ball with hit line when damage is applied (Volley ability only)
 pub fn on_apply_damage(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     time: Res<Time>,
@@ -132,7 +132,7 @@ pub fn on_apply_damage(
 /// Despawn attack ball when threat is cleared (deflect/knockback)
 pub fn on_clear_queue(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     balls: Query<(Entity, &AttackBall)>,
 ) {
     for message in reader.read() {

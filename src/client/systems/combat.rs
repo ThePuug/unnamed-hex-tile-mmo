@@ -9,7 +9,7 @@ use crate::common::{
 /// Inserts threats into the visual reaction queue for display
 /// No deduplication needed - we don't predict threat insertions
 pub fn handle_insert_threat(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<&mut ReactionQueue>,
     time: Res<Time>,
     server: Res<crate::client::resources::Server>,
@@ -35,7 +35,7 @@ pub fn handle_insert_threat(
 /// NOTE: Does NOT update health - server sends authoritative health via Incremental{Health}
 pub fn handle_apply_damage(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     _health_query: Query<&mut Health>,
     mut queue_query: Query<&mut ReactionQueue>,
     transform_query: Query<&Transform>,
@@ -86,7 +86,7 @@ pub fn handle_apply_damage(
 /// Client system to handle ClearQueue events from server
 /// Confirms queue clears (may be redundant with prediction but ensures sync)
 pub fn handle_clear_queue(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<&mut ReactionQueue>,
 ) {
     for event in reader.read() {
@@ -102,7 +102,7 @@ pub fn handle_clear_queue(
 /// Client system to handle AbilityFailed events
 /// Rolls back optimistic prediction when server rejects ability use
 pub fn handle_ability_failed(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
 ) {
     for event in reader.read() {
         if let GameEvent::AbilityFailed { ent: _, reason: _ } = &event.event {
@@ -116,7 +116,7 @@ pub fn handle_ability_failed(
 /// Listens to Do<Event::Gcd> and calls gcd.activate() on the local entity
 /// This ensures client-side prediction checks (predict_dodge, etc.) see accurate GCD state
 pub fn apply_gcd(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<&mut Gcd>,
     time: Res<Time>,
 ) {
@@ -145,7 +145,7 @@ pub fn apply_gcd(
 /// - No GCD active (attacks are free actions)
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
-    mut writer: EventWriter<Try>,
+    mut writer: MessageWriter<Try>,
     mut player_query: Query<(Entity, &Loc, &Target, &mut crate::common::components::LastAutoAttack, Option<&Gcd>)>,
     target_query: Query<&Loc>,
     input_queues: Res<crate::common::resources::InputQueues>,

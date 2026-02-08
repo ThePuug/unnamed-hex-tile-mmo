@@ -12,8 +12,8 @@ use crate::{
 };
 
 pub fn try_input(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
 ) {
     for &message in reader.read() {
@@ -61,7 +61,7 @@ pub fn send_input(
 /// This function exists to satisfy the event pipeline but does nothing.
 /// Event::Gcd { typ: GcdType::Attack } is sent but not processed here.
 pub fn try_gcd(
-    mut _reader: EventReader<Try>,
+    mut _reader: MessageReader<Try>,
 ) {
     // GcdType::Attack is handled by ability systems (auto_attack, lunge, etc.)
     // PlaceSpawner and Spawn were removed - spawners are placed during terrain generation
@@ -75,8 +75,8 @@ pub fn try_gcd(
 /// Server updates the TierLock component to reflect the chosen tier.
 /// Abilities will validate the existing Target component is in the correct tier.
 pub fn try_set_tier_lock(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     mut tier_locks: Query<&mut TierLock>,
 ) {
     for &message in reader.read() {
@@ -103,7 +103,7 @@ pub fn try_set_tier_lock(
 /// broadcast where players are heading, enabling client-side prediction of remote players.
 pub fn broadcast_player_movement_intent(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
     buffers: Res<InputQueues>,
     mut query: Query<(&Loc, &Heading, &Offset, Option<&ActorAttributes>, Option<&mut crate::common::components::movement_intent_state::MovementIntentState>)>,
     map: Res<Map>,

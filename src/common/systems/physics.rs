@@ -58,6 +58,12 @@ const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
 /// Prevents excessive entity stacking
 const MAX_ENTITIES_PER_TILE: usize = 7;
 
+/// Position smoothing factor for prev_step updates
+/// Higher values = more smoothing (reduces jitter when changing directions)
+/// Lower values = more responsive (closer to direct assignment)
+/// Range: 0.0 (no smoothing) to 1.0 (maximum smoothing)
+const PREV_STEP_SMOOTHING: f32 = 0.5;
+
 pub fn update(
     mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>), With<Physics>>,
     map: Res<Map>,
@@ -87,7 +93,9 @@ pub fn update(
         // Update heading component to last non-default heading
         *heading = new_heading;
 
-        offset0.prev_step = offset0.step;
+        // Smooth prev_step transition to reduce jitter when changing directions
+        // Instead of snapping prev_step to step, lerp it for smoother interpolation
+        offset0.prev_step = offset0.prev_step.lerp(offset0.step, 1.0 - PREV_STEP_SMOOTHING);
         (offset0.step, airtime0.step) = (offset,airtime);
     }
 }

@@ -303,7 +303,7 @@ fn calculate_icon_angle(index: usize, capacity: usize) -> f32 {
 pub fn animate_clear(
     mut _commands: Commands,
     _icon_query: Query<Entity, With<ThreatIcon>>,
-    mut clear_reader: EventReader<crate::common::message::Do>,
+    mut clear_reader: MessageReader<crate::common::message::Do>,
 ) {
     use crate::common::message::Event as GameEvent;
 

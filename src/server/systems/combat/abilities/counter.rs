@@ -18,7 +18,7 @@ use crate::{
 /// - Reflects 50% of the threat's damage back to attacker's ReactionQueue
 pub fn handle_counter(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<(&EntityType, &Loc)>,
     mut queue_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
@@ -27,7 +27,7 @@ pub fn handle_counter(
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {

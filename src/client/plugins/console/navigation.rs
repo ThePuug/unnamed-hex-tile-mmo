@@ -9,7 +9,7 @@ use super::{
 pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
-    mut action_writer: EventWriter<DevConsoleAction>,
+    mut action_writer: MessageWriter<DevConsoleAction>,
 ) {
     // Toggle console visibility with NumpadDivide
     if keyboard.just_pressed(KeyCode::NumpadDivide) {
@@ -75,7 +75,7 @@ fn handle_root_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConsol
 
 fn handle_terrain_menu(
     keyboard: &mut ButtonInput<KeyCode>,
-    action_writer: &mut EventWriter<DevConsoleAction>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
     let mut consumed = None;
 
@@ -100,7 +100,7 @@ fn handle_terrain_menu(
 
 fn handle_performance_menu(
     keyboard: &mut ButtonInput<KeyCode>,
-    action_writer: &mut EventWriter<DevConsoleAction>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
     let mut consumed = None;
 

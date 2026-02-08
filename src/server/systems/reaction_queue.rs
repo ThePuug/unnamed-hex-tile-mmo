@@ -13,7 +13,7 @@ pub fn process_expired_threats(
     time: Res<Time>,
     runtime: Res<crate::server::resources::RunTime>,
     mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes)>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     // Use game world time (same as threat timestamps)
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;

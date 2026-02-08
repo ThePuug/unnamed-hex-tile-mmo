@@ -8,8 +8,8 @@ use crate::common::{
 };
 
 pub fn try_incremental(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::Incremental { ent, component } } = message {
@@ -23,7 +23,7 @@ pub fn try_incremental(
 /// Exceptions: Loc/Offset/Heading require all related components and skip if dependencies missing.
 pub fn do_incremental(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<(
         Option<&mut Loc>,
         Option<&mut Offset>,

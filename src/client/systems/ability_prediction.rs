@@ -10,7 +10,7 @@ use crate::common::{
 /// Server broadcasts when ability succeeds, client applies recovery/synergies locally
 pub fn handle_ability_used(
     mut commands: Commands,
-    mut do_reader: EventReader<Do>,
+    mut do_reader: MessageReader<Do>,
 ) {
     for event in do_reader.read() {
         let Do { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {

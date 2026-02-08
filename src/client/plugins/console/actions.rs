@@ -25,7 +25,7 @@ pub enum DevConsoleAction {
 /// System that executes console actions
 pub fn execute_console_actions(
     mut diagnostics_state: ResMut<DiagnosticsState>,
-    mut reader: EventReader<DevConsoleAction>,
+    mut reader: MessageReader<DevConsoleAction>,
     mut map: ResMut<Map>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
     mut terrain_query: Query<&mut Terrain>,

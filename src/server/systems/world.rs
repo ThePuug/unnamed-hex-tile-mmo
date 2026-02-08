@@ -127,8 +127,8 @@ pub fn setup(
 }
 
 pub fn try_spawn(
-    mut reader: EventReader<Try>,
-    mut writer: EventWriter<Do>,
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
     query: Query<(
         &Loc,
         &EntityType,
@@ -170,7 +170,7 @@ pub fn try_spawn(
 
 pub fn do_spawn(
     mut commands: Commands,
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut map: ResMut<crate::Map>,
     entities: &Entities,
     existing_actors: Query<(), With<Actor>>,

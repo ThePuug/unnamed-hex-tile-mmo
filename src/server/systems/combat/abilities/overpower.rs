@@ -13,14 +13,14 @@ use crate::{
 /// - Melee range (adjacent hex)
 pub fn handle_overpower(
     mut commands: Commands,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&crate::common::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
-    mut writer: EventWriter<Do>,
+    mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {

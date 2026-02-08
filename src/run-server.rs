@@ -32,7 +32,7 @@ use crate::{
 
 const PROTOCOL_ID: u64 = 7;
 
-fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
+fn panic_on_error_system(mut renet_error: MessageReader<NetcodeTransportError>) {
     if let Some(e) = renet_error.read().next() {
         panic!("{:?}", e);
     }
@@ -59,9 +59,9 @@ fn main() {
         server::plugins::behaviour::BehaviourPlugin,
     ));
 
-    app.add_event::<Do>();
-    app.add_event::<Try>();
-    app.add_event::<Tick>();
+    app.add_message::<Do>();
+    app.add_message::<Try>();
+    app.add_message::<Tick>();
 
     // Add observers for triggered events
     app.add_observer(combat::process_deal_damage);

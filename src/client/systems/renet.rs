@@ -74,8 +74,8 @@ pub fn setup(
 
 pub fn write_do(
     mut commands: Commands,
-    mut do_writer: EventWriter<Do>,
-    mut try_writer: EventWriter<Try>,
+    mut do_writer: MessageWriter<Do>,
+    mut try_writer: MessageWriter<Try>,
     mut conn: ResMut<RenetClient>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
@@ -263,7 +263,7 @@ pub fn write_do(
 
 pub fn send_try(
     mut conn: ResMut<RenetClient>,
-    mut reader: EventReader<Try>,
+    mut reader: MessageReader<Try>,
     l2r: Res<EntityMap>,
 ) {
     for &message in reader.read() {
@@ -310,7 +310,7 @@ pub fn send_try(
 
 /// Handle Pong response to refine time sync with measured network latency
 pub fn handle_pong(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut server: ResMut<crate::client::resources::Server>,
     time: Res<Time>,
 ) {
@@ -350,7 +350,7 @@ pub fn handle_pong(
 /// Sends a ping every 5 seconds to measure network conditions
 pub fn periodic_ping(
     mut server: ResMut<crate::client::resources::Server>,
-    mut try_writer: EventWriter<Try>,
+    mut try_writer: MessageWriter<Try>,
     time: Res<Time>,
 ) {
     const PING_INTERVAL_MS: u128 = 5000; // Ping every 5 seconds

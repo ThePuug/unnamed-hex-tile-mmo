@@ -22,7 +22,7 @@ use crate::{
 /// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
 fn broadcast_intent(
     commands: &mut Commands,
-    writer: &mut EventWriter<Do>,
+    writer: &mut MessageWriter<Do>,
     map: &Map,
     npc_entity: Entity,
     npc_loc: &Loc,
@@ -94,7 +94,7 @@ pub struct Chase {
 
 pub fn chase(
     mut commands: Commands,
-    mut writer: EventWriter<Do>,  // ADR-011: Broadcast movement intents
+    mut writer: MessageWriter<Do>,  // ADR-011: Broadcast movement intents
     mut query: Query<(
         Entity,
         &Chase,

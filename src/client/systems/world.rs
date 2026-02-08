@@ -69,8 +69,8 @@ pub fn setup(
 }
 
 pub fn do_init(
-    mut reader: EventReader<Do>,
-    mut try_writer: EventWriter<Try>,
+    mut reader: MessageReader<Do>,
+    mut try_writer: MessageWriter<Try>,
     mut server: ResMut<Server>,
     time: Res<Time>,
 ) {
@@ -91,7 +91,7 @@ pub fn do_init(
 }
 
 pub fn do_spawn(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
 ) {

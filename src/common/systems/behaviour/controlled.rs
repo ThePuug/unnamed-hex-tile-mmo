@@ -9,8 +9,8 @@ use crate::common::{
     };
 
 pub fn tick(
-    mut reader: EventReader<Do>,
-    mut writer: EventWriter<Try>,
+    mut reader: MessageReader<Do>,
+    mut writer: MessageWriter<Try>,
     query: Query<&Behaviour>,
     time: Res<Time>,
     mut buffers: ResMut<InputQueues>,
@@ -66,7 +66,7 @@ pub fn tick(
 }
 
 pub fn apply(
-    mut reader: EventReader<Do>,
+    mut reader: MessageReader<Do>,
     mut query: Query<(&Loc, &mut Heading, &mut Offset, &mut AirTime, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
