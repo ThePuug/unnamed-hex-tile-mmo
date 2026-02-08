@@ -186,7 +186,6 @@ pub fn do_incremental(
             Component::Returning(returning) => {
                 commands.entity(ent).insert(returning);
             }
-            _ => {}
         }
     }
 }

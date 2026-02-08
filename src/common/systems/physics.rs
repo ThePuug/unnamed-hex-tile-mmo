@@ -12,7 +12,7 @@ use crate::common::{
         *
     },
     plugins::nntree::*,
-    resources::{map::*, InputQueues},
+    resources::map::*,
 };
 
 // ===== Physics Constants =====
@@ -56,29 +56,6 @@ const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
 /// Maximum entity count per tile before considering it solid
 /// Prevents excessive entity stacking
 const MAX_ENTITIES_PER_TILE: usize = 7;
-
-/// Updates Loc for entities that have crossed tile boundaries
-/// This handles NPCs and other non-player entities that don't have InputQueues
-pub fn update_tile_crossings(
-    mut query: Query<(Entity, &mut Loc, &Position), With<Physics>>,
-    map: Res<Map>,
-    buffers: Res<InputQueues>,
-) {
-    for (ent, mut loc, position) in &mut query {
-        // Skip entities with input queues (handled by controlled::apply + prediction)
-        if buffers.get(&ent).is_some() {
-            continue;
-        }
-
-        // Calculate world position and check if it's on a different tile
-        let world_pos = map.convert(**loc) + position.offset;
-        let new_tile = map.convert(world_pos);
-
-        if new_tile != **loc {
-            *loc = Loc::new(new_tile);
-        }
-    }
-}
 
 pub fn apply(
     dest: Loc,
