@@ -2,7 +2,7 @@
 
 ## Status
 
-**Planned** - 2026-02-09
+**Review** - 2026-02-09
 
 ## References
 
@@ -216,7 +216,18 @@
 
 ## Discussion
 
-*This section will be populated during implementation with questions, decisions, and deviations.*
+### Deviation: Defender Positioning Strategy
+
+**SOW specified:** Defender → Perimeter (hexes at 2–3 range)
+**Implemented:** Defender → Surround (adjacent hexes)
+
+**Rationale:** Defenders are melee NPCs with `attack_range: 1` (Chase behavior). The Perimeter strategy assigns hexes at distance 2 from the player, but the attack gate requires the NPC to be on its assigned hex AND adjacent to the player — conditions that can never both be true when the assigned hex is 2 tiles away. This caused NPCs to oscillate at the tile boundary, never attacking.
+
+All melee archetypes now use adjacent strategies (Cluster or Surround). Perimeter/Orbital strategies remain implemented and available for future ranged archetypes.
+
+### Implementation Note: Hold-on-Hex Behavior
+
+Added a safety check in chase: when an NPC reaches its assigned hex but is not in attack range, it holds position and faces the target rather than wandering. This prevents oscillation for any strategy where the assigned hex is beyond attack range.
 
 ### Implementation Note: Phase Dependencies
 

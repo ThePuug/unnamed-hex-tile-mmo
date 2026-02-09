@@ -19,6 +19,8 @@ use crate::{
             },
             gcd::Gcd,
             heading::Heading,
+            hex_assignment::HexAssignment,
+            npc_recovery::NpcRecovery,
             position::Position,
             reaction_queue::ReactionQueue,
             resources::{CombatState, Health, Mana, Stamina},
@@ -180,6 +182,7 @@ fn spawn_engagement_at(
             engagement.clone(),
             Loc::new(location),
             LastPlayerProximity::new(time.elapsed()),
+            HexAssignment::default(),  // SOW-018: Hex assignment tracking
         ))
         .id();
 
@@ -275,6 +278,7 @@ fn spawn_engagement_at(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
+                    NpcRecovery::for_archetype(archetype),  // SOW-018: Per-archetype recovery timer
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
                     Position::at_tile(npc_location),

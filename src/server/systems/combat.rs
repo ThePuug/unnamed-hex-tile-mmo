@@ -209,7 +209,9 @@ pub fn do_nothing(){}
 /// Auto-attack cooldown: 1.5s (1500ms)
 pub fn process_passive_auto_attack(
     mut query: Query<
-        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target),
+        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target,
+         Option<&mut crate::common::components::npc_recovery::NpcRecovery>,
+         Option<&crate::common::components::hex_assignment::AssignedHex>),
         Without<crate::common::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -224,11 +226,25 @@ pub fn process_passive_auto_attack(
     const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
                 continue; // Skip if on GCD
+            }
+        }
+
+        // SOW-018: Check NPC recovery timer (per-archetype cooldown between attacks)
+        if let Some(ref recovery) = npc_recovery_opt {
+            if recovery.is_recovering(now) {
+                continue; // Still in recovery phase
+            }
+        }
+
+        // SOW-018: Check NPC is on assigned hex (if it has one)
+        if let Some(assigned) = assigned_hex_opt {
+            if loc.flat_distance(&crate::common::components::Loc::new(assigned.0)) != 0 {
+                continue; // Not on assigned hex yet
             }
         }
 
@@ -268,6 +284,11 @@ pub fn process_passive_auto_attack(
 
             // Update last attack time
             last_auto_attack.last_attack_time = now;
+
+            // SOW-018: Start NPC recovery timer after attacking
+            if let Some(mut recovery) = npc_recovery_opt {
+                recovery.start_recovery(now);
+            }
         }
     }
 }

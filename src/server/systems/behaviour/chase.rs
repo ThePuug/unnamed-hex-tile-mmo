@@ -8,6 +8,7 @@ use crate::{
             Loc, heading::Heading, position::Position, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             returning::Returning,
+            hex_assignment::AssignedHex,
         },
         message::{Event, Do, Component as MessageComponent},
         plugins::nntree::*,
@@ -107,6 +108,7 @@ pub fn chase(
         Option<&Returning>,
         Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &ChildOf,
+        Option<&AssignedHex>,  // SOW-018: Path to assigned hex
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
     q_spawner: Query<&Loc, Without<Chase>>,  // Query spawner locations
@@ -114,7 +116,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of, assigned_hex_opt) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -318,11 +320,17 @@ pub fn chase(
             continue;
         };
 
-        // 3. CHECK RANGE
-        let distance = npc_loc.flat_distance(target_loc);
+        // SOW-018: Determine movement destination — assigned hex if available, otherwise player tile
+        let move_target = assigned_hex_opt.map(|ah| ah.0).unwrap_or(**target_loc);
 
-        if distance <= chase_config.attack_range {
-            // In attack range - face target (auto-attack handles damage)
+        // 3. CHECK RANGE — NPC must be on assigned hex AND adjacent to player to attack
+        let distance_to_player = npc_loc.flat_distance(target_loc);
+        let on_assigned_hex = assigned_hex_opt
+            .map(|ah| npc_loc.flat_distance(&Loc::new(ah.0)) == 0)
+            .unwrap_or(true); // No assignment = no hex constraint
+
+        if distance_to_player <= chase_config.attack_range && on_assigned_hex {
+            // In attack range AND on assigned hex — face target (auto-attack handles damage)
             let direction = (**target_loc - **npc_loc).normalize();
             let desired_heading = Heading::new(direction);
             *npc_heading = desired_heading;
@@ -330,8 +338,17 @@ pub fn chase(
             continue;
         }
 
-        // 4. MOVEMENT: Greedy chase toward target
-        let target_qrz = **target_loc;
+        // SOW-018: On assigned hex but not in attack range — hold position, face target.
+        // Prevents oscillation when assigned hex is farther than attack range.
+        if on_assigned_hex && assigned_hex_opt.is_some() {
+            let direction = (**target_loc - **npc_loc).normalize();
+            *npc_heading = Heading::new(direction);
+            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
+            continue;
+        }
+
+        // 4. MOVEMENT: Greedy chase toward assigned hex (or player if no assignment)
+        let target_qrz = move_target;
 
         // Find terrain under current location and target
         let Some((start, _)) = map.find(**npc_loc, -60) else {
