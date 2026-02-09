@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::client::systems::{action_bar, character_panel, combat_ui, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
+use crate::client::systems::{action_bar, character_panel, combat_log, combat_ui, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
 ///
@@ -30,6 +30,8 @@ impl Plugin for UiPlugin {
                 target_indicator::setup,
                 tier_lock_range_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::client::systems::camera::setup),
+                resolved_threats::setup.after(crate::client::systems::camera::setup), // ADR-025
+                combat_log::setup.after(crate::client::systems::camera::setup), // ADR-025
             ),
         );
 
@@ -70,6 +72,20 @@ impl Plugin for UiPlugin {
                 combat_ui::update_floating_text,
                 combat_ui::update_health_bars,
                 combat_ui::update_threat_queue_dots, // Threat queue capacity dots above health bars
+            ),
+        );
+
+        // ADR-025: Combat feedback enhancements (resolved threats + combat log)
+        app.add_systems(
+            Update,
+            (
+                resolved_threats::on_damage_resolved,
+                resolved_threats::update_entries,
+                combat_log::on_damage_applied,
+                combat_log::on_queue_cleared,
+                combat_log::maintain_log,
+                combat_log::handle_scroll,
+                combat_log::auto_scroll_to_bottom,
             ),
         );
     }

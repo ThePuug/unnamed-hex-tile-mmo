@@ -24,6 +24,7 @@ pub fn setup(
             height: Val::Percent(100.),
             ..default()
         },
+        Pickable::IGNORE,
     ))
     .with_children(|parent| {
         parent.spawn((

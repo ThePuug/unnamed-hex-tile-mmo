@@ -56,6 +56,7 @@ pub fn setup(
             padding: UiRect::bottom(Val::Percent(6.0)),  // Above resource bars
             ..default()
         },
+        Pickable::IGNORE,
         ActionBarDisplay,
     ))
     .with_children(|parent| {

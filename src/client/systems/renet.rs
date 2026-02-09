@@ -81,6 +81,7 @@ pub fn write_do(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
+    time: Res<Time>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
@@ -146,12 +147,17 @@ pub fn write_do(
                     // The entity will be reused on respawn
                     // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
                 } else {
-                    // For NPCs/other players: remove from EntityMap and despawn
+                    // For NPCs/other players: remove from EntityMap and delay despawn
+                    // Entity stays alive for 3s in a death pose so damage numbers can render
                     let Some((local_ent, _)) = l2r.remove_by_right(&ent) else {
                         continue
                     };
 
-                    commands.entity(local_ent).despawn();
+                    commands.entity(local_ent).insert(
+                        crate::client::components::DeathMarker {
+                            death_time: time.elapsed(),
+                        }
+                    );
                 }
             }
             Do { event: Event::Incremental { ent, component } } => {
@@ -201,7 +207,6 @@ pub fn write_do(
                 };
                 // Map source entity too
                 let source = l2r.get_by_right(&source).copied().unwrap_or(source);
-                // Forward to Do writer for systems to handle
                 do_writer.write(Do { event: Event::ApplyDamage { ent, damage, source } });
             }
             Do { event: Event::ClearQueue { ent, clear_type } } => {

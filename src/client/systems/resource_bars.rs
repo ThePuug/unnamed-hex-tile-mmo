@@ -59,6 +59,7 @@ pub fn setup(
             padding: UiRect::bottom(Val::Percent(12.5)),  // Halfway between bottom and player
             ..default()
         },
+        Pickable::IGNORE,
     ))
     .with_children(|parent| {
         parent.spawn((

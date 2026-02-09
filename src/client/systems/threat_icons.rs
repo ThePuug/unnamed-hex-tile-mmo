@@ -42,6 +42,7 @@ pub fn setup(
             height: Val::Percent(100.),
             ..default()
         },
+        Pickable::IGNORE,
         ThreatIconContainer,
     ));
 }

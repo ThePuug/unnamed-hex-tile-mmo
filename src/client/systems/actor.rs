@@ -54,7 +54,7 @@ fn ready(
 }
 
 pub fn update(
-    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>)>,
+    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>), Without<DeathMarker>>,
     map: Res<Map>,
 ) {
     for (&loc, &heading, mut transform0, vis_pos) in &mut query {

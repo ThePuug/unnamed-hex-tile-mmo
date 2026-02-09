@@ -115,6 +115,7 @@ fn main() {
         prediction::advance_interpolation.before(actor::update), // ADR-019: Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
+        actor_dead_visibility::cleanup_dead_entities,
         animator::update,
         camera::update,
         targeting::update_targets, // Update hostile targets every frame (detects when targets move)

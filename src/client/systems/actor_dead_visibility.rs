@@ -1,18 +1,37 @@
 use bevy::prelude::*;
 use crate::common::components::{Actor, resources::Health};
+use crate::client::components::DeathMarker;
 
-/// Hide dead actors (those with health <= 0)
-/// Makes the actor model invisible while waiting for respawn
-/// Works for both players (PvP) and NPCs
+/// Restore visibility for actors that were hidden (e.g. after respawn)
+/// Dead actors now get a death pose via DeathMarker instead of being hidden
 pub fn update_dead_visibility(
     mut query: Query<(&Health, &mut Visibility), With<Actor>>,
 ) {
     for (health, mut visibility) in &mut query {
-        if health.state <= 0.0 {
-            *visibility = Visibility::Hidden;
-        } else if *visibility == Visibility::Hidden {
-            // Restore visibility when health > 0 (respawned)
+        if health.state > 0.0 && *visibility == Visibility::Hidden {
             *visibility = Visibility::Visible;
+        }
+    }
+}
+
+/// Apply death pose to newly dead entities and despawn after 3 seconds
+pub fn cleanup_dead_entities(
+    mut commands: Commands,
+    mut query: Query<(Entity, &DeathMarker, &mut Transform)>,
+    time: Res<Time>,
+) {
+    const DEATH_LINGER_SECS: f32 = 3.0;
+
+    for (entity, marker, mut transform) in &mut query {
+        let elapsed = (time.elapsed() - marker.death_time).as_secs_f32();
+
+        if elapsed <= 0.01 {
+            // First frame: tip over 90 degrees to lay on side
+            transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        }
+
+        if elapsed >= DEATH_LINGER_SECS {
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -23,47 +42,34 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
 
     #[test]
-    fn test_dead_actor_becomes_hidden() {
+    fn test_dead_actor_stays_visible() {
         let mut world = World::new();
 
-        // Create dead actor
+        // Dead actors stay visible (death pose handled by DeathMarker/cleanup_dead_entities)
         let entity = world.spawn((
             Actor,
-            Health {
-                max: 100.0,
-                state: 0.0,
-                step: 0.0,
-            },
+            Health { max: 100.0, state: 0.0, step: 0.0 },
             Visibility::Visible,
         )).id();
 
-        // Run system
         world.run_system_once(update_dead_visibility).unwrap();
 
-        // Verify visibility is hidden
         let visibility = world.get::<Visibility>(entity).unwrap();
-        assert_eq!(*visibility, Visibility::Hidden);
+        assert_eq!(*visibility, Visibility::Visible);
     }
 
     #[test]
     fn test_alive_actor_stays_visible() {
         let mut world = World::new();
 
-        // Create alive actor
         let entity = world.spawn((
             Actor,
-            Health {
-                max: 100.0,
-                state: 50.0,
-                step: 50.0,
-            },
+            Health { max: 100.0, state: 50.0, step: 50.0 },
             Visibility::Visible,
         )).id();
 
-        // Run system
         world.run_system_once(update_dead_visibility).unwrap();
 
-        // Verify visibility is still visible
         let visibility = world.get::<Visibility>(entity).unwrap();
         assert_eq!(*visibility, Visibility::Visible);
     }
@@ -72,59 +78,16 @@ mod tests {
     fn test_respawned_actor_becomes_visible() {
         let mut world = World::new();
 
-        // Create actor that was hidden (previously dead)
+        // Actor that was hidden for some reason gets restored when health > 0
         let entity = world.spawn((
             Actor,
-            Health {
-                max: 100.0,
-                state: 100.0, // Respawned with full health
-                step: 100.0,
-            },
-            Visibility::Hidden, // Was hidden while dead
+            Health { max: 100.0, state: 100.0, step: 100.0 },
+            Visibility::Hidden,
         )).id();
 
-        // Run system
         world.run_system_once(update_dead_visibility).unwrap();
 
-        // Verify visibility is restored
         let visibility = world.get::<Visibility>(entity).unwrap();
         assert_eq!(*visibility, Visibility::Visible);
-    }
-
-    #[test]
-    fn test_works_for_players_and_npcs() {
-        let mut world = World::new();
-
-        // Create dead player (no Behaviour component)
-        let player = world.spawn((
-            Actor,
-            Health {
-                max: 100.0,
-                state: 0.0,
-                step: 0.0,
-            },
-            Visibility::Visible,
-        )).id();
-
-        // Create dead NPC (has Behaviour component)
-        let npc = world.spawn((
-            Actor,
-            crate::common::components::behaviour::Behaviour::default(),
-            Health {
-                max: 100.0,
-                state: 0.0,
-                step: 0.0,
-            },
-            Visibility::Visible,
-        )).id();
-
-        // Run system
-        world.run_system_once(update_dead_visibility).unwrap();
-
-        // Verify both are hidden
-        let player_vis = world.get::<Visibility>(player).unwrap();
-        let npc_vis = world.get::<Visibility>(npc).unwrap();
-        assert_eq!(*player_vis, Visibility::Hidden, "Dead player should be hidden");
-        assert_eq!(*npc_vis, Visibility::Hidden, "Dead NPC should be hidden");
     }
 }

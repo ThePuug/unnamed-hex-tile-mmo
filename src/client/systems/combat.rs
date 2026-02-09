@@ -33,52 +33,58 @@ pub fn handle_insert_threat(
 /// Client system to handle ApplyDamage events
 /// Removes the corresponding threat from the queue and spawns floating damage numbers
 /// NOTE: Does NOT update health - server sends authoritative health via Incremental{Health}
+/// ADR-025: Only spawns damage numbers over NPCs (outgoing damage), not over player (incoming damage shown in resolved threats)
 pub fn handle_apply_damage(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     _health_query: Query<&mut Health>,
     mut queue_query: Query<&mut ReactionQueue>,
+    input_queues: Res<crate::common::resources::InputQueues>,
     transform_query: Query<&Transform>,
     time: Res<Time>,
 ) {
+    // Local player is the entity with an InputQueue (only one on client)
+    let player_entity = input_queues.entities().next().copied();
+
     for event in reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
-            // NOTE: We do NOT update health here - the server sends authoritative health
-            // via Incremental{Health} messages. Applying damage here would cause double-damage.
-
             // Remove the resolved threat from the queue
-            // Match by source - the oldest threat from this source
             if let Ok(mut queue) = queue_query.get_mut(ent) {
                 if let Some(pos) = queue.threats.iter().position(|t| t.source == source) {
                     queue.threats.remove(pos);
                 }
             }
 
-            // Spawn floating damage number above entity using UI system
-            if let Ok(transform) = transform_query.get(ent) {
-                let damage_text = format!("{:.0}", damage);
-                let world_pos = transform.translation + Vec3::new(0.0, 2.5, 0.0);
-
-                commands.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        ..default()
-                    },
-                    Text::new(damage_text),
-                    TextFont {
-                        font_size: 32.0,
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                    TextLayout::new_with_justify(Justify::Center),
-                    crate::client::components::FloatingText {
-                        spawn_time: time.elapsed(),
-                        world_position: world_pos,
-                        lifetime: 1.5,
-                        velocity: 1.0,
-                    },
-                ));
+            // Skip player incoming damage - shown via resolved threats stack (ADR-025)
+            let is_player_target = player_entity.map_or(false, |p| p == ent);
+            if is_player_target {
+                continue;
             }
+
+            // Spawn floating damage number over the NPC
+            // Entity stays alive for 3s in death pose, so Transform is available
+            let Ok(transform) = transform_query.get(ent) else { continue; };
+            let world_pos = transform.translation + Vec3::new(0.0, 2.5, 0.0);
+
+            commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                Text::new(format!("{:.0}", damage)),
+                TextFont {
+                    font_size: 32.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                TextLayout::new_with_justify(Justify::Center),
+                crate::client::components::FloatingText {
+                    spawn_time: time.elapsed(),
+                    world_position: world_pos,
+                    lifetime: 1.5,
+                    velocity: 1.0,
+                },
+            ));
         }
     }
 }

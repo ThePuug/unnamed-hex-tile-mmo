@@ -77,3 +77,36 @@ pub struct AllyQueueDots;
 pub struct ThreatCapacityDot {
     pub index: usize,
 }
+
+/// Resolved threat entry - fades out after showing damage resolution (ADR-025)
+#[derive(Component)]
+pub struct ResolvedThreatEntry {
+    pub spawn_time: std::time::Duration,
+    pub lifetime: f32,  // 4.0 seconds
+    pub damage: f32,
+}
+
+/// Marker for resolved threats container (ADR-025)
+#[derive(Component)]
+pub struct ResolvedThreatsContainer;
+
+/// Marker for combat log panel (ADR-025)
+#[derive(Component)]
+pub struct CombatLogPanel;
+
+/// Marker for combat log content (scrollable) (ADR-025)
+#[derive(Component)]
+pub struct CombatLogContent;
+
+/// Combat log entry with metadata for color coding (ADR-025)
+#[derive(Component)]
+pub struct CombatLogEntry {
+    pub timestamp: String,  // Pre-formatted "HH:MM:SS"
+    pub is_player_damage: bool,  // true = dealt, false = taken
+}
+
+/// Marker for NPC entities in death pose (lying on side for 3s before despawn)
+#[derive(Component)]
+pub struct DeathMarker {
+    pub death_time: std::time::Duration,
+}
