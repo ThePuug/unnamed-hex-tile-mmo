@@ -43,24 +43,29 @@ pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
     }
 }
 
-/// Calculate timer duration based on Instinct attribute
-/// Formula: base_window * (1.0 + instinct / 1000.0)
-///
-/// With new scaling (instinct returns u16):
-/// - Instinct = 0: 1.0s (base * 1.0)
-/// - Instinct = 250: 1.25s (base * 1.25)
-/// - Instinct = 500 (level 50 pure specialist): 1.5s (base * 1.5)
+/// Calculate timer duration based on Instinct attribute and level multiplier (ADR-020)
+/// Linear formula: base_window * (1.0 + instinct / 1000.0)
+/// Then scaled by reaction_level_multiplier for super-linear growth
 ///
 /// Minimum 250ms to prevent instant resolution
 pub fn calculate_timer_duration(attrs: &ActorAttributes) -> Duration {
-    // Use instinct() which returns u16 (scaled: 0-500+ range)
     let instinct = attrs.instinct() as f32;
 
     let base_window = 1.0;
-    let multiplier = 1.0 + (instinct / 1000.0); // 0: 1.0x, 500: 1.5x, 1000: 2.0x
-    let duration_secs = base_window * multiplier;
+    let linear = base_window * (1.0 + instinct / 1000.0);
+    let duration_secs = linear * attrs.reaction_level_multiplier();
 
     Duration::from_secs_f32(duration_secs).max(Duration::from_millis(250))
+}
+
+/// Calculate reaction window multiplier based on level gap (ADR-020)
+/// Higher-level defenders get more time to react to lower-level threats
+/// No penalty when outleveled (floor at 1.0), capped at max multiplier
+pub fn gap_multiplier(defender_level: u32, attacker_level: u32) -> f32 {
+    let gap = defender_level.saturating_sub(attacker_level) as f32;
+    const WINDOW_SCALING_FACTOR: f32 = 0.15;
+    const WINDOW_MAX_MULTIPLIER: f32 = 3.0;
+    (1.0 + gap * WINDOW_SCALING_FACTOR).min(WINDOW_MAX_MULTIPLIER)
 }
 
 /// Insert a threat into the queue
@@ -173,27 +178,70 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_timer_duration_zero_instinct() {
-        // Instinct = 0 (axis on presence side) should give 1.0s
-        let attrs = create_test_attrs(0, 100);
+    fn test_timer_duration_minimum_floor() {
+        // Timer duration should never drop below 250ms regardless of attributes
+        let attrs = ActorAttributes::default();
         let duration = calculate_timer_duration(&attrs);
+        assert!(
+            duration >= Duration::from_millis(250),
+            "Timer duration must be >= 250ms, got {:?}",
+            duration
+        );
+    }
+
+    #[test]
+    fn test_timer_duration_increases_with_instinct() {
+        // Higher instinct should give longer reaction windows
+        let low_instinct = ActorAttributes::default(); // instinct 0, level 0
+        let high_instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0); // instinct investment
+        assert!(
+            calculate_timer_duration(&high_instinct) > calculate_timer_duration(&low_instinct),
+            "Higher instinct should produce longer timer duration"
+        );
+    }
+
+    #[test]
+    fn test_timer_duration_level_zero_is_base() {
+        // Level 0 entity: reaction multiplier = 1.0, so duration = base window
+        let attrs = ActorAttributes::default();
+        assert_eq!(attrs.total_level(), 0);
+        let duration = calculate_timer_duration(&attrs);
+        // Base window with zero instinct and level multiplier 1.0 should be exactly 1.0s
         assert_eq!(duration, Duration::from_secs(1));
     }
 
+    // ===== GAP MULTIPLIER TESTS (ADR-020 Phase 3) =====
+    // Property tests only — no specific formula values, survives balance tuning
+
     #[test]
-    fn test_calculate_timer_duration_mid_instinct() {
-        // Instinct = 50 (axis = -50 on instinct side) should give 1.25s
-        let attrs = create_test_attrs(0, -50);
-        let duration = calculate_timer_duration(&attrs);
-        assert_eq!(duration, Duration::from_millis(1250));
+    fn test_gap_multiplier_equal_levels() {
+        // Equal levels should give exactly 1.0 (no bonus or penalty)
+        assert_eq!(gap_multiplier(0, 0), 1.0);
+        assert_eq!(gap_multiplier(5, 5), 1.0);
+        assert_eq!(gap_multiplier(50, 50), 1.0);
     }
 
     #[test]
-    fn test_calculate_timer_duration_high_instinct() {
-        // Instinct = 100 (axis = -100 on instinct side) should give 1.5s
-        let attrs = create_test_attrs(0, -100);
-        let duration = calculate_timer_duration(&attrs);
-        assert_eq!(duration, Duration::from_millis(1500));
+    fn test_gap_multiplier_no_penalty_when_outleveled() {
+        // Fighting higher-level enemies should never reduce the window
+        assert_eq!(gap_multiplier(0, 10), 1.0);
+        assert_eq!(gap_multiplier(5, 20), 1.0);
+    }
+
+    #[test]
+    fn test_gap_multiplier_increases_with_gap() {
+        // Larger level gap should give larger multiplier
+        let small_gap = gap_multiplier(10, 5);
+        let large_gap = gap_multiplier(20, 5);
+        assert!(small_gap > 1.0, "Positive gap should give > 1.0");
+        assert!(large_gap > small_gap, "Larger gap should give bigger multiplier");
+    }
+
+    #[test]
+    fn test_gap_multiplier_has_ceiling() {
+        // Very large gaps should be capped
+        let huge_gap = gap_multiplier(100, 0);
+        assert!(huge_gap <= 3.0, "Gap multiplier should be capped, got {}", huge_gap);
     }
 
     #[test]

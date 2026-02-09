@@ -50,7 +50,9 @@ pub fn process_deal_damage(
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-        let timer_duration = queue_utils::calculate_timer_duration(attrs);
+        let base_timer = queue_utils::calculate_timer_duration(attrs);
+        let gap_mult = queue_utils::gap_multiplier(attrs.total_level(), source_attrs.total_level());
+        let timer_duration = base_timer.mul_f32(gap_mult);
 
         let threat = QueuedThreat {
             source: *source,

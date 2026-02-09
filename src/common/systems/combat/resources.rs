@@ -4,30 +4,24 @@ use crate::common::{
     message::{Component as MessageComponent, Event, *},
 };
 
-/// Calculate maximum stamina from actor attributes
-/// Formula (scaled for u16 values): 100 + (might * 0.2) + (vitality * 0.06)
-///
-/// Examples (level 50 specialist = 500 reach):
-/// - might=250: 100 + 50 = 150 stamina
-/// - might=500: 100 + 100 = 200 stamina
-/// - might=500, vitality=500: 100 + 100 + 30 = 230 stamina
+/// Calculate maximum stamina from actor attributes (ADR-020: level multiplier applied)
+/// Linear formula: 100 + (might * 0.2) + (vitality * 0.06)
+/// Then multiplied by hp_level_multiplier for super-linear scaling
 pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
     let might = attrs.might() as f32;
     let vitality = attrs.vitality() as f32;
-    100.0 + (might * 0.2) + (vitality * 0.06)
+    let linear = 100.0 + (might * 0.2) + (vitality * 0.06);
+    linear * attrs.hp_level_multiplier()
 }
 
-/// Calculate maximum mana from actor attributes
-/// Formula (scaled for u16 values): 100 + (focus * 0.1) + (presence * 0.06)
-///
-/// Examples (level 50 specialist = 500 reach):
-/// - focus=250: 100 + 25 = 125 mana
-/// - focus=500: 100 + 50 = 150 mana
-/// - focus=500, presence=500: 100 + 50 + 30 = 180 mana
+/// Calculate maximum mana from actor attributes (ADR-020: level multiplier applied)
+/// Linear formula: 100 + (focus * 0.1) + (presence * 0.06)
+/// Then multiplied by hp_level_multiplier for super-linear scaling
 pub fn calculate_max_mana(attrs: &ActorAttributes) -> f32 {
     let focus = attrs.focus() as f32;
     let presence = attrs.presence() as f32;
-    100.0 + (focus * 0.1) + (presence * 0.06)
+    let linear = 100.0 + (focus * 0.1) + (presence * 0.06);
+    linear * attrs.hp_level_multiplier()
 }
 
 /// Calculate stamina regeneration rate

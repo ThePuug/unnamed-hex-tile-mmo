@@ -22,6 +22,8 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 | 014 | Spatial Difficulty System | 📊 Progression | ✅ Implemented | 2025-11-07 | No (design scope) |
 | 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Implemented | 2025-11-08 | No (testing strategy) |
 | 016 | Movement System Rewrite | 🌐 Network | ✅ Approved | 2025-02-08 | Yes (ADR-019) |
+| 017 | Combat Balance Overhaul | ⚔️ Combat | ✅ Implemented | 2026-02-09 | Yes (ADR-020/021/022) |
+| 018 | NPC Engagement Coordination | 🤖 AI | 📝 Draft | 2026-02-09 | Yes (ADR-023/024) |
 
 **Legend:**
 - **Status:** ✅ Implemented (merged to main) | ✅ Approved (ready for implementation) | 🔄 Under Review | 📝 Draft/Proposed

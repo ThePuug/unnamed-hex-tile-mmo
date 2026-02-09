@@ -73,12 +73,13 @@ pub fn do_manage_connections(
                     ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // Level 10: Full spectrum distribution (4+3+3=10 points)
+                // Level 10: Full spectrum distribution (3+4+3=10 points)
                 // Balanced axis (0) allows players to shift in any direction for skill balance testing
+                // Focus spectrum = 4 provides 40% investment ratio → 2 queue slots
                 // New system: raw investment counts (axis ×10, spectrum ×7 for reach)
                 let attrs = ActorAttributes::new(
-                    0, 4, 0,       // might_grace: 0 axis, 4 spectrum, 0 shift
-                    0, 3, 0,       // vitality_focus: 0 axis, 3 spectrum, 0 shift
+                    0, 3, 0,       // might_grace: 0 axis, 3 spectrum, 0 shift
+                    0, 4, 0,       // vitality_focus: 0 axis, 4 spectrum, 0 shift
                     0, 3, 0,       // instinct_presence: 0 axis, 3 spectrum, 0 shift
                 );
                 // Calculate initial resources from attributes
@@ -242,6 +243,10 @@ pub fn write_try(
                         Do { event: Event::Pong { client_time }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                Try { event: Event::Dismiss { ent: _ } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::Dismiss { ent }});
                 }
                 Try { event: Event::SetTierLock { ent: _, tier } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };

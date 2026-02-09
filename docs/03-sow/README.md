@@ -22,6 +22,8 @@ SOWs are work orders for developers. Each SOW defines what needs to be built, wh
 | 014 | Spatial Difficulty System | 📊 Progression | ✅ Merged | 2025-11-07 | 6.5-9.5 hours | ~8 hours |
 | 015 | Architectural Invariant Testing | 🧪 Testing | ✅ Merged | 2025-11-08 | 2.5 days | ~2 days |
 | 016 | Movement System Rewrite | 🌐 Network | ✅ Merged | 2025-02-08 | 14-20 hours | - |
+| 017 | Combat Balance Implementation | ⚔️ Combat | ✅ Merged | 2026-02-09 | 8-12 hours | - |
+| 018 | NPC Engagement Coordination | 🤖 AI | 📝 Planned | 2026-02-09 | 13-19 hours | - |
 
 **Legend:**
 - **Status:** ✅ Accepted/Merged | 🔄 In Progress/Review | 📝 Planned/Proposed

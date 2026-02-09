@@ -105,6 +105,7 @@ fn main() {
         combat::abilities::deflect::handle_deflect,
         combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
+        reaction_queue::process_dismiss, // ADR-022: Dismiss front queue threat (no GCD/lockout)
         common::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 

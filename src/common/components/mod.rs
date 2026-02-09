@@ -422,6 +422,39 @@ impl ActorAttributes {
         mg_points + vf_points + ip_points
     }
 
+    // === LEVEL MULTIPLIER (ADR-020) ===
+
+    /// Pure level multiplier for super-linear stat scaling
+    /// Formula: (1 + level * k)^p
+    /// Level 0 always returns 1.0 (backward compatible)
+    pub fn level_multiplier(level: u32, k: f32, p: f32) -> f32 {
+        (1.0 + level as f32 * k).powf(p)
+    }
+
+    /// HP/survivability level multiplier
+    /// Moderate scaling: preserves danger from equal-level foes
+    pub fn hp_level_multiplier(&self) -> f32 {
+        const K: f32 = 0.10;
+        const P: f32 = 1.5;
+        Self::level_multiplier(self.total_level(), K, P)
+    }
+
+    /// Damage/offense level multiplier
+    /// Aggressive scaling: rewards offensive power at high levels
+    pub fn damage_level_multiplier(&self) -> f32 {
+        const K: f32 = 0.15;
+        const P: f32 = 2.0;
+        Self::level_multiplier(self.total_level(), K, P)
+    }
+
+    /// Reaction stat level multiplier
+    /// Gentle scaling: bounded by human reaction limits
+    pub fn reaction_level_multiplier(&self) -> f32 {
+        const K: f32 = 0.10;
+        const P: f32 = 1.2;
+        Self::level_multiplier(self.total_level(), K, P)
+    }
+
     // === DERIVED ATTRIBUTES ===
 
     /// Movement speed derived from grace position (axis + shift)
@@ -440,16 +473,14 @@ impl ActorAttributes {
         BASE_SPEED * (speed_percent / 100.0)
     }
 
-    /// Maximum health derived from vitality_reach
-    /// Higher vitality reach = higher max health potential
-    /// Scaled formula: 100 + (vitality_reach * 3.8)
-    ///
-    /// 0 vitality_reach = 100 HP
-    /// 500 vitality_reach (level 50 pure vitality) = 2000 HP
+    /// Maximum health derived from vitality_reach, scaled by level multiplier (ADR-020)
+    /// Linear formula: 100 + (vitality_reach * 3.8)
+    /// Then multiplied by hp_level_multiplier for super-linear scaling
     pub fn max_health(&self) -> f32 {
         let base = 100.0;
         let vitality_reach = self.vitality_reach() as f32;
-        base + (vitality_reach * 3.8)
+        let linear = base + (vitality_reach * 3.8);
+        linear * self.hp_level_multiplier()
     }
 }
 
@@ -683,6 +714,105 @@ mod tests {
             "Grace 100 (via axis+shift) should give 150% speed (0.0075), got {}",
             speed
         );
+    }
+
+    // ===== LEVEL MULTIPLIER TESTS (ADR-020) =====
+    // Property tests only — no specific formula values, survives balance tuning
+
+    #[test]
+    fn test_level_multiplier_identity_at_zero() {
+        // Level 0 must always return 1.0 regardless of k/p
+        assert_eq!(ActorAttributes::level_multiplier(0, 0.10, 1.5), 1.0);
+        assert_eq!(ActorAttributes::level_multiplier(0, 0.15, 2.0), 1.0);
+        assert_eq!(ActorAttributes::level_multiplier(0, 0.10, 1.2), 1.0);
+        assert_eq!(ActorAttributes::level_multiplier(0, 0.99, 5.0), 1.0);
+    }
+
+    #[test]
+    fn test_level_multiplier_monotonically_increasing() {
+        // Higher level must always produce higher multiplier (same k/p)
+        for level in 0..20u32 {
+            let lower = ActorAttributes::level_multiplier(level, 0.10, 1.5);
+            let higher = ActorAttributes::level_multiplier(level + 1, 0.10, 1.5);
+            assert!(
+                higher > lower,
+                "Multiplier must increase with level: level {} ({}) >= level {} ({})",
+                level + 1, higher, level, lower
+            );
+        }
+    }
+
+    #[test]
+    fn test_level_multiplier_super_linear_growth() {
+        // The gap between consecutive levels should increase (super-linear, not linear)
+        // gap(level N→N+1) < gap(level N+1→N+2) for p > 1
+        let gap_low = ActorAttributes::level_multiplier(2, 0.10, 1.5)
+            - ActorAttributes::level_multiplier(1, 0.10, 1.5);
+        let gap_high = ActorAttributes::level_multiplier(9, 0.10, 1.5)
+            - ActorAttributes::level_multiplier(8, 0.10, 1.5);
+        assert!(
+            gap_high > gap_low,
+            "Growth rate should accelerate: gap at high levels ({}) > gap at low levels ({})",
+            gap_high, gap_low
+        );
+    }
+
+    #[test]
+    fn test_damage_multiplier_exceeds_hp_multiplier() {
+        // Damage scales more aggressively than HP at all positive levels
+        for level in 1..=20u32 {
+            let attrs = ActorAttributes::new(
+                -(level as i8).min(127), 0, 0,  // some might investment
+                0, 0, 0,
+                0, 0, 0,
+            );
+            assert!(
+                attrs.damage_level_multiplier() >= attrs.hp_level_multiplier(),
+                "Damage multiplier should >= HP multiplier at level {}",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn test_hp_multiplier_exceeds_reaction_multiplier() {
+        // HP scales more than reaction stats at all positive levels
+        for level in 1..=20u32 {
+            let attrs = ActorAttributes::new(
+                -(level as i8).min(127), 0, 0,
+                0, 0, 0,
+                0, 0, 0,
+            );
+            assert!(
+                attrs.hp_level_multiplier() >= attrs.reaction_level_multiplier(),
+                "HP multiplier should >= reaction multiplier at level {}",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_health_increases_with_level() {
+        let level_0 = ActorAttributes::default();
+        let level_5 = ActorAttributes::new(-3, -2, 0, 0, 0, 0, 0, 0, 0); // 5 points invested
+        let level_10 = ActorAttributes::new(-5, -3, 0, -1, -1, 0, 0, 0, 0); // 10 points invested
+
+        assert!(
+            level_5.max_health() > level_0.max_health(),
+            "Level 5 should have more HP than level 0"
+        );
+        assert!(
+            level_10.max_health() > level_5.max_health(),
+            "Level 10 should have more HP than level 5"
+        );
+    }
+
+    #[test]
+    fn test_default_attrs_max_health_is_base() {
+        // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
+        let attrs = ActorAttributes::default();
+        assert_eq!(attrs.total_level(), 0);
+        assert_eq!(attrs.max_health(), 100.0, "Level 0 with no vitality should have base 100 HP");
     }
 
 }

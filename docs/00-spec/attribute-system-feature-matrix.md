@@ -1,7 +1,7 @@
 # Attribute System - Feature Matrix
 
 **Specification:** [attribute-system.md](attribute-system.md)
-**Last Updated:** 2025-11-01
+**Last Updated:** 2026-02-09
 **Overall Status:** 2/27 features complete (7% - foundational only)
 
 ---
@@ -32,18 +32,20 @@
 
 ### Derived Stats
 
+**Note:** All derived stats are currently linear. [RFC-017](../01-rfc/017-combat-balance-overhaul.md) / [ADR-020](../02-adr/020-super-linear-level-multiplier.md) proposes super-linear polynomial multiplier applied after existing linear formulas.
+
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
 |---------|--------|----------|----------------|-------|
-| Might → Physical Damage | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Line 40 | Implemented in damage calc |
+| Might → Physical Damage | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Line 40 | Implemented in damage calc. **Planned:** Super-linear multiplier (ADR-020) |
 | Might → Stagger Multiplier | ❌ Not Started | - | Line 40 | Stagger system deferred |
 | Might → Stamina Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 40 | Resource scaling implemented |
 | Grace → Movement Speed | ❌ Not Started | - | Lines 41, 338-347 | Formula defined, not implemented |
 | Grace → Hit Chance | ❌ Not Started | - | Line 41 | Attack accuracy system |
 | Grace → Dodge Recovery | ❌ Not Started | - | Line 41 | Dodge ability not in MVP |
-| Vitality → Health Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 42 | Resource scaling implemented |
+| Vitality → Health Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 42 | Resource scaling implemented. **Planned:** Super-linear multiplier (ADR-020) |
 | Vitality → Stagger Resist | ⏸️ Deferred | - | Line 42 | Stagger system deferred |
 | Vitality → DoT Resistance | ❌ Not Started | - | Line 42 | Status effects not implemented |
-| Focus → Mana Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 43 | Resource scaling implemented |
+| Focus → Mana Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 43 | Resource scaling implemented. **Planned:** Queue capacity via commitment ratio (ADR-021) |
 | Focus → Magic Damage | 🚧 Partial | [ADR-005](../adr/005-damage-pipeline.md) | Line 43 | Formula exists, no magic abilities |
 | Focus → Resist Recovery | ❌ Not Started | - | Line 43 | Recovery mechanics |
 | Instinct → Crit Chance | ⏸️ Deferred | - | Line 44 | Crit system deferred |
@@ -155,12 +157,13 @@ Features described in spec but not yet in implementation plan:
 
 Based on combat system dependencies and player value:
 
-1. **Implement Axis/Spectrum/Shift Core** - Foundation for entire system
-2. **Scrollbar UI Prototype** - Make system understandable to players
-3. **Level 1-50 Investment** - Allow progression and build diversity
-4. **Movement Speed (Grace)** - Immediate tactical impact
-5. **Threat Generation (Presence)** - Required for PvE tanking
-6. **Critical Hit System (Instinct)** - Adds build variety and excitement
+1. **Combat Balance Overhaul (RFC-017)** - Super-linear scaling, commitment-ratio queue, reaction window gap, dismiss mechanic — required for meaningful multi-enemy balance
+2. **Implement Axis/Spectrum/Shift Core** - Foundation for entire system
+3. **Scrollbar UI Prototype** - Make system understandable to players
+4. **Level 1-50 Investment** - Allow progression and build diversity
+5. **Movement Speed (Grace)** - Immediate tactical impact
+6. **Threat Generation (Presence)** - Required for PvE tanking
+7. **Critical Hit System (Instinct)** - Adds build variety and excitement
 
 ---
 

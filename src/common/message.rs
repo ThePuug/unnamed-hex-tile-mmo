@@ -57,6 +57,9 @@ pub enum Event {
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
+    /// Client → Server: Dismiss front queue threat at full unmitigated damage (ADR-022)
+    /// No GCD, no lockout, no resource cost — queue management, not an ability
+    Dismiss { ent: Entity },
     /// Client → Server: Set tier lock for targeting (ADR-010 Phase 1)
     SetTierLock { ent: Entity, tier: RangeTier },
     /// Server → Client: Entity intends to move to destination (ADR-011)

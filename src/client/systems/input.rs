@@ -58,6 +58,11 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target_loc: None }});
         }
 
+        // ADR-022: Dismiss front queue threat (no GCD check — independent of ability system)
+        if keyboard.just_pressed(KeyCode::KeyD) {
+            writer.write(Try { event: Event::Dismiss { ent }});
+        }
+
         // ADR-010 Phase 1: Tier Lock Targeting
 
         // 1 key: Lock to Close tier (1-2 hexes)

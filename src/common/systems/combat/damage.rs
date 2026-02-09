@@ -43,9 +43,9 @@ pub fn calculate_outgoing_damage(
         DamageType::Magic => attrs.focus() as f32,
     };
 
-    // Scaled for u16 values: divide by 165 instead of 33 (5x multiplier)
-    // might/focus=165 → 2x damage, might/focus=500 → ~4x damage
-    base_damage * (1.0 + scaling_attribute / 165.0)
+    // Linear scaling from attributes, then super-linear level multiplier (ADR-020)
+    let linear = base_damage * (1.0 + scaling_attribute / 165.0);
+    linear * attrs.damage_level_multiplier()
 }
 
 /// Roll for critical hit and calculate multiplier

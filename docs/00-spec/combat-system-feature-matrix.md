@@ -1,8 +1,8 @@
 # Combat System - Feature Matrix
 
 **Specification:** [combat-system.md](combat-system.md)
-**Last Updated:** 2025-11-07
-**Overall Status:** 66/118 features complete (56%)
+**Last Updated:** 2026-02-09
+**Overall Status:** 70/122 features complete (57%)
 
 ---
 
@@ -92,8 +92,8 @@
 |---------|--------|----------|----------------|-------|
 | Threat queue component | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 188-194 | Per-entity queue |
 | Independent timers | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Line 190 | Circular progress |
-| Queue capacity (Focus) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 222-230 | Scales with Focus attribute |
-| Timer duration (Instinct) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 212-220 | Reaction window scaling |
+| Queue capacity (Focus) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md), [ADR-021](../adr/021-commitment-ratio-queue-capacity.md) | Lines 222-230 | Scales with Focus attribute. **Planned:** Replace with commitment-ratio formula (RFC-017, ADR-021) |
+| Timer duration (Instinct) | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md), [ADR-020](../adr/020-super-linear-level-multiplier.md) | Lines 212-220 | Reaction window scaling. **Planned:** Add level-gap modifier (RFC-017, ADR-020) |
 | Queue overflow resolution | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 239-243 | Oldest threat resolves |
 | Queue display UI | ✅ Complete | [ADR-008](../adr/008-combat-hud.md) | Lines 196-209 | Circular icons with timers |
 | Reaction ability clear | ✅ Complete | [ADR-003](../adr/003-reaction-queue-system.md) | Lines 244-248 | Deflect clears queue |
@@ -312,6 +312,21 @@
 
 ---
 
+### Combat Balance (RFC-017)
+
+**Core Problem:** Linear stat scaling breaks against multiplicative threat counts (3× level-0 NPCs overwhelm a level-10 player).
+
+| Feature | Status | ADR/Impl | Spec Reference | Notes |
+|---------|--------|----------|----------------|-------|
+| Super-linear stat scaling | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md), [SOW-017](../03-sow/017-combat-balance-implementation.md) | [combat-balance.md](combat-balance.md) | Polynomial level multiplier for HP (k=0.10, p=1.5), damage (k=0.15, p=2.0), reaction stats (k=0.10, p=1.2) |
+| Commitment-ratio queue capacity | ✅ Complete | [ADR-021](../02-adr/021-commitment-ratio-queue-capacity.md), [SOW-017](../03-sow/017-combat-balance-implementation.md) | [combat-balance.md](combat-balance.md) | Focus investment ratio → threshold-based slot count (<33%→1, 33-49%→2, 50-65%→3, ≥66%→4) |
+| Reaction window level gap | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md), [SOW-017](../03-sow/017-combat-balance-implementation.md) | [combat-balance.md](combat-balance.md) | Wider windows when defender outlevels attacker (0.15 per level gap, capped at 3.0×) |
+| Dismiss mechanic | ✅ Complete | [ADR-022](../02-adr/022-dismiss-mechanic.md), [SOW-017](../03-sow/017-combat-balance-implementation.md) | [combat-balance.md](combat-balance.md) | Skip front threat at full unmitigated damage, no lockout, no GCD |
+
+**Category Status:** 4/4 complete (100% — [SOW-017](../03-sow/017-combat-balance-implementation.md) merged)
+
+---
+
 ### Special Mechanics
 
 | Feature | Status | ADR/Impl | Spec Reference | Notes |
@@ -428,6 +443,7 @@ Features described in spec but not yet in implementation plan:
 
 ### Critical Priority
 - **Unified Tier Lock Tutorial:** Explicit teaching that tier lock affects both hostiles and allies ([Player Feedback](../adr/010-player-feedback.md) Lines 106-136, 184-212, 323-402) - **MANDATORY before support abilities launch**
+- ~~**Combat Balance Overhaul:** Super-linear scaling, commitment-ratio queue, reaction window gap, dismiss mechanic~~ — ✅ **Implemented** ([RFC-017](../01-rfc/017-combat-balance-overhaul.md), [SOW-017](../03-sow/017-combat-balance-implementation.md))
 
 ### High Priority
 - **TAB Cycling:** Manual target selection within tier (Lines 108-115)
@@ -481,6 +497,6 @@ Features described in spec but not yet in implementation plan:
 
 ---
 
-**Document Version:** 1.2
-**Last Updated:** 2025-11-07
+**Document Version:** 1.3
+**Last Updated:** 2026-02-09
 **Maintained By:** Development team

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{reaction_queue::*, ActorAttributes},
+    components::{reaction_queue::*, resources::*, ActorAttributes},
     message::{Try, Do, ClearType, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
@@ -54,6 +54,59 @@ pub fn process_expired_threats(
                 );
             }
         }
+    }
+}
+
+/// Server system to process Dismiss events (ADR-022)
+/// Pops the front threat from the queue and applies full unmitigated damage
+/// No GCD, no lockout, no resource cost
+pub fn process_dismiss(
+    mut reader: MessageReader<Try>,
+    mut query: Query<(&mut ReactionQueue, &mut Health)>,
+    mut writer: MessageWriter<Do>,
+) {
+    for event in reader.read() {
+        let GameEvent::Dismiss { ent } = event.event else {
+            continue;
+        };
+
+        let Ok((mut queue, mut health)) = query.get_mut(ent) else {
+            continue;
+        };
+
+        // Must have at least one threat to dismiss
+        let Some(threat) = queue.threats.pop_front() else {
+            continue;
+        };
+
+        // Apply full unmitigated damage (no armor, no resistance)
+        health.state = (health.state - threat.damage).max(0.0);
+        health.step = health.state;
+
+        // Broadcast queue clear to clients
+        writer.write(Do {
+            event: GameEvent::ClearQueue {
+                ent,
+                clear_type: ClearType::First(1),
+            },
+        });
+
+        // Broadcast damage event to clients
+        writer.write(Do {
+            event: GameEvent::ApplyDamage {
+                ent,
+                damage: threat.damage,
+                source: threat.source,
+            },
+        });
+
+        // Send authoritative health
+        writer.write(Do {
+            event: GameEvent::Incremental {
+                ent,
+                component: crate::common::message::Component::Health(*health),
+            },
+        });
     }
 }
 

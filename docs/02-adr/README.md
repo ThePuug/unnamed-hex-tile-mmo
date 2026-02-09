@@ -34,6 +34,11 @@ This directory contains technical architecture decisions for the unnamed hex-til
 | 017 | ✅ | Universal Lockout + Synergy Architecture | ⚔️ | 2025-11-07 |
 | 018 | 📋 | Ability Execution Pipeline | ⚔️ | 2025-11-07 |
 | 019 | ✅ | Unified Interpolation Model | 🌐 | 2025-02-08 |
+| 020 | ✅ | Super-Linear Level Multiplier | ⚡ | 2026-02-09 |
+| 021 | ✅ | Commitment-Ratio Queue Capacity | ⚔️ | 2026-02-09 |
+| 022 | ✅ | Dismiss Mechanic | ⚔️ | 2026-02-09 |
+| 023 | 📋 | Coordinated Hex Assignment | 🤖 | 2026-02-09 |
+| 024 | 📋 | Per-Archetype Positioning Strategy | 🤖 | 2026-02-09 |
 
 ### When to Read Each ADR
 
@@ -58,6 +63,11 @@ This directory contains technical architecture decisions for the unnamed hex-til
 - **016 - Movement Intent Architecture:** Broadcast movement destinations before completion for remote entity prediction. Read when working with movement, network sync, or remote entity rendering.
 - **017 - Universal Lockout + Synergy Architecture:** Variable recovery durations with early unlock synergies. Read when implementing ability pacing, combat flow, or synergy systems.
 - **018 - Ability Execution Pipeline:** Three-stage pipeline (validation → execution → broadcasting) with pure function extraction. Read when implementing new abilities or refactoring ability systems.
+- **020 - Super-Linear Level Multiplier:** Polynomial level scaling for HP, damage, and reaction stats plus reaction window gap modifier. Read when working with stat derivation, level scaling, or reaction timers.
+- **021 - Commitment-Ratio Queue Capacity:** Focus investment ratio determines queue slots instead of raw points. Read when working with queue capacity, attribute investment, or Focus scaling.
+- **022 - Dismiss Mechanic:** New queue management verb — skip front threat at full unmitigated damage with no lockout. Read when working with reaction queue, combat input, or queue UI.
+- **023 - Coordinated Hex Assignment:** Engagement entity assigns unique approach hexes to child NPCs, recalculates on player tile change. Read when working with engagement spawning, NPC AI targeting, or multi-NPC coordination.
+- **024 - Per-Archetype Positioning Strategy:** Surround/Cluster/Perimeter/Orbital strategies determine hex preference per archetype. Read when working with archetype behavior, engagement composition, or NPC spatial patterns.
 - **019 - Unified Interpolation Model:** Separate authoritative position from visual interpolation, unified local/remote handling. Read when working with movement, position, or entity rendering.
 
 **UI & Developer Tools:**
