@@ -76,8 +76,8 @@ pub fn do_spawn(
     mut reader: MessageReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    _meshes: ResMut<Assets<Mesh>>,
+    _materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
@@ -191,7 +191,7 @@ pub fn apply_movement_intent(
             continue;
         }
 
-        let Ok((loc, heading, mut visual)) = query.get_mut(ent) else {
+        let Ok((_loc, heading, mut visual)) = query.get_mut(ent) else {
             continue;
         };
 
@@ -212,11 +212,11 @@ pub fn apply_movement_intent(
         visual.interpolate_toward(dest_world, duration_secs);
 
         if let Ok(mut entity_cmd) = commands.get_entity(ent) {
-            entity_cmd.insert(crate::common::components::movement_prediction::MovementPrediction::new(
-                destination,
-                time.elapsed() + Duration::from_millis(duration_ms as u64),
-                time.elapsed(),
-            ));
+            entity_cmd.insert(crate::common::components::movement_prediction::MovementPrediction {
+                predicted_dest: destination,
+                predicted_arrival: time.elapsed() + Duration::from_millis(duration_ms as u64),
+                prediction_start: time.elapsed(),
+            });
         }
     }
 }

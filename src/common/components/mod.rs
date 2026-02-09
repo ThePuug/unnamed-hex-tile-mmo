@@ -53,63 +53,6 @@ impl Loc {
         flat_dist == 1 && z_diff <= 1
     }
 
-    /// Check if a target location is reachable within a given number of steps
-    ///
-    /// Uses pathfinding to determine if there's a viable path from `from` to `to`
-    /// that is at most `max_steps` long. Accounts for terrain and slopes (±1 z-level).
-    ///
-    /// # Early Exit Optimization
-    /// Returns false immediately if flat_distance exceeds max_steps (no pathfinding needed)
-    ///
-    /// # Arguments
-    /// * `from` - Starting location
-    /// * `to` - Target location
-    /// * `max_steps` - Maximum number of steps allowed in the path
-    /// * `map` - The game map for pathfinding
-    ///
-    /// # Returns
-    /// `true` if a path exists within max_steps, `false` otherwise
-    pub fn is_reachable_within(from: Loc, to: Loc, max_steps: u32, map: &crate::common::resources::map::Map) -> bool {
-        use pathfinding::prelude::*;
-
-        // Early exit: if flat distance exceeds max_steps, it's definitely unreachable
-        let flat_dist = from.flat_distance(&to) as u32;
-        if flat_dist > max_steps {
-            return false;
-        }
-
-        // Use map.find to get actual ground positions (accounting for terrain)
-        let Some((start, _)) = map.find(*from, -60) else { return false };
-        let Some((dest, _)) = map.find(*to, -60) else { return false };
-
-        // If start and dest are the same, it's reachable
-        if start == dest {
-            return true;
-        }
-
-        // Use BFS (breadth-first search) to find shortest path
-        // BFS is better than A* here because we only care about path length, not optimality
-        let result = bfs(
-            &start,
-            |&loc| {
-                // Get neighbors that are passable (map.neighbors handles ±1 z-level)
-                map.neighbors(loc)
-                    .into_iter()
-                    .map(|(neighbor_loc, _)| neighbor_loc)
-            },
-            |&loc| loc == dest
-        );
-
-        // Check if path exists and is within max_steps
-        match result {
-            Some(path) => {
-                // path.len() includes the start position, so subtract 1 for actual steps
-                let steps = path.len().saturating_sub(1);
-                steps <= max_steps as usize
-            }
-            None => false
-        }
-    }
 }
 
 #[cfg(test)]
@@ -167,89 +110,7 @@ mod loc_tests {
         assert!(loc1.is_adjacent(&loc2), "Same tile, different z should be adjacent");
     }
 
-    // ===== REACHABILITY TESTS =====
-
-    #[test]
-    fn test_is_reachable_within_early_exit() {
-        use crate::common::{components::entity_type::*, resources::map::Map};
-        use qrz::Map as QrzMap;
-
-        // Create a simple map
-        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
-        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
-        qrz_map.insert(Qrz { q: 5, r: 0, z: -5 }, EntityType::Decorator(Default::default()));
-        let map = Map::new(qrz_map);
-
-        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let to = Loc::new(Qrz { q: 5, r: 0, z: -5 });
-
-        // Target is 5 hexes away, max_steps is 3 - should early exit without pathfinding
-        assert!(!Loc::is_reachable_within(from, to, 3, &map),
-            "Should early exit when flat_distance exceeds max_steps");
-    }
-
-    #[test]
-    fn test_is_reachable_within_straight_line() {
-        use crate::common::{components::entity_type::*, resources::map::Map};
-        use qrz::Map as QrzMap;
-
-        // Create a straight line path
-        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
-        for i in 0..=3 {
-            qrz_map.insert(Qrz { q: i, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
-        }
-        let map = Map::new(qrz_map);
-
-        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let to = Loc::new(Qrz { q: 3, r: 0, z: 0 });
-
-        assert!(Loc::is_reachable_within(from, to, 3, &map),
-            "Should be reachable in exactly 3 steps");
-        assert!(Loc::is_reachable_within(from, to, 5, &map),
-            "Should be reachable with more than needed steps");
-        assert!(!Loc::is_reachable_within(from, to, 2, &map),
-            "Should not be reachable with too few steps");
-    }
-
-    #[test]
-    fn test_is_reachable_within_with_slopes() {
-        use crate::common::{components::entity_type::*, resources::map::Map};
-        use qrz::Map as QrzMap;
-
-        // Create a path with slopes (±1 z-level)
-        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
-        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
-        qrz_map.insert(Qrz { q: 1, r: 0, z: 1 }, EntityType::Decorator(Default::default())); // Up 1
-        qrz_map.insert(Qrz { q: 2, r: 0, z: 1 }, EntityType::Decorator(Default::default())); // Flat
-        qrz_map.insert(Qrz { q: 3, r: 0, z: 0 }, EntityType::Decorator(Default::default())); // Down 1
-        let map = Map::new(qrz_map);
-
-        let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let to = Loc::new(Qrz { q: 3, r: 0, z: 0 });
-
-        assert!(Loc::is_reachable_within(from, to, 3, &map),
-            "Should be reachable via slopes in 3 steps");
-    }
-
-    #[test]
-    fn test_is_reachable_within_same_location() {
-        use crate::common::{components::entity_type::*, resources::map::Map};
-        use qrz::Map as QrzMap;
-
-        let mut qrz_map: QrzMap<EntityType> = QrzMap::new(1.0, 0.8);
-        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Default::default()));
-        let map = Map::new(qrz_map);
-
-        let loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-
-        assert!(Loc::is_reachable_within(loc, loc, 0, &map),
-            "Same location should always be reachable");
-    }
 }
-
-/// Destination for pathfinding - the Qrz location an entity is trying to reach
-#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Dest(pub Qrz);
 
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct AirTime {
@@ -322,7 +183,7 @@ impl ActorAttributes {
         }
     }
 
-    // === Raw field accessors (for testing and debugging) ===
+    // === Raw field accessors ===
 
     pub fn might_grace_axis(&self) -> i8 { self.might_grace_axis }
     pub fn might_grace_spectrum(&self) -> i8 { self.might_grace_spectrum }
@@ -364,18 +225,6 @@ impl ActorAttributes {
         axis_scaled + shift_scaled
     }
 
-    fn vitality_focus_position(&self) -> i16 {
-        let axis_scaled = (self.vitality_focus_axis as i16) * 10;
-        let shift_scaled = (self.vitality_focus_shift as i16) * 7;
-        axis_scaled + shift_scaled
-    }
-
-    fn instinct_presence_position(&self) -> i16 {
-        let axis_scaled = (self.instinct_presence_axis as i16) * 10;
-        let shift_scaled = (self.instinct_presence_shift as i16) * 7;
-        axis_scaled + shift_scaled
-    }
-
     // === MIGHT ↔ GRACE ===
 
     /// Maximum Might reach
@@ -384,11 +233,9 @@ impl ActorAttributes {
         let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 7;
 
         if self.might_grace_axis <= 0 {
-            // On might side or balanced: |axis| * 10 + spectrum * 7
             let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 10;
             axis_reach + spectrum_reach
         } else {
-            // On grace side: spectrum * 7 only
             spectrum_reach
         }
     }
@@ -399,11 +246,9 @@ impl ActorAttributes {
         let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 7;
 
         if self.might_grace_axis >= 0 {
-            // On grace side or balanced: |axis| * 10 + spectrum * 7
             let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 10;
             axis_reach + spectrum_reach
         } else {
-            // On might side: spectrum * 7 only
             spectrum_reach
         }
     }
@@ -427,17 +272,14 @@ impl ActorAttributes {
 
     /// Current available Grace (scaled)
     /// Shift moves spectrum reach between might and grace
-    /// Formula: spectrum×7 + shift×7 (on might side) or axis×10 + spectrum×7 + shift×7 (on grace side)
     pub fn grace(&self) -> u16 {
         let spectrum_reach = (self.might_grace_spectrum.max(0) as i16) * 7;
         let shift_scaled = (self.might_grace_shift as i16) * 7;
 
         if self.might_grace_axis >= 0 {
-            // On grace side: axis reach + spectrum + shift adjustment
             let axis_reach = (self.might_grace_axis.unsigned_abs() as i16) * 10;
             (axis_reach + spectrum_reach + shift_scaled).max(0) as u16
         } else {
-            // On might side: spectrum + shift adjustment only
             (spectrum_reach + shift_scaled).max(0) as u16
         }
     }
@@ -516,11 +358,9 @@ impl ActorAttributes {
         let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 7;
 
         if self.instinct_presence_axis <= 0 {
-            // On instinct side or balanced: |axis| * 10 + spectrum * 7
             let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 10;
             axis_reach + spectrum_reach
         } else {
-            // On presence side: spectrum * 7 only
             spectrum_reach
         }
     }
@@ -531,11 +371,9 @@ impl ActorAttributes {
         let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 7;
 
         if self.instinct_presence_axis >= 0 {
-            // On presence side or balanced: |axis| * 10 + spectrum * 7
             let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 10;
             axis_reach + spectrum_reach
         } else {
-            // On instinct side: spectrum * 7 only
             spectrum_reach
         }
     }
@@ -663,8 +501,6 @@ mod tests {
     #[test]
     fn test_balanced_attributes() {
         // axis=-50, spectrum=25: -50A/25S (on might side)
-        // might_reach = abs(-50 - 25*1.5) = abs(-50 - 37) = 87
-        // grace_reach = 25 * 1.5 = 37
         let base = ActorAttributes {
             might_grace_axis: -50,
             might_grace_spectrum: 25,
@@ -672,41 +508,24 @@ mod tests {
         };
 
         let attrs = ActorAttributes { might_grace_shift: -25, ..base };
-        assert_eq!(attrs.might_reach(), 87);  // abs(-50 - 37)
-        assert_eq!(attrs.might(), 87);  // abs(-50 + (-25)/2 - 25) = abs(-87) = 87
-        assert_eq!(attrs.grace(), 13);  // 25 + (-25)/2 = 25 + (-12) = 13 (integer division)
-        assert_eq!(attrs.grace_reach(), 37);  // 25 * 1.5
+        assert_eq!(attrs.might(), 87);
 
         let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might_reach(), 87);
-        assert_eq!(attrs.might(), 80);  // abs(-50 + (-10)/2 - 25) = abs(-80) = 80
-        assert_eq!(attrs.grace(), 20);  // 25 + (-10)/2 = 25 - 5 = 20
-        assert_eq!(attrs.grace_reach(), 37);
+        assert_eq!(attrs.might(), 80);
 
         let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might_reach(), 87);
-        assert_eq!(attrs.might(), 75);  // abs(-50 + 0 - 25) = abs(-75) = 75
-        assert_eq!(attrs.grace(), 25);  // 25 + 0 = 25
-        assert_eq!(attrs.grace_reach(), 37);
+        assert_eq!(attrs.might(), 75);
 
         let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might_reach(), 87);
-        assert_eq!(attrs.might(), 70);  // abs(-50 + 10/2 - 25) = abs(-70) = 70
-        assert_eq!(attrs.grace(), 30);  // 25 + 10/2 = 25 + 5 = 30
-        assert_eq!(attrs.grace_reach(), 37);
+        assert_eq!(attrs.might(), 70);
 
         let attrs = ActorAttributes { might_grace_shift: 25, ..base };
-        assert_eq!(attrs.might_reach(), 87);
-        assert_eq!(attrs.might(), 63);  // abs(-50 + 25/2 - 25) = abs(-50 + 12 - 25) = abs(-63) = 63
-        assert_eq!(attrs.grace(), 37);  // 25 + 25/2 = 25 + 12 = 37
-        assert_eq!(attrs.grace_reach(), 37);
+        assert_eq!(attrs.might(), 63);
     }
 
     #[test]
     fn test_perfectly_balanced_attributes() {
         // Perfectly balanced: axis=0, spectrum=20: 0A/20S
-        // might_reach = abs(0 - 20*1.5) = abs(-30) = 30
-        // grace_reach = abs(0 + 20*1.5) = abs(30) = 30
         let base = ActorAttributes {
             might_grace_axis: 0,
             might_grace_spectrum: 20,
@@ -715,45 +534,28 @@ mod tests {
 
         // Shift fully toward might
         let attrs = ActorAttributes { might_grace_shift: -20, ..base };
-        assert_eq!(attrs.might_reach(), 30);  // abs(0 - 30) = 30
-        assert_eq!(attrs.might(), 30);  // abs(0 + (-20)/2 - 20) = abs(-30) = 30
-        assert_eq!(attrs.grace(), 10);  // abs(0 + (-20)/2 + 20) = abs(10) = 10
-        assert_eq!(attrs.grace_reach(), 30);  // abs(0 + 30) = 30
+        assert_eq!(attrs.might(), 30);
 
         // Shift partially toward might
         let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might_reach(), 30);
-        assert_eq!(attrs.might(), 25);  // abs(0 + (-10)/2 - 20) = abs(-25) = 25
-        assert_eq!(attrs.grace(), 15);  // abs(0 + (-10)/2 + 20) = abs(15) = 15
-        assert_eq!(attrs.grace_reach(), 30);
+        assert_eq!(attrs.might(), 25);
 
         // No shift (perfectly centered)
         let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might_reach(), 30);
-        assert_eq!(attrs.might(), 20);  // abs(0 + 0 - 20) = abs(-20) = 20
-        assert_eq!(attrs.grace(), 20);  // abs(0 + 0 + 20) = abs(20) = 20
-        assert_eq!(attrs.grace_reach(), 30);
+        assert_eq!(attrs.might(), 20);
 
         // Shift partially toward grace
         let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might_reach(), 30);
-        assert_eq!(attrs.might(), 15);  // abs(0 + 10/2 - 20) = abs(-15) = 15
-        assert_eq!(attrs.grace(), 25);  // abs(0 + 10/2 + 20) = abs(25) = 25
-        assert_eq!(attrs.grace_reach(), 30);
+        assert_eq!(attrs.might(), 15);
 
         // Shift fully toward grace
         let attrs = ActorAttributes { might_grace_shift: 20, ..base };
-        assert_eq!(attrs.might_reach(), 30);
-        assert_eq!(attrs.might(), 10);  // abs(0 + 20/2 - 20) = abs(-10) = 10
-        assert_eq!(attrs.grace(), 30);  // abs(0 + 20/2 + 20) = abs(30) = 30
-        assert_eq!(attrs.grace_reach(), 30);
+        assert_eq!(attrs.might(), 10);
     }
 
     #[test]
     fn test_narrow_spectrum_attributes() {
         // axis=-80, spectrum=10: -80A/10S (on might side)
-        // might_reach = abs(-80 - 10*1.5) = abs(-80 - 15) = 95
-        // grace_reach = 10 * 1.5 = 15
         let base = ActorAttributes {
             might_grace_axis: -80,
             might_grace_spectrum: 10,
@@ -761,34 +563,19 @@ mod tests {
         };
 
         let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might_reach(), 95);  // abs(-80 - 15) = 95
-        assert_eq!(attrs.might(), 95);  // abs(-80 + (-10)/2 - 10) = abs(-95) = 95
-        assert_eq!(attrs.grace(), 5);  // 10 + (-10)/2 = 10 - 5 = 5
-        assert_eq!(attrs.grace_reach(), 15);  // 10 * 1.5 = 15
+        assert_eq!(attrs.might(), 95);
 
         let attrs = ActorAttributes { might_grace_shift: -5, ..base };
-        assert_eq!(attrs.might_reach(), 95);
-        assert_eq!(attrs.might(), 92);  // abs(-80 + (-5)/2 - 10) = abs(-92) = 92
-        assert_eq!(attrs.grace(), 8);  // 10 + (-5)/2 = 10 + (-2) = 8 (integer division)
-        assert_eq!(attrs.grace_reach(), 15);
+        assert_eq!(attrs.might(), 92);
 
         let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might_reach(), 95);
-        assert_eq!(attrs.might(), 90);  // abs(-80 + 0 - 10) = abs(-90) = 90
-        assert_eq!(attrs.grace(), 10);  // 10 + 0 = 10
-        assert_eq!(attrs.grace_reach(), 15);
+        assert_eq!(attrs.might(), 90);
 
         let attrs = ActorAttributes { might_grace_shift: 5, ..base };
-        assert_eq!(attrs.might_reach(), 95);
-        assert_eq!(attrs.might(), 88);  // abs(-80 + 5/2 - 10) = abs(-88) = 88
-        assert_eq!(attrs.grace(), 12);  // 10 + 5/2 = 10 + 2 = 12
-        assert_eq!(attrs.grace_reach(), 15);
+        assert_eq!(attrs.might(), 88);
 
         let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might_reach(), 95);
-        assert_eq!(attrs.might(), 85);  // abs(-80 + 10/2 - 10) = abs(-85) = 85
-        assert_eq!(attrs.grace(), 15);  // 10 + 10/2 = 10 + 5 = 15
-        assert_eq!(attrs.grace_reach(), 15);
+        assert_eq!(attrs.might(), 85);
     }
 
     // ===== MOVEMENT SPEED TESTS (ADR-010 Phase 2) =====

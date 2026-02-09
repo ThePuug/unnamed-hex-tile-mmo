@@ -3,7 +3,6 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
@@ -20,10 +19,6 @@ pub const FOV_CHUNK_RADIUS: u8 = 2;
 pub struct ChunkId(pub i16, pub i16);
 
 impl ChunkId {
-    pub fn new(chunk_q: i16, chunk_r: i16) -> Self {
-        ChunkId(chunk_q, chunk_r)
-    }
-
     /// Get the center tile of this chunk (for spawning engagements)
     pub fn center(&self) -> Qrz {
         // Center is at offset (8, 8) in a 16x16 chunk
@@ -35,14 +30,12 @@ impl ChunkId {
 #[derive(Clone, Debug)]
 pub struct TerrainChunk {
     pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 256]>,
-    pub generated_at: Instant,
 }
 
 impl TerrainChunk {
     pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 256]>) -> Self {
         Self {
             tiles,
-            generated_at: Instant::now(),
         }
     }
 }

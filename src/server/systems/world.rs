@@ -73,11 +73,11 @@ pub fn generate_actor_spawn_events(
 }
 
 pub fn setup(
-    mut commands: Commands,
+    _commands: Commands,
     mut runtime: ResMut<RunTime>,
     time: Res<Time>,
-    terrain: Res<crate::server::resources::terrain::Terrain>,
-    map: Res<crate::Map>,
+    _terrain: Res<crate::server::resources::terrain::Terrain>,
+    _map: Res<crate::Map>,
 ) {
     let elapsed = time.elapsed().as_millis();
     let secs_since_midnight = Local::now().time().num_seconds_from_midnight();

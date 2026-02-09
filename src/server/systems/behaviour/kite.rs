@@ -7,8 +7,6 @@ use crate::{
         components::{
             Loc, heading::Heading, position::Position, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
-            reaction_queue::DamageType,
-            entity_type::EntityType,
             returning::Returning,
         },
         message::{Event, Do, Try, Event as GameEvent, Component as MessageComponent},
@@ -34,7 +32,7 @@ fn broadcast_intent(
     intent_state_opt: Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,
 ) {
     // Get or initialize MovementIntentState
-    let mut intent_state = if let Some(state) = intent_state_opt {
+    let intent_state = if let Some(state) = intent_state_opt {
         state
     } else {
         // First time - add component and skip (will process next frame)
@@ -101,7 +99,6 @@ pub struct Kite {
     pub optimal_distance_max: i16,   // Max optimal attack range (e.g., 8 hexes)
     pub disengage_distance: i16,     // Flee threshold when target too close (e.g., 3 hexes)
     pub attack_interval_ms: u32,     // Cooldown between attacks (e.g., 3000ms)
-    pub attack_damage: f32,          // Base damage per attack (e.g., 20.0)
     pub last_attack_time: u128,      // Server-side state: timestamp of last attack (default 0)
 }
 
@@ -115,7 +112,6 @@ impl Kite {
             optimal_distance_max: 8,
             disengage_distance: 3,        // Flee if < 3 hexes
             attack_interval_ms: 3000,     // 3 second attack speed
-            attack_damage: 20.0,          // 20 damage per hit
             last_attack_time: 0,
         }
     }
@@ -512,7 +508,6 @@ mod tests {
         assert_eq!(kite.optimal_distance_max, 8);
         assert_eq!(kite.disengage_distance, 3);
         assert_eq!(kite.attack_interval_ms, 3000);
-        assert_eq!(kite.attack_damage, 20.0);
     }
 
     #[test]
@@ -662,7 +657,6 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Verify attack stats match ADR-010 specifications
-        assert_eq!(kite.attack_damage, 20.0, "Forest Sprite should deal 20 damage");
         assert_eq!(kite.attack_interval_ms, 3000, "Should attack every 3 seconds");
     }
 

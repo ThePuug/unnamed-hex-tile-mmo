@@ -64,15 +64,6 @@ impl Position {
         use qrz::Convert;
         map.convert(self.tile) + self.offset
     }
-
-    /// Create a Position from a world-space Vec3 using the map
-    pub fn from_world(world_pos: Vec3, map: &crate::common::resources::map::Map) -> Self {
-        use qrz::Convert;
-        let tile = map.convert(world_pos);
-        let tile_center = map.convert(tile);
-        let offset = world_pos - tile_center;
-        Self { tile, offset }
-    }
 }
 
 /// Visual interpolation state for smooth rendering.

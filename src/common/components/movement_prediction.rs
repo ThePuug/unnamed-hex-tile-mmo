@@ -16,12 +16,3 @@ pub struct MovementPrediction {
     pub prediction_start: Duration,
 }
 
-impl MovementPrediction {
-    pub fn new(predicted_dest: Qrz, predicted_arrival: Duration, prediction_start: Duration) -> Self {
-        Self {
-            predicted_dest,
-            predicted_arrival,
-            prediction_start,
-        }
-    }
-}

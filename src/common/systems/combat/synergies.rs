@@ -83,31 +83,6 @@ pub fn apply_synergies(
     }
 }
 
-/// Check if an ability can be used (considering recovery and synergies)
-pub fn can_use_ability(
-    ability: AbilityType,
-    entity: Entity,
-    recovery_query: &Query<&GlobalRecovery>,
-    synergy_query: &Query<&SynergyUnlock>,
-) -> bool {
-    // Check if universal lockout is active
-    if let Ok(recovery) = recovery_query.get(entity) {
-        // Check if synergy unlocks this ability early
-        if let Ok(synergy) = synergy_query.get(entity) {
-            if synergy.ability == ability {
-                // Synergy active: check if unlock time reached
-                return synergy.is_unlocked(recovery.remaining);
-            }
-        }
-
-        // No synergy: locked until full recovery
-        return false;
-    }
-
-    // No lockout: ability available
-    true
-}
-
 /// System to clean up expired synergies when recovery expires
 pub fn synergy_cleanup_system(
     mut commands: Commands,

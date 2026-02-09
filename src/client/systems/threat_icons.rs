@@ -1,11 +1,6 @@
 use bevy::prelude::*;
-use std::f32::consts::PI;
 
 use crate::common::components::reaction_queue::*;
-
-/// Marker component to track which player the UI is for
-#[derive(Component)]
-pub struct LocalPlayerUi;
 
 /// Marker component for the threat icons container
 #[derive(Component)]
@@ -289,15 +284,6 @@ fn spawn_threat_icon(
     });
 }
 
-/// Calculate the angle for an icon at the given index
-/// Icons are distributed evenly in a circle, starting from top (90 degrees)
-fn calculate_icon_angle(index: usize, capacity: usize) -> f32 {
-    // Start at top (90 degrees = PI/2) and go clockwise
-    let base_angle = PI / 2.0;
-    let angle_step = (2.0 * PI) / capacity.max(1) as f32;
-    base_angle - (angle_step * index as f32)
-}
-
 /// Handle clearing animations when threats are removed
 /// Shows a flash/fade effect when player dodges
 pub fn animate_clear(
@@ -316,24 +302,3 @@ pub fn animate_clear(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_calculate_icon_angle_single() {
-        // Single threat should be at top
-        let angle = calculate_icon_angle(0, 1);
-        assert!((angle - PI / 2.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_calculate_icon_angle_distribution() {
-        // 4 threats should be evenly distributed (90 degrees apart)
-        let capacity = 4;
-        let angle0 = calculate_icon_angle(0, capacity);
-        let angle1 = calculate_icon_angle(1, capacity);
-        let diff = angle0 - angle1;
-        assert!((diff - PI / 2.0).abs() < 0.01); // Should be 90 degrees
-    }
-}

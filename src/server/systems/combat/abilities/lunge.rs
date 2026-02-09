@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::{
     common::{
-        components::{entity_type::*, resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+        components::{resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
         message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
         systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
     },

@@ -115,7 +115,7 @@ impl Point for Loc {
         }
     }
 
-    fn nth_mut(&mut self, index: usize) -> &mut Self::Scalar {
+    fn nth_mut(&mut self, _index: usize) -> &mut Self::Scalar {
         // Since we can't return a mutable reference to a temporary i32,
         // we need to work with a static mutable. This is a limitation of the API.
         // However, this method is rarely used by rstar for spatial queries.

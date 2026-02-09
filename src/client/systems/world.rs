@@ -19,7 +19,7 @@ use crate::{
     common::{
         chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
         components::{ *,
-            behaviour::{Behaviour, PlayerControlled},
+            behaviour::PlayerControlled,
             entity_type::*,
         },
         message::{Event, *},

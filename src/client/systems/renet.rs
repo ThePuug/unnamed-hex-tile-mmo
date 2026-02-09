@@ -80,7 +80,7 @@ pub fn write_do(
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut network_metrics: ResMut<NetworkMetrics>,
-    locs: Query<&Loc>,
+    _locs: Query<&Loc>,
 ) {
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();

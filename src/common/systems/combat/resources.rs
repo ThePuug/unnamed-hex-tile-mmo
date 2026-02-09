@@ -42,44 +42,6 @@ pub fn calculate_mana_regen_rate(_attrs: &ActorAttributes) -> f32 {
     8.0
 }
 
-/// Calculate health regeneration rate
-/// Returns 5 HP/sec when out of combat, 0 HP/sec when in combat
-pub fn calculate_health_regen_rate(in_combat: bool) -> f32 {
-    if in_combat {
-        0.0
-    } else {
-        5.0
-    }
-}
-
-/// Calculate armor (physical damage reduction) from actor attributes
-/// Formula (scaled for u16): base_armor + (vitality / 330.0)
-/// Capped at 75% max
-///
-/// Examples (level 50 specialist = 500 reach):
-/// - vitality=165: +0.5 armor (50% reduction)
-/// - vitality=330: +1.0 armor (capped at 75%)
-/// - vitality=500: +1.51 armor (capped at 75%)
-pub fn calculate_armor(attrs: &ActorAttributes, base_armor: f32) -> f32 {
-    let vitality = attrs.vitality() as f32;
-    let armor = base_armor + (vitality / 330.0);
-    armor.min(0.75)
-}
-
-/// Calculate resistance (magic damage reduction) from actor attributes
-/// Formula (scaled for u16): base_resistance + (focus / 330.0)
-/// Capped at 75% max
-///
-/// Examples (level 50 specialist = 500 reach):
-/// - focus=165: +0.5 resistance (50% reduction)
-/// - focus=330: +1.0 resistance (capped at 75%)
-/// - focus=500: +1.51 resistance (capped at 75%)
-pub fn calculate_resistance(attrs: &ActorAttributes, base_resistance: f32) -> f32 {
-    let focus = attrs.focus() as f32;
-    let resistance = base_resistance + (focus / 330.0);
-    resistance.min(0.75)
-}
-
 /// Regenerate stamina, mana, and health for all entities with resources
 /// Runs in FixedUpdate schedule (125ms ticks)
 /// Health regenerates at:
@@ -307,92 +269,8 @@ mod tests {
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants (ADR-015)
 
-    /// INV-007: Armor 75% Cap
-    /// Armor (physical damage reduction) MUST cap at 75% to prevent invulnerability.
-    /// Even with extreme vitality stacking, minimum 25% damage always goes through.
-    #[test]
-    fn test_armor_caps_at_75_percent() {
-        // Use axis=-100 to get vitality=100 (on vitality side)
-        let extreme_vitality = test_attrs_simple(
-            0,      // might_grace_axis
-            -100,   // vitality=100 (vitality_focus_axis=-100)
-        );
-        let base_armor = 0.0;
-
-        let armor = calculate_armor(&extreme_vitality, base_armor);
-
-        // Formula: armor = base + (vitality/66) = 0 + (100/66) = 1.51
-        // Should cap at 0.75 despite exceeding cap
-        assert_eq!(armor, 0.75, "Armor did not cap at 75%");
-
-        // Verify minimum 25% damage always goes through
-        // If incoming damage is 100, final should be 25 after 75% mitigation
-        let incoming_damage = 100.0;
-        let final_damage = incoming_damage * (1.0 - armor);
-        assert_eq!(final_damage, 25.0, "Damage reduction exceeded 75% cap");
-    }
-
-    /// INV-007: Resistance 75% Cap
-    /// Resistance (magic damage reduction) MUST cap at 75% to prevent invulnerability.
-    /// Even with extreme focus stacking, minimum 25% damage always goes through.
-    #[test]
-    fn test_resistance_caps_at_75_percent() {
-        // Use axis=100 to get focus=100 (on focus side)
-        let extreme_focus = test_attrs_simple(
-            0,      // might_grace_axis
-            100,    // focus=100 (vitality_focus_axis=100)
-        );
-        let base_resistance = 0.0;
-
-        let resistance = calculate_resistance(&extreme_focus, base_resistance);
-
-        // Formula: resistance = base + (focus/66) = 0 + (100/66) = 1.51
-        // Should cap at 0.75 despite exceeding cap
-        assert_eq!(resistance, 0.75, "Resistance did not cap at 75%");
-
-        // Verify minimum 25% damage always goes through
-        let incoming_damage = 100.0;
-        let final_damage = incoming_damage * (1.0 - resistance);
-        assert_eq!(final_damage, 25.0, "Magic damage reduction exceeded 75% cap");
-    }
-
-    /// INV-007: Armor Below Cap
-    /// Verify armor calculation works correctly when below the cap.
-    #[test]
-    fn test_armor_below_cap() {
-        // Use axis=-33 to get vitality=33
-        let moderate_vitality = test_attrs_simple(
-            0,      // might_grace_axis
-            -33,    // vitality=33 (vitality_focus_axis=-33)
-        );
-        let base_armor = 0.0;
-
-        let armor = calculate_armor(&moderate_vitality, base_armor);
-
-        // Formula: 0 + (33/66) = 0.5 (50%)
-        assert!((armor - 0.5).abs() < 0.01, "Armor calculation incorrect: expected ~0.5, got {}", armor);
-    }
-
-    /// INV-007: Resistance Below Cap
-    /// Verify resistance calculation works correctly when below the cap.
-    #[test]
-    fn test_resistance_below_cap() {
-        // Use axis=33 to get focus=33
-        let moderate_focus = test_attrs_simple(
-            0,      // might_grace_axis
-            33,     // focus=33 (vitality_focus_axis=33)
-        );
-        let base_resistance = 0.0;
-
-        let resistance = calculate_resistance(&moderate_focus, base_resistance);
-
-        // Formula: 0 + (33/66) = 0.5 (50%)
-        assert!((resistance - 0.5).abs() < 0.01, "Resistance calculation incorrect: expected ~0.5, got {}", resistance);
-    }
-
     /// INV-008: Resource Regeneration During Combat
     /// Stamina and mana MUST regenerate during combat.
-    /// Health MUST NOT regenerate during combat (except when Returning).
     #[test]
     fn test_stamina_regenerates_in_combat() {
         let regen_rate = calculate_stamina_regen_rate(&test_attrs_simple(0, 0));
@@ -403,20 +281,6 @@ mod tests {
     fn test_mana_regenerates_in_combat() {
         let regen_rate = calculate_mana_regen_rate(&test_attrs_simple(0, 0));
         assert!(regen_rate > 0.0, "Mana should regenerate in combat");
-    }
-
-    #[test]
-    fn test_health_does_not_regenerate_in_combat() {
-        let in_combat = true;
-        let regen_rate = calculate_health_regen_rate(in_combat);
-        assert_eq!(regen_rate, 0.0, "Health must NOT regenerate in combat");
-    }
-
-    #[test]
-    fn test_health_regenerates_out_of_combat() {
-        let in_combat = false;
-        let regen_rate = calculate_health_regen_rate(in_combat);
-        assert!(regen_rate > 0.0, "Health should regenerate out of combat");
     }
 
     // ===== SYSTEM TESTS =====
@@ -581,15 +445,4 @@ mod tests {
         assert_eq!(events.len(), 0, "Should not emit Despawn event for alive entities");
     }
 
-    #[test]
-    fn test_health_regen_out_of_combat() {
-        let rate = calculate_health_regen_rate(false);
-        assert_eq!(rate, 5.0, "Health should regenerate at 5 HP/sec when out of combat");
-    }
-
-    #[test]
-    fn test_health_regen_in_combat() {
-        let rate = calculate_health_regen_rate(true);
-        assert_eq!(rate, 0.0, "Health should not regenerate when in combat");
-    }
 }

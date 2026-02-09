@@ -104,15 +104,11 @@ pub struct AllyDotsContainer;
 
 /// Marker component for individual threat icons in ally frame
 #[derive(Component)]
-pub struct AllyThreatIcon {
-    pub index: usize,
-}
+pub struct AllyThreatIcon;
 
 /// Marker component for ally capacity dot (filled or empty)
 #[derive(Component)]
-pub struct AllyCapacityDot {
-    pub index: usize,
-}
+pub struct AllyCapacityDot;
 
 /// Marker component for the ally's level hexagon indicator (ADR-014 Phase 4B)
 #[derive(Component)]
@@ -1113,7 +1109,7 @@ pub fn update_ally_queue(
                             BorderColor::all(border_color),
                             BorderRadius::all(Val::Percent(50.)), // Make circular
                             BackgroundColor(bg_color),
-                            AllyCapacityDot { index: i },
+                            AllyCapacityDot,
                         ));
                     }
                 });
@@ -1138,7 +1134,7 @@ pub fn update_ally_queue(
                             .enumerate()
                             .collect();
 
-                        for (index, threat) in active_threats {
+                        for (_index, threat) in active_threats {
                             // Calculate timer progress
                             let elapsed = now.saturating_sub(threat.inserted_at);
                             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
@@ -1186,7 +1182,7 @@ pub fn update_ally_queue(
                                 }),
                                 BorderRadius::all(Val::Percent(50.)), // Make circular
                                 BackgroundColor(Color::srgb(0.1, 0.3, 0.1)),
-                                AllyThreatIcon { index },
+                                AllyThreatIcon,
                             ))
                             .with_children(|parent| {
                                 // Timer ring (grows from center as time runs out)

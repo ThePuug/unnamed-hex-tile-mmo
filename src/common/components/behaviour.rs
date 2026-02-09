@@ -1,6 +1,4 @@
-use tinyvec::ArrayVec;
 use bevy::prelude::*;
-use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -31,53 +29,3 @@ pub enum Behaviour {
 #[reflect(Component)]
 pub struct PlayerControlled;
 
-/// Defines how PathTo approaches its destination
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum PathLimit {
-    /// Move N tiles towards dest, then succeed (even if not at dest)
-    By(u16),
-    /// Move towards dest until N tiles away, then succeed
-    Until(u16),
-    /// Move all the way to dest (complete path)
-    Complete,
-}
-
-/// Defines the pathfinding algorithm used by PathTo
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum PathAlgorithm {
-    /// Full A* pathfinding every time dest changes (slow but intelligent)
-    Full,
-    /// Greedy chase: move directly toward dest each tile, no pathfinding (fast, dumb)
-    Greedy,
-}
-
-impl Default for PathLimit {
-    fn default() -> Self {
-        PathLimit::Complete
-    }
-}
-
-impl Default for PathAlgorithm {
-    fn default() -> Self {
-        PathAlgorithm::Full
-    }
-}
-
-#[derive(Clone, Component, Debug, Deserialize, Serialize)]
-pub struct PathTo {
-    pub dest: Qrz,
-    pub path: ArrayVec<[Qrz; 20]>,
-    pub limit: PathLimit,
-    pub algorithm: PathAlgorithm,
-}
-
-impl Default for PathTo {
-    fn default() -> Self {
-        Self {
-            dest: Qrz::default(),
-            path: ArrayVec::new(),
-            limit: PathLimit::default(),
-            algorithm: PathAlgorithm::default(),
-        }
-    }
-}

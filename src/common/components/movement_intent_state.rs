@@ -15,15 +15,6 @@ pub struct MovementIntentState {
     pub last_broadcast_heading: Heading,
 }
 
-impl MovementIntentState {
-    pub fn new(last_broadcast_dest: Qrz, last_broadcast_heading: Heading) -> Self {
-        Self {
-            last_broadcast_dest,
-            last_broadcast_heading,
-        }
-    }
-}
-
 impl Default for MovementIntentState {
     fn default() -> Self {
         Self {

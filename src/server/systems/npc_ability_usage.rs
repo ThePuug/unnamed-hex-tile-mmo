@@ -34,7 +34,7 @@ pub fn npc_ability_usage(
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<crate::common::components::behaviour::PlayerControlled>>,
-    time: Res<Time>,
+    _time: Res<Time>,
     mut writer: MessageWriter<Try>,
 ) {
     for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt) in npc_query.iter_mut() {

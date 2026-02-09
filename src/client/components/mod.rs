@@ -1,7 +1,6 @@
 use bevy::{prelude::*, tasks::Task};
 use bevy_camera::primitives::Aabb;
 
-use crate::common::chunk::ChunkId;
 
 #[derive(Clone, Component, Copy)]
 #[relationship(relationship_target = AnimatedBy)]
@@ -31,10 +30,6 @@ pub struct TargetIndicator {
 }
 
 // TODO: TierBadge component - deferred until proper 3D text setup (ADR-010 Phase 5)
-
-/// Marks a tile entity as belonging to a specific chunk
-#[derive(Component, Copy, Clone, Debug)]
-pub struct ChunkMember(pub ChunkId);
 
 /// Floating text component for damage numbers and other temporary text
 /// Used with UI Node entities that follow world-space positions

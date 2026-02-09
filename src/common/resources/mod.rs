@@ -41,10 +41,6 @@ impl InputQueues {
         self.queues.iter().map(|(&k, v)| (k, v))
     }
     
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut InputQueue)> {
-        self.queues.iter_mut().map(|(&k, v)| (k, v))
-    }
-
     /// Returns iterator over all entities with queues
     /// Note: All queues always have at least 1 input (the accumulating one)
     pub fn entities(&self) -> impl Iterator<Item = &Entity> {

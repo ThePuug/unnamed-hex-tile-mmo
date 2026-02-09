@@ -16,14 +16,8 @@ pub struct ActionBarDisplay;
 /// Marker component for individual ability slot UI
 #[derive(Component)]
 pub struct AbilitySlot {
-    pub slot_index: usize,
     pub ability: Option<AbilityType>,
-    pub keybind: KeyCode,
 }
-
-/// Marker for ability slot background
-#[derive(Component)]
-pub struct SlotBackground;
 
 /// Marker for ability slot icon
 #[derive(Component)]
@@ -36,10 +30,6 @@ pub struct SlotKeybind;
 /// Marker for ability slot cost badge
 #[derive(Component)]
 pub struct SlotCost;
-
-/// Marker for ability slot cooldown overlay
-#[derive(Component)]
-pub struct SlotCooldown;
 
 /// Marker for ability slot synergy glow overlay (ADR-012)
 #[derive(Component)]
@@ -85,7 +75,7 @@ pub fn setup(
                 (3, KeyCode::KeyR, Some(AbilityType::Deflect)),    // R = Deflect (clear queue)
             ];
 
-            for (slot_index, keybind, ability) in slots {
+            for (_slot_index, keybind, ability) in slots {
                 // Spawn ability slot
                 parent.spawn((
         Node {
@@ -98,7 +88,7 @@ pub fn setup(
         },
         BorderColor::all(Color::srgb(0.3, 0.8, 0.3)),  // Default: Green (ready)
         BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        AbilitySlot { slot_index, ability, keybind },
+        AbilitySlot { ability },
     ))
     .with_children(|parent| {
         // Ability icon (center)
@@ -291,7 +281,7 @@ fn get_ability_state(
     _mana: &Mana,
     gcd_active: bool,
     recovery_active: bool,
-    recovery_remaining: f32,
+    _recovery_remaining: f32,
     synergy_opt: Option<&SynergyUnlock>,
     player_ent: Entity,
     player_loc: Loc,

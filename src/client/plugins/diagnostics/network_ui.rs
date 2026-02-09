@@ -107,17 +107,6 @@ impl NetworkMetrics {
         self.displayed_messages_per_sec
     }
 
-    /// Get breakdown of bandwidth by message type (sorted by bytes, descending)
-    /// Note: Currently returns current frame data; could be enhanced to track history per type
-    pub fn get_breakdown(&self) -> Vec<(String, f32)> {
-        let mut breakdown: Vec<(String, f32)> = self.bytes_received_per_type
-            .iter()
-            .map(|(msg_type, bytes)| (msg_type.clone(), *bytes as f32))
-            .collect();
-
-        breakdown.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        breakdown
-    }
 }
 
 // ============================================================================

@@ -37,11 +37,6 @@ impl Gcd {
         self.expires_at = now + duration;
     }
 
-    /// Clear GCD (set to inactive)
-    pub fn clear(&mut self) {
-        self.gcd_type = None;
-        self.expires_at = Duration::ZERO;
-    }
 }
 
 #[cfg(test)]
@@ -106,39 +101,6 @@ mod tests {
 
         assert_eq!(gcd.gcd_type, Some(GcdType::Attack));
         assert_eq!(gcd.expires_at, Duration::from_millis(3500));
-    }
-
-    #[test]
-    fn test_gcd_clear_resets_state() {
-        let mut gcd = Gcd::new();
-        let now = Duration::from_millis(1000);
-
-        gcd.activate(GcdType::Attack, Duration::from_millis(500), now);
-        assert!(gcd.is_active(Duration::from_millis(1200)));
-
-        gcd.clear();
-
-        assert_eq!(gcd.gcd_type, None);
-        assert_eq!(gcd.expires_at, Duration::ZERO);
-        assert!(!gcd.is_active(Duration::from_millis(1200)));
-    }
-
-    #[test]
-    fn test_gcd_can_be_reactivated_after_clear() {
-        let mut gcd = Gcd::new();
-
-        // First activation
-        gcd.activate(GcdType::Attack, Duration::from_millis(500), Duration::from_millis(1000));
-        assert!(gcd.is_active(Duration::from_millis(1200)));
-
-        // Clear
-        gcd.clear();
-        assert!(!gcd.is_active(Duration::from_millis(1200)));
-
-        // Second activation (should work)
-        gcd.activate(GcdType::Attack, Duration::from_millis(300), Duration::from_millis(2000));
-        assert!(gcd.is_active(Duration::from_millis(2100)));
-        assert_eq!(gcd.expires_at, Duration::from_millis(2300));
     }
 
     #[test]

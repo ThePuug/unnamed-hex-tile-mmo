@@ -22,7 +22,6 @@
 //! - NW (Northwest): 330°
 
 use bevy::prelude::*;
-use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{

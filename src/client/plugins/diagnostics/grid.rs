@@ -82,42 +82,6 @@ pub fn setup_grid_overlay(
     ));
 }
 
-/// Toggles grid visibility when the grid toggle key is pressed
-///
-/// NOTE: This function is deprecated and only used by legacy tests.
-/// Grid toggling is now handled by the developer console.
-///
-/// When toggling on, sets the regeneration flag to ensure the mesh is rebuilt
-/// with current map data. When toggling off, just hides the mesh.
-pub fn toggle_grid_visibility(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut state: ResMut<DiagnosticsState>,
-    mut query: Query<(&mut Visibility, &mut HexGridOverlay)>,
-) {
-    // Hardcoded key for legacy test compatibility
-    if keyboard.just_pressed(KeyCode::KeyJ) {
-        state.grid_visible = !state.grid_visible;
-
-        if let Ok((mut visibility, mut overlay)) = query.single_mut() {
-            *visibility = if state.grid_visible {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
-
-            // Request mesh regeneration when toggling on to get fresh data
-            if state.grid_visible {
-                overlay.needs_regeneration = true;
-            }
-        }
-
-        info!(
-            "Grid overlay {}",
-            if state.grid_visible { "enabled" } else { "disabled" }
-        );
-    }
-}
-
 /// Regenerates the grid mesh when the map changes or regeneration is requested
 ///
 /// This system responds to two triggers:

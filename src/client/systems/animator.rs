@@ -10,7 +10,7 @@ pub fn update(
     query: Query<(Entity, &AirTime, &Animates, &VisualPosition)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
 ) {
-    for (entity, &airtime, &animates, vis_pos) in &query {
+    for (_entity, &airtime, &animates, vis_pos) in &query {
         // ADR-019: Entity is moving if VisualPosition is actively interpolating
         let is_moving = !vis_pos.is_complete() && vis_pos.from.distance_squared(vis_pos.to) > 0.001;
 

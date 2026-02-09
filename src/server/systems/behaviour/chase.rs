@@ -32,7 +32,7 @@ fn broadcast_intent(
     intent_state_opt: Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,
 ) {
     // Get or initialize MovementIntentState
-    let mut intent_state = if let Some(state) = intent_state_opt {
+    let intent_state = if let Some(state) = intent_state_opt {
         state
     } else {
         // First time - add component and skip (will process next frame)

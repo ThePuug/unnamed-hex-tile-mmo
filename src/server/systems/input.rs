@@ -5,7 +5,6 @@ use crate::{
     common::{
         components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, position::Position, * },
         message::{Event, *},
-        systems::combat::gcd::*,
         resources::map::Map,
     },
     *

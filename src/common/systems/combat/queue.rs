@@ -213,7 +213,7 @@ mod tests {
         // Insert into empty queue - should not overflow
         let overflow = insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
         assert!(overflow.is_none());
-        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.threats.len(), 1);
     }
 
     #[test]
@@ -241,7 +241,7 @@ mod tests {
 
         insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
         insert_threat(&mut queue, threat2.clone(), Duration::from_secs(1));
-        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.threats.len(), 2);
         assert!(queue.is_full());
 
         // Insert third threat - should overflow and return oldest (threat1)
@@ -257,7 +257,7 @@ mod tests {
         let overflow = insert_threat(&mut queue, threat3.clone(), Duration::from_secs(2));
         assert!(overflow.is_some());
         assert_eq!(overflow.unwrap().damage, 10.0); // threat1 was oldest
-        assert_eq!(queue.len(), 2); // Still at capacity
+        assert_eq!(queue.threats.len(), 2); // Still at capacity
         assert_eq!(queue.threats[0].damage, 15.0); // threat2 is now oldest
         assert_eq!(queue.threats[1].damage, 20.0); // threat3 is newest
     }
@@ -281,7 +281,7 @@ mod tests {
         // Check at 0.5s - threat expires at 1.0s, so not expired yet
         let expired = check_expired_threats(&queue, Duration::from_millis(500));
         assert_eq!(expired.len(), 0);
-        assert_eq!(queue.len(), 1); // Threat still in queue
+        assert_eq!(queue.threats.len(), 1); // Threat still in queue
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
         let expired = check_expired_threats(&queue, Duration::from_secs(1));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].damage, 10.0);
-        assert_eq!(queue.len(), 1); // check_expired_threats doesn't remove
+        assert_eq!(queue.threats.len(), 1); // check_expired_threats doesn't remove
     }
 
     #[test]
@@ -362,12 +362,12 @@ mod tests {
             });
         }
 
-        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.threats.len(), 3);
 
         // Clear all
         let cleared = clear_threats(&mut queue, ClearType::All);
         assert_eq!(cleared.len(), 3);
-        assert_eq!(queue.len(), 0);
+        assert_eq!(queue.threats.len(), 0);
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(cleared.len(), 2);
         assert_eq!(cleared[0].damage, 10.0); // First threat
         assert_eq!(cleared[1].damage, 20.0); // Second threat
-        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.threats.len(), 1);
         assert_eq!(queue.threats[0].damage, 30.0); // Third threat remains
     }
 
@@ -435,14 +435,14 @@ mod tests {
             ability: None,
         });
 
-        assert_eq!(queue.len(), 4);
+        assert_eq!(queue.threats.len(), 4);
 
         // Clear only Magic threats
         let cleared = clear_threats(&mut queue, ClearType::ByType(DamageType::Magic));
         assert_eq!(cleared.len(), 2);
         assert_eq!(cleared[0].damage, 15.0);
         assert_eq!(cleared[1].damage, 25.0);
-        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.threats.len(), 2);
         assert_eq!(queue.threats[0].damage, 10.0); // Physical remains
         assert_eq!(queue.threats[1].damage, 20.0); // Physical remains
     }

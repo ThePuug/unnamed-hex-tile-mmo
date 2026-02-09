@@ -149,7 +149,7 @@ fn try_spawn_engagement_at_chunk(
 fn spawn_engagement_at(
     location: Qrz,
     commands: &mut Commands,
-    writer: &mut MessageWriter<Do>,
+    _writer: &mut MessageWriter<Do>,
     budget: &mut EngagementBudget,
     time: &Time,
     terrain: &crate::server::resources::terrain::Terrain,

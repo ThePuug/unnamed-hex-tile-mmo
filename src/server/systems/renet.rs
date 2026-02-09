@@ -422,15 +422,12 @@ pub fn write_try(
                     continue;
                 };
 
-                // Track how many players received this intent (for bandwidth metrics)
-                let mut recipients = 0;
                 for other in nntree.locate_within_distance(loc, INTENT_RELEVANCE_RADIUS_SQ) {
                     if let Some(client_id) = lobby.get_by_right(&other.ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::MovementIntent { ent, destination, duration_ms }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::Unreliable, message);
-                        recipients += 1;
                     }
                 }
 

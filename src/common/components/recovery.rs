@@ -71,25 +71,6 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
     }
 }
 
-/// Calculate auto-attack period based on Presence attribute
-/// Uses hyperbolic diminishing returns curve approaching 1.0s soft cap
-///
-/// - Presence = 0: 2.5s (slow, base NPCs)
-/// - Presence = 50: 1.75s (mid-game)
-/// - Presence = 100: 1.5s (high presence build)
-/// - Presence → ∞: 1.0s (soft cap, extreme stacking)
-pub fn calculate_auto_attack_period(presence: i8) -> f32 {
-    const MIN_PERIOD: f32 = 1.0;  // Soft cap (high Presence)
-    const BASE_PERIOD: f32 = 2.5; // Period at 0 Presence
-    const SCALE: f32 = 50.0;      // Steeper curve (reaches 2.0s at 50 Presence)
-
-    // Clamp to 0 minimum - negative Presence doesn't slow attacks further
-    let presence_clamped = presence.max(0) as f32;
-
-    // Hyperbolic diminishing returns: period = 1.0 + 1.5 / (1 + presence/50)
-    MIN_PERIOD + (BASE_PERIOD - MIN_PERIOD) / (1.0 + presence_clamped / SCALE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,66 +217,6 @@ mod tests {
         assert_eq!(get_ability_recovery_duration(AbilityType::Deflect), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
         assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 3.0);
-    }
-
-    // ===== Auto-Attack Period Tests =====
-
-    #[test]
-    fn test_auto_attack_period_base() {
-        // 0 Presence = 2.5s (base period for NPCs with no Presence)
-        let period = calculate_auto_attack_period(0);
-        assert!((period - 2.5).abs() < 0.001, "Expected 2.5s at 0 Presence, got {}", period);
-    }
-
-    #[test]
-    fn test_auto_attack_period_negative_presence() {
-        // Negative Presence is clamped to 0 (doesn't slow further)
-        let period = calculate_auto_attack_period(-50);
-        assert!((period - 2.5).abs() < 0.001, "Negative Presence should clamp to base period");
-    }
-
-    #[test]
-    fn test_auto_attack_period_mid_game() {
-        // 50 Presence = 1.75s (significant early gain)
-        let period = calculate_auto_attack_period(50);
-        assert!((period - 1.75).abs() < 0.01, "Expected 1.75s at 50 Presence, got {}", period);
-    }
-
-    #[test]
-    fn test_auto_attack_period_high_presence() {
-        // 100 Presence = 1.5s (high presence build)
-        let period = calculate_auto_attack_period(100);
-        assert!((period - 1.5).abs() < 0.01, "Expected 1.5s at 100 Presence, got {}", period);
-    }
-
-    #[test]
-    fn test_auto_attack_period_extreme_presence() {
-        // 127 Presence (i8 max) = ~1.27s (approaching soft cap with diminishing returns)
-        let period = calculate_auto_attack_period(127);
-        assert!(period < 1.5, "Expected period < 1.5s at max Presence");
-        assert!(period > 1.0, "Should never reach 1.0s soft cap");
-    }
-
-    #[test]
-    fn test_auto_attack_period_approaches_soft_cap() {
-        // Very high Presence approaches but never reaches 1.0s
-        // Using i8::MAX (127) as test value: 1.0 + 1.5/(1+127/50) ≈ 1.42s
-        let period_max = calculate_auto_attack_period(i8::MAX);
-
-        assert!(period_max > 1.0, "Should never reach 1.0s soft cap even at i8::MAX");
-        assert!(period_max < 1.5, "Should be approaching soft cap at max Presence");
-        assert!((period_max - 1.42).abs() < 0.05, "Expected ~1.42s at i8::MAX, got {}", period_max);
-    }
-
-    #[test]
-    fn test_auto_attack_period_diminishing_returns() {
-        // Test that returns diminish as Presence increases (using values within i8 range)
-        let gain_0_to_50 = calculate_auto_attack_period(0) - calculate_auto_attack_period(50);
-        let gain_50_to_100 = calculate_auto_attack_period(50) - calculate_auto_attack_period(100);
-        let gain_100_to_127 = calculate_auto_attack_period(100) - calculate_auto_attack_period(127);
-
-        assert!(gain_0_to_50 > gain_50_to_100, "First 50 Presence should give more benefit than second 50");
-        assert!(gain_50_to_100 > gain_100_to_127, "Benefit should continue diminishing");
     }
 
     // ===== Integration Tests =====

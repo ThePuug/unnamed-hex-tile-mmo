@@ -101,6 +101,6 @@ mod tests {
 
         // In Phase 2, we're just setting up the structure
         // Actual expiry processing will be tested when we integrate with time system
-        assert!(queue_after.len() <= 1); // Threat either still there or removed
+        assert!(queue_after.threats.len() <= 1); // Threat either still there or removed
     }
 }

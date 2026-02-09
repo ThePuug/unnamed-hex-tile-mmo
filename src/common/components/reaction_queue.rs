@@ -45,10 +45,6 @@ impl ReactionQueue {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.threats.len()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.threats.is_empty()
     }
@@ -66,7 +62,7 @@ mod tests {
     fn test_reaction_queue_new() {
         let queue = ReactionQueue::new(3);
         assert_eq!(queue.capacity, 3);
-        assert_eq!(queue.len(), 0);
+        assert_eq!(queue.threats.len(), 0);
         assert!(queue.is_empty());
         assert!(!queue.is_full());
     }
@@ -87,7 +83,7 @@ mod tests {
             timer_duration: Duration::from_secs(1),
             ability: None,
         });
-        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.threats.len(), 1);
         assert!(!queue.is_full());
 
         // Add second threat
@@ -99,7 +95,7 @@ mod tests {
             timer_duration: Duration::from_secs(1),
             ability: None,
         });
-        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.threats.len(), 2);
         assert!(queue.is_full());
     }
 }

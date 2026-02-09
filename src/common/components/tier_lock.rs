@@ -36,21 +36,6 @@ impl TierLock {
         self.tier = Some(tier);
     }
 
-    /// Clear the tier lock (reset to automatic targeting)
-    pub fn clear(&mut self) {
-        self.tier = None;
-    }
-
-    /// Check if currently tier locked
-    pub fn is_locked(&self) -> bool {
-        self.tier.is_some()
-    }
-
-    /// Check if unlocked (automatic targeting)
-    pub fn is_unlocked(&self) -> bool {
-        self.tier.is_none()
-    }
-
     /// Get the current tier lock, if any
     pub fn get(&self) -> Option<RangeTier> {
         self.tier
@@ -65,8 +50,6 @@ mod tests {
     fn test_default_is_unlocked() {
         let lock = TierLock::default();
         assert_eq!(lock.tier, None);
-        assert!(!lock.is_locked());
-        assert!(lock.is_unlocked());
         assert_eq!(lock.get(), None);
     }
 
@@ -74,8 +57,6 @@ mod tests {
     fn test_new_is_unlocked() {
         let lock = TierLock::new();
         assert_eq!(lock.tier, None);
-        assert!(!lock.is_locked());
-        assert!(lock.is_unlocked());
     }
 
     #[test]
@@ -84,8 +65,6 @@ mod tests {
         lock.set(RangeTier::Close);
 
         assert_eq!(lock.tier, Some(RangeTier::Close));
-        assert!(lock.is_locked());
-        assert!(!lock.is_unlocked());
         assert_eq!(lock.get(), Some(RangeTier::Close));
     }
 
@@ -95,7 +74,6 @@ mod tests {
         lock.set(RangeTier::Mid);
 
         assert_eq!(lock.tier, Some(RangeTier::Mid));
-        assert!(lock.is_locked());
         assert_eq!(lock.get(), Some(RangeTier::Mid));
     }
 
@@ -105,20 +83,7 @@ mod tests {
         lock.set(RangeTier::Far);
 
         assert_eq!(lock.tier, Some(RangeTier::Far));
-        assert!(lock.is_locked());
         assert_eq!(lock.get(), Some(RangeTier::Far));
-    }
-
-    #[test]
-    fn test_clear_tier_lock() {
-        let mut lock = TierLock::new();
-        lock.set(RangeTier::Close);
-        assert!(lock.is_locked());
-
-        lock.clear();
-        assert!(lock.is_unlocked());
-        assert!(!lock.is_locked());
-        assert_eq!(lock.get(), None);
     }
 
     #[test]

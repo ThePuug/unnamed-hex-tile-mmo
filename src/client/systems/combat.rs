@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::common::{
-    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, behaviour::PlayerControlled, Loc},
+    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, Loc},
     message::{AbilityType, Do, Event as GameEvent, Try},
     systems::combat::{queue as queue_utils, gcd::GcdType},
 };

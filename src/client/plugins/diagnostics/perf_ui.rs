@@ -89,33 +89,3 @@ pub fn setup_performance_ui(
     ));
 }
 
-/// Toggles performance UI visibility when the perf UI toggle key is pressed
-///
-/// NOTE: This function is deprecated and only used by legacy tests.
-/// Performance UI toggle is now handled by the developer console.
-///
-/// Updates both the DiagnosticsState resource and the visibility component
-/// of the performance UI entity.
-pub fn toggle_performance_ui(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut state: ResMut<DiagnosticsState>,
-    mut perf_ui_query: Query<&mut Visibility, With<PerfUiRootMarker>>,
-) {
-    // Hardcoded key for legacy test compatibility
-    if keyboard.just_pressed(KeyCode::F3) {
-        state.perf_ui_visible = !state.perf_ui_visible;
-
-        if let Ok(mut visibility) = perf_ui_query.single_mut() {
-            *visibility = if state.perf_ui_visible {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
-        }
-
-        info!(
-            "Performance UI {}",
-            if state.perf_ui_visible { "enabled" } else { "disabled" }
-        );
-    }
-}

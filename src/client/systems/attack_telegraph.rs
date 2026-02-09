@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use qrz::Convert;
 use crate::common::{
     message::{Do, Event as GameEvent},
 };
@@ -16,10 +15,6 @@ pub struct AttackBall {
 /// Component for hit line visual (line connecting attacker to target)
 #[derive(Component)]
 pub struct HitLine {
-    /// Entity that is attacking
-    pub source: Entity,
-    /// Entity that is being attacked
-    pub target: Entity,
     /// Time when the line was spawned
     pub spawn_time: f32,
     /// Duration of the line effect (milliseconds)
@@ -100,8 +95,6 @@ pub fn on_apply_damage(
 
                 commands.spawn((
                     HitLine {
-                        source: *source,
-                        target: *target,
                         spawn_time: time.elapsed_secs(),
                         duration_ms: 300,
                     },
