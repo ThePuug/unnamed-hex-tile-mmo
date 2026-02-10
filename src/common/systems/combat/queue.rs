@@ -330,6 +330,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         // Insert into empty queue - should not overflow
@@ -351,6 +352,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
         let threat2 = QueuedThreat {
             source: entity,
@@ -359,6 +361,7 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
@@ -374,6 +377,7 @@ mod tests {
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         let overflow = insert_threat(&mut queue, threat3.clone(), Duration::from_secs(2));
@@ -396,6 +400,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat);
@@ -418,6 +423,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat.clone());
@@ -442,6 +448,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         // Threat 2: inserted at 0.5s, expires at 1.5s
@@ -452,6 +459,7 @@ mod tests {
             inserted_at: Duration::from_millis(500),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat1);
@@ -481,6 +489,7 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+                precision_mod: 1.0,
             });
         }
 
@@ -506,6 +515,7 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+                precision_mod: 1.0,
             });
         }
 
@@ -531,6 +541,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -539,6 +550,7 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -547,6 +559,7 @@ mod tests {
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -555,6 +568,7 @@ mod tests {
             inserted_at: Duration::from_secs(3),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
 
         assert_eq!(queue.threats.len(), 4);

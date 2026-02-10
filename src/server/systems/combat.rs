@@ -14,7 +14,7 @@ use crate::common::{
 pub fn process_deal_damage(
     trigger: On<Try>,
     mut commands: Commands,
-    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
+    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut crate::common::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
@@ -29,15 +29,8 @@ pub fn process_deal_damage(
             return;
         };
 
-        // Roll for critical hit
-        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs);
-
-        // Calculate outgoing damage (Phase 1)
-        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
-        let outgoing_with_crit = outgoing * crit_mult;
-
-        // Get target's queue, attributes, and health
-        let Ok((mut queue, attrs, health)) = target_query.get_mut(*target) else {
+        // Get target's queue, attributes, health, and recovery
+        let Ok((mut queue, attrs, health, recovery_opt)) = target_query.get_mut(*target) else {
             return;
         };
 
@@ -52,13 +45,36 @@ pub fn process_deal_damage(
             return; // Threat evaded — no queue insertion, no combat entry
         }
 
+        // --- Relative stat contests (SOW-020 Phase 4) ---
+        // Precision vs Toughness: attacker grace vs defender vitality
+        let precision_mod = damage_calc::contest_modifier(source_attrs.grace(), attrs.vitality());
+        // Dominance vs Cunning: attacker presence vs defender instinct
+        let tempo_mod = damage_calc::contest_modifier(source_attrs.presence(), attrs.instinct());
+        // Composure: defender focus vs attacker might (defensive contest)
+        let composure_mod = damage_calc::contest_modifier(attrs.focus(), source_attrs.might());
+
+        // Roll for critical hit (scaled by precision contest)
+        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs, precision_mod);
+
+        // Calculate outgoing damage (Phase 1)
+        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
+        let outgoing_with_crit = outgoing * crit_mult;
+
         // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         let base_timer = queue_utils::calculate_timer_duration(attrs);
         let gap_mult = queue_utils::gap_multiplier(attrs.total_level(), source_attrs.total_level());
-        let timer_duration = base_timer.mul_f32(gap_mult);
+        // Tempo contest scales reaction window: high attacker Presence → shorter window
+        let timer_duration = base_timer.mul_f32(gap_mult).mul_f32(1.0 / tempo_mod);
+
+        // Recovery pushback: high Dominance → more pushback, high Composure → less pushback
+        const BASE_PUSHBACK: f32 = 0.25;
+        let effective_pushback = BASE_PUSHBACK * tempo_mod * (1.0 / composure_mod);
+        if let Some(mut recovery) = recovery_opt {
+            recovery.remaining += effective_pushback;
+        }
 
         let threat = QueuedThreat {
             source: *source,
@@ -67,6 +83,7 @@ pub fn process_deal_damage(
             inserted_at: now,
             timer_duration,
             ability: *ability,
+            precision_mod,
         };
 
         // Try to insert threat into queue
@@ -124,11 +141,12 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // Apply passive modifiers (Phase 2)
+            // Apply passive modifiers (Phase 2), using stored precision contest
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
                 attrs,
                 threat.damage_type,
+                threat.precision_mod,
             );
 
             // Apply damage to health

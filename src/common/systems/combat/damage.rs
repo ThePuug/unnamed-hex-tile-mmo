@@ -12,6 +12,22 @@ use crate::common::components::reaction_queue::DamageType;
 use crate::common::components::ActorAttributes;
 use rand::Rng;
 
+/// Compute a relative stat contest modifier between attacker and defender.
+///
+/// Uses raw attribute values only (no level multiplier). Clamped linear:
+/// `modifier = clamp(1.0 + delta / K, 0.5, 1.5)` where `delta = attacker - defender`.
+///
+/// - Equal stats → 1.0 (neutral)
+/// - Attacker +100 over defender → 1.5 (capped)
+/// - Defender +100 over attacker → 0.5 (capped)
+pub fn contest_modifier(attacker_stat: u16, defender_stat: u16) -> f32 {
+    let delta = attacker_stat as f32 - defender_stat as f32;
+    const K: f32 = 200.0;
+    const MIN: f32 = 0.5;
+    const MAX: f32 = 1.5;
+    (1.0 + delta / K).clamp(MIN, MAX)
+}
+
 /// Calculate outgoing damage based on attacker's attributes
 ///
 /// Formula (from combat-system.md spec):
@@ -71,10 +87,10 @@ pub fn calculate_outgoing_damage(
 /// let attrs = ActorAttributes::default();
 /// let (was_crit, multiplier) = roll_critical(&attrs);
 /// ```
-pub fn roll_critical(attrs: &ActorAttributes) -> (bool, f32) {
+pub fn roll_critical(attrs: &ActorAttributes, precision_mod: f32) -> (bool, f32) {
     let instinct = attrs.instinct() as f32;
     let base_crit_chance = 0.05; // 5%
-    let crit_chance = base_crit_chance + (instinct / 1000.0);
+    let crit_chance = (base_crit_chance + (instinct / 1000.0)) * precision_mod;
 
     let mut rng = rand::rng();
     let was_crit = rng.random::<f32>() < crit_chance;
@@ -114,19 +130,118 @@ pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
     damage_type: DamageType,
+    precision_mod: f32,
 ) -> f32 {
-    let mitigation = match damage_type {
+    let base_mitigation = match damage_type {
         DamageType::Physical => {
             let vitality = attrs.vitality() as f32;
-            (vitality / 330.0).min(0.75) // Cap at 75% reduction
+            vitality / 330.0
         }
         DamageType::Magic => {
             let focus = attrs.focus() as f32;
-            (focus / 330.0).min(0.75) // Cap at 75% reduction
+            focus / 330.0
         }
     };
 
+    // Precision contest inversely scales mitigation:
+    // attacker advantage (mod=1.5) → mitigation * 0.67
+    // defender advantage (mod=0.5) → mitigation * 2.0
+    let mitigation = (base_mitigation * (1.0 / precision_mod)).min(0.75);
+
     let final_damage = outgoing_damage * (1.0 - mitigation);
-    final_damage.max(0.0) // Clamp to 0 (no healing from negative damage)
+    final_damage.max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== CONTEST MODIFIER TESTS =====
+
+    #[test]
+    fn test_contest_modifier_neutral() {
+        assert_eq!(contest_modifier(100, 100), 1.0);
+        assert_eq!(contest_modifier(0, 0), 1.0);
+        assert_eq!(contest_modifier(50, 50), 1.0);
+    }
+
+    #[test]
+    fn test_contest_modifier_attacker_advantage() {
+        let m = contest_modifier(150, 100);
+        assert!(m > 1.0, "Attacker advantage should produce >1.0, got {m}");
+        assert!((m - 1.25).abs() < 0.001, "150 vs 100 → delta 50/200 = 1.25, got {m}");
+    }
+
+    #[test]
+    fn test_contest_modifier_defender_advantage() {
+        let m = contest_modifier(100, 150);
+        assert!(m < 1.0, "Defender advantage should produce <1.0, got {m}");
+        assert!((m - 0.75).abs() < 0.001, "100 vs 150 → delta -50/200 = 0.75, got {m}");
+    }
+
+    #[test]
+    fn test_contest_modifier_clamped() {
+        // +200 delta would give 2.0 unclamped, should cap at 1.5
+        assert_eq!(contest_modifier(300, 100), 1.5);
+        // -200 delta would give 0.0 unclamped, should floor at 0.5
+        assert_eq!(contest_modifier(100, 300), 0.5);
+        // Extreme values
+        assert_eq!(contest_modifier(u16::MAX, 0), 1.5);
+        assert_eq!(contest_modifier(0, u16::MAX), 0.5);
+    }
+
+    #[test]
+    fn test_contest_modifier_symmetric() {
+        // f(a,b) + f(b,a) = 2.0 (they are complements around 1.0)
+        let pairs = [(100, 150), (0, 50), (200, 100), (80, 120)];
+        for (a, b) in pairs {
+            let forward = contest_modifier(a, b);
+            let reverse = contest_modifier(b, a);
+            assert!(
+                (forward + reverse - 2.0).abs() < 0.001,
+                "f({a},{b})={forward} + f({b},{a})={reverse} should = 2.0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_contest_modifier_monotonic() {
+        // Larger attacker stat → larger modifier
+        let m1 = contest_modifier(100, 100); // delta 0
+        let m2 = contest_modifier(120, 100); // delta 20
+        let m3 = contest_modifier(150, 100); // delta 50
+        let m4 = contest_modifier(200, 100); // delta 100 (capped)
+        assert!(m1 < m2, "m1={m1} should be < m2={m2}");
+        assert!(m2 < m3, "m2={m2} should be < m3={m3}");
+        assert!(m3 <= m4, "m3={m3} should be <= m4={m4}");
+    }
+
+    // ===== PRECISION MOD EFFECT TESTS =====
+
+    #[test]
+    fn test_crit_chance_with_precision_mod() {
+        let attrs = ActorAttributes::default();
+        // With precision_mod > 1, crit chance should increase
+        let base_instinct = attrs.instinct() as f32;
+        let base_chance = 0.05 + base_instinct / 1000.0;
+        let boosted = base_chance * 1.5;
+        assert!(boosted > base_chance);
+    }
+
+    #[test]
+    fn test_mitigation_with_precision_mod() {
+        // Build attrs with some vitality for mitigation
+        let attrs = ActorAttributes::new(0, 0, 0, -5, 0, 0, 0, 0, 0);
+        let damage = 100.0;
+
+        let neutral = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 1.0);
+        let boosted = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 1.5);
+        let reduced = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 0.5);
+
+        // Attacker advantage → less mitigation → more damage through
+        assert!(boosted > neutral, "precision_mod 1.5 should let more damage through: {boosted} > {neutral}");
+        // Defender advantage → more mitigation → less damage through
+        assert!(reduced < neutral, "precision_mod 0.5 should reduce damage through: {reduced} < {neutral}");
+    }
 }
 

@@ -4,7 +4,7 @@
 
 **Specification:** [attribute-system.md](attribute-system.md) (v2.0)
 **Last Updated:** 2026-02-10
-**Overall Status:** 8/28 features complete (29% — Phases 1–3 complete)
+**Overall Status:** 12/28 features complete (43% — Phases 1–4 complete)
 
 ---
 
@@ -52,12 +52,12 @@
 
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
-| Precision (Grace) vs Toughness (Vitality) | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | Crit chance vs mitigation |
-| Impact (Might) vs Composure (Focus) | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | Impact is open; Composure = recovery reduction |
-| Dominance (Presence) vs Cunning (Instinct) | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | Recovery pushback vs reaction window |
-| Contest resolution function | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | f(attacker - defender) → modifier |
+| Precision (Grace) vs Toughness (Vitality) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Crit chance × precision_mod, mitigation × 1/precision_mod (SOW-020 Phase 4) |
+| Impact (Might) vs Composure (Focus) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Impact passively increases pushback; Composure reduces it (SOW-020 Phase 4) |
+| Dominance (Presence) vs Cunning (Instinct) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Reaction window × 1/tempo_mod, recovery pushback × tempo_mod (SOW-020 Phase 4) |
+| Contest resolution function | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | contest_modifier(): clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4) |
 
-**Category Status:** 0/4 complete (0%)
+**Category Status:** 4/4 complete (100%)
 
 ---
 
@@ -81,16 +81,16 @@
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
 | Queue capacity via Concentration tier | ✅ Complete | [ADR-021](../02-adr/021-commitment-ratio-queue-capacity.md) | Migrated to commitment tier (SOW-020 Phase 3) |
-| Reaction window via Cunning vs Dominance | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | Currently level-gap only (ADR-020) |
-| Recovery pushback via Dominance | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | New mechanic |
-| Recovery reduction via Composure | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | New mechanic |
-| Crit via Precision vs Toughness | ❌ Not Started | [ADR-029](../02-adr/029-relative-stat-contests.md) | New mechanic |
+| Reaction window via Cunning vs Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | timer_duration × 1/tempo_mod (SOW-020 Phase 4) |
+| Recovery pushback via Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | BASE_PUSHBACK (250ms) × tempo_mod per threat (SOW-020 Phase 4) |
+| Recovery reduction via Composure | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Pushback × 1/composure_mod (SOW-020 Phase 4) |
+| Crit via Precision vs Toughness | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | crit_chance × precision_mod (SOW-020 Phase 4) |
 | Cadence via Intensity tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Replaces fixed 1500ms cooldown (SOW-020 Phase 3) |
 | Evasion via Poise tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Grace tier dodge at threat insertion (SOW-020 Phase 3) |
-| Dismiss + Precision/Toughness | ❌ Not Started | [ADR-022](../02-adr/022-dismiss-mechanic.md), [ADR-029](../02-adr/029-relative-stat-contests.md) | Crit on dismissed threats |
+| Dismiss + Precision/Toughness | 🚧 Partial | [ADR-022](../02-adr/022-dismiss-mechanic.md), [ADR-029](../02-adr/029-relative-stat-contests.md) | precision_mod stored in QueuedThreat, available at resolution; dismiss mechanic not yet implemented |
 | Movement speed via Grace | ✅ Complete | Various | Grace-based movement speed formula exists |
 
-**Category Status:** 4/9 complete (44%)
+**Category Status:** 8/9 complete (89%)
 
 ---
 
@@ -116,7 +116,7 @@ The following v1.0 features are **superseded** or deferred:
 ## Spec Gaps
 
 ### Critical for Full Combat System
-- **Relative Stat Contest Framework:** Three opposing pairs (SOW-020 Phase 4)
+- ~~**Relative Stat Contest Framework:** Three opposing pairs (SOW-020 Phase 4)~~ ✅ Complete
 
 ### Medium Priority
 - **Absolute Stat Rewiring:** Force (damage) still partial — needs full rewiring (SOW-020 Phase 2 remainder)
@@ -140,29 +140,33 @@ The following v1.0 features are **superseded** or deferred:
 - HP rewired to vitality() with shift sensitivity (SOW-020 Phase 2)
 - Damage partially rewired
 
-**Relative Stats:** 0/4 features (0%)
-- Contest framework not yet built (SOW-020 Phase 4)
+**Relative Stats:** 4/4 features (100%)
+- Contest resolution function: clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4)
+- Precision vs Toughness: crit chance and mitigation scaling (SOW-020 Phase 4)
+- Dominance vs Cunning: reaction window and recovery pushback (SOW-020 Phase 4)
+- Impact vs Composure: recovery pushback reduction (SOW-020 Phase 4)
 
 **Commitment Stats:** 3/6 features (50%)
 - Queue capacity via Focus tier (SOW-020 Phase 3)
 - Cadence via Presence tier (SOW-020 Phase 3)
 - Evasion via Grace tier (SOW-020 Phase 3)
 
-**Combat Integration:** 4/9 features (44%)
-- Movement speed, queue capacity, cadence, evasion all wired
+**Combat Integration:** 8/9 features (89%)
+- Movement speed, queue capacity, cadence, evasion, reaction window, recovery pushback, recovery reduction, crit all wired
+- Dismiss + Precision/Toughness partial (precision_mod stored, dismiss mechanic not yet implemented)
 
-**Total Attribute System (v2.0):** 8/28 features complete (29% — through Phase 3, 3 open stats deferred)
+**Total Attribute System (v2.0):** 12/28 features complete (43% — through Phase 4, open stats deferred)
 
 ---
 
 ## Next Priorities
 
-Based on SOW-020 phase ordering (Phases 1–3 complete):
+Based on SOW-020 phase ordering (Phases 1–4 complete):
 
 1. ~~**Phase 1: Scaling Mode Foundation**~~ ✅
 2. ~~**Phase 2: Absolute Stats**~~ ✅ (HP rewired; damage partial)
 3. ~~**Phase 3: Commitment Stats**~~ ✅ (queue capacity, cadence, evasion)
-4. **Phase 4: Relative Contests** — Precision/Toughness, Dominance/Cunning, Impact/Composure
+4. ~~**Phase 4: Relative Contests**~~ ✅ (all 3 pairs + contest function)
 5. **Phase 5: Decoupling** — Remove archetype coupling, migrate NPCs, cleanup
 
 ---
