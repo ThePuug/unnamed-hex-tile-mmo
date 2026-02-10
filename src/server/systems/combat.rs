@@ -46,6 +46,12 @@ pub fn process_deal_damage(
             return;
         }
 
+        // Evasion check (Grace commitment tier)
+        let dodge = queue_utils::evasion_chance(attrs);
+        if dodge > 0.0 && rand::Rng::random_range(&mut rand::rng(), 0.0..1.0) < dodge {
+            return; // Threat evaded — no queue insertion, no combat entry
+        }
+
         // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
@@ -211,7 +217,8 @@ pub fn process_passive_auto_attack(
     mut query: Query<
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target,
          Option<&mut crate::common::components::npc_recovery::NpcRecovery>,
-         Option<&crate::common::components::hex_assignment::AssignedHex>),
+         Option<&crate::common::components::hex_assignment::AssignedHex>,
+         &ActorAttributes),
         Without<crate::common::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -223,10 +230,8 @@ pub fn process_passive_auto_attack(
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-    const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
-
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, attrs) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
@@ -248,9 +253,10 @@ pub fn process_passive_auto_attack(
             }
         }
 
-        // Check cooldown (1.5s between auto-attacks)
+        // Check cooldown (tier-based cadence from Presence commitment)
+        let cooldown = queue_utils::cadence_interval(attrs);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
-        if time_since_last_attack.as_millis() < AUTO_ATTACK_COOLDOWN_MS as u128 {
+        if time_since_last_attack < cooldown {
             continue; // Still on cooldown
         }
 
