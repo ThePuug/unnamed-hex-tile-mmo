@@ -173,7 +173,7 @@ pub fn player_auto_attack(
         }
 
         // Check cooldown (tier-based cadence from Presence commitment)
-        let cooldown = crate::common::systems::combat::queue::cadence_interval(attrs);
+        let cooldown = attrs.cadence_interval();
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
             continue; // Still on cooldown

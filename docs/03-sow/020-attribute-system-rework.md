@@ -37,8 +37,8 @@
 - All existing methods preserved: `.might()`, `.grace()`, `.might_reach()`, `.set_might_grace_shift()`, etc.
 - Character panel unchanged
 - NPC generation unchanged
-- Level multiplier methods use `total_budget()` for level input (same concept as `total_level()`)
-- `total_level()` kept as alias for `total_budget()`
+- Level multiplier methods use `total_level()` for level input (counts invested points)
+- `total_budget()` is a NEW method that sums derived attribute values (different from `total_level()`)
 
 **Success Criteria:**
 - `commitment_tier(30, 100)` returns T1 (30% threshold)

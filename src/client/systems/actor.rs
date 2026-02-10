@@ -17,7 +17,6 @@ use crate::{
         message::{ Event, * },
         plugins::nntree::NearestNeighbor,
         resources::{map::Map, InputQueues},
-        systems::combat::queue as queue_calcs,
     }
 };
 
@@ -88,7 +87,7 @@ pub fn do_spawn(
 
                 // Initialize reaction queue with capacity based on Focus attribute
                 let attrs_val = attrs.unwrap_or_default();
-                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs_val);
+                let queue_capacity = attrs_val.queue_capacity();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 // Handle entities that may have been evicted - spawn if needed

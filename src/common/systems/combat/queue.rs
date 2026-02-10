@@ -1,49 +1,11 @@
 use crate::common::components::reaction_queue::{QueuedThreat, ReactionQueue};
-use crate::common::components::{ActorAttributes, CommitmentTier};
+use crate::common::components::ActorAttributes;
 use crate::common::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
 
 #[cfg(test)]
 use crate::common::components::reaction_queue::DamageType;
-
-/// Calculate queue capacity from Focus commitment tier.
-///
-/// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots.
-pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
-    match attrs.commitment_tier_for(attrs.focus()) {
-        CommitmentTier::T0 => 1,
-        CommitmentTier::T1 => 2,
-        CommitmentTier::T2 => 3,
-        CommitmentTier::T3 => 4,
-    }
-}
-
-/// Calculate auto-attack interval from Presence commitment tier.
-///
-/// Higher presence commitment → faster attacks.
-/// T0 → 2000ms, T1 → 1500ms, T2 → 1000ms, T3 → 750ms.
-pub fn cadence_interval(attrs: &ActorAttributes) -> Duration {
-    match attrs.commitment_tier_for(attrs.presence()) {
-        CommitmentTier::T0 => Duration::from_millis(2000),
-        CommitmentTier::T1 => Duration::from_millis(1500),
-        CommitmentTier::T2 => Duration::from_millis(1000),
-        CommitmentTier::T3 => Duration::from_millis(750),
-    }
-}
-
-/// Calculate evasion (dodge) chance from Grace commitment tier.
-///
-/// Higher grace commitment → higher dodge chance at threat insertion.
-/// T0 → 0%, T1 → 10%, T2 → 20%, T3 → 30%.
-pub fn evasion_chance(attrs: &ActorAttributes) -> f32 {
-    match attrs.commitment_tier_for(attrs.grace()) {
-        CommitmentTier::T0 => 0.0,
-        CommitmentTier::T1 => 0.10,
-        CommitmentTier::T2 => 0.20,
-        CommitmentTier::T3 => 0.30,
-    }
-}
 
 /// Calculate timer duration based on Instinct attribute and level multiplier (ADR-020)
 /// Linear formula: base_window * (1.0 + instinct / 1000.0)
@@ -146,14 +108,14 @@ mod tests {
     fn test_queue_capacity_zero_investment() {
         // No investment → total_budget=0 → T0 → 1 slot
         let attrs = ActorAttributes::default();
-        assert_eq!(calculate_queue_capacity(&attrs), 1);
+        assert_eq!(attrs.queue_capacity(), 1);
     }
 
     #[test]
     fn test_queue_capacity_full_focus_commitment() {
         // All investment in focus → focus/total_budget = 100% → T3 → 4 slots
         let attrs = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 4);
+        assert_eq!(attrs.queue_capacity(), 4);
     }
 
     #[test]
@@ -165,22 +127,22 @@ mod tests {
         // might=-6 (might=60), focus=3 (focus=30) → budget=90, focus/budget=33% → T1
         // Need <30%: might=-7 (70), focus=2 (20) → budget=90, 20/90=22% → T0
         let t0 = ActorAttributes::new(-7, 0, 0, 2, 0, 0, 0, 0, 0);
-        assert_eq!(calculate_queue_capacity(&t0), 1, "T0 should give 1 slot");
+        assert_eq!(t0.queue_capacity(), 1, "T0 should give 1 slot");
 
         // 30% → T1 → 2 slots
         // might=-6 (60), focus=3 (30) → budget=90, 30/90=33% → T1
         let t1 = ActorAttributes::new(-6, 0, 0, 3, 0, 0, 0, 0, 0);
-        assert_eq!(calculate_queue_capacity(&t1), 2, "T1 should give 2 slots");
+        assert_eq!(t1.queue_capacity(), 2, "T1 should give 2 slots");
 
         // 45% → T2 → 3 slots
         // might=-5 (50), focus=5 (50) → budget=100, 50/100=50% → T2
         let t2 = ActorAttributes::new(-5, 0, 0, 5, 0, 0, 0, 0, 0);
-        assert_eq!(calculate_queue_capacity(&t2), 3, "T2 should give 3 slots");
+        assert_eq!(t2.queue_capacity(), 3, "T2 should give 3 slots");
 
         // 60% → T3 → 4 slots
         // might=-3 (30), focus=6 (60) → budget=90, 60/90=67% → T3
         let t3 = ActorAttributes::new(-3, 0, 0, 6, 0, 0, 0, 0, 0);
-        assert_eq!(calculate_queue_capacity(&t3), 4, "T3 should give 4 slots");
+        assert_eq!(t3.queue_capacity(), 4, "T3 should give 4 slots");
     }
 
     // ===== CADENCE INTERVAL TESTS =====
@@ -189,29 +151,29 @@ mod tests {
     fn test_cadence_interval_tiers() {
         // T0: no presence investment → 2000ms
         let t0 = ActorAttributes::default();
-        assert_eq!(cadence_interval(&t0), Duration::from_millis(2000));
+        assert_eq!(t0.cadence_interval(), Duration::from_millis(2000));
 
         // T1: presence ~33% of budget → 1500ms
         // might=-6 (60), presence=3 (30) → budget=90, 30/90=33% → T1
         let t1 = ActorAttributes::new(-6, 0, 0, 0, 0, 0, 3, 0, 0);
-        assert_eq!(cadence_interval(&t1), Duration::from_millis(1500));
+        assert_eq!(t1.cadence_interval(), Duration::from_millis(1500));
 
         // T2: presence ~50% of budget → 1000ms
         let t2 = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0);
-        assert_eq!(cadence_interval(&t2), Duration::from_millis(1000));
+        assert_eq!(t2.cadence_interval(), Duration::from_millis(1000));
 
         // T3: presence 100% of budget → 750ms
         let t3 = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
-        assert_eq!(cadence_interval(&t3), Duration::from_millis(750));
+        assert_eq!(t3.cadence_interval(), Duration::from_millis(750));
     }
 
     #[test]
     fn test_cadence_monotonically_decreasing() {
         // Higher tier → shorter interval
-        let t0 = cadence_interval(&ActorAttributes::default());
-        let t1 = cadence_interval(&ActorAttributes::new(-6, 0, 0, 0, 0, 0, 3, 0, 0));
-        let t2 = cadence_interval(&ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0));
-        let t3 = cadence_interval(&ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
+        let t0 = ActorAttributes::default().cadence_interval();
+        let t1 = ActorAttributes::new(-6, 0, 0, 0, 0, 0, 3, 0, 0).cadence_interval();
+        let t2 = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0).cadence_interval();
+        let t3 = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0).cadence_interval();
         assert!(t0 > t1, "T0 should be slower than T1");
         assert!(t1 > t2, "T1 should be slower than T2");
         assert!(t2 > t3, "T2 should be slower than T3");
@@ -223,29 +185,29 @@ mod tests {
     fn test_evasion_chance_tiers() {
         // T0: no grace investment → 0%
         let t0 = ActorAttributes::default();
-        assert_eq!(evasion_chance(&t0), 0.0);
+        assert_eq!(t0.evasion_chance(), 0.0);
 
         // T1: grace ~33% of budget → 10%
         // vitality=-6 (60), grace=3 (30) → budget=90, 30/90=33% → T1
         let t1 = ActorAttributes::new(3, 0, 0, -6, 0, 0, 0, 0, 0);
-        assert_eq!(evasion_chance(&t1), 0.10);
+        assert_eq!(t1.evasion_chance(), 0.10);
 
         // T2: grace ~50% of budget → 20%
         let t2 = ActorAttributes::new(5, 0, 0, -5, 0, 0, 0, 0, 0);
-        assert_eq!(evasion_chance(&t2), 0.20);
+        assert_eq!(t2.evasion_chance(), 0.20);
 
         // T3: grace 100% of budget → 30%
         let t3 = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert_eq!(evasion_chance(&t3), 0.30);
+        assert_eq!(t3.evasion_chance(), 0.30);
     }
 
     #[test]
     fn test_evasion_monotonically_increasing() {
         // Higher tier → higher dodge chance
-        let t0 = evasion_chance(&ActorAttributes::default());
-        let t1 = evasion_chance(&ActorAttributes::new(3, 0, 0, -6, 0, 0, 0, 0, 0));
-        let t2 = evasion_chance(&ActorAttributes::new(5, 0, 0, -5, 0, 0, 0, 0, 0));
-        let t3 = evasion_chance(&ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0));
+        let t0 = ActorAttributes::default().evasion_chance();
+        let t1 = ActorAttributes::new(3, 0, 0, -6, 0, 0, 0, 0, 0).evasion_chance();
+        let t2 = ActorAttributes::new(5, 0, 0, -5, 0, 0, 0, 0, 0).evasion_chance();
+        let t3 = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0).evasion_chance();
         assert!(t0 < t1, "T0 should have less evasion than T1");
         assert!(t1 < t2, "T1 should have less evasion than T2");
         assert!(t2 < t3, "T2 should have less evasion than T3");

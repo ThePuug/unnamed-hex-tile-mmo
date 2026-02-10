@@ -20,7 +20,6 @@ use crate::{ common::{
         plugins::nntree::*,
         resources::*,
         systems::combat::{
-            queue as queue_calcs,
             resources as resource_calcs,
         },
     }, *
@@ -113,7 +112,7 @@ pub fn do_manage_connections(
                     last_action: time.elapsed(),
                 };
                 // Initialize reaction queue with capacity based on Focus attribute
-                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs);
+                let queue_capacity = attrs.queue_capacity();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 let ent = commands.spawn((

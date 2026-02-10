@@ -40,7 +40,7 @@ pub fn process_deal_damage(
         }
 
         // Evasion check (Grace commitment tier)
-        let dodge = queue_utils::evasion_chance(attrs);
+        let dodge = attrs.evasion_chance();
         if dodge > 0.0 && rand::Rng::random_range(&mut rand::rng(), 0.0..1.0) < dodge {
             return; // Threat evaded — no queue insertion, no combat entry
         }
@@ -272,7 +272,7 @@ pub fn process_passive_auto_attack(
         }
 
         // Check cooldown (tier-based cadence from Presence commitment)
-        let cooldown = queue_utils::cadence_interval(attrs);
+        let cooldown = attrs.cadence_interval();
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
             continue; // Still on cooldown

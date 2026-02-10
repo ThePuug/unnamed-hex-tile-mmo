@@ -538,6 +538,23 @@ impl ActorAttributes {
     }
 
     // === LAYER 2: SCALING MODE HELPERS ===
+    //
+    // The attribute system has three layers:
+    //
+    // **Layer 1 — Bipolar Input (Axis/Spectrum/Shift):**
+    //   9 i8 fields storing raw investment counts per pair
+    //
+    // **Layer 2 — Derived Attribute Values:**
+    //   Six pure values from A/S/S scaling: might(), grace(), vitality(),
+    //   focus(), instinct(), presence()
+    //
+    // **Layer 3 — Three Scaling Modes:**
+    //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
+    //   - RELATIVE (build matchup): contest_modifier() in damage.rs — no level scaling
+    //   - COMMITMENT (build identity): queue_capacity(), cadence_interval(),
+    //     evasion_chance() — discrete tiers based on % of total budget
+    //
+    // See docs/00-spec/attribute-system.md for full design.
 
     /// Total attribute budget: sum of all six derived attribute values.
     ///
@@ -561,6 +578,47 @@ impl ActorAttributes {
     /// Example: `attrs.commitment_tier_for(attrs.focus())` → Focus commitment tier
     pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
         CommitmentTier::calculate(derived_value, self.total_budget())
+    }
+
+    // === COMMITMENT-DRIVEN STATS (Layer 3) ===
+
+    /// Reaction queue capacity from Focus commitment tier.
+    ///
+    /// Higher Focus commitment → more queue slots for reactive play.
+    /// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots.
+    pub fn queue_capacity(&self) -> usize {
+        match self.commitment_tier_for(self.focus()) {
+            CommitmentTier::T0 => 1,
+            CommitmentTier::T1 => 2,
+            CommitmentTier::T2 => 3,
+            CommitmentTier::T3 => 4,
+        }
+    }
+
+    /// Auto-attack interval from Presence commitment tier.
+    ///
+    /// Higher Presence commitment → faster attacks (shorter interval).
+    /// T0 → 2000ms, T1 → 1500ms, T2 → 1000ms, T3 → 750ms.
+    pub fn cadence_interval(&self) -> std::time::Duration {
+        match self.commitment_tier_for(self.presence()) {
+            CommitmentTier::T0 => std::time::Duration::from_millis(2000),
+            CommitmentTier::T1 => std::time::Duration::from_millis(1500),
+            CommitmentTier::T2 => std::time::Duration::from_millis(1000),
+            CommitmentTier::T3 => std::time::Duration::from_millis(750),
+        }
+    }
+
+    /// Evasion (dodge) chance from Grace commitment tier.
+    ///
+    /// Higher Grace commitment → higher chance to evade incoming threats entirely.
+    /// T0 → 0%, T1 → 10%, T2 → 20%, T3 → 30%.
+    pub fn evasion_chance(&self) -> f32 {
+        match self.commitment_tier_for(self.grace()) {
+            CommitmentTier::T0 => 0.0,
+            CommitmentTier::T1 => 0.10,
+            CommitmentTier::T2 => 0.20,
+            CommitmentTier::T3 => 0.30,
+        }
     }
 }
 

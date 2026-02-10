@@ -32,7 +32,7 @@ use crate::{
             calculate_enemy_attributes, calculate_enemy_level, get_directional_zone,
             EnemyArchetype, HAVEN_LOCATION,
         },
-        systems::combat::{queue as queue_calcs, resources as resource_calcs},
+        systems::combat::resources as resource_calcs,
     },
     server::resources::engagement_budget::EngagementBudget,
 };
@@ -243,7 +243,7 @@ fn spawn_engagement_at(
         };
 
         // Initialize reaction queue with capacity based on Focus attribute
-        let queue_capacity = queue_calcs::calculate_queue_capacity(&attributes);
+        let queue_capacity = attributes.queue_capacity();
         let reaction_queue = ReactionQueue::new(queue_capacity);
 
         // Spawn NPC entity (will be discovered when player gets near)
