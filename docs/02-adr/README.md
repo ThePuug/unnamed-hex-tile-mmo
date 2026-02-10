@@ -39,6 +39,11 @@ This directory contains technical architecture decisions for the unnamed hex-til
 | 022 | ✅ | Dismiss Mechanic | ⚔️ | 2026-02-09 |
 | 023 | 📋 | Coordinated Hex Assignment | 🤖 | 2026-02-09 |
 | 024 | 📋 | Per-Archetype Positioning Strategy | 🤖 | 2026-02-09 |
+| 025 | ✅ | Combat Feedback Enhancements | ⚔️ | 2026-02-09 |
+| 026 | 📋 | Three Scaling Modes | ⚡ | 2026-02-10 |
+| 027 | 📋 | Commitment Tiers (30/45/60) | ⚡ | 2026-02-10 |
+| 028 | 📋 | Attribute-Triumvirate Decoupling | ⚡ | 2026-02-10 |
+| 029 | 📋 | Relative Stat Contests | ⚔️ | 2026-02-10 |
 
 ### When to Read Each ADR
 
@@ -69,6 +74,11 @@ This directory contains technical architecture decisions for the unnamed hex-til
 - **023 - Coordinated Hex Assignment:** Engagement entity assigns unique approach hexes to child NPCs, recalculates on player tile change. Read when working with engagement spawning, NPC AI targeting, or multi-NPC coordination.
 - **024 - Per-Archetype Positioning Strategy:** Surround/Cluster/Perimeter/Orbital strategies determine hex preference per archetype. Read when working with archetype behavior, engagement composition, or NPC spatial patterns.
 - **019 - Unified Interpolation Model:** Separate authoritative position from visual interpolation, unified local/remote handling. Read when working with movement, position, or entity rendering.
+- **025 - Combat Feedback Enhancements:** Visual and audio feedback for combat events. Read when working with combat UI or feedback systems.
+- **026 - Three Scaling Modes:** Absolute (progression), Relative (build matchup), and Commitment (build identity) modes per attribute. Read when working with attribute derivation, stat formulas, or the attribute data model.
+- **027 - Commitment Tiers:** Discrete 30/45/60% budget thresholds for build identity stats (queue capacity, cadence, evasion). Read when working with commitment-driven mechanics or attribute investment.
+- **028 - Attribute-Triumvirate Decoupling:** Attributes are independent from Triumvirate Approach/Resilience. Read when working with NPC configuration, archetype systems, or attribute assignment.
+- **029 - Relative Stat Contests:** Three opposing pairs (Grace/Vitality, Might/Focus, Presence/Instinct) for attacker-vs-defender build matchups with no level scaling. Read when working with combat resolution, crit/mitigation, or recovery mechanics.
 
 **UI & Developer Tools:**
 - **013 - Developer Console Architecture:** Hierarchical menu with event-based actions. Read when adding debug features or console commands.

@@ -24,6 +24,8 @@ SOWs are work orders for developers. Each SOW defines what needs to be built, wh
 | 016 | Movement System Rewrite | 🌐 Network | ✅ Merged | 2025-02-08 | 14-20 hours | - |
 | 017 | Combat Balance Implementation | ⚔️ Combat | ✅ Merged | 2026-02-09 | 8-12 hours | - |
 | 018 | NPC Engagement Coordination | 🤖 AI | 📝 Planned | 2026-02-09 | 13-19 hours | - |
+| 019 | Combat Feedback Enhancements | ⚔️ Combat | ✅ Merged | 2026-02-09 | - | - |
+| 020 | Attribute System Rework | 📊 Progression | 📝 Planned | 2026-02-10 | 18-28 hours | - |
 
 **Legend:**
 - **Status:** ✅ Accepted/Merged | 🔄 In Progress/Review | 📝 Planned/Proposed
