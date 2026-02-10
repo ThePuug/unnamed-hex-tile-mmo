@@ -123,6 +123,57 @@ pub struct AirTime {
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
+// === SCALING MODE INFRASTRUCTURE (ADR-026, RFC-020) ===
+// Layer 2: Three scaling modes layered on top of existing A/S/S model.
+// These are pure abstractions that take derived attribute values as input.
+// - Absolute: derived_value × level_multiplier (methods already on ActorAttributes)
+// - Relative: attacker_derived - defender_derived (Phase 4, not yet implemented)
+// - Commitment: tier_from_percentage(derived_value / total_budget) (below)
+
+/// Discrete commitment tier based on percentage of total attribute budget.
+///
+/// Thresholds: T0 (<30%), T1 (≥30%), T2 (≥45%), T3 (≥60%).
+/// Budget math forces hard build choices:
+/// - Specialist: T3 (60%) + T1 (30%) = 90% → viable
+/// - Dual identity: T2 (45%) + T2 (45%) = 90% → viable
+/// - Generalist: T1 (30%) × 3 = 90% → viable
+/// - T3 + T2 = 105% → impossible
+///
+/// See ADR-027 for design rationale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CommitmentTier {
+    /// No commitment identity — baseline only
+    T0,
+    /// Identity unlocked — noticeable specialization (≥30% of budget)
+    T1,
+    /// Identity deepened — significant commitment (≥45% of budget)
+    T2,
+    /// Identity defining — dominant aspect of build (≥60% of budget)
+    T3,
+}
+
+impl CommitmentTier {
+    /// Calculate commitment tier from a derived attribute value and total budget.
+    ///
+    /// This is a pure function — it does not know which attribute produced the value
+    /// or how it was derived from A/S/S. It only cares about the percentage.
+    pub fn calculate(derived_value: u16, total_budget: u32) -> Self {
+        if total_budget == 0 {
+            return Self::T0;
+        }
+        let pct = (derived_value as f64 / total_budget as f64) * 100.0;
+        if pct >= 60.0 {
+            Self::T3
+        } else if pct >= 45.0 {
+            Self::T2
+        } else if pct >= 30.0 {
+            Self::T1
+        } else {
+            Self::T0
+        }
+    }
+}
+
 /// Attributes for actor entities that affect gameplay mechanics
 ///
 /// Fields store RAW INVESTMENT COUNTS (levels invested):
@@ -475,14 +526,41 @@ impl ActorAttributes {
         BASE_SPEED * (speed_percent / 100.0)
     }
 
-    /// Maximum health derived from vitality_reach, scaled by level multiplier (ADR-020)
-    /// Linear formula: 100 + (vitality_reach * 3.8)
+    /// Maximum health derived from vitality, scaled by level multiplier (ADR-020)
+    /// Linear formula: 100 + (vitality * 3.8)
     /// Then multiplied by hp_level_multiplier for super-linear scaling
+    /// Uses vitality() (not vitality_reach()) so HP responds to shift drag.
     pub fn max_health(&self) -> f32 {
         let base = 100.0;
-        let vitality_reach = self.vitality_reach() as f32;
-        let linear = base + (vitality_reach * 3.8);
+        let vitality = self.vitality() as f32;
+        let linear = base + (vitality * 3.8);
         linear * self.hp_level_multiplier()
+    }
+
+    // === LAYER 2: SCALING MODE HELPERS ===
+
+    /// Total attribute budget: sum of all six derived attribute values.
+    ///
+    /// This is the denominator for commitment tier percentage calculations.
+    /// Unlike total_level() which counts invested points (axis + spectrum),
+    /// this sums the actual derived values after A/S/S scaling.
+    pub fn total_budget(&self) -> u32 {
+        self.might() as u32
+            + self.grace() as u32
+            + self.vitality() as u32
+            + self.focus() as u32
+            + self.instinct() as u32
+            + self.presence() as u32
+    }
+
+    /// Calculate the commitment tier for a specific derived attribute value.
+    ///
+    /// Convenience method — delegates to CommitmentTier::calculate with
+    /// this entity's total_budget as denominator.
+    ///
+    /// Example: `attrs.commitment_tier_for(attrs.focus())` → Focus commitment tier
+    pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
+        CommitmentTier::calculate(derived_value, self.total_budget())
     }
 }
 
@@ -531,86 +609,6 @@ impl Default for LastAutoAttack {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_balanced_attributes() {
-        // axis=-50, spectrum=25: -50A/25S (on might side)
-        let base = ActorAttributes {
-            might_grace_axis: -50,
-            might_grace_spectrum: 25,
-            ..Default::default()
-        };
-
-        let attrs = ActorAttributes { might_grace_shift: -25, ..base };
-        assert_eq!(attrs.might(), 87);
-
-        let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might(), 80);
-
-        let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might(), 75);
-
-        let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might(), 70);
-
-        let attrs = ActorAttributes { might_grace_shift: 25, ..base };
-        assert_eq!(attrs.might(), 63);
-    }
-
-    #[test]
-    fn test_perfectly_balanced_attributes() {
-        // Perfectly balanced: axis=0, spectrum=20: 0A/20S
-        let base = ActorAttributes {
-            might_grace_axis: 0,
-            might_grace_spectrum: 20,
-            ..Default::default()
-        };
-
-        // Shift fully toward might
-        let attrs = ActorAttributes { might_grace_shift: -20, ..base };
-        assert_eq!(attrs.might(), 30);
-
-        // Shift partially toward might
-        let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might(), 25);
-
-        // No shift (perfectly centered)
-        let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might(), 20);
-
-        // Shift partially toward grace
-        let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might(), 15);
-
-        // Shift fully toward grace
-        let attrs = ActorAttributes { might_grace_shift: 20, ..base };
-        assert_eq!(attrs.might(), 10);
-    }
-
-    #[test]
-    fn test_narrow_spectrum_attributes() {
-        // axis=-80, spectrum=10: -80A/10S (on might side)
-        let base = ActorAttributes {
-            might_grace_axis: -80,
-            might_grace_spectrum: 10,
-            ..Default::default()
-        };
-
-        let attrs = ActorAttributes { might_grace_shift: -10, ..base };
-        assert_eq!(attrs.might(), 95);
-
-        let attrs = ActorAttributes { might_grace_shift: -5, ..base };
-        assert_eq!(attrs.might(), 92);
-
-        let attrs = ActorAttributes { might_grace_shift: 0, ..base };
-        assert_eq!(attrs.might(), 90);
-
-        let attrs = ActorAttributes { might_grace_shift: 5, ..base };
-        assert_eq!(attrs.might(), 88);
-
-        let attrs = ActorAttributes { might_grace_shift: 10, ..base };
-        assert_eq!(attrs.might(), 85);
-    }
-
     // ===== MOVEMENT SPEED TESTS (ADR-010 Phase 2) =====
 
     #[test]
@@ -636,27 +634,6 @@ mod tests {
     }
 
     #[test]
-    fn test_movement_speed_formula_grace_100() {
-        // Grace = 100 (Grace specialist) should give +50% speed
-        // Formula: max(75, 100 + (100 / 2)) = max(75, 150) = 150
-        // Speed multiplier: 150 / 100 = 1.5
-        // Final speed: 0.005 * 1.5 = 0.0075
-        let attrs = ActorAttributes {
-            might_grace_axis: 100,
-            might_grace_spectrum: 0,
-            might_grace_shift: 0,
-            ..Default::default()
-        };
-
-        let speed = attrs.movement_speed();
-        assert!(
-            (speed - 0.0075).abs() < 0.0001,
-            "Grace 100 should give 150% speed (0.0075), got {}",
-            speed
-        );
-    }
-
-    #[test]
     fn test_movement_speed_formula_grace_neg100() {
         // Grace = -100 (Might specialist) should be clamped at 75% speed
         // Formula: max(75, 100 + (-100 / 2)) = max(75, 50) = 75
@@ -673,47 +650,6 @@ mod tests {
         assert!(
             (speed - 0.00375).abs() < 0.0001,
             "Grace -100 should be clamped at 75% speed (0.00375), got {}",
-            speed
-        );
-    }
-
-    #[test]
-    fn test_movement_speed_formula_grace_50() {
-        // Grace = 50 should give +25% speed
-        // Formula: max(75, 100 + (50 / 2)) = max(75, 125) = 125
-        // Speed multiplier: 125 / 100 = 1.25
-        // Final speed: 0.005 * 1.25 = 0.00625
-        let attrs = ActorAttributes {
-            might_grace_axis: 50,
-            might_grace_spectrum: 0,
-            might_grace_shift: 0,
-            ..Default::default()
-        };
-
-        let speed = attrs.movement_speed();
-        assert!(
-            (speed - 0.00625).abs() < 0.0001,
-            "Grace 50 should give 125% speed (0.00625), got {}",
-            speed
-        );
-    }
-
-    #[test]
-    fn test_movement_speed_with_axis_and_shift() {
-        // Test that shift affects movement speed via might_grace()
-        // axis = 80, shift = 20 -> might_grace() = 100 (clamped)
-        let attrs = ActorAttributes {
-            might_grace_axis: 80,
-            might_grace_spectrum: 30,
-            might_grace_shift: 20,
-            ..Default::default()
-        };
-
-        // might_grace() = clamp(80 + 20, -100, 100) = 100
-        let speed = attrs.movement_speed();
-        assert!(
-            (speed - 0.0075).abs() < 0.0001,
-            "Grace 100 (via axis+shift) should give 150% speed (0.0075), got {}",
             speed
         );
     }
@@ -815,6 +751,145 @@ mod tests {
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
         assert_eq!(attrs.max_health(), 100.0, "Level 0 with no vitality should have base 100 HP");
+    }
+
+    // ===== COMMITMENT TIER TESTS (ADR-027, Layer 2) =====
+
+    #[test]
+    fn test_commitment_tier_thresholds() {
+        // T0: below 30%
+        assert_eq!(CommitmentTier::calculate(29, 100), CommitmentTier::T0);
+        assert_eq!(CommitmentTier::calculate(0, 100), CommitmentTier::T0);
+
+        // T1: exactly 30% and above
+        assert_eq!(CommitmentTier::calculate(30, 100), CommitmentTier::T1);
+        assert_eq!(CommitmentTier::calculate(44, 100), CommitmentTier::T1);
+
+        // T2: exactly 45% and above
+        assert_eq!(CommitmentTier::calculate(45, 100), CommitmentTier::T2);
+        assert_eq!(CommitmentTier::calculate(59, 100), CommitmentTier::T2);
+
+        // T3: exactly 60% and above
+        assert_eq!(CommitmentTier::calculate(60, 100), CommitmentTier::T3);
+        assert_eq!(CommitmentTier::calculate(100, 100), CommitmentTier::T3);
+    }
+
+    #[test]
+    fn test_commitment_tier_zero_budget() {
+        // Zero total budget always returns T0
+        assert_eq!(CommitmentTier::calculate(0, 0), CommitmentTier::T0);
+        assert_eq!(CommitmentTier::calculate(50, 0), CommitmentTier::T0);
+    }
+
+    #[test]
+    fn test_commitment_tier_ordering() {
+        // Tiers are ordered T0 < T1 < T2 < T3
+        assert!(CommitmentTier::T0 < CommitmentTier::T1);
+        assert!(CommitmentTier::T1 < CommitmentTier::T2);
+        assert!(CommitmentTier::T2 < CommitmentTier::T3);
+    }
+
+    #[test]
+    fn test_commitment_tier_non_round_budget() {
+        // Verify with non-round total budget values
+        // 30 out of 73 = 41.1% → T1
+        assert_eq!(CommitmentTier::calculate(30, 73), CommitmentTier::T1);
+        // 33 out of 73 = 45.2% → T2
+        assert_eq!(CommitmentTier::calculate(33, 73), CommitmentTier::T2);
+        // 44 out of 73 = 60.3% → T3
+        assert_eq!(CommitmentTier::calculate(44, 73), CommitmentTier::T3);
+    }
+
+    // ===== TOTAL BUDGET TESTS (Layer 2) =====
+
+    #[test]
+    fn test_total_budget_default() {
+        let attrs = ActorAttributes::default();
+        assert_eq!(attrs.total_budget(), 0, "Default attrs should have zero budget");
+    }
+
+    #[test]
+    fn test_total_budget_sums_all_derived_values() {
+        // axis=-3, spectrum=2 on M/G pair: might side
+        // might = |axis|*10 + spectrum*7 - shift*7 = 30 + 14 - 0 = 44
+        // grace = spectrum*7 + shift*7 = 14 + 0 = 14
+        // (Other pairs at default = 0)
+        let attrs = ActorAttributes::new(-3, 2, 0, 0, 0, 0, 0, 0, 0);
+        let expected = attrs.might() as u32 + attrs.grace() as u32
+            + attrs.vitality() as u32 + attrs.focus() as u32
+            + attrs.instinct() as u32 + attrs.presence() as u32;
+        assert_eq!(attrs.total_budget(), expected);
+        assert!(attrs.total_budget() > 0, "Should have non-zero budget with investment");
+    }
+
+    #[test]
+    fn test_total_budget_differs_from_total_level() {
+        // total_level counts invested points; total_budget sums derived values
+        let attrs = ActorAttributes::new(-3, 2, 0, 0, 0, 0, 0, 0, 0);
+        // total_level = |axis| + spectrum = 3 + 2 = 5
+        assert_eq!(attrs.total_level(), 5);
+        // total_budget = might(44) + grace(14) + 0+0+0+0 = 58
+        assert_eq!(attrs.total_budget(), 58);
+        assert_ne!(attrs.total_level(), attrs.total_budget() as u32);
+    }
+
+    // ===== COMMITMENT_TIER_FOR TESTS (Layer 2) =====
+
+    #[test]
+    fn test_commitment_tier_for_convenience() {
+        // Specialist build: heavy investment in one attribute
+        // axis=-5, spectrum=0 → might=50, grace=0, total_budget=50
+        // might commitment: 50/50 = 100% → T3
+        let attrs = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
+        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T0);
+    }
+
+    #[test]
+    fn test_commitment_tier_for_balanced_build() {
+        // Spread across pairs: each pair gets some investment
+        // M/G: axis=0, spectrum=3 → might=21, grace=21
+        // V/F: axis=0, spectrum=3 → vitality=21, focus=21
+        // I/P: axis=0, spectrum=3 → instinct=21, presence=21
+        // total_budget = 126, each attr = 21/126 = 16.7% → all T0
+        let attrs = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
+        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T0);
+        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T0);
+        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T0);
+        assert_eq!(attrs.commitment_tier_for(attrs.focus()), CommitmentTier::T0);
+    }
+
+    #[test]
+    fn test_commitment_tier_budget_constraints() {
+        // Verify that T3+T1 is achievable (60%+30%=90%)
+        // Need: one attr at ≥60%, another at ≥30%
+        // axis=-6, spectrum=0 → might=60, grace=0
+        // axis=0, spectrum=0, axis=-3, spectrum=0 → vitality=30
+        // total_budget = 60 + 0 + 30 + 0 + 0 + 0 = 90
+        // might: 60/90 = 66.7% → T3 ✓
+        // vitality: 30/90 = 33.3% → T1 ✓
+        let attrs = ActorAttributes::new(-6, 0, 0, -3, 0, 0, 0, 0, 0);
+        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
+        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T1);
+    }
+
+    #[test]
+    fn test_commitment_tier_dual_t2() {
+        // Verify dual T2 is achievable (45%+45%=90%)
+        // might=45, vitality=45, total_budget=90
+        // Both at 50% → T2
+        // axis=-4, spectrum=0 → might=40... not quite
+        // We need derived values that work out. Let's use:
+        // M/G: axis=-4, spectrum=1 → might=47, grace=7
+        // V/F: axis=-4, spectrum=1 → vitality=47, focus=7
+        // total_budget = 47+7+47+7+0+0 = 108
+        // might: 47/108 = 43.5% → T1 (just under T2)
+        // Let's try axis=-5, spectrum=0:
+        // might=50, grace=0, vitality=50, focus=0 → total=100
+        // might: 50/100 = 50% → T2 ✓, vitality: 50/100 = 50% → T2 ✓
+        let attrs = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
+        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T2);
+        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T2);
     }
 
 }

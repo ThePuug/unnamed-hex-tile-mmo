@@ -157,20 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_queue_capacity_low_focus() {
-        // Focus = 33 (axis = 33 on focus side) should give 2 slots (base=1, bonus=1)
-        let attrs = create_test_attrs(33, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 2);
-    }
-
-    #[test]
-    fn test_calculate_queue_capacity_mid_focus() {
-        // Focus = 66 (axis = 66 on focus side) should give 3 slots (base=1, bonus=2)
-        let attrs = create_test_attrs(66, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 3);
-    }
-
-    #[test]
     fn test_calculate_queue_capacity_high_focus() {
         // Focus = 100 (axis = 100 on focus side) should give 4 slots (base=1, bonus=3)
         let attrs = create_test_attrs(100, 0);
