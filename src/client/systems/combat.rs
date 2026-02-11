@@ -152,15 +152,14 @@ pub fn apply_gcd(
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut crate::common::components::LastAutoAttack, Option<&Gcd>)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut crate::common::components::LastAutoAttack, Option<&Gcd>, &crate::common::components::ActorAttributes)>,
     target_query: Query<&Loc>,
     input_queues: Res<crate::common::resources::InputQueues>,
     time: Res<Time>,
 ) {
-    const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
     let now = time.elapsed();
 
-    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt) in &mut player_query {
+    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs) in &mut player_query {
         // Only process local player (entity with InputQueue)
         if input_queues.get(&player_ent).is_none() {
             continue;
@@ -173,9 +172,10 @@ pub fn player_auto_attack(
             }
         }
 
-        // Check cooldown (1.5s between auto-attacks)
+        // Check cooldown (tier-based cadence from Presence commitment)
+        let cooldown = attrs.cadence_interval();
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
-        if time_since_last_attack.as_millis() < AUTO_ATTACK_COOLDOWN_MS as u128 {
+        if time_since_last_attack < cooldown {
             continue; // Still on cooldown
         }
 

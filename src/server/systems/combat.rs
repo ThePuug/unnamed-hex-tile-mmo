@@ -14,7 +14,7 @@ use crate::common::{
 pub fn process_deal_damage(
     trigger: On<Try>,
     mut commands: Commands,
-    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health)>,
+    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut crate::common::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
@@ -29,15 +29,8 @@ pub fn process_deal_damage(
             return;
         };
 
-        // Roll for critical hit
-        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs);
-
-        // Calculate outgoing damage (Phase 1)
-        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
-        let outgoing_with_crit = outgoing * crit_mult;
-
-        // Get target's queue, attributes, and health
-        let Ok((mut queue, attrs, health)) = target_query.get_mut(*target) else {
+        // Get target's queue, attributes, health, and recovery
+        let Ok((mut queue, attrs, health, recovery_opt)) = target_query.get_mut(*target) else {
             return;
         };
 
@@ -46,13 +39,42 @@ pub fn process_deal_damage(
             return;
         }
 
+        // Evasion check (Grace commitment tier)
+        let dodge = attrs.evasion_chance();
+        if dodge > 0.0 && rand::Rng::random_range(&mut rand::rng(), 0.0..1.0) < dodge {
+            return; // Threat evaded — no queue insertion, no combat entry
+        }
+
+        // --- Relative stat contests (SOW-020 Phase 4) ---
+        // Precision vs Toughness: attacker precision (grace) vs defender toughness (vitality)
+        let precision_mod = damage_calc::contest_modifier(source_attrs.precision(), attrs.toughness());
+        // Dominance vs Cunning: attacker dominance (presence) vs defender cunning (instinct)
+        let tempo_mod = damage_calc::contest_modifier(source_attrs.dominance(), attrs.cunning());
+        // Composure vs Impact: defender composure (focus) vs attacker impact (might)
+        let composure_mod = damage_calc::contest_modifier(attrs.composure(), source_attrs.impact());
+
+        // Roll for critical hit (scaled by precision contest)
+        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs, precision_mod);
+
+        // Calculate outgoing damage (Phase 1)
+        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
+        let outgoing_with_crit = outgoing * crit_mult;
+
         // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         let base_timer = queue_utils::calculate_timer_duration(attrs);
         let gap_mult = queue_utils::gap_multiplier(attrs.total_level(), source_attrs.total_level());
-        let timer_duration = base_timer.mul_f32(gap_mult);
+        // Tempo contest scales reaction window: high attacker Presence → shorter window
+        let timer_duration = base_timer.mul_f32(gap_mult).mul_f32(1.0 / tempo_mod);
+
+        // Recovery pushback: high Dominance → more pushback, high Composure → less pushback
+        const BASE_PUSHBACK: f32 = 0.25;
+        let effective_pushback = BASE_PUSHBACK * tempo_mod * (1.0 / composure_mod);
+        if let Some(mut recovery) = recovery_opt {
+            recovery.remaining += effective_pushback;
+        }
 
         let threat = QueuedThreat {
             source: *source,
@@ -61,6 +83,7 @@ pub fn process_deal_damage(
             inserted_at: now,
             timer_duration,
             ability: *ability,
+            precision_mod,
         };
 
         // Try to insert threat into queue
@@ -118,11 +141,12 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // Apply passive modifiers (Phase 2)
+            // Apply passive modifiers (Phase 2), using stored precision contest
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
                 attrs,
                 threat.damage_type,
+                threat.precision_mod,
             );
 
             // Apply damage to health
@@ -206,10 +230,14 @@ pub fn do_nothing(){}
 
 /// System to automatically trigger auto-attacks when adjacent to hostiles (ADR-009)
 /// Runs periodically to check if actors have adjacent hostiles and can auto-attack
-/// Auto-attack cooldown: 1.5s (1500ms)
+/// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)
 pub fn process_passive_auto_attack(
     mut query: Query<
-        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target),
+        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target,
+         Option<&mut crate::common::components::npc_recovery::NpcRecovery>,
+         Option<&crate::common::components::hex_assignment::AssignedHex>,
+         Option<&crate::common::components::recovery::GlobalRecovery>,
+         &ActorAttributes),
         Without<crate::common::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -221,10 +249,8 @@ pub fn process_passive_auto_attack(
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-    const AUTO_ATTACK_COOLDOWN_MS: u64 = 1500; // 1.5 seconds
-
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, global_recovery_opt, attrs) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
@@ -232,9 +258,31 @@ pub fn process_passive_auto_attack(
             }
         }
 
-        // Check cooldown (1.5s between auto-attacks)
+        // Check if in ability recovery lockout (from using Lunge, Overpower, etc.)
+        if let Some(recovery) = global_recovery_opt {
+            if recovery.is_active() {
+                continue; // Skip if still locked out from ability usage
+            }
+        }
+
+        // SOW-018: Check NPC recovery timer (per-archetype cooldown between attacks)
+        if let Some(ref recovery) = npc_recovery_opt {
+            if recovery.is_recovering(now) {
+                continue; // Still in recovery phase
+            }
+        }
+
+        // SOW-018: Check NPC is on assigned hex (if it has one)
+        if let Some(assigned) = assigned_hex_opt {
+            if loc.flat_distance(&crate::common::components::Loc::new(assigned.0)) != 0 {
+                continue; // Not on assigned hex yet
+            }
+        }
+
+        // Check cooldown (tier-based cadence from Presence commitment)
+        let cooldown = attrs.cadence_interval();
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
-        if time_since_last_attack.as_millis() < AUTO_ATTACK_COOLDOWN_MS as u128 {
+        if time_since_last_attack < cooldown {
             continue; // Still on cooldown
         }
 
@@ -254,10 +302,10 @@ pub fn process_passive_auto_attack(
             continue;
         }
 
-        // Check if target is adjacent (distance == 1)
+        // Check if target is within range (same hex or adjacent: distance <= 1)
         let distance = loc.flat_distance(target_loc);
-        if distance == 1 {
-            // Target is adjacent - trigger auto-attack
+        if distance <= 1 {
+            // Target is in range - trigger auto-attack
             writer.write(Try {
                 event: GameEvent::UseAbility {
                     ent,
@@ -268,6 +316,11 @@ pub fn process_passive_auto_attack(
 
             // Update last attack time
             last_auto_attack.last_attack_time = now;
+
+            // SOW-018: Start NPC recovery timer after attacking
+            if let Some(mut recovery) = npc_recovery_opt {
+                recovery.start_recovery(now);
+            }
         }
     }
 }

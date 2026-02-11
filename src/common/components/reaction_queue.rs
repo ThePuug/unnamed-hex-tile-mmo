@@ -26,6 +26,9 @@ pub struct QueuedThreat {
     pub timer_duration: Duration,
     /// Optional ability that caused this threat (for visual effects/telegraphs)
     pub ability: Option<crate::common::message::AbilityType>,
+    /// Precision vs Toughness contest result, stored at insertion for use at resolution.
+    /// 1.0 = neutral, >1.0 = attacker advantage, <1.0 = defender advantage.
+    pub precision_mod: f32,
 }
 
 /// Reaction queue component that holds incoming threats
@@ -82,6 +85,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         assert_eq!(queue.threats.len(), 1);
         assert!(!queue.is_full());
@@ -94,6 +98,7 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         assert_eq!(queue.threats.len(), 2);
         assert!(queue.is_full());

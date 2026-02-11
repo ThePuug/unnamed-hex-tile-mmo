@@ -1,8 +1,10 @@
 # Attribute System - Feature Matrix
 
-**Specification:** [attribute-system.md](attribute-system.md)
-**Last Updated:** 2026-02-09
-**Overall Status:** 2/27 features complete (7% - foundational only)
+> **Note:** This feature matrix tracks the **v2.0 attribute system** (RFC-020: three scaling modes layered on existing bipolar Axis/Spectrum/Shift model, commitment tiers). The existing A/S/S input model is preserved and extended.
+
+**Specification:** [attribute-system.md](attribute-system.md) (v2.0)
+**Last Updated:** 2026-02-10
+**Overall Status:** 12/28 features complete (43% — Phases 1–4 complete)
 
 ---
 
@@ -18,155 +20,157 @@
 
 ## Feature Breakdown
 
-### Core Attribute Pairs
+### Scaling Mode Foundation
 
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Might ↔ Grace pair | 🚧 Partial | Various ADRs | Lines 17-20 | Attributes exist, sliding scale not implemented |
-| Vitality ↔ Focus pair | 🚧 Partial | Various ADRs | Lines 22-25 | Attributes exist, sliding scale not implemented |
-| Instinct ↔ Presence pair | 🚧 Partial | Various ADRs | Lines 27-30 | Attributes exist, sliding scale not implemented |
+| Feature | Status | ADR/Impl | Notes |
+|---------|--------|----------|-------|
+| CommitmentTier enum (T0/T1/T2/T3) | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | 20/40/60% thresholds, max=level×10 (SOW-020 Phase 1) |
+| Attribute formulas (axis×16, spectrum×12) | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Smooth 160→120 progression, shift constraints (SOW-020 Phase 1) |
+| Attribute-Triumvirate decoupling | ❌ Not Started | [ADR-028](../02-adr/028-attribute-triumvirate-decoupling.md) | Remove archetype-attribute mapping (SOW-020 Phase 5) |
 
-**Category Status:** 0/3 complete (partial foundation exists)
-
----
-
-### Derived Stats
-
-**Note:** All derived stats are currently linear. [RFC-017](../01-rfc/017-combat-balance-overhaul.md) / [ADR-020](../02-adr/020-super-linear-level-multiplier.md) proposes super-linear polynomial multiplier applied after existing linear formulas.
-
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Might → Physical Damage | ✅ Complete | [ADR-005](../adr/005-damage-pipeline.md) | Line 40 | Implemented in damage calc. **Planned:** Super-linear multiplier (ADR-020) |
-| Might → Stagger Multiplier | ❌ Not Started | - | Line 40 | Stagger system deferred |
-| Might → Stamina Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 40 | Resource scaling implemented |
-| Grace → Movement Speed | ❌ Not Started | - | Lines 41, 338-347 | Formula defined, not implemented |
-| Grace → Hit Chance | ❌ Not Started | - | Line 41 | Attack accuracy system |
-| Grace → Dodge Recovery | ❌ Not Started | - | Line 41 | Dodge ability not in MVP |
-| Vitality → Health Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 42 | Resource scaling implemented. **Planned:** Super-linear multiplier (ADR-020) |
-| Vitality → Stagger Resist | ⏸️ Deferred | - | Line 42 | Stagger system deferred |
-| Vitality → DoT Resistance | ❌ Not Started | - | Line 42 | Status effects not implemented |
-| Focus → Mana Pool | ✅ Complete | [ADR-002](../adr/002-combat-foundation.md) | Line 43 | Resource scaling implemented. **Planned:** Queue capacity via commitment ratio (ADR-021) |
-| Focus → Magic Damage | 🚧 Partial | [ADR-005](../adr/005-damage-pipeline.md) | Line 43 | Formula exists, no magic abilities |
-| Focus → Resist Recovery | ❌ Not Started | - | Line 43 | Recovery mechanics |
-| Instinct → Crit Chance | ⏸️ Deferred | - | Line 44 | Crit system deferred |
-| Instinct → Physical Penetration | ❌ Not Started | - | Line 44 | Armor penetration |
-| Instinct → Parry Recovery | ⏸️ Deferred | - | Line 44 | Parry ability post-MVP |
-| Presence → Threat Generation | ❌ Not Started | - | Line 45 | Aggro/threat system |
-| Presence → AoE Multiplier | ❌ Not Started | - | Line 45 | AoE abilities post-MVP |
-| Presence → CC Duration | ❌ Not Started | - | Line 45 | Crowd control system |
-
-**Category Status:** 4/18 complete (22%)
+**Category Status:** 2/3 complete (67%)
 
 ---
 
-### Axis & Spectrum Mechanics
+### Absolute Stats (Progression)
 
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Axis (permanent center) | ❌ Not Started | - | Lines 66-69 | Core progression mechanic |
-| Spectrum (adjustment range) | ❌ Not Started | - | Lines 71-74 | Tactical flexibility |
-| Shift (current adjustment) | ❌ Not Started | - | Lines 76-78 | Pre-encounter positioning |
-| Position calculation formulas | ❌ Not Started | - | Lines 80-100 | Left/right reach math |
-| Scrollbar UI visualization | ❌ Not Started | - | Lines 108-134 | Visual metaphor |
+| Feature | Status | ADR/Impl | Notes |
+|---------|--------|----------|-------|
+| Force (Might absolute) → Damage | 🚧 Partial | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | Damage exists, uses might() scaling |
+| Constitution (Vitality absolute) → HP | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | max_health() uses vitality() with shift sensitivity (SOW-020 Phase 2) |
+| Technique (Grace absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Discipline (Focus absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Intuition (Instinct absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Gravitas (Presence absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Super-linear level multiplier | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | Polynomial multiplier implemented |
 
-**Category Status:** 0/5 complete (0%)
-
----
-
-### Progression Systems
-
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Starting position (all 0) | ❌ Not Started | - | Lines 140-148 | New player state |
-| Level 1-50 investment | ❌ Not Started | - | Lines 152-194 | +2% Axis OR +1% Spectrum per level |
-| Prestige redistribution | ❌ Not Started | - | Lines 198-242 | Level 51+ respec actions |
-| Prestige banking | ❌ Not Started | - | Line 219 | Limited banking (TBD amount) |
-
-**Category Status:** 0/4 complete (0%)
+**Category Status:** 2/7 complete (29%) — HP rewired via Phase 2, damage partially rewired
 
 ---
 
-### Advanced Mechanics
+### Relative Stats (Build Benefit)
 
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Overclock (>100%) | ⏸️ Deferred | - | Lines 246-258 | Risk/reward for extreme values |
-| Reach skills (max stat) | ❌ Not Started | - | Lines 318-329 | Ultimate abilities scale from reach |
+| Feature | Status | ADR/Impl | Notes |
+|---------|--------|----------|-------|
+| Precision (Grace) vs Toughness (Vitality) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Crit chance × precision_mod, mitigation × 1/precision_mod (SOW-020 Phase 4) |
+| Impact (Might) vs Composure (Focus) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Impact passively increases pushback; Composure reduces it (SOW-020 Phase 4) |
+| Dominance (Presence) vs Cunning (Instinct) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Reaction window × 1/tempo_mod, recovery pushback × tempo_mod (SOW-020 Phase 4) |
+| Contest resolution function | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | contest_modifier(): clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4) |
 
-**Category Status:** 0/2 complete (0%)
+**Category Status:** 4/4 complete (100%)
 
 ---
 
-### Triumvirate Integration
+### Commitment Stats (Build Identity)
 
-| Feature | Status | ADR/Impl | Spec Reference | Notes |
-|---------|--------|----------|----------------|-------|
-| Approach attribute leanings | ❌ Not Started | - | Lines 268-278 | Primary/secondary/tertiary |
-| Resilience attribute leanings | ❌ Not Started | - | Lines 282-290 | Primary/secondary/tertiary |
-| Signature skill scaling | 🚧 Partial | [ADR-009](../adr/009-mvp-ability-set.md) | Lines 303-315 | MVP abilities scale, but no axis/spectrum |
+| Feature | Status | ADR/Impl | Notes |
+|---------|--------|----------|-------|
+| Poise (Grace commitment) → Evasion | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | evasion_chance() — T0→0%, T1→10%, T2→20%, T3→30% (SOW-020 Phase 3) |
+| Concentration (Focus commitment) → Queue capacity | ✅ Complete | [ADR-021](../02-adr/021-commitment-ratio-queue-capacity.md), [ADR-027](../02-adr/027-commitment-tiers.md) | calculate_queue_capacity() uses commitment tier (SOW-020 Phase 3) |
+| Intensity (Presence commitment) → Cadence | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | cadence_interval() — T0→2s, T1→1.5s, T2→1s, T3→750ms (SOW-020 Phase 3) |
+| Ferocity (Might commitment) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Grit (Vitality commitment) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Flow (Instinct commitment) | ❌ Not Started | — | Open — no concrete stat mapped |
 
-**Category Status:** 0/3 complete (0%)
+**Category Status:** 3/6 complete (50%)
+
+---
+
+### Combat System Integration
+
+| Feature | Status | ADR/Impl | Notes |
+|---------|--------|----------|-------|
+| Queue capacity via Concentration tier | ✅ Complete | [ADR-021](../02-adr/021-commitment-ratio-queue-capacity.md) | Migrated to commitment tier (SOW-020 Phase 3) |
+| Reaction window via Cunning vs Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | timer_duration × 1/tempo_mod (SOW-020 Phase 4) |
+| Recovery pushback via Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | BASE_PUSHBACK (250ms) × tempo_mod per threat (SOW-020 Phase 4) |
+| Recovery reduction via Composure | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Pushback × 1/composure_mod (SOW-020 Phase 4) |
+| Crit via Precision vs Toughness | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | crit_chance × precision_mod (SOW-020 Phase 4) |
+| Cadence via Intensity tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Replaces fixed 1500ms cooldown (SOW-020 Phase 3) |
+| Evasion via Poise tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Grace tier dodge at threat insertion (SOW-020 Phase 3) |
+| Dismiss + Precision/Toughness | 🚧 Partial | [ADR-022](../02-adr/022-dismiss-mechanic.md), [ADR-029](../02-adr/029-relative-stat-contests.md) | precision_mod stored in QueuedThreat, available at resolution; dismiss mechanic not yet implemented |
+| Movement speed via Grace | ✅ Complete | Various | Grace-based movement speed formula exists |
+
+**Category Status:** 8/9 complete (89%)
 
 ---
 
 ## Implementation Deviations
 
-Currently no deviations - system is mostly unimplemented. MVP combat uses **simplified fixed attributes** rather than the full Axis/Spectrum/Shift system.
+### v1.0 → v2.0 Extension
+
+The v2.0 system **extends** the v1.0 bipolar model by layering three scaling modes on top. The following v1.0 features are **preserved**:
+
+- Bipolar attribute pairs (Might ↔ Grace, Vitality ↔ Focus, Instinct ↔ Presence) — retained as input model
+- Axis/Spectrum/Shift mechanics — retained; derived values feed scaling modes
+- Character panel with shift drag — retained unchanged
+
+The following v1.0 features are **superseded** or deferred:
+
+- Approach/Resilience attribute leanings — superseded by decoupling (ADR-028)
+- Prestige redistribution system — deferred to future RFC
+- Overclock mechanic — deferred to future RFC
+- 18-stat derived stat table — replaced by three scaling modes with named sub-attributes
 
 ---
 
 ## Spec Gaps
 
-Features described in spec but not yet in implementation plan:
-
 ### Critical for Full Combat System
-- **Axis/Spectrum/Shift Core Mechanics:** Entire sliding scale system (Lines 62-134)
-- **Level 1-50 Investment System:** Attribute point progression (Lines 152-194)
-- **Scrollbar UI:** Visual representation of attributes (Lines 108-134)
+- ~~**Relative Stat Contest Framework:** Three opposing pairs (SOW-020 Phase 4)~~ ✅ Complete
 
 ### Medium Priority
-- **Derived Stat Implementations:** Movement speed, hit chance, threat, etc. (Lines 338-349)
-- **Triumvirate Attribute Integration:** Approach/Resilience leanings (Lines 262-329)
-- **Prestige Redistribution:** Respec system for level 51+ (Lines 198-242)
+- **Absolute Stat Rewiring:** Force (damage) still partial — needs full rewiring (SOW-020 Phase 2 remainder)
+- **Decoupling Migration:** Remove archetype-attribute coupling (SOW-020 Phase 5)
 
 ### Low Priority (Post-Launch)
-- **Overclock Mechanics:** Risk/reward for >100% attributes (Lines 246-258)
-- **Reach Skills:** Ultimate abilities using max potential (Lines 318-329)
-- **Prestige Banking:** Limited respec point storage (Line 219)
+- **Open Stats:** Technique, Discipline, Intuition, Gravitas, Impact, Ferocity, Grit, Flow
+- **Equipment Attribute Modifiers:** Separate RFC
+- **Commitment Tier Tuning:** Specific values for Poise/Intensity breakpoints
 
 ---
 
 ## Progress Summary
 
-**Foundation (Basic Attributes):** 4/18 derived stats implemented (22%)
-- Resource pools (stamina, health, mana): ✅ Complete
-- Damage scaling (physical, magic): ✅ Complete
-- All other derived stats: ❌ Not Started
+**Scaling Mode Foundation:** 2/3 features (67%)
+- CommitmentTier + total_budget complete (SOW-020 Phase 1)
+- Decoupling remains (Phase 5)
 
-**Core System (Axis/Spectrum/Shift):** 0/12 features implemented (0%)
-- Entire sliding scale system not yet built
+**Absolute Stats:** 2/7 features (29%)
+- Level multiplier implemented (ADR-020)
+- HP rewired to vitality() with shift sensitivity (SOW-020 Phase 2)
+- Damage partially rewired
 
-**Progression (Leveling/Prestige):** 0/4 features implemented (0%)
-- No attribute progression system exists
+**Relative Stats:** 4/4 features (100%)
+- Contest resolution function: clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4)
+- Precision vs Toughness: crit chance and mitigation scaling (SOW-020 Phase 4)
+- Dominance vs Cunning: reaction window and recovery pushback (SOW-020 Phase 4)
+- Impact vs Composure: recovery pushback reduction (SOW-020 Phase 4)
 
-**Total Attribute System:** 4/37 features complete (11%)
+**Commitment Stats:** 3/6 features (50%)
+- Queue capacity via Focus tier (SOW-020 Phase 3)
+- Cadence via Presence tier (SOW-020 Phase 3)
+- Evasion via Grace tier (SOW-020 Phase 3)
+
+**Combat Integration:** 8/9 features (89%)
+- Movement speed, queue capacity, cadence, evasion, reaction window, recovery pushback, recovery reduction, crit all wired
+- Dismiss + Precision/Toughness partial (precision_mod stored, dismiss mechanic not yet implemented)
+
+**Total Attribute System (v2.0):** 12/28 features complete (43% — through Phase 4, open stats deferred)
 
 ---
 
 ## Next Priorities
 
-Based on combat system dependencies and player value:
+Based on SOW-020 phase ordering (Phases 1–4 complete):
 
-1. **Combat Balance Overhaul (RFC-017)** - Super-linear scaling, commitment-ratio queue, reaction window gap, dismiss mechanic — required for meaningful multi-enemy balance
-2. **Implement Axis/Spectrum/Shift Core** - Foundation for entire system
-3. **Scrollbar UI Prototype** - Make system understandable to players
-4. **Level 1-50 Investment** - Allow progression and build diversity
-5. **Movement Speed (Grace)** - Immediate tactical impact
-6. **Threat Generation (Presence)** - Required for PvE tanking
-7. **Critical Hit System (Instinct)** - Adds build variety and excitement
+1. ~~**Phase 1: Scaling Mode Foundation**~~ ✅
+2. ~~**Phase 2: Absolute Stats**~~ ✅ (HP rewired; damage partial)
+3. ~~**Phase 3: Commitment Stats**~~ ✅ (queue capacity, cadence, evasion)
+4. ~~**Phase 4: Relative Contests**~~ ✅ (all 3 pairs + contest function)
+5. **Phase 5: Decoupling** — Remove archetype coupling, migrate NPCs, cleanup
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0
 **Maintained By:** Development team
-**Review Cadence:** Update after each ADR acceptance or spec change
+**Review Cadence:** Update after each SOW-020 phase completion

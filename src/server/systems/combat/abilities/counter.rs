@@ -186,6 +186,7 @@ pub fn handle_counter(
                 inserted_at: now,
                 timer_duration,
                 ability: Some(AbilityType::Counter),
+                precision_mod: 1.0, // Reflected damage uses neutral contest
             };
 
             // Add to back of target's queue (newest threat)

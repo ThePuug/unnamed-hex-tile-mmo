@@ -20,7 +20,6 @@ use crate::{ common::{
         plugins::nntree::*,
         resources::*,
         systems::combat::{
-            queue as queue_calcs,
             resources as resource_calcs,
         },
     }, *
@@ -73,14 +72,15 @@ pub fn do_manage_connections(
                     ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // Level 10: Full spectrum distribution (3+4+3=10 points)
-                // Balanced axis (0) allows players to shift in any direction for skill balance testing
-                // Focus spectrum = 4 provides 40% investment ratio → 2 queue slots
-                // New system: raw investment counts (axis ×10, spectrum ×7 for reach)
+                // Level 10: Flex build (2/3/0 + 2/3/0) - test shift flexibility
+                // At shift=0: 2×T3 (68% each on grace+focus)
+                // Can shift to redistribute: T3→T2/T1 or T2→T1/T1
+                // M/G: 2 grace axis + 3 spectrum → grace=68 (T3), might=0 (can shift to 36)
+                // V/F: 2 focus axis + 3 spectrum → focus=68 (T3), vitality=0 (can shift to 36)
                 let attrs = ActorAttributes::new(
-                    0, 3, 0,       // might_grace: 0 axis, 3 spectrum, 0 shift
-                    0, 4, 0,       // vitality_focus: 0 axis, 4 spectrum, 0 shift
-                    0, 3, 0,       // instinct_presence: 0 axis, 3 spectrum, 0 shift
+                    2, 3, 0,       // might_grace: 2 axis (grace), 3 spectrum, 0 shift
+                    2, 3, 0,       // vitality_focus: 2 axis (focus), 3 spectrum, 0 shift
+                    0, 0, 0,       // instinct_presence: no investment
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
@@ -113,7 +113,7 @@ pub fn do_manage_connections(
                     last_action: time.elapsed(),
                 };
                 // Initialize reaction queue with capacity based on Focus attribute
-                let queue_capacity = queue_calcs::calculate_queue_capacity(&attrs);
+                let queue_capacity = attrs.queue_capacity();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 let ent = commands.spawn((

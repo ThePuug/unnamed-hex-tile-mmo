@@ -14,6 +14,7 @@ impl Plugin for BehaviourPlugin {
         app.add_systems(
             FixedUpdate,
             (
+                crate::server::systems::behaviour::hex_assignment::assign_hexes,
                 crate::server::systems::behaviour::chase::chase,
                 crate::server::systems::behaviour::kite::kite,
             )

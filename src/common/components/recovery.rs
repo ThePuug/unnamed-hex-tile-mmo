@@ -61,13 +61,13 @@ impl SynergyUnlock {
 /// These are MVP values from ADR-012
 pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
     match ability {
-        AbilityType::Lunge => 1.0,      // Gap closer: 1s lockout
-        AbilityType::Overpower => 2.0,  // Heavy strike: 2s lockout
-        AbilityType::Knockback => 0.5,  // Push: 0.5s lockout
+        AbilityType::Lunge => 2.0,      // Gap closer: 2s lockout
+        AbilityType::Overpower => 3.0,  // Heavy strike: 3s lockout
+        AbilityType::Knockback => 1.0,  // Push: 1s lockout
         AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
-        AbilityType::Volley => 3.0,     // NPC ranged: 3s lockout
-        AbilityType::Counter => 1.2,    // ADR-014: Counter-attack: 1.2s lockout
+        AbilityType::Volley => 4.0,     // NPC ranged: 4s lockout
+        AbilityType::Counter => 1.5,    // ADR-014: Counter-attack: 1.5s lockout
     }
 }
 
@@ -210,13 +210,14 @@ mod tests {
 
     #[test]
     fn test_ability_recovery_durations() {
-        // MVP values from ADR-012
-        assert_eq!(get_ability_recovery_duration(AbilityType::Lunge), 1.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Overpower), 2.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Knockback), 0.5);
+        // Updated values for slower combat pace
+        assert_eq!(get_ability_recovery_duration(AbilityType::Lunge), 2.0);
+        assert_eq!(get_ability_recovery_duration(AbilityType::Overpower), 3.0);
+        assert_eq!(get_ability_recovery_duration(AbilityType::Knockback), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Deflect), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
-        assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 3.0);
+        assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 4.0);
+        assert_eq!(get_ability_recovery_duration(AbilityType::Counter), 1.5);
     }
 
     // ===== Integration Tests =====

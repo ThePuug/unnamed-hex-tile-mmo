@@ -7,42 +7,6 @@ use std::time::Duration;
 #[cfg(test)]
 use crate::common::components::reaction_queue::DamageType;
 
-/// Calculate queue capacity based on Focus reach investment ratio
-///
-/// Formula: Slots based on investment ratio (focus_reach / max_efficient_reach)
-/// - Max efficient reach = total_level × 7 (all points to spectrum)
-/// - < 33% investment: 1 slot
-/// - 33-49% investment: 2 slots (base)
-/// - 50-65% investment: 3 slots
-/// - 66%+ investment: 4 slots
-///
-/// Examples at level 9:
-/// - 3 spectrum (21 reach / 63 max = 33.3%): 2 slots
-/// - 5 spectrum (35 reach / 63 max = 55.6%): 3 slots
-/// - 6 spectrum (42 reach / 63 max = 66.7%): 4 slots
-pub fn calculate_queue_capacity(attrs: &ActorAttributes) -> usize {
-    let focus_reach = attrs.focus_reach() as f32;
-    let total_level = attrs.total_level() as f32;
-
-    if total_level == 0.0 {
-        return 1; // No investment = minimum slots
-    }
-
-    // Max efficient reach if all points went to spectrum
-    let max_efficient_reach = total_level * 7.0;
-    let investment_ratio = focus_reach / max_efficient_reach;
-
-    if investment_ratio < 0.33 {
-        1  // Below minimum investment
-    } else if investment_ratio < 0.50 {
-        2  // Base capacity (33-49% investment)
-    } else if investment_ratio < 0.66 {
-        3  // +1 slot (50-65% investment)
-    } else {
-        4  // +2 slots (66%+ investment)
-    }
-}
-
 /// Calculate timer duration based on Instinct attribute and level multiplier (ADR-020)
 /// Linear formula: base_window * (1.0 + instinct / 1000.0)
 /// Then scaled by reaction_level_multiplier for super-linear growth
@@ -140,41 +104,117 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
 mod tests {
     use super::*;
 
-    // Helper to create test attributes
-    fn create_test_attrs(focus_axis: i8, instinct_axis: i8) -> ActorAttributes {
-        ActorAttributes::new(
-            0, 0, 0,          // might_grace: axis, spectrum, shift
-            focus_axis, 0, 0, // vitality_focus: axis, spectrum, shift
-            instinct_axis, 0, 0, // instinct_presence: axis, spectrum, shift
-        )
+    #[test]
+    fn test_queue_capacity_zero_investment() {
+        // No investment → total_budget=0 → T0 → 1 slot
+        let attrs = ActorAttributes::default();
+        assert_eq!(attrs.queue_capacity(), 1);
     }
 
     #[test]
-    fn test_calculate_queue_capacity_zero_focus() {
-        // Focus = 0 (axis on vitality side) should give 1 slot (base=1, bonus=0)
-        let attrs = create_test_attrs(-100, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 1);
+    fn test_queue_capacity_full_focus_commitment() {
+        // All investment in focus → focus/total_budget = 100% → T3 → 4 slots
+        let attrs = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        assert_eq!(attrs.queue_capacity(), 4);
     }
 
     #[test]
-    fn test_calculate_queue_capacity_low_focus() {
-        // Focus = 33 (axis = 33 on focus side) should give 2 slots (base=1, bonus=1)
-        let attrs = create_test_attrs(33, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 2);
+    fn test_queue_capacity_tier_boundaries() {
+        // Use CommitmentTier thresholds: T0 <30%, T1 ≥30%, T2 ≥45%, T3 ≥60%
+        // total_budget = sum of all 6 derived values
+
+        // 29% → T0 → 1 slot
+        // might=-6 (might=60), focus=3 (focus=30) → budget=90, focus/budget=33% → T1
+        // Need <30%: might=-7 (70), focus=2 (20) → budget=90, 20/90=22% → T0
+        let t0 = ActorAttributes::new(-7, 0, 0, 2, 0, 0, 0, 0, 0);
+        assert_eq!(t0.queue_capacity(), 1, "T0 should give 1 slot");
+
+        // 30% → T1 → 2 slots
+        // might=-6 (60), focus=3 (30) → budget=90, 30/90=33% → T1
+        let t1 = ActorAttributes::new(-6, 0, 0, 3, 0, 0, 0, 0, 0);
+        assert_eq!(t1.queue_capacity(), 2, "T1 should give 2 slots");
+
+        // 45% → T2 → 3 slots
+        // might=-5 (50), focus=5 (50) → budget=100, 50/100=50% → T2
+        let t2 = ActorAttributes::new(-5, 0, 0, 5, 0, 0, 0, 0, 0);
+        assert_eq!(t2.queue_capacity(), 3, "T2 should give 3 slots");
+
+        // 60% → T3 → 4 slots
+        // might=-3 (30), focus=6 (60) → budget=90, 60/90=67% → T3
+        let t3 = ActorAttributes::new(-3, 0, 0, 6, 0, 0, 0, 0, 0);
+        assert_eq!(t3.queue_capacity(), 4, "T3 should give 4 slots");
+    }
+
+    // ===== CADENCE INTERVAL TESTS =====
+
+    #[test]
+    fn test_cadence_interval_tiers() {
+        // All builds use 10 points total so max_possible = 100
+
+        // T0: no presence investment → 3000ms
+        let t0 = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0); // 10 in might, 0 in presence
+        assert_eq!(t0.cadence_interval(), Duration::from_millis(3000));
+
+        // T1: presence 30-44% → 2500ms
+        // 7 might + 3 presence: presence=30, max=100 → 30% → T1
+        let t1 = ActorAttributes::new(-7, 0, 0, 0, 0, 0, 3, 0, 0);
+        assert_eq!(t1.cadence_interval(), Duration::from_millis(2500));
+
+        // T2: presence 45-60% → 2000ms
+        // 5 might + 5 presence: presence=50, max=100 → 50% → T2
+        let t2 = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0);
+        assert_eq!(t2.cadence_interval(), Duration::from_millis(2000));
+
+        // T3: presence >60% → 1500ms
+        // 3 might + 7 presence: presence=70, max=100 → 70% → T3
+        let t3 = ActorAttributes::new(-3, 0, 0, 0, 0, 0, 7, 0, 0);
+        assert_eq!(t3.cadence_interval(), Duration::from_millis(1500));
     }
 
     #[test]
-    fn test_calculate_queue_capacity_mid_focus() {
-        // Focus = 66 (axis = 66 on focus side) should give 3 slots (base=1, bonus=2)
-        let attrs = create_test_attrs(66, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 3);
+    fn test_cadence_monotonically_decreasing() {
+        // Higher tier → shorter interval
+        let t0 = ActorAttributes::default().cadence_interval();
+        let t1 = ActorAttributes::new(-6, 0, 0, 0, 0, 0, 3, 0, 0).cadence_interval();
+        let t2 = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0).cadence_interval();
+        let t3 = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0).cadence_interval();
+        assert!(t0 > t1, "T0 should be slower than T1");
+        assert!(t1 > t2, "T1 should be slower than T2");
+        assert!(t2 > t3, "T2 should be slower than T3");
+    }
+
+    // ===== EVASION CHANCE TESTS =====
+
+    #[test]
+    fn test_evasion_chance_tiers() {
+        // T0: no grace investment → 0%
+        let t0 = ActorAttributes::default();
+        assert_eq!(t0.evasion_chance(), 0.0);
+
+        // T1: grace ~33% of budget → 10%
+        // vitality=-6 (60), grace=3 (30) → budget=90, 30/90=33% → T1
+        let t1 = ActorAttributes::new(3, 0, 0, -6, 0, 0, 0, 0, 0);
+        assert_eq!(t1.evasion_chance(), 0.10);
+
+        // T2: grace ~50% of budget → 20%
+        let t2 = ActorAttributes::new(5, 0, 0, -5, 0, 0, 0, 0, 0);
+        assert_eq!(t2.evasion_chance(), 0.20);
+
+        // T3: grace 100% of budget → 30%
+        let t3 = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(t3.evasion_chance(), 0.30);
     }
 
     #[test]
-    fn test_calculate_queue_capacity_high_focus() {
-        // Focus = 100 (axis = 100 on focus side) should give 4 slots (base=1, bonus=3)
-        let attrs = create_test_attrs(100, 0);
-        assert_eq!(calculate_queue_capacity(&attrs), 4);
+    fn test_evasion_monotonically_increasing() {
+        // Higher tier → higher dodge chance
+        let t0 = ActorAttributes::default().evasion_chance();
+        let t1 = ActorAttributes::new(3, 0, 0, -6, 0, 0, 0, 0, 0).evasion_chance();
+        let t2 = ActorAttributes::new(5, 0, 0, -5, 0, 0, 0, 0, 0).evasion_chance();
+        let t3 = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0).evasion_chance();
+        assert!(t0 < t1, "T0 should have less evasion than T1");
+        assert!(t1 < t2, "T1 should have less evasion than T2");
+        assert!(t2 < t3, "T2 should have less evasion than T3");
     }
 
     #[test]
@@ -256,6 +296,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         // Insert into empty queue - should not overflow
@@ -277,6 +318,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
         let threat2 = QueuedThreat {
             source: entity,
@@ -285,6 +327,7 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
@@ -300,6 +343,7 @@ mod tests {
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         let overflow = insert_threat(&mut queue, threat3.clone(), Duration::from_secs(2));
@@ -322,6 +366,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat);
@@ -344,6 +389,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat.clone());
@@ -368,6 +414,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         // Threat 2: inserted at 0.5s, expires at 1.5s
@@ -378,6 +425,7 @@ mod tests {
             inserted_at: Duration::from_millis(500),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         };
 
         queue.threats.push_back(threat1);
@@ -407,6 +455,7 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+                precision_mod: 1.0,
             });
         }
 
@@ -432,6 +481,7 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+                precision_mod: 1.0,
             });
         }
 
@@ -457,6 +507,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -465,6 +516,7 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -473,6 +525,7 @@ mod tests {
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
         queue.threats.push_back(QueuedThreat {
             source: entity,
@@ -481,6 +534,7 @@ mod tests {
             inserted_at: Duration::from_secs(3),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            precision_mod: 1.0,
         });
 
         assert_eq!(queue.threats.len(), 4);

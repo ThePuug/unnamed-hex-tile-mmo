@@ -102,6 +102,8 @@ Combined NPC damage: 60/tick vs player's 566 HP. Player has ~9.4 ticks of surviv
 
 ## System 2: Queue Capacity by Commitment Ratio
 
+> **Note:** This formula is being generalized by [RFC-020: Attribute System Rework](../01-rfc/020-attribute-system-rework.md) into a unified commitment tier system ([ADR-027](../02-adr/027-commitment-tiers.md)). The threshold concept and slot mapping are preserved, but the input changes from `focus_reach / (total_level × 7)` to `commitment_tier(focus, total_budget)` with thresholds at 30/45/60%.
+
 ### Formula
 
 ```

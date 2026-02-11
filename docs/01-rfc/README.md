@@ -24,6 +24,8 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 | 016 | Movement System Rewrite | 🌐 Network | ✅ Approved | 2025-02-08 | Yes (ADR-019) |
 | 017 | Combat Balance Overhaul | ⚔️ Combat | ✅ Implemented | 2026-02-09 | Yes (ADR-020/021/022) |
 | 018 | NPC Engagement Coordination | 🤖 AI | 📝 Draft | 2026-02-09 | Yes (ADR-023/024) |
+| 019 | Combat Feedback Enhancements | ⚔️ Combat | ✅ Implemented | 2026-02-09 | Yes (ADR-025) |
+| 020 | Attribute System Rework | 📊 Progression | 📝 Draft | 2026-02-10 | Yes (ADR-026/027/028/029) |
 
 **Legend:**
 - **Status:** ✅ Implemented (merged to main) | ✅ Approved (ready for implementation) | 🔄 Under Review | 📝 Draft/Proposed

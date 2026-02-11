@@ -19,6 +19,8 @@ use crate::{
             },
             gcd::Gcd,
             heading::Heading,
+            hex_assignment::HexAssignment,
+            npc_recovery::NpcRecovery,
             position::Position,
             reaction_queue::ReactionQueue,
             resources::{CombatState, Health, Mana, Stamina},
@@ -30,7 +32,7 @@ use crate::{
             calculate_enemy_attributes, calculate_enemy_level, get_directional_zone,
             EnemyArchetype, HAVEN_LOCATION,
         },
-        systems::combat::{queue as queue_calcs, resources as resource_calcs},
+        systems::combat::resources as resource_calcs,
     },
     server::resources::engagement_budget::EngagementBudget,
 };
@@ -180,6 +182,7 @@ fn spawn_engagement_at(
             engagement.clone(),
             Loc::new(location),
             LastPlayerProximity::new(time.elapsed()),
+            HexAssignment::default(),  // SOW-018: Hex assignment tracking
         ))
         .id();
 
@@ -240,7 +243,7 @@ fn spawn_engagement_at(
         };
 
         // Initialize reaction queue with capacity based on Focus attribute
-        let queue_capacity = queue_calcs::calculate_queue_capacity(&attributes);
+        let queue_capacity = attributes.queue_capacity();
         let reaction_queue = ReactionQueue::new(queue_capacity);
 
         // Spawn NPC entity (will be discovered when player gets near)
@@ -275,6 +278,7 @@ fn spawn_engagement_at(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
+                    NpcRecovery::for_archetype(archetype),  // SOW-018: Per-archetype recovery timer
                     crate::common::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
                     Position::at_tile(npc_location),

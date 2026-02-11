@@ -8,6 +8,7 @@ use crate::common::{
 /// Handle Volley ability (NPC ranged attack)
 /// - NPC-only ability (typically used by Kite behavior)
 /// - Ranged attack (optimal 5-8 hex range)
+/// - Base damage from Force meta-attribute (scales with might + level)
 /// - No stamina cost, cooldown tracked in Kite component
 /// - Attacks single hostile target
 pub fn handle_volley(
@@ -15,6 +16,7 @@ pub fn handle_volley(
     mut reader: MessageReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
     mut writer: MessageWriter<Do>,
@@ -119,13 +121,16 @@ pub fn handle_volley(
         };
 
         // Send DealDamage event for this target
-        // Volley: 20 damage, Physical type
+        // Base damage from Force meta-attribute (same as Lunge)
+        let attrs = attrs_query.get(*ent).expect("Volley caster must have ActorAttributes");
+        let base_damage = attrs.force();
+
         commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
                     target,
-                    base_damage: 20.0,
+                    base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Volley),
                 },
