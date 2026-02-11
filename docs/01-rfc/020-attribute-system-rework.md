@@ -56,9 +56,9 @@ Players should experience:
 - Lower-level player with heavy investment can win relative contests against higher-level player who neglected opposing stat
 
 **Commitment (Build Identity):**
-- Percentage of total budget invested in attribute
-- Discrete tiers: T0 (<30%), T1 (30%), T2 (45%), T3 (60%)
-- Budget math forces hard choices: T3+T1 = 90%, dual T2 = 90%, triple T1 = 90%
+- Percentage of maximum possible for that attribute (total_level × 10)
+- Discrete tiers: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%)
+- Budget math forces hard choices: T3+T3 = dual T3 at 60% each, T3+T2+T1 possible with multi-pair
 - Does not scale with level — permanent statement of identity
 - Concrete stats: Poise (evasion), Concentration (queue capacity), Intensity (cadence)
 
@@ -133,19 +133,31 @@ Commitment = tier_from_percentage(derived_value / total_budget)
 
 ```
 tier(percentage) = match percentage {
-    p if p >= 0.60 => Tier3,
-    p if p >= 0.45 => Tier2,
-    p if p >= 0.30 => Tier1,
+    p if p >= 60.0 => Tier3,
+    p if p >= 40.0 => Tier2,
+    p if p >= 20.0 => Tier1,
     _ => Tier0,
 }
+
+where percentage = (derived_value / (total_level × 10)) × 100
 ```
 
-Budget constraint analysis:
-- T3 + T1 = 60% + 30% = 90% → viable (10% spare)
-- T2 + T2 = 45% + 45% = 90% → viable (10% spare)
-- T1 + T1 + T1 = 30% + 30% + 30% = 90% → viable (10% spare)
-- T3 + T2 = 60% + 45% = 105% → impossible
-- T1 × 4 = 120% → impossible
+**Attribute Scaling Formulas:**
+- **Axis**: ×16 (specialist investment)
+- **Spectrum**: ×12 (flexible investment)
+- **Shift**: ×12 (redistributes spectrum between sides)
+- **Axis=0 edge case**: ×6 (half spectrum bonus, no shift allowed)
+
+**Formula by axis direction:**
+- **Axis side**: axis×16 + spectrum×12 ± shift×12
+- **Opposite side**: ±shift×12 only (starts at 0)
+- **Balanced (axis=0)**: spectrum×6 on each side (no shift)
+
+Build constraint analysis:
+- Dual T3 (5+5 axis): 80+80 = 160 total → viable
+- T3+T2+T1 (4+3+3 axis): 64+48+48 = 160 total → viable
+- 4×T2 (0/5/0 + 0/5/0 spectrum): 30×4 = 120 total → not achievable with thresholds
+- 6×T1 (full spectrum spread): dilutes below T1 → not achievable
 
 **Relative Stat Contests:**
 

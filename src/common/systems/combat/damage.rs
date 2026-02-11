@@ -30,19 +30,17 @@ pub fn contest_modifier(attacker_stat: u16, defender_stat: u16) -> f32 {
 
 /// Calculate outgoing damage based on attacker's attributes
 ///
-/// Formula (from combat-system.md spec):
-/// - Physical: damage = base * (1 + might/33)
-/// - Magic: damage = base * (1 + focus/33)
-///
-/// Scaling: 20 might = 1.6x, 50 might = 2.5x, 100 might = 4.0x
+/// Since SOW-020 Phase 4, base_damage from abilities comes from meta-attributes
+/// (e.g., force()) which already include attribute scaling and level multipliers.
+/// This function now serves as a pass-through for future expansion (e.g., gear bonuses).
 ///
 /// # Arguments
-/// * `base_damage` - Base damage from ability
-/// * `attrs` - Attacker's attributes
-/// * `damage_type` - Physical or Magic
+/// * `base_damage` - Base damage from ability (already scaled by meta-attributes)
+/// * `attrs` - Attacker's attributes (currently unused, kept for future expansion)
+/// * `damage_type` - Physical or Magic (currently unused, kept for future expansion)
 ///
 /// # Returns
-/// Scaled damage before mitigation
+/// Base damage without additional scaling
 ///
 /// # Example
 /// ```
@@ -51,17 +49,14 @@ pub fn contest_modifier(attacker_stat: u16, defender_stat: u16) -> f32 {
 /// ```
 pub fn calculate_outgoing_damage(
     base_damage: f32,
-    attrs: &ActorAttributes,
-    damage_type: DamageType,
+    _attrs: &ActorAttributes,
+    _damage_type: DamageType,
 ) -> f32 {
-    let scaling_attribute = match damage_type {
-        DamageType::Physical => attrs.might() as f32,
-        DamageType::Magic => attrs.focus() as f32,
-    };
-
-    // Linear scaling from attributes, then super-linear level multiplier (ADR-020)
-    let linear = base_damage * (1.0 + scaling_attribute / 165.0);
-    linear * attrs.damage_level_multiplier()
+    // Base damage from meta-attributes (like force()) already includes:
+    // - Attribute scaling (might, focus, etc.)
+    // - Level multipliers
+    // No additional scaling needed to avoid double-application
+    base_damage
 }
 
 /// Roll for critical hit and calculate multiplier

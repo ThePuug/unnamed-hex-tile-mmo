@@ -4,24 +4,16 @@ use crate::common::{
     message::{Component as MessageComponent, Event, *},
 };
 
-/// Calculate maximum stamina from actor attributes (ADR-020: level multiplier applied)
-/// Linear formula: 100 + (might * 0.2) + (vitality * 0.06)
-/// Then multiplied by hp_level_multiplier for super-linear scaling
-pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
-    let might = attrs.might() as f32;
-    let vitality = attrs.vitality() as f32;
-    let linear = 100.0 + (might * 0.2) + (vitality * 0.06);
-    linear * attrs.hp_level_multiplier()
+/// Calculate maximum stamina from actor attributes
+/// Fixed at 100 until we determine which attributes should scale it
+pub fn calculate_max_stamina(_attrs: &ActorAttributes) -> f32 {
+    100.0
 }
 
-/// Calculate maximum mana from actor attributes (ADR-020: level multiplier applied)
-/// Linear formula: 100 + (focus * 0.1) + (presence * 0.06)
-/// Then multiplied by hp_level_multiplier for super-linear scaling
-pub fn calculate_max_mana(attrs: &ActorAttributes) -> f32 {
-    let focus = attrs.focus() as f32;
-    let presence = attrs.presence() as f32;
-    let linear = 100.0 + (focus * 0.1) + (presence * 0.06);
-    linear * attrs.hp_level_multiplier()
+/// Calculate maximum mana from actor attributes
+/// Fixed at 100 until we determine which attributes should scale it
+pub fn calculate_max_mana(_attrs: &ActorAttributes) -> f32 {
+    100.0
 }
 
 /// Calculate stamina regeneration rate

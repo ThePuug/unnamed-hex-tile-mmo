@@ -46,12 +46,12 @@ pub fn process_deal_damage(
         }
 
         // --- Relative stat contests (SOW-020 Phase 4) ---
-        // Precision vs Toughness: attacker grace vs defender vitality
-        let precision_mod = damage_calc::contest_modifier(source_attrs.grace(), attrs.vitality());
-        // Dominance vs Cunning: attacker presence vs defender instinct
-        let tempo_mod = damage_calc::contest_modifier(source_attrs.presence(), attrs.instinct());
-        // Composure: defender focus vs attacker might (defensive contest)
-        let composure_mod = damage_calc::contest_modifier(attrs.focus(), source_attrs.might());
+        // Precision vs Toughness: attacker precision (grace) vs defender toughness (vitality)
+        let precision_mod = damage_calc::contest_modifier(source_attrs.precision(), attrs.toughness());
+        // Dominance vs Cunning: attacker dominance (presence) vs defender cunning (instinct)
+        let tempo_mod = damage_calc::contest_modifier(source_attrs.dominance(), attrs.cunning());
+        // Composure vs Impact: defender composure (focus) vs attacker impact (might)
+        let composure_mod = damage_calc::contest_modifier(attrs.composure(), source_attrs.impact());
 
         // Roll for critical hit (scaled by precision contest)
         let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs, precision_mod);
@@ -230,12 +230,13 @@ pub fn do_nothing(){}
 
 /// System to automatically trigger auto-attacks when adjacent to hostiles (ADR-009)
 /// Runs periodically to check if actors have adjacent hostiles and can auto-attack
-/// Auto-attack cooldown: 1.5s (1500ms)
+/// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)
 pub fn process_passive_auto_attack(
     mut query: Query<
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &crate::common::components::target::Target,
          Option<&mut crate::common::components::npc_recovery::NpcRecovery>,
          Option<&crate::common::components::hex_assignment::AssignedHex>,
+         Option<&crate::common::components::recovery::GlobalRecovery>,
          &ActorAttributes),
         Without<crate::common::components::behaviour::PlayerControlled>
     >,
@@ -249,11 +250,18 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, attrs) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, global_recovery_opt, attrs) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
                 continue; // Skip if on GCD
+            }
+        }
+
+        // Check if in ability recovery lockout (from using Lunge, Overpower, etc.)
+        if let Some(recovery) = global_recovery_opt {
+            if recovery.is_active() {
+                continue; // Skip if still locked out from ability usage
             }
         }
 
@@ -294,10 +302,10 @@ pub fn process_passive_auto_attack(
             continue;
         }
 
-        // Check if target is adjacent (distance == 1)
+        // Check if target is within range (same hex or adjacent: distance <= 1)
         let distance = loc.flat_distance(target_loc);
-        if distance == 1 {
-            // Target is adjacent - trigger auto-attack
+        if distance <= 1 {
+            // Target is in range - trigger auto-attack
             writer.write(Try {
                 event: GameEvent::UseAbility {
                     ent,

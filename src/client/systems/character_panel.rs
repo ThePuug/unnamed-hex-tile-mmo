@@ -25,7 +25,7 @@ pub enum AttributeCurrent {
 }
 
 /// Marker component for the visual attribute bar
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub enum AttributeBar {
     MightGrace,
     VitalityFocus,
@@ -293,7 +293,7 @@ pub fn toggle_panel(
 pub fn handle_shift_drag(
     mut state: ResMut<CharacterPanelState>,
     mut player_query: Query<&mut ActorAttributes, With<Actor>>,
-    bar_query: Query<(Entity, &AttributeBar, &Interaction, &GlobalTransform, &Node)>,
+    bar_query: Query<(Entity, &AttributeBar, &Interaction, &Node)>,
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
 ) {
@@ -314,7 +314,7 @@ pub fn handle_shift_drag(
 
     // Start drag on mouse press over any attribute bar
     if buttons.just_pressed(MouseButton::Left) {
-        for (bar_entity, bar_type, interaction, _transform, _node) in &bar_query {
+        for (bar_entity, bar_type, interaction, _node) in &bar_query {
             if *interaction == Interaction::Hovered || *interaction == Interaction::Pressed {
                 let attr_type = match bar_type {
                     AttributeBar::MightGrace => AttributeType::MightGrace,
@@ -344,7 +344,7 @@ pub fn handle_shift_drag(
     if let Some(drag_state) = state.dragging {
         if buttons.pressed(MouseButton::Left) {
             // Get the bar's width to calculate pixels per unit
-            if let Ok((_entity, _bar_type, _interaction, _bar_transform, bar_node)) = bar_query.get(drag_state.bar_entity) {
+            if let Ok((_entity, _bar_type, _interaction, bar_node)) = bar_query.get(drag_state.bar_entity) {
                 let bar_width = if let Val::Px(w) = bar_node.width { w } else { 250.0 };
 
                 // Calculate max attribute value based on current level

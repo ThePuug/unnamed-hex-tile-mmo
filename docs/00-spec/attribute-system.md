@@ -7,8 +7,9 @@ The attribute system uses **three bipolar pairs** of attributes, managed through
 **Key Principles:**
 - **Bipolar Pairs:** Might ↔ Grace, Vitality ↔ Focus, Instinct ↔ Presence — the Axis/Spectrum/Shift model remains the core input mechanism
 - **Three Scaling Modes:** Absolute (progression), Relative (build matchup), Commitment (build identity)
-- **Commitment Tiers:** Percentage-based discrete tiers (30/45/60%) create hard build choices
+- **Commitment Tiers:** Percentage-based discrete tiers (20/40/60%) create hard build choices
 - **Decoupled from Triumvirate:** Attributes, Triumvirate, and equipment are independent layers
+- **Attribute Formulas:** Axis×16, Spectrum×12, Shift×12, Axis=0×6 (smooth 160→120 stat curve)
 
 **Related Documents:**
 - [RFC-020: Attribute System Rework](../01-rfc/020-attribute-system-rework.md)
@@ -78,24 +79,22 @@ See [ADR-029](../02-adr/029-relative-stat-contests.md) for contest resolution de
 
 ### Commitment — Build Identity
 
-Commitment values are the **build identity**. They are determined by the **percentage of total attribute budget** invested in that attribute. Commitment defines playstyle at every level, in every fight. It does not inflate with level — it is a permanent statement about who you are as a fighter.
-
-The **total budget** is the sum of all six derived attribute values: `might() + grace() + vitality() + focus() + instinct() + presence()`.
+Commitment values are the **build identity**. They are determined by the **percentage of maximum possible** for that attribute: `derived_value / (total_level × 10) × 100`. Commitment defines playstyle at every level, in every fight. It does not inflate with level — it is a permanent statement about who you are as a fighter.
 
 Commitment scales in **discrete tiers**, not linearly:
 
 | Tier | Threshold | Meaning |
 |------|-----------|---------|
-| Tier 0 | < 30% | No commitment identity for this attribute |
-| Tier 1 | ≥ 30% | Unlocks the identity |
-| Tier 2 | ≥ 45% | Deepens it |
+| Tier 0 | < 20% | No commitment identity for this attribute |
+| Tier 1 | ≥ 20% | Unlocks the identity |
+| Tier 2 | ≥ 40% | Deepens it |
 | Tier 3 | ≥ 60% | Defines you |
 
-**Budget constraint:** With 100% to distribute across 6 attributes, commitment tiers force hard choices:
-- **Specialist**: 60% + 30% = 90% → one T3, one T1, nothing else
-- **Dual identity**: 45% + 45% = 90% → two T2s
-- **Generalist**: 30% + 30% + 30% = 90% → three T1s
-- **Impossible**: Two T3s (120%), T3 + T2 (105%), Four T1s (120%)
+**Build constraints with 10 points:**
+- **Dual T3** (5+5 axis): 80+80 = 160 total (80% each)
+- **T3+2×T2** (4+3+3 axis): 64+48+48 = 160 total
+- **4×T2** (pure spectrum): Not achievable (30% each = T1)
+- **6×T1** (spectrum spread): Not achievable (dilutes below 20%)
 
 See [ADR-027](../02-adr/027-commitment-tiers.md) for tier calculation details.
 

@@ -1,4 +1,4 @@
-# ADR-027: Commitment Tiers (Discrete 30/45/60)
+# ADR-027: Commitment Tiers (Discrete 20/40/60)
 
 ## Status
 
@@ -19,58 +19,62 @@ The existing commitment-ratio queue capacity system (ADR-021) uses thresholds at
 
 ## Decision
 
-Commitment values scale in **discrete tiers** based on the **percentage of total attribute budget** invested in that attribute. Three tiers above baseline, with thresholds at 30%, 45%, and 60%.
+Commitment values scale in **discrete tiers** based on the **percentage of maximum possible** for that attribute. Three tiers above baseline, with thresholds at 20%, 40%, and 60%.
 
 ### Core Mechanism
 
 **Tier Calculation:**
 
 ```rust
-fn commitment_tier(derived_attribute: f32, total_budget: f32) -> CommitmentTier {
-    if total_budget == 0.0 {
+fn commitment_tier(derived_attribute: u16, total_level: u32) -> CommitmentTier {
+    let max_possible = total_level * 10; // Maximum for any single attribute
+    if max_possible == 0 {
         return CommitmentTier::T0;
     }
-    let percentage = derived_attribute / total_budget;
+    let percentage = (derived_attribute as f64 / max_possible as f64) * 100.0;
     match percentage {
-        p if p >= 0.60 => CommitmentTier::T3,
-        p if p >= 0.45 => CommitmentTier::T2,
-        p if p >= 0.30 => CommitmentTier::T1,
+        p if p >= 60.0 => CommitmentTier::T3,
+        p if p >= 40.0 => CommitmentTier::T2,
+        p if p >= 20.0 => CommitmentTier::T1,
         _ => CommitmentTier::T0,
     }
 }
 ```
 
+**Attribute Formulas (axis×16, spectrum×12, shift×12):**
+- **Axis side**: axis×16 + spectrum×12 ± shift×12
+- **Opposite side**: ±shift×12 only (starts at 0)
+- **Balanced (axis=0)**: spectrum×6 each side, no shift
+
 **Tier Definitions:**
 
 | Tier | Threshold | Meaning |
 |------|-----------|---------|
-| T0 | < 30% | No commitment identity — baseline only |
-| T1 | ≥ 30% | Identity unlocked — noticeable specialization |
-| T2 | ≥ 45% | Identity deepened — significant commitment |
+| T0 | < 20% | No commitment identity — baseline only |
+| T1 | ≥ 20% | Identity unlocked — noticeable specialization |
+| T2 | ≥ 40% | Identity deepened — significant commitment |
 | T3 | ≥ 60% | Identity defining — dominant aspect of build |
 
-**Budget Constraint Analysis (100% across 6 attributes):**
+**Build Constraint Analysis (10 points, max=100):**
 
-| Build Pattern | Investment | Remaining | Viable |
-|---------------|-----------|-----------|--------|
-| Specialist | T3 (60%) + T1 (30%) | 10% | ✅ |
-| Dual identity | T2 (45%) + T2 (45%) | 10% | ✅ |
-| Generalist | T1 (30%) + T1 (30%) + T1 (30%) | 10% | ✅ |
-| T3 + T2 | 60% + 45% | -5% | ❌ Impossible |
-| Dual T3 | 60% + 60% | -20% | ❌ Impossible |
-| Quad T1 | 30% × 4 | -20% | ❌ Impossible |
+| Build Pattern | Values | Tiers | Total | Viable |
+|---------------|--------|-------|-------|--------|
+| Dual T3 (5+5 axis) | 80+80 | 80% each | 160 | ✅ |
+| T3+2×T2 (4+3+3 axis) | 64+48+48 | T3+T2+T2 | 160 | ✅ |
+| 4×T2 (0/5/0 + 0/5/0) | 30×4 | T1 each | 120 | ❌ (30% < 40%) |
+| 5×T1 (0/4/0 + 0/4/0 + 2/0/0) | 24+24+24+24+32 | T1 each | 128 | ✅ |
 
-The 30/45/60 thresholds allow 10% wiggle room in all viable builds. This buffer means players don't need perfectly optimal splits to hit breakpoints.
+The 20/40/60 thresholds create viable dual-T3 builds and smooth progression from specialist (160 total) to generalist (120 total).
 
 **Concrete Commitment Stats (MVP):**
 
 | Attribute | Commitment | Stat | T0 | T1 | T2 | T3 |
 |-----------|-----------|------|----|----|----|----|
-| Grace | Poise | Evasion | None | Low | Moderate | High |
+| Grace | Poise | Evasion | 0% | 10% | 20% | 30% |
 | Focus | Concentration | Queue capacity | 1 slot | 2 slots | 3 slots | 4 slots |
-| Presence | Intensity | Cadence | Slow | Moderate | Fast | Rapid |
+| Presence | Intensity | Cadence | 3000ms | 2500ms | 2000ms | 1500ms |
 
-Specific numeric values for Poise and Intensity are tuning knobs to be determined through playtesting. Concentration slot counts follow the existing ADR-021 pattern.
+Concentration slot counts follow ADR-021 pattern. Poise and Intensity values tuned for combat pacing.
 
 **Open Commitment Stats (no concrete mechanic yet):**
 
@@ -89,17 +93,18 @@ Specific numeric values for Poise and Intensity are tuning knobs to be determine
 - Creates meaningful identity boundaries (you either "are" a Might fighter or you're not)
 - UI representation is cleaner (tier badges vs percentage bars)
 
-**Why 30/45/60 thresholds, not 33/50/66:**
-- 10% buffer in all viable builds (T3+T1 = 90%, not 99%)
-- More forgiving investment math (players don't need exact splits)
-- Three viable archetypes (specialist, dual, generalist) all have breathing room
-- Lower T1 threshold (30% vs 33%) makes generalist triple-T1 build achievable
+**Why 20/40/60 thresholds:**
+- Enables dual-T3 builds (80% each with 5+5 axis split)
+- Creates smooth 160→120 stat progression (specialist to generalist)
+- Lower T1 (20%) allows 5×T1 generalist builds
+- Wider tiers (20% gaps) reduce cliff effects
+- Matches 3:4 ratio of spectrum:axis multipliers (12:16)
 
-**Why generalize ADR-021 rather than keep Focus-specific:**
-- Same mathematical pattern applies to all six attributes
-- Unified system is simpler to understand (one tier mechanic, not six different mechanics)
-- ADR-021's 33/50/66 thresholds shift to 30/45/60 — slot mapping stays the same (4 tiers → 4 slot counts)
-- Equipment that modifies commitment tier uses the same system for all attributes
+**Why use total_level×10, not total_budget:**
+- Prevents spectrum builds from being penalized in tier calculation
+- Axis and spectrum builds with same points compare fairly (both to max=100 with 10 points)
+- Creates smooth stat curve: pure axis (160) → hybrids (140-128) → pure spectrum (120)
+- Opposite side starts at 0 (shift only) - rewards axis commitment while preserving spectrum flexibility
 
 **Why T0 exists (below 30%):**
 - Most attributes will be T0 in any viable build (specialist has 4-5 T0 attributes)
@@ -140,9 +145,15 @@ pub enum CommitmentTier { T0, T1, T2, T3 }
 - Equipment modifiers may shift effective percentage (future)
 
 **Migration from ADR-021:**
-- `calculate_queue_capacity` → uses `commitment_tier(focus, total_budget)` instead of `focus_reach / (total_level × 7)`
+- `calculate_queue_capacity` → uses `commitment_tier_for(focus)` instead of `focus_reach / (total_level × 7)`
 - Threshold mapping: T0→1 slot, T1→2, T2→3, T3→4 (same output, different input formula)
 - Level-0 special case preserved (T0 → 1 slot)
+- Tier calculation now uses max_possible (total_level × 10) instead of total_budget to fairly compare axis vs spectrum builds
+
+**Shift Constraints:**
+- Shift direction locked by axis: positive axis → negative shift only, negative axis → positive shift only
+- Pure spectrum (axis=0) cannot shift - requires axis commitment for tactical redistribution
+- Shift magnitude clamped to spectrum value
 
 **Files Affected:**
 - `src/common/components/` — CommitmentTier enum, cached tier per attribute

@@ -9,7 +9,7 @@ use crate::{
 
 /// Handle Lunge ability (Q key)
 /// - 20 stamina cost
-/// - 40 base damage
+/// - Base damage from Force meta-attribute (scales with might + level)
 /// - 4 hex range
 /// - Teleports caster adjacent to target
 pub fn handle_lunge(
@@ -18,6 +18,7 @@ pub fn handle_lunge(
     entity_query: Query<&Loc>,
     loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     mut writer: MessageWriter<Do>,
@@ -171,13 +172,16 @@ pub fn handle_lunge(
             },
         });
 
-        // Deal damage (40 base damage)
+        // Deal damage (base damage from Force meta-attribute)
+        let attrs = attrs_query.get(*ent).expect("Lunge caster must have ActorAttributes");
+        let base_damage = attrs.force();
+
         commands.trigger(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
                     target: target_ent,
-                    base_damage: 40.0,
+                    base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Lunge),
                 },

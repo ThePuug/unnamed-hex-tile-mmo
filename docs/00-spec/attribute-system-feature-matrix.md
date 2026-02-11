@@ -24,8 +24,8 @@
 
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
-| CommitmentTier enum (T0/T1/T2/T3) | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | 30/45/60% thresholds (SOW-020 Phase 1) |
-| total_budget() calculation | ✅ Complete | [ADR-026](../02-adr/026-three-scaling-modes.md) | Sum of all six derived values (SOW-020 Phase 1) |
+| CommitmentTier enum (T0/T1/T2/T3) | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | 20/40/60% thresholds, max=level×10 (SOW-020 Phase 1) |
+| Attribute formulas (axis×16, spectrum×12) | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Smooth 160→120 progression, shift constraints (SOW-020 Phase 1) |
 | Attribute-Triumvirate decoupling | ❌ Not Started | [ADR-028](../02-adr/028-attribute-triumvirate-decoupling.md) | Remove archetype-attribute mapping (SOW-020 Phase 5) |
 
 **Category Status:** 2/3 complete (67%)

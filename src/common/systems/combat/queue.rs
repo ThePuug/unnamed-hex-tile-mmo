@@ -149,22 +149,26 @@ mod tests {
 
     #[test]
     fn test_cadence_interval_tiers() {
-        // T0: no presence investment → 2000ms
-        let t0 = ActorAttributes::default();
-        assert_eq!(t0.cadence_interval(), Duration::from_millis(2000));
+        // All builds use 10 points total so max_possible = 100
 
-        // T1: presence ~33% of budget → 1500ms
-        // might=-6 (60), presence=3 (30) → budget=90, 30/90=33% → T1
-        let t1 = ActorAttributes::new(-6, 0, 0, 0, 0, 0, 3, 0, 0);
-        assert_eq!(t1.cadence_interval(), Duration::from_millis(1500));
+        // T0: no presence investment → 3000ms
+        let t0 = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0); // 10 in might, 0 in presence
+        assert_eq!(t0.cadence_interval(), Duration::from_millis(3000));
 
-        // T2: presence ~50% of budget → 1000ms
+        // T1: presence 30-44% → 2500ms
+        // 7 might + 3 presence: presence=30, max=100 → 30% → T1
+        let t1 = ActorAttributes::new(-7, 0, 0, 0, 0, 0, 3, 0, 0);
+        assert_eq!(t1.cadence_interval(), Duration::from_millis(2500));
+
+        // T2: presence 45-60% → 2000ms
+        // 5 might + 5 presence: presence=50, max=100 → 50% → T2
         let t2 = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 5, 0, 0);
-        assert_eq!(t2.cadence_interval(), Duration::from_millis(1000));
+        assert_eq!(t2.cadence_interval(), Duration::from_millis(2000));
 
-        // T3: presence 100% of budget → 750ms
-        let t3 = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
-        assert_eq!(t3.cadence_interval(), Duration::from_millis(750));
+        // T3: presence >60% → 1500ms
+        // 3 might + 7 presence: presence=70, max=100 → 70% → T3
+        let t3 = ActorAttributes::new(-3, 0, 0, 0, 0, 0, 7, 0, 0);
+        assert_eq!(t3.cadence_interval(), Duration::from_millis(1500));
     }
 
     #[test]

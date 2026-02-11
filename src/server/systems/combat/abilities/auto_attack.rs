@@ -8,12 +8,14 @@ use crate::common::{
 /// Handle AutoAttack ability
 /// - Passive ability (no stamina cost, no GCD)
 /// - Attacks ALL hostile entities on target hex
+/// - Base damage from Force meta-attribute (scales with might + level)
 /// - Requires target_loc to be adjacent (distance == 1)
 pub fn handle_auto_attack(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     entity_query: Query<(&EntityType, &Loc, Option<&crate::common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
     respawn_query: Query<&crate::common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
     mut writer: MessageWriter<Do>,
@@ -50,11 +52,12 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Validate target hex is adjacent (considering slopes)
-        // Adjacent means 1 hex away horizontally with at most 1 z-level difference
+        // Validate target hex is within range (same hex or adjacent)
+        // Range: 0 (same hex) or 1 (adjacent hex)
         let target_loc = Loc::new(*target_qrz);
+        let distance = caster_loc.flat_distance(&target_loc);
 
-        if !caster_loc.is_adjacent(&target_loc) {
+        if distance > 1 {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -117,7 +120,10 @@ pub fn handle_auto_attack(
         }
 
         // Deal damage to ALL hostile entities on the target hex
-        let base_damage = 20.0;
+        // Base damage from Force meta-attribute (50% of Lunge damage)
+        let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
+        let base_damage = attrs.force() * 0.5;
+
         for target_ent in target_entities {
             commands.trigger(
                 Try {

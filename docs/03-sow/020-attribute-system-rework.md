@@ -31,23 +31,30 @@
 - Tests for CommitmentTier thresholds, total_budget, and helper
 
 **Architectural Constraints:**
-- `CommitmentTier` enum: T0 (<30%), T1 (≥30%), T2 (≥45%), T3 (≥60%)
-- `total_budget()` = `might() + grace() + vitality() + focus() + instinct() + presence()` (sum of derived values)
+- `CommitmentTier` enum: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%)
+- Commitment calculated as: `derived_value / (total_level × 10) × 100`
+- Attribute formulas:
+  - Axis: ×16, Spectrum: ×12, Shift: ×12
+  - Axis=0: ×6 (half spectrum, no shift)
+  - Axis side: axis×16 + spectrum×12 ± shift×12
+  - Opposite side: ±shift×12 only
 - Existing ActorAttributes struct is **unchanged** — 9 `i8` fields (axis/spectrum/shift per pair)
 - All existing methods preserved: `.might()`, `.grace()`, `.might_reach()`, `.set_might_grace_shift()`, etc.
 - Character panel unchanged
 - NPC generation unchanged
 - Level multiplier methods use `total_level()` for level input (counts invested points)
-- `total_budget()` is a NEW method that sums derived attribute values (different from `total_level()`)
+- Shift constraints: direction locked by axis sign, axis=0 blocks shift
 
 **Success Criteria:**
-- `commitment_tier(30, 100)` returns T1 (30% threshold)
-- `commitment_tier(29, 100)` returns T0
-- `commitment_tier(45, 100)` returns T2
+- `commitment_tier(20, 100)` returns T1 (20% threshold)
+- `commitment_tier(19, 100)` returns T0
+- `commitment_tier(40, 100)` returns T2
 - `commitment_tier(60, 100)` returns T3
-- `total_budget()` correctly sums all six derived attribute values
-- All existing tests pass unchanged
-- Character panel works unchanged
+- Commitment calculated relative to max_possible (total_level × 10), not total_budget
+- Smooth stat progression: 10 axis (160) → 5/5 axis (140) → 0/10 spectrum (120)
+- Shift constraints enforce axis direction (positive axis → negative shift only)
+- All existing tests pass with updated values
+- Character panel works with updated reach calculations
 - `cargo test` passes
 
 **Duration:** 2–3 hours
