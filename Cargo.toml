@@ -15,7 +15,6 @@ bevy_renet = "4"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"
-iyes_perf_ui = { git = "https://github.com/blip-radar/iyes_perf_ui", branch = "bevy-0-18" }
 log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
 lru = "0"
 noise = { version = "0" }

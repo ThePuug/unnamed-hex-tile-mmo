@@ -24,8 +24,8 @@ impl Default for DiagnosticsState {
             grid_visible: false,
             slope_rendering_enabled: true, // Required for proper physics
             fixed_lighting_enabled: true,  // Start in debug mode
-            perf_ui_visible: true,         // Start visible
-            network_ui_visible: true,      // Start visible
+            perf_ui_visible: false,
+            network_ui_visible: false,
         }
     }
 }

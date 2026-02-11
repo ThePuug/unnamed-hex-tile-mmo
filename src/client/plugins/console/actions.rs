@@ -29,8 +29,8 @@ pub fn execute_console_actions(
     mut map: ResMut<Map>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
     mut terrain_query: Query<&mut Terrain>,
-    mut perf_ui_query: Query<&mut Visibility, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>)>,
-    mut network_ui_query: Query<&mut Visibility, (With<NetworkUiRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>)>,
+    mut perf_ui_query: Query<&mut Node, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>)>,
+    mut network_ui_query: Query<&mut Node, (With<NetworkUiRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>)>,
 ) {
     for action in reader.read() {
         match action {
@@ -83,12 +83,11 @@ pub fn execute_console_actions(
             DevConsoleAction::TogglePerfUI => {
                 diagnostics_state.perf_ui_visible = !diagnostics_state.perf_ui_visible;
 
-                // Update performance UI visibility component (same as toggle_performance_ui)
-                if let Ok(mut visibility) = perf_ui_query.single_mut() {
-                    *visibility = if diagnostics_state.perf_ui_visible {
-                        Visibility::Visible
+                if let Ok(mut node) = perf_ui_query.single_mut() {
+                    node.display = if diagnostics_state.perf_ui_visible {
+                        Display::Flex
                     } else {
-                        Visibility::Hidden
+                        Display::None
                     };
                 }
 
@@ -97,12 +96,11 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleNetworkUI => {
                 diagnostics_state.network_ui_visible = !diagnostics_state.network_ui_visible;
 
-                // Update network UI visibility component
-                if let Ok(mut visibility) = network_ui_query.single_mut() {
-                    *visibility = if diagnostics_state.network_ui_visible {
-                        Visibility::Visible
+                if let Ok(mut node) = network_ui_query.single_mut() {
+                    node.display = if diagnostics_state.network_ui_visible {
+                        Display::Flex
                     } else {
-                        Visibility::Hidden
+                        Display::None
                     };
                 }
 

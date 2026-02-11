@@ -1,10 +1,8 @@
 use bevy::prelude::*;
-use bevy::ecs::system::lifetimeless::SRes;
-use iyes_perf_ui::prelude::*;
-use iyes_perf_ui::entry::PerfUiEntry;
-use iyes_perf_ui::utils::next_sort_key;
+use bevy::picking::Pickable;
 use std::collections::HashMap;
 
+use super::DiagnosticsRoot;
 use super::config::DiagnosticsState;
 
 // ============================================================================
@@ -106,7 +104,6 @@ impl NetworkMetrics {
     pub fn displayed_messages_per_sec(&self) -> f32 {
         self.displayed_messages_per_sec
     }
-
 }
 
 // ============================================================================
@@ -117,120 +114,78 @@ impl NetworkMetrics {
 #[derive(Component)]
 pub struct NetworkUiRootMarker;
 
-/// Custom perf UI entry for total network bandwidth
-#[derive(Component, Debug, Clone)]
-#[require(PerfUiRoot)]
-pub struct PerfUiNetworkBandwidth {
-    pub label: String,
-    pub sort_key: i32,
-}
+#[derive(Component)]
+pub(super) struct BandwidthText;
 
-impl Default for PerfUiNetworkBandwidth {
-    fn default() -> Self {
-        Self {
-            label: String::from("Network (bytes/s)"),
-            sort_key: next_sort_key(),
-        }
-    }
-}
-
-impl PerfUiEntry for PerfUiNetworkBandwidth {
-    type SystemParam = SRes<NetworkMetrics>;
-    type Value = f32;
-
-    fn label(&self) -> &str {
-        if self.label.is_empty() {
-            "Network (bytes/s)"
-        } else {
-            &self.label
-        }
-    }
-
-    fn sort_key(&self) -> i32 {
-        self.sort_key
-    }
-
-    fn update_value(
-        &self,
-        param: &mut <Self::SystemParam as bevy::ecs::system::SystemParam>::Item<'_, '_>,
-    ) -> Option<Self::Value> {
-        Some(param.displayed_bytes_per_sec())
-    }
-
-    fn format_value(&self, value: &Self::Value) -> String {
-        if *value > 1024.0 {
-            format!("{:.1} KB/s", value / 1024.0)
-        } else {
-            format!("{:.0} B/s", value)
-        }
-    }
-}
-
-/// Custom perf UI entry for message rate
-#[derive(Component, Debug, Clone)]
-#[require(PerfUiRoot)]
-pub struct PerfUiNetworkMessages {
-    pub label: String,
-    pub sort_key: i32,
-}
-
-impl Default for PerfUiNetworkMessages {
-    fn default() -> Self {
-        Self {
-            label: String::from("Network (msg/s)"),
-            sort_key: next_sort_key(),
-        }
-    }
-}
-
-impl PerfUiEntry for PerfUiNetworkMessages {
-    type SystemParam = SRes<NetworkMetrics>;
-    type Value = f32;
-
-    fn label(&self) -> &str {
-        if self.label.is_empty() {
-            "Network (msg/s)"
-        } else {
-            &self.label
-        }
-    }
-
-    fn sort_key(&self) -> i32 {
-        self.sort_key
-    }
-
-    fn update_value(
-        &self,
-        param: &mut <Self::SystemParam as bevy::ecs::system::SystemParam>::Item<'_, '_>,
-    ) -> Option<Self::Value> {
-        Some(param.displayed_messages_per_sec())
-    }
-
-    fn format_value(&self, value: &Self::Value) -> String {
-        format!("{:.0} msg/s", value)
-    }
-}
+#[derive(Component)]
+pub(super) struct MessagesText;
 
 // ============================================================================
 // Systems
 // ============================================================================
 
-/// Creates the network diagnostics UI on startup
+const FONT_SIZE: f32 = 16.0;
+const LABEL_COLOR: Color = Color::srgba(0.7, 0.7, 0.7, 1.0);
+
+fn metric_row(label: &str) -> (Text, TextFont, TextColor) {
+    (
+        Text::new(format!("{label}: --")),
+        TextFont {
+            font_size: FONT_SIZE,
+            ..default()
+        },
+        TextColor(LABEL_COLOR),
+    )
+}
+
+/// Creates the network diagnostics UI panel as a child of the diagnostics root container
 pub fn setup_network_ui(
     mut commands: Commands,
     state: Res<DiagnosticsState>,
+    root_q: Query<Entity, With<DiagnosticsRoot>>,
 ) {
-    commands.spawn((
-        NetworkUiRootMarker,
-        PerfUiRoot::default(),
-        PerfUiNetworkBandwidth::default(),
-        PerfUiNetworkMessages::default(),
-        if state.network_ui_visible {
-            Visibility::Visible
+    let root = root_q.single().unwrap();
+
+    let panel = commands
+        .spawn((
+            NetworkUiRootMarker,
+            Pickable::IGNORE,
+            Node {
+                display: if state.network_ui_visible { Display::Flex } else { Display::None },
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(2.0),
+                padding: UiRect::all(Val::Px(4.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((BandwidthText, metric_row("Bandwidth")));
+            parent.spawn((MessagesText, metric_row("Messages")));
+        })
+        .id();
+
+    commands.entity(root).add_child(panel);
+}
+
+/// Updates the network UI text from NetworkMetrics
+pub fn update_network_ui(
+    metrics: Res<NetworkMetrics>,
+    mut bandwidth_q: Query<&mut Text, (With<BandwidthText>, Without<MessagesText>)>,
+    mut messages_q: Query<&mut Text, (With<MessagesText>, Without<BandwidthText>)>,
+) {
+    if let Ok(mut text) = bandwidth_q.single_mut() {
+        let bps = metrics.displayed_bytes_per_sec();
+        if bps > 1024.0 {
+            **text = format!("Bandwidth: {:.1} KB/s", bps / 1024.0);
         } else {
-            Visibility::Hidden
-        },
-    ));
+            **text = format!("Bandwidth: {:.0} B/s", bps);
+        }
+    }
+
+    if let Ok(mut text) = messages_q.single_mut() {
+        **text = format!("Messages: {:.0} msg/s", metrics.displayed_messages_per_sec());
+    }
 }
 
 /// End-of-frame system to update exponential moving averages
