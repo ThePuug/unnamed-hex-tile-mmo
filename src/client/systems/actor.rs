@@ -111,6 +111,7 @@ pub fn do_spawn(
                             translation: spawn_world,
                             scale: Vec3::ONE * map.radius(),
                             ..default()},
+                        GlobalTransform::default(),
                         AirTime { state: Some(0), step: None },
                         NearestNeighbor::new(ent, loc),
                         Heading::default(),
