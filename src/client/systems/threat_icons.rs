@@ -193,10 +193,10 @@ pub fn update(
                             left: Val::Percent(42.5), // Center the 15% ring
                             top: Val::Percent(42.5),
                             border: UiRect::all(Val::Px(3.)),
+                            border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                             ..default()
                         },
                         BorderColor::all(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow
-                        BorderRadius::all(Val::Percent(50.)), // Make circular
                         BackgroundColor(Color::NONE),
                         ThreatTimerRing { index: icon.index },
                     ));
@@ -306,10 +306,10 @@ fn spawn_threat_icon(
                     ..default()
                 },
                 border: UiRect::all(Val::Px(3.)),
+                border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                 ..default()
             },
             BorderColor::all(border_color),
-            BorderRadius::all(Val::Percent(50.)), // Make circular
             BackgroundColor(background_color),
             ThreatIcon { index },
         ))
@@ -325,10 +325,10 @@ fn spawn_threat_icon(
                         left: Val::Percent(42.5), // Center the 15% ring
                         top: Val::Percent(42.5),
                         border: UiRect::all(Val::Px(3.)),
+                        border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                         ..default()
                     },
                     BorderColor::all(Color::srgba(1.0, 0.9, 0.0, 0.9)), // Start yellow, will transition to red
-                    BorderRadius::all(Val::Percent(50.)), // Make circular
                     BackgroundColor(Color::NONE),
                     ThreatTimerRing { index },
                 ));
@@ -400,11 +400,11 @@ pub fn spawn_pop_animation(
                         border: UiRect::all(Val::Px(3.)),
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::Center,
+                        border_radius: BorderRadius::all(Val::Percent(50.)),
                         ..default()
                     },
                     // Start bright white for flash
                     BorderColor::all(Color::srgb(1.0, 1.0, 1.0)),
-                    BorderRadius::all(Val::Percent(50.)),
                     BackgroundColor(Color::srgba(r * 0.5, g * 0.5, b * 0.5, 0.9)),
                     PoppingThreatIcon {
                         spawn_time: time.elapsed(),

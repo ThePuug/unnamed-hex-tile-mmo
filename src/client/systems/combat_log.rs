@@ -34,11 +34,11 @@ pub fn setup(
             padding: UiRect::all(Val::Px(10.)),
             flex_direction: FlexDirection::Column,
             overflow: Overflow::scroll_y(), // Enable vertical scrolling
+            border_radius: BorderRadius::all(Val::Px(4.)),
             ..default()
         },
         BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.85)),
         BorderColor::all(Color::srgba(0.5, 0.5, 0.5, 0.8)),
-        BorderRadius::all(Val::Px(4.)),
         ScrollPosition::default(),
         CombatLogPanel,
     ))
@@ -180,9 +180,9 @@ pub fn maintain_log(
 }
 
 /// Handle mouse wheel scrolling over the combat log panel
-/// Uses HoverMap + EventReader<MouseWheel> following Bevy's official scroll example
+/// Uses HoverMap + MessageReader<MouseWheel> following Bevy's official scroll example
 pub fn handle_scroll(
-    mut mouse_wheel_events: EventReader<MouseWheel>,
+    mut mouse_wheel_events: MessageReader<MouseWheel>,
     mut panel_query: Query<(Entity, &mut ScrollPosition, &ComputedNode), With<CombatLogPanel>>,
     hover_map: Res<HoverMap>,
     parent_query: Query<&ChildOf>,

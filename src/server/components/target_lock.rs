@@ -53,7 +53,7 @@ mod tests {
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let lock = TargetLock::new(target_ent, 30, origin);
 
-        assert_eq!(lock.locked_target.index(), 42);
+        assert_eq!(lock.locked_target.index().index(), 42);
         assert_eq!(lock.max_chase_distance, 30);
         assert_eq!(lock.origin, origin);
     }

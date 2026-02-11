@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use bevy_renet::netcode::ClientAuthentication;
+use bevy_renet::{RenetClient, renet::ConnectionConfig, netcode::{ClientAuthentication, NetcodeClientTransport}};
 use qrz::Qrz;
-use ::renet::{DefaultChannel, RenetClient};
+use ::renet::DefaultChannel;
 
 use crate::{
     client::{

@@ -187,11 +187,11 @@ fn spawn_resolved_threat_entry(
                 border: UiRect::all(Val::Px(2.)),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::all(Val::Percent(50.)),
                 ..default()
             },
             // Start invisible (alpha 0) — appear_delay handles visibility
             BorderColor::all(Color::srgba(r, g, b, 0.0)),
-            BorderRadius::all(Val::Percent(50.)),
             BackgroundColor(Color::srgba(r * 0.35, g * 0.35, b * 0.35, 0.0)),
             ResolvedThreatEntry {
                 spawn_time,

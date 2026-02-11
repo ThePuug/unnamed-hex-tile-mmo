@@ -14,9 +14,9 @@ use bevy::{
 };
 use bevy_easings::*;
 use bevy_renet::{
-    renet::*,
-    netcode::*,
-    *,
+    renet::ConnectionConfig,
+    netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeErrorEvent},
+    RenetClient, RenetClientPlugin,
 };
 
 use common::{
@@ -38,12 +38,8 @@ use client::{
 
 const PROTOCOL_ID: u64 = 7;
 
-fn panic_on_error_system(
-    mut renet_error: MessageReader<NetcodeTransportError>
-) {
-    if let Some(e) = renet_error.read().next() {
-        panic!("{:?}", e);
-    }
+fn panic_on_error_system(trigger: On<NetcodeErrorEvent>) {
+    panic!("{:?}", trigger.event());
 }
 
 fn setup(
@@ -79,6 +75,8 @@ fn main() {
     app.add_message::<Do>();
     app.add_message::<Try>();
 
+    app.add_observer(panic_on_error_system);
+
     app.add_systems(Startup, (
         setup,
         actor::setup,
@@ -108,7 +106,6 @@ fn main() {
     ));
 
     app.add_systems(Update, (
-        panic_on_error_system,
         actor::do_spawn,
         actor::apply_movement_intent, // ADR-011: Apply movement intent predictions
         actor::try_gcd,

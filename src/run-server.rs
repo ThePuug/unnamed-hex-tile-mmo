@@ -8,9 +8,9 @@ use std::{ net::UdpSocket, time::* };
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
 use bevy_easings::*;
 use bevy_renet::{
-    renet::{ConnectionConfig, RenetServer},
-    netcode::{NetcodeServerTransport, NetcodeTransportError, NetcodeServerPlugin},
-    RenetServerPlugin,
+    renet::ConnectionConfig,
+    netcode::{NetcodeErrorEvent, NetcodeServerPlugin, NetcodeServerTransport},
+    RenetServer, RenetServerPlugin,
 };
 use ::renet::DefaultChannel;
 
@@ -31,10 +31,8 @@ use crate::{
 
 const PROTOCOL_ID: u64 = 7;
 
-fn panic_on_error_system(mut renet_error: MessageReader<NetcodeTransportError>) {
-    if let Some(e) = renet_error.read().next() {
-        panic!("{:?}", e);
-    }
+fn panic_on_error_system(trigger: On<NetcodeErrorEvent>) {
+    panic!("{:?}", trigger.event());
 }
 
 fn main() {
@@ -63,6 +61,8 @@ fn main() {
     app.add_message::<Tick>();
 
     // Add observers for triggered events
+    app.add_observer(panic_on_error_system);
+    app.add_observer(renet::do_manage_connections);
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
 
@@ -89,7 +89,6 @@ fn main() {
 
     // Core combat and actor systems
     app.add_systems(Update, (
-        panic_on_error_system,
         actor::do_incremental,
         actor::update,
         targeting::update_targets, // Update targets every frame (detects when targets move)
@@ -117,7 +116,6 @@ fn main() {
         input::try_gcd,
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
-        renet::do_manage_connections,
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
         world::do_spawn,

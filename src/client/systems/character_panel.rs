@@ -77,10 +77,10 @@ macro_rules! create_attribute_section {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(5.),
                 padding: UiRect::all(Val::Px(10.)),
+                border_radius: BorderRadius::all(Val::Px(4.)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
-            BorderRadius::all(Val::Px(4.)),
         ))
         .with_children(|section| {
             // Title row: reach LABEL ↔ LABEL reach
@@ -161,10 +161,10 @@ macro_rules! create_attribute_section {
                             width: Val::Percent(100.),
                             height: Val::Percent(100.),
                             position_type: PositionType::Absolute,
+                            border_radius: BorderRadius::all(Val::Px(4.)),
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 1.0)),
-                        BorderRadius::all(Val::Px(4.)),
                     ));
 
                     // Center line (at 0)
@@ -187,10 +187,10 @@ macro_rules! create_attribute_section {
                             position_type: PositionType::Absolute,
                             left: Val::Percent(50.),
                             width: Val::Px(0.),
+                            border_radius: BorderRadius::all(Val::Px(3.)),
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.3, 0.5, 0.7, 0.4)),
-                        BorderRadius::all(Val::Px(3.)),
                     ));
 
                     // Axis bar - shows current available range (draggable)
@@ -201,10 +201,10 @@ macro_rules! create_attribute_section {
                             height: Val::Percent(100.),
                             position_type: PositionType::Absolute,
                             left: Val::Percent(50.),  // Will be set dynamically
+                            border_radius: BorderRadius::all(Val::Px(2.)),
                             ..default()
                         },
                         BackgroundColor(Color::srgba(1.0, 0.8, 0.0, 0.6)),
-                        BorderRadius::all(Val::Px(2.)),
                         Interaction::default(),
                     ));
                 });
@@ -237,11 +237,11 @@ pub fn setup(
                 padding: UiRect::all(Val::Px(20.)),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(15.),
+                border_radius: BorderRadius::all(Val::Px(8.)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
             BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
-            BorderRadius::all(Val::Px(8.)),
             Visibility::Hidden,
         ))
         .with_children(|parent| {
