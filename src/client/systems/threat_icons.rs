@@ -1,6 +1,10 @@
 use bevy::prelude::*;
 
+use crate::client::components::PoppingThreatIcon;
 use crate::common::components::reaction_queue::*;
+use crate::common::components::resources::Health;
+use crate::common::components::ActorAttributes;
+use crate::common::systems::combat::damage;
 
 /// Marker component for the threat icons container
 #[derive(Component)]
@@ -20,9 +24,47 @@ pub struct ThreatTimerRing {
     pub index: usize,
 }
 
-const ICON_SIZE: f32 = 50.0;
+pub const ICON_SIZE: f32 = 50.0;
 const ICON_SPACING: f32 = 10.0; // Space between icons
 const VERTICAL_OFFSET: f32 = -150.0; // Pixels above center (negative = up)
+
+const POP_FLASH_DURATION: f32 = 0.08;
+const POP_TRAVEL_DURATION: f32 = 0.4;
+const RESOLVED_VERTICAL_OFFSET: f32 = -70.0; // Must match resolved_threats::VERTICAL_OFFSET
+
+/// Map severity (estimated_damage / max_health) to an RGB color.
+///
+/// - 0–10%: Muted yellow-green → yellow
+/// - 10–30%: Yellow → orange
+/// - 30%+: Orange → intense red
+pub fn severity_rgb(severity: f32) -> (f32, f32, f32) {
+    let s = severity.clamp(0.0, 1.0);
+    if s < 0.1 {
+        // Muted yellow-green → yellow
+        let t = s / 0.1;
+        (
+            0.6 + 0.4 * t, // 0.6 → 1.0
+            0.8 - 0.1 * t, // 0.8 → 0.7
+            0.2 * (1.0 - t), // 0.2 → 0.0
+        )
+    } else if s < 0.3 {
+        // Yellow → orange
+        let t = (s - 0.1) / 0.2;
+        (
+            1.0,
+            0.7 - 0.35 * t, // 0.7 → 0.35
+            0.0,
+        )
+    } else {
+        // Orange → intense red
+        let t = ((s - 0.3) / 0.3).min(1.0);
+        (
+            1.0,
+            0.35 * (1.0 - t), // 0.35 → 0.0
+            0.0,
+        )
+    }
+}
 
 /// Setup threat icon container in the HUD
 /// Creates a container that will hold threat icons in a horizontal line above the player
@@ -50,14 +92,14 @@ pub fn setup(
 /// Update threat icons to match the player's reaction queue
 /// Spawns/despawns icons as threats are added/removed
 /// Updates timer rings to show time remaining
+/// Colors filled icons by severity (estimated damage / max health)
 pub fn update(
     mut commands: Commands,
     container_query: Query<Entity, With<ThreatIconContainer>>,
     icon_query: Query<(Entity, &ThreatIcon)>,
     mut ring_query: Query<(Entity, &ThreatTimerRing, &mut Node), Without<ThreatIcon>>,
     icon_with_children: Query<&Children, With<ThreatIcon>>,
-    // Use Actor marker to identify the local player (only one entity has it)
-    player_query: Query<(Entity, &ReactionQueue), With<crate::common::components::Actor>>,
+    player_query: Query<(Entity, &ReactionQueue, &ActorAttributes, &Health), With<crate::common::components::Actor>>,
     time: Res<Time>,
     server: Res<crate::client::resources::Server>,
 ) {
@@ -67,7 +109,7 @@ pub fn update(
     };
 
     // Get the local player's queue (marked with Actor component)
-    let Some((_player_entity, queue)) = player_query.iter().next() else {
+    let Some((_player_entity, queue, attrs, health)) = player_query.iter().next() else {
         // No local player with queue yet - this is normal during startup
         return;
     };
@@ -107,11 +149,21 @@ pub fn update(
         for (entity, icon) in &current_icons {
             let is_filled = icon.index < queue.threats.len();
 
-            // Update colors
+            // Update colors — severity-based for filled, dim for empty
             if is_filled {
+                let threat = &queue.threats[icon.index];
+                let estimated = damage::apply_passive_modifiers(
+                    threat.damage, attrs, threat.damage_type, threat.precision_mod,
+                );
+                let severity = if health.max > 0.0 {
+                    (estimated / health.max).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let (r, g, b) = severity_rgb(severity);
                 commands.entity(*entity).insert((
-                    BorderColor::all(Color::srgb(0.8, 0.2, 0.2)),
-                    BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
+                    BorderColor::all(Color::srgb(r, g, b)),
+                    BackgroundColor(Color::srgb(r * 0.35, g * 0.35, b * 0.35)),
                 ));
             } else {
                 commands.entity(*entity).insert((
@@ -163,8 +215,8 @@ pub fn update(
     }
 
     // Update timer rings with:
-    // - Color gradient (yellow → orange → red as time runs out)
-    // - Growing size (small → large as time runs out)
+    // - Color gradient (yellow -> orange -> red as time runs out)
+    // - Growing size (small -> large as time runs out)
     for (entity, ring, mut node) in ring_query.iter_mut() {
         if ring.index < queue.threats.len() {
             let threat = &queue.threats[ring.index];
@@ -172,23 +224,23 @@ pub fn update(
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
             let remaining = 1.0 - progress;
 
-            // Color gradient: Yellow (start) → Orange (50%) → Red (end)
+            // Color gradient: Yellow (start) -> Orange (50%) -> Red (end)
             // remaining: 1.0 = just inserted, 0.0 = about to resolve
             let color = if remaining > 0.5 {
-                // Yellow → Orange transition (100% to 50% remaining)
+                // Yellow -> Orange transition (100% to 50% remaining)
                 let t = (remaining - 0.5) / 0.5; // 1.0 at start, 0.0 at midpoint
                 Color::srgba(
                     1.0,
-                    0.9 * t + 0.5 * (1.0 - t), // 0.9 → 0.5 (yellow to orange)
+                    0.9 * t + 0.5 * (1.0 - t), // 0.9 -> 0.5 (yellow to orange)
                     0.0,
                     0.9,
                 )
             } else {
-                // Orange → Red transition (50% to 0% remaining)
+                // Orange -> Red transition (50% to 0% remaining)
                 let t = remaining / 0.5; // 1.0 at midpoint, 0.0 at end
                 Color::srgba(
                     1.0,
-                    0.5 * t, // 0.5 → 0.0 (orange to red)
+                    0.5 * t, // 0.5 -> 0.0 (orange to red)
                     0.0,
                     0.9,
                 )
@@ -285,21 +337,254 @@ fn spawn_threat_icon(
     });
 }
 
-/// Handle clearing animations when threats are removed
-/// Shows a flash/fade effect when player dodges
-pub fn animate_clear(
-    mut _commands: Commands,
-    _icon_query: Query<Entity, With<ThreatIcon>>,
-    mut clear_reader: MessageReader<crate::common::message::Do>,
+/// Compute the front icon x-offset for a given queue capacity
+pub fn front_icon_x_offset(capacity: usize) -> f32 {
+    let total_width = (capacity as f32 * ICON_SIZE) + ((capacity.saturating_sub(1)) as f32 * ICON_SPACING);
+    let start_x = -total_width / 2.0;
+    start_x // index 0
+}
+
+/// Spawn pop animation when a threat resolves against the player.
+/// Listens for ApplyDamage events targeting the local player.
+pub fn spawn_pop_animation(
+    mut commands: Commands,
+    container_query: Query<Entity, With<ThreatIconContainer>>,
+    player_query: Query<(&ReactionQueue, &Health), With<crate::common::components::Actor>>,
+    input_queues: Res<crate::common::resources::InputQueues>,
+    mut event_reader: MessageReader<crate::common::message::Do>,
+    time: Res<Time>,
 ) {
     use crate::common::message::Event as GameEvent;
 
-    for event in clear_reader.read() {
-        if let GameEvent::ClearQueue { .. } = event.event {
-            // TODO: Add proper flash/fade animation using bevy_easings
-            // For now, do nothing - the update system will handle the visual change
-            // by detecting the queue change and updating icon colors
+    let Ok(container) = container_query.single() else {
+        return;
+    };
+
+    let Some(&player_entity) = input_queues.entities().next() else {
+        return;
+    };
+
+    let Ok((queue, health)) = player_query.get(player_entity) else {
+        return;
+    };
+
+    for event in event_reader.read() {
+        if let GameEvent::ApplyDamage { ent, damage, .. } = event.event {
+            if ent != player_entity {
+                continue;
+            }
+
+            let severity = if health.max > 0.0 {
+                (damage / health.max).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+
+            let start_margin_left = front_icon_x_offset(queue.capacity);
+
+            // Spawn pop icon as child of the container
+            let (r, g, b) = severity_rgb(severity);
+            commands.entity(container).with_children(|parent| {
+                parent.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Px(ICON_SIZE),
+                        height: Val::Px(ICON_SIZE),
+                        left: Val::Percent(50.0),
+                        top: Val::Percent(50.0),
+                        margin: UiRect {
+                            left: Val::Px(start_margin_left),
+                            top: Val::Px(VERTICAL_OFFSET),
+                            ..default()
+                        },
+                        border: UiRect::all(Val::Px(3.)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    // Start bright white for flash
+                    BorderColor::all(Color::srgb(1.0, 1.0, 1.0)),
+                    BorderRadius::all(Val::Percent(50.)),
+                    BackgroundColor(Color::srgba(r * 0.5, g * 0.5, b * 0.5, 0.9)),
+                    PoppingThreatIcon {
+                        spawn_time: time.elapsed(),
+                        severity,
+                        start_margin_left,
+                        target_margin_top: RESOLVED_VERTICAL_OFFSET,
+                    },
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new(format!("{:.0}", damage)),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 1.0, 1.0)),
+                    ));
+                });
+            });
         }
     }
 }
 
+/// Animate popping icons: flash phase then travel to resolved stack.
+pub fn update_popping_icons(
+    mut commands: Commands,
+    mut query: Query<(Entity, &PoppingThreatIcon, &mut Node, &mut BorderColor, &mut BackgroundColor)>,
+    time: Res<Time>,
+) {
+    for (entity, pop, mut node, mut border, mut bg) in &mut query {
+        let elapsed = (time.elapsed() - pop.spawn_time).as_secs_f32();
+
+        if elapsed >= POP_TRAVEL_DURATION {
+            // Done — despawn (resolved entry appears simultaneously)
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        let (r, g, b) = severity_rgb(pop.severity);
+
+        if elapsed < POP_FLASH_DURATION {
+            // Flash phase: scale up 1.0 -> 1.3, color white -> severity
+            let t = elapsed / POP_FLASH_DURATION;
+            let scale = 1.0 + 0.3 * t;
+            let size = ICON_SIZE * scale;
+
+            // Lerp from white to severity color
+            let cr = 1.0 + (r - 1.0) * t;
+            let cg = 1.0 + (g - 1.0) * t;
+            let cb = 1.0 + (b - 1.0) * t;
+
+            node.width = Val::Px(size);
+            node.height = Val::Px(size);
+            // Adjust margin to keep centered as size changes
+            let size_delta = (size - ICON_SIZE) / 2.0;
+            node.margin.left = Val::Px(pop.start_margin_left - size_delta);
+            node.margin.top = Val::Px(VERTICAL_OFFSET - size_delta);
+
+            *border = BorderColor::all(Color::srgb(cr, cg, cb));
+            bg.0 = Color::srgba(cr * 0.5, cg * 0.5, cb * 0.5, 0.9);
+        } else {
+            // Travel phase: shrink 1.3 -> 0.6, move from queue to resolved stack
+            let travel_elapsed = elapsed - POP_FLASH_DURATION;
+            let travel_duration = POP_TRAVEL_DURATION - POP_FLASH_DURATION;
+            let t = (travel_elapsed / travel_duration).clamp(0.0, 1.0);
+            // Ease-out for smooth deceleration
+            let t_eased = 1.0 - (1.0 - t) * (1.0 - t);
+
+            let scale = 1.3 - 0.7 * t_eased; // 1.3 -> 0.6
+            let size = ICON_SIZE * scale;
+
+            // Lerp vertical position from queue to resolved stack
+            let start_top = VERTICAL_OFFSET;
+            let end_top = pop.target_margin_top;
+            let current_top = start_top + (end_top - start_top) * t_eased;
+
+            // Center horizontally as size changes
+            let size_delta = (ICON_SIZE - size) / 2.0;
+            node.width = Val::Px(size);
+            node.height = Val::Px(size);
+            node.margin.left = Val::Px(pop.start_margin_left + size_delta);
+            node.margin.top = Val::Px(current_top);
+
+            // Fade slightly during travel
+            let alpha = 1.0 - 0.3 * t_eased;
+            *border = BorderColor::all(Color::srgba(r, g, b, alpha));
+            bg.0 = Color::srgba(r * 0.35, g * 0.35, b * 0.35, alpha * 0.9);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_severity_rgb_zero() {
+        let (r, g, b) = severity_rgb(0.0);
+        // Should be muted yellow-green
+        assert!(r > 0.5, "r={r}");
+        assert!(g > 0.5, "g={g}");
+        assert!(b > 0.0, "b={b} should have some blue/green");
+    }
+
+    #[test]
+    fn test_severity_rgb_low() {
+        let (r, g, b) = severity_rgb(0.05);
+        // Between yellow-green and yellow
+        assert!(r > 0.7, "r={r}");
+        assert!(g > 0.5, "g={g}");
+    }
+
+    #[test]
+    fn test_severity_rgb_ten_percent() {
+        let (r, g, b) = severity_rgb(0.1);
+        // Should be yellow
+        assert!((r - 1.0).abs() < 0.01, "r={r}");
+        assert!(g > 0.6, "g={g}");
+        assert!(b < 0.01, "b={b}");
+    }
+
+    #[test]
+    fn test_severity_rgb_mid() {
+        let (r, g, b) = severity_rgb(0.2);
+        // Should be orange-ish (between yellow and orange)
+        assert!((r - 1.0).abs() < 0.01, "r={r}");
+        assert!(g > 0.3 && g < 0.7, "g={g} should be between yellow and orange");
+        assert!(b < 0.01, "b={b}");
+    }
+
+    #[test]
+    fn test_severity_rgb_high() {
+        let (r, g, b) = severity_rgb(0.6);
+        // Should be red (past 30% threshold)
+        assert!((r - 1.0).abs() < 0.01, "r={r}");
+        assert!(g < 0.1, "g={g} should be near zero for red");
+        assert!(b < 0.01, "b={b}");
+    }
+
+    #[test]
+    fn test_severity_rgb_clamped_above_one() {
+        let (r, g, b) = severity_rgb(2.0);
+        // Should clamp to max severity (same as 1.0)
+        let (r1, g1, b1) = severity_rgb(1.0);
+        assert!((r - r1).abs() < 0.01);
+        assert!((g - g1).abs() < 0.01);
+        assert!((b - b1).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_severity_rgb_monotonic_red() {
+        // Red channel should be monotonically non-decreasing
+        let severities = [0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0];
+        let mut prev_r = 0.0;
+        for s in severities {
+            let (r, _, _) = severity_rgb(s);
+            assert!(r >= prev_r - 0.01, "Red not monotonic at severity={s}: {r} < {prev_r}");
+            prev_r = r;
+        }
+    }
+
+    #[test]
+    fn test_severity_rgb_green_decreasing() {
+        // Green should generally decrease (gets more red over time)
+        let (_, g_low, _) = severity_rgb(0.05);
+        let (_, g_high, _) = severity_rgb(0.5);
+        assert!(g_low > g_high, "Green should decrease: {g_low} vs {g_high}");
+    }
+
+    #[test]
+    fn test_front_icon_x_offset_single() {
+        let x = front_icon_x_offset(1);
+        // Single icon: total_width = 50, start_x = -25
+        assert!((x - (-25.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_front_icon_x_offset_three() {
+        let x = front_icon_x_offset(3);
+        // 3 icons: total_width = 3*50 + 2*10 = 170, start_x = -85
+        assert!((x - (-85.0)).abs() < 0.01);
+    }
+}
