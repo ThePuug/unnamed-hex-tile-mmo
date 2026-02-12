@@ -22,9 +22,8 @@ pub fn handle_insert_threat(
                 let server_now_ms = server.current_time(client_now);
                 let server_now = std::time::Duration::from_millis(server_now_ms.min(u64::MAX as u128) as u64);
 
-                // Use insert_threat helper to properly handle queue capacity
-                let _overflow = queue_utils::insert_threat(&mut queue, threat, server_now);
-                // Note: We ignore overflow - server already handled it
+                // ADR-030: Insert always succeeds (unbounded queue)
+                queue_utils::insert_threat(&mut queue, threat, server_now);
             }
         }
     }

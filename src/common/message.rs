@@ -104,14 +104,16 @@ pub enum AbilityFailReason {
 /// Types of queue clears for reaction abilities
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ClearType {
-    /// Clear all threats (Dodge)
+    /// Clear all threats (Deflect - i-frame, clears visible + hidden)
     All,
-    /// Clear first N threats (Counter, Parry - future)
+    /// Clear first N threats (Counter - blanket reaction over visible window)
     First(usize),
-    /// Clear last N threats (Knockback - removes most recent threat)
+    /// Clear last N threats from back of queue
     Last(usize),
     /// Clear threats by damage type (Ward - future)
     ByType(DamageType),
+    /// Clear threat at specific index (Knockback - last visible in window)
+    AtIndex(usize),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

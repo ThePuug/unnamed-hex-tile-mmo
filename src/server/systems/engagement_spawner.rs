@@ -183,6 +183,8 @@ fn spawn_engagement_at(
             Loc::new(location),
             LastPlayerProximity::new(time.elapsed()),
             HexAssignment::default(),  // SOW-018: Hex assignment tracking
+            Transform::default(),
+            GlobalTransform::default(),
         ))
         .id();
 
@@ -242,9 +244,9 @@ fn spawn_engagement_at(
             last_action: time.elapsed(),
         };
 
-        // Initialize reaction queue with capacity based on Focus attribute
-        let queue_capacity = attributes.queue_capacity();
-        let reaction_queue = ReactionQueue::new(queue_capacity);
+        // Initialize reaction queue with window size based on Focus attribute (ADR-030)
+        let window_size = attributes.window_size();
+        let reaction_queue = ReactionQueue::new(window_size);
 
         // Spawn NPC entity (will be discovered when player gets near)
         let npc_loc = Loc::new(npc_location);

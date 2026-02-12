@@ -82,9 +82,15 @@ pub fn handle_knockback(
             continue;
         };
 
-        // Get the most recent threat from the queue (back = newest)
-        let Some(threat) = queue.threats.back().copied() else {
-            // No threats in queue - nothing to knockback
+        // ADR-030: Target the last VISIBLE threat (back of window, not back of full queue)
+        let visible_count = queue.visible_count();
+        let threat = if visible_count > 0 {
+            queue.threats.get(visible_count - 1).copied()
+        } else {
+            None
+        };
+        let Some(threat) = threat else {
+            // No visible threats in queue - nothing to knockback
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -192,14 +198,15 @@ pub fn handle_knockback(
             },
         });
 
-        // Remove the threat from the queue (cancel the incoming attack)
-        queue.threats.pop_back();
+        // ADR-030: Remove the last visible threat by index
+        let remove_index = queue.visible_count().saturating_sub(1);
+        queue.threats.remove(remove_index);
 
         // Broadcast threat removal to clients
         writer.write(Do {
             event: GameEvent::ClearQueue {
                 ent: *ent,
-                clear_type: ClearType::Last(1),
+                clear_type: ClearType::AtIndex(remove_index),
             },
         });
 

@@ -85,10 +85,10 @@ pub fn do_spawn(
             EntityType::Actor(desc) => {
                 let loc = Loc::new(qrz);
 
-                // Initialize reaction queue with capacity based on Focus attribute
+                // Initialize reaction queue with window size based on Focus attribute (ADR-030)
                 let attrs_val = attrs.unwrap_or_default();
-                let queue_capacity = attrs_val.queue_capacity();
-                let reaction_queue = ReactionQueue::new(queue_capacity);
+                let window_size = attrs_val.window_size();
+                let reaction_queue = ReactionQueue::new(window_size);
 
                 // Handle entities that may have been evicted - spawn if needed
                 let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {
