@@ -7,13 +7,18 @@ mod toggles;
 
 use bevy::{
     diagnostic::*,
+    picking::Pickable,
     prelude::*,
     render::diagnostic::*,
 };
-use iyes_perf_ui::{PerfUiPlugin, PerfUiAppExt};
 
 // Re-export public types for external use
 pub use config::DiagnosticsState;
+
+/// Marker for the root diagnostics container (bottom-right column).
+/// Individual panels are children of this node.
+#[derive(Component)]
+pub struct DiagnosticsRoot;
 
 /// Plugin that consolidates all debug and diagnostic features
 ///
@@ -28,28 +33,25 @@ pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
-        // Add performance monitoring plugins from Bevy and third-party
+        // Add performance monitoring plugins from Bevy
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
-            PerfUiPlugin,
         ));
-
-        // Register custom perf UI entry types
-        app.add_perf_ui_simple_entry::<perf_ui::PerfUiTerrainTiles>();
-        app.add_perf_ui_simple_entry::<network_ui::PerfUiNetworkBandwidth>();
-        app.add_perf_ui_simple_entry::<network_ui::PerfUiNetworkMessages>();
 
         // Initialize shared diagnostic resources
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<network_ui::NetworkMetrics>();
 
         // Setup systems run once at startup
+        // The root container must exist before panels add themselves as children.
         app.add_systems(
             Startup,
             (
                 grid::setup_grid_overlay,
+                setup_diagnostics_root.before(perf_ui::setup_performance_ui)
+                                      .before(network_ui::setup_network_ui),
                 perf_ui::setup_performance_ui,
                 network_ui::setup_network_ui,
             ),
@@ -61,11 +63,31 @@ impl Plugin for DiagnosticsPlugin {
             (
                 // Mesh update systems (no direct input handlers - use dev console)
                 grid::update_grid_mesh,
+                // Performance and network UI updates
+                perf_ui::update_performance_ui,
+                network_ui::update_network_ui,
                 // Network metrics update (end of frame)
                 network_ui::update_network_metrics,
             ),
         );
     }
+}
+
+/// Spawns the bottom-right container that diagnostic panels stack into.
+fn setup_diagnostics_root(mut commands: Commands) {
+    commands.spawn((
+        DiagnosticsRoot,
+        Pickable::IGNORE,
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(8.0),
+            bottom: Val::Px(8.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            align_items: AlignItems::FlexEnd,
+            ..default()
+        },
+    ));
 }
 
 // ============================================================================

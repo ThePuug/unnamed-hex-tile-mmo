@@ -44,7 +44,6 @@ This directory contains technical architecture decisions for the unnamed hex-til
 | 027 | 📋 | Commitment Tiers (30/45/60) | ⚡ | 2026-02-10 |
 | 028 | 📋 | Attribute-Triumvirate Decoupling | ⚡ | 2026-02-10 |
 | 029 | 📋 | Relative Stat Contests | ⚔️ | 2026-02-10 |
-| 030 | ✅ | Reaction Queue Window Mechanic | ⚔️ | 2026-02-11 |
 
 ### When to Read Each ADR
 
@@ -80,7 +79,6 @@ This directory contains technical architecture decisions for the unnamed hex-til
 - **027 - Commitment Tiers:** Discrete 30/45/60% budget thresholds for build identity stats (queue capacity, cadence, evasion). Read when working with commitment-driven mechanics or attribute investment.
 - **028 - Attribute-Triumvirate Decoupling:** Attributes are independent from Triumvirate Approach/Resilience. Read when working with NPC configuration, archetype systems, or attribute assignment.
 - **029 - Relative Stat Contests:** Three opposing pairs (Grace/Vitality, Might/Focus, Presence/Instinct) for attacker-vs-defender build matchups with no level scaling. Read when working with combat resolution, crit/mitigation, or recovery mechanics.
-- **030 - Reaction Queue Window Mechanic:** Unbounded queue with visibility window replacing fixed capacity. Counter/Deflect are blanket reactions, Knockback stays single-target. Read when working with reaction queue, threat insertion, or combat UI.
 
 **UI & Developer Tools:**
 - **013 - Developer Console Architecture:** Hierarchical menu with event-based actions. Read when adding debug features or console commands.

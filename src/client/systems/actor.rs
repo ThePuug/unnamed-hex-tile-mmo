@@ -85,10 +85,10 @@ pub fn do_spawn(
             EntityType::Actor(desc) => {
                 let loc = Loc::new(qrz);
 
-                // Initialize reaction queue with window size based on Focus attribute (ADR-030)
+                // Initialize reaction queue with capacity based on Focus attribute
                 let attrs_val = attrs.unwrap_or_default();
-                let window_size = attrs_val.window_size();
-                let reaction_queue = ReactionQueue::new(window_size);
+                let queue_capacity = attrs_val.queue_capacity();
+                let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 // Handle entities that may have been evicted - spawn if needed
                 let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {
@@ -111,6 +111,7 @@ pub fn do_spawn(
                             translation: spawn_world,
                             scale: Vec3::ONE * map.radius(),
                             ..default()},
+                        GlobalTransform::default(),
                         AirTime { state: Some(0), step: None },
                         NearestNeighbor::new(ent, loc),
                         Heading::default(),

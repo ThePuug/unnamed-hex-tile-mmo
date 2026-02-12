@@ -160,9 +160,9 @@ pub fn sync_container_position(
         return;
     };
 
-    // Pop ends at: front_icon_x_offset(window_size) + (ICON_SIZE - final_size) / 2
+    // Pop ends at: front_icon_x_offset(cap) + (ICON_SIZE - final_size) / 2
     // final_size = ICON_SIZE * 0.6 = 30 = ENTRY_SIZE, so offset = (ICON_SIZE - ENTRY_SIZE) / 2
-    let x = threat_icons::front_icon_x_offset(queue.window_size)
+    let x = threat_icons::front_icon_x_offset(queue.capacity)
         + (threat_icons::ICON_SIZE - ENTRY_SIZE) / 2.0;
     node.margin.left = Val::Px(x);
 }

@@ -121,10 +121,10 @@ pub fn update(
 
     // Get current icon count
     let current_icons: Vec<_> = icon_query.iter().collect();
-    // ADR-030: Show window_size slots (visible window only)
-    let target_count = queue.window_size;
+    // Show ALL capacity slots (filled + empty ghost slots)
+    let target_count = queue.capacity;
 
-    // Check if we need to rebuild the UI (window size changed or icons mismatched)
+    // Check if we need to rebuild the UI (capacity changed or icons mismatched)
     let needs_rebuild = current_icons.len() != target_count;
 
     if needs_rebuild {
@@ -134,10 +134,10 @@ pub fn update(
             commands.entity(*entity).despawn();
         }
 
-        // Spawn all window slots (filled + empty ghost)
+        // Spawn all capacity slots (filled + empty)
         for index in 0..target_count {
             let is_filled = index < queue.threats.len();
-            spawn_threat_icon(&mut commands, container, index, queue.window_size, is_filled);
+            spawn_threat_icon(&mut commands, container, index, queue.capacity, is_filled);
         }
 
         // Return early - new icons will be updated next frame
@@ -201,23 +201,24 @@ pub fn update(
                         ThreatTimerRing { index: icon.index },
                     ));
                 });
+            } else if !is_filled && has_timer_ring {
+                // Need to despawn timer ring
+                if let Ok(children) = icon_with_children.get(*entity) {
+                    for child in children.iter() {
+                        if ring_query.get(child).is_ok() {
+                            commands.entity(child).despawn();
+                        }
+                    }
+                }
             }
-            // Note: Timer ring visibility is managed in separate loop below
-            // to avoid iterating over potentially-stale Children components
         }
     }
 
     // Update timer rings with:
-    // - Visibility (show only for filled slots, hide for empty)
     // - Color gradient (yellow -> orange -> red as time runs out)
     // - Growing size (small -> large as time runs out)
     for (entity, ring, mut node) in ring_query.iter_mut() {
-        let is_filled = ring.index < queue.threats.len();
-
-        // Set visibility based on whether slot is filled
-        // Use try_insert to gracefully handle entities that were despawned between query and command execution
-        if is_filled {
-            commands.entity(entity).try_insert(Visibility::Visible);
+        if ring.index < queue.threats.len() {
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
@@ -259,10 +260,7 @@ pub fn update(
             node.left = Val::Percent(offset_percent);
             node.top = Val::Percent(offset_percent);
 
-            commands.entity(entity).try_insert(BorderColor::all(color));
-        } else {
-            // Hide ring when slot is empty
-            commands.entity(entity).try_insert(Visibility::Hidden);
+            commands.entity(entity).insert(BorderColor::all(color));
         }
     }
 }
@@ -382,7 +380,7 @@ pub fn spawn_pop_animation(
                 1.0
             };
 
-            let start_margin_left = front_icon_x_offset(queue.window_size);
+            let start_margin_left = front_icon_x_offset(queue.capacity);
 
             // Spawn pop icon as child of the container
             let (r, g, b) = severity_rgb(severity);

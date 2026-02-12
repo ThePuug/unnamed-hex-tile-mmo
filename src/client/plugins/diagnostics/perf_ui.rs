@@ -1,9 +1,8 @@
 use bevy::prelude::*;
-use bevy::ecs::system::lifetimeless::SRes;
-use iyes_perf_ui::prelude::*;
-use iyes_perf_ui::entry::PerfUiEntry;
-use iyes_perf_ui::utils::next_sort_key;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin, EntityCountDiagnosticsPlugin};
+use bevy::picking::Pickable;
 
+use super::DiagnosticsRoot;
 use super::config::DiagnosticsState;
 
 // ============================================================================
@@ -16,76 +15,99 @@ use super::config::DiagnosticsState;
 #[derive(Component)]
 pub struct PerfUiRootMarker;
 
-/// Custom perf UI entry that displays terrain tile count
-#[derive(Component, Debug, Clone)]
-#[require(PerfUiRoot)]
-pub struct PerfUiTerrainTiles {
-    /// Custom label. If empty (default), the default label will be used.
-    pub label: String,
-    /// Sort Key (control where the entry will appear in the Perf UI).
-    pub sort_key: i32,
-}
+#[derive(Component)]
+pub(super) struct FpsText;
 
-impl Default for PerfUiTerrainTiles {
-    fn default() -> Self {
-        Self {
-            label: String::from("Terrain Tiles"),
-            sort_key: next_sort_key(),
-        }
-    }
-}
+#[derive(Component)]
+pub(super) struct FrameTimeText;
 
-impl PerfUiEntry for PerfUiTerrainTiles {
-    type SystemParam = SRes<crate::common::resources::map::Map>;
-    type Value = usize;
+#[derive(Component)]
+pub(super) struct EntityCountText;
 
-    fn label(&self) -> &str {
-        if self.label.is_empty() {
-            "Terrain Tiles"
-        } else {
-            &self.label
-        }
-    }
-
-    fn sort_key(&self) -> i32 {
-        self.sort_key
-    }
-
-    fn update_value(
-        &self,
-        param: &mut <Self::SystemParam as bevy::ecs::system::SystemParam>::Item<'_, '_>,
-    ) -> Option<Self::Value> {
-        Some(param.len())
-    }
-
-    fn format_value(&self, value: &Self::Value) -> String {
-        format!("{}", value)
-    }
-}
+#[derive(Component)]
+pub(super) struct TerrainTilesText;
 
 // ============================================================================
 // Systems
 // ============================================================================
 
-/// Creates the performance UI overlay on startup
-///
-/// The UI displays default metrics (FPS, frame time, entity count, etc.)
-/// and respects the initial visibility setting from DiagnosticsState.
+const FONT_SIZE: f32 = 16.0;
+const LABEL_COLOR: Color = Color::srgba(0.7, 0.7, 0.7, 1.0);
+const VALUE_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 1.0);
+
+fn metric_row(label: &str) -> (Text, TextFont, TextColor) {
+    (
+        Text::new(format!("{label}: --")),
+        TextFont {
+            font_size: FONT_SIZE,
+            ..default()
+        },
+        TextColor(LABEL_COLOR),
+    )
+}
+
+/// Creates the performance UI panel as a child of the diagnostics root container
 pub fn setup_performance_ui(
     mut commands: Commands,
     state: Res<DiagnosticsState>,
+    root_q: Query<Entity, With<DiagnosticsRoot>>,
 ) {
-    // Spawn the iyes_perf_ui root with default entries and our custom terrain tiles entry
-    commands.spawn((
-        PerfUiRootMarker,
-        PerfUiRoot::default(),
-        PerfUiDefaultEntries::default(),
-        PerfUiTerrainTiles::default(),
-        if state.perf_ui_visible {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        },
-    ));
+    let root = root_q.single().unwrap();
+
+    let panel = commands
+        .spawn((
+            PerfUiRootMarker,
+            Pickable::IGNORE,
+            Node {
+                display: if state.perf_ui_visible { Display::Flex } else { Display::None },
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(2.0),
+                padding: UiRect::all(Val::Px(4.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((FpsText, metric_row("FPS")));
+            parent.spawn((FrameTimeText, metric_row("Frame")));
+            parent.spawn((EntityCountText, metric_row("Entities")));
+            parent.spawn((TerrainTilesText, metric_row("Terrain Tiles")));
+        })
+        .id();
+
+    commands.entity(root).add_child(panel);
 }
 
+/// Updates the performance UI text every frame
+pub fn update_performance_ui(
+    diagnostics: Res<DiagnosticsStore>,
+    map: Res<crate::common::resources::map::Map>,
+    mut fps_q: Query<(&mut Text, &mut TextColor), (With<FpsText>, Without<FrameTimeText>, Without<EntityCountText>, Without<TerrainTilesText>)>,
+    mut frame_q: Query<(&mut Text, &mut TextColor), (With<FrameTimeText>, Without<FpsText>, Without<EntityCountText>, Without<TerrainTilesText>)>,
+    mut entity_q: Query<&mut Text, (With<EntityCountText>, Without<FpsText>, Without<FrameTimeText>, Without<TerrainTilesText>)>,
+    mut terrain_q: Query<&mut Text, (With<TerrainTilesText>, Without<FpsText>, Without<FrameTimeText>, Without<EntityCountText>)>,
+) {
+    if let Ok((mut text, mut color)) = fps_q.single_mut() {
+        if let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()) {
+            **text = format!("FPS: {fps:.0}");
+            color.0 = if fps >= 55.0 { VALUE_COLOR } else { Color::srgba(1.0, 0.4, 0.4, 1.0) };
+        }
+    }
+
+    if let Ok((mut text, mut color)) = frame_q.single_mut() {
+        if let Some(ft) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.smoothed()) {
+            **text = format!("Frame: {ft:.1} ms");
+            color.0 = if ft <= 18.0 { VALUE_COLOR } else { Color::srgba(1.0, 0.4, 0.4, 1.0) };
+        }
+    }
+
+    if let Ok(mut text) = entity_q.single_mut() {
+        if let Some(count) = diagnostics.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT).and_then(|d| d.smoothed()) {
+            **text = format!("Entities: {count:.0}");
+        }
+    }
+
+    if let Ok(mut text) = terrain_q.single_mut() {
+        **text = format!("Terrain Tiles: {}", map.len());
+    }
+}

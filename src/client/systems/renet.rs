@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use bevy_renet::netcode::ClientAuthentication;
+use bevy_renet::{RenetClient, renet::ConnectionConfig, netcode::{ClientAuthentication, NetcodeClientTransport}};
 use qrz::Qrz;
-use ::renet::{DefaultChannel, RenetClient};
+use ::renet::DefaultChannel;
 
 use crate::{
     client::{
@@ -305,6 +305,11 @@ pub fn send_try(
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
                     ent: *l2r.get_by_left(&ent).unwrap(),
                     tier
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Try { event: Event::Dismiss { ent } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

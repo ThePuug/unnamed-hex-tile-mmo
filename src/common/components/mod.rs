@@ -612,7 +612,7 @@ impl ActorAttributes {
     // **Layer 3 — Three Scaling Modes:**
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
     //   - RELATIVE (build matchup): contest_modifier() in damage.rs — no level scaling
-    //   - COMMITMENT (build identity): window_size(), cadence_interval(),
+    //   - COMMITMENT (build identity): queue_capacity(), cadence_interval(),
     //     evasion_chance() — discrete tiers based on % of total budget
     //
     // See docs/00-spec/attribute-system.md for full design.
@@ -719,10 +719,10 @@ impl ActorAttributes {
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
-    /// Reaction queue window size from Concentration meta-attribute (ADR-030)
-    /// Higher Concentration tier → larger visibility window for reactive play
+    /// Reaction queue capacity from Concentration meta-attribute
+    /// Higher Concentration tier → more queue slots for reactive play
     /// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots
-    pub fn window_size(&self) -> usize {
+    pub fn queue_capacity(&self) -> usize {
         match self.concentration() {
             CommitmentTier::T0 => 1,
             CommitmentTier::T1 => 2,

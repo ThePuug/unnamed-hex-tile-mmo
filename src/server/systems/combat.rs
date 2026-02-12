@@ -13,7 +13,7 @@ use crate::common::{
 /// Rolls for crit, calculates outgoing damage, inserts into reaction queue
 pub fn process_deal_damage(
     trigger: On<Try>,
-    _commands: Commands,
+    mut commands: Commands,
     mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut crate::common::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
@@ -86,8 +86,8 @@ pub fn process_deal_damage(
             precision_mod,
         };
 
-        // Insert threat into queue (ADR-030: unbounded, no overflow)
-        queue_utils::insert_threat(&mut queue, threat, now);
+        // Try to insert threat into queue
+        let overflow = queue_utils::insert_threat(&mut queue, threat, now);
 
         // Enter combat for both attacker and target AFTER threat is successfully inserted
         // Handle case where source == target (self-damage)
@@ -113,6 +113,19 @@ pub fn process_deal_damage(
                 threat,
             },
         });
+
+        // If queue overflowed, immediately resolve the overflow threat
+        if let Some(overflow_threat) = overflow {
+            // Emit ResolveThreat event for the overflow
+            commands.trigger(
+                Try {
+                    event: GameEvent::ResolveThreat {
+                        ent: *target,
+                        threat: overflow_threat,
+                    },
+                },
+            );
+        }
     }
 }
 

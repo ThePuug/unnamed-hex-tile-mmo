@@ -160,10 +160,10 @@ pub fn setup_health_bars(mut commands: Commands) {
                 width: Val::Px(8.0),
                 height: Val::Px(8.0),
                 border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
             BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
-            BorderRadius::all(Val::Percent(50.0)),
             BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
             Visibility::Hidden, // Start hidden, will be shown based on capacity
             crate::client::components::ThreatCapacityDot { index: i },
@@ -194,10 +194,10 @@ pub fn setup_health_bars(mut commands: Commands) {
                 width: Val::Px(8.0),
                 height: Val::Px(8.0),
                 border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
             BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
-            BorderRadius::all(Val::Percent(50.0)),
             BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
             Visibility::Hidden, // Start hidden, will be shown based on capacity
             crate::client::components::ThreatCapacityDot { index: i },

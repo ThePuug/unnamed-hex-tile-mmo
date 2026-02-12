@@ -160,11 +160,11 @@ pub fn setup(
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     border: UiRect::all(Val::Px(2.)),
+                    border_radius: BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                     ..default()
                 },
                 BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
                 BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
-                BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                 TargetLevelHex,
             ))
             .with_children(|parent| {
@@ -332,11 +332,11 @@ pub fn setup(
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     border: UiRect::all(Val::Px(2.)),
+                    border_radius: BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                     ..default()
                 },
                 BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
                 BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
-                BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                 AllyLevelHex,
             ))
             .with_children(|parent| {
@@ -675,10 +675,10 @@ pub fn update_queue(
                                     width: Val::Px(8.),
                                     height: Val::Px(8.),
                                     border: UiRect::all(Val::Px(1.)),
+                                    border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                                     ..default()
                                 },
                                 BorderColor::all(border_color),
-                                BorderRadius::all(Val::Percent(50.)), // Make circular
                                 BackgroundColor(bg_color),
                                 CapacityDot { index: i },
                             ));
@@ -777,6 +777,7 @@ pub fn update_queue(
                                         border: UiRect::all(Val::Px(2.)),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                                         ..default()
                                     },
                                     BorderColor::all(if is_full {
@@ -784,7 +785,6 @@ pub fn update_queue(
                                     } else {
                                         Color::srgb(0.8, 0.2, 0.2)  // Normal red
                                     }),
-                                    BorderRadius::all(Val::Percent(50.)), // Make circular
                                     BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
                                     TargetThreatIcon { index: *index },
                                 ))
@@ -798,10 +798,10 @@ pub fn update_queue(
                                             left: Val::Percent(offset_percent),
                                             top: Val::Percent(offset_percent),
                                             border: UiRect::all(Val::Px(3.)),
+                                            border_radius: BorderRadius::all(Val::Percent(50.)),
                                             ..default()
                                         },
                                         BorderColor::all(timer_color),
-                                        BorderRadius::all(Val::Percent(50.)),
                                         BackgroundColor(Color::NONE),
                                         TargetThreatTimerRing { index: *index },
                                     ));
@@ -1106,10 +1106,10 @@ pub fn update_ally_queue(
                                 width: Val::Px(8.),
                                 height: Val::Px(8.),
                                 border: UiRect::all(Val::Px(1.)),
+                                border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                                 ..default()
                             },
                             BorderColor::all(border_color),
-                            BorderRadius::all(Val::Percent(50.)), // Make circular
                             BackgroundColor(bg_color),
                             AllyCapacityDot,
                         ));
@@ -1175,6 +1175,7 @@ pub fn update_ally_queue(
                                     border: UiRect::all(Val::Px(2.)),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
+                                    border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
                                     ..default()
                                 },
                                 BorderColor::all(if is_full {
@@ -1182,7 +1183,6 @@ pub fn update_ally_queue(
                                 } else {
                                     Color::srgb(0.2, 0.8, 0.2)  // Normal green
                                 }),
-                                BorderRadius::all(Val::Percent(50.)), // Make circular
                                 BackgroundColor(Color::srgb(0.1, 0.3, 0.1)),
                                 AllyThreatIcon,
                             ))
@@ -1196,10 +1196,10 @@ pub fn update_ally_queue(
                                         left: Val::Percent(offset_percent),
                                         top: Val::Percent(offset_percent),
                                         border: UiRect::all(Val::Px(3.)),
+                                        border_radius: BorderRadius::all(Val::Percent(50.)),
                                         ..default()
                                     },
                                     BorderColor::all(timer_color),
-                                    BorderRadius::all(Val::Percent(50.)),
                                     BackgroundColor(Color::NONE),
                                 ));
 

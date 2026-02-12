@@ -37,11 +37,11 @@ pub fn setup_dev_console(mut commands: Commands) {
                 },
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(8.0),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
             BorderColor::all(Color::srgb(0.3, 0.6, 0.9)),
-            BorderRadius::all(Val::Px(8.0)),
             Visibility::Hidden,
             ZIndex(1000),
         ))

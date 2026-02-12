@@ -61,7 +61,8 @@ impl Plugin for UiPlugin {
             Update,
             (
                 threat_icons::update,
-                threat_icons::animate_clear,
+                threat_icons::spawn_pop_animation,
+                threat_icons::update_popping_icons,
             ),
         );
 
@@ -81,6 +82,7 @@ impl Plugin for UiPlugin {
             (
                 resolved_threats::on_damage_resolved,
                 resolved_threats::update_entries,
+                resolved_threats::sync_container_position,
                 combat_log::on_damage_applied,
                 combat_log::on_queue_cleared,
                 combat_log::maintain_log,

@@ -34,7 +34,7 @@ pub fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(
-        AmbientLight {
+        GlobalAmbientLight {
             color: Color::WHITE,
             brightness: 10.,
             ..default()});
@@ -156,7 +156,7 @@ pub fn update(
     time: Res<Time>,
     mut q_sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>,Without<Moon>)>,
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
-    mut a_light: ResMut<AmbientLight>,
+    mut a_light: ResMut<GlobalAmbientLight>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
 ) {
