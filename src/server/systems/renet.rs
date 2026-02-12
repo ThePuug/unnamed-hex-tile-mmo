@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use bevy_renet::netcode::{ServerAuthentication, ServerConfig};
+use bevy_renet::{RenetServer, RenetServerEvent, renet::ConnectionConfig, netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig}};
 use qrz::*;
-use ::renet::ServerEvent;
+use ::renet::{DefaultChannel, ServerEvent};
 
 use crate::{ common::{
         chunk::PlayerDiscoveryState,
@@ -50,9 +50,9 @@ pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 
 #[allow(clippy::too_many_arguments)]
 pub fn do_manage_connections(
+    trigger: On<RenetServerEvent>,
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
-    mut reader: MessageReader<ServerEvent>,
     mut writer: MessageWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
@@ -61,7 +61,8 @@ pub fn do_manage_connections(
     runtime: Res<RunTime>,
     nntree: Res<NNTree>,
 ) {
-    for event in reader.read() {
+    {
+        let event = &trigger.event().0;
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected", client_id);
@@ -201,7 +202,7 @@ pub fn do_manage_connections(
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.remove_by_left(&client_id).unwrap().1;
+                let ent = lobby.remove_by_left(client_id).unwrap().1;
                 buffers.remove(&ent);
                 commands.entity(ent).despawn();
                 let message = bincode::serde::encode_to_vec(
@@ -211,7 +212,7 @@ pub fn do_manage_connections(
             }
         }
     }
- }
+}
 
 pub fn write_try(
     mut writer: MessageWriter<Try>,

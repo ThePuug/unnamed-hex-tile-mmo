@@ -100,43 +100,11 @@ pub fn handle_counter(
             (*caster_loc, threat, target_ent)
         };
 
-        // Check if attacker is still alive
-        if respawn_query.get(target_ent).is_ok() {
-            // Attacker is dead - can't reflect damage to corpse
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::NoTargets,
-                },
-            });
-            continue;
-        }
-
-        // Get attacker's location
-        let Some(target_loc) = entity_query.get(target_ent).ok().map(|(_, loc)| *loc) else {
-            // Attacker entity doesn't exist
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::NoTargets,
-                },
-            });
-            continue;
-        };
-
-        // Check range (must be adjacent for Counter - 1 hex melee range)
-        let distance = caster_loc.flat_distance(&target_loc) as u32;
-
-        if distance != 1 {
-            // Target is out of range (not adjacent)
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::OutOfRange,
-                },
-            });
-            continue;
-        }
+        // Determine if we can reflect damage back (target alive, exists, and adjacent)
+        let can_reflect = respawn_query.get(target_ent).is_err()
+            && entity_query.get(target_ent).ok().map(|(_, loc)| {
+                caster_loc.flat_distance(loc) as u32 == 1
+            }).unwrap_or(false);
 
         // Check stamina (30 cost)
         let counter_stamina_cost = 30.0;
@@ -170,6 +138,8 @@ pub fn handle_counter(
         let reflected_damage = threat.damage * 0.5;
 
         // Queue reflected damage as a NEW threat in the attacker's ReactionQueue
+        // (only if the attacker is still alive, exists, and is adjacent)
+        if can_reflect {
         if let Ok((_, mut target_queue)) = queue_query.get_mut(target_ent) {
             // Calculate timer duration (standard threat timing - 1.5s base)
             // TODO: Could scale with target's Instinct for proper reaction window
@@ -199,6 +169,7 @@ pub fn handle_counter(
                     threat: reflected_threat,
                 },
             });
+        }
         }
 
         // Remove the countered threat from the caster's queue (pop from FRONT)
