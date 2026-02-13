@@ -45,20 +45,8 @@ pub fn process_deal_damage(
             return; // Threat evaded — no queue insertion, no combat entry
         }
 
-        // --- Relative stat contests (SOW-020 Phase 4) ---
-        // Precision vs Toughness: attacker precision (grace) vs defender toughness (vitality)
-        let precision_mod = damage_calc::contest_modifier(source_attrs.precision(), attrs.toughness());
-        // Dominance vs Cunning: attacker dominance (presence) vs defender cunning (instinct)
-        let tempo_mod = damage_calc::contest_modifier(source_attrs.dominance(), attrs.cunning());
-        // Composure vs Impact: defender composure (focus) vs attacker impact (might)
-        let composure_mod = damage_calc::contest_modifier(attrs.composure(), source_attrs.impact());
-
-        // Roll for critical hit (scaled by precision contest)
-        let (_was_crit, crit_mult) = damage_calc::roll_critical(source_attrs, precision_mod);
-
         // Calculate outgoing damage (Phase 1)
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
-        let outgoing_with_crit = outgoing * crit_mult;
 
         // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
@@ -66,24 +54,29 @@ pub fn process_deal_damage(
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         let base_timer = queue_utils::calculate_timer_duration(attrs);
         let gap_mult = queue_utils::gap_multiplier(attrs.total_level(), source_attrs.total_level());
-        // Tempo contest scales reaction window: high attacker Presence → shorter window
-        let timer_duration = base_timer.mul_f32(gap_mult).mul_f32(1.0 / tempo_mod);
+        let timer_with_gap = base_timer.mul_f32(gap_mult);
 
-        // Recovery pushback: high Dominance → more pushback, high Composure → less pushback
-        const BASE_PUSHBACK: f32 = 0.25;
-        let effective_pushback = BASE_PUSHBACK * tempo_mod * (1.0 / composure_mod);
+        // Cunning extension (SOW-021 Phase 2): Defender's cunning vs attacker's finesse
+        let cunning_extension = queue_utils::calculate_cunning_extension(attrs.cunning(), source_attrs.finesse());
+        let timer_duration = timer_with_gap + cunning_extension;
+
+        // Recovery pushback (SOW-021 Phase 1): Impact vs Composure
+        // Apply pushback when target has active GlobalRecovery
         if let Some(mut recovery) = recovery_opt {
-            recovery.remaining += effective_pushback;
+            let pushback_pct = damage_calc::calculate_recovery_pushback(
+                source_attrs.impact(),
+                attrs.composure(),
+            );
+            recovery.apply_pushback(pushback_pct);
         }
 
         let threat = QueuedThreat {
             source: *source,
-            damage: outgoing_with_crit,
+            damage: outgoing,
             damage_type: *damage_type,
             inserted_at: now,
             timer_duration,
             ability: *ability,
-            precision_mod,
         };
 
         // Try to insert threat into queue
@@ -124,18 +117,23 @@ pub fn resolve_threat(
     trigger: On<Try>,
     _commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes)>,
+    loc_query: Query<&Loc>,
+    all_attrs: Query<&ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // Apply passive modifiers (Phase 2), using stored precision contest
+            // Scan for strongest Dominance aura affecting this entity
+            let max_dominance = damage_calc::find_max_dominance_in_range(*ent, &loc_query, &all_attrs);
+
+            // Apply passive modifiers (Phase 2)
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
                 attrs,
                 threat.damage_type,
-                threat.precision_mod,
+                max_dominance,
             );
 
             // Apply damage to health

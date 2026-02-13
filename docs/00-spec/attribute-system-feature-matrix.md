@@ -1,10 +1,10 @@
 # Attribute System - Feature Matrix
 
-> **Note:** This feature matrix tracks the **v2.0 attribute system** (RFC-020: three scaling modes layered on existing bipolar Axis/Spectrum/Shift model, commitment tiers). The existing A/S/S input model is preserved and extended.
+> **Note:** This feature matrix tracks the **v2.1 attribute system** (RFC-020 + RFC-021: three scaling modes with rotated relative oppositions). The existing A/S/S input model is preserved and extended.
 
-**Specification:** [attribute-system.md](attribute-system.md) (v2.0)
-**Last Updated:** 2026-02-10
-**Overall Status:** 12/28 features complete (43% — Phases 1–4 complete)
+**Specification:** [attribute-system.md](attribute-system.md) (v2.1)
+**Last Updated:** 2026-02-13
+**Overall Status:** 11/28 features complete (39% — SOW-020 Phase 4 superseded by SOW-021)
 
 ---
 
@@ -50,14 +50,17 @@
 
 ### Relative Stats (Build Benefit)
 
+**Note:** RFC-021 + ADR-031 reworked relative oppositions with rotated pairings. SOW-020 Phase 4 implementation superseded by SOW-021.
+
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
-| Precision (Grace) vs Toughness (Vitality) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Crit chance × precision_mod, mitigation × 1/precision_mod (SOW-020 Phase 4) |
-| Impact (Might) vs Composure (Focus) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Impact passively increases pushback; Composure reduces it (SOW-020 Phase 4) |
-| Dominance (Presence) vs Cunning (Instinct) | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Reaction window × 1/tempo_mod, recovery pushback × tempo_mod (SOW-020 Phase 4) |
-| Contest resolution function | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | contest_modifier(): clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4) |
+| Impact (Might) vs Composure (Focus) — Recovery timeline | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Impact: recovery pushback (25% of max × contest). Composure: recovery reduction (passive tick rate). SOW-021 Phase 1 |
+| Finesse (Grace) vs Cunning (Instinct) — Lockout-vs-window | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Finesse: synergy reduction via contest. Cunning: reaction window extension (2ms/point, 600ms cap). SOW-021 Phase 2 |
+| Dominance (Presence) vs Toughness (Vitality) — Sustain ratio | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Dominance: healing reduction aura (5 hex, worst-wins). Toughness: damage mitigation. SOW-021 Phase 3 |
+| Contest resolution function | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | contest_modifier(): clamped linear [0.5, 1.5], K=200 (reused for all pairs) |
+| ~~Precision (Grace) — Critical hits~~ | ⏸️ **Removed** | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Critical hit system removed entirely. Damage now deterministic and contest-driven. |
 
-**Category Status:** 4/4 complete (100%)
+**Category Status:** 1/4 complete (25%) — Contest function preserved, relative pairs being reworked
 
 ---
 
@@ -78,19 +81,23 @@
 
 ### Combat System Integration
 
+**Note:** SOW-021 replaces SOW-020 Phase 4 relative stat integrations. Some features deprecated.
+
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
 | Queue capacity via Concentration tier | ✅ Complete | [ADR-021](../02-adr/021-commitment-ratio-queue-capacity.md) | Migrated to commitment tier (SOW-020 Phase 3) |
-| Reaction window via Cunning vs Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | timer_duration × 1/tempo_mod (SOW-020 Phase 4) |
-| Recovery pushback via Dominance | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | BASE_PUSHBACK (250ms) × tempo_mod per threat (SOW-020 Phase 4) |
-| Recovery reduction via Composure | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Pushback × 1/composure_mod (SOW-020 Phase 4) |
-| Crit via Precision vs Toughness | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | crit_chance × precision_mod (SOW-020 Phase 4) |
+| Reaction window via Cunning | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | timer_duration + (cunning × 2ms), capped at 600ms (SOW-021 Phase 2) |
+| Recovery pushback via Impact | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | 25% of recovery.duration × contest_modifier (SOW-021 Phase 1) |
+| Recovery reduction via Composure | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Passive tick rate modifier in global_recovery_system (SOW-021 Phase 1) |
+| Synergy reduction via Finesse vs Cunning | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | unlock_reduction × contest_modifier (SOW-021 Phase 2) |
+| Healing reduction via Dominance | ❌ Not Started | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Aura: 5 hex radius, worst-effect-wins, contests Toughness (SOW-021 Phase 3) |
+| Mitigation via Toughness | ✅ Complete | [ADR-029](../02-adr/029-relative-stat-contests.md) | Flat damage reduction per hit (already implemented) |
 | Cadence via Intensity tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Replaces fixed 1500ms cooldown (SOW-020 Phase 3) |
 | Evasion via Poise tier | ✅ Complete | [ADR-027](../02-adr/027-commitment-tiers.md) | Grace tier dodge at threat insertion (SOW-020 Phase 3) |
-| Dismiss + Precision/Toughness | 🚧 Partial | [ADR-022](../02-adr/022-dismiss-mechanic.md), [ADR-029](../02-adr/029-relative-stat-contests.md) | precision_mod stored in QueuedThreat, available at resolution; dismiss mechanic not yet implemented |
+| ~~Crit via Precision vs Toughness~~ | ⏸️ **Removed** | [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) | Critical hit system removed (ADR-031) |
 | Movement speed via Grace | ✅ Complete | Various | Grace-based movement speed formula exists |
 
-**Category Status:** 8/9 complete (89%)
+**Category Status:** 4/10 complete (40%) — Commitment integrations preserved, relative integrations being reworked
 
 ---
 
@@ -123,9 +130,10 @@ The following v1.0 features are **superseded** or deferred:
 - **Decoupling Migration:** Remove archetype-attribute coupling (SOW-020 Phase 5)
 
 ### Low Priority (Post-Launch)
-- **Open Stats:** Technique, Discipline, Intuition, Gravitas, Impact, Ferocity, Grit, Flow
+- **Open Stats:** Technique, Discipline, Intuition, Gravitas, Ferocity, Grit, Flow
 - **Equipment Attribute Modifiers:** Separate RFC
 - **Commitment Tier Tuning:** Specific values for Poise/Intensity breakpoints
+- **Healing System Expansion:** Minimal healing in SOW-021 Phase 3, full system separate RFC
 
 ---
 
@@ -140,37 +148,41 @@ The following v1.0 features are **superseded** or deferred:
 - HP rewired to vitality() with shift sensitivity (SOW-020 Phase 2)
 - Damage partially rewired
 
-**Relative Stats:** 4/4 features (100%)
-- Contest resolution function: clamped linear [0.5, 1.5], K=200 (SOW-020 Phase 4)
-- Precision vs Toughness: crit chance and mitigation scaling (SOW-020 Phase 4)
-- Dominance vs Cunning: reaction window and recovery pushback (SOW-020 Phase 4)
-- Impact vs Composure: recovery pushback reduction (SOW-020 Phase 4)
+**Relative Stats:** 1/4 features (25%) — **Rework in progress (RFC-021, SOW-021)**
+- Contest resolution function preserved: clamped linear [0.5, 1.5], K=200
+- Impact vs Composure (recovery timeline): SOW-021 Phase 1 (not started)
+- Finesse vs Cunning (lockout-vs-window): SOW-021 Phase 2 (not started)
+- Dominance vs Toughness (sustain ratio): SOW-021 Phase 3 (not started)
+- ~~Precision (crit chance)~~: Removed in ADR-031
 
 **Commitment Stats:** 3/6 features (50%)
 - Queue capacity via Focus tier (SOW-020 Phase 3)
 - Cadence via Presence tier (SOW-020 Phase 3)
 - Evasion via Grace tier (SOW-020 Phase 3)
 
-**Combat Integration:** 8/9 features (89%)
-- Movement speed, queue capacity, cadence, evasion, reaction window, recovery pushback, recovery reduction, crit all wired
-- Dismiss + Precision/Toughness partial (precision_mod stored, dismiss mechanic not yet implemented)
+**Combat Integration:** 4/10 features (40%)
+- Movement speed, queue capacity, cadence, evasion, mitigation complete (commitment + existing)
+- Relative stat integrations being reworked via SOW-021 (Impact/Composure, Finesse/Cunning, Dominance/Toughness)
 
-**Total Attribute System (v2.0):** 12/28 features complete (43% — through Phase 4, open stats deferred)
+**Total Attribute System (v2.1):** 11/28 features complete (39% — SOW-020 Phase 4 superseded, SOW-021 in planning)
 
 ---
 
 ## Next Priorities
 
-Based on SOW-020 phase ordering (Phases 1–4 complete):
+**SOW-021: Relative Meta-Attributes Implementation** (supersedes SOW-020 Phase 4):
 
-1. ~~**Phase 1: Scaling Mode Foundation**~~ ✅
-2. ~~**Phase 2: Absolute Stats**~~ ✅ (HP rewired; damage partial)
-3. ~~**Phase 3: Commitment Stats**~~ ✅ (queue capacity, cadence, evasion)
-4. ~~**Phase 4: Relative Contests**~~ ✅ (all 3 pairs + contest function)
-5. **Phase 5: Decoupling** — Remove archetype coupling, migrate NPCs, cleanup
+1. ~~**Phase 1: Scaling Mode Foundation**~~ ✅ (SOW-020)
+2. ~~**Phase 2: Absolute Stats**~~ ✅ (SOW-020 — HP rewired; damage partial)
+3. ~~**Phase 3: Commitment Stats**~~ ✅ (SOW-020 — queue capacity, cadence, evasion)
+4. ~~**Phase 4: Relative Contests**~~ ⏸️ **Superseded by RFC-021** (old implementation deprecated)
+5. **SOW-021 Phase 1:** Impact/Composure (recovery timeline) + crit removal — **Next priority**
+6. **SOW-021 Phase 2:** Finesse/Cunning (lockout-vs-window)
+7. **SOW-021 Phase 3:** Dominance/Toughness (sustain ratio) + minimal healing
+8. **SOW-020 Phase 5:** Decoupling — Remove archetype coupling, migrate NPCs, cleanup
 
 ---
 
-**Document Version:** 2.0
+**Document Version:** 2.1
 **Maintained By:** Development team
-**Review Cadence:** Update after each SOW-020 phase completion
+**Review Cadence:** Update after each SOW-021 phase completion

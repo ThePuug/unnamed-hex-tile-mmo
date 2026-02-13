@@ -15,6 +15,7 @@ pub fn handle_deflect(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -116,7 +117,11 @@ pub fn handle_deflect(
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Deflect);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state)
-        apply_synergies(*ent, AbilityType::Deflect, &recovery, &mut commands);
+        // Apply synergies (server-side state, SOW-021 Phase 2)
+        // Self-cast: both attacker and defender are the same entity
+        let Ok(attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+        apply_synergies(*ent, AbilityType::Deflect, &recovery, attrs, attrs, &mut commands);
     }
 }

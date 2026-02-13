@@ -8,24 +8,37 @@
 //!
 //! See ADR-005 for architectural details.
 
+use bevy::prelude::Entity;
 use crate::common::components::reaction_queue::DamageType;
 use crate::common::components::ActorAttributes;
-use rand::Rng;
 
 /// Compute a relative stat contest modifier between attacker and defender.
 ///
-/// Uses raw attribute values only (no level multiplier). Clamped linear:
-/// `modifier = clamp(1.0 + delta / K, 0.5, 1.5)` where `delta = attacker - defender`.
+/// Uses raw attribute values only (no level multiplier). Exponential curve with diminishing returns
+/// and complete negation at equal stats.
 ///
-/// - Equal stats → 1.0 (neutral)
-/// - Attacker +100 over defender → 1.5 (capped)
-/// - Defender +100 over attacker → 0.5 (capped)
+/// Formula: if delta <= 0 then 0.0, else sqrt(delta / 300).clamp(0, 1)
+///
+/// Equal or disadvantaged stats completely negate the benefit:
+/// - Disadvantage (delta < 0) → 0.0 (completely negated)
+/// - Equal stats (delta = 0) → 0.0 (cancelled out)
+/// - +100 advantage → 0.577 (57.7% of full benefit)
+/// - +200 advantage → 0.816 (81.6% of full benefit)
+/// - +300 advantage → 1.0 (100% full benefit, capped)
 pub fn contest_modifier(attacker_stat: u16, defender_stat: u16) -> f32 {
     let delta = attacker_stat as f32 - defender_stat as f32;
-    const K: f32 = 200.0;
-    const MIN: f32 = 0.5;
-    const MAX: f32 = 1.5;
-    (1.0 + delta / K).clamp(MIN, MAX)
+    const MAX_DELTA: f32 = 300.0;
+
+    // Any disadvantage or equal stats = complete negation
+    if delta <= 0.0 {
+        return 0.0;
+    }
+
+    // Normalize delta to [0, 1] range (capped at +300)
+    let normalized = (delta / MAX_DELTA).min(1.0);
+
+    // Apply square root for diminishing returns
+    normalized.sqrt()
 }
 
 /// Calculate outgoing damage based on attacker's attributes
@@ -59,89 +72,114 @@ pub fn calculate_outgoing_damage(
     base_damage
 }
 
-/// Roll for critical hit and calculate multiplier
+
+/// Calculate recovery pushback based on Impact vs Composure contest (SOW-021 Phase 2)
 ///
-/// Formula (scaled for u16 values):
-/// - Crit chance: base (5%) + (instinct / 1000)
-///   - At instinct=0: 5% crit chance
-///   - At instinct=500 (level 50): 55% crit chance
-/// - Crit multiplier: 1.5 + (instinct / 1000)
-///   - At instinct=0: 1.5x damage
-///   - At instinct=500 (level 50): 2.0x damage
+/// Formula: Contest reduces effective stat, then linear scaling 0% to 50%
+/// - Effective Impact = impact × contest_modifier(impact, composure)
+/// - Pushback = (effective_impact / 6.0) capped at 50%
 ///
 /// # Arguments
-/// * `attrs` - Attacker's attributes
+/// * `attacker_impact` - Attacker's Impact stat (might)
+/// * `defender_composure` - Defender's Composure stat (focus)
 ///
 /// # Returns
-/// Tuple of (was_crit: bool, multiplier: f32)
-/// - If crit: (true, 1.5-2.0)
-/// - If not crit: (false, 1.0)
+/// Pushback percentage (e.g., 0.25 for 25%)
 ///
 /// # Example
 /// ```
-/// let attrs = ActorAttributes::default();
-/// let (was_crit, multiplier) = roll_critical(&attrs);
+/// let pushback = calculate_recovery_pushback(0, 0); // Returns 0.0 (no impact)
+/// let pushback = calculate_recovery_pushback(100, 100); // Returns 0.167 (neutral contest)
+/// let pushback = calculate_recovery_pushback(300, 0); // Returns 0.50 (50% capped)
 /// ```
-pub fn roll_critical(attrs: &ActorAttributes, precision_mod: f32) -> (bool, f32) {
-    let instinct = attrs.instinct() as f32;
-    let base_crit_chance = 0.05; // 5%
-    let crit_chance = (base_crit_chance + (instinct / 1000.0)) * precision_mod;
+pub fn calculate_recovery_pushback(
+    attacker_impact: u16,
+    defender_composure: u16,
+) -> f32 {
+    const MAX_PUSHBACK: f32 = 0.50; // Cap at 50%
+    const IMPACT_DIVISOR: f32 = 600.0; // 300 impact → 50% (0.50 as decimal)
 
-    let mut rng = rand::rng();
-    let was_crit = rng.random::<f32>() < crit_chance;
+    // Calculate base pushback from raw stat
+    let base_pushback = (attacker_impact as f32) / IMPACT_DIVISOR;
 
-    let crit_multiplier = if was_crit {
-        1.5 + (instinct / 1000.0)
-    } else {
-        1.0
+    // Apply contest modifier directly to benefit
+    let contest_mod = contest_modifier(attacker_impact, defender_composure);
+    let contested_pushback = base_pushback * contest_mod;
+
+    contested_pushback.min(MAX_PUSHBACK)
+}
+
+/// Scan for the strongest Dominance aura within range of target
+///
+/// Returns the highest Dominance stat within 5-hex radius
+pub fn find_max_dominance_in_range(
+    target: Entity,
+    loc_query: &bevy::prelude::Query<&crate::common::components::Loc>,
+    attrs_query: &bevy::prelude::Query<&ActorAttributes>,
+) -> u16 {
+    const RADIUS: i32 = 5;
+
+    let Ok(target_loc) = loc_query.get(target) else {
+        return 0;
     };
 
-    (was_crit, crit_multiplier)
+    let mut max_dominance = 0u16;
+
+    for (loc, attrs) in loc_query.iter().zip(attrs_query.iter()) {
+        let distance = target_loc.flat_distance(loc) as i32;
+        if distance <= RADIUS {
+            let dominance = attrs.dominance();
+            if dominance > max_dominance {
+                max_dominance = dominance;
+            }
+        }
+    }
+
+    max_dominance
 }
 
 /// Apply passive defensive modifiers to damage
 ///
-/// Formula (scaled for u16 values):
-/// - Physical: mitigation = vitality / 330 (capped at 75%)
-/// - Magic: mitigation = focus / 330 (capped at 75%)
+/// Formula: Toughness contested by strongest Dominance aura in range
+/// - effective_toughness = toughness × contest_modifier(toughness, max_dominance)
+/// - Physical: mitigation = (effective_toughness / 330).min(75%)
+/// - Magic: mitigation = (effective_focus / 330).min(75%)
 /// - Final damage = outgoing * (1 - mitigation)
-///
-/// Scaling: vitality=100 → 30% mitigation, vitality=250 → 75% (cap)
 ///
 /// # Arguments
 /// * `outgoing_damage` - Damage after attacker scaling
 /// * `attrs` - Defender's attributes
 /// * `damage_type` - Physical or Magic
+/// * `max_dominance_in_range` - Strongest Dominance aura affecting defender (0 if none)
 ///
 /// # Returns
 /// Final damage after mitigation (clamped to 0 minimum)
-///
-/// # Example
-/// ```
-/// let attrs = ActorAttributes::default();
-/// let final_damage = apply_passive_modifiers(50.0, &attrs, DamageType::Physical);
-/// ```
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
     damage_type: DamageType,
-    precision_mod: f32,
+    max_dominance_in_range: u16,
 ) -> f32 {
-    let base_mitigation = match damage_type {
+    let mitigation = match damage_type {
         DamageType::Physical => {
-            let vitality = attrs.vitality() as f32;
-            vitality / 330.0
+            let toughness = attrs.toughness();
+            // Calculate base mitigation from raw stat
+            let base_mitigation = (toughness as f32) / 330.0;
+            // Apply contest modifier directly to benefit
+            let contest_mod = contest_modifier(toughness, max_dominance_in_range);
+            let contested_mitigation = base_mitigation * contest_mod;
+            contested_mitigation.min(0.75)
         }
         DamageType::Magic => {
-            let focus = attrs.focus() as f32;
-            focus / 330.0
+            let focus = attrs.focus();
+            // Calculate base mitigation from raw stat
+            let base_mitigation = (focus as f32) / 330.0;
+            // Apply contest modifier directly to benefit
+            let contest_mod = contest_modifier(focus, max_dominance_in_range);
+            let contested_mitigation = base_mitigation * contest_mod;
+            contested_mitigation.min(0.75)
         }
     };
-
-    // Precision contest inversely scales mitigation:
-    // attacker advantage (mod=1.5) → mitigation * 0.67
-    // defender advantage (mod=0.5) → mitigation * 2.0
-    let mitigation = (base_mitigation * (1.0 / precision_mod)).min(0.75);
 
     let final_damage = outgoing_damage * (1.0 - mitigation);
     final_damage.max(0.0)
@@ -155,47 +193,55 @@ mod tests {
 
     #[test]
     fn test_contest_modifier_neutral() {
-        assert_eq!(contest_modifier(100, 100), 1.0);
-        assert_eq!(contest_modifier(0, 0), 1.0);
-        assert_eq!(contest_modifier(50, 50), 1.0);
+        // Equal stats = complete negation (0.0x)
+        assert_eq!(contest_modifier(100, 100), 0.0);
+        assert_eq!(contest_modifier(0, 0), 0.0);
+        assert_eq!(contest_modifier(50, 50), 0.0);
     }
 
     #[test]
     fn test_contest_modifier_attacker_advantage() {
+        // delta = 50, sqrt(50/300) = sqrt(0.167) = 0.408
         let m = contest_modifier(150, 100);
-        assert!(m > 1.0, "Attacker advantage should produce >1.0, got {m}");
-        assert!((m - 1.25).abs() < 0.001, "150 vs 100 → delta 50/200 = 1.25, got {m}");
+        assert!(m > 0.0, "Attacker advantage should produce >0.0, got {m}");
+        assert!((m - 0.408).abs() < 0.01, "150 vs 100 → sqrt(50/300) = ~0.408, got {m}");
     }
 
     #[test]
     fn test_contest_modifier_defender_advantage() {
+        // Any disadvantage = complete negation (0.0x)
         let m = contest_modifier(100, 150);
-        assert!(m < 1.0, "Defender advantage should produce <1.0, got {m}");
-        assert!((m - 0.75).abs() < 0.001, "100 vs 150 → delta -50/200 = 0.75, got {m}");
+        assert_eq!(m, 0.0, "Defender advantage should produce 0.0, got {m}");
     }
 
     #[test]
     fn test_contest_modifier_clamped() {
-        // +200 delta would give 2.0 unclamped, should cap at 1.5
-        assert_eq!(contest_modifier(300, 100), 1.5);
-        // -200 delta would give 0.0 unclamped, should floor at 0.5
-        assert_eq!(contest_modifier(100, 300), 0.5);
-        // Extreme values
-        assert_eq!(contest_modifier(u16::MAX, 0), 1.5);
-        assert_eq!(contest_modifier(0, u16::MAX), 0.5);
+        // +300 delta: sqrt(300/300) = 1.0 (max)
+        assert_eq!(contest_modifier(300, 0), 1.0);
+        // Any disadvantage = 0.0 (min)
+        assert_eq!(contest_modifier(0, 300), 0.0);
+        // Extreme advantage values
+        assert_eq!(contest_modifier(u16::MAX, 0), 1.0);
+        assert_eq!(contest_modifier(0, u16::MAX), 0.0);
     }
 
     #[test]
-    fn test_contest_modifier_symmetric() {
-        // f(a,b) + f(b,a) = 2.0 (they are complements around 1.0)
+    fn test_contest_modifier_asymmetric() {
+        // Advantage gives benefit (>0), disadvantage gives nothing (0)
         let pairs = [(100, 150), (0, 50), (200, 100), (80, 120)];
         for (a, b) in pairs {
             let forward = contest_modifier(a, b);
             let reverse = contest_modifier(b, a);
-            assert!(
-                (forward + reverse - 2.0).abs() < 0.001,
-                "f({a},{b})={forward} + f({b},{a})={reverse} should = 2.0"
-            );
+            if a > b {
+                assert!(forward > 0.0, "f({a},{b}) should be >0 (advantage), got {forward}");
+                assert_eq!(reverse, 0.0, "f({b},{a}) should be 0 (disadvantage), got {reverse}");
+            } else if a < b {
+                assert_eq!(forward, 0.0, "f({a},{b}) should be 0 (disadvantage), got {forward}");
+                assert!(reverse > 0.0, "f({b},{a}) should be >0 (advantage), got {reverse}");
+            } else {
+                assert_eq!(forward, 0.0, "f({a},{b}) should be 0 (equal), got {forward}");
+                assert_eq!(reverse, 0.0, "f({b},{a}) should be 0 (equal), got {reverse}");
+            }
         }
     }
 
@@ -211,32 +257,48 @@ mod tests {
         assert!(m3 <= m4, "m3={m3} should be <= m4={m4}");
     }
 
-    // ===== PRECISION MOD EFFECT TESTS =====
+    // ===== RECOVERY PUSHBACK TESTS (SOW-021 Phase 2) =====
 
     #[test]
-    fn test_crit_chance_with_precision_mod() {
-        let attrs = ActorAttributes::default();
-        // With precision_mod > 1, crit chance should increase
-        let base_instinct = attrs.instinct() as f32;
-        let base_chance = 0.05 + base_instinct / 1000.0;
-        let boosted = base_chance * 1.5;
-        assert!(boosted > base_chance);
+    fn test_pushback_neutral_contest() {
+        // 100 Impact vs 100 Composure: equal stats = complete negation → 0%
+        let pushback = calculate_recovery_pushback(100, 100);
+        assert_eq!(pushback, 0.0, "Expected 0.0 (stats cancel), got {pushback}");
     }
 
     #[test]
-    fn test_mitigation_with_precision_mod() {
-        // Build attrs with some vitality for mitigation
-        let attrs = ActorAttributes::new(0, 0, 0, -5, 0, 0, 0, 0, 0);
-        let damage = 100.0;
-
-        let neutral = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 1.0);
-        let boosted = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 1.5);
-        let reduced = apply_passive_modifiers(damage, &attrs, DamageType::Physical, 0.5);
-
-        // Attacker advantage → less mitigation → more damage through
-        assert!(boosted > neutral, "precision_mod 1.5 should let more damage through: {boosted} > {neutral}");
-        // Defender advantage → more mitigation → less damage through
-        assert!(reduced < neutral, "precision_mod 0.5 should reduce damage through: {reduced} < {neutral}");
+    fn test_pushback_attacker_advantage() {
+        // 200 Impact vs 100 Composure: base = 200/600 = 0.333, contest = sqrt(100/300) = 0.577, result = 0.192
+        let pushback = calculate_recovery_pushback(200, 100);
+        assert!((pushback - 0.192).abs() < 0.01, "Expected ~0.192, got {pushback}");
     }
+
+    #[test]
+    fn test_pushback_defender_advantage() {
+        // 100 Impact vs 200 Composure: contest = 0.0 (defender advantage), result = 0.0
+        let pushback = calculate_recovery_pushback(100, 200);
+        assert_eq!(pushback, 0.0, "Expected 0.0 (negated), got {pushback}");
+    }
+
+    #[test]
+    fn test_pushback_extreme_values() {
+        // Maximum Impact vs 0 Composure: effective = MAX × 1.5 → 50% (capped)
+        let max_pushback = calculate_recovery_pushback(u16::MAX, 0);
+        assert!((max_pushback - 0.50).abs() < 0.01, "Expected 0.50 (capped), got {max_pushback}");
+
+        // 0 Impact: effective = 0 × anything = 0 → 0%
+        let min_pushback = calculate_recovery_pushback(0, u16::MAX);
+        assert!((min_pushback - 0.0).abs() < 0.001, "Expected 0.0 (no impact), got {min_pushback}");
+    }
+
+    #[test]
+    fn test_pushback_on_2s_recovery() {
+        // Simulate pushback on 2s recovery with equal stats (100, 100) = complete negation
+        let pushback_pct = calculate_recovery_pushback(100, 100);
+        let extension = 2.0 * pushback_pct;  // 2s × 0.0 = 0s (negated)
+        assert_eq!(extension, 0.0, "Expected 0.0s extension (stats cancel), got {extension}");
+    }
+
 }
+
 

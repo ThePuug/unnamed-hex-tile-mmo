@@ -199,10 +199,21 @@ pub fn handle_lunge(
 
         // Trigger recovery lockout (server-side state)
         let recovery_duration = get_ability_recovery_duration(AbilityType::Lunge);
-        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Lunge);
+
+        // Get target's Impact to contest Composure recovery reduction (SOW-021 Phase 2)
+        let target_impact = attrs_query.get(target_ent)
+            .map(|target_attrs| target_attrs.impact())
+            .unwrap_or(0);
+
+        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Lunge)
+            .with_target_impact(target_impact);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state)
-        apply_synergies(*ent, AbilityType::Lunge, &recovery, &mut commands);
+        // Apply synergies (server-side state, SOW-021 Phase 2)
+        // Self-cast: both attacker and defender are the same entity
+        let Ok(attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+        apply_synergies(*ent, AbilityType::Lunge, &recovery, attrs, attrs, &mut commands);
     }
 }

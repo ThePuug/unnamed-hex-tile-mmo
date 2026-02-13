@@ -11,6 +11,7 @@ use crate::common::{
 pub fn handle_ability_used(
     mut commands: Commands,
     mut do_reader: MessageReader<Do>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
 ) {
     for event in do_reader.read() {
         let Do { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -29,8 +30,11 @@ pub fn handle_ability_used(
         if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
             entity_cmd.insert(recovery);
 
-            // Apply synergies (same as server)
-            apply_synergies(*ent, *ability, &recovery, &mut commands);
+            // Apply synergies (same as server, SOW-021 Phase 2)
+            // Self-cast: both attacker and defender are the same entity
+            if let Ok(attrs) = attrs_query.get(*ent) {
+                apply_synergies(*ent, *ability, &recovery, attrs, attrs, &mut commands);
+            }
         }
     }
 }

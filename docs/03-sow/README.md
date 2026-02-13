@@ -26,6 +26,7 @@ SOWs are work orders for developers. Each SOW defines what needs to be built, wh
 | 018 | NPC Engagement Coordination | 🤖 AI | 📝 Planned | 2026-02-09 | 13-19 hours | - |
 | 019 | Combat Feedback Enhancements | ⚔️ Combat | ✅ Merged | 2026-02-09 | - | - |
 | 020 | Attribute System Rework | 📊 Progression | 📝 Planned | 2026-02-10 | 18-28 hours | - |
+| 021 | Relative Meta-Attributes Implementation | 📊 Progression | 📝 Planned | 2026-02-13 | 22-34 hours | - |
 
 **Legend:**
 - **Status:** ✅ Accepted/Merged | 🔄 In Progress/Review | 📝 Planned/Proposed

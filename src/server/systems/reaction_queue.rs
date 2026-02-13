@@ -133,8 +133,7 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
-            precision_mod: 1.0,
-        });
+                    });
 
         let attrs = ActorAttributes::default();
 

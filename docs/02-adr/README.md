@@ -44,6 +44,8 @@ This directory contains technical architecture decisions for the unnamed hex-til
 | 027 | 📋 | Commitment Tiers (30/45/60) | ⚡ | 2026-02-10 |
 | 028 | 📋 | Attribute-Triumvirate Decoupling | ⚡ | 2026-02-10 |
 | 029 | 📋 | Relative Stat Contests | ⚔️ | 2026-02-10 |
+| 030 | ✅ | Reaction Queue Window Mechanic | ⚔️ | 2026-02-10 |
+| 031 | ✅ | Relative Meta-Attribute Opposition System | ⚔️ | 2026-02-13 |
 
 ### When to Read Each ADR
 
@@ -79,6 +81,8 @@ This directory contains technical architecture decisions for the unnamed hex-til
 - **027 - Commitment Tiers:** Discrete 30/45/60% budget thresholds for build identity stats (queue capacity, cadence, evasion). Read when working with commitment-driven mechanics or attribute investment.
 - **028 - Attribute-Triumvirate Decoupling:** Attributes are independent from Triumvirate Approach/Resilience. Read when working with NPC configuration, archetype systems, or attribute assignment.
 - **029 - Relative Stat Contests:** Three opposing pairs (Grace/Vitality, Might/Focus, Presence/Instinct) for attacker-vs-defender build matchups with no level scaling. Read when working with combat resolution, crit/mitigation, or recovery mechanics.
+- **030 - Reaction Queue Window Mechanic:** Reaction window extends threat timer duration, enabling defenders to react to incoming threats. Read when working with reaction queue, threat timers, or defensive attributes.
+- **031 - Relative Meta-Attribute Opposition System:** Reworked relative oppositions (Impact/Composure, Finesse/Cunning, Dominance/Toughness) with rotated pairings across scaling layers. Removes critical hit system. Read when working with relative attributes, recovery mechanics, synergy systems, or healing reduction.
 
 **UI & Developer Tools:**
 - **013 - Developer Console Architecture:** Hierarchical menu with event-based actions. Read when adding debug features or console commands.

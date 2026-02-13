@@ -153,7 +153,7 @@ pub fn update(
             if is_filled {
                 let threat = &queue.threats[icon.index];
                 let estimated = damage::apply_passive_modifiers(
-                    threat.damage, attrs, threat.damage_type, threat.precision_mod,
+                    threat.damage, attrs, threat.damage_type, 0, // No dominance for UI display
                 );
                 let severity = if health.max > 0.0 {
                     (estimated / health.max).clamp(0.0, 1.0)

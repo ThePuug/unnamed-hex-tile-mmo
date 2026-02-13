@@ -13,11 +13,14 @@ The attribute system uses **three bipolar pairs** of attributes, managed through
 
 **Related Documents:**
 - [RFC-020: Attribute System Rework](../01-rfc/020-attribute-system-rework.md)
+- [RFC-021: Relative Meta-Attribute Opposition System](../01-rfc/021-relative-meta-attributes-rework.md)
 - [ADR-026: Three Scaling Modes](../02-adr/026-three-scaling-modes.md)
 - [ADR-027: Commitment Tiers](../02-adr/027-commitment-tiers.md)
 - [ADR-028: Attribute-Triumvirate Decoupling](../02-adr/028-attribute-triumvirate-decoupling.md)
 - [ADR-029: Relative Stat Contests](../02-adr/029-relative-stat-contests.md)
+- [ADR-031: Relative Meta-Attribute Opposition System](../02-adr/031-relative-meta-attributes-rework.md)
 - [ADR-020: Super-Linear Level Multiplier](../02-adr/020-super-linear-level-multiplier.md)
+- [SOW-021: Relative Meta-Attributes Implementation](../03-sow/021-relative-meta-attributes-implementation.md)
 - [Combat Balance Design Doc](combat-balance.md)
 
 ---
@@ -67,15 +70,17 @@ Relative values are the **build benefit**. They do not scale with level. Instead
 
 This means a lower-level player who committed heavily to one attribute can still win relative contests against a higher-level player who neglected the opposing stat. Build choices matter even across level gaps.
 
-Relative stats operate in opposing pairs:
+Relative stats operate in opposing pairs with **rotated oppositions** (different from absolute/commitment layers to prevent single counter-builds):
 
-| Pair | Attacker Stat | Defender Stat | Interaction |
-|------|--------------|---------------|-------------|
-| **Grace vs Vitality** | **Precision**: Crit chance | **Toughness**: Mitigation | Your technique finding gaps in their constitution. Applies to unmitigated/dismissed threat resolution. |
-| **Might vs Focus** | **Impact**: — | **Composure**: Recovery reduction | Your raw force against their mental discipline. Applies to active reaction resolution. |
-| **Presence vs Instinct** | **Dominance**: Recovery pushback | **Cunning**: Reaction window | Your gravitational control against their instinctive adaptation. Applies to tempo control. |
+| Pair | Attacker Stat | Defender Stat | Mechanical Layer | Contest Equation |
+|------|--------------|---------------|------------------|------------------|
+| **Might vs Focus** | **Impact**: Recovery pushback | **Composure**: Recovery reduction | Recovery timeline | Impact extends enemy recovery by 25% of max duration × contest_modifier. Composure reduces own recovery tick rate passively. |
+| **Grace vs Instinct** | **Finesse**: Synergy recovery reduction | **Cunning**: Reaction window | Lockout-vs-window | Finesse tightens synergy burst sequences via contest. Cunning extends reaction window duration (2ms per point, capped at 600ms). |
+| **Presence vs Vitality** | **Dominance**: Healing reduction (aura) | **Toughness**: Mitigation | Sustain ratio | Dominance reduces healing within 5 hex radius (worst-effect-wins). Toughness provides flat damage reduction per hit. |
 
-See [ADR-029](../02-adr/029-relative-stat-contests.md) for contest resolution details.
+**Critical hits removed:** The previous Precision (crit chance) mechanic has been removed entirely. Damage is now deterministic and contest-driven. See [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) for rationale.
+
+See [ADR-029](../02-adr/029-relative-stat-contests.md) for contest resolution formula and [ADR-031](../02-adr/031-relative-meta-attributes-rework.md) for detailed mechanics.
 
 ### Commitment — Build Identity
 
@@ -117,21 +122,21 @@ Each attribute has three named sub-attributes, one per scaling mode:
 
 | Attribute | Absolute (progression) | Relative (build benefit) | Commitment (build identity) |
 |-----------|----------------------|---------------------------|----------------------------|
-| Might | Force: Damage | Impact | Ferocity |
-| Grace | Technique | Precision: Crit chance | Poise: Evasion |
+| Might | Force: Damage | Impact: Recovery pushback | Ferocity |
+| Grace | Technique | Finesse: Synergy recovery reduction | Poise: Evasion |
 | Vitality | Constitution: HP | Toughness: Mitigation | Grit |
 | Focus | Discipline | Composure: Recovery reduction | Concentration: Queue capacity |
 | Instinct | Intuition | Cunning: Reaction window | Flow |
-| Presence | Gravitas | Dominance: Recovery pushback | Intensity: Cadence |
+| Presence | Gravitas | Dominance: Healing reduction (aura) | Intensity: Cadence |
 
 ### Framing Sentences
 
-- **Might**: Force is the raw energy generated which grows as you grow stronger. How significant that force is when applied to a target is its impact. The amount of effort you put into generating that force is your ferocity.
-- **Grace**: Technique is the practiced skill that grows as you grow more experienced. How effectively that technique finds a target's weakness is its precision. The dedication to honing that technique into fluid movement is your poise.
+- **Might**: Force is the raw energy generated which grows as you grow stronger. The tempo pressure that force exerts on an opponent's actions is its impact. The amount of effort you put into generating that force is your ferocity.
+- **Grace**: Technique is the practiced skill that grows as you grow more experienced. How fluidly that technique chains abilities together is its finesse. The dedication to honing that technique into fluid movement is your poise.
 - **Vitality**: Constitution is the raw endurance that grows as you grow hardier. How well that constitution absorbs punishment from a source is its toughness. The mental stubbornness behind that physical resilience is your grit.
-- **Focus**: Discipline is the trained mental strength that grows as you grow sharper. How well that discipline holds under pressure from an opponent is its composure. The dedication to sustaining that mental effort is your concentration.
-- **Instinct**: Intuition is the gut sense that deepens as you grow wiser. How well that intuition reads and adapts to the field is your cunning. Letting go of conscious thought and letting that intuition guide your actions is your flow.
-- **Presence**: Gravitas is the weight of your presence that grows as you grow more powerful. How effectively that gravitas controls the space around a target is your dominance. The raw energy you project into every action is your intensity.
+- **Focus**: Discipline is the trained mental strength that grows as you grow sharper. How well that discipline maintains composure and recovers quickly is its composure. The dedication to sustaining that mental effort is your concentration.
+- **Instinct**: Intuition is the gut sense that deepens as you grow wiser. How well that intuition reads incoming threats and extends your reaction time is your cunning. Letting go of conscious thought and letting that intuition guide your actions is your flow.
+- **Presence**: Gravitas is the weight of your presence that grows as you grow more powerful. How effectively that gravitas suppresses healing in the space around you is your dominance. The raw energy you project into every action is your intensity.
 
 ---
 
@@ -157,9 +162,10 @@ See [ADR-028](../02-adr/028-attribute-triumvirate-decoupling.md) for decoupling 
 
 The following systems interact with this attribute system:
 
-- **Reaction queue (ADR-003/006)**: Queue capacity is driven by Focus → Concentration commitment tier. Reaction window duration is driven by Instinct → Cunning relative stat vs attacker's Presence → Dominance.
-- **Universal lockout (ADR-017)**: Recovery reduction (Focus → Composure) and recovery pushback (Presence → Dominance) affect the lockout/recovery timeline.
-- **Dismiss mechanic (ADR-022)**: Dismissed threats resolve at full damage minus passive defenses. Crit chance (Grace → Precision) vs mitigation (Vitality → Toughness) determines damage outcome on unmitigated threats.
+- **Reaction queue (ADR-003/006)**: Queue capacity is driven by Focus → Concentration commitment tier. Reaction window duration is driven by Instinct → Cunning relative stat (extends threat timer duration).
+- **Universal lockout (ADR-017)**: Recovery reduction (Focus → Composure) and recovery pushback (Might → Impact) affect the lockout/recovery timeline. Synergy recovery reduction (Grace → Finesse) vs reaction window (Instinct → Cunning) creates lockout-vs-window equation.
+- **Dismiss mechanic (ADR-022)**: Dismissed threats resolve at full damage minus passive defenses. Vitality → Toughness provides mitigation. (Note: Critical hits removed in ADR-031.)
+- **Healing system (SOW-021 Phase 3)**: Healing reduction aura (Presence → Dominance) opposes mitigation (Vitality → Toughness) on the sustain ratio layer.
 - **Spatial difficulty (RFC-014)**: Distance from haven determines NPC level, which determines absolute stat scaling.
 - **Auto-attack timeline**: One action timeline per entity. Cadence (Presence → Intensity commitment tier) determines auto-attack speed. Recovery pushback/reduction affects the timeline between actions.
 - **Super-linear scaling (ADR-020)**: Polynomial level multiplier applied to absolute stats. Level 0 multiplier = 1.0 (backward compatible).
@@ -177,8 +183,13 @@ These are intentionally left as design space for future iteration:
 - Intuition (Instinct absolute) — no specific stat yet
 - Gravitas (Presence absolute) — no specific stat yet
 
-**Empty relative stats:**
-- Impact (Might relative) — no specific stat yet
+**Relative stats (all implemented in SOW-021):**
+- Impact (Might relative) — Recovery pushback on hit
+- Finesse (Grace relative) — Synergy recovery reduction via contest
+- Composure (Focus relative) — Recovery reduction (passive tick rate modifier)
+- Cunning (Instinct relative) — Reaction window extension
+- Dominance (Presence relative) — Healing reduction aura (5 hex radius, worst-effect-wins)
+- Toughness (Vitality relative) — Flat damage mitigation per hit
 
 **Empty commitment stats:**
 - Ferocity (Might commitment) — no specific stat yet
@@ -209,7 +220,7 @@ Do **not** fill open cells — document them as explicitly open design space.
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2026-02-10
+**Document Version:** 2.1
+**Last Updated:** 2026-02-13
 **Maintained By:** Development team
 **Extends:** Version 1.0 (adds three scaling modes on top of existing Axis/Spectrum/Shift system)

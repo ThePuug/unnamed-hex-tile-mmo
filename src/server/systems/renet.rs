@@ -73,15 +73,15 @@ pub fn do_manage_connections(
                     ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // Level 10: Flex build (2/3/0 + 2/3/0) - test shift flexibility
-                // At shift=0: 2×T3 (68% each on grace+focus)
-                // Can shift to redistribute: T3→T2/T1 or T2→T1/T1
-                // M/G: 2 grace axis + 3 spectrum → grace=68 (T3), might=0 (can shift to 36)
-                // V/F: 2 focus axis + 3 spectrum → focus=68 (T3), vitality=0 (can shift to 36)
+                // Level 50: Balanced high-level build for stat scaling testing
+                // M/G: 10 grace axis + 5 spectrum → grace focus with flexibility
+                // V/F: 10 focus axis + 5 spectrum → focus build with flexibility
+                // I/P: 10 instinct axis + 10 spectrum → balanced instinct/cunning
+                // Total: 15 + 15 + 20 = 50 levels
                 let attrs = ActorAttributes::new(
-                    2, 3, 0,       // might_grace: 2 axis (grace), 3 spectrum, 0 shift
-                    2, 3, 0,       // vitality_focus: 2 axis (focus), 3 spectrum, 0 shift
-                    0, 0, 0,       // instinct_presence: no investment
+                    10, 5, 0,      // might_grace: 10 axis (grace), 5 spectrum
+                    10, 5, 0,      // vitality_focus: 10 axis (focus), 5 spectrum
+                    -10, 10, 0,    // instinct_presence: -10 axis (instinct), 10 spectrum
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();

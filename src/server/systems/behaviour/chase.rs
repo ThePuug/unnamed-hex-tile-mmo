@@ -1,4 +1,4 @@
-use bevy::{prelude::*, ecs::hierarchy::ChildOf};
+use bevy::prelude::*;
 use rand::seq::IteratorRandom;
 use qrz::{Convert, Qrz};
 
@@ -9,6 +9,7 @@ use crate::{
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             returning::Returning,
             hex_assignment::AssignedHex,
+            engagement::EngagementMember,
         },
         message::{Event, Do, Component as MessageComponent},
         plugins::nntree::*,
@@ -107,7 +108,7 @@ pub fn chase(
         Option<&TargetLock>,
         Option<&Returning>,
         Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,  // ADR-011
-        &ChildOf,
+        &EngagementMember,
         Option<&AssignedHex>,  // SOW-018: Path to assigned hex
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
@@ -116,12 +117,12 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of, assigned_hex_opt) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, assigned_hex_opt) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
             // Get spawner location to return to
-            let Ok(&spawner_loc) = q_spawner.get(child_of.parent()) else {
+            let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
                 continue;
             };
 
@@ -225,7 +226,7 @@ pub fn chase(
             Some(ent) => ent,
             None => {
                 // Check if we're too far from spawner to acquire new targets
-                let Ok(&spawner_loc) = q_spawner.get(child_of.parent()) else {
+                let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
                     continue;
                 };
 

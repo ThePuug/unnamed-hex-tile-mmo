@@ -1,4 +1,4 @@
-use bevy::{prelude::*, ecs::hierarchy::ChildOf};
+use bevy::prelude::*;
 use rand::seq::IteratorRandom;
 use qrz::{Convert, Qrz};
 
@@ -8,6 +8,7 @@ use crate::{
             Loc, heading::Heading, position::Position, resources::Health,
             behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
             returning::Returning,
+            engagement::EngagementMember,
         },
         message::{Event, Do, Try, Event as GameEvent, Component as MessageComponent},
         plugins::nntree::*,
@@ -159,7 +160,7 @@ pub fn kite(
         Option<&TargetLock>,
         Option<&Returning>,
         Option<&mut crate::common::components::movement_intent_state::MovementIntentState>,  // ADR-011
-        &ChildOf,
+        &EngagementMember,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
     q_spawner: Query<&Loc, Without<Kite>>,
@@ -171,12 +172,12 @@ pub fn kite(
 ) {
     let current_time = dt.elapsed().as_millis();
 
-    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, child_of) in &mut query {
+    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
             // Get spawner location to return to
-            let Ok(&spawner_loc) = q_spawner.get(child_of.parent()) else {
+            let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
                 continue;
             };
 
@@ -278,7 +279,7 @@ pub fn kite(
             Some(ent) => ent,
             None => {
                 // Check if we're too far from spawner to acquire new targets
-                let Ok(&spawner_loc) = q_spawner.get(child_of.parent()) else {
+                let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
                     continue;
                 };
 

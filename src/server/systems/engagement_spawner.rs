@@ -283,7 +283,6 @@ fn spawn_engagement_at(
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));
             }
             EnemyArchetype::Kiter => {
@@ -296,7 +295,6 @@ fn spawn_engagement_at(
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    bevy::ecs::hierarchy::ChildOf(engagement_entity),  // Link to parent engagement for leashing
                 ));
             }
         }

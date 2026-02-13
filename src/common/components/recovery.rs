@@ -11,6 +11,7 @@ pub struct GlobalRecovery {
     pub remaining: f32,              // Seconds until ALL abilities unlock
     pub duration: f32,               // Total duration of current lockout
     pub triggered_by: AbilityType,   // Which ability triggered this lockout
+    pub target_impact: u16,          // Impact of the target attacked (contests Composure)
 }
 
 impl GlobalRecovery {
@@ -19,7 +20,13 @@ impl GlobalRecovery {
             remaining: duration,
             duration,
             triggered_by,
+            target_impact: 0,  // Default to uncontested
         }
+    }
+
+    pub fn with_target_impact(mut self, target_impact: u16) -> Self {
+        self.target_impact = target_impact;
+        self
     }
 
     /// Check if lockout is still active (remaining > 0)
@@ -30,6 +37,14 @@ impl GlobalRecovery {
     /// Tick the recovery timer (subtract delta time)
     pub fn tick(&mut self, delta: f32) {
         self.remaining = (self.remaining - delta).max(0.0);
+    }
+
+    /// Apply recovery pushback based on Impact vs Composure contest (SOW-021 Phase 1)
+    /// Extends recovery timer by percentage of max duration
+    /// Capped at 2x original duration to prevent infinite lockout
+    pub fn apply_pushback(&mut self, pushback_amount: f32) {
+        let extension = self.duration * pushback_amount;
+        self.remaining = (self.remaining + extension).min(self.duration * 2.0);
     }
 }
 
@@ -63,7 +78,6 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
     match ability {
         AbilityType::Lunge => 2.0,      // Gap closer: 2s lockout
         AbilityType::Overpower => 3.0,  // Heavy strike: 3s lockout
-        AbilityType::Knockback => 1.0,  // Push: 1s lockout
         AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
         AbilityType::Volley => 4.0,     // NPC ranged: 4s lockout
@@ -95,13 +109,14 @@ mod tests {
             remaining: 0.0,
             duration: 1.0,
             triggered_by: AbilityType::Overpower,
+            target_impact: 0,
         };
         assert!(!recovery.is_active(), "Should be inactive when remaining == 0");
     }
 
     #[test]
     fn test_global_recovery_tick() {
-        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Knockback);
+        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
 
         // Tick by 0.3s
         recovery.tick(0.3);
@@ -183,7 +198,7 @@ mod tests {
     fn test_synergy_unlock_immediate() {
         // Synergy that unlocks immediately (unlock_at = lockout duration)
         let synergy = SynergyUnlock::new(
-            AbilityType::Knockback,
+            AbilityType::Lunge,
             2.0,  // Unlocks when lockout remaining <= 2.0s (which is immediately for a 2s lockout)
             AbilityType::Overpower,
         );
@@ -198,7 +213,7 @@ mod tests {
         let synergy = SynergyUnlock::new(
             AbilityType::Deflect,
             0.0,  // Only unlocks at 0s remaining
-            AbilityType::Knockback,
+            AbilityType::Lunge,
         );
 
         assert!(!synergy.is_unlocked(0.5), "Should not be unlocked at 0.5s remaining");
@@ -213,7 +228,6 @@ mod tests {
         // Updated values for slower combat pace
         assert_eq!(get_ability_recovery_duration(AbilityType::Lunge), 2.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Overpower), 3.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Knockback), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Deflect), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
         assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 4.0);
@@ -259,7 +273,7 @@ mod tests {
         let mut recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
 
         // 2. Synergy detected → Knockback can unlock at 1.0s
-        let synergy = SynergyUnlock::new(AbilityType::Knockback, 1.0, AbilityType::Overpower);
+        let synergy = SynergyUnlock::new(AbilityType::Lunge, 1.0, AbilityType::Overpower);
 
         // 3. At t=0.0s: Knockback not unlocked yet
         assert!(!synergy.is_unlocked(recovery.remaining));
@@ -283,7 +297,7 @@ mod tests {
         // In theory, multiple abilities could synergize at once
         let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
 
-        let synergy1 = SynergyUnlock::new(AbilityType::Knockback, 1.0, AbilityType::Overpower);
+        let synergy1 = SynergyUnlock::new(AbilityType::Lunge, 1.0, AbilityType::Overpower);
         let synergy2 = SynergyUnlock::new(AbilityType::Deflect, 0.5, AbilityType::Overpower);
 
         // At 2.0s remaining: nothing unlocked
@@ -297,5 +311,76 @@ mod tests {
         // At 0.5s remaining: both unlock
         assert!(synergy1.is_unlocked(0.5));
         assert!(synergy2.is_unlocked(0.5));
+    }
+
+    // ===== RECOVERY PUSHBACK TESTS (SOW-021 Phase 1) =====
+
+    #[test]
+    fn test_pushback_extends_recovery() {
+        let mut recovery = GlobalRecovery::new(2.0, AbilityType::Lunge);
+
+        // Tick down to 1.0s remaining
+        recovery.tick(1.0);
+        assert!((recovery.remaining - 1.0).abs() < 0.001);
+
+        // Apply 25% pushback (0.5s extension on 2.0s duration)
+        recovery.apply_pushback(0.25);
+        assert!((recovery.remaining - 1.5).abs() < 0.001, "Expected 1.5s after pushback, got {}", recovery.remaining);
+    }
+
+    #[test]
+    fn test_pushback_cap_at_2x_duration() {
+        let mut recovery = GlobalRecovery::new(2.0, AbilityType::Lunge);
+
+        // Apply massive pushback (100% of duration)
+        recovery.apply_pushback(1.0);
+        assert!((recovery.remaining - 4.0).abs() < 0.001, "Expected 4.0s (2x cap), got {}", recovery.remaining);
+
+        // Try to push further - should still cap at 2x
+        recovery.apply_pushback(1.0);
+        assert!((recovery.remaining - 4.0).abs() < 0.001, "Should still be capped at 4.0s, got {}", recovery.remaining);
+    }
+
+    #[test]
+    fn test_pushback_on_expired_recovery() {
+        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Deflect);
+
+        // Tick past expiry
+        recovery.tick(1.5);
+        assert_eq!(recovery.remaining, 0.0);
+
+        // Apply pushback - should extend from 0
+        recovery.apply_pushback(0.25);
+        assert!((recovery.remaining - 0.25).abs() < 0.001, "Expected 0.25s after pushback, got {}", recovery.remaining);
+    }
+
+    #[test]
+    fn test_multiple_pushbacks_accumulate() {
+        let mut recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
+
+        // Start at 1.5s remaining
+        recovery.tick(0.5);
+
+        // Apply 3 small pushbacks (10% each = 0.2s each)
+        recovery.apply_pushback(0.1);
+        assert!((recovery.remaining - 1.7).abs() < 0.001);
+
+        recovery.apply_pushback(0.1);
+        assert!((recovery.remaining - 1.9).abs() < 0.001);
+
+        recovery.apply_pushback(0.1);
+        assert!((recovery.remaining - 2.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pushback_respects_2x_cap_with_accumulation() {
+        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
+
+        // Apply multiple pushbacks that would exceed 2x
+        recovery.apply_pushback(0.5);  // 1.5s
+        recovery.apply_pushback(0.5);  // Would be 2.0s, capped at 2.0s (2x duration)
+        recovery.apply_pushback(0.5);  // Still capped at 2.0s
+
+        assert!((recovery.remaining - 2.0).abs() < 0.001, "Should be capped at 2.0s (2x of 1.0s), got {}", recovery.remaining);
     }
 }

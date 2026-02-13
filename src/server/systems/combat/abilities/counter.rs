@@ -22,6 +22,7 @@ pub fn handle_counter(
     entity_query: Query<(&EntityType, &Loc)>,
     mut queue_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
+    attrs_query: Query<&crate::common::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&crate::common::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
@@ -156,8 +157,7 @@ pub fn handle_counter(
                 inserted_at: now,
                 timer_duration,
                 ability: Some(AbilityType::Counter),
-                precision_mod: 1.0, // Reflected damage uses neutral contest
-            };
+                            };
 
             // Add to back of target's queue (newest threat)
             target_queue.threats.push_back(reflected_threat);
@@ -199,8 +199,12 @@ pub fn handle_counter(
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Counter);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state)
+        // Apply synergies (server-side state, SOW-021 Phase 2)
         // Note: Counter uses same ability type as Knockback for Overpower synergy
-        apply_synergies(*ent, AbilityType::Counter, &recovery, &mut commands);
+        // Self-cast: both attacker and defender are the same entity
+        let Ok(attrs) = attrs_query.get(*ent) else {
+            continue;
+        };
+        apply_synergies(*ent, AbilityType::Counter, &recovery, attrs, attrs, &mut commands);
     }
 }

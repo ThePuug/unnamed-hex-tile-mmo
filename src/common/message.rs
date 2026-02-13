@@ -53,6 +53,8 @@ pub enum Event {
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
+    /// Server → Client: Healing was applied to entity (SOW-021 Phase 3)
+    Heal { target: Entity, amount: f32 },
     /// Client → Server: Measure network latency (client timestamp)
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
@@ -78,8 +80,6 @@ pub enum AbilityType {
     Lunge,
     /// W: Heavy strike - high damage melee attack (1 hex, 40 stam, 80 dmg, 2s CD)
     Overpower,
-    /// E: Positioning - push target 1 hex away (2 hex range, 30 stam, 1.5s CD)
-    Knockback,
     /// R: Emergency defense - clear all queued threats (50 stam, 0.5s GCD)
     Deflect,
     /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
@@ -108,12 +108,8 @@ pub enum ClearType {
     All,
     /// Clear first N threats (Counter - blanket reaction over visible window)
     First(usize),
-    /// Clear last N threats from back of queue
-    Last(usize),
     /// Clear threats by damage type (Ward - future)
     ByType(DamageType),
-    /// Clear threat at specific index (Knockback - last visible in window)
-    AtIndex(usize),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

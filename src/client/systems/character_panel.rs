@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    common::components::{Actor, ActorAttributes},
+    common::{
+        components::{Actor, ActorAttributes},
+        systems::combat::damage::contest_modifier,
+    },
 };
 
 /// Marker component for the character panel root node
@@ -44,6 +47,21 @@ pub enum AxisMarker {
     InstinctPresence,
 }
 
+/// Marker component for meta-attribute stat display (SOW-021)
+#[derive(Component, Clone)]
+pub enum MetaAttributeStat {
+    Impact,
+    Composure,
+    Finesse,
+    Cunning,
+    Dominance,
+    Toughness,
+}
+
+/// Marker for raw stat value display (e.g., "(150)")
+#[derive(Component)]
+pub struct RawStatValue;
+
 /// Resource to track character panel visibility and drag state
 #[derive(Resource, Default)]
 pub struct CharacterPanelState {
@@ -69,8 +87,115 @@ pub enum AttributeType {
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
+macro_rules! create_stat_row {
+    ($parent:expr, $left_stat:expr, $right_stat:expr) => {
+        $parent.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(5.),
+                padding: UiRect::all(Val::Px(10.)),
+                border_radius: BorderRadius::all(Val::Px(4.)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
+        ))
+        .with_children(|section| {
+            // Two-column layout for stats
+            section.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(10.),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                // Left stat column
+                create_stat_display!(row, $left_stat);
+
+                // Right stat column
+                create_stat_display!(row, $right_stat);
+            });
+        });
+    };
+}
+
+macro_rules! create_stat_display {
+    ($parent:expr, $stat:expr) => {
+        {
+            let (name, color, effect_label) = match $stat {
+                MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
+                MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
+                MetaAttributeStat::Finesse => ("Finesse", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
+                MetaAttributeStat::Cunning => ("Cunning", Color::srgb(0.7, 0.5, 0.9), "Window Extension:"),
+                MetaAttributeStat::Dominance => ("Dominance", Color::srgb(0.9, 0.6, 0.3), "Healing Reduction:"),
+                MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
+            };
+
+            $parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(3.),
+                    flex_grow: 1.0,
+                    ..default()
+                },
+            ))
+            .with_children(|stat_col| {
+                // Header row: stat name + raw value
+                stat_col.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(4.),
+                        ..default()
+                    },
+                ))
+                .with_children(|header| {
+                    // Stat name (colored)
+                    header.spawn((
+                        Text::new(name),
+                        TextFont { font_size: 11.0, ..default() },
+                        TextColor(color),
+                    ));
+                    // Raw stat value
+                    header.spawn((
+                        $stat.clone(),
+                        RawStatValue,
+                        Text::new("(0)"),
+                        TextFont { font_size: 11.0, ..default() },
+                        TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                    ));
+                });
+
+                // Effect row: label + calculated value (right-aligned)
+                stat_col.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        ..default()
+                    },
+                ))
+                .with_children(|effect_row| {
+                    // Effect label
+                    effect_row.spawn((
+                        Text::new(effect_label),
+                        TextFont { font_size: 10.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                    ));
+                    // Calculated value (marker for updates)
+                    effect_row.spawn((
+                        $stat,
+                        Text::new("0"),
+                        TextFont { font_size: 11.0, ..default() },
+                        TextColor(Color::srgb(1.0, 1.0, 1.0)),
+                    ));
+                });
+            });
+        }
+    };
+}
+
 macro_rules! create_attribute_section {
-    ($parent:expr, $left_name:expr, $right_name:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr) => {
+    ($parent:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr) => {
         $parent
         .spawn((
             Node {
@@ -104,7 +229,7 @@ macro_rules! create_attribute_section {
                 title_row.spawn((
                     Text::new($left_name),
                     TextFont { font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.9, 0.6, 0.6)),
+                    TextColor($left_color),
                 ));
                 // Arrow separator
                 title_row.spawn((
@@ -116,7 +241,7 @@ macro_rules! create_attribute_section {
                 title_row.spawn((
                     Text::new($right_name),
                     TextFont { font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.6, 0.6, 0.9)),
+                    TextColor($right_color),
                 ));
                 // Right reach value (outer)
                 title_row.spawn((
@@ -233,7 +358,7 @@ pub fn setup(
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.),
                 top: Val::Px(100.),
-                width: Val::Px(400.),
+                width: Val::Px(770.),
                 padding: UiRect::all(Val::Px(20.)),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(15.),
@@ -259,14 +384,62 @@ pub fn setup(
                 },
             ));
 
-            // MIGHT ↔ GRACE section
-            create_attribute_section!(parent, "MIGHT", "GRACE", AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace);
+            // Main content: two columns (sliders left, stats right)
+            parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(20.),
+                    ..default()
+                },
+            ))
+            .with_children(|main| {
+                // Left column: attribute sliders
+                main.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(15.),
+                        flex_grow: 1.0,
+                        ..default()
+                    },
+                ))
+                .with_children(|left| {
+                    // MIGHT ↔ GRACE section (Impact = red, Finesse = yellow)
+                    create_attribute_section!(left, "MIGHT", "GRACE",
+                        Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
+                        AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace);
 
-            // VITALITY ↔ FOCUS section
-            create_attribute_section!(parent, "VITALITY", "FOCUS", AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus);
+                    // VITALITY ↔ FOCUS section (Toughness = green, Composure = blue)
+                    create_attribute_section!(left, "VITALITY", "FOCUS",
+                        Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
+                        AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus);
 
-            // INSTINCT ↔ PRESENCE section
-            create_attribute_section!(parent, "INSTINCT", "PRESENCE", AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence);
+                    // INSTINCT ↔ PRESENCE section (Cunning = purple, Dominance = orange)
+                    create_attribute_section!(left, "INSTINCT", "PRESENCE",
+                        Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
+                        AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence);
+                });
+
+                // Right column: meta-attribute stats
+                main.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(15.),
+                        width: Val::Px(360.),
+                        ..default()
+                    },
+                ))
+                .with_children(|right| {
+                    // Row 1: Impact (left) & Finesse (right) - from MIGHT ↔ GRACE
+                    create_stat_row!(right, MetaAttributeStat::Impact, MetaAttributeStat::Finesse);
+
+                    // Row 2: Toughness (left) & Composure (right) - from VITALITY ↔ FOCUS
+                    create_stat_row!(right, MetaAttributeStat::Toughness, MetaAttributeStat::Composure);
+
+                    // Row 3: Cunning (left) & Dominance (right) - from INSTINCT ↔ PRESENCE
+                    create_stat_row!(right, MetaAttributeStat::Cunning, MetaAttributeStat::Dominance);
+                });
+            });
+
         });
 }
 
@@ -392,6 +565,7 @@ pub fn update_attributes(
     title_query: Query<(Entity, &AttributeTitle)>,
     current_query: Query<(Entity, &AttributeCurrent)>,
     bar_query: Query<(Entity, &AttributeBar)>,
+    meta_query: Query<(&MetaAttributeStat, Entity)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
     mut axis_query: Query<(&AxisMarker, &mut Node), Without<SpectrumRange>>,
     mut text_query: Query<&mut Text>,
@@ -491,6 +665,88 @@ pub fn update_attributes(
                 if let Ok((_, mut node)) = axis_query.get_mut(child) {
                     update_axis_bar(&mut node, left_current, right_current, max_attr_scaled);
                 }
+            }
+        }
+    }
+
+    // Update meta-attribute raw values and calculated effects (SOW-021)
+    // Separate queries for raw values vs calculated effects
+    let mut raw_query = meta_query.iter().filter(|(_, e)| {
+        text_query.get(*e).ok()
+            .and_then(|text| text.0.chars().next())
+            .map(|c| c == '(')
+            .unwrap_or(false)
+    });
+
+    for (meta_stat, entity) in &meta_query {
+        if let Ok(mut text) = text_query.get_mut(entity) {
+            // Check if this is a raw value display (starts with '(')
+            let is_raw = text.0.starts_with('(');
+
+            if is_raw {
+                // Update raw stat value in parentheses
+                let raw_value = match meta_stat {
+                    MetaAttributeStat::Impact => attrs.impact(),
+                    MetaAttributeStat::Composure => attrs.composure(),
+                    MetaAttributeStat::Finesse => attrs.finesse(),
+                    MetaAttributeStat::Cunning => attrs.cunning(),
+                    MetaAttributeStat::Dominance => attrs.dominance(),
+                    MetaAttributeStat::Toughness => attrs.toughness(),
+                };
+                **text = format!("({})", raw_value);
+            } else {
+                // Update calculated effect value
+                **text = match meta_stat {
+                    MetaAttributeStat::Impact => {
+                        // Recovery pushback: effective_impact = impact × contest(impact, 0) → pushback
+                        let impact = attrs.impact();
+                        let contest_mod = contest_modifier(impact, 0);
+                        let effective_impact = (impact as f32) * contest_mod;
+                        let pushback_pct = (effective_impact / 600.0).min(0.50) * 100.0;
+                        format!("+{:.0}%", pushback_pct)
+                    },
+                    MetaAttributeStat::Composure => {
+                        // Recovery time reduction: show as percentage time saved
+                        let composure = attrs.composure();
+                        let contest_mod = contest_modifier(composure, 0);  // Uncontested display
+                        let effective_composure = (composure as f32) * contest_mod;
+                        let speed_increase = (effective_composure * 0.5).min(150.0);  // 0.5% per point, cap at 150%
+                        let speed_multiplier = 1.0 + (speed_increase / 100.0);  // 1.0 to 2.5
+                        let time_reduction_pct = ((1.0 - 1.0 / speed_multiplier) * 100.0).round() as u8;
+                        format!("-{}%", time_reduction_pct)
+                    },
+                    MetaAttributeStat::Finesse => {
+                        // Synergy improvement: 0-50% reduction of synergy unlock time
+                        let finesse = attrs.finesse();
+                        let contest_mod = contest_modifier(finesse, 0);
+                        let improvement_pct = (contest_mod * 50.0).round() as u8;
+                        format!("+{}%", improvement_pct)
+                    },
+                    MetaAttributeStat::Cunning => {
+                        // Reaction window extension: show as percentage of max (600ms)
+                        let cunning = attrs.cunning();
+                        let contest_mod = contest_modifier(cunning, 0);  // Uncontested display
+                        let effective_cunning = (cunning as f32) * contest_mod;
+                        let extension_ms = (effective_cunning * 2.0).min(600.0);
+                        let extension_pct = ((extension_ms / 600.0) * 100.0).round() as u8;
+                        format!("+{}%", extension_pct)
+                    },
+                    MetaAttributeStat::Dominance => {
+                        // Healing reduction aura: 25% base × contest_modifier(dominance, 0)
+                        let dominance = attrs.dominance();
+                        let contest_mod = contest_modifier(dominance, 0);
+                        let reduction_pct = (25.0 * contest_mod).round() as u8;
+                        format!("-{}%", reduction_pct)
+                    },
+                    MetaAttributeStat::Toughness => {
+                        // Physical damage mitigation: toughness vs dominance contest
+                        let toughness = attrs.toughness();
+                        let contest_mod = contest_modifier(toughness, 0);  // Uncontested display
+                        let effective_toughness = (toughness as f32) * contest_mod;
+                        let mitigation_pct = ((effective_toughness / 330.0).min(0.75) * 100.0).round() as u8;
+                        format!("-{}%", mitigation_pct)
+                    },
+                };
             }
         }
     }

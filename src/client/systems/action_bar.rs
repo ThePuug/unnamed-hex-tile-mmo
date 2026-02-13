@@ -96,7 +96,6 @@ pub fn setup(
         let icon_text = match ability {
             Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
             Some(AbilityType::Overpower) => "💥",  // Heavy strike
-            Some(AbilityType::Knockback) => "💨",  // Push effect
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
             Some(AbilityType::Volley) => "🏹",     // NPC ranged attack (not on bar)
@@ -140,7 +139,6 @@ pub fn setup(
             let cost_text = match ability_type {
                 AbilityType::Lunge => "20".to_string(),       // 20 stamina
                 AbilityType::Overpower => "40".to_string(),   // 40 stamina
-                AbilityType::Knockback => "30".to_string(),   // 30 stamina
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Volley => String::new(),         // NPC-only (not on player bar)
@@ -359,34 +357,6 @@ fn get_ability_state(
                 if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
                     if distance > 1 {
-                        return AbilityState::OutOfRange;
-                    }
-                }
-                AbilityState::Ready
-            } else {
-                AbilityState::OutOfRange
-            }
-        }
-        AbilityType::Knockback => {
-            // Push enemy: 2 hex range, 30 stamina, requires target
-            if stamina.step < 30.0 {
-                return AbilityState::InsufficientResources;
-            }
-
-            let target_opt = select_target(
-                player_ent,
-                player_loc,
-                player_heading,
-                targeting_state.get(), // Respect tier lock
-                nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
-            );
-
-            if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
-                    let distance = player_loc.flat_distance(target_loc) as u32;
-                    if distance > 2 {
                         return AbilityState::OutOfRange;
                     }
                 }

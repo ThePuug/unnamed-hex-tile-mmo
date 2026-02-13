@@ -4,6 +4,7 @@ pub mod engagement;
 pub mod entity_type;
 pub mod gcd;
 pub mod heading;
+pub mod heal;
 pub mod hex_assignment;
 pub mod keybits;
 pub mod movement_intent_state;
@@ -639,7 +640,7 @@ impl ActorAttributes {
     ///
     /// Example: `attrs.commitment_tier_for(attrs.focus())` → Focus commitment tier
     pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
-        let max_possible = self.total_level() as u32 * 6;
+        let max_possible = self.total_level() as u32 * 10;
         CommitmentTier::calculate(derived_value, max_possible)
     }
 
@@ -672,28 +673,28 @@ impl ActorAttributes {
 
     // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---
 
-    /// Precision: Accuracy and critical hit potential from grace
-    /// Used in contest vs Toughness (affects crit chance and mitigation)
-    pub fn precision(&self) -> u16 { self.grace() }
+    /// Finesse: Synergy chain compression from grace (SOW-021 Phase 2)
+    /// Used in contest vs Cunning (affects synergy recovery reduction)
+    pub fn finesse(&self) -> u16 { self.grace() }
 
     /// Toughness: Physical damage resistance from vitality
-    /// Used in contest vs Precision (affects mitigation and crit resistance)
+    /// Used in contest vs Dominance (affects mitigation vs healing reduction)
     pub fn toughness(&self) -> u16 { self.vitality() }
 
-    /// Impact: Raw damage output from might
-    /// Used in contest vs Composure (affects recovery pushback)
+    /// Impact: Recovery pushback from might (SOW-021 Phase 1)
+    /// Used in contest vs Composure (extends enemy recovery duration)
     pub fn impact(&self) -> u16 { self.might() }
 
-    /// Composure: Mental fortitude from focus
-    /// Used in contest vs Impact (reduces recovery pushback)
+    /// Composure: Recovery reduction from focus (SOW-021 Phase 1)
+    /// Used in contest vs Impact (reduces own recovery duration passively)
     pub fn composure(&self) -> u16 { self.focus() }
 
-    /// Dominance: Tempo control from presence
-    /// Used in contest vs Cunning (affects reaction window and recovery pushback)
+    /// Dominance: Healing reduction from presence (SOW-021 Phase 3)
+    /// Used in contest vs Toughness (reduces healing effectiveness via aura)
     pub fn dominance(&self) -> u16 { self.presence() }
 
-    /// Cunning: Reactive capability from instinct
-    /// Used in contest vs Dominance (improves reaction window)
+    /// Cunning: Reaction window extension from instinct (SOW-021 Phase 2)
+    /// Used in contest vs Finesse (extends time to react to threats)
     pub fn cunning(&self) -> u16 { self.instinct() }
 
     // --- COMMITMENT META-ATTRIBUTES (tier-based) ---

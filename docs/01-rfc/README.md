@@ -26,6 +26,7 @@ RFCs bridge player needs and technical reality. Each RFC starts with a player-fa
 | 018 | NPC Engagement Coordination | 🤖 AI | 📝 Draft | 2026-02-09 | Yes (ADR-023/024) |
 | 019 | Combat Feedback Enhancements | ⚔️ Combat | ✅ Implemented | 2026-02-09 | Yes (ADR-025) |
 | 020 | Attribute System Rework | 📊 Progression | 📝 Draft | 2026-02-10 | Yes (ADR-026/027/028/029) |
+| 021 | Relative Meta-Attribute Opposition System | 📊 Progression | ✅ Approved | 2026-02-13 | Yes (ADR-031) |
 
 **Legend:**
 - **Status:** ✅ Implemented (merged to main) | ✅ Approved (ready for implementation) | 🔄 Under Review | 📝 Draft/Proposed

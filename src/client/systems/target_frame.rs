@@ -637,10 +637,10 @@ pub fn update_queue(
             *queue_visibility = Visibility::Visible;
 
             // Get actual queue window size from the component (ADR-030)
-            let queue_capacity = queue.window_size;
+            let queue_capacity = queue.capacity;
             let filled_slots = queue.threats.len();
             // ADR-030: Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = queue.threats.len() >= queue.window_size;
+            let is_full = queue.threats.len() >= queue.capacity;
 
             // Check if we need to rebuild capacity dots (capacity changed)
             let current_dots: Vec<_> = capacity_dot_query.iter().collect();
@@ -1077,10 +1077,10 @@ pub fn update_ally_queue(
             }
 
             // Get actual queue window size from the component (ADR-030)
-            let queue_capacity = queue.window_size;
+            let queue_capacity = queue.capacity;
             let filled_slots = queue.threats.len();
             // ADR-030: Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = queue.threats.len() >= queue.window_size;
+            let is_full = queue.threats.len() >= queue.capacity;
 
             // Spawn capacity dots in the dots container
             if let Ok(dots_container_ent) = dots_container_query.single() {
