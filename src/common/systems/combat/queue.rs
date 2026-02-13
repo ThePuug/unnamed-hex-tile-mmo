@@ -32,24 +32,14 @@ pub fn gap_multiplier(defender_level: u32, attacker_level: u32) -> f32 {
     (1.0 + gap * WINDOW_SCALING_FACTOR).min(WINDOW_MAX_MULTIPLIER)
 }
 
-/// Insert a threat into the queue
-/// Returns Some(overflow_threat) if queue was full and oldest threat was evicted
-/// Returns None if threat was inserted without overflow
+/// Insert a threat into the queue (ADR-030: unbounded, no overflow eviction)
+/// Queue is unbounded — threats always insert. Window size controls visibility only.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
     threat: QueuedThreat,
     _now: Duration,
-) -> Option<QueuedThreat> {
-    if queue.is_full() {
-        // Queue is full, pop oldest threat
-        let overflow = queue.threats.pop_front();
-        queue.threats.push_back(threat);
-        overflow
-    } else {
-        // Queue has capacity, just push
-        queue.threats.push_back(threat);
-        None
-    }
+) {
+    queue.threats.push_back(threat);
 }
 
 /// Check for expired threats in the queue
@@ -97,6 +87,14 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             }
             cleared
         }
+        ClearType::AtIndex(index) => {
+            // Remove a specific threat by index (ADR-030: Knockback targets last visible)
+            if index < queue.threats.len() {
+                vec![queue.threats.remove(index).unwrap()]
+            } else {
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -105,44 +103,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_queue_capacity_zero_investment() {
+    fn test_window_size_zero_investment() {
         // No investment → total_budget=0 → T0 → 1 slot
         let attrs = ActorAttributes::default();
-        assert_eq!(attrs.queue_capacity(), 1);
+        assert_eq!(attrs.window_size(), 1);
     }
 
     #[test]
-    fn test_queue_capacity_full_focus_commitment() {
+    fn test_window_size_full_focus_commitment() {
         // All investment in focus → focus/total_budget = 100% → T3 → 4 slots
         let attrs = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
-        assert_eq!(attrs.queue_capacity(), 4);
+        assert_eq!(attrs.window_size(), 4);
     }
 
     #[test]
-    fn test_queue_capacity_tier_boundaries() {
+    fn test_window_size_tier_boundaries() {
         // Use CommitmentTier thresholds: T0 <30%, T1 ≥30%, T2 ≥45%, T3 ≥60%
         // total_budget = sum of all 6 derived values
 
         // 29% → T0 → 1 slot
-        // might=-6 (might=60), focus=3 (focus=30) → budget=90, focus/budget=33% → T1
-        // Need <30%: might=-7 (70), focus=2 (20) → budget=90, 20/90=22% → T0
+        // might=-7 (70), focus=2 (20) → budget=90, 20/90=22% → T0
         let t0 = ActorAttributes::new(-7, 0, 0, 2, 0, 0, 0, 0, 0);
-        assert_eq!(t0.queue_capacity(), 1, "T0 should give 1 slot");
+        assert_eq!(t0.window_size(), 1, "T0 should give 1 slot");
 
         // 30% → T1 → 2 slots
         // might=-6 (60), focus=3 (30) → budget=90, 30/90=33% → T1
         let t1 = ActorAttributes::new(-6, 0, 0, 3, 0, 0, 0, 0, 0);
-        assert_eq!(t1.queue_capacity(), 2, "T1 should give 2 slots");
+        assert_eq!(t1.window_size(), 2, "T1 should give 2 slots");
 
         // 45% → T2 → 3 slots
         // might=-5 (50), focus=5 (50) → budget=100, 50/100=50% → T2
         let t2 = ActorAttributes::new(-5, 0, 0, 5, 0, 0, 0, 0, 0);
-        assert_eq!(t2.queue_capacity(), 3, "T2 should give 3 slots");
+        assert_eq!(t2.window_size(), 3, "T2 should give 3 slots");
 
         // 60% → T3 → 4 slots
         // might=-3 (30), focus=6 (60) → budget=90, 60/90=67% → T3
         let t3 = ActorAttributes::new(-3, 0, 0, 6, 0, 0, 0, 0, 0);
-        assert_eq!(t3.queue_capacity(), 4, "T3 should give 4 slots");
+        assert_eq!(t3.window_size(), 4, "T3 should give 4 slots");
     }
 
     // ===== CADENCE INTERVAL TESTS =====
@@ -285,73 +282,39 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_threat_with_capacity() {
-        let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw_u32(0).unwrap();
-
-        let threat1 = QueuedThreat {
-            source: entity,
-            damage: 10.0,
-            damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(0),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            precision_mod: 1.0,
-        };
-
-        // Insert into empty queue - should not overflow
-        let overflow = insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
-        assert!(overflow.is_none());
-        assert_eq!(queue.threats.len(), 1);
-    }
-
-    #[test]
-    fn test_insert_threat_overflow() {
+    fn test_insert_threat_unbounded() {
         let mut queue = ReactionQueue::new(2);
         let entity = Entity::from_raw_u32(0).unwrap();
 
-        // Fill queue to capacity
-        let threat1 = QueuedThreat {
+        let make_threat = |damage: f32, secs: u64| QueuedThreat {
             source: entity,
-            damage: 10.0,
+            damage,
             damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(0),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            precision_mod: 1.0,
-        };
-        let threat2 = QueuedThreat {
-            source: entity,
-            damage: 15.0,
-            damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(1),
+            inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: None,
             precision_mod: 1.0,
         };
 
-        insert_threat(&mut queue, threat1.clone(), Duration::from_secs(0));
-        insert_threat(&mut queue, threat2.clone(), Duration::from_secs(1));
+        // Insert always succeeds, no overflow (ADR-030)
+        insert_threat(&mut queue, make_threat(10.0, 0), Duration::from_secs(0));
+        assert_eq!(queue.threats.len(), 1);
+
+        insert_threat(&mut queue, make_threat(15.0, 1), Duration::from_secs(1));
         assert_eq!(queue.threats.len(), 2);
-        assert!(queue.is_full());
 
-        // Insert third threat - should overflow and return oldest (threat1)
-        let threat3 = QueuedThreat {
-            source: entity,
-            damage: 20.0,
-            damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(2),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            precision_mod: 1.0,
-        };
+        // Beyond window_size: still inserts, just hidden
+        insert_threat(&mut queue, make_threat(20.0, 2), Duration::from_secs(2));
+        assert_eq!(queue.threats.len(), 3);
+        assert_eq!(queue.visible_count(), 2);
+        assert_eq!(queue.hidden_count(), 1);
 
-        let overflow = insert_threat(&mut queue, threat3.clone(), Duration::from_secs(2));
-        assert!(overflow.is_some());
-        assert_eq!(overflow.unwrap().damage, 10.0); // threat1 was oldest
-        assert_eq!(queue.threats.len(), 2); // Still at capacity
-        assert_eq!(queue.threats[0].damage, 15.0); // threat2 is now oldest
-        assert_eq!(queue.threats[1].damage, 20.0); // threat3 is newest
+        // Insert more — all succeed
+        insert_threat(&mut queue, make_threat(25.0, 3), Duration::from_secs(3));
+        insert_threat(&mut queue, make_threat(30.0, 4), Duration::from_secs(4));
+        assert_eq!(queue.threats.len(), 5);
+        assert_eq!(queue.visible_count(), 2);
+        assert_eq!(queue.hidden_count(), 3);
     }
 
     #[test]

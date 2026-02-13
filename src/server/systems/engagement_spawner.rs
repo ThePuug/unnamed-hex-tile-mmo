@@ -243,7 +243,7 @@ fn spawn_engagement_at(
         };
 
         // Initialize reaction queue with capacity based on Focus attribute
-        let queue_capacity = attributes.queue_capacity();
+        let queue_capacity = attributes.window_size();
         let reaction_queue = ReactionQueue::new(queue_capacity);
 
         // Spawn NPC entity (will be discovered when player gets near)

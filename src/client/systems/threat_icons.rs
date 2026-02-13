@@ -122,7 +122,7 @@ pub fn update(
     // Get current icon count
     let current_icons: Vec<_> = icon_query.iter().collect();
     // Show ALL capacity slots (filled + empty ghost slots)
-    let target_count = queue.capacity;
+    let target_count = queue.window_size;
 
     // Check if we need to rebuild the UI (capacity changed or icons mismatched)
     let needs_rebuild = current_icons.len() != target_count;
@@ -137,7 +137,7 @@ pub fn update(
         // Spawn all capacity slots (filled + empty)
         for index in 0..target_count {
             let is_filled = index < queue.threats.len();
-            spawn_threat_icon(&mut commands, container, index, queue.capacity, is_filled);
+            spawn_threat_icon(&mut commands, container, index, queue.window_size, is_filled);
         }
 
         // Return early - new icons will be updated next frame
@@ -380,7 +380,7 @@ pub fn spawn_pop_animation(
                 1.0
             };
 
-            let start_margin_left = front_icon_x_offset(queue.capacity);
+            let start_margin_left = front_icon_x_offset(queue.window_size);
 
             // Spawn pop icon as child of the container
             let (r, g, b) = severity_rgb(severity);

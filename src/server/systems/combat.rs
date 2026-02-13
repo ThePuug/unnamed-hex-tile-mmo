@@ -114,18 +114,7 @@ pub fn process_deal_damage(
             },
         });
 
-        // If queue overflowed, immediately resolve the overflow threat
-        if let Some(overflow_threat) = overflow {
-            // Emit ResolveThreat event for the overflow
-            commands.trigger(
-                Try {
-                    event: GameEvent::ResolveThreat {
-                        ent: *target,
-                        threat: overflow_threat,
-                    },
-                },
-            );
-        }
+        // ADR-030: Queue is unbounded, no overflow handling needed
     }
 }
 

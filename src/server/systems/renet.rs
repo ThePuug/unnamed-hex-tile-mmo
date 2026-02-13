@@ -114,7 +114,7 @@ pub fn do_manage_connections(
                     last_action: time.elapsed(),
                 };
                 // Initialize reaction queue with capacity based on Focus attribute
-                let queue_capacity = attrs.queue_capacity();
+                let queue_capacity = attrs.window_size();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
 
                 let ent = commands.spawn((
