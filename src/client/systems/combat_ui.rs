@@ -376,7 +376,7 @@ pub fn update_threat_queue_dots(
             // Target exists - check if it has a queue
             if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
                 if let Some(queue) = queue_opt {
-                    if queue.capacity > 0 {
+                    if queue.window_size > 0 {
                         // Show container
                         *visibility = Visibility::Visible;
 
@@ -391,12 +391,12 @@ pub fn update_threat_queue_dots(
 
                             // Update dots visibility and colors
                             let filled_slots = queue.threats.len();
-                            let is_full = queue.threats.len().saturating_sub(queue.capacity) > 0;
+                            let is_full = queue.threats.len().saturating_sub(queue.window_size) > 0;
 
                             for child in children.iter() {
                                 if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {
                                     // Show dots up to capacity, hide the rest
-                                    if dot.index < queue.capacity {
+                                    if dot.index < queue.window_size {
                                         *dot_vis = Visibility::Visible;
 
                                         // Update colors based on filled state
@@ -467,7 +467,7 @@ pub fn update_threat_queue_dots(
             // Target exists - check if it has a queue
             if let Ok((queue_opt, transform)) = queue_query.get(target_ent) {
                 if let Some(queue) = queue_opt {
-                    if queue.capacity > 0 {
+                    if queue.window_size > 0 {
                         // Show container
                         *visibility = Visibility::Visible;
 
@@ -482,12 +482,12 @@ pub fn update_threat_queue_dots(
 
                             // Update dots visibility and colors
                             let filled_slots = queue.threats.len();
-                            let is_full = queue.threats.len().saturating_sub(queue.capacity) > 0;
+                            let is_full = queue.threats.len().saturating_sub(queue.window_size) > 0;
 
                             for child in children.iter() {
                                 if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {
                                     // Show dots up to capacity, hide the rest
-                                    if dot.index < queue.capacity {
+                                    if dot.index < queue.window_size {
                                         *dot_vis = Visibility::Visible;
 
                                         // Update colors based on filled state

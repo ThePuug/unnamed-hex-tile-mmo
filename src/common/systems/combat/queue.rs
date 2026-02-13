@@ -32,6 +32,26 @@ pub fn gap_multiplier(defender_level: u32, attacker_level: u32) -> f32 {
     (1.0 + gap * WINDOW_SCALING_FACTOR).min(WINDOW_MAX_MULTIPLIER)
 }
 
+/// Calculate Cunning-based reaction window extension (SOW-021 Phase 2)
+/// Defender's cunning extends the time available to react to threats
+/// Formula: 2ms per cunning point, capped at 600ms, contested by attacker's finesse
+pub fn calculate_cunning_extension(cunning: u16, attacker_finesse: u16) -> Duration {
+    use crate::common::systems::combat::damage::contest_modifier;
+
+    const MS_PER_CUNNING: f32 = 2.0;
+    const MAX_EXTENSION_MS: f32 = 600.0;
+
+    // Calculate base extension from raw stat
+    let base_extension_ms = (cunning as f32) * MS_PER_CUNNING;
+
+    // Apply contest modifier directly to benefit
+    let contest_mod = contest_modifier(cunning, attacker_finesse);
+    let contested_extension_ms = base_extension_ms * contest_mod;
+
+    let extension_ms = contested_extension_ms.min(MAX_EXTENSION_MS);
+    Duration::from_secs_f32(extension_ms / 1000.0)
+}
+
 /// Insert a threat into the queue (ADR-030: unbounded, no overflow eviction)
 /// Queue is unbounded — threats always insert. Window size controls visibility only.
 pub fn insert_threat(
@@ -67,13 +87,6 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             let count = n.min(queue.threats.len());
             queue.threats.drain(..count).collect()
         }
-        ClearType::Last(n) => {
-            // Drain last N threats (newest) - for reactive abilities like Knockback
-            let len = queue.threats.len();
-            let count = n.min(len);
-            let start = len.saturating_sub(count);
-            queue.threats.drain(start..).collect()
-        }
         ClearType::ByType(damage_type) => {
             // Remove threats matching damage type
             let mut cleared = Vec::new();
@@ -86,14 +99,6 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
                 }
             }
             cleared
-        }
-        ClearType::AtIndex(index) => {
-            // Remove a specific threat by index (ADR-030: Knockback targets last visible)
-            if index < queue.threats.len() {
-                vec![queue.threats.remove(index).unwrap()]
-            } else {
-                Vec::new()
-            }
         }
     }
 }
