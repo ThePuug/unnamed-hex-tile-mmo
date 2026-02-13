@@ -8,11 +8,7 @@
 
 struct VignetteSettings {
     intensity: f32,
-    time: f32,  // Time for pulsing effect
-    // WebGL2 requires 16-byte alignment for uniform buffer members
-#ifdef SIXTEEN_BYTE_ALIGNMENT
-    _webgl2_padding: vec2<f32>,
-#endif
+    time: f32,
 }
 
 @group(0) @binding(2) var<uniform> settings: VignetteSettings;

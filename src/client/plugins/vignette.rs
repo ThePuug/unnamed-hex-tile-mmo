@@ -1,33 +1,56 @@
-//! Vignette post-processing plugin
-//!
-//! TODO: The render graph API changed significantly in Bevy 0.17.
-//! The vignette effect is temporarily disabled until the post-processing
-//! can be properly updated to use the new API.
+//! Vignette post-processing plugin using Bevy 0.18 FullscreenMaterial API
 
-use bevy::prelude::*;
+use bevy::{
+    core_pipeline::{
+        core_3d::graph::{Core3d, Node3d},
+        fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},
+    },
+    prelude::*,
+    render::{
+        extract_component::ExtractComponent,
+        render_graph::{InternedRenderLabel, InternedRenderSubGraph, RenderLabel, RenderSubGraph},
+        render_resource::ShaderType,
+    },
+    shader::ShaderRef,
+};
 
 use crate::common::components::{behaviour::PlayerControlled, resources::CombatState};
 
 /// Plugin that adds vignette post-processing effect
-/// NOTE: Currently a no-op stub - render graph API needs updating for Bevy 0.17
 pub struct VignettePlugin;
 
 impl Plugin for VignettePlugin {
     fn build(&self, app: &mut App) {
-        // Just add the system to update vignette intensity
-        // The actual rendering is disabled until API is updated
+        app.add_plugins(FullscreenMaterialPlugin::<VignetteSettings>::default());
         app.add_systems(Update, update_vignette_intensity);
     }
 }
 
 /// Settings for vignette effect (attached to camera)
-/// NOTE: Currently not rendered - component kept for API compatibility
-#[derive(Component, Clone, Copy, Default)]
+#[derive(Component, ExtractComponent, Clone, Copy, ShaderType, Default)]
 pub struct VignetteSettings {
     /// Intensity of the vignette effect (0.0 = none, 1.0 = full)
     pub intensity: f32,
     /// Time for pulsing effect
     pub time: f32,
+}
+
+impl FullscreenMaterial for VignetteSettings {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/vignette.wgsl".into()
+    }
+
+    fn node_edges() -> Vec<InternedRenderLabel> {
+        vec![
+            Node3d::Tonemapping.intern(),
+            Self::node_label().intern(),
+            Node3d::EndMainPassPostProcessing.intern(),
+        ]
+    }
+
+    fn sub_graph() -> Option<InternedRenderSubGraph> {
+        Some(Core3d.intern())
+    }
 }
 
 /// Update vignette intensity based on player combat state
