@@ -47,12 +47,9 @@ pub fn handle_apply_damage(
 
     for event in reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
-            // Remove the resolved threat from the queue
-            if let Ok(mut queue) = queue_query.get_mut(ent) {
-                if let Some(pos) = queue.threats.iter().position(|t| t.source == source) {
-                    queue.threats.remove(pos);
-                }
-            }
+            // Don't remove from queue - ClearQueue event already did that!
+            // This was causing double-removal and queue desync
+            // (ApplyDamage is for damage display only, not queue management)
 
             // Skip player incoming damage - shown via resolved threats stack (ADR-025)
             let is_player_target = player_entity.map_or(false, |p| p == ent);
