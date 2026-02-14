@@ -191,7 +191,6 @@ impl Map {
         let mut west_skirt_verts: Vec<Vec3> = Vec::new();
         let mut west_skirt_norms: Vec<Vec3> = Vec::new();
         let mut west_skirt_colors: Vec<[f32; 4]> = Vec::new();
-        let (mut min, mut max) = (Vec3::new(f32::MAX, f32::MAX, f32::MAX), Vec3::new(f32::MIN, f32::MIN, f32::MIN));
 
         let map = self.0.clone();
         map.clone().into_iter().for_each(|tile| {
@@ -205,13 +204,6 @@ impl Map {
                     verts.append(&mut west_skirt_verts);
                     norms.append(&mut west_skirt_norms);
                     colors.append(&mut west_skirt_colors);
-
-                    // update bounding box
-                    let (last_vrt, _) = self.vertices_and_colors_with_slopes(last_qrz, apply_slopes);
-                    min = Vec3::min(min, it_vrt[6]);
-                    min = Vec3::min(min, last_vrt[6]);
-                    max = Vec3::max(max, it_vrt[6]);
-                    max = Vec3::max(max, last_vrt[6]);
                 }
             }
 
@@ -305,7 +297,18 @@ impl Map {
             last_qrz = Some(it_qrz);
         });
 
+        // Compute proper AABB from ALL vertices (not just column boundaries)
+        // This ensures frustum culling works correctly with varied terrain heights
+        let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+        let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+        for vert in &verts {
+            min = Vec3::min(min, *vert);
+            max = Vec3::max(max, *vert);
+        }
+
         let len = verts.clone().len() as u32;
+        println!("Terrain mesh: {} tiles, {} vertices, AABB: {:?} to {:?}",
+                 self.0.len(), len, min, max);
         (
             Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)

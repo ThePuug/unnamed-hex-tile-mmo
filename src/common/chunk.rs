@@ -11,8 +11,8 @@ use crate::common::components::entity_type::*;
 /// Chunk size in tiles (16x16 = 256 tiles per chunk)
 pub const CHUNK_SIZE: i16 = 16;
 
-/// Field of view distance in chunks (FOV distance 10 ≈ 2 chunk radius)
-pub const FOV_CHUNK_RADIUS: u8 = 2;
+/// Field of view distance in chunks (expanded to prevent visible chunk edges when zoomed out)
+pub const FOV_CHUNK_RADIUS: u8 = 5;
 
 /// Chunk identifier in chunk-coordinate space
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]

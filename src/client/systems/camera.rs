@@ -19,6 +19,8 @@ pub fn setup(
         Camera3d::default(),
         Projection::from(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical { viewport_height: 40.0 },
+            near: -10000.0,  // Extend clipping planes to prevent terrain culling
+            far: 10000.0,
             ..OrthographicProjection::default_3d()
         }),
         Transform::default(),

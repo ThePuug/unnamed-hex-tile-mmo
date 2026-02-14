@@ -63,7 +63,6 @@ pub fn setup(
 
     commands.spawn((
         Mesh3d(mesh),
-        Aabb::default(),
         MeshMaterial3d(material),
         Terrain::default()));
 }
@@ -131,20 +130,19 @@ pub fn async_spawn(
 }
 
 pub fn async_ready(
-    mut query: Query<(&mut Mesh3d, &mut Aabb, &mut Terrain)>,
+    mut query: Query<(&mut Mesh3d, &mut Terrain)>,
     mut meshes: ResMut<Assets<Mesh>>,
     map: Res<Map>,
 ) {
-    let (mut mesh, mut aabb, mut terrain) = query.single_mut().expect("no result in query");
+    let (mut mesh, mut terrain) = query.single_mut().expect("no result in query");
     if terrain.task_regenerate_mesh.is_none() { return; }
 
     let task = terrain.task_regenerate_mesh.as_mut();
     let result = block_on(future::poll_once(task.unwrap()));
     if result.is_none() { return; }
 
-    let (raw_mesh, raw_aabb) = result.unwrap();
+    let (raw_mesh, _raw_aabb) = result.unwrap();
     *mesh = Mesh3d(meshes.add(raw_mesh.clone()));
-    *aabb = raw_aabb;
     terrain.task_regenerate_mesh = None;
     
     // Track tile count for initial mesh generation check
