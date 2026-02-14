@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::{
     common::{
         components::{Actor, ActorAttributes},
-        systems::combat::damage::contest_modifier,
+        systems::combat::damage::{contest_factor, reaction_contest_factor},
     },
 };
 
@@ -127,7 +127,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
                 MetaAttributeStat::Finesse => ("Finesse", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
-                MetaAttributeStat::Cunning => ("Cunning", Color::srgb(0.7, 0.5, 0.9), "Window Extension:"),
+                MetaAttributeStat::Cunning => ("Cunning", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
                 MetaAttributeStat::Dominance => ("Dominance", Color::srgb(0.9, 0.6, 0.3), "Healing Reduction:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
             };
@@ -695,56 +695,51 @@ pub fn update_attributes(
                 };
                 **text = format!("({})", raw_value);
             } else {
-                // Update calculated effect value
+                // Update calculated effect value (uncontested display)
                 **text = match meta_stat {
                     MetaAttributeStat::Impact => {
-                        // Recovery pushback: effective_impact = impact × contest(impact, 0) → pushback
+                        // Recovery pushback: 0.50 × gap × contest_factor
                         let impact = attrs.impact();
-                        let contest_mod = contest_modifier(impact, 0);
-                        let effective_impact = (impact as f32) * contest_mod;
-                        let pushback_pct = (effective_impact / 600.0).min(0.50) * 100.0;
+                        let contest = contest_factor(impact, 0);  // vs 0 composure
+                        let pushback_pct = (0.50 * contest) * 100.0;
                         format!("+{:.0}%", pushback_pct)
                     },
                     MetaAttributeStat::Composure => {
-                        // Recovery time reduction: show as percentage time saved
+                        // Recovery time reduction: 0.33 × gap × contest_factor
                         let composure = attrs.composure();
-                        let contest_mod = contest_modifier(composure, 0);  // Uncontested display
-                        let effective_composure = (composure as f32) * contest_mod;
-                        let speed_increase = (effective_composure * 0.5).min(150.0);  // 0.5% per point, cap at 150%
-                        let speed_multiplier = 1.0 + (speed_increase / 100.0);  // 1.0 to 2.5
-                        let time_reduction_pct = ((1.0 - 1.0 / speed_multiplier) * 100.0).round() as u8;
-                        format!("-{}%", time_reduction_pct)
+                        let contest = contest_factor(composure, 0);  // vs 0 impact
+                        let reduction_pct = (0.33 * contest) * 100.0;
+                        format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Finesse => {
-                        // Synergy improvement: 0-50% reduction of synergy unlock time
+                        // Synergy reduction: 0.66 × gap × contest_factor
                         let finesse = attrs.finesse();
-                        let contest_mod = contest_modifier(finesse, 0);
-                        let improvement_pct = (contest_mod * 50.0).round() as u8;
-                        format!("+{}%", improvement_pct)
+                        let contest = contest_factor(finesse, 0);  // vs 0 cunning
+                        let reduction_pct = (0.66 * contest) * 100.0;
+                        format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Cunning => {
-                        // Reaction window extension: show as percentage of max (600ms)
+                        // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
+                        // Display raw time value (different pattern from other stats)
                         let cunning = attrs.cunning();
-                        let contest_mod = contest_modifier(cunning, 0);  // Uncontested display
-                        let effective_cunning = (cunning as f32) * contest_mod;
-                        let extension_ms = (effective_cunning * 2.0).min(600.0);
-                        let extension_pct = ((extension_ms / 600.0) * 100.0).round() as u8;
-                        format!("+{}%", extension_pct)
+                        let contest = contest_factor(cunning, 0);  // vs 0 finesse
+                        let multiplier = 1.0 + 0.5 * contest;
+                        let window_seconds = 3.0 * multiplier;
+                        format!("{:.1}s", window_seconds)
                     },
                     MetaAttributeStat::Dominance => {
-                        // Healing reduction aura: 25% base × contest_modifier(dominance, 0)
+                        // Healing reduction aura: 0.25 × gap × contest_factor
                         let dominance = attrs.dominance();
-                        let contest_mod = contest_modifier(dominance, 0);
-                        let reduction_pct = (25.0 * contest_mod).round() as u8;
-                        format!("-{}%", reduction_pct)
+                        let contest = contest_factor(dominance, 0);  // vs 0 toughness
+                        let reduction_pct = (0.25 * contest) * 100.0;
+                        format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Toughness => {
-                        // Physical damage mitigation: toughness vs dominance contest
+                        // Damage mitigation: 0.75 × gap × contest_factor
                         let toughness = attrs.toughness();
-                        let contest_mod = contest_modifier(toughness, 0);  // Uncontested display
-                        let effective_toughness = (toughness as f32) * contest_mod;
-                        let mitigation_pct = ((effective_toughness / 330.0).min(0.75) * 100.0).round() as u8;
-                        format!("-{}%", mitigation_pct)
+                        let contest = contest_factor(toughness, 0);  // vs 0 dominance
+                        let mitigation_pct = (0.75 * contest) * 100.0;
+                        format!("-{:.0}%", mitigation_pct)
                     },
                 };
             }

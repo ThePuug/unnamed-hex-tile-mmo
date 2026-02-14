@@ -200,13 +200,12 @@ pub fn handle_lunge(
         // Trigger recovery lockout (server-side state)
         let recovery_duration = get_ability_recovery_duration(AbilityType::Lunge);
 
-        // Get target's Impact to contest Composure recovery reduction (SOW-021 Phase 2)
-        let target_impact = attrs_query.get(target_ent)
-            .map(|target_attrs| target_attrs.impact())
-            .unwrap_or(0);
+        let (target_impact, target_level) = attrs_query.get(target_ent)
+            .map(|a| (a.impact(), a.total_level()))
+            .unwrap_or((0, 0));
 
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Lunge)
-            .with_target_impact(target_impact);
+            .with_target(target_impact, target_level);
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state, SOW-021 Phase 2)

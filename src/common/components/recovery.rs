@@ -12,6 +12,7 @@ pub struct GlobalRecovery {
     pub duration: f32,               // Total duration of current lockout
     pub triggered_by: AbilityType,   // Which ability triggered this lockout
     pub target_impact: u16,          // Impact of the target attacked (contests Composure)
+    pub target_level: u32,           // Level of the target attacked (for gap_factor)
 }
 
 impl GlobalRecovery {
@@ -20,12 +21,14 @@ impl GlobalRecovery {
             remaining: duration,
             duration,
             triggered_by,
-            target_impact: 0,  // Default to uncontested
+            target_impact: 0,
+            target_level: 0,
         }
     }
 
-    pub fn with_target_impact(mut self, target_impact: u16) -> Self {
+    pub fn with_target(mut self, target_impact: u16, target_level: u32) -> Self {
         self.target_impact = target_impact;
+        self.target_level = target_level;
         self
     }
 
@@ -110,6 +113,7 @@ mod tests {
             duration: 1.0,
             triggered_by: AbilityType::Overpower,
             target_impact: 0,
+            target_level: 0,
         };
         assert!(!recovery.is_active(), "Should be inactive when remaining == 0");
     }

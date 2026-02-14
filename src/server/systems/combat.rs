@@ -52,12 +52,13 @@ pub fn process_deal_damage(
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-        // Recovery pushback (SOW-021 Phase 1): Impact vs Composure
-        // Apply pushback when target has active GlobalRecovery
+        // Recovery pushback: Impact vs Composure with gap factor
         if let Some(mut recovery) = recovery_opt {
             let pushback_pct = damage_calc::calculate_recovery_pushback(
                 source_attrs.impact(),
                 attrs.composure(),
+                source_attrs.total_level(),
+                attrs.total_level(),
             );
             recovery.apply_pushback(pushback_pct);
         }
@@ -120,14 +121,14 @@ pub fn resolve_threat(
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
             // Scan for strongest Dominance aura affecting this entity
-            let max_dominance = damage_calc::find_max_dominance_in_range(*ent, &loc_query, &all_attrs);
+            let (max_dominance, dominant_level) = damage_calc::find_max_dominance_in_range(*ent, &loc_query, &all_attrs);
 
-            // Apply passive modifiers (Phase 2)
+            // Apply passive mitigation (unified for all damage types)
             let final_damage = damage_calc::apply_passive_modifiers(
                 threat.damage,
                 attrs,
-                threat.damage_type,
                 max_dominance,
+                dominant_level,
             );
 
             // Apply damage to health

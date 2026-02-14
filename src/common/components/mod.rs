@@ -630,7 +630,8 @@ impl ActorAttributes {
     //
     // **Layer 3 — Three Scaling Modes:**
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
-    //   - RELATIVE (build matchup): contest_modifier() in damage.rs — no level scaling
+    //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
+    //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
     //   - COMMITMENT (build identity): window_size(), cadence_interval(),
     //     evasion_chance() — discrete tiers based on % of total budget
     //

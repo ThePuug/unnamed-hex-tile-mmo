@@ -1,3 +1,25 @@
+# Game Thesis
+
+**A world that fights back — you don't beat it, you survive it, together.**
+
+This thesis sits above everything: combat is *how* you survive it, the transforming world is *what* you're surviving, cities are *where* you survive it, and "together" is *why* it's an MMO.
+
+## The Three Pillars
+
+**Combat:** *Combat that feels like reading a fight, not executing a rotation.*
+
+Combat is reading because the world is a worthy opponent you need to understand. You see attacks coming and decide how to respond in the moment.
+
+**World:** *A living world that transforms itself, not one stuck in static repetition.*
+
+The world transforms because it's alive and fighting. Exploration drives discovery, and the further you venture from safety, the harder it pushes back.
+
+**Cities:** *Build anywhere, but beware a world that wants to reclaim it.*
+
+Cities are contested because survival isn't guaranteed. Players create safe spaces together, but the world pushes back.
+
+---
+
 # Build
 - `cargo build`
 
