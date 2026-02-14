@@ -7,39 +7,43 @@ use std::time::Duration;
 #[cfg(test)]
 use crate::common::components::reaction_queue::DamageType;
 
-/// Calculate timer duration based on Instinct attribute and level multiplier (ADR-020)
-/// Linear formula: base_window * (1.0 + instinct / 1000.0)
-/// Then scaled by reaction_level_multiplier for super-linear growth
+/// Base timer constant (flat, no attribute scaling)
+/// Attribute scaling handled by cunning_extension, level scaling by gap_multiplier.
+/// This is the baseline reaction window before any modifiers (3 seconds).
+/// Gap and cunning can extend this up to 10 seconds total.
+pub fn base_timer() -> Duration {
+    Duration::from_secs_f32(3.0)
+}
+
+/// Calculate reaction window bonus from level gap (no individual cap)
+/// Uses INVERSE of cunning's sqrt formula (squared) for symmetric diminishing returns.
+/// Combined with cunning_extension, the total bonus is capped at 7s.
 ///
-/// Minimum 250ms to prevent instant resolution
-pub fn calculate_timer_duration(attrs: &ActorAttributes) -> Duration {
-    let instinct = attrs.instinct() as f32;
-
-    let base_window = 1.0;
-    let linear = base_window * (1.0 + instinct / 1000.0);
-    let duration_secs = linear * attrs.reaction_level_multiplier();
-
-    Duration::from_secs_f32(duration_secs).max(Duration::from_millis(250))
-}
-
-/// Calculate reaction window multiplier based on level gap (ADR-020)
-/// Higher-level defenders get more time to react to lower-level threats
-/// No penalty when outleveled (floor at 1.0), capped at max multiplier
-pub fn gap_multiplier(defender_level: u32, attacker_level: u32) -> f32 {
+/// - At equal levels: 0s bonus
+/// - At extreme gaps: ~5-6s bonus (before combined cap)
+/// - No penalty when outleveled (floor at 0)
+pub fn gap_bonus(defender_level: u32, attacker_level: u32) -> Duration {
     let gap = defender_level.saturating_sub(attacker_level) as f32;
-    const WINDOW_SCALING_FACTOR: f32 = 0.15;
-    const WINDOW_MAX_MULTIPLIER: f32 = 3.0;
-    (1.0 + gap * WINDOW_SCALING_FACTOR).min(WINDOW_MAX_MULTIPLIER)
+    const GAP_NORMALIZER: f32 = 50.0;  // 50-level gap ≈ max effect
+
+    // Squared for inverse sqrt curve (fast growth that slows)
+    // Scale to give ~6s at max gap (before combined cap)
+    let normalized = (gap / GAP_NORMALIZER).min(1.0);
+    let bonus_secs = normalized.powi(2) * 6.0;
+
+    Duration::from_secs_f32(bonus_secs)
 }
 
-/// Calculate Cunning-based reaction window extension (SOW-021 Phase 2)
-/// Defender's cunning extends the time available to react to threats
-/// Formula: 2ms per cunning point, capped at 600ms, contested by attacker's finesse
-pub fn calculate_cunning_extension(cunning: u16, attacker_finesse: u16) -> Duration {
+/// Calculate Cunning-based reaction window bonus (no individual cap)
+/// Defender's cunning extends the time available to react to threats.
+/// Weaker than gap_bonus - cunning is a secondary advantage.
+/// Combined with gap_bonus, the total bonus is capped at 7s.
+///
+/// Formula: scales to give ~3s at max cunning (before combined cap)
+pub fn cunning_bonus(cunning: u16, attacker_finesse: u16) -> Duration {
     use crate::common::systems::combat::damage::contest_modifier;
 
-    const MS_PER_CUNNING: f32 = 2.0;
-    const MAX_EXTENSION_MS: f32 = 600.0;
+    const MS_PER_CUNNING: f32 = 10.0; // 10ms per cunning point (weaker than level gap)
 
     // Calculate base extension from raw stat
     let base_extension_ms = (cunning as f32) * MS_PER_CUNNING;
@@ -48,15 +52,69 @@ pub fn calculate_cunning_extension(cunning: u16, attacker_finesse: u16) -> Durat
     let contest_mod = contest_modifier(cunning, attacker_finesse);
     let contested_extension_ms = base_extension_ms * contest_mod;
 
-    let extension_ms = contested_extension_ms.min(MAX_EXTENSION_MS);
-    Duration::from_secs_f32(extension_ms / 1000.0)
+    Duration::from_secs_f32(contested_extension_ms / 1000.0)
+}
+
+/// Create a threat with proper timer calculation (INVARIANT: INV-003)
+///
+/// **CRITICAL INVARIANT (INV-003):** All threats from the same source to the same target
+/// MUST have identical timer durations, regardless of which ability created them.
+/// This ensures consistent reaction windows and prevents ability-specific timing quirks.
+///
+/// Timer calculation (2 independent components):
+/// 1. **Level scaling**: base × gap_multiplier(level_diff) — absolute power difference
+/// 2. **Stat scaling**: cunning_extension(cunning vs finesse) — relative stat contest
+///
+/// # Arguments
+/// * `source` - Attacker entity (source of threat)
+/// * `target_attrs` - Defender's attributes (receives threat)
+/// * `source_attrs` - Attacker's attributes (creates threat)
+/// * `damage` - Final damage amount
+/// * `damage_type` - Physical or Magic
+/// * `ability` - Which ability created this threat
+/// * `now` - Current game time
+///
+/// # Returns
+/// Fully-formed QueuedThreat with correct timer duration
+pub fn create_threat(
+    source: bevy::prelude::Entity,
+    target_attrs: &ActorAttributes,
+    source_attrs: &ActorAttributes,
+    damage: f32,
+    damage_type: crate::common::components::reaction_queue::DamageType,
+    ability: Option<crate::common::message::AbilityType>,
+    now: Duration,
+) -> crate::common::components::reaction_queue::QueuedThreat {
+    // Two-component timer calculation with combined cap (INV-003)
+    // Base: 3s flat
+    // Bonuses: gap + cunning, capped at 7s combined
+    // Final range: 3s to 10s
+
+    let gap_bonus = gap_bonus(target_attrs.total_level(), source_attrs.total_level());
+    let cunning_bonus = cunning_bonus(target_attrs.cunning(), source_attrs.finesse());
+
+    // Cap the combined bonuses at 7 seconds
+    const MAX_COMBINED_BONUS_MS: u128 = 7000;
+    let total_bonus_ms = (gap_bonus.as_millis() + cunning_bonus.as_millis())
+        .min(MAX_COMBINED_BONUS_MS);
+
+    let timer_duration = base_timer() + Duration::from_millis(total_bonus_ms as u64);
+
+    crate::common::components::reaction_queue::QueuedThreat {
+        source,
+        damage,
+        damage_type,
+        inserted_at: now,
+        timer_duration,
+        ability,
+    }
 }
 
 /// Insert a threat into the queue (ADR-030: unbounded, no overflow eviction)
 /// Queue is unbounded — threats always insert. Window size controls visibility only.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
-    threat: QueuedThreat,
+    threat: crate::common::components::reaction_queue::QueuedThreat,
     _now: Duration,
 ) {
     queue.threats.push_back(threat);

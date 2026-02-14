@@ -12,6 +12,13 @@ pub enum DamageType {
 
 /// A single threat in the reaction queue
 /// Represents incoming damage that has not yet been applied
+///
+/// # CRITICAL INVARIANT (INV-003)
+/// **DO NOT MANUALLY CONSTRUCT** this struct. ALWAYS use `queue::create_threat()`.
+/// Manual construction bypasses threat timer consistency checks and will break
+/// reaction window predictability.
+///
+/// Reading fields is fine. Construction must go through the helper.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueuedThreat {
     /// The entity that caused this threat (attacker)

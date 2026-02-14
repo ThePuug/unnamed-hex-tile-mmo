@@ -319,32 +319,38 @@ impl ActorAttributes {
     /// Maximum Might reach (including maximum shift)
     /// When axis on might side: axis×16 + spectrum×12 (at shift=0)
     /// When axis on grace side: spectrum×12 (max shift gives -shift×12)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn might_reach(&self) -> u16 {
-        let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
-
-        if self.might_grace_axis <= 0 {
+        if self.might_grace_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.might_grace_spectrum.max(0) as u16) * 6
+        } else if self.might_grace_axis < 0 {
             // Axis on might side: already at max with shift=0
             let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on grace side: can shift spectrum to might
-            spectrum_reach
+            (self.might_grace_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Maximum Grace reach (including maximum shift)
     /// When axis on grace side: axis×16 + spectrum×12 (at shift=0)
     /// When axis on might side: spectrum×12 (max shift gives shift×12)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn grace_reach(&self) -> u16 {
-        let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
-
-        if self.might_grace_axis >= 0 {
+        if self.might_grace_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.might_grace_spectrum.max(0) as u16) * 6
+        } else if self.might_grace_axis > 0 {
             // Axis on grace side: already at max with shift=0
             let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on might side: can shift spectrum to grace
-            spectrum_reach
+            (self.might_grace_spectrum.max(0) as u16) * 12
         }
     }
 
@@ -393,34 +399,40 @@ impl ActorAttributes {
     // === VITALITY ↔ FOCUS ===
 
     /// Maximum Vitality reach (including maximum shift)
-    /// When axis on vitality side: axis*10 + spectrum*7 (at shift=0)
-    /// When axis on focus side: spectrum*7*2 (shift all spectrum to vitality)
+    /// When axis on vitality side: axis×16 + spectrum×12 (at shift=0)
+    /// When axis on focus side: spectrum×12 (shift all spectrum to vitality)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn vitality_reach(&self) -> u16 {
-        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
-
-        if self.vitality_focus_axis <= 0 {
+        if self.vitality_focus_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.vitality_focus_spectrum.max(0) as u16) * 6
+        } else if self.vitality_focus_axis < 0 {
             // Axis on vitality side: already at max with shift=0
             let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on focus side: can shift spectrum to vitality
-            spectrum_reach
+            (self.vitality_focus_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Maximum Focus reach (including maximum shift)
     /// When axis on focus side: axis×16 + spectrum×12 (at shift=0)
     /// When axis on vitality side: spectrum×12 (max shift toward focus)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn focus_reach(&self) -> u16 {
-        let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
-
-        if self.vitality_focus_axis >= 0 {
+        if self.vitality_focus_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.vitality_focus_spectrum.max(0) as u16) * 6
+        } else if self.vitality_focus_axis > 0 {
             // Axis on focus side: already at max with shift=0
             let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on vitality side: can shift spectrum to focus
-            spectrum_reach
+            (self.vitality_focus_spectrum.max(0) as u16) * 12
         }
     }
 
@@ -469,34 +481,40 @@ impl ActorAttributes {
     // === INSTINCT ↔ PRESENCE ===
 
     /// Maximum Instinct reach (including maximum shift)
-    /// When axis on instinct side: axis*10 + spectrum*7 (at shift=0)
-    /// When axis on presence side: spectrum*7*2 (shift all spectrum to instinct)
+    /// When axis on instinct side: axis×16 + spectrum×12 (at shift=0)
+    /// When axis on presence side: spectrum×12 (shift all spectrum to instinct)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn instinct_reach(&self) -> u16 {
-        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
-
-        if self.instinct_presence_axis <= 0 {
+        if self.instinct_presence_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.instinct_presence_spectrum.max(0) as u16) * 6
+        } else if self.instinct_presence_axis < 0 {
             // Axis on instinct side: already at max with shift=0
             let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on presence side: can shift spectrum to instinct
-            spectrum_reach
+            (self.instinct_presence_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Maximum Presence reach (including maximum shift)
     /// When axis on presence side: axis×16 + spectrum×12 (at shift=0)
     /// When axis on instinct side: spectrum×12 (max shift toward presence)
+    /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn presence_reach(&self) -> u16 {
-        let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
-
-        if self.instinct_presence_axis >= 0 {
+        if self.instinct_presence_axis == 0 {
+            // Balanced: no shift allowed, reach equals current
+            (self.instinct_presence_spectrum.max(0) as u16) * 6
+        } else if self.instinct_presence_axis > 0 {
             // Axis on presence side: already at max with shift=0
             let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
             // Axis on instinct side: can shift spectrum to presence
-            spectrum_reach
+            (self.instinct_presence_spectrum.max(0) as u16) * 12
         }
     }
 

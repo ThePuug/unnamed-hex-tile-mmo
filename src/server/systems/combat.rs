@@ -48,17 +48,9 @@ pub fn process_deal_damage(
         // Calculate outgoing damage (Phase 1)
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
 
-        // Insert threat into queue
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-        let base_timer = queue_utils::calculate_timer_duration(attrs);
-        let gap_mult = queue_utils::gap_multiplier(attrs.total_level(), source_attrs.total_level());
-        let timer_with_gap = base_timer.mul_f32(gap_mult);
-
-        // Cunning extension (SOW-021 Phase 2): Defender's cunning vs attacker's finesse
-        let cunning_extension = queue_utils::calculate_cunning_extension(attrs.cunning(), source_attrs.finesse());
-        let timer_duration = timer_with_gap + cunning_extension;
 
         // Recovery pushback (SOW-021 Phase 1): Impact vs Composure
         // Apply pushback when target has active GlobalRecovery
@@ -70,14 +62,16 @@ pub fn process_deal_damage(
             recovery.apply_pushback(pushback_pct);
         }
 
-        let threat = QueuedThreat {
-            source: *source,
-            damage: outgoing,
-            damage_type: *damage_type,
-            inserted_at: now,
-            timer_duration,
-            ability: *ability,
-        };
+        // Create threat using canonical helper (INV-003: ensures consistent timers)
+        let threat = queue_utils::create_threat(
+            *source,       // Source entity
+            attrs,         // Target attributes
+            source_attrs,  // Source attributes
+            outgoing,      // Damage
+            *damage_type,  // Damage type
+            *ability,      // Ability
+            now,           // Current time
+        );
 
         // Try to insert threat into queue
         let overflow = queue_utils::insert_threat(&mut queue, threat, now);

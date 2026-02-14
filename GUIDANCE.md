@@ -80,6 +80,27 @@ Client-server MMO built with Bevy ECS:
 
 **Resources:** `InputQueues`, `EntityMap` (client), `Map` (hex↔world), `NNTree` (spatial queries)
 
+---
+
+## Combat & Threat System
+
+**ReactionQueue:** Incoming threats that must be resolved. Window size from Focus commitment tier (1-4 slots visible).
+
+**Critical Invariant (INV-003): Threat Timer Consistency**
+- **Rule:** ALL threats from source X to target Y MUST have identical timer durations
+- **Why:** Ensures predictable reaction windows regardless of ability used
+- **How:** ALWAYS use `queue_utils::create_threat()` helper when creating threats
+- **Never:** Manually construct `QueuedThreat` or calculate custom timers per ability
+
+**Timer Formula (3 components):**
+1. Base timer: `target.instinct + target.level_multiplier`
+2. Gap multiplier: `(1.0 + level_gap × 0.15).min(3.0)` — up to 3× when defender outlevels attacker
+3. Cunning extension: `target.cunning × 2ms × contest(cunning, source.finesse)` — up to 600ms
+
+**Example:** Level 1 NPC → Level 50 player = ~23 second window (regardless of ability)
+
+---
+
 ## System Execution Order
 
 **FixedUpdate (125ms):** `controlled::apply` → `tick` → `interpolate_remote`
@@ -96,6 +117,8 @@ Client-server MMO built with Bevy ECS:
 2. **❌ Forget renet updates** - When adding Events/Components, update BOTH `server/systems/renet.rs` AND `client/systems/renet.rs` (`on_event()` + `send_do()` handlers).
 
 3. **❌ Bypass Try/Do pattern** - ALWAYS: Client→Try → Server validates → Server→Do broadcast. Never write `Do` events directly.
+
+4. **❌ Manual threat construction** - NEVER manually construct `QueuedThreat` in abilities. ALWAYS use `queue_utils::create_threat()` to ensure consistent timers (INV-003). Bypassing this breaks reaction window predictability.
 
 4. **❌ Test trivial code** - Test invariants ("PROXIMITY_RANGE > eviction distance"), not getters/setters. Tests should document architecture and survive refactors.
 

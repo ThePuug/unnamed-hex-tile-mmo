@@ -135,29 +135,47 @@ pub fn handle_counter(
             },
         });
 
-        // Calculate reflected damage (50% of the threat's damage)
-        let reflected_damage = threat.damage * 0.5;
+        // Calculate reflected damage: additive scaling with cap
+        // - Base damage from defender's force (level-appropriate minimum)
+        // - Bonus from incoming threat (rewards countering big attacks)
+        // - Capped at defender's force (prevents low-level abuse)
+        let reflected_damage = {
+            let Ok(defender_attrs) = attrs_query.get(*ent) else {
+                continue;
+            };
+
+            let base_reflect = defender_attrs.force() * 0.2;  // 20% force minimum
+            let threat_bonus = threat.damage * 0.3;            // 30% of countered damage
+            let uncapped = base_reflect + threat_bonus;
+            let cap = defender_attrs.force() * 2.0;            // Cap at 2x defender's force
+
+            uncapped.min(cap)
+        };
 
         // Queue reflected damage as a NEW threat in the attacker's ReactionQueue
         // (only if the attacker is still alive, exists, and is adjacent)
         if can_reflect {
         if let Ok((_, mut target_queue)) = queue_query.get_mut(target_ent) {
-            // Calculate timer duration (standard threat timing - 1.5s base)
-            // TODO: Could scale with target's Instinct for proper reaction window
-            let timer_duration = Duration::from_millis(1500);
+            // Use canonical threat creation helper (INV-003: ensures consistent timers)
+            use crate::common::systems::combat::queue::create_threat;
+
+            let target_attrs = attrs_query.get(target_ent).unwrap();  // Target always has attrs
+            let counter_attrs = attrs_query.get(*ent).unwrap();       // Counter source always has attrs
 
             // Use game world time (server uptime + offset) for consistent time base
             let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
             let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-            let reflected_threat = QueuedThreat {
-                source: *ent,  // Counter caster is the source of reflected damage
-                damage: reflected_damage,
-                damage_type: threat.damage_type,  // Preserve original damage type
-                inserted_at: now,
-                timer_duration,
-                ability: Some(AbilityType::Counter),
-                            };
+            // Create threat using standard helper (guarantees consistent timer calculation)
+            let reflected_threat = create_threat(
+                *ent,                    // Source: Counter caster
+                target_attrs,            // Target: Original attacker (receives reflected damage)
+                counter_attrs,           // Source attrs: Counter caster's stats
+                reflected_damage,        // Damage amount
+                threat.damage_type,      // Preserve original damage type
+                Some(AbilityType::Counter), // Ability that created this threat
+                now,                     // Current time
+            );
 
             // Add to back of target's queue (newest threat)
             target_queue.threats.push_back(reflected_threat);
