@@ -24,6 +24,10 @@ pub struct ThreatTimerRing {
     pub index: usize,
 }
 
+/// Marker component for the overflow counter (shows +N for hidden threats)
+#[derive(Component)]
+pub struct OverflowCounter;
+
 pub const ICON_SIZE: f32 = 50.0;
 const ICON_SPACING: f32 = 10.0; // Space between icons
 const VERTICAL_OFFSET: f32 = -150.0; // Pixels above center (negative = up)
@@ -99,7 +103,10 @@ pub fn update(
     icon_query: Query<(Entity, &ThreatIcon)>,
     mut ring_query: Query<(Entity, &ThreatTimerRing, &mut Node), Without<ThreatIcon>>,
     icon_with_children: Query<&Children, With<ThreatIcon>>,
+    overflow_query: Query<Entity, With<OverflowCounter>>,
+    mut text_query: Query<&mut Text>,
     player_query: Query<(Entity, &ReactionQueue, &ActorAttributes, &Health), With<crate::common::components::Actor>>,
+    container_children: Query<&Children, With<ThreatIconContainer>>,
     time: Res<Time>,
     server: Res<crate::client::resources::Server>,
 ) {
@@ -134,10 +141,21 @@ pub fn update(
             commands.entity(*entity).despawn();
         }
 
+        // Despawn old overflow counter if it exists
+        if let Ok(old_counter) = overflow_query.single() {
+            commands.entity(old_counter).despawn();
+        }
+
         // Spawn all capacity slots (filled + empty)
         for index in 0..target_count {
             let is_filled = index < queue.threats.len();
             spawn_threat_icon(&mut commands, container, index, queue.window_size, is_filled);
+        }
+
+        // Spawn overflow counter (+N indicator) to the right of icons
+        let hidden_count = queue.threats.len().saturating_sub(queue.window_size);
+        if hidden_count > 0 {
+            spawn_overflow_counter(&mut commands, container, queue.window_size, hidden_count);
         }
 
         // Return early - new icons will be updated next frame
@@ -263,6 +281,37 @@ pub fn update(
             commands.entity(entity).insert(BorderColor::all(color));
         }
     }
+
+    // Update overflow counter (+N for hidden threats)
+    let hidden_count = queue.threats.len().saturating_sub(queue.window_size);
+    let counter_exists = overflow_query.iter().next().is_some();
+
+    if hidden_count > 0 && !counter_exists {
+        // Spawn counter
+        spawn_overflow_counter(&mut commands, container, queue.window_size, hidden_count);
+    } else if hidden_count == 0 && counter_exists {
+        // Despawn counter
+        if let Ok(counter) = overflow_query.single() {
+            commands.entity(counter).despawn();
+        }
+    } else if hidden_count > 0 && counter_exists {
+        // Update counter text
+        if let Ok(counter) = overflow_query.single() {
+            if let Ok(children) = container_children.get(container) {
+                for child in children.iter() {
+                    if overflow_query.get(child).is_ok() {
+                        if let Ok(text_children) = container_children.get(child) {
+                            for text_child in text_children.iter() {
+                                if let Ok(mut text) = text_query.get_mut(text_child) {
+                                    **text = format!("+{}", hidden_count);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Spawn a single threat icon at the specified index
@@ -333,6 +382,45 @@ fn spawn_threat_icon(
                     ThreatTimerRing { index },
                 ));
             }
+        });
+    });
+}
+
+/// Spawn overflow counter showing "+N" for hidden threats beyond the window
+fn spawn_overflow_counter(
+    commands: &mut Commands,
+    container: Entity,
+    window_size: usize,
+    hidden_count: usize,
+) {
+    // Position to the right of all icons
+    let total_width = (window_size as f32 * ICON_SIZE) + ((window_size - 1) as f32 * ICON_SPACING);
+    let x_offset = -total_width / 2.0 + total_width + ICON_SPACING + 10.0; // 10px extra padding
+
+    commands.entity(container).with_children(|parent| {
+        parent.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                margin: UiRect {
+                    left: Val::Px(x_offset),
+                    top: Val::Px(VERTICAL_OFFSET + 10.0), // Align with icons
+                    ..default()
+                },
+                ..default()
+            },
+            OverflowCounter,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(format!("+{}", hidden_count)),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.7, 0.0)), // Orange
+            ));
         });
     });
 }
