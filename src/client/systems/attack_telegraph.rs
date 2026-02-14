@@ -55,7 +55,10 @@ pub fn on_insert_threat(
         )).id();
 
         // Parent ball to source entity for automatic position tracking
-        commands.entity(threat.source).add_child(ball_id);
+        // Silently skip if source entity despawned
+        if let Ok(mut entity_commands) = commands.get_entity(threat.source) {
+            entity_commands.add_child(ball_id);
+        }
     }
 }
 

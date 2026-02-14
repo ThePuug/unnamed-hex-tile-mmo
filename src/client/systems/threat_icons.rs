@@ -179,15 +179,19 @@ pub fn update(
                     1.0
                 };
                 let (r, g, b) = severity_rgb(severity);
-                commands.entity(*entity).insert((
-                    BorderColor::all(Color::srgb(r, g, b)),
-                    BackgroundColor(Color::srgb(r * 0.35, g * 0.35, b * 0.35)),
-                ));
+                if let Ok(mut e) = commands.get_entity(*entity) {
+                    e.insert((
+                        BorderColor::all(Color::srgb(r, g, b)),
+                        BackgroundColor(Color::srgb(r * 0.35, g * 0.35, b * 0.35)),
+                    ));
+                }
             } else {
-                commands.entity(*entity).insert((
-                    BorderColor::all(Color::srgba(0.6, 0.3, 0.1, 0.5)),
-                    BackgroundColor(Color::srgba(0.15, 0.1, 0.05, 0.5)),
-                ));
+                if let Ok(mut e) = commands.get_entity(*entity) {
+                    e.insert((
+                        BorderColor::all(Color::srgba(0.6, 0.3, 0.1, 0.5)),
+                        BackgroundColor(Color::srgba(0.15, 0.1, 0.05, 0.5)),
+                    ));
+                }
             }
 
             // Manage timer ring child
@@ -278,7 +282,9 @@ pub fn update(
             node.left = Val::Percent(offset_percent);
             node.top = Val::Percent(offset_percent);
 
-            commands.entity(entity).insert(BorderColor::all(color));
+            if let Ok(mut e) = commands.get_entity(entity) {
+                e.insert(BorderColor::all(color));
+            }
         }
     }
 
