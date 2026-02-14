@@ -126,6 +126,7 @@ fn main() {
         ability_prediction::handle_ability_used, // Apply recovery/synergies when server confirms ability use
         common::systems::combat::recovery::global_recovery_system, // Tick down recovery timer
         common::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
+        common::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
     ));
 
     app.add_systems(Update, (

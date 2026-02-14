@@ -117,6 +117,21 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
     }
 }
 
+/// Sync reaction queue window size when attributes change
+///
+/// This system ensures that ReactionQueue.window_size stays in sync with
+/// ActorAttributes.window_size() after attribute changes (respecs, level ups, etc).
+pub fn sync_queue_window_size(
+    mut queue_query: Query<(&ActorAttributes, &mut ReactionQueue), Changed<ActorAttributes>>,
+) {
+    for (attrs, mut queue) in &mut queue_query {
+        let new_window_size = attrs.window_size();
+        if queue.window_size != new_window_size {
+            queue.window_size = new_window_size;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
