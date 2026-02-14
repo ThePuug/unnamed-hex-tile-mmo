@@ -303,6 +303,32 @@ impl ActorAttributes {
         self.instinct_presence_shift = clamped;
     }
 
+    // === Mutators for axis and spectrum values (respec system) ===
+
+    /// Apply a full attribute respec (used when server confirms change)
+    pub fn apply_respec(
+        &mut self,
+        mg_axis: i8,
+        mg_spectrum: i8,
+        vf_axis: i8,
+        vf_spectrum: i8,
+        ip_axis: i8,
+        ip_spectrum: i8,
+    ) {
+        // Apply axis/spectrum (validation happens before this)
+        self.might_grace_axis = mg_axis;
+        self.might_grace_spectrum = mg_spectrum.max(0); // Spectrum can't be negative
+        self.vitality_focus_axis = vf_axis;
+        self.vitality_focus_spectrum = vf_spectrum.max(0);
+        self.instinct_presence_axis = ip_axis;
+        self.instinct_presence_spectrum = ip_spectrum.max(0);
+
+        // Auto-clamp shifts to new valid ranges
+        self.set_might_grace_shift(self.might_grace_shift);
+        self.set_vitality_focus_shift(self.vitality_focus_shift);
+        self.set_instinct_presence_shift(self.instinct_presence_shift);
+    }
+
     // === Private: Get current scaled position (for derived stats like movement speed) ===
     // These calculate the NET position (might vs grace) factoring in both axis and shift
     // Positive = grace side, Negative = might side

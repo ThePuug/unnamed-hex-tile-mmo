@@ -115,6 +115,7 @@ fn main() {
         input::try_gcd,
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
+        input::try_respec_attributes, // Attribute respec system
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
         world::do_spawn,

@@ -235,6 +235,14 @@ pub fn write_do(
                 // Forward Pong to Do writer for handle_pong system
                 do_writer.write(Do { event: Event::Pong { client_time } });
             }
+            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+                // Map entity ID and forward to handle_respec_confirmed system
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    warn!("Client: RespecAttributes for unknown entity {:?}", ent);
+                    continue
+                };
+                do_writer.write(Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } });
+            }
             _ => {}
         }
     }
@@ -310,6 +318,17 @@ pub fn send_try(
             Try { event: Event::Dismiss { ent } } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
                     ent: *l2r.get_by_left(&ent).unwrap(),
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
+                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    might_grace_axis,
+                    might_grace_spectrum,
+                    vitality_focus_axis,
+                    vitality_focus_spectrum,
+                    instinct_presence_axis,
+                    instinct_presence_spectrum,
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

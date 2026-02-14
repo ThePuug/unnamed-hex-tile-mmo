@@ -6,6 +6,7 @@ pub mod animator;
 pub mod attack_telegraph;
 pub mod camera;
 pub mod character_panel;
+pub mod character_panel_respec;
 pub mod combat;
 pub mod combat_log; // ADR-025: Combat log panel for event history
 pub mod combat_ui;

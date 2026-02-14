@@ -187,3 +187,74 @@ pub fn broadcast_player_movement_intent(
     }
 }
 
+/// Handle attribute respec requests from clients
+///
+/// Clients send RespecAttributes Try events when clicking Apply button.
+/// Server validates the respec (budget, ranges, not in combat) and broadcasts Do event.
+pub fn try_respec_attributes(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut attrs_query: Query<&mut ActorAttributes>,
+) {
+    for &message in reader.read() {
+        let Try { event } = message;
+        let Event::RespecAttributes {
+            ent,
+            might_grace_axis,
+            might_grace_spectrum,
+            vitality_focus_axis,
+            vitality_focus_spectrum,
+            instinct_presence_axis,
+            instinct_presence_spectrum,
+        } = event
+        else {
+            continue;
+        };
+
+        let Ok(mut attrs) = attrs_query.get_mut(ent) else {
+            continue;
+        };
+
+        // Calculate draft investment
+        let draft_investment = might_grace_axis.unsigned_abs() as u32
+            + might_grace_spectrum.max(0) as u32
+            + vitality_focus_axis.unsigned_abs() as u32
+            + vitality_focus_spectrum.max(0) as u32
+            + instinct_presence_axis.unsigned_abs() as u32
+            + instinct_presence_spectrum.max(0) as u32;
+
+        // Validate budget
+        if draft_investment > attrs.total_level() {
+            continue; // Overbudget
+        }
+
+        // Validate ranges (i8 max is 127, but level is practical limit)
+        let max_investment = attrs.total_level() as i8;
+        if might_grace_axis.abs() > max_investment
+            || might_grace_spectrum < 0
+            || might_grace_spectrum > max_investment
+            || vitality_focus_axis.abs() > max_investment
+            || vitality_focus_spectrum < 0
+            || vitality_focus_spectrum > max_investment
+            || instinct_presence_axis.abs() > max_investment
+            || instinct_presence_spectrum < 0
+            || instinct_presence_spectrum > max_investment
+        {
+            continue; // Invalid ranges
+        }
+
+        // Apply respec
+        attrs.apply_respec(
+            might_grace_axis,
+            might_grace_spectrum,
+            vitality_focus_axis,
+            vitality_focus_spectrum,
+            instinct_presence_axis,
+            instinct_presence_spectrum,
+        );
+
+        // Broadcast confirmation
+        writer.write(Do { event });
+    }
+}
+

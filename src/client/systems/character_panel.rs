@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::{
     common::{
         components::{Actor, ActorAttributes},
-        systems::combat::damage::{contest_factor, reaction_contest_factor},
+        systems::combat::damage::contest_factor,
     },
 };
 
@@ -19,9 +19,25 @@ pub enum AttributeTitle {
     InstinctPresence,
 }
 
-/// Marker component for attribute current value text
+/// Marker component for attribute current value row (container for values + buttons)
 #[derive(Component)]
 pub enum AttributeCurrent {
+    MightGrace,
+    VitalityFocus,
+    InstinctPresence,
+}
+
+/// Marker for left current value text
+#[derive(Component)]
+pub enum LeftCurrentValue {
+    MightGrace,
+    VitalityFocus,
+    InstinctPresence,
+}
+
+/// Marker for right current value text
+#[derive(Component)]
+pub enum RightCurrentValue {
     MightGrace,
     VitalityFocus,
     InstinctPresence,
@@ -62,11 +78,115 @@ pub enum MetaAttributeStat {
 #[derive(Component)]
 pub struct RawStatValue;
 
+/// Marker for axis adjustment buttons (left-side positioned)
+#[derive(Component, Clone, Copy)]
+pub enum AxisAdjustButton {
+    MightGraceDecrease,
+    MightGraceIncrease,
+    VitalityFocusDecrease,
+    VitalityFocusIncrease,
+    InstinctPresenceDecrease,
+    InstinctPresenceIncrease,
+}
+
+/// Marker for axis adjustment buttons (right-side positioned)
+#[derive(Component, Clone, Copy)]
+pub enum AxisAdjustButtonRight {
+    MightGraceDecrease,
+    MightGraceIncrease,
+    VitalityFocusDecrease,
+    VitalityFocusIncrease,
+    InstinctPresenceDecrease,
+    InstinctPresenceIncrease,
+}
+
+/// Marker for spectrum adjustment buttons
+#[derive(Component, Clone, Copy)]
+pub enum SpectrumAdjustButton {
+    MightGraceDecrease,
+    MightGraceIncrease,
+    VitalityFocusDecrease,
+    VitalityFocusIncrease,
+    InstinctPresenceDecrease,
+    InstinctPresenceIncrease,
+}
+
+/// Marker for Apply Respec button
+#[derive(Component)]
+pub struct ApplyRespecButton;
+
+/// Marker for Apply button text (shows budget)
+#[derive(Component)]
+pub struct ApplyButtonText;
+
+/// Draft attributes for respec (axis/spectrum only, shift is immediate)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DraftAttributes {
+    pub might_grace_axis: i8,
+    pub might_grace_spectrum: i8,
+    pub vitality_focus_axis: i8,
+    pub vitality_focus_spectrum: i8,
+    pub instinct_presence_axis: i8,
+    pub instinct_presence_spectrum: i8,
+}
+
+impl DraftAttributes {
+    /// Create draft from current ActorAttributes
+    pub fn from_current(attrs: &ActorAttributes) -> Self {
+        Self {
+            might_grace_axis: attrs.might_grace_axis(),
+            might_grace_spectrum: attrs.might_grace_spectrum(),
+            vitality_focus_axis: attrs.vitality_focus_axis(),
+            vitality_focus_spectrum: attrs.vitality_focus_spectrum(),
+            instinct_presence_axis: attrs.instinct_presence_axis(),
+            instinct_presence_spectrum: attrs.instinct_presence_spectrum(),
+        }
+    }
+
+    /// Calculate total investment (for budget validation)
+    pub fn total_investment(&self) -> u32 {
+        self.might_grace_axis.unsigned_abs() as u32
+            + self.might_grace_spectrum.max(0) as u32
+            + self.vitality_focus_axis.unsigned_abs() as u32
+            + self.vitality_focus_spectrum.max(0) as u32
+            + self.instinct_presence_axis.unsigned_abs() as u32
+            + self.instinct_presence_spectrum.max(0) as u32
+    }
+
+    /// Validate draft against level budget
+    pub fn is_valid(&self, level: u32) -> bool {
+        let max_investment = level as i8;
+        self.total_investment() <= level
+            && self.might_grace_axis.abs() <= max_investment
+            && self.might_grace_spectrum >= 0
+            && self.might_grace_spectrum <= max_investment
+            && self.vitality_focus_axis.abs() <= max_investment
+            && self.vitality_focus_spectrum >= 0
+            && self.vitality_focus_spectrum <= max_investment
+            && self.instinct_presence_axis.abs() <= max_investment
+            && self.instinct_presence_spectrum >= 0
+            && self.instinct_presence_spectrum <= max_investment
+    }
+}
+
 /// Resource to track character panel visibility and drag state
 #[derive(Resource, Default)]
 pub struct CharacterPanelState {
     pub visible: bool,
     pub dragging: Option<DragState>,
+    pub pending_respec: Option<DraftAttributes>,  // None = no pending changes
+}
+
+impl CharacterPanelState {
+    pub fn has_pending_changes(&self) -> bool {
+        self.pending_respec.is_some()
+    }
+
+    pub fn mark_dirty(&mut self, attrs: &ActorAttributes) {
+        if self.pending_respec.is_none() {
+            self.pending_respec = Some(DraftAttributes::from_current(attrs));
+        }
+    }
 }
 
 /// Tracks which attribute is being dragged
@@ -195,7 +315,7 @@ macro_rules! create_stat_display {
 }
 
 macro_rules! create_attribute_section {
-    ($parent:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr) => {
+    ($parent:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr, $left_current_marker:expr, $right_current_marker:expr, $axis_dec_left_marker:expr, $axis_inc_left_marker:expr, $axis_dec_right_marker:expr, $axis_inc_right_marker:expr, $spectrum_dec_marker:expr, $spectrum_inc_marker:expr) => {
         $parent
         .spawn((
             Node {
@@ -251,7 +371,7 @@ macro_rules! create_attribute_section {
                 ));
             });
 
-            // Bar and current values row
+            // Bar and current values row (with inline axis buttons)
             section.spawn((
                 $current_marker,
                 Node {
@@ -262,84 +382,254 @@ macro_rules! create_attribute_section {
                     ..default()
                 },
             )).with_children(|bar_row| {
-                // Left current value (inner)
+                // Left value container (value + axis buttons)
                 bar_row.spawn((
-                    Text::new("0"),
-                    TextFont { font_size: 13.0, ..default() },
-                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                ));
-
-                // Visual bar container (-120 to +120 range)
-                bar_row.spawn((
-                    $bar_marker,
                     Node {
-                        width: Val::Px(250.),
-                        height: Val::Px(20.),
-                        position_type: PositionType::Relative,
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(4.),
+                        min_width: Val::Px(80.),  // Reserve space for value + buttons
                         ..default()
                     },
-                    Interaction::default(),
-                )).with_children(|bar_container| {
-                    // Background track (full range -120 to +120)
-                    bar_container.spawn((
+                ))
+                .with_children(|left_container| {
+                    // Plus button (left-side) - increases commitment (away from center, on outside)
+                    left_container.spawn((
+                        $axis_inc_left_marker,
+                        Button,
                         Node {
-                            width: Val::Percent(100.),
-                            height: Val::Percent(100.),
-                            position_type: PositionType::Absolute,
-                            border_radius: BorderRadius::all(Val::Px(4.)),
+                            width: Val::Px(16.),
+                            height: Val::Px(16.),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 1.0)),
-                    ));
+                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        Visibility::Hidden,  // Will be shown conditionally
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("+"),
+                            TextFont { font_size: 10.0, ..default() },
+                        ));
+                    });
 
-                    // Center line (at 0)
-                    bar_container.spawn((
+                    // Minus button (left-side) - reduces commitment (toward center, on inside)
+                    left_container.spawn((
+                        $axis_dec_left_marker,
+                        Button,
                         Node {
-                            width: Val::Px(2.),
-                            height: Val::Percent(100.),
-                            position_type: PositionType::Absolute,
-                            left: Val::Percent(50.),
+                            width: Val::Px(16.),
+                            height: Val::Px(16.),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.8)),
-                    ));
+                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        Visibility::Hidden,  // Will be shown conditionally
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("−"),
+                            TextFont { font_size: 10.0, ..default() },
+                        ));
+                    });
 
-                    // Spectrum range indicator (will be updated dynamically)
-                    bar_container.spawn((
-                        SpectrumRange,
-                        Node {
-                            height: Val::Percent(100.),
-                            position_type: PositionType::Absolute,
-                            left: Val::Percent(50.),
-                            width: Val::Px(0.),
-                            border_radius: BorderRadius::all(Val::Px(3.)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.3, 0.5, 0.7, 0.4)),
-                    ));
-
-                    // Axis bar - shows current available range (draggable)
-                    bar_container.spawn((
-                        $axis_marker,
-                        Node {
-                            width: Val::Px(0.),  // Will be set dynamically
-                            height: Val::Percent(100.),
-                            position_type: PositionType::Absolute,
-                            left: Val::Percent(50.),  // Will be set dynamically
-                            border_radius: BorderRadius::all(Val::Px(2.)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(1.0, 0.8, 0.0, 0.6)),
-                        Interaction::default(),
+                    // Left current value
+                    left_container.spawn((
+                        $left_current_marker,
+                        Text::new("0"),
+                        TextFont { font_size: 13.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
                     ));
                 });
 
-                // Right current value (inner)
+                // Visual bar container (spectrum buttons centered on bar)
                 bar_row.spawn((
-                    Text::new("0"),
-                    TextFont { font_size: 13.0, ..default() },
-                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                ));
+                    Node {
+                        position_type: PositionType::Relative,
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|bar_wrapper| {
+                    // The actual bar
+                    bar_wrapper.spawn((
+                        $bar_marker,
+                        Node {
+                            width: Val::Px(250.),
+                            height: Val::Px(20.),
+                            position_type: PositionType::Relative,
+                            ..default()
+                        },
+                        Interaction::default(),
+                    )).with_children(|bar_container| {
+                        // Background track (full range -120 to +120)
+                        bar_container.spawn((
+                            Node {
+                                width: Val::Percent(100.),
+                                height: Val::Percent(100.),
+                                position_type: PositionType::Absolute,
+                                border_radius: BorderRadius::all(Val::Px(4.)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 1.0)),
+                        ));
+
+                        // Center line (at 0)
+                        bar_container.spawn((
+                            Node {
+                                width: Val::Px(2.),
+                                height: Val::Percent(100.),
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.8)),
+                        ));
+
+                        // Spectrum range indicator (will be updated dynamically)
+                        bar_container.spawn((
+                            SpectrumRange,
+                            Node {
+                                height: Val::Percent(100.),
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.),
+                                width: Val::Px(0.),
+                                border_radius: BorderRadius::all(Val::Px(3.)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.3, 0.5, 0.7, 0.4)),
+                        ));
+
+                        // Axis bar - shows current available range (draggable)
+                        bar_container.spawn((
+                            $axis_marker,
+                            Node {
+                                width: Val::Px(0.),  // Will be set dynamically
+                                height: Val::Percent(100.),
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.),  // Will be set dynamically
+                                border_radius: BorderRadius::all(Val::Px(2.)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(1.0, 0.8, 0.0, 0.6)),
+                            Interaction::default(),
+                        ));
+
+                        // Spectrum decrease button (above bar, centered, left side)
+                        bar_container.spawn((
+                            $spectrum_dec_marker,
+                            Button,
+                            Node {
+                                width: Val::Px(20.),
+                                height: Val::Px(20.),
+                                position_type: PositionType::Absolute,
+                                // Position at center minus 12px (half of 20px button + 2px gap)
+                                left: Val::Px(113.),  // 250px bar / 2 - 12px = 113px
+                                top: Val::Px(-24.),   // Above the bar to avoid occlusion
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new("−"),
+                                TextFont { font_size: 12.0, ..default() },
+                            ));
+                        });
+
+                        // Spectrum increase button (above bar, centered, right side)
+                        bar_container.spawn((
+                            $spectrum_inc_marker,
+                            Button,
+                            Node {
+                                width: Val::Px(20.),
+                                height: Val::Px(20.),
+                                position_type: PositionType::Absolute,
+                                // Position at center plus 2px gap
+                                left: Val::Px(127.),  // 250px bar / 2 + 2px = 127px
+                                top: Val::Px(-24.),   // Above the bar to avoid occlusion
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new("+"),
+                                TextFont { font_size: 12.0, ..default() },
+                            ));
+                        });
+                    });
+                });
+
+                // Right value container (buttons + value)
+                bar_row.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(4.),
+                        min_width: Val::Px(80.),  // Reserve space to match left side
+                        justify_content: JustifyContent::FlexEnd,
+                        ..default()
+                    },
+                ))
+                .with_children(|right_container| {
+                    // Minus button (right-side) - reduces commitment (toward center)
+                    right_container.spawn((
+                        $axis_dec_right_marker,
+                        Button,
+                        Node {
+                            width: Val::Px(16.),
+                            height: Val::Px(16.),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        Visibility::Hidden,  // Will be shown conditionally
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("−"),
+                            TextFont { font_size: 10.0, ..default() },
+                        ));
+                    });
+
+                    // Plus button (right-side) - increases commitment (away from center)
+                    right_container.spawn((
+                        $axis_inc_right_marker,
+                        Button,
+                        Node {
+                            width: Val::Px(16.),
+                            height: Val::Px(16.),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
+                        Visibility::Hidden,  // Will be shown conditionally
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("+"),
+                            TextFont { font_size: 10.0, ..default() },
+                        ));
+                    });
+
+                    // Right current value
+                    right_container.spawn((
+                        $right_current_marker,
+                        Text::new("0"),
+                        TextFont { font_size: 13.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    ));
+                });
             });
         });
     };
@@ -406,17 +696,29 @@ pub fn setup(
                     // MIGHT ↔ GRACE section (Impact = red, Finesse = yellow)
                     create_attribute_section!(left, "MIGHT", "GRACE",
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
-                        AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace);
+                        AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace,
+                        LeftCurrentValue::MightGrace, RightCurrentValue::MightGrace,
+                        AxisAdjustButton::MightGraceDecrease, AxisAdjustButton::MightGraceIncrease,
+                        AxisAdjustButtonRight::MightGraceDecrease, AxisAdjustButtonRight::MightGraceIncrease,
+                        SpectrumAdjustButton::MightGraceDecrease, SpectrumAdjustButton::MightGraceIncrease);
 
                     // VITALITY ↔ FOCUS section (Toughness = green, Composure = blue)
                     create_attribute_section!(left, "VITALITY", "FOCUS",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
-                        AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus);
+                        AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus,
+                        LeftCurrentValue::VitalityFocus, RightCurrentValue::VitalityFocus,
+                        AxisAdjustButton::VitalityFocusDecrease, AxisAdjustButton::VitalityFocusIncrease,
+                        AxisAdjustButtonRight::VitalityFocusDecrease, AxisAdjustButtonRight::VitalityFocusIncrease,
+                        SpectrumAdjustButton::VitalityFocusDecrease, SpectrumAdjustButton::VitalityFocusIncrease);
 
                     // INSTINCT ↔ PRESENCE section (Cunning = purple, Dominance = orange)
                     create_attribute_section!(left, "INSTINCT", "PRESENCE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
-                        AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence);
+                        AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence,
+                        LeftCurrentValue::InstinctPresence, RightCurrentValue::InstinctPresence,
+                        AxisAdjustButton::InstinctPresenceDecrease, AxisAdjustButton::InstinctPresenceIncrease,
+                        AxisAdjustButtonRight::InstinctPresenceDecrease, AxisAdjustButtonRight::InstinctPresenceIncrease,
+                        SpectrumAdjustButton::InstinctPresenceDecrease, SpectrumAdjustButton::InstinctPresenceIncrease);
                 });
 
                 // Right column: meta-attribute stats
@@ -440,6 +742,29 @@ pub fn setup(
                 });
             });
 
+            // Apply button (hidden by default, shown when changes are pending)
+            parent.spawn((
+                ApplyRespecButton,
+                Button,
+                Node {
+                    width: Val::Px(180.),
+                    height: Val::Px(30.),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    margin: UiRect::top(Val::Px(10.)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.3, 0.7, 0.3)),
+                Visibility::Hidden,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    ApplyButtonText,
+                    Text::new("Apply Changes"),
+                    TextFont { font_size: 14.0, ..default() },
+                ));
+            });
+
         });
 }
 
@@ -451,6 +776,11 @@ pub fn toggle_panel(
 ) {
     if keyboard.just_pressed(KEYCODE_CHARACTER_PANEL) {
         state.visible = !state.visible;
+
+        // Cancel any pending respec when closing panel
+        if !state.visible {
+            state.pending_respec = None;
+        }
 
         if let Ok(mut visibility) = query.single_mut() {
             *visibility = if state.visible {
@@ -563,7 +893,8 @@ pub fn update_attributes(
     state: Res<CharacterPanelState>,
     player_query: Query<&ActorAttributes, With<Actor>>,
     title_query: Query<(Entity, &AttributeTitle)>,
-    current_query: Query<(Entity, &AttributeCurrent)>,
+    left_value_query: Query<(Entity, &LeftCurrentValue)>,
+    right_value_query: Query<(Entity, &RightCurrentValue)>,
     bar_query: Query<(Entity, &AttributeBar)>,
     meta_query: Query<(&MetaAttributeStat, Entity)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
@@ -579,18 +910,37 @@ pub fn update_attributes(
         return;
     };
 
-    // Calculate max scaled attribute value based on current level
+    // Use draft values if available, otherwise use committed values
+    let draft_attrs = if let Some(draft) = &state.pending_respec {
+        // Create a temporary ActorAttributes with draft values for display
+        let mut temp_attrs = attrs.clone();
+        temp_attrs.apply_respec(
+            draft.might_grace_axis,
+            draft.might_grace_spectrum,
+            draft.vitality_focus_axis,
+            draft.vitality_focus_spectrum,
+            draft.instinct_presence_axis,
+            draft.instinct_presence_spectrum,
+        );
+        Some(temp_attrs)
+    } else {
+        None
+    };
+    let display_attrs = draft_attrs.as_ref().unwrap_or(attrs);
+
+    // Calculate max scaled attribute value based on ACTUAL character level (not draft)
+    // The bar scale should stay fixed regardless of draft allocation
     // Each level grants 1 point. Max scaled value if all points → one axis: level × 10
     // At level 10: max is ±100 (10 points × 10 scaling)
-    let level = attrs.total_level();
+    let level = attrs.total_level(); // Use actual level, not draft
     let max_attr_scaled = (level * 10) as i16;
 
     // Update title rows (reach values)
     for (title_entity, attr_type) in &title_query {
         let (left_reach, right_reach) = match attr_type {
-            AttributeTitle::MightGrace => (attrs.might_reach(), attrs.grace_reach()),
-            AttributeTitle::VitalityFocus => (attrs.vitality_reach(), attrs.focus_reach()),
-            AttributeTitle::InstinctPresence => (attrs.instinct_reach(), attrs.presence_reach()),
+            AttributeTitle::MightGrace => (display_attrs.might_reach(), display_attrs.grace_reach()),
+            AttributeTitle::VitalityFocus => (display_attrs.vitality_reach(), display_attrs.focus_reach()),
+            AttributeTitle::InstinctPresence => (display_attrs.instinct_reach(), display_attrs.presence_reach()),
         };
 
         // Update the reach text values (first and last child)
@@ -608,26 +958,29 @@ pub fn update_attributes(
         }
     }
 
-    // Update current value rows
-    for (current_entity, attr_type) in &current_query {
-        let (left_current, right_current) = match attr_type {
-            AttributeCurrent::MightGrace => (attrs.might(), attrs.grace()),
-            AttributeCurrent::VitalityFocus => (attrs.vitality(), attrs.focus()),
-            AttributeCurrent::InstinctPresence => (attrs.instinct(), attrs.presence()),
+    // Update left current values
+    for (left_entity, attr_type) in &left_value_query {
+        let left_current = match attr_type {
+            LeftCurrentValue::MightGrace => display_attrs.might(),
+            LeftCurrentValue::VitalityFocus => display_attrs.vitality(),
+            LeftCurrentValue::InstinctPresence => display_attrs.instinct(),
         };
 
-        // Update the current text values (first and last child)
-        if let Ok(current_children) = children.get(current_entity) {
-            if current_children.len() >= 3 {
-                // First child: left current value
-                if let Ok(mut text) = text_query.get_mut(current_children[0]) {
-                    **text = format!("{}", left_current);
-                }
-                // Last child: right current value
-                if let Ok(mut text) = text_query.get_mut(current_children[2]) {
-                    **text = format!("{}", right_current);
-                }
-            }
+        if let Ok(mut text) = text_query.get_mut(left_entity) {
+            **text = format!("{}", left_current);
+        }
+    }
+
+    // Update right current values
+    for (right_entity, attr_type) in &right_value_query {
+        let right_current = match attr_type {
+            RightCurrentValue::MightGrace => display_attrs.grace(),
+            RightCurrentValue::VitalityFocus => display_attrs.focus(),
+            RightCurrentValue::InstinctPresence => display_attrs.presence(),
+        };
+
+        if let Ok(mut text) = text_query.get_mut(right_entity) {
+            **text = format!("{}", right_current);
         }
     }
 
@@ -635,22 +988,22 @@ pub fn update_attributes(
     for (bar_entity, bar_type) in &bar_query {
         let (left_reach, right_reach, left_current, right_current) = match bar_type {
             AttributeBar::MightGrace => (
-                attrs.might_reach(),
-                attrs.grace_reach(),
-                attrs.might(),
-                attrs.grace(),
+                display_attrs.might_reach(),
+                display_attrs.grace_reach(),
+                display_attrs.might(),
+                display_attrs.grace(),
             ),
             AttributeBar::VitalityFocus => (
-                attrs.vitality_reach(),
-                attrs.focus_reach(),
-                attrs.vitality(),
-                attrs.focus(),
+                display_attrs.vitality_reach(),
+                display_attrs.focus_reach(),
+                display_attrs.vitality(),
+                display_attrs.focus(),
             ),
             AttributeBar::InstinctPresence => (
-                attrs.instinct_reach(),
-                attrs.presence_reach(),
-                attrs.instinct(),
-                attrs.presence(),
+                display_attrs.instinct_reach(),
+                display_attrs.presence_reach(),
+                display_attrs.instinct(),
+                display_attrs.presence(),
             ),
         };
 
@@ -670,14 +1023,6 @@ pub fn update_attributes(
     }
 
     // Update meta-attribute raw values and calculated effects (SOW-021)
-    // Separate queries for raw values vs calculated effects
-    let mut raw_query = meta_query.iter().filter(|(_, e)| {
-        text_query.get(*e).ok()
-            .and_then(|text| text.0.chars().next())
-            .map(|c| c == '(')
-            .unwrap_or(false)
-    });
-
     for (meta_stat, entity) in &meta_query {
         if let Ok(mut text) = text_query.get_mut(entity) {
             // Check if this is a raw value display (starts with '(')
@@ -686,12 +1031,12 @@ pub fn update_attributes(
             if is_raw {
                 // Update raw stat value in parentheses
                 let raw_value = match meta_stat {
-                    MetaAttributeStat::Impact => attrs.impact(),
-                    MetaAttributeStat::Composure => attrs.composure(),
-                    MetaAttributeStat::Finesse => attrs.finesse(),
-                    MetaAttributeStat::Cunning => attrs.cunning(),
-                    MetaAttributeStat::Dominance => attrs.dominance(),
-                    MetaAttributeStat::Toughness => attrs.toughness(),
+                    MetaAttributeStat::Impact => display_attrs.impact(),
+                    MetaAttributeStat::Composure => display_attrs.composure(),
+                    MetaAttributeStat::Finesse => display_attrs.finesse(),
+                    MetaAttributeStat::Cunning => display_attrs.cunning(),
+                    MetaAttributeStat::Dominance => display_attrs.dominance(),
+                    MetaAttributeStat::Toughness => display_attrs.toughness(),
                 };
                 **text = format!("({})", raw_value);
             } else {
@@ -699,21 +1044,21 @@ pub fn update_attributes(
                 **text = match meta_stat {
                     MetaAttributeStat::Impact => {
                         // Recovery pushback: 0.50 × gap × contest_factor
-                        let impact = attrs.impact();
+                        let impact = display_attrs.impact();
                         let contest = contest_factor(impact, 0);  // vs 0 composure
                         let pushback_pct = (0.50 * contest) * 100.0;
                         format!("+{:.0}%", pushback_pct)
                     },
                     MetaAttributeStat::Composure => {
                         // Recovery time reduction: 0.33 × gap × contest_factor
-                        let composure = attrs.composure();
+                        let composure = display_attrs.composure();
                         let contest = contest_factor(composure, 0);  // vs 0 impact
                         let reduction_pct = (0.33 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Finesse => {
                         // Synergy reduction: 0.66 × gap × contest_factor
-                        let finesse = attrs.finesse();
+                        let finesse = display_attrs.finesse();
                         let contest = contest_factor(finesse, 0);  // vs 0 cunning
                         let reduction_pct = (0.66 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
@@ -721,7 +1066,7 @@ pub fn update_attributes(
                     MetaAttributeStat::Cunning => {
                         // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
                         // Display raw time value (different pattern from other stats)
-                        let cunning = attrs.cunning();
+                        let cunning = display_attrs.cunning();
                         let contest = contest_factor(cunning, 0);  // vs 0 finesse
                         let multiplier = 1.0 + 0.5 * contest;
                         let window_seconds = 3.0 * multiplier;
@@ -729,14 +1074,14 @@ pub fn update_attributes(
                     },
                     MetaAttributeStat::Dominance => {
                         // Healing reduction aura: 0.25 × gap × contest_factor
-                        let dominance = attrs.dominance();
+                        let dominance = display_attrs.dominance();
                         let contest = contest_factor(dominance, 0);  // vs 0 toughness
                         let reduction_pct = (0.25 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Toughness => {
                         // Damage mitigation: 0.75 × gap × contest_factor
-                        let toughness = attrs.toughness();
+                        let toughness = display_attrs.toughness();
                         let contest = contest_factor(toughness, 0);  // vs 0 dominance
                         let mitigation_pct = (0.75 * contest) * 100.0;
                         format!("-{:.0}%", mitigation_pct)
@@ -744,6 +1089,73 @@ pub fn update_attributes(
                 };
             }
         }
+    }
+}
+
+/// Update axis button visibility based on current axis value
+pub fn update_axis_button_visibility(
+    state: Res<CharacterPanelState>,
+    player_query: Query<&ActorAttributes, With<Actor>>,
+    mut left_buttons: Query<(&AxisAdjustButton, &mut Visibility), Without<AxisAdjustButtonRight>>,
+    mut right_buttons: Query<(&AxisAdjustButtonRight, &mut Visibility)>,
+) {
+    // Hide all buttons if panel is not visible
+    if !state.visible {
+        for (_, mut vis) in &mut left_buttons {
+            *vis = Visibility::Hidden;
+        }
+        for (_, mut vis) in &mut right_buttons {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+
+    let Ok(attrs) = player_query.single() else {
+        return;
+    };
+
+    // Get current draft or use actual attributes
+    let default_draft = DraftAttributes::from_current(attrs);
+    let draft = state.pending_respec.as_ref().unwrap_or(&default_draft);
+
+    // Update left-side buttons
+    for (button, mut visibility) in &mut left_buttons {
+        let should_show = match button {
+            // Show decrease when axis < 0 (can decrease further on left side)
+            AxisAdjustButton::MightGraceDecrease => draft.might_grace_axis < 0,
+            AxisAdjustButton::VitalityFocusDecrease => draft.vitality_focus_axis < 0,
+            AxisAdjustButton::InstinctPresenceDecrease => draft.instinct_presence_axis < 0,
+            // Show increase when axis <= 0 (can commit to left, or increase left commitment)
+            AxisAdjustButton::MightGraceIncrease => draft.might_grace_axis <= 0,
+            AxisAdjustButton::VitalityFocusIncrease => draft.vitality_focus_axis <= 0,
+            AxisAdjustButton::InstinctPresenceIncrease => draft.instinct_presence_axis <= 0,
+        };
+
+        *visibility = if should_show {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    // Update right-side buttons
+    for (button, mut visibility) in &mut right_buttons {
+        let should_show = match button {
+            // Show decrease when axis >= 0 (can move back left from right side)
+            AxisAdjustButtonRight::MightGraceDecrease => draft.might_grace_axis >= 0,
+            AxisAdjustButtonRight::VitalityFocusDecrease => draft.vitality_focus_axis >= 0,
+            AxisAdjustButtonRight::InstinctPresenceDecrease => draft.instinct_presence_axis >= 0,
+            // Show increase when axis > 0 (can increase right commitment)
+            AxisAdjustButtonRight::MightGraceIncrease => draft.might_grace_axis > 0,
+            AxisAdjustButtonRight::VitalityFocusIncrease => draft.vitality_focus_axis > 0,
+            AxisAdjustButtonRight::InstinctPresenceIncrease => draft.instinct_presence_axis > 0,
+        };
+
+        *visibility = if should_show {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 
@@ -799,3 +1211,47 @@ fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_a
     node.left = Val::Percent(left_percent);
     node.width = Val::Percent(width_percent);
 }
+
+/// Update Apply button text with budget counter and enable/disable based on allocation
+pub fn update_apply_button(
+    state: Res<CharacterPanelState>,
+    player_query: Query<&ActorAttributes, With<Actor>>,
+    mut button_query: Query<(&mut BackgroundColor, &Children), With<ApplyRespecButton>>,
+    mut text_query: Query<&mut Text, With<ApplyButtonText>>,
+) {
+    if !state.visible {
+        return;
+    }
+
+    let Ok(attrs) = player_query.single() else {
+        return;
+    };
+
+    let Some(draft) = &state.pending_respec else {
+        return; // No pending changes
+    };
+
+    let Ok((mut bg_color, children)) = button_query.single_mut() else {
+        return;
+    };
+
+    let level = attrs.total_level();
+    let investment = draft.total_investment();
+    let unallocated = level.saturating_sub(investment);
+
+    // Find the text child and update it
+    for child in children.iter() {
+        if let Ok(mut text) = text_query.get_mut(child) {
+            if unallocated > 0 {
+                **text = format!("Apply ({} points left)", unallocated);
+                // Disable button (red)
+                *bg_color = BackgroundColor(Color::srgb(0.6, 0.3, 0.3));
+            } else {
+                **text = "Apply Changes".to_string();
+                // Enable button (green)
+                *bg_color = BackgroundColor(Color::srgb(0.3, 0.7, 0.3));
+            }
+        }
+    }
+}
+

@@ -80,9 +80,9 @@ pub fn do_manage_connections(
                 // Total: 22 + 22 + 6 = 50 levels
                 // Spectrum breakdown: 13 + 13 + 6 = 32 (optimal for T3×2)
                 let attrs = ActorAttributes::new(
-                    9, 13, 0,      // might_grace: 9 axis (grace), 13 spectrum
-                    9, 13, 0,      // vitality_focus: 9 axis (focus), 13 spectrum
-                    0, 6, 0,       // instinct_presence: 0 axis (balanced), 6 spectrum
+                    -9, 13, 0,      // might_grace: 9 axis (grace), 13 spectrum
+                    1, 5, 0,      // vitality_focus: 9 axis (focus), 13 spectrum
+                    -9, 13, 0,       // instinct_presence: 0 axis (balanced), 6 spectrum
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
@@ -222,7 +222,7 @@ pub fn write_try(
 ) {
     for client_id in conn.clients_id() {
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
-            let (message, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+            let (message, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match message {
                 Try { event: Event::Incremental { component: Component::KeyBits(keybits), .. } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
@@ -253,6 +253,10 @@ pub fn write_try(
                 Try { event: Event::SetTierLock { ent: _, tier } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::SetTierLock { ent, tier }});
+                }
+                Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum }});
                 }
                 _ => {}
             }
@@ -438,6 +442,15 @@ pub fn write_try(
                     }
                 }
 
+            }
+            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+                // Send respec confirmation only to the owning client
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
             }
             _ => {}
         }

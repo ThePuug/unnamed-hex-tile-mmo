@@ -71,6 +71,17 @@ pub enum Event {
         destination: Qrz,   // Target tile
         duration_ms: u16,   // Expected travel time (for speed scaling)
     },
+    /// Client → Server (Try): Request to respec attribute allocation
+    /// Server → Client (Do): Attribute respec confirmed and applied
+    RespecAttributes {
+        ent: Entity,
+        might_grace_axis: i8,
+        might_grace_spectrum: i8,
+        vitality_focus_axis: i8,
+        vitality_focus_spectrum: i8,
+        instinct_presence_axis: i8,
+        instinct_presence_spectrum: i8,
+    },
 }
 
 /// Types of abilities that can be used (ADR-009 MVP ability set + ADR-014 Counter)
