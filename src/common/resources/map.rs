@@ -349,7 +349,83 @@ impl Map {
                 indices.extend([base_idx, v2, v1]); // Reversed winding: [center, v2, v1]
             }
 
-            // TODO: Skirt generation removed - need to reimplement correctly
+            // Generate vertical skirt geometry for cliff edges
+            for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
+                let neighbor_qrz = tile_qrz + *direction;
+
+                // Find neighbor at different elevation (search up/down)
+                let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
+                    .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+
+                if let Some((actual_neighbor_qrz, _)) = found_neighbor {
+                    let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
+
+                    // Only generate skirt for elevation drops (neighbor is lower)
+                    if elevation_diff >= 0 {
+                        continue;
+                    }
+
+                    // Get neighbor vertices (raw positions for alignment)
+                    let neighbor_raw = map.vertices(actual_neighbor_qrz);
+                    let neighbor_verts: Vec<Vec3> = if apply_slopes {
+                        let (neighbor_slope, _) = self.vertices_and_colors_with_slopes(actual_neighbor_qrz, true);
+                        neighbor_raw.iter().enumerate().map(|(i, &raw_pos)| {
+                            if i < 6 {
+                                Vec3::new(raw_pos.x, neighbor_slope[i].y, raw_pos.z)
+                            } else {
+                                raw_pos
+                            }
+                        }).collect()
+                    } else {
+                        neighbor_raw
+                    };
+
+                    let neighbor_colors = vec![self.height_color_tint(actual_neighbor_qrz.z); 6];
+
+                    // Map direction to edge vertex indices
+                    // For each direction, we need the two vertices that form that edge
+                    // Hex vertices: 0=N, 1=NE, 2=SE, 3=S, 4=SW, 5=NW
+                    // Directions: 0=West, 1=SW, 2=SE, 3=East, 4=NE, 5=NW
+                    // Try swapping neighbor vertex order - pair matching vertices (SW<->SE, NW<->NE, etc)
+                    let (curr_v1_idx, curr_v2_idx, neighbor_v1_idx, neighbor_v2_idx) = match dir_idx {
+                        0 => (4, 5, 2, 1), // West: SW-NW pairs with neighbor SE-NE (swapped)
+                        1 => (3, 4, 1, 0), // SW: S-SW pairs with neighbor NE-N (swapped)
+                        2 => (2, 3, 0, 5), // SE: SE-S pairs with neighbor N-NW (swapped)
+                        3 => (1, 2, 5, 4), // East: NE-SE pairs with neighbor NW-SW (swapped)
+                        4 => (0, 1, 4, 3), // NE: N-NE pairs with neighbor SW-S (swapped)
+                        5 => (5, 0, 3, 2), // NW: NW-N pairs with neighbor S-SE (swapped)
+                        _ => continue,
+                    };
+
+                    let curr_v1 = tile_verts[curr_v1_idx];
+                    let curr_v2 = tile_verts[curr_v2_idx];
+                    let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
+                    let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
+
+                    let curr_c1 = tile_colors[curr_v1_idx];
+                    let curr_c2 = tile_colors[curr_v2_idx];
+                    let neighbor_c1 = neighbor_colors[neighbor_v1_idx];
+                    let neighbor_c2 = neighbor_colors[neighbor_v2_idx];
+
+                    // Calculate outward-facing normal for this edge
+                    // Cross product of edge direction with vertical gives outward normal
+                    let edge_dir = (curr_v2 - curr_v1).normalize();
+                    let vertical = Vec3::new(0., -1., 0.); // Pointing down
+                    let outward_normal = edge_dir.cross(vertical).normalize();
+
+                    // Add 4 vertices for the quad: [upper_v1, upper_v2, lower_v2, lower_v1]
+                    let skirt_base = verts.len() as u32;
+                    verts.extend([curr_v1, curr_v2, neighbor_v2, neighbor_v1]);
+                    colors.extend([curr_c1, curr_c2, neighbor_c2, neighbor_c1]);
+                    norms.extend([outward_normal; 4]);
+
+                    // Triangulate the quad - simple consistent winding for all directions
+                    // Vertices: 0=curr_v1, 1=curr_v2, 2=neighbor_v2, 3=neighbor_v1
+                    // Try diagonal 0-2: triangles [0,1,2] and [0,2,3]
+                    indices.extend([skirt_base, skirt_base + 1, skirt_base + 2]);
+                    indices.extend([skirt_base, skirt_base + 2, skirt_base + 3]);
+                }
+            }
         }
 
         // Compute AABB from chunk vertices only
