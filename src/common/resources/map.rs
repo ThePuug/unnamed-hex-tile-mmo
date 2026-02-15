@@ -8,7 +8,10 @@ use bevy_mesh::Indices;
 
 use qrz::{self, Convert, Qrz};
 
-use crate::common::components::entity_type::*;
+use crate::common::{
+    chunk::{ChunkId, loc_to_chunk},
+    components::entity_type::*,
+};
 
 #[derive(Clone, Resource)]
 pub struct Map(qrz::Map<EntityType>);
@@ -180,6 +183,167 @@ impl Map {
         // For smooth terrain appearance, use flat upward normals
         // This prevents each hex from showing as a distinct bump
         Vec3::new(0., 1., 0.)
+    }
+
+    /// Generate a mesh for a single chunk using TriangleList topology
+    /// This enables independent chunk rendering and better GPU cache locality
+    pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
+        let mut verts: Vec<Vec3> = Vec::new();
+        let mut norms: Vec<Vec3> = Vec::new();
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        let mut tile_count = 0;
+
+        // Filter tiles to only those in this chunk
+        for (tile_qrz, _) in self.0.clone().into_iter() {
+            if loc_to_chunk(tile_qrz) != chunk_id {
+                continue;
+            }
+
+            tile_count += 1;
+
+            // Get RAW vertices (without slope adjustments to avoid gaps at boundaries)
+            // Only apply slopes if explicitly enabled AND we're okay with gaps
+            let raw_verts = self.0.vertices(tile_qrz);
+            let (slope_verts, tile_colors) = if apply_slopes {
+                self.vertices_and_colors_with_slopes(tile_qrz, true)
+            } else {
+                let colors = vec![self.height_color_tint(tile_qrz.z); 6];
+                (raw_verts.clone(), colors)
+            };
+
+            // Use raw vertices for edge vertices to ensure adjacent hexes align perfectly
+            // Use slope-adjusted vertices only for height, not position
+            let tile_verts: Vec<Vec3> = raw_verts.iter().enumerate().map(|(i, &raw_pos)| {
+                if apply_slopes && i < 6 {
+                    // Keep X/Z from raw, but use Y from slope-adjusted
+                    Vec3::new(raw_pos.x, slope_verts[i].y, raw_pos.z)
+                } else {
+                    raw_pos
+                }
+            }).collect();
+
+            // Base index for this tile's vertices
+            let base_idx = verts.len() as u32;
+
+            // Center vertex (index 6)
+            let center_pos = tile_verts[6];
+            let center_color = self.height_color_tint(tile_qrz.z);
+            let center_normal = Vec3::new(0., 1., 0.);
+
+            verts.push(center_pos);
+            colors.push(center_color);
+            norms.push(center_normal);
+
+            // Outer vertices (indices 0-5: N, NE, SE, S, SW, NW)
+            for i in 0..6 {
+                verts.push(tile_verts[i]);
+                colors.push(tile_colors[i]);
+                norms.push(self.calculate_vertex_normal(tile_qrz, i, &tile_verts, apply_slopes));
+            }
+
+            // Generate 6 triangles for the hex top surface (TriangleList)
+            // Hex vertices are ordered clockwise (N, NE, SE, S, SW, NW)
+            // Reverse winding to counter-clockwise for Bevy's backface culling
+            for i in 0..6 {
+                let v1 = base_idx + 1 + i;
+                let v2 = base_idx + 1 + ((i + 1) % 6);
+                indices.extend([base_idx, v2, v1]); // Reversed winding: [center, v2, v1]
+            }
+
+            // Add vertical skirt geometry for edges with elevation changes
+            for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
+                let neighbor_qrz = tile_qrz + *direction;
+
+                // Find neighbor at different elevation (search up/down)
+                let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
+                    .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+
+                if let Some((actual_neighbor_qrz, _)) = found_neighbor {
+                    let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
+
+                    // Only add skirt if there's a cliff drop (elevation difference >= 2)
+                    // Each hex is in exactly one chunk, so no duplicates - we render skirts
+                    // for all our hexes regardless of where the neighbor is
+                    if elevation_diff >= -1 {
+                        continue;
+                    }
+
+                    // Get neighbor vertices
+                    let (neighbor_verts, neighbor_colors) = self.vertices_and_colors_with_slopes(actual_neighbor_qrz, apply_slopes);
+
+                    // Map direction to edge vertices
+                    // dir_idx 0 (West): current hex SW(4) and NW(5), neighbor NE(1) and SE(2)
+                    // dir_idx 1 (SW): current hex S(3) and SW(4), neighbor N(0) and NE(1)
+                    // dir_idx 2 (SE): current hex SE(2) and S(3), neighbor NW(5) and N(0)
+                    // dir_idx 3 (East): current hex NE(1) and SE(2), neighbor SW(4) and NW(5)
+                    // dir_idx 4 (NE): current hex N(0) and NE(1), neighbor S(3) and SW(4)
+                    // dir_idx 5 (NW): current hex NW(5) and N(0), neighbor SE(2) and S(3)
+                    let (curr_v1_idx, curr_v2_idx, neighbor_v1_idx, neighbor_v2_idx) = match dir_idx {
+                        0 => (4, 5, 1, 2), // West
+                        1 => (3, 4, 0, 1), // SW
+                        2 => (2, 3, 5, 0), // SE
+                        3 => (1, 2, 4, 5), // East
+                        4 => (0, 1, 3, 4), // NE
+                        5 => (5, 0, 2, 3), // NW
+                        _ => continue,
+                    };
+
+                    let curr_v1 = tile_verts[curr_v1_idx];
+                    let curr_v2 = tile_verts[curr_v2_idx];
+                    let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
+                    let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
+
+                    let curr_c1 = tile_colors[curr_v1_idx];
+                    let curr_c2 = tile_colors[curr_v2_idx];
+                    let neighbor_c1 = neighbor_colors[neighbor_v1_idx];
+                    let neighbor_c2 = neighbor_colors[neighbor_v2_idx];
+
+                    // Add 4 vertices for the vertical quad
+                    let skirt_base = verts.len() as u32;
+                    verts.extend([curr_v1, curr_v2, neighbor_v2, neighbor_v1]);
+                    colors.extend([curr_c1, curr_c2, neighbor_c2, neighbor_c1]);
+
+                    // Normal pointing outward from the edge
+                    let edge_normal = Vec3::new(0., 0., 1.); // Simplified, could calculate actual normal
+                    norms.extend([edge_normal; 4]);
+
+                    // Two triangles forming the vertical quad (counter-clockwise winding from outside)
+                    // Vertices: 0=bottom-left, 1=top-left, 2=bottom-right, 3=top-right
+                    // Triangle 1: [0, 1, 3] counter-clockwise
+                    // Triangle 2: [0, 3, 2] counter-clockwise
+                    indices.extend([skirt_base, skirt_base + 1, skirt_base + 3]);
+                    indices.extend([skirt_base, skirt_base + 3, skirt_base + 2]);
+                }
+            }
+        }
+
+        // Compute AABB from chunk vertices only
+        let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+        let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+        for vert in &verts {
+            min = Vec3::min(min, *vert);
+            max = Vec3::max(max, *vert);
+        }
+
+        println!("Chunk mesh: chunk_id=({},{}), {} tiles, {} vertices, {} indices, AABB: {:?} to {:?}",
+                 chunk_id.0, chunk_id.1, tile_count, verts.len(), indices.len(), min, max);
+
+        let vert_count = verts.len();
+
+        (
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD
+            )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..vert_count).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
+                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+                .with_inserted_indices(Indices::U32(indices)),
+            Aabb::from_min_max(min, max),
+        )
     }
 
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
@@ -490,6 +654,103 @@ mod tests {
             assert!(color[2] >= 0.0 && color[2] <= 1.0, "Blue component out of range: {}", color[2]);
             assert!(color[3] >= 0.0 && color[3] <= 1.0, "Alpha component out of range: {}", color[3]);
         }
+    }
+
+    #[test]
+    fn test_generate_chunk_mesh() {
+        use crate::common::chunk::{ChunkId, chunk_to_tile, CHUNK_SIZE};
+
+        // Create a map with tiles in multiple chunks
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+
+        // Chunk (0,0) - add 16 tiles
+        for offset_q in 0..16 {
+            for offset_r in 0..16 {
+                let tile = chunk_to_tile(ChunkId(0, 0), offset_q as u8, offset_r as u8);
+                qrz_map.insert(tile, EntityType::Decorator(default()));
+            }
+        }
+
+        // Chunk (1,1) - add 16 tiles
+        for offset_q in 0..16 {
+            for offset_r in 0..16 {
+                let tile = chunk_to_tile(ChunkId(1, 1), offset_q as u8, offset_r as u8);
+                qrz_map.insert(tile, EntityType::Decorator(default()));
+            }
+        }
+
+        let map = Map::new(qrz_map);
+
+        // Generate mesh for chunk (0,0) only
+        let (mesh, aabb) = map.generate_chunk_mesh(ChunkId(0, 0), true);
+
+        // Verify mesh properties
+        let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            .expect("Mesh should have positions")
+            .as_float3()
+            .expect("Positions should be Vec3");
+
+        // Each hex has 7 vertices (1 center + 6 outer)
+        // 16x16 = 256 tiles per chunk
+        assert_eq!(positions.len(), 256 * 7, "Expected 256 tiles * 7 vertices per tile");
+
+        // Verify mesh has indices for TriangleList
+        let indices = match mesh.indices() {
+            Some(bevy_mesh::Indices::U32(idx)) => idx,
+            _ => panic!("Expected U32 indices"),
+        };
+
+        // Each hex has 6 triangles (18 indices)
+        assert_eq!(indices.len(), 256 * 6 * 3, "Expected 256 tiles * 6 triangles * 3 indices");
+
+        // Verify AABB is reasonable (not empty)
+        assert!(aabb.min().x < aabb.max().x, "AABB should have width");
+        assert!(aabb.min().y < aabb.max().y, "AABB should have height");
+        assert!(aabb.min().z < aabb.max().z, "AABB should have depth");
+    }
+
+    #[test]
+    fn test_generate_chunk_mesh_filters_to_chunk() {
+        use crate::common::chunk::{ChunkId, chunk_to_tile};
+
+        // Create a map with tiles in two different chunks
+        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+
+        // Chunk (0,0) - 4 tiles
+        for offset_q in 0..2 {
+            for offset_r in 0..2 {
+                let tile = chunk_to_tile(ChunkId(0, 0), offset_q as u8, offset_r as u8);
+                qrz_map.insert(tile, EntityType::Decorator(default()));
+            }
+        }
+
+        // Chunk (1,1) - 9 tiles
+        for offset_q in 0..3 {
+            for offset_r in 0..3 {
+                let tile = chunk_to_tile(ChunkId(1, 1), offset_q as u8, offset_r as u8);
+                qrz_map.insert(tile, EntityType::Decorator(default()));
+            }
+        }
+
+        let map = Map::new(qrz_map);
+
+        // Generate mesh for chunk (0,0) - should only include 4 tiles
+        let (mesh_00, _) = map.generate_chunk_mesh(ChunkId(0, 0), true);
+        let positions_00 = mesh_00.attribute(Mesh::ATTRIBUTE_POSITION)
+            .expect("Mesh should have positions")
+            .as_float3()
+            .expect("Positions should be Vec3");
+
+        assert_eq!(positions_00.len(), 4 * 7, "Chunk (0,0) should have 4 tiles * 7 vertices");
+
+        // Generate mesh for chunk (1,1) - should only include 9 tiles
+        let (mesh_11, _) = map.generate_chunk_mesh(ChunkId(1, 1), true);
+        let positions_11 = mesh_11.attribute(Mesh::ATTRIBUTE_POSITION)
+            .expect("Mesh should have positions")
+            .as_float3()
+            .expect("Positions should be Vec3");
+
+        assert_eq!(positions_11.len(), 9 * 7, "Chunk (1,1) should have 9 tiles * 7 vertices");
     }
 
     #[test]

@@ -150,12 +150,11 @@ fn main() {
     ));
 
     app.add_systems(Update, (
-        world::async_spawn,
-        world::async_ready,
         world::do_init,
         renet::handle_pong,
         renet::periodic_ping,
         world::do_spawn,
+        world::poll_chunk_mesh_tasks, // Poll async chunk mesh tasks
         world::update,
     ));
 
@@ -169,6 +168,7 @@ fn main() {
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
+    app.init_resource::<client::resources::PendingChunkMeshes>();
 
     // Add chunk eviction system (runs periodically to cleanup distant chunks)
     // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction

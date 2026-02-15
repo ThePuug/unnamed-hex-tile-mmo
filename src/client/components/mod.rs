@@ -1,6 +1,8 @@
 use bevy::{prelude::*, tasks::Task};
 use bevy_camera::primitives::Aabb;
 
+use crate::common::chunk::ChunkId;
+
 
 #[derive(Clone, Component, Copy)]
 #[relationship(relationship_target = AnimatedBy)]
@@ -21,6 +23,12 @@ pub struct Terrain {
     pub task_regenerate_mesh: Option<Task<(Mesh,Aabb)>>,
     pub task_start_regenerate_mesh: bool,
     pub last_tile_count: usize,
+}
+
+/// Component linking mesh entities to their chunk for eviction
+#[derive(Component)]
+pub struct ChunkMesh {
+    pub chunk_id: ChunkId,
 }
 
 /// Target indicator component for showing which entity will be targeted

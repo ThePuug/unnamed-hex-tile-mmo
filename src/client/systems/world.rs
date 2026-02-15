@@ -3,18 +3,17 @@ use std::f32::consts::PI;
 use bevy::{
     math::ops::*,
     prelude::*,
-    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool}
+    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool},
 };
-use bevy_camera::primitives::Aabb;
 
 pub const TILE_RISE: f32 = 0.8;
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
     client::{
-        components::Terrain,
+        components::ChunkMesh,
         plugins::diagnostics::DiagnosticsState,
-        resources::{LoadedChunks, Server}
+        resources::{LoadedChunks, PendingChunkMeshes, Server, TerrainMaterial}
     },
     common::{
         chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
@@ -28,9 +27,8 @@ use crate::{
     }
 };
 
-pub fn setup(    
+pub fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(
@@ -45,26 +43,69 @@ pub fn setup(
             shadow_depth_bias: 0.02,
             shadow_normal_bias: 0.6,
             ..default()},
-        Transform::default(), 
+        Transform::default(),
         Sun::default()));
     commands.spawn((
         DirectionalLight {
             shadows_enabled: false,
             color: Color::WHITE,
             ..default()},
-        Transform::default(), 
+        Transform::default(),
         Moon::default()));
 
-    let mesh = meshes.add(Extrusion::new(RegularPolygon::new(TILE_SIZE, 6),TILE_RISE));
+    // Initialize shared terrain material (white to let vertex colors show through)
     let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE, // Use white to let vertex colors show through
+        base_color: Color::WHITE,
         perceptual_roughness: 1.,
-        ..default()});
+        ..default()
+    });
+    commands.insert_resource(TerrainMaterial { handle: material });
+}
 
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        Terrain::default()));
+/// Poll pending chunk mesh generation tasks and spawn/update mesh entities when ready
+pub fn poll_chunk_mesh_tasks(
+    mut commands: Commands,
+    mut pending_meshes: ResMut<PendingChunkMeshes>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    terrain_material: Res<TerrainMaterial>,
+    chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh)>,
+) {
+    use crate::common::chunk::ChunkId;
+
+    let mut completed_chunks: Vec<(ChunkId, Mesh)> = Vec::new();
+
+    // Poll all pending tasks (non-blocking)
+    pending_meshes.tasks.retain(|&chunk_id, task| {
+        let result = block_on(future::poll_once(task));
+        if let Some((chunk_mesh, _aabb)) = result {
+            completed_chunks.push((chunk_id, chunk_mesh));
+            false // Remove from pending
+        } else {
+            true // Keep pending
+        }
+    });
+
+    // Spawn or update mesh entities for completed tasks
+    for (chunk_id, chunk_mesh) in completed_chunks {
+        // Check if mesh entity for this chunk already exists
+        let existing_entity = chunk_mesh_query.iter()
+            .find(|(_, _, c)| c.chunk_id == chunk_id)
+            .map(|(entity, mesh_handle, _)| (entity, mesh_handle.clone()));
+
+        if let Some((_entity, mesh_handle)) = existing_entity {
+            // Update existing mesh
+            if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
+                *mesh_asset = chunk_mesh;
+            }
+        } else {
+            // Spawn new mesh entity
+            commands.spawn((
+                Mesh3d(meshes.add(chunk_mesh)),
+                MeshMaterial3d(terrain_material.handle.clone()),
+                ChunkMesh { chunk_id },
+            ));
+        }
+    }
 }
 
 pub fn do_init(
@@ -91,62 +132,53 @@ pub fn do_init(
 
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
-    mut query: Query<&mut Terrain>,
     mut map: ResMut<Map>,
+    mut pending_meshes: ResMut<PendingChunkMeshes>,
+    diagnostics_state: Res<DiagnosticsState>,
 ) {
-    let mut terrain = query.single_mut().expect("no result in query");
-    let mut tiles_added = false;
-    
+    use std::collections::HashSet;
+    use crate::common::chunk::{ChunkId, calculate_visible_chunks};
+
+    // Track which chunks have new tiles
+    let mut chunks_with_new_tiles: HashSet<ChunkId> = HashSet::new();
+
     for &message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
         if map.get(qrz).is_some() { continue }
         map.insert(qrz, EntityType::Decorator(decorator));
-        tiles_added = true;
-    }
-    
-    // Trigger mesh regeneration whenever new tiles are added
-    // Background task system prevents concurrent regenerations
-    if tiles_added {
-        terrain.task_start_regenerate_mesh = true;
-    }
-}
 
-pub fn async_spawn(
-    mut query: Query<&mut Terrain>,
-    map: Res<Map>,
-    diagnostics_state: Res<DiagnosticsState>,
-) {
-    let mut terrain = query.single_mut().expect("no result in query");
-    if !terrain.task_start_regenerate_mesh { return }
-    if !terrain.task_regenerate_mesh.is_none() { return }
-    terrain.task_start_regenerate_mesh = false;
+        let chunk_id = loc_to_chunk(qrz);
+        chunks_with_new_tiles.insert(chunk_id);
+    }
 
+    // For each chunk with new tiles, regenerate it AND its neighbors
+    // This ensures edge vertices are recalculated with correct neighbor data
     let pool = AsyncComputeTaskPool::get();
-    let map = map.clone();
-    let apply_slopes = diagnostics_state.slope_rendering_enabled;
-    terrain.task_regenerate_mesh = Some(pool.spawn(async move {
-        map.regenerate_mesh(apply_slopes)
-    }));
-}
+    let mut chunks_to_regenerate: HashSet<ChunkId> = HashSet::new();
 
-pub fn async_ready(
-    mut query: Query<(&mut Mesh3d, &mut Terrain)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    map: Res<Map>,
-) {
-    let (mut mesh, mut terrain) = query.single_mut().expect("no result in query");
-    if terrain.task_regenerate_mesh.is_none() { return; }
+    for chunk_id in chunks_with_new_tiles {
+        // Regenerate this chunk
+        chunks_to_regenerate.insert(chunk_id);
 
-    let task = terrain.task_regenerate_mesh.as_mut();
-    let result = block_on(future::poll_once(task.unwrap()));
-    if result.is_none() { return; }
+        // Also regenerate adjacent chunks (radius 1) to fix their edge vertices
+        for adjacent_chunk in calculate_visible_chunks(chunk_id, 1) {
+            chunks_to_regenerate.insert(adjacent_chunk);
+        }
+    }
 
-    let (raw_mesh, _raw_aabb) = result.unwrap();
-    *mesh = Mesh3d(meshes.add(raw_mesh.clone()));
-    terrain.task_regenerate_mesh = None;
-    
-    // Track tile count for initial mesh generation check
-    terrain.last_tile_count = map.iter_tiles().count();
+    for chunk_id in chunks_to_regenerate {
+        // Cancel any pending task for this chunk and spawn a new one
+        pending_meshes.tasks.remove(&chunk_id);
+
+        // Spawn async task to generate mesh for this chunk
+        let map_clone = map.clone();
+        let apply_slopes = diagnostics_state.slope_rendering_enabled;
+        let task = pool.spawn(async move {
+            map_clone.generate_chunk_mesh(chunk_id, apply_slopes)
+        });
+
+        pending_meshes.tasks.insert(chunk_id, task);
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -211,9 +243,9 @@ pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut map: ResMut<Map>,
-    mut terrain: Query<&mut Terrain>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
+    chunk_mesh_query: Query<(Entity, &ChunkMesh)>,
 ) {
     // Only evict if we have a player
     let Ok(player_loc) = player_query.single() else {
@@ -251,6 +283,13 @@ pub fn evict_distant_chunks(
         }
     }
 
+    // Despawn mesh entities for evicted chunks
+    for (entity, chunk_mesh) in chunk_mesh_query.iter() {
+        if evictable.contains(&chunk_mesh.chunk_id) {
+            commands.entity(entity).despawn();
+        }
+    }
+
     // Remove all tiles belonging to evicted chunks from the map
     let tiles_to_remove: Vec<_> = map.iter_tiles()
         .filter_map(|(qrz, _typ)| {
@@ -268,10 +307,7 @@ pub fn evict_distant_chunks(
             map.remove(*qrz);
         }
 
-        // Trigger mesh regeneration
-        if let Ok(mut terrain) = terrain.single_mut() {
-            terrain.task_start_regenerate_mesh = true;
-        }
+        // Remove chunk from LoadedChunks
         loaded_chunks.evict(&evictable);
     }
 }

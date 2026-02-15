@@ -39,6 +39,22 @@ impl Server {
     }
 }
 
+use bevy::tasks::Task;
+use bevy_camera::primitives::Aabb;
+use std::collections::HashMap;
+
+/// Shared material for all chunk meshes
+#[derive(Resource)]
+pub struct TerrainMaterial {
+    pub handle: Handle<StandardMaterial>,
+}
+
+/// Tracks pending async mesh generation tasks per chunk
+#[derive(Resource, Default)]
+pub struct PendingChunkMeshes {
+    pub tasks: HashMap<ChunkId, Task<(Mesh, Aabb)>>,
+}
+
 /// Tracks which chunks have been received on the client
 #[derive(Debug, Default, Resource)]
 pub struct LoadedChunks {
