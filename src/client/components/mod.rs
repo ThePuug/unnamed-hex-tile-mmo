@@ -133,3 +133,16 @@ pub struct CombatLogEntry {
 pub struct DeathMarker {
     pub death_time: std::time::Duration,
 }
+
+/// Marker for compass container
+#[derive(Component)]
+pub struct CompassContainer;
+
+/// Marker for compass direction line
+#[derive(Component)]
+pub struct CompassLine {
+    /// Base angle in radians (0, 60°, 120°, etc.)
+    pub base_angle: f32,
+    /// Whether this is the north indicator
+    pub is_north: bool,
+}
