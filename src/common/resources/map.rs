@@ -21,6 +21,11 @@ impl Map {
         Map(map)
     }
 
+    /// Get the vertical rise per Z level from the underlying map
+    pub fn rise(&self) -> f32 {
+        self.0.rise()
+    }
+
     /// Generate vertices for a hex tile with slopes toward neighbors
     /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
     /// If apply_slopes is false, vertices remain flat at their natural height
@@ -64,8 +69,6 @@ impl Map {
 
         // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
-        // Track which vertices touch upward cliff edges (should not slope up)
-        let mut vertex_touches_upward_cliff: [bool; 6] = [false; 6];
         
         // Map of direction index to the two vertices on that edge
         let direction_to_vertices = [
@@ -103,13 +106,12 @@ impl Map {
                 let is_cliff = elevation_diff.abs() > 1;
                 
                 // Slope calculation:
-                // - Allow downward slopes at cliffs (creates natural drop-offs)
-                // - Prevent upward slopes at cliffs (will be filtered later)
-                // - Allow all slopes at gradual transitions
+                // - Allow slopes on both sides of cliffs (top slopes down, bottom slopes up)
+                // - This creates more gradual cliff faces
                 let adjustment = if is_cliff && elevation_diff > 1 {
-                    0.0  // Upward cliff: no slope (will be enforced by vertex filter)
+                    rise * 0.5  // Upward cliff: slope up toward higher neighbor
                 } else if is_cliff && elevation_diff < -1 {
-                    rise * -0.5  // Downward cliff: allow slope down
+                    rise * -0.5  // Downward cliff: slope down toward lower neighbor
                 } else if elevation_diff > 0 {
                     rise * 0.5  // Gradual up: slope up
                 } else if elevation_diff < 0 {
@@ -125,44 +127,31 @@ impl Map {
                     vertex_adjustments[v2].push(adjustment);
                 }
                 
-                // Mark cliff edges with different coloring
-                // Only track upward cliffs for slope prevention
-                if is_cliff {
+                // Darken vertices at the BOTTOM of cliffs (looking up at higher neighbor)
+                // Keep vertices at the TOP of cliffs (looking down) at normal color
+                if is_cliff && elevation_diff > 1 {
+                    // This is the bottom of a cliff - darken vertices
                     let (v1, v2) = direction_to_vertices[dir_idx];
                     colors[v1] = cliff_color;
                     colors[v2] = cliff_color;
-                    
-                    // Only mark vertices on upward cliffs (neighbor is higher)
-                    // Allow downward cliffs to slope naturally
-                    if elevation_diff > 1 {
-                        vertex_touches_upward_cliff[v1] = true;
-                        vertex_touches_upward_cliff[v2] = true;
-                    }
                 }
+                // Don't darken vertices at the top of cliffs (elevation_diff < -1)
             }
         }
 
         // Apply the maximum absolute adjustment to each vertex
-        // Vertices touching upward cliffs can't slope up, but can slope down
+        // Now we allow slopes on both sides of cliffs for more gradual transitions
         if apply_slopes {
             for (i, adjustments) in vertex_adjustments.iter().enumerate() {
                 if adjustments.is_empty() {
                     continue;
                 }
-                
-                // If vertex touches an upward cliff, filter out positive (upward) adjustments
-                let filtered_adjustments: Vec<f32> = if vertex_touches_upward_cliff[i] {
-                    adjustments.iter().copied().filter(|&adj| adj <= 0.0).collect()
-                } else {
-                    adjustments.clone()
-                };
-                
-                if !filtered_adjustments.is_empty() {
-                    let max_adj = filtered_adjustments.iter()
-                        .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-                        .copied().unwrap();
-                    verts[i].y += max_adj;
-                }
+
+                // Apply the adjustment with the largest absolute value
+                let max_adj = adjustments.iter()
+                    .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+                    .copied().unwrap();
+                verts[i].y += max_adj;
             }
         }
 

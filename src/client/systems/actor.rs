@@ -220,3 +220,49 @@ pub fn apply_movement_intent(
         }
     }
 }
+
+/// Spawn and toggle debug spheres at player origin (toggles with terrain grid)
+pub fn update_player_origin_debug(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    diagnostics: Res<crate::client::plugins::diagnostics::DiagnosticsState>,
+    player_query: Query<(Entity, &Children), With<crate::common::components::behaviour::PlayerControlled>>,
+    debug_query: Query<Entity, With<PlayerOriginDebug>>,
+) {
+    // Toggle visibility based on grid_visible
+    for entity in debug_query.iter() {
+        if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+            if diagnostics.grid_visible {
+                entity_cmd.insert(Visibility::Visible);
+            } else {
+                entity_cmd.insert(Visibility::Hidden);
+            }
+        }
+    }
+
+    // Spawn debug sphere for players that don't have one
+    if diagnostics.grid_visible {
+        for (player_entity, children) in player_query.iter() {
+            // Check if player already has a debug sphere child
+            let has_debug = children.iter().any(|child| debug_query.contains(child));
+
+            if !has_debug {
+                // Spawn a small red sphere at player origin
+                let debug_sphere = commands.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.05))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(1.0, 0.0, 0.0),
+                        emissive: Color::srgb(1.0, 0.0, 0.0).into(),
+                        ..default()
+                    })),
+                    Transform::from_xyz(0.0, 0.0, 0.0),
+                    PlayerOriginDebug,
+                    Visibility::Visible,
+                )).id();
+
+                commands.entity(player_entity).add_child(debug_sphere);
+            }
+        }
+    }
+}

@@ -31,6 +31,10 @@ pub struct ChunkMesh {
     pub chunk_id: ChunkId,
 }
 
+/// Debug sphere marker - shows player origin position (toggles with terrain grid)
+#[derive(Component)]
+pub struct PlayerOriginDebug;
+
 /// Target indicator component for showing which entity will be targeted
 #[derive(Component)]
 pub struct TargetIndicator {
