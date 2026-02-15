@@ -31,7 +31,7 @@ pub struct ChunkMesh {
     pub chunk_id: ChunkId,
 }
 
-/// Debug sphere marker - shows player origin position (toggles with terrain grid)
+/// Debug sphere marker - shows actor origin position (toggles with terrain grid)
 #[derive(Component)]
 pub struct PlayerOriginDebug;
 

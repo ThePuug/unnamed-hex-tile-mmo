@@ -111,7 +111,7 @@ fn main() {
         actor::try_gcd,
         prediction::advance_interpolation.before(actor::update), // ADR-019: Advance VisualPosition before rendering
         actor::update,
-        actor::update_player_origin_debug, // Debug sphere at player origin (toggles with grid)
+        actor::update_player_origin_debug, // Debug spheres at actor origins (toggles with grid)
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
         animator::update,
