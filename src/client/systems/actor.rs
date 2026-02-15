@@ -75,8 +75,9 @@ pub fn do_spawn(
     mut reader: MessageReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
-    _meshes: ResMut<Assets<Mesh>>,
-    _materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    diagnostics: Res<crate::client::plugins::diagnostics::DiagnosticsState>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
@@ -131,6 +132,12 @@ pub fn do_spawn(
                         crate::common::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
                     ))
                     .observe(ready);
+
+                let actor_entity = entity_cmd.id();
+
+                if diagnostics.grid_visible {
+                    spawn_debug_sphere(&mut commands, &mut meshes, &mut materials, actor_entity);
+                }
 
                 // Health/Stamina/Mana/CombatState will be inserted by Incremental events from server
                 // (do_incremental handles inserting missing components)
@@ -221,48 +228,25 @@ pub fn apply_movement_intent(
     }
 }
 
-/// Spawn and toggle debug spheres at actor origins (toggles with terrain grid)
-pub fn update_player_origin_debug(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    diagnostics: Res<crate::client::plugins::diagnostics::DiagnosticsState>,
-    actor_query: Query<(Entity, &Children), With<Behaviour>>,
-    debug_query: Query<Entity, With<PlayerOriginDebug>>,
+/// Spawn a debug sphere as a child of the given actor entity.
+/// Called at actor spawn time (if grid visible) and when grid is toggled on.
+pub fn spawn_debug_sphere(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    actor_entity: Entity,
 ) {
-    // Toggle visibility based on grid_visible
-    for entity in debug_query.iter() {
-        if let Ok(mut entity_cmd) = commands.get_entity(entity) {
-            if diagnostics.grid_visible {
-                entity_cmd.insert(Visibility::Visible);
-            } else {
-                entity_cmd.insert(Visibility::Hidden);
-            }
-        }
-    }
+    let debug_sphere = commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(0.05))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.0, 0.0),
+            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
+            ..default()
+        })),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        PlayerOriginDebug,
+        Visibility::Visible,
+    )).id();
 
-    // Spawn debug sphere for actors that don't have one
-    if diagnostics.grid_visible {
-        for (actor_entity, children) in actor_query.iter() {
-            // Check if actor already has a debug sphere child
-            let has_debug = children.iter().any(|child| debug_query.contains(child));
-
-            if !has_debug {
-                // Spawn a small red sphere at actor origin
-                let debug_sphere = commands.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.05))),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgb(1.0, 0.0, 0.0),
-                        emissive: Color::srgb(1.0, 0.0, 0.0).into(),
-                        ..default()
-                    })),
-                    Transform::from_xyz(0.0, 0.0, 0.0),
-                    PlayerOriginDebug,
-                    Visibility::Visible,
-                )).id();
-
-                commands.entity(actor_entity).add_child(debug_sphere);
-            }
-        }
-    }
+    commands.entity(actor_entity).add_child(debug_sphere);
 }

@@ -3,9 +3,12 @@ use bevy::prelude::*;
 use crate::{
     client::{
         plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay, perf_ui::PerfUiRootMarker, network_ui::NetworkUiRootMarker},
-        components::Terrain,
+        components::{Terrain, PlayerOriginDebug},
     },
-    common::resources::map::Map,
+    common::{
+        components::behaviour::Behaviour,
+        resources::map::Map,
+    },
 };
 
 /// Events that can be triggered from the developer console
@@ -28,9 +31,13 @@ pub fn execute_console_actions(
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut reader: MessageReader<DevConsoleAction>,
     mut map: ResMut<Map>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
     mut pending_meshes: ResMut<crate::client::resources::PendingChunkMeshes>,
     chunk_mesh_query: Query<(Entity, &Mesh3d, &crate::client::components::ChunkMesh)>,
+    actor_query: Query<Entity, With<Behaviour>>,
+    debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut perf_ui_query: Query<&mut Node, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>)>,
     mut network_ui_query: Query<&mut Node, (With<NetworkUiRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>)>,
 ) {
@@ -51,6 +58,19 @@ pub fn execute_console_actions(
                     // Request mesh regeneration when toggling on
                     if diagnostics_state.grid_visible {
                         overlay.needs_regeneration = true;
+                    }
+                }
+
+                // Spawn or despawn debug spheres for all actors
+                if diagnostics_state.grid_visible {
+                    for actor_entity in actor_query.iter() {
+                        crate::client::systems::actor::spawn_debug_sphere(
+                            &mut commands, &mut meshes, &mut materials, actor_entity,
+                        );
+                    }
+                } else {
+                    for entity in debug_sphere_query.iter() {
+                        commands.entity(entity).despawn();
                     }
                 }
 
