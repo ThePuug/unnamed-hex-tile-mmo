@@ -349,71 +349,7 @@ impl Map {
                 indices.extend([base_idx, v2, v1]); // Reversed winding: [center, v2, v1]
             }
 
-            // Add vertical skirt geometry for edges with elevation changes
-            for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
-                let neighbor_qrz = tile_qrz + *direction;
-
-                // Find neighbor at different elevation (search up/down)
-                let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
-                    .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
-
-                if let Some((actual_neighbor_qrz, _)) = found_neighbor {
-                    let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
-
-                    // Only add skirt if there's a cliff drop (elevation difference >= 2)
-                    // Each hex is in exactly one chunk, so no duplicates - we render skirts
-                    // for all our hexes regardless of where the neighbor is
-                    if elevation_diff >= -1 {
-                        continue;
-                    }
-
-                    // Get neighbor vertices
-                    let (neighbor_verts, neighbor_colors) = self.vertices_and_colors_with_slopes(actual_neighbor_qrz, apply_slopes);
-
-                    // Map direction to edge vertices
-                    // dir_idx 0 (West): current hex SW(4) and NW(5), neighbor NE(1) and SE(2)
-                    // dir_idx 1 (SW): current hex S(3) and SW(4), neighbor N(0) and NE(1)
-                    // dir_idx 2 (SE): current hex SE(2) and S(3), neighbor NW(5) and N(0)
-                    // dir_idx 3 (East): current hex NE(1) and SE(2), neighbor SW(4) and NW(5)
-                    // dir_idx 4 (NE): current hex N(0) and NE(1), neighbor S(3) and SW(4)
-                    // dir_idx 5 (NW): current hex NW(5) and N(0), neighbor SE(2) and S(3)
-                    let (curr_v1_idx, curr_v2_idx, neighbor_v1_idx, neighbor_v2_idx) = match dir_idx {
-                        0 => (4, 5, 1, 2), // West
-                        1 => (3, 4, 0, 1), // SW
-                        2 => (2, 3, 5, 0), // SE
-                        3 => (1, 2, 4, 5), // East
-                        4 => (0, 1, 3, 4), // NE
-                        5 => (5, 0, 2, 3), // NW
-                        _ => continue,
-                    };
-
-                    let curr_v1 = tile_verts[curr_v1_idx];
-                    let curr_v2 = tile_verts[curr_v2_idx];
-                    let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
-                    let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
-
-                    let curr_c1 = tile_colors[curr_v1_idx];
-                    let curr_c2 = tile_colors[curr_v2_idx];
-                    let neighbor_c1 = neighbor_colors[neighbor_v1_idx];
-                    let neighbor_c2 = neighbor_colors[neighbor_v2_idx];
-
-                    // Add 4 vertices for the vertical quad
-                    let skirt_base = verts.len() as u32;
-                    verts.extend([curr_v1, curr_v2, neighbor_v2, neighbor_v1]);
-                    colors.extend([curr_c1, curr_c2, neighbor_c2, neighbor_c1]);
-
-                    // Normal pointing outward from the edge
-                    let edge_normal = Vec3::new(0., 0., 1.); // Simplified, could calculate actual normal
-                    norms.extend([edge_normal; 4]);
-
-                    // Two triangles forming the vertical quad (counter-clockwise winding from outside)
-                    // Vertices: 0=bottom-left, 1=top-left, 2=bottom-right, 3=top-right
-                    // Triangle 1: [0, 1, 3] counter-clockwise
-                    // Triangle 2: [0, 3, 2] counter-clockwise
-                    indices.extend([skirt_base, skirt_base + 1, skirt_base + 3]);
-                    indices.extend([skirt_base, skirt_base + 3, skirt_base + 2]);
-                }
-            }
+            // TODO: Skirt generation removed - need to reimplement correctly
         }
 
         // Compute AABB from chunk vertices only
