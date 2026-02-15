@@ -402,10 +402,15 @@ impl Map {
                     let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
                     let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
 
-                    let curr_c1 = tile_colors[curr_v1_idx];
-                    let curr_c2 = tile_colors[curr_v2_idx];
-                    let neighbor_c1 = neighbor_colors[neighbor_v1_idx];
-                    let neighbor_c2 = neighbor_colors[neighbor_v2_idx];
+                    // Blocking cliffs (|diff| > 1) get stone grey, gentle slopes keep altitude color
+                    let is_blocking_cliff = elevation_diff.abs() > 1;
+                    let (curr_c1, curr_c2, neighbor_c1, neighbor_c2) = if is_blocking_cliff {
+                        let cliff_color = [0.35, 0.32, 0.28, 1.0];
+                        (cliff_color, cliff_color, cliff_color, cliff_color)
+                    } else {
+                        (tile_colors[curr_v1_idx], tile_colors[curr_v2_idx],
+                         neighbor_colors[neighbor_v1_idx], neighbor_colors[neighbor_v2_idx])
+                    };
 
                     // Calculate outward-facing normal for this edge
                     // Cross product of edge direction with vertical gives outward normal
