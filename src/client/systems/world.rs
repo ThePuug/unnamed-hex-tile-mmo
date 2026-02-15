@@ -22,7 +22,6 @@ use crate::{
             entity_type::*,
         },
         message::{Event, *},
-        resources::map::*,
         systems::*,
     }
 };
@@ -62,11 +61,99 @@ pub fn setup(
     commands.insert_resource(TerrainMaterial { handle: material });
 }
 
+/// Scan the map and spawn mesh generation tasks for chunks that have tiles but no meshes
+/// This system runs periodically and automatically generates meshes after the drain loop
+/// processes tile events, avoiding the need for coordination between systems
+pub fn spawn_missing_chunk_meshes(
+    map_state: Res<crate::common::resources::map::MapState>,
+    chunk_mesh_query: Query<&ChunkMesh>,
+    mut pending_meshes: ResMut<PendingChunkMeshes>,
+    diagnostics_state: Res<DiagnosticsState>,
+) {
+    use std::collections::HashSet;
+    use crate::common::chunk::{ChunkId, calculate_visible_chunks, loc_to_chunk};
+    use bevy::tasks::AsyncComputeTaskPool;
+
+    // Get chunks that already have mesh entities
+    let chunks_with_meshes: HashSet<ChunkId> = chunk_mesh_query
+        .iter()
+        .map(|mesh| mesh.chunk_id)
+        .collect();
+
+    // Scan the map to find which chunks have tiles
+    // Clone map and release lock BEFORE iterating (avoid holding read lock too long)
+    let map_clone = {
+        let map = map_state.map.read().unwrap();
+        map.clone()
+    }; // Read lock released here
+
+    let mut chunks_with_tiles: HashSet<ChunkId> = HashSet::new();
+    for (qrz, _) in map_clone.into_iter() {
+        chunks_with_tiles.insert(loc_to_chunk(qrz));
+    }
+
+    // Spawn mesh tasks for chunks with tiles but no mesh (and no pending task)
+    let pool = AsyncComputeTaskPool::get();
+
+    for chunk_id in &chunks_with_tiles {
+        // Skip if mesh already exists or task is pending
+        if chunks_with_meshes.contains(chunk_id) || pending_meshes.tasks.contains_key(chunk_id) {
+            continue;
+        }
+
+        // Spawn async mesh generation task
+        let map_arc = map_state.map.clone();
+        let apply_slopes = diagnostics_state.slope_rendering_enabled;
+        let chunk_id = *chunk_id; // Copy ChunkId for async move
+
+        let task = pool.spawn(async move {
+            // Acquire read lock (blocks if drain task has write lock)
+            let map_lock = map_arc.read().unwrap();
+
+            // Generate mesh using temporary Map wrapper
+            let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+            map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+        });
+
+        pending_meshes.tasks.insert(chunk_id, task);
+    }
+
+    // Also regenerate adjacent chunks when a new chunk appears (fixes edge vertices)
+    let mut chunks_to_regenerate: HashSet<ChunkId> = HashSet::new();
+    for chunk_id in &chunks_with_tiles {
+        // If this chunk is new (no mesh yet), regenerate its neighbors too
+        if !chunks_with_meshes.contains(chunk_id) {
+            for adjacent_chunk in calculate_visible_chunks(*chunk_id, 1) {
+                if chunks_with_tiles.contains(&adjacent_chunk) && chunks_with_meshes.contains(&adjacent_chunk) {
+                    chunks_to_regenerate.insert(adjacent_chunk);
+                }
+            }
+        }
+    }
+
+    // Regenerate neighbor chunks (cancel pending tasks first)
+    for chunk_id in chunks_to_regenerate {
+        pending_meshes.tasks.remove(&chunk_id);
+
+        let map_arc = map_state.map.clone();
+        let apply_slopes = diagnostics_state.slope_rendering_enabled;
+
+        let task = pool.spawn(async move {
+            let map_lock = map_arc.read().unwrap();
+            let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+            map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+        });
+
+        pending_meshes.tasks.insert(chunk_id, task);
+    }
+}
+
 /// Poll pending chunk mesh generation tasks and spawn/update mesh entities when ready
 pub fn poll_chunk_mesh_tasks(
     mut commands: Commands,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut map: ResMut<crate::common::resources::map::Map>,
     terrain_material: Res<TerrainMaterial>,
     chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh)>,
 ) {
@@ -86,24 +173,29 @@ pub fn poll_chunk_mesh_tasks(
     });
 
     // Spawn or update mesh entities for completed tasks
-    for (chunk_id, chunk_mesh) in completed_chunks {
-        // Check if mesh entity for this chunk already exists
-        let existing_entity = chunk_mesh_query.iter()
-            .find(|(_, _, c)| c.chunk_id == chunk_id)
-            .map(|(entity, mesh_handle, _)| (entity, mesh_handle.clone()));
+    if !completed_chunks.is_empty() {
+        // Mark map as changed to trigger grid overlay regeneration
+        map.set_changed();
 
-        if let Some((_entity, mesh_handle)) = existing_entity {
-            // Update existing mesh
-            if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
-                *mesh_asset = chunk_mesh;
+        for (chunk_id, chunk_mesh) in completed_chunks {
+            // Check if mesh entity for this chunk already exists
+            let existing_entity = chunk_mesh_query.iter()
+                .find(|(_, _, c)| c.chunk_id == chunk_id)
+                .map(|(entity, mesh_handle, _)| (entity, mesh_handle.clone()));
+
+            if let Some((_entity, mesh_handle)) = existing_entity {
+                // Update existing mesh
+                if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
+                    *mesh_asset = chunk_mesh;
+                }
+            } else {
+                // Spawn new mesh entity
+                commands.spawn((
+                    Mesh3d(meshes.add(chunk_mesh)),
+                    MeshMaterial3d(terrain_material.handle.clone()),
+                    ChunkMesh { chunk_id },
+                ));
             }
-        } else {
-            // Spawn new mesh entity
-            commands.spawn((
-                Mesh3d(meshes.add(chunk_mesh)),
-                MeshMaterial3d(terrain_material.handle.clone()),
-                ChunkMesh { chunk_id },
-            ));
         }
     }
 }
@@ -132,54 +224,22 @@ pub fn do_init(
 
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
-    mut map: ResMut<Map>,
-    mut pending_meshes: ResMut<PendingChunkMeshes>,
-    diagnostics_state: Res<DiagnosticsState>,
+    map_state: Res<crate::common::resources::map::MapState>,
+    mut map: ResMut<crate::common::resources::map::Map>,
 ) {
-    use std::collections::HashSet;
-    use crate::common::chunk::{ChunkId, calculate_visible_chunks};
+    use crate::common::resources::map::TileEvent;
 
-    // Track which chunks have new tiles
-    let mut chunks_with_new_tiles: HashSet<ChunkId> = HashSet::new();
-
+    // Queue tile spawn events (drain loop will process them)
     for &message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
-        if map.get(qrz).is_some() { continue }
-        map.insert(qrz, EntityType::Decorator(decorator));
 
-        let chunk_id = loc_to_chunk(qrz);
-        chunks_with_new_tiles.insert(chunk_id);
+        map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
     }
 
-    // For each chunk with new tiles, regenerate it AND its neighbors
-    // This ensures edge vertices are recalculated with correct neighbor data
-    let pool = AsyncComputeTaskPool::get();
-    let mut chunks_to_regenerate: HashSet<ChunkId> = HashSet::new();
-
-    for chunk_id in chunks_with_new_tiles {
-        // Regenerate this chunk
-        chunks_to_regenerate.insert(chunk_id);
-
-        // Also regenerate adjacent chunks (radius 1) to fix their edge vertices
-        for adjacent_chunk in calculate_visible_chunks(chunk_id, 1) {
-            chunks_to_regenerate.insert(adjacent_chunk);
-        }
-    }
-
-    for chunk_id in chunks_to_regenerate {
-        // Cancel any pending task for this chunk and spawn a new one
-        pending_meshes.tasks.remove(&chunk_id);
-
-        // Spawn async task to generate mesh for this chunk
-        let map_clone = map.clone();
-        let apply_slopes = diagnostics_state.slope_rendering_enabled;
-        let task = pool.spawn(async move {
-            map_clone.generate_chunk_mesh(chunk_id, apply_slopes)
-        });
-
-        pending_meshes.tasks.insert(chunk_id, task);
-    }
+    // Note: ResMut<Map> marks map as changed for grid overlay detection
+    // Mesh generation happens in spawn_missing_chunk_meshes system
 }
+
 
 #[allow(clippy::type_complexity)]
 pub fn update(
@@ -242,7 +302,7 @@ pub fn update(
 pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
-    mut map: ResMut<Map>,
+    map_state: Res<crate::common::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
     chunk_mesh_query: Query<(Entity, &ChunkMesh)>,
@@ -290,24 +350,34 @@ pub fn evict_distant_chunks(
         }
     }
 
-    // Remove all tiles belonging to evicted chunks from the map
-    let tiles_to_remove: Vec<_> = map.iter_tiles()
-        .filter_map(|(qrz, _typ)| {
-            let tile_chunk = loc_to_chunk(qrz);
-            if evictable.contains(&tile_chunk) {
-                Some(qrz)
-            } else {
-                None
+    // Queue despawn events for all tiles in evicted chunks
+    {
+        use crate::common::resources::map::TileEvent;
+
+        // Clone map and release lock BEFORE iterating
+        let map_clone = {
+            let map_lock = map_state.map.read().unwrap();
+            map_lock.clone()
+        }; // Read lock released here
+
+        let tiles_to_remove: Vec<_> = map_clone.into_iter()
+            .filter_map(|(qrz, _typ)| {
+                let tile_chunk = loc_to_chunk(qrz);
+                if evictable.contains(&tile_chunk) {
+                    Some(qrz)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !tiles_to_remove.is_empty() {
+            for qrz in &tiles_to_remove {
+                map_state.queue_event(TileEvent::Despawn(*qrz));
             }
-        })
-        .collect();
 
-    if !tiles_to_remove.is_empty() {
-        for qrz in &tiles_to_remove {
-            map.remove(*qrz);
+            // Remove chunk from LoadedChunks
+            loaded_chunks.evict(&evictable);
         }
-
-        // Remove chunk from LoadedChunks
-        loaded_chunks.evict(&evictable);
     }
 }

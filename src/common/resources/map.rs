@@ -5,6 +5,7 @@ use bevy::{
 };
 use bevy_camera::primitives::Aabb;
 use bevy_mesh::Indices;
+use std::sync::{Arc, RwLock, Mutex};
 
 use qrz::{self, Convert, Qrz};
 
@@ -13,17 +14,121 @@ use crate::common::{
     components::entity_type::*,
 };
 
+/// Events that modify the map (spawn/despawn tiles)
+#[derive(Clone, Debug)]
+pub enum TileEvent {
+    Spawn(Qrz, EntityType),
+    Despawn(Qrz),
+}
+
+/// Map resource with queued tile events for async coordination
+#[derive(Resource)]
+pub struct MapState {
+    /// The actual map data, protected by RwLock for async access
+    pub map: Arc<RwLock<qrz::Map<EntityType>>>,
+    /// Queue of pending tile events (spawns/despawns)
+    pub pending_events: Arc<Mutex<Vec<TileEvent>>>,
+}
+
+impl MapState {
+    pub fn new(map: qrz::Map<EntityType>) -> Self {
+        let map_arc = Arc::new(RwLock::new(map));
+        let pending_arc = Arc::new(Mutex::new(Vec::new()));
+
+        // Spawn permanent background drain task
+        let map_clone = map_arc.clone();
+        let pending_clone = pending_arc.clone();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                drain_loop(map_clone, pending_clone);
+            });
+        }
+
+        Self {
+            map: map_arc,
+            pending_events: pending_arc,
+        }
+    }
+
+    /// Queue a tile event (spawn or despawn)
+    pub fn queue_event(&self, event: TileEvent) {
+        let mut queue = self.pending_events.lock().unwrap();
+        queue.push(event);
+    }
+
+    /// Create a Map resource that shares the same Arc (for systems that need Res<Map>)
+    pub fn as_map(&self) -> Map {
+        Map::from_arc(self.map.clone())
+    }
+}
+
+/// Permanent background task that drains pending tile events and applies them to the map
+/// Runs forever in a loop, sleeping when queue is empty
+fn drain_loop(
+    map: Arc<RwLock<qrz::Map<EntityType>>>,
+    pending: Arc<Mutex<Vec<TileEvent>>>,
+) {
+    use std::time::Duration;
+
+    loop {
+        // Lock briefly to check and take events
+        let events = {
+            let mut queue = pending.lock().unwrap();
+            if queue.is_empty() {
+                drop(queue);
+                // Queue is empty, sleep briefly and continue
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            std::mem::take(&mut *queue)
+        };
+
+        // Acquire write lock (blocks mesh generators)
+        {
+            let mut map_lock = map.write().unwrap();
+            for event in events {
+                match event {
+                    TileEvent::Spawn(qrz, entity_type) => {
+                        map_lock.insert(qrz, entity_type);
+                    }
+                    TileEvent::Despawn(qrz) => {
+                        map_lock.remove(qrz);
+                    }
+                }
+            }
+        } // Write lock released
+
+        // Delay to yield to mesh generators after processing events
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// Legacy Map wrapper for compatibility (client systems use this for read-only access)
+/// Wraps the same Arc<RwLock> as MapState for shared access
 #[derive(Clone, Resource)]
-pub struct Map(qrz::Map<EntityType>);
+pub struct Map(Arc<RwLock<qrz::Map<EntityType>>>);
 
 impl Map {
     pub fn new(map: qrz::Map<EntityType>) -> Map {
-        Map(map)
+        Map(Arc::new(RwLock::new(map)))
+    }
+
+    /// Create from Arc (for sharing with MapState)
+    pub fn from_arc(arc: Arc<RwLock<qrz::Map<EntityType>>>) -> Map {
+        Map(arc)
+    }
+
+    /// Create from inner qrz::Map (for temporary wrappers in async tasks)
+    pub fn from_inner(map: qrz::Map<EntityType>) -> Map {
+        Map(Arc::new(RwLock::new(map)))
     }
 
     /// Get the vertical rise per Z level from the underlying map
     pub fn rise(&self) -> f32 {
-        self.0.rise()
+        let map = self.0.read().unwrap();
+        map.rise()
     }
 
     /// Generate vertices for a hex tile with slopes toward neighbors
@@ -54,8 +159,9 @@ impl Map {
     }
 
     pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
-        let mut verts = self.0.vertices(qrz);
-        let rise = self.0.rise();
+        let map = self.0.read().unwrap();
+        let mut verts = map.vertices(qrz);
+        let rise = map.rise();
 
         // Use height-based color instead of fixed grass color
         let grass_color = self.height_color_tint(qrz.z);
@@ -177,6 +283,8 @@ impl Map {
     /// Generate a mesh for a single chunk using TriangleList topology
     /// This enables independent chunk rendering and better GPU cache locality
     pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
+        let map = self.0.read().unwrap();
+
         let mut verts: Vec<Vec3> = Vec::new();
         let mut norms: Vec<Vec3> = Vec::new();
         let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -185,7 +293,7 @@ impl Map {
         let mut tile_count = 0;
 
         // Filter tiles to only those in this chunk
-        for (tile_qrz, _) in self.0.clone().into_iter() {
+        for (tile_qrz, _) in map.clone().into_iter() {
             if loc_to_chunk(tile_qrz) != chunk_id {
                 continue;
             }
@@ -194,7 +302,7 @@ impl Map {
 
             // Get RAW vertices (without slope adjustments to avoid gaps at boundaries)
             // Only apply slopes if explicitly enabled AND we're okay with gaps
-            let raw_verts = self.0.vertices(tile_qrz);
+            let raw_verts = map.vertices(tile_qrz);
             let (slope_verts, tile_colors) = if apply_slopes {
                 self.vertices_and_colors_with_slopes(tile_qrz, true)
             } else {
@@ -336,6 +444,8 @@ impl Map {
     }
 
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
+        let map = self.0.read().unwrap();
+
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
         let mut colors:Vec<[f32; 4]> = Vec::new();
@@ -345,7 +455,6 @@ impl Map {
         let mut west_skirt_norms: Vec<Vec3> = Vec::new();
         let mut west_skirt_colors: Vec<[f32; 4]> = Vec::new();
 
-        let map = self.0.clone();
         map.clone().into_iter().for_each(|tile| {
             let it_qrz = tile.0;
             let (it_vrt, it_col) = self.vertices_and_colors_with_slopes(it_qrz, apply_slopes);
@@ -415,7 +524,7 @@ impl Map {
             } else {
                 // For fake west neighbor, use height-based color
                 let fake_we_color = self.height_color_tint(we_qrz.z);
-                (self.0.vertices(we_qrz), vec![fake_we_color; 6])
+                (map.vertices(we_qrz), vec![fake_we_color; 6])
             };
             
             // If west neighbor is fake, match its East edge vertices to current tile's West edge
@@ -461,7 +570,7 @@ impl Map {
 
         let len = verts.clone().len() as u32;
         println!("Terrain mesh: {} tiles, {} vertices, AABB: {:?} to {:?}",
-                 self.0.len(), len, min, max);
+                 map.len(), len, min, max);
         (
             Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
@@ -473,27 +582,58 @@ impl Map {
         )
     }
 
-    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, EntityType)> { self.0.find(qrz, dist) }
-    pub fn get(&self, qrz: Qrz) -> Option<&EntityType> { self.0.get(qrz) }
-    pub fn insert(&mut self, qrz: Qrz, obj: EntityType) { self.0.insert(qrz, obj); }
-    pub fn remove(&mut self, qrz: Qrz) -> Option<EntityType> { self.0.remove(qrz) }
-    pub fn len(&self) -> usize { self.0.len() }
-    pub fn radius(&self) -> f32 { self.0.radius() }
-    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> { self.0.neighbors(qrz) }
-    pub fn iter_tiles(&self) -> impl Iterator<Item = (Qrz, EntityType)> + '_ {
-        self.0.clone().into_iter()
+    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, EntityType)> {
+        let map = self.0.read().unwrap();
+        map.find(qrz, dist)
+    }
+
+    pub fn get(&self, qrz: Qrz) -> Option<EntityType> {
+        let map = self.0.read().unwrap();
+        map.get(qrz).copied()
+    }
+
+    pub fn insert(&mut self, qrz: Qrz, obj: EntityType) {
+        let mut map = self.0.write().unwrap();
+        map.insert(qrz, obj);
+    }
+
+    pub fn remove(&mut self, qrz: Qrz) -> Option<EntityType> {
+        let mut map = self.0.write().unwrap();
+        map.remove(qrz)
+    }
+
+    pub fn len(&self) -> usize {
+        let map = self.0.read().unwrap();
+        map.len()
+    }
+
+    pub fn radius(&self) -> f32 {
+        let map = self.0.read().unwrap();
+        map.radius()
+    }
+
+    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> {
+        let map = self.0.read().unwrap();
+        map.neighbors(qrz)
+    }
+
+    pub fn iter_tiles(&self) -> impl Iterator<Item = (Qrz, EntityType)> {
+        let map = self.0.read().unwrap();
+        map.clone().into_iter()
     }
 }
 
 impl Convert<Qrz, Vec3> for Map {
     fn convert(&self, it: Qrz) -> Vec3 {
-        self.0.convert(it)
+        let map = self.0.read().unwrap();
+        map.convert(it)
     }
 }
 
 impl Convert<Vec3, Qrz> for Map {
     fn convert(&self, it: Vec3) -> Qrz {
-        self.0.convert(it)
+        let map = self.0.read().unwrap();
+        map.convert(it)
     }
 }
 

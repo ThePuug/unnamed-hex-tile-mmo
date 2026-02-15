@@ -43,6 +43,7 @@ impl Plugin for DiagnosticsPlugin {
         // Initialize shared diagnostic resources
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<network_ui::NetworkMetrics>();
+        app.init_resource::<grid::PendingGridMesh>();
 
         // Setup systems run once at startup
         // The root container must exist before panels add themselves as children.
@@ -62,7 +63,8 @@ impl Plugin for DiagnosticsPlugin {
             Update,
             (
                 // Mesh update systems (no direct input handlers - use dev console)
-                grid::update_grid_mesh,
+                grid::spawn_grid_mesh_task,
+                grid::poll_grid_mesh_task,
                 // Performance and network UI updates
                 perf_ui::update_performance_ui,
                 network_ui::update_network_ui,

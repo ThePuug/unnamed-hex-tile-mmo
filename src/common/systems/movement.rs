@@ -349,7 +349,7 @@ pub fn is_tile_blocked(
 
     // Check if next tile has a solid obstacle
     let exact_is_solid = match map.get(next_hx) {
-        Some(EntityType::Decorator(Decorator { is_solid, .. })) => *is_solid,
+        Some(EntityType::Decorator(Decorator { is_solid, .. })) => is_solid,
         _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= MAX_ENTITIES_PER_TILE,
     };
 
@@ -466,7 +466,7 @@ pub fn calculate_movement(
             };
 
             let exact_is_solid = match map.get(next_hx) {
-                Some(EntityType::Decorator(Decorator { is_solid, .. })) => *is_solid,
+                Some(EntityType::Decorator(Decorator { is_solid, .. })) => is_solid,
                 _ => nntree.locate_all_at_point(&Loc::new(next_hx)).count() >= MAX_ENTITIES_PER_TILE,
             };
 

@@ -14,16 +14,15 @@ use bevy::{
 };
 use bevy_easings::*;
 use bevy_renet::{
-    renet::ConnectionConfig,
-    netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeErrorEvent},
-    RenetClient, RenetClientPlugin,
+    netcode::{NetcodeClientPlugin, NetcodeErrorEvent},
+    RenetClientPlugin,
 };
 
 use common::{
     components::{entity_type::*, *},
     message::*,
     plugins::nntree,
-    resources::{ map::*,  * },
+    resources::*,
 };
 use client::{
     plugins::{
@@ -154,6 +153,7 @@ fn main() {
         renet::handle_pong,
         renet::periodic_ping,
         world::do_spawn,
+        world::spawn_missing_chunk_meshes.run_if(on_timer(Duration::from_millis(100))), // Check for chunks needing meshes every 100ms
         world::poll_chunk_mesh_tasks, // Poll async chunk mesh tasks
         world::update,
     ));
@@ -162,7 +162,10 @@ fn main() {
         renet::send_try,
     ));
 
-    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
+    let map_state = common::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8));
+    let map = map_state.as_map(); // Create Map that shares the same Arc
+    app.insert_resource(map_state);
+    app.insert_resource(map);
 
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();

@@ -3,12 +3,9 @@ use bevy::prelude::*;
 use crate::{
     client::{
         plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay, perf_ui::PerfUiRootMarker, network_ui::NetworkUiRootMarker},
-        components::{Terrain, PlayerOriginDebug},
+        components::PlayerOriginDebug,
     },
-    common::{
-        components::behaviour::Behaviour,
-        resources::map::Map,
-    },
+    common::components::behaviour::Behaviour,
 };
 
 /// Events that can be triggered from the developer console
@@ -30,7 +27,7 @@ pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut reader: MessageReader<DevConsoleAction>,
-    mut map: ResMut<Map>,
+    map_state: Res<crate::common::resources::map::MapState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
@@ -84,19 +81,21 @@ pub fn execute_console_actions(
 
                 let pool = bevy::tasks::AsyncComputeTaskPool::get();
                 for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_clone = map.clone();
+                    let map_arc = map_state.map.clone();
                     let apply_slopes = diagnostics_state.slope_rendering_enabled;
                     let chunk_id = chunk_mesh.chunk_id;
 
                     let task = pool.spawn(async move {
-                        map_clone.generate_chunk_mesh(chunk_id, apply_slopes)
+                        // Acquire read lock (blocks if drain task has write lock)
+                        let map_lock = map_arc.read().unwrap();
+
+                        // Generate mesh using temporary Map wrapper
+                        let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+                        map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
                     });
 
                     pending_meshes.tasks.insert(chunk_id, task);
                 }
-
-                // Trigger map change detection to force grid regeneration
-                map.set_changed();
 
                 info!("Slope rendering: {} (regenerating {} chunks async)",
                     if diagnostics_state.slope_rendering_enabled { "ON" } else { "OFF" },
@@ -112,18 +111,22 @@ pub fn execute_console_actions(
 
                 let pool = bevy::tasks::AsyncComputeTaskPool::get();
                 for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_clone = map.clone();
+                    let map_arc = map_state.map.clone();
                     let apply_slopes = diagnostics_state.slope_rendering_enabled;
                     let chunk_id = chunk_mesh.chunk_id;
 
                     let task = pool.spawn(async move {
-                        map_clone.generate_chunk_mesh(chunk_id, apply_slopes)
+                        // Acquire read lock (blocks if drain task has write lock)
+                        let map_lock = map_arc.read().unwrap();
+
+                        // Generate mesh using temporary Map wrapper
+                        let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+                        map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
                     });
 
                     pending_meshes.tasks.insert(chunk_id, task);
                 }
 
-                map.set_changed();
                 info!("Mesh regeneration requested ({} chunks async)", pending_meshes.tasks.len());
             }
 

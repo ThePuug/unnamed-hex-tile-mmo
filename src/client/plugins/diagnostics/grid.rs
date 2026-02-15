@@ -1,6 +1,7 @@
 use bevy::{
     prelude::*,
     render::render_resource::PrimitiveTopology,
+    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task},
 };
 use bevy_asset::RenderAssetUsages;
 use bevy_camera::primitives::Aabb;
@@ -21,6 +22,16 @@ const HEX_EDGE_COUNT: usize = 6;
 
 /// Index of the center vertex in the vertex array
 const HEX_CENTER_INDEX: usize = 6;
+
+// ============================================================================
+// Resources
+// ============================================================================
+
+/// Tracks pending async grid mesh generation task
+#[derive(Resource, Default)]
+pub struct PendingGridMesh {
+    pub task: Option<Task<(Mesh, Aabb)>>,
+}
 
 // ============================================================================
 // Components
@@ -82,22 +93,27 @@ pub fn setup_grid_overlay(
     ));
 }
 
-/// Regenerates the grid mesh when the map changes or regeneration is requested
+/// Spawns async grid mesh generation task when needed
 ///
 /// This system responds to two triggers:
 /// 1. Map resource changes (new tiles discovered)
 /// 2. Forced regeneration flag (grid toggled on, or slope setting changed)
 ///
-/// The mesh is only updated when the grid is visible to avoid unnecessary work.
-pub fn update_grid_mesh(
-    mut grid_query: Query<(&mut Mesh3d, &mut Aabb, &mut HexGridOverlay)>,
+/// The task is only spawned when the grid is visible and no task is already pending.
+pub fn spawn_grid_mesh_task(
     map: Res<Map>,
+    mut grid_query: Query<&mut HexGridOverlay>,
     state: Res<DiagnosticsState>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut pending_mesh: ResMut<PendingGridMesh>,
 ) {
-    let Ok((mut grid_mesh_handle, mut aabb, mut overlay)) = grid_query.single_mut() else {
+    let Ok(mut overlay) = grid_query.single_mut() else {
         return;
     };
+
+    // Skip if task already pending
+    if pending_mesh.task.is_some() {
+        return;
+    }
 
     // Only update if there's a reason to (map changed or forced) and grid is visible
     let should_update = (map.is_changed() || overlay.needs_regeneration) && state.grid_visible;
@@ -108,18 +124,43 @@ pub fn update_grid_mesh(
     // Clear the forced regeneration flag
     overlay.needs_regeneration = false;
 
-    // Build the grid mesh from all map tiles
-    let grid_builder = build_hex_grid_lines(&map, state.slope_rendering_enabled);
+    // Spawn async task to build grid mesh
+    let map_clone = map.clone();
+    let apply_slopes = state.slope_rendering_enabled;
+    let pool = AsyncComputeTaskPool::get();
 
-    // Don't create empty mesh - causes rendering errors
-    if grid_builder.is_empty() {
+    let task = pool.spawn(async move {
+        let grid_builder = build_hex_grid_lines(&map_clone, apply_slopes);
+        grid_builder.into_mesh()
+    });
+
+    pending_mesh.task = Some(task);
+}
+
+/// Polls pending grid mesh task and updates the mesh when ready
+pub fn poll_grid_mesh_task(
+    mut pending_mesh: ResMut<PendingGridMesh>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut grid_query: Query<(&mut Mesh3d, &mut Aabb), With<HexGridOverlay>>,
+) {
+    let Some(task) = pending_mesh.task.as_mut() else {
         return;
-    }
+    };
 
-    // Create and upload the new mesh
-    let (new_mesh, new_aabb) = grid_builder.into_mesh();
-    grid_mesh_handle.0 = meshes.add(new_mesh);
-    *aabb = new_aabb;
+    // Poll the task (non-blocking)
+    let result = block_on(future::poll_once(task));
+
+    if let Some((new_mesh, new_aabb)) = result {
+        // Task completed - update the mesh
+        pending_mesh.task = None;
+
+        let Ok((mut grid_mesh_handle, mut aabb)) = grid_query.single_mut() else {
+            return;
+        };
+
+        grid_mesh_handle.0 = meshes.add(new_mesh);
+        *aabb = new_aabb;
+    }
 }
 
 // ============================================================================
