@@ -1,3 +1,7 @@
+[workspace]
+members = ["tools/console"]
+exclude = []
+
 [package]
 name = "unnamed-hex-tile-mmo"
 edition = "2021"

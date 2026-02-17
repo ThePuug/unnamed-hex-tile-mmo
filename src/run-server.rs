@@ -54,6 +54,7 @@ fn main() {
         nntree::NNTreePlugin,
         common::plugins::controlled::ControlledPlugin,
         server::plugins::behaviour::BehaviourPlugin,
+        server::plugins::metrics::MetricsPlugin::default(),
     ));
 
     app.add_message::<Do>();

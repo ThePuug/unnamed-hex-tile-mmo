@@ -649,6 +649,10 @@ impl Map {
         self.0.len()
     }
 
+    pub fn heap_size_estimate(&self) -> usize {
+        self.0.heap_size_estimate()
+    }
+
     pub fn radius(&self) -> f32 {
         self.0.radius()
     }

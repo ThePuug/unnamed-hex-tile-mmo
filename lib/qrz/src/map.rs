@@ -143,6 +143,16 @@ where T : Copy {
         ]
     }
 
+    /// Estimate heap bytes used by the internal BTreeMap + HashMap.
+    pub fn heap_size_estimate(&self) -> usize {
+        let entry = std::mem::size_of::<Qrz>() + std::mem::size_of::<T>();
+        // hashbrown: 1 control byte per slot + entry storage
+        let hash_bytes = self.hash.capacity() * (entry + 1);
+        // BTreeMap: ~40 bytes node overhead per entry (pointers, metadata, padding)
+        let btree_bytes = self.tree.len() * (entry + 40);
+        hash_bytes + btree_bytes
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&Qrz, &T)> {
         self.tree.iter()
     }

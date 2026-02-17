@@ -1,6 +1,7 @@
 pub mod chunk;
 pub mod components;
 pub mod message;
+pub mod metrics;
 pub mod plugins;
 pub mod resources;
 pub mod spatial_difficulty;
