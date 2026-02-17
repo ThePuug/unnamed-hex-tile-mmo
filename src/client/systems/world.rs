@@ -107,11 +107,12 @@ pub fn spawn_missing_chunk_meshes(
         let chunk_id = *chunk_id; // Copy ChunkId for async move
 
         let task = pool.spawn(async move {
-            // Acquire read lock (blocks if drain task has write lock)
-            let map_lock = map_arc.read().unwrap();
-
-            // Generate mesh using temporary Map wrapper
-            let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+            // Snapshot map data into separate RwLock, then release the shared lock
+            // before expensive mesh generation (prevents contention with drain_loop)
+            let map_wrapper = {
+                let map_lock = map_arc.read().unwrap();
+                crate::common::resources::map::Map::from_inner(map_lock.clone())
+            }; // Shared read lock released here
             map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
         });
 
@@ -139,8 +140,10 @@ pub fn spawn_missing_chunk_meshes(
         let apply_slopes = diagnostics_state.slope_rendering_enabled;
 
         let task = pool.spawn(async move {
-            let map_lock = map_arc.read().unwrap();
-            let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
+            let map_wrapper = {
+                let map_lock = map_arc.read().unwrap();
+                crate::common::resources::map::Map::from_inner(map_lock.clone())
+            };
             map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
         });
 

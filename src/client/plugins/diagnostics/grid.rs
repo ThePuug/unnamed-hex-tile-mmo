@@ -124,13 +124,14 @@ pub fn spawn_grid_mesh_task(
     // Clear the forced regeneration flag
     overlay.needs_regeneration = false;
 
-    // Spawn async task to build grid mesh
-    let map_clone = map.clone();
+    // Snapshot map data into a separate RwLock to avoid holding the shared lock
+    // during expensive grid mesh generation (prevents contention with drain_loop)
+    let map_snapshot = map.snapshot();
     let apply_slopes = state.slope_rendering_enabled;
     let pool = AsyncComputeTaskPool::get();
 
     let task = pool.spawn(async move {
-        let grid_builder = build_hex_grid_lines(&map_clone, apply_slopes);
+        let grid_builder = build_hex_grid_lines(&map_snapshot, apply_slopes);
         grid_builder.into_mesh()
     });
 

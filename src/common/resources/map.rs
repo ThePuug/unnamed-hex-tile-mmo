@@ -125,17 +125,22 @@ impl Map {
         Map(Arc::new(RwLock::new(map)))
     }
 
+    /// Create an independent snapshot (clones map data into a separate RwLock).
+    /// Use this to avoid holding the shared RwLock during expensive operations.
+    pub fn snapshot(&self) -> Map {
+        let map = self.0.read().unwrap();
+        Map::from_inner(map.clone())
+    }
+
     /// Get the vertical rise per Z level from the underlying map
     pub fn rise(&self) -> f32 {
         let map = self.0.read().unwrap();
         map.rise()
     }
 
-    /// Generate vertices for a hex tile with slopes toward neighbors
-    /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
-    /// If apply_slopes is false, vertices remain flat at their natural height
-    /// Calculate height-based color tint for a given elevation
-    fn height_color_tint(&self, elevation: i16) -> [f32; 4] {
+    /// Calculate height-based color tint for a given elevation.
+    /// Pure computation - no lock needed.
+    fn height_color_tint(elevation: i16) -> [f32; 4] {
         // Base grass color (dark greenish)
         let base_color = [0.04, 0.09, 0.04];
 
@@ -158,13 +163,16 @@ impl Map {
         ]
     }
 
-    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
-        let map = self.0.read().unwrap();
+    /// Inner implementation of vertices_and_colors_with_slopes that operates on a pre-locked
+    /// map reference. This avoids re-entrant RwLock acquisitions which deadlock on Windows
+    /// (SRWLock does not support re-entrant reads; a pending writer from drain_loop blocks
+    /// new readers, causing deadlock when a thread already holding a read lock tries again).
+    fn vertices_and_colors_with_slopes_inner(map: &qrz::Map<EntityType>, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
         let mut verts = map.vertices(qrz);
         let rise = map.rise();
 
         // Use height-based color instead of fixed grass color
-        let grass_color = self.height_color_tint(qrz.z);
+        let grass_color = Self::height_color_tint(qrz.z);
         // Stone cliff color (lighter gray-brown for contrast)
         let cliff_color = [0.35, 0.32, 0.28, 1.0];
         let mut colors = vec![grass_color; 6];
@@ -175,7 +183,7 @@ impl Map {
 
         // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
-        
+
         // Map of direction index to the two vertices on that edge
         let direction_to_vertices = [
             (4, 5), // Dir 0: West edge has vertices SW(4) and NW(5)
@@ -190,11 +198,12 @@ impl Map {
         // Do neighbor search once and use for both slopes and cliff detection
         for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
             let neighbor_qrz = qrz + *direction;
-            
+
             // Try to find the neighbor tile across this edge (search both up and down)
-            let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
-                .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
-            
+            // Use map.find() directly to avoid nested lock acquisition
+            let found_neighbor = map.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
+                .or_else(|| map.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+
             if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                 // Calculate elevation difference
                 let elevation_diff = actual_neighbor_qrz.z - qrz.z;
@@ -210,7 +219,7 @@ impl Map {
 
                 // Check if this is a cliff edge (elevation difference > 1)
                 let is_cliff = elevation_diff.abs() > 1;
-                
+
                 // Slope calculation:
                 // - Allow slopes on both sides of cliffs (top slopes down, bottom slopes up)
                 // - This creates more gradual cliff faces
@@ -232,7 +241,7 @@ impl Map {
                     vertex_adjustments[v1].push(adjustment);
                     vertex_adjustments[v2].push(adjustment);
                 }
-                
+
                 // Darken vertices at the BOTTOM of cliffs (looking up at higher neighbor)
                 // Keep vertices at the TOP of cliffs (looking down) at normal color
                 if is_cliff && elevation_diff > 1 {
@@ -272,6 +281,14 @@ impl Map {
         (verts, colors)
     }
 
+    /// Generate vertices for a hex tile with slopes toward neighbors
+    /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
+    /// If apply_slopes is false, vertices remain flat at their natural height
+    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
+        let map = self.0.read().unwrap();
+        Self::vertices_and_colors_with_slopes_inner(&map, qrz, apply_slopes)
+    }
+
     /// Calculate smooth normal for a vertex by averaging face normals of adjacent triangles
     /// This version considers neighboring hexes for truly smooth lighting
     fn calculate_vertex_normal(&self, _qrz: Qrz, _vertex_idx: usize, _verts: &[Vec3], _apply_slopes: bool) -> Vec3 {
@@ -304,9 +321,9 @@ impl Map {
             // Only apply slopes if explicitly enabled AND we're okay with gaps
             let raw_verts = map.vertices(tile_qrz);
             let (slope_verts, tile_colors) = if apply_slopes {
-                self.vertices_and_colors_with_slopes(tile_qrz, true)
+                Self::vertices_and_colors_with_slopes_inner(&map, tile_qrz, true)
             } else {
-                let colors = vec![self.height_color_tint(tile_qrz.z); 6];
+                let colors = vec![Self::height_color_tint(tile_qrz.z); 6];
                 (raw_verts.clone(), colors)
             };
 
@@ -326,7 +343,7 @@ impl Map {
 
             // Center vertex (index 6)
             let center_pos = tile_verts[6];
-            let center_color = self.height_color_tint(tile_qrz.z);
+            let center_color = Self::height_color_tint(tile_qrz.z);
             let center_normal = Vec3::new(0., 1., 0.);
 
             verts.push(center_pos);
@@ -354,8 +371,8 @@ impl Map {
                 let neighbor_qrz = tile_qrz + *direction;
 
                 // Find neighbor at different elevation (search up/down)
-                let found_neighbor = self.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
-                    .or_else(|| self.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+                let found_neighbor = map.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
+                    .or_else(|| map.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
 
                 if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                     let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
@@ -368,7 +385,7 @@ impl Map {
                     // Get neighbor vertices (raw positions for alignment)
                     let neighbor_raw = map.vertices(actual_neighbor_qrz);
                     let neighbor_verts: Vec<Vec3> = if apply_slopes {
-                        let (neighbor_slope, _) = self.vertices_and_colors_with_slopes(actual_neighbor_qrz, true);
+                        let (neighbor_slope, _) = Self::vertices_and_colors_with_slopes_inner(&map, actual_neighbor_qrz, true);
                         neighbor_raw.iter().enumerate().map(|(i, &raw_pos)| {
                             if i < 6 {
                                 Vec3::new(raw_pos.x, neighbor_slope[i].y, raw_pos.z)
@@ -380,7 +397,7 @@ impl Map {
                         neighbor_raw
                     };
 
-                    let neighbor_colors = vec![self.height_color_tint(actual_neighbor_qrz.z); 6];
+                    let neighbor_colors = vec![Self::height_color_tint(actual_neighbor_qrz.z); 6];
 
                     // Map direction to edge vertex indices
                     // For each direction, we need the two vertices that form that edge
@@ -471,7 +488,7 @@ impl Map {
 
         map.clone().into_iter().for_each(|tile| {
             let it_qrz = tile.0;
-            let (it_vrt, it_col) = self.vertices_and_colors_with_slopes(it_qrz, apply_slopes);
+            let (it_vrt, it_col) = Self::vertices_and_colors_with_slopes_inner(&map, it_qrz, apply_slopes);
 
             if let Some(last_qrz) = last_qrz {
                 // if new column
@@ -483,11 +500,11 @@ impl Map {
                 }
             }
 
-            let sw_result = self.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[1], -60);
-            let sw_data = sw_result.map(|(qrz, _)| self.vertices_and_colors_with_slopes(qrz, apply_slopes));
+            let sw_result = map.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[1], -60);
+            let sw_data = sw_result.map(|(qrz, _)| Self::vertices_and_colors_with_slopes_inner(&map, qrz, apply_slopes));
 
             if skip_sw {
-                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz.unwrap(), apply_slopes);
+                let (last_vrt, last_col) = Self::vertices_and_colors_with_slopes_inner(&map, last_qrz.unwrap(), apply_slopes);
                 let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
                 verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
                 // For transition vertices, use simple up normal
@@ -504,7 +521,7 @@ impl Map {
             let center_normal = Vec3::new(0., 1., 0.); // Center can stay up
 
             // Use height-based color for center vertex
-            let it_center_color = self.height_color_tint(it_qrz.z);
+            let it_center_color = Self::height_color_tint(it_qrz.z);
 
             verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
             norms.extend([ norm_0, norm_5, center_normal, norm_4, norm_3 ]);
@@ -518,7 +535,7 @@ impl Map {
                 let sw_norm_2 = self.calculate_vertex_normal(sw_qrz, 2, &sw_vrt, apply_slopes);
                 let sw_norm_3 = self.calculate_vertex_normal(sw_qrz, 3, &sw_vrt, apply_slopes);
                 let sw_center = Vec3::new(0., 1., 0.);
-                let sw_center_color = self.height_color_tint(sw_qrz.z);
+                let sw_center_color = Self::height_color_tint(sw_qrz.z);
 
                 verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
                 norms.extend([ sw_norm_0, sw_norm_1, sw_center, sw_norm_2, sw_norm_3 ]);
@@ -530,23 +547,23 @@ impl Map {
                 skip_sw = true;
             }
 
-            let we_result = self.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[0], -60);
+            let we_result = map.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[0], -60);
             let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
             // Only use sloped vertices if the tile actually exists in the map
             let (mut we_vrt, we_col) = if we_result.is_some() {
-                self.vertices_and_colors_with_slopes(we_qrz, apply_slopes)
+                Self::vertices_and_colors_with_slopes_inner(&map, we_qrz, apply_slopes)
             } else {
                 // For fake west neighbor, use height-based color
-                let fake_we_color = self.height_color_tint(we_qrz.z);
+                let fake_we_color = Self::height_color_tint(we_qrz.z);
                 (map.vertices(we_qrz), vec![fake_we_color; 6])
             };
-            
+
             // If west neighbor is fake, match its East edge vertices to current tile's West edge
             if we_result.is_none() {
-                we_vrt[1].y = it_vrt[5].y;  // NE of west neighbor = NW of current tile  
+                we_vrt[1].y = it_vrt[5].y;  // NE of west neighbor = NW of current tile
                 we_vrt[2].y = it_vrt[4].y;  // SE of west neighbor = SW of current tile
             }
-            
+
             // Calculate normals for west neighbor (if it exists)
             let we_norm_1 = if we_result.is_some() {
                 self.calculate_vertex_normal(we_qrz, 1, &we_vrt, apply_slopes)
@@ -560,7 +577,7 @@ impl Map {
             };
 
             if let Some(last_qrz) = last_qrz {
-                let (last_vrt, last_col) = self.vertices_and_colors_with_slopes(last_qrz, apply_slopes);
+                let (last_vrt, last_col) = Self::vertices_and_colors_with_slopes_inner(&map, last_qrz, apply_slopes);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
                 west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
                 west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
@@ -569,7 +586,7 @@ impl Map {
             west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
             west_skirt_norms.extend([ norm_5, we_norm_1, norm_4, we_norm_2, norm_4, norm_4 ]);
             west_skirt_colors.extend([ it_col[5], we_col[1], it_col[4], we_col[2], it_col[4], it_col[4] ]);
-            
+
             last_qrz = Some(it_qrz);
         });
 

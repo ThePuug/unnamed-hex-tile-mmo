@@ -104,6 +104,11 @@ mod tests {
 
     #[test]
     fn test_update_grid_triggers_on_map_change() {
+        // Initialize task pool (required for spawn_grid_mesh_task)
+        bevy::tasks::AsyncComputeTaskPool::get_or_init(|| {
+            bevy::tasks::TaskPool::new()
+        });
+
         // Setup app with grid visible
         let mut app = App::new();
         let mut state = DiagnosticsState::default();
@@ -133,7 +138,8 @@ mod tests {
         app.world_mut().resource_mut::<Map>().set_changed();
 
         // Add update system
-        app.add_systems(Update, grid::update_grid_mesh);
+        app.insert_resource(grid::PendingGridMesh::default());
+        app.add_systems(Update, grid::spawn_grid_mesh_task);
 
         // Run one update cycle
         app.update();
@@ -181,7 +187,8 @@ mod tests {
         app.world_mut().resource_mut::<Map>().set_changed();
 
         // Add update system
-        app.add_systems(Update, grid::update_grid_mesh);
+        app.insert_resource(grid::PendingGridMesh::default());
+        app.add_systems(Update, grid::spawn_grid_mesh_task);
 
         // Run one update cycle
         app.update();
