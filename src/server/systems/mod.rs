@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod aoi;
 pub mod behaviour;
 pub mod combat;
 pub mod diagnostics;

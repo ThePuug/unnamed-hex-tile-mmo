@@ -7,10 +7,13 @@ use bevy::prelude::*;
 use std::time::Duration;
 
 use crate::{
-    common::components::{
-        behaviour::Behaviour,
-        engagement::{Engagement, EngagementMember, LastPlayerProximity},
-        Loc,
+    common::{
+        components::{
+            behaviour::Behaviour,
+            engagement::{Engagement, EngagementMember, LastPlayerProximity},
+            Loc,
+        },
+        message::{Do, Event},
     },
     server::resources::engagement_budget::EngagementBudget,
 };
@@ -18,8 +21,11 @@ use crate::{
 /// Abandonment timeout (30 seconds with no players nearby)
 const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Proximity range for abandonment check (60 tiles)
-const PROXIMITY_RANGE: i16 = 60;
+/// Proximity range for abandonment check.
+/// Must exceed the minimum client eviction distance to prevent ghost NPCs.
+/// With FOV_CHUNK_RADIUS=5 and CHUNK_SIZE=16, eviction distance is ~104 tiles.
+/// Set to 120 to exceed AOI EXIT_RADIUS (112) with safety margin.
+const PROXIMITY_RANGE: i16 = 120;
 
 /// System that cleans up completed or abandoned engagements
 ///
@@ -33,6 +39,7 @@ const PROXIMITY_RANGE: i16 = 60;
 pub fn cleanup_engagements(
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
+    mut writer: MessageWriter<Do>,
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
     npc_query: Query<&EngagementMember>,
@@ -55,7 +62,6 @@ pub fn cleanup_engagements(
 
             if is_abandoned {
                 // Double-check: are there really no players nearby?
-                // Find closest ACTUAL player (not NPCs)
                 let closest_player_dist = player_query.iter()
                     .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
                     .map(|(player_loc, _)| engagement_loc.flat_distance(&**player_loc))
@@ -74,14 +80,15 @@ pub fn cleanup_engagements(
             // Unregister from budget
             budget.unregister_engagement(engagement.zone_id);
 
-            // Despawn all NPCs (server-side cleanup, no broadcast needed since clients evict chunks first)
+            // Emit Despawn events for all NPCs — send_do routes via LoadedBy,
+            // cleanup_despawned handles actual entity removal
             for &npc_entity in &engagement.spawned_npcs {
                 if npc_query.get(npc_entity).is_ok() {
-                    commands.entity(npc_entity).despawn();
+                    writer.write(Do { event: Event::Despawn { ent: npc_entity } });
                 }
             }
 
-            // Despawn engagement entity
+            // Despawn engagement entity directly (no network component, clients don't know about it)
             commands.entity(engagement_entity).despawn();
         }
     }

@@ -9,7 +9,6 @@ use crate::{
             entity_type::{ decorator::*, *},
             heading::Heading,
             position::Position,
-            resources::RespawnTimer,
             *
         },
         message::{Component, Event, *},
@@ -131,27 +130,16 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
 }
 
 /// New chunk-based discovery system
+///
+/// Generates terrain for discovered chunks and sends to clients.
+/// Actor discovery is handled by the AOI system (aoi.rs) via LoadedBy tracking.
 pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
     terrain: Res<Terrain>,
     mut map: ResMut<Map>,
-    actors_query: Query<(
-        Entity,
-        &Loc,
-        &EntityType,
-        Option<&ActorAttributes>,
-        Option<&crate::common::components::behaviour::PlayerControlled>,
-        Option<&Heading>,
-        Option<&crate::common::components::resources::Health>,
-        Option<&crate::common::components::resources::Stamina>,
-        Option<&crate::common::components::resources::Mana>,
-        Option<&crate::common::components::resources::CombatState>,
-    ), Without<RespawnTimer>>,
 ) {
-    use crate::common::chunk::is_loc_in_chunk;
-
     for &message in reader.read() {
         if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = message {
             // Check cache first
@@ -195,30 +183,6 @@ pub fn try_discover_chunk(
                     tiles: chunk.tiles.clone(),
                 }
             });
-
-            // Send all actors (NPCs and players) that are in this chunk
-            for (actor_ent, actor_loc, actor_type, attrs, player_controlled, heading, health, stamina, mana, combat_state) in actors_query.iter() {
-                if is_loc_in_chunk(**actor_loc, chunk_id) {
-                    // Send Spawn + all actor components using shared helper
-                    use crate::server::systems::world::generate_actor_spawn_events;
-                    let spawn_events = generate_actor_spawn_events(
-                        actor_ent,
-                        *actor_type,
-                        **actor_loc,
-                        attrs.copied(),
-                        player_controlled,
-                        heading,
-                        health,
-                        stamina,
-                        mana,
-                        combat_state,
-                    );
-
-                    for event in spawn_events {
-                        writer.write(event);
-                    }
-                }
-            }
         }
     }
 }

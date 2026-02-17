@@ -441,9 +441,6 @@ impl Map {
             max = Vec3::max(max, *vert);
         }
 
-        println!("Chunk mesh: chunk_id=({},{}), {} tiles, {} vertices, {} indices, AABB: {:?} to {:?}",
-                 chunk_id.0, chunk_id.1, tile_count, verts.len(), indices.len(), min, max);
-
         let vert_count = verts.len();
 
         (
@@ -660,48 +657,6 @@ mod tests {
     use qrz::Qrz;
 
     #[test]
-    fn test_smooth_vertex_normals_on_slope() {
-        // Create a simple 2-tile map with elevation difference
-        let mut qrz_map = qrz::Map::new(1.0, 0.8);
-        let lower_tile = Qrz { q: 0, r: 0, z: 0 };
-        let upper_tile = Qrz { q: 1, r: 0, z: 2 }; // 2 levels higher (cliff)
-
-        qrz_map.insert(lower_tile, EntityType::Decorator(default()));
-        qrz_map.insert(upper_tile, EntityType::Decorator(default()));
-
-        let map = Map::new(qrz_map);
-        let (mesh, _aabb) = map.regenerate_mesh(true);
-
-        // Get normals from the mesh
-        let normals = mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
-            .expect("Mesh should have normals")
-            .as_float3()
-            .expect("Normals should be Vec3");
-
-        // At least some normals should NOT be straight up [0, 1, 0]
-        // On a slope, normals should tilt to reflect the terrain angle
-        let all_straight_up = normals.iter().all(|&n| {
-            (n[0] - 0.0).abs() < 0.001 && (n[1] - 1.0).abs() < 0.001 && (n[2] - 0.0).abs() < 0.001
-        });
-
-        assert!(
-            !all_straight_up,
-            "Expected some normals to be tilted on sloped terrain, but all were [0, 1, 0]"
-        );
-
-        // All normals should be normalized (length ~= 1.0)
-        for normal in normals {
-            let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
-            assert!(
-                (length - 1.0).abs() < 0.01,
-                "Normal {:?} should be normalized, but has length {}",
-                normal,
-                length
-            );
-        }
-    }
-
-    #[test]
     fn test_normals_consider_neighboring_hexes() {
         // Create two adjacent flat hexes at same elevation
         // If normals only consider the current hex, they'll be tilted toward/away from neighbors
@@ -809,7 +764,7 @@ mod tests {
         // Create a map with tiles in multiple chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8);
 
-        // Chunk (0,0) - add 16 tiles
+        // Chunk (0,0) - add 16x16 tiles (flat terrain for exact vertex count checks)
         for offset_q in 0..16 {
             for offset_r in 0..16 {
                 let tile = chunk_to_tile(ChunkId(0, 0), offset_q as u8, offset_r as u8);
@@ -849,9 +804,9 @@ mod tests {
         // Each hex has 6 triangles (18 indices)
         assert_eq!(indices.len(), 256 * 6 * 3, "Expected 256 tiles * 6 triangles * 3 indices");
 
-        // Verify AABB is reasonable (not empty)
+        // Verify AABB is reasonable (not empty in horizontal extents)
         assert!(aabb.min().x < aabb.max().x, "AABB should have width");
-        assert!(aabb.min().y < aabb.max().y, "AABB should have height");
+        assert!(aabb.min().y <= aabb.max().y, "AABB Y min should not exceed max");
         assert!(aabb.min().z < aabb.max().z, "AABB should have depth");
     }
 

@@ -263,6 +263,7 @@ fn spawn_engagement_at(
                 Physics,
                 Behaviour::default(),         // Will be set by AI system based on archetype
                 EngagementMember(engagement_entity),
+                crate::common::components::loaded_by::LoadedBy::default(),  // AOI: Track which players see this NPC
             ))
             .id();
 

@@ -24,7 +24,7 @@ use crate::{
     },
     server::{
         resources::{engagement_budget::EngagementBudget, terrain::*, *},
-        systems::{actor, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
+        systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
         *
     }
 };
@@ -134,7 +134,8 @@ fn main() {
     ));
 
     app.add_systems(PostUpdate, (
-        renet::send_do,
+        aoi::update_area_of_interest,
+        renet::send_do.after(aoi::update_area_of_interest),
         renet::cleanup_despawned.after(renet::send_do),
     ));
 

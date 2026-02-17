@@ -10,7 +10,6 @@ use crate::{ common::{
             entity_type::{ *,
                 actor::*,
             },
-            heading::*,
             keybits::*,
             reaction_queue::*,
             resources::*,
@@ -25,10 +24,6 @@ use crate::{ common::{
     }, *
 };
 
-// ADR-011 Phase 2: Relevance radius for movement intent broadcasting (30 hexes, larger than FOV)
-// Note: Uses squared Euclidean distance as approximation for performance (R-Tree spatial index)
-// 30 hex distance ≈ 30 tiles in practice given typical hex grid spacing
-const INTENT_RELEVANCE_RADIUS_SQ: i32 = 30 * 30;
 
 pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     let public_addr = "0.0.0.0:5000".parse().unwrap();
@@ -53,13 +48,12 @@ pub fn do_manage_connections(
     trigger: On<RenetServerEvent>,
     mut commands: Commands,
     mut conn: ResMut<RenetServer>,
-    mut writer: MessageWriter<Do>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    query: Query<(&Loc, &EntityType, Option<&ActorAttributes>, Option<&Health>, Option<&Stamina>, Option<&Mana>, Option<&CombatState>, Option<&PlayerControlled>, Option<&Heading>)>,
+    mut loaded_by_query: Query<&mut crate::common::components::loaded_by::LoadedBy>,
+    mut writer: MessageWriter<Do>,
     time: Res<Time>,
     runtime: Res<RunTime>,
-    nntree: Res<NNTree>,
 ) {
     {
         let event = &trigger.event().0;
@@ -73,16 +67,10 @@ pub fn do_manage_connections(
                     ActorIdentity::Player));
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
-                // Level 50: T3 dual-cap build with MAXIMUM spectrum (32 total)
-                // M/G: 9 grace axis + 13 spectrum → Grace=300 (T3), Might=78
-                // V/F: 9 focus axis + 13 spectrum → Focus=300 (T3), Vitality=78
-                // I/P: 0 axis + 6 spectrum → Instinct=36, Presence=36 (balanced)
-                // Total: 22 + 22 + 6 = 50 levels
-                // Spectrum breakdown: 13 + 13 + 6 = 32 (optimal for T3×2)
                 let attrs = ActorAttributes::new(
-                    -9, 13, 0,      // might_grace: 9 axis (grace), 13 spectrum
-                    1, 5, 0,      // vitality_focus: 9 axis (focus), 13 spectrum
-                    -9, 13, 0,       // instinct_presence: 0 axis (balanced), 6 spectrum
+                    -9, 13, 0,
+                    1, 5, 0,
+                    -9, 13, 0,
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();
@@ -129,18 +117,16 @@ pub fn do_manage_connections(
                     mana,
                     combat_state,
                     reaction_queue,
-                    gcd::Gcd::new(),  // GCD component for cooldown tracking
-                    LastAutoAttack::default(),  // ADR-009: Track auto-attack cooldown
+                    gcd::Gcd::new(),
+                    LastAutoAttack::default(),
                     PlayerDiscoveryState::default(),
-                    TierLock::new(),  // ADR-010 Phase 1: Tier lock targeting
-                    crate::common::components::target::Target::default(),  // For unified targeting system
+                    TierLock::new(),
+                    crate::common::components::target::Target::default(),
                 )).id();
-                commands.entity(ent).insert(NearestNeighbor::new(ent, loc));
-
-                // Broadcast Spawn to nearby players (goes through send_do system for proximity filtering)
-                writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) }});
-                // Broadcast PlayerControlled to nearby players so they recognize this as an ally
-                writer.write(Do { event: Event::Incremental { ent, component: Component::PlayerControlled(PlayerControlled) }});
+                commands.entity(ent).insert((
+                    NearestNeighbor::new(ent, loc),
+                    crate::common::components::loaded_by::LoadedBy::default(),
+                ));
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue {
@@ -153,10 +139,8 @@ pub fn do_manage_connections(
                     bincode::config::legacy()).unwrap();
                 conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
 
-                // Send Spawn + all component states directly to connecting client
-                // Can't use event writer here because send_do relies on NNTree proximity,
-                // and this entity isn't in NNTree yet
-                // Use shared helper to ensure consistency with other player spawns
+                // Send own Spawn + component states directly to connecting client
+                // AOI will handle discovering nearby entities via Changed<Loc>
                 use crate::server::systems::world::generate_actor_spawn_events;
                 let spawn_events = generate_actor_spawn_events(
                     ent,
@@ -164,7 +148,7 @@ pub fn do_manage_connections(
                     qrz,
                     Some(attrs),
                     Some(&PlayerControlled),
-                    None,  // No heading initially
+                    None,
                     Some(&health),
                     Some(&stamina),
                     Some(&mana),
@@ -176,40 +160,34 @@ pub fn do_manage_connections(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
-                // spawn nearby actors
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    let (&loc, &typ, attrs, health, stamina, mana, combat_state, player_controlled, heading) = query.get(other.ent).unwrap();
+                // Write Spawn to message bus so do_spawn_discover triggers initial chunk discovery
+                writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
 
-                    // Send Spawn + all actor components using shared helper to ensure consistency
-                    let spawn_events = generate_actor_spawn_events(
-                        other.ent,
-                        typ,
-                        *loc,
-                        attrs.copied(),
-                        player_controlled,
-                        heading,
-                        health,
-                        stamina,
-                        mana,
-                        combat_state,
-                    );
-
-                    for event in spawn_events {
-                        let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
                 lobby.insert(*client_id, ent);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
                 let ent = lobby.remove_by_left(client_id).unwrap().1;
                 buffers.remove(&ent);
+
+                // Send Despawn to all players who had this entity loaded
+                if let Ok(loaded_by) = loaded_by_query.get(ent) {
+                    for &player_ent in &loaded_by.players {
+                        if let Some(player_client_id) = lobby.get_by_right(&player_ent) {
+                            let message = bincode::serde::encode_to_vec(
+                                Do { event: Event::Despawn { ent }},
+                                bincode::config::legacy()).unwrap();
+                            conn.send_message(*player_client_id, DefaultChannel::ReliableOrdered, message);
+                        }
+                    }
+                }
+
+                // Remove disconnected player from all LoadedBy sets
+                for mut loaded_by in loaded_by_query.iter_mut() {
+                    loaded_by.players.remove(&ent);
+                }
+
                 commands.entity(ent).despawn();
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Despawn { ent }}, 
-                    bincode::config::legacy()).unwrap();
-                conn.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
         }
     }
@@ -265,48 +243,19 @@ pub fn write_try(
  }
 
  pub fn send_do(
-    query: Query<&Loc>,
     mut conn: ResMut<RenetServer>,
     mut reader: MessageReader<Do>,
-    nntree: Res<NNTree>,
+    loaded_by_query: Query<&crate::common::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
 ) {
     for &message in reader.read() {
         match message {
-            Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
-                // Always send Spawn to the owning client (for respawns, initial spawns, etc.)
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { ent, typ, qrz, attrs }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-
-                // Also send to nearby players
-                // Range must be at least 35 tiles to cover all chunks within FOV_CHUNK_RADIUS=2
-                // (5x5 chunks, worst-case actor at corner chunk edge ≈ 34 tiles from center)
-                // PLUS buffer for Z-level differences (NNTree uses 3D distance = hex_dist + |z_diff|)
-                // Max terrain Z ~20, player spawns at Z=4, so max Z diff ~16 → use 55 tile radius
-                let nearby = nntree.locate_within_distance(Loc::new(qrz), 55*55).collect::<Vec<_>>();
-                for other in nearby {
-                    let Some(client_id) = lobby.get_by_right(&other.ent) else {
-                        continue;
-                    };
-                    // Skip if already sent above
-                    if other.ent == ent { continue; }
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Spawn { ent, typ, qrz, attrs }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-            }
+            // Spawn events are handled by the AOI system — skip here
+            Do { event: Event::Spawn { .. } } => {}
             Do { event: Event::Incremental { ent, component } } => {
-                match component {
-                    Component::KeyBits(_) => continue,
-                    _ => {}
-                }
+                if matches!(component, Component::KeyBits(_)) { continue; }
 
-                // Always send Incremental to owning client first (for respawns, etc.)
+                // Send to owning client
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Incremental { ent, component }},
@@ -314,36 +263,30 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
-                // Also send to nearby players (skip owning client to avoid duplicate)
-                // Entity might have been despawned in the same frame, so handle gracefully
-                // Range must match Spawn events (55 tiles) to ensure component updates reach all discovering players
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 55*55) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
-                        // Skip if we already sent to this client above
-                        if other.ent == ent { continue; }
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Incremental { ent, component }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
+                // Send to all players who have this entity loaded (skip owner to avoid duplicate)
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Incremental { ent, component }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             Do { event: Event::Despawn { ent } } => {
-                // Send despawn event to players who might have this entity rendered
-                // Use a large radius (70 tiles) to ensure despawns reach all players within despawn_distance (60) with buffer
-                if let Ok(&loc) = query.get(ent) {
-                    for other in nntree.locate_within_distance(loc, 70*70) {
-                        if let Some(client_id) = lobby.get_by_right(&other.ent) {
-                            let message = bincode::serde::encode_to_vec(
-                                Do { event: Event::Despawn { ent }},
-                                bincode::config::legacy()).unwrap();
-                            conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
-                        }
+                // Send despawn to all players who have this entity loaded
+                let Ok(loaded_by) = loaded_by_query.get(ent) else {
+                    warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
+                    continue;
+                };
+                for &player_ent in &loaded_by.players {
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
+                        let message = bincode::serde::encode_to_vec(
+                            Do { event: Event::Despawn { ent }},
+                            bincode::config::legacy()).unwrap();
+                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
-                    // Note: Actual despawning happens in cleanup_despawned system (PostUpdate)
-                } else {
-                    warn!("SERVER: Cannot send Despawn for entity {:?} - no Loc component", ent);
                 }
             }
             Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
@@ -356,10 +299,17 @@ pub fn write_try(
                 }
             }
             Do { event: Event::InsertThreat { ent, threat } } => {
-                // Send threat insertion to nearby players
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                // Send to owning client (player receiving threat needs to see it)
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::InsertThreat { ent, threat }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::InsertThreat { ent, threat }},
                             bincode::config::legacy()).unwrap();
@@ -368,10 +318,16 @@ pub fn write_try(
                 }
             }
             Do { event: Event::ApplyDamage { ent, damage, source } } => {
-                // Send damage application to nearby players
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::ApplyDamage { ent, damage, source }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::ApplyDamage { ent, damage, source }},
                             bincode::config::legacy()).unwrap();
@@ -380,10 +336,16 @@ pub fn write_try(
                 }
             }
             Do { event: Event::ClearQueue { ent, clear_type } } => {
-                // Send queue clear to nearby players
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::ClearQueue { ent, clear_type }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::ClearQueue { ent, clear_type }},
                             bincode::config::legacy()).unwrap();
@@ -392,10 +354,16 @@ pub fn write_try(
                 }
             }
             Do { event: Event::Gcd { ent, typ } } => {
-                // Send GCD to nearby players
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::Gcd { ent, typ }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Gcd { ent, typ }},
                             bincode::config::legacy()).unwrap();
@@ -413,10 +381,16 @@ pub fn write_try(
                 }
             }
             Do { event: Event::UseAbility { ent, ability, target_loc } } => {
-                // Send ability success to nearby players (ADR-012: client applies recovery/synergies)
-                let Ok(&loc) = query.get(ent) else { continue; };
-                for other in nntree.locate_within_distance(loc, 20*20) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::UseAbility { ent, ability, target_loc }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if player_ent == ent { continue; }
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::UseAbility { ent, ability, target_loc }},
                             bincode::config::legacy()).unwrap();
@@ -425,23 +399,16 @@ pub fn write_try(
                 }
             }
             Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
-                // ADR-011 Phase 2: Send movement intent to nearby players for client-side prediction
-                // Uses Unreliable channel + relevance filtering for optimal bandwidth/latency
-                // Dropped packets are acceptable - next intent supersedes previous (self-correcting)
-                let Ok(&loc) = query.get(ent) else {
-                    warn!("Cannot send MovementIntent for entity {:?} - no Loc component", ent);
-                    continue;
-                };
-
-                for other in nntree.locate_within_distance(loc, INTENT_RELEVANCE_RADIUS_SQ) {
-                    if let Some(client_id) = lobby.get_by_right(&other.ent) {
+                // ADR-011: Movement intent via Unreliable channel for client-side prediction
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                for &player_ent in &loaded_by.players {
+                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::MovementIntent { ent, destination, duration_ms }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::Unreliable, message);
                     }
                 }
-
             }
             Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
                 // Send respec confirmation only to the owning client

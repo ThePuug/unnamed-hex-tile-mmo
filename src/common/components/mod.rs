@@ -7,6 +7,7 @@ pub mod heading;
 pub mod heal;
 pub mod hex_assignment;
 pub mod keybits;
+pub mod loaded_by;
 pub mod movement_intent_state;
 pub mod movement_prediction;
 pub mod npc_recovery;
@@ -953,21 +954,20 @@ mod tests {
 
     #[test]
     fn test_commitment_tier_thresholds() {
-        // T0: below 30%
-        assert_eq!(CommitmentTier::calculate(29, 100), CommitmentTier::T0);
+        // T0: below 20%
+        assert_eq!(CommitmentTier::calculate(19, 100), CommitmentTier::T0);
         assert_eq!(CommitmentTier::calculate(0, 100), CommitmentTier::T0);
 
-        // T1: exactly 30% and above
-        assert_eq!(CommitmentTier::calculate(30, 100), CommitmentTier::T1);
-        assert_eq!(CommitmentTier::calculate(44, 100), CommitmentTier::T1);
+        // T1: 20% and above
+        assert_eq!(CommitmentTier::calculate(20, 100), CommitmentTier::T1);
+        assert_eq!(CommitmentTier::calculate(39, 100), CommitmentTier::T1);
 
-        // T2: exactly 45% and above
-        assert_eq!(CommitmentTier::calculate(45, 100), CommitmentTier::T2);
+        // T2: 40% and above
+        assert_eq!(CommitmentTier::calculate(40, 100), CommitmentTier::T2);
         assert_eq!(CommitmentTier::calculate(59, 100), CommitmentTier::T2);
 
-        // T3: above 60% (not including 60%)
-        assert_eq!(CommitmentTier::calculate(60, 100), CommitmentTier::T2); // Exactly 60% is T2
-        assert_eq!(CommitmentTier::calculate(61, 100), CommitmentTier::T3); // 61% is T3
+        // T3: 60% and above
+        assert_eq!(CommitmentTier::calculate(60, 100), CommitmentTier::T3);
         assert_eq!(CommitmentTier::calculate(100, 100), CommitmentTier::T3);
     }
 
@@ -989,11 +989,13 @@ mod tests {
     #[test]
     fn test_commitment_tier_non_round_budget() {
         // Verify with non-round total budget values
-        // 30 out of 73 = 41.1% → T1
-        assert_eq!(CommitmentTier::calculate(30, 73), CommitmentTier::T1);
-        // 33 out of 73 = 45.2% → T2
-        assert_eq!(CommitmentTier::calculate(33, 73), CommitmentTier::T2);
-        // 44 out of 73 = 60.3% → T3
+        // 30 out of 73 = 41.1% → T2 (≥40%)
+        assert_eq!(CommitmentTier::calculate(30, 73), CommitmentTier::T2);
+        // 14 out of 73 = 19.2% → T0 (<20%)
+        assert_eq!(CommitmentTier::calculate(14, 73), CommitmentTier::T0);
+        // 15 out of 73 = 20.5% → T1 (≥20%)
+        assert_eq!(CommitmentTier::calculate(15, 73), CommitmentTier::T1);
+        // 44 out of 73 = 60.3% → T3 (≥60%)
         assert_eq!(CommitmentTier::calculate(44, 73), CommitmentTier::T3);
     }
 
@@ -1026,9 +1028,9 @@ mod tests {
         // total_level = |axis| + spectrum = 3 + 2 = 5
         assert_eq!(attrs.total_level(), 5);
         // With axis=-3 (might), spectrum=2, shift=0:
-        // might = 3*10 + 2*6 - 0 = 42, grace = 0 (opposite side, no shift)
-        // total_budget = 42 + 0 + 0+0+0+0 = 42
-        assert_eq!(attrs.total_budget(), 42);
+        // might = 3×16 + 2×12 = 72, grace = 0 (opposite side, no shift)
+        // total_budget = 72 + 0 + 0+0+0+0 = 72
+        assert_eq!(attrs.total_budget(), 72);
         assert_ne!(attrs.total_level(), attrs.total_budget() as u32);
     }
 
@@ -1047,48 +1049,44 @@ mod tests {
     #[test]
     fn test_commitment_tier_for_balanced_build() {
         // Spread across pairs: each pair gets some investment
-        // M/G: axis=0, spectrum=3 → might=21, grace=21
-        // V/F: axis=0, spectrum=3 → vitality=21, focus=21
-        // I/P: axis=0, spectrum=3 → instinct=21, presence=21
-        // total_budget = 126, each attr = 21/126 = 16.7% → all T0
+        // M/G: axis=0, spectrum=3 → might=18, grace=18 (3×6 balanced multiplier)
+        // V/F: axis=0, spectrum=3 → vitality=18, focus=18
+        // I/P: axis=0, spectrum=3 → instinct=18, presence=18
+        // total_level = 9, max_possible = 90
+        // each attr = 18/90 = 20% → T1 (exactly at threshold)
         let attrs = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
-        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T0);
-        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T0);
-        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T0);
-        assert_eq!(attrs.commitment_tier_for(attrs.focus()), CommitmentTier::T0);
+        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.focus()), CommitmentTier::T1);
     }
 
     #[test]
     fn test_commitment_tier_budget_constraints() {
-        // Verify that T3+T1 is achievable (60%+30%=90%)
-        // Need: one attr at ≥60%, another at ≥30%
-        // axis=-6, spectrum=0 → might=60, grace=0
-        // axis=0, spectrum=0, axis=-3, spectrum=0 → vitality=30
-        // total_budget = 60 + 0 + 30 + 0 + 0 + 0 = 90
-        // might: 60/90 = 66.7% → T3 ✓
-        // vitality: 30/90 = 33.3% → T1 ✓
+        // T3+T2 build:
+        // axis=-6 → might = 6×16 = 96, axis=-3 → vitality = 3×16 = 48
+        // total_level = 9, max_possible = 90
+        // might: 96/90 = 106.7% → T3 ✓
+        // vitality: 48/90 = 53.3% → T2 ✓
         let attrs = ActorAttributes::new(-6, 0, 0, -3, 0, 0, 0, 0, 0);
         assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
-        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T2);
     }
 
     #[test]
     fn test_commitment_tier_dual_t2() {
-        // Verify dual T2 is achievable (45%+45%=90%)
-        // might=45, vitality=45, total_budget=90
-        // Both at 50% → T2
-        // axis=-4, spectrum=0 → might=40... not quite
-        // We need derived values that work out. Let's use:
-        // M/G: axis=-4, spectrum=1 → might=47, grace=7
-        // V/F: axis=-4, spectrum=1 → vitality=47, focus=7
-        // total_budget = 47+7+47+7+0+0 = 108
-        // might: 47/108 = 43.5% → T1 (just under T2)
-        // Let's try axis=-5, spectrum=0:
-        // might=50, grace=0, vitality=50, focus=0 → total=100
-        // might: 50/100 = 50% → T2 ✓, vitality: 50/100 = 50% → T2 ✓
-        let attrs = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
+        // Dual T2 with axis×16 scaling:
+        // axis=-3 on two pairs: total_level = 6, max_possible = 60
+        // might = 3×16 = 48 → 48/60 = 80% → T3 (too high for single pair!)
+        //
+        // Spread to three pairs for T2:
+        // axis=-3 each → total_level = 9, max_possible = 90
+        // might = 48 → 48/90 = 53.3% → T2 ✓
+        // vitality = 48 → 53.3% → T2 ✓
+        let attrs = ActorAttributes::new(-3, 0, 0, -3, 0, 0, -3, 0, 0);
         assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T2);
         assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T2);
+        assert_eq!(attrs.commitment_tier_for(attrs.instinct()), CommitmentTier::T2);
     }
 
     // ===== SHIFT CONSTRAINT TESTS =====
@@ -1171,182 +1169,6 @@ mod tests {
 
         attrs.set_instinct_presence_shift(0);
         assert_eq!(attrs.instinct_presence_shift(), 0);
-    }
-
-    #[test]
-    #[ignore] // Manual exploration test - run with --ignored to see output
-    fn explore_build_variations() {
-        println!("\n=== BUILD VARIATIONS ===\n");
-
-        // 3-point builds (early game)
-        println!("--- 3-POINT BUILDS (Early Game) ---");
-        println!("Max possible = 30");
-        let early = [
-            ("3 might axis", -3, 0, 0, 0, 0, 0, 0, 0, 0),
-            ("3 spectrum", 0, 3, 0, 0, 0, 0, 0, 0, 0),
-            ("2 axis + 1 spec", -2, 1, 0, 0, 0, 0, 0, 0, 0),
-        ];
-        for (desc, a1, a2, a3, a4, a5, a6, a7, a8, a9) in early {
-            let attrs = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("{}: M={} ({:?}), G={} ({:?}), total={}",
-                desc, attrs.might(), attrs.commitment_tier_for(attrs.might()),
-                attrs.grace(), attrs.commitment_tier_for(attrs.grace()),
-                attrs.might() + attrs.grace());
-        }
-
-        // 10-point single-pair builds
-        println!("\n--- 10-POINT SINGLE-PAIR BUILDS ---");
-        println!("Max possible = 100, T1≥30, T2≥45, T3>60\n");
-
-        let single = [
-            ("10 axis (specialist)", -10, 0, 0, 0, 0, 0, 0, 0, 0),
-            ("10 spectrum (flexible)", 0, 10, 0, 0, 0, 0, 0, 0, 0),
-            ("7 axis + 3 spec", -7, 3, 0, 0, 0, 0, 0, 0, 0),
-            ("5 axis + 5 spec", -5, 5, 0, 0, 0, 0, 0, 0, 0),
-            ("3 axis + 7 spec", -3, 7, 0, 0, 0, 0, 0, 0, 0),
-        ];
-        for (desc, a1, a2, a3, a4, a5, a6, a7, a8, a9) in single {
-            let attrs = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("{}: M={} ({:?}), G={} ({:?}), total={}",
-                desc, attrs.might(), attrs.commitment_tier_for(attrs.might()),
-                attrs.grace(), attrs.commitment_tier_for(attrs.grace()),
-                attrs.might() + attrs.grace());
-        }
-
-        // Cross-pair builds
-        println!("\n--- 10-POINT CROSS-PAIR BUILDS ---");
-        let cross = [
-            ("M/G 3 axis + I/P 6 axis + 1 spec", 3, 0, 0, 0, 0, 0, 6, 1, 0),
-            ("M/G 5 axis + V/F 5 axis", -5, 0, 0, -5, 0, 0, 0, 0, 0),
-            ("M/G 3/3 + V/F 4", -3, 3, 0, -4, 0, 0, 0, 0, 0),
-            ("All spectrum (3/3/4)", 0, 3, 0, 0, 3, 0, 0, 4, 0),
-        ];
-        for (desc, a1, a2, a3, a4, a5, a6, a7, a8, a9) in cross {
-            let attrs = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("{}", desc);
-            println!("  M={} ({:?}), G={} ({:?})", attrs.might(), attrs.commitment_tier_for(attrs.might()),
-                attrs.grace(), attrs.commitment_tier_for(attrs.grace()));
-            println!("  V={} ({:?}), F={} ({:?})", attrs.vitality(), attrs.commitment_tier_for(attrs.vitality()),
-                attrs.focus(), attrs.commitment_tier_for(attrs.focus()));
-            println!("  I={} ({:?}), P={} ({:?})", attrs.instinct(), attrs.commitment_tier_for(attrs.instinct()),
-                attrs.presence(), attrs.commitment_tier_for(attrs.presence()));
-            println!("  Total: {}\n", attrs.might() + attrs.grace() + attrs.vitality() +
-                attrs.focus() + attrs.instinct() + attrs.presence());
-        }
-
-        // Strategic build examples
-        println!("\n--- STRATEGIC BUILD EXAMPLES (Level 10) ---\n");
-
-        println!("SINGLE-PAIR (10 points in one pair):");
-        let examples = [
-            ("Glass Cannon", -10, 0, 0, 0, 0, 0, 0, 0, 0, "Max damage, no defense"),
-            ("Tank", 0, 0, 0, -10, 0, 0, 0, 0, 0, "Max health, low damage"),
-            ("Balanced DPS", 0, 10, 0, 0, 0, 0, 0, 0, 0, "Dual T2 might/grace"),
-        ];
-        for (name, a1, a2, a3, a4, a5, a6, a7, a8, a9, note) in examples {
-            let a = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("  {}: {}", name, note);
-            println!("    M={} ({:?}), G={} ({:?}), V={} ({:?}), F={} ({:?}), I={} ({:?}), P={} ({:?})",
-                a.might(), a.commitment_tier_for(a.might()),
-                a.grace(), a.commitment_tier_for(a.grace()),
-                a.vitality(), a.commitment_tier_for(a.vitality()),
-                a.focus(), a.commitment_tier_for(a.focus()),
-                a.instinct(), a.commitment_tier_for(a.instinct()),
-                a.presence(), a.commitment_tier_for(a.presence()));
-        }
-
-        println!("\nDUAL-PAIR (10 points across two pairs):");
-        let dual = [
-            ("Bruiser", -5, 0, 0, -5, 0, 0, 0, 0, 0, "T2 might + T2 vitality"),
-            ("Duelist", -6, 0, 0, 0, 0, 0, -4, 0, 0, "T3 might + T1 instinct (crit)"),
-            ("Presence Tank", 0, 0, 0, -7, 0, 0, 3, 0, 0, "T3 vitality + T1 presence"),
-            ("Flex Fighter", -3, 3, 0, -4, 0, 0, 0, 0, 0, "T3 might + T1 grace + T1 vitality"),
-        ];
-        for (name, a1, a2, a3, a4, a5, a6, a7, a8, a9, note) in dual {
-            let a = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("  {}: {}", name, note);
-            println!("    M={} ({:?}), G={} ({:?}), V={} ({:?}), F={} ({:?}), I={} ({:?}), P={} ({:?})",
-                a.might(), a.commitment_tier_for(a.might()),
-                a.grace(), a.commitment_tier_for(a.grace()),
-                a.vitality(), a.commitment_tier_for(a.vitality()),
-                a.focus(), a.commitment_tier_for(a.focus()),
-                a.instinct(), a.commitment_tier_for(a.instinct()),
-                a.presence(), a.commitment_tier_for(a.presence()));
-        }
-
-        println!("\nTRIPLE-PAIR (10 points across all three pairs):");
-        let triple = [
-            ("Jack of All Trades", -3, 0, 0, -3, 0, 0, -4, 0, 0, "T1 each, spread thin"),
-            ("Spectrum Generalist", 0, 3, 0, 0, 3, 0, 0, 4, 0, "T2 on 6 stats but low values"),
-            ("Hybrid Versatile", -4, 1, 0, -3, 1, 0, -1, 1, 0, "Mixed approach"),
-        ];
-        for (name, a1, a2, a3, a4, a5, a6, a7, a8, a9, note) in triple {
-            let a = ActorAttributes::new(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-            println!("  {}: {}", name, note);
-            println!("    M={} ({:?}), G={} ({:?}), V={} ({:?}), F={} ({:?}), I={} ({:?}), P={} ({:?})",
-                a.might(), a.commitment_tier_for(a.might()),
-                a.grace(), a.commitment_tier_for(a.grace()),
-                a.vitality(), a.commitment_tier_for(a.vitality()),
-                a.focus(), a.commitment_tier_for(a.focus()),
-                a.instinct(), a.commitment_tier_for(a.instinct()),
-                a.presence(), a.commitment_tier_for(a.presence()));
-            let total = a.might() + a.grace() + a.vitality() + a.focus() + a.instinct() + a.presence();
-            println!("    Total stats: {}\n", total);
-        }
-
-        panic!("Exploration complete - check output above");
-    }
-
-    #[test]
-    #[ignore]
-    fn find_build_varieties() {
-        println!("\n=== 10-POINT BUILD VARIETIES ===");
-        println!("Axis×16, Spectrum×12, Axis=0×6");
-        println!("T1≥30, T2≥45, T3≥60\n");
-
-        let builds = [
-            // Pure axis builds
-            ("4/0/0 + 4/0/0 + 2/0/0", (-4,0,0, -4,0,0, -2,0,0)),
-            ("4/0/0 + 3/0/0 + 3/0/0", (-4,0,0, -3,0,0, -3,0,0)),
-            ("5/0/0 + 5/0/0", (-5,0,0, -5,0,0, 0,0,0)),
-
-            // Pure spectrum builds
-            ("0/5/0 + 0/5/0", (0,5,0, 0,5,0, 0,0,0)),
-            ("0/4/0 + 0/3/0 + 0/3/0", (0,4,0, 0,3,0, 0,3,0)),
-            ("0/3/0 + 0/3/0 + 0/4/0", (0,3,0, 0,3,0, 0,4,0)),
-
-            // Hybrid builds
-            ("2/3/0 + 2/3/0", (-2,3,0, -2,3,0, 0,0,0)),
-            ("1/4/0 + 1/4/0", (-1,4,0, -1,4,0, 0,0,0)),
-            ("3/2/0 + 3/2/0", (-3,2,0, -3,2,0, 0,0,0)),
-        ];
-
-        for (desc, (a1,a2,a3, a4,a5,a6, a7,a8,a9)) in builds {
-            let attrs = ActorAttributes::new(a1,a2,a3, a4,a5,a6, a7,a8,a9);
-            let m = attrs.might();
-            let g = attrs.grace();
-            let v = attrs.vitality();
-            let f = attrs.focus();
-            let i = attrs.instinct();
-            let p = attrs.presence();
-
-            let tiers: Vec<_> = [m,g,v,f,i,p].iter()
-                .filter(|&&val| val > 0)
-                .map(|&val| attrs.commitment_tier_for(val))
-                .collect();
-
-            let tier_counts = format!(
-                "{}×T3 + {}×T2 + {}×T1",
-                tiers.iter().filter(|&&t| t == CommitmentTier::T3).count(),
-                tiers.iter().filter(|&&t| t == CommitmentTier::T2).count(),
-                tiers.iter().filter(|&&t| t == CommitmentTier::T1).count()
-            );
-
-            let total = m + g + v + f + i + p;
-            println!("{} = {} ({})", desc, tier_counts, total);
-        }
-
-        panic!("Exploration complete");
     }
 
 }
