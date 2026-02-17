@@ -27,7 +27,7 @@ pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut reader: MessageReader<DevConsoleAction>,
-    map_state: Res<crate::common::resources::map::MapState>,
+    map: Res<crate::common::resources::map::Map>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
@@ -81,17 +81,12 @@ pub fn execute_console_actions(
 
                 let pool = bevy::tasks::AsyncComputeTaskPool::get();
                 for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_arc = map_state.map.clone();
+                    let map_snapshot = map.clone();
                     let apply_slopes = diagnostics_state.slope_rendering_enabled;
                     let chunk_id = chunk_mesh.chunk_id;
 
                     let task = pool.spawn(async move {
-                        // Acquire read lock (blocks if drain task has write lock)
-                        let map_lock = map_arc.read().unwrap();
-
-                        // Generate mesh using temporary Map wrapper
-                        let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
-                        map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+                        map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
                     });
 
                     pending_meshes.tasks.insert(chunk_id, task);
@@ -111,17 +106,12 @@ pub fn execute_console_actions(
 
                 let pool = bevy::tasks::AsyncComputeTaskPool::get();
                 for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_arc = map_state.map.clone();
+                    let map_snapshot = map.clone();
                     let apply_slopes = diagnostics_state.slope_rendering_enabled;
                     let chunk_id = chunk_mesh.chunk_id;
 
                     let task = pool.spawn(async move {
-                        // Acquire read lock (blocks if drain task has write lock)
-                        let map_lock = map_arc.read().unwrap();
-
-                        // Generate mesh using temporary Map wrapper
-                        let map_wrapper = crate::common::resources::map::Map::from_inner(map_lock.clone());
-                        map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+                        map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
                     });
 
                     pending_meshes.tasks.insert(chunk_id, task);

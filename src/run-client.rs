@@ -88,6 +88,7 @@ fn main() {
     app.add_systems(PreUpdate, (
         // Ensure proper ordering: update_keybits -> tick -> do_input
         input::update_keybits,
+        common::resources::map::refresh_map,
     ));
 
     app.add_systems(FixedUpdate, (

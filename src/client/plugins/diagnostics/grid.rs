@@ -124,9 +124,8 @@ pub fn spawn_grid_mesh_task(
     // Clear the forced regeneration flag
     overlay.needs_regeneration = false;
 
-    // Snapshot map data into a separate RwLock to avoid holding the shared lock
-    // during expensive grid mesh generation (prevents contention with drain_loop)
-    let map_snapshot = map.snapshot();
+    // Clone the Map (O(1) Arc clone) for the async task
+    let map_snapshot = map.clone();
     let apply_slopes = state.slope_rendering_enabled;
     let pool = AsyncComputeTaskPool::get();
 

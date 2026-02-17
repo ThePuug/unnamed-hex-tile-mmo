@@ -143,6 +143,10 @@ where T : Copy {
         ]
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&Qrz, &T)> {
+        self.tree.iter()
+    }
+
     pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz,T)> {
         let mut neighbors = Vec::new();
         for check in qrz.neighbors() {

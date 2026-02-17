@@ -65,7 +65,7 @@ pub fn setup(
 /// This system runs periodically and automatically generates meshes after the drain loop
 /// processes tile events, avoiding the need for coordination between systems
 pub fn spawn_missing_chunk_meshes(
-    map_state: Res<crate::common::resources::map::MapState>,
+    map: Res<crate::common::resources::map::Map>,
     chunk_mesh_query: Query<&ChunkMesh>,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     diagnostics_state: Res<DiagnosticsState>,
@@ -81,14 +81,8 @@ pub fn spawn_missing_chunk_meshes(
         .collect();
 
     // Scan the map to find which chunks have tiles
-    // Clone map and release lock BEFORE iterating (avoid holding read lock too long)
-    let map_clone = {
-        let map = map_state.map.read().unwrap();
-        map.clone()
-    }; // Read lock released here
-
     let mut chunks_with_tiles: HashSet<ChunkId> = HashSet::new();
-    for (qrz, _) in map_clone.into_iter() {
+    for (qrz, _) in map.iter_tiles() {
         chunks_with_tiles.insert(loc_to_chunk(qrz));
     }
 
@@ -101,19 +95,13 @@ pub fn spawn_missing_chunk_meshes(
             continue;
         }
 
-        // Spawn async mesh generation task
-        let map_arc = map_state.map.clone();
+        // Clone Map (O(1) Arc clone) for async task
+        let map_snapshot = map.clone();
         let apply_slopes = diagnostics_state.slope_rendering_enabled;
         let chunk_id = *chunk_id; // Copy ChunkId for async move
 
         let task = pool.spawn(async move {
-            // Snapshot map data into separate RwLock, then release the shared lock
-            // before expensive mesh generation (prevents contention with drain_loop)
-            let map_wrapper = {
-                let map_lock = map_arc.read().unwrap();
-                crate::common::resources::map::Map::from_inner(map_lock.clone())
-            }; // Shared read lock released here
-            map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+            map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
         });
 
         pending_meshes.tasks.insert(chunk_id, task);
@@ -136,15 +124,11 @@ pub fn spawn_missing_chunk_meshes(
     for chunk_id in chunks_to_regenerate {
         pending_meshes.tasks.remove(&chunk_id);
 
-        let map_arc = map_state.map.clone();
+        let map_snapshot = map.clone();
         let apply_slopes = diagnostics_state.slope_rendering_enabled;
 
         let task = pool.spawn(async move {
-            let map_wrapper = {
-                let map_lock = map_arc.read().unwrap();
-                crate::common::resources::map::Map::from_inner(map_lock.clone())
-            };
-            map_wrapper.generate_chunk_mesh(chunk_id, apply_slopes)
+            map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
         });
 
         pending_meshes.tasks.insert(chunk_id, task);
@@ -156,7 +140,6 @@ pub fn poll_chunk_mesh_tasks(
     mut commands: Commands,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut map: ResMut<crate::common::resources::map::Map>,
     terrain_material: Res<TerrainMaterial>,
     chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh)>,
 ) {
@@ -177,9 +160,6 @@ pub fn poll_chunk_mesh_tasks(
 
     // Spawn or update mesh entities for completed tasks
     if !completed_chunks.is_empty() {
-        // Mark map as changed to trigger grid overlay regeneration
-        map.set_changed();
-
         for (chunk_id, chunk_mesh) in completed_chunks {
             // Check if mesh entity for this chunk already exists
             let existing_entity = chunk_mesh_query.iter()
@@ -228,19 +208,16 @@ pub fn do_init(
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
     map_state: Res<crate::common::resources::map::MapState>,
-    mut map: ResMut<crate::common::resources::map::Map>,
 ) {
     use crate::common::resources::map::TileEvent;
 
     // Queue tile spawn events (drain loop will process them)
+    // refresh_map system will swap in new snapshot and trigger Bevy change detection
     for &message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
 
         map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
     }
-
-    // Note: ResMut<Map> marks map as changed for grid overlay detection
-    // Mesh generation happens in spawn_missing_chunk_meshes system
 }
 
 
@@ -305,6 +282,7 @@ pub fn update(
 pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    map: Res<crate::common::resources::map::Map>,
     map_state: Res<crate::common::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
@@ -357,13 +335,7 @@ pub fn evict_distant_chunks(
     {
         use crate::common::resources::map::TileEvent;
 
-        // Clone map and release lock BEFORE iterating
-        let map_clone = {
-            let map_lock = map_state.map.read().unwrap();
-            map_lock.clone()
-        }; // Read lock released here
-
-        let tiles_to_remove: Vec<_> = map_clone.into_iter()
+        let tiles_to_remove: Vec<_> = map.iter_tiles()
             .filter_map(|(qrz, _typ)| {
                 let tile_chunk = loc_to_chunk(qrz);
                 if evictable.contains(&tile_chunk) {
