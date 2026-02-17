@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::net::UdpSocket;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 // Mirror of common::metrics — keep in sync, version check catches drift.
 const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-const METRICS_VERSION: u16 = 4;
+const METRICS_VERSION: u16 = 6;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ServerMetrics {
@@ -17,20 +18,74 @@ struct ServerMetrics {
     connected_players: u32,
     tick_duration_us: u64,
     tick_duration_max_us: u64,
+    tick_overrun_count: u64,
     memory_bytes: u64,
     memory_map_bytes: u64,
     frame_duration_us: u64,
     frame_duration_max_us: u64,
+    frame_overrun_count: u64,
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const MB: f64 = 1024.0 * 1024.0;
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.2} GB", b / GB)
+/// Ring buffer for sparkline history.
+const HISTORY_LEN: usize = 60;
+
+/// 2-minute window at 2s intervals = 60 snapshots.
+const WINDOW_LEN: usize = 60;
+
+struct History(VecDeque<f64>);
+
+impl History {
+    fn new() -> Self {
+        Self(VecDeque::with_capacity(HISTORY_LEN))
+    }
+
+    fn push(&mut self, val: f64) {
+        if self.0.len() >= HISTORY_LEN {
+            self.0.pop_front();
+        }
+        self.0.push_back(val);
+    }
+}
+
+/// Rolling window that tracks a value over WINDOW_LEN snapshots.
+/// Used to compute peaks and deltas over the 2-minute window.
+struct RollingWindow(VecDeque<f64>);
+
+impl RollingWindow {
+    fn new() -> Self {
+        Self(VecDeque::with_capacity(WINDOW_LEN + 1))
+    }
+
+    fn push(&mut self, val: f64) {
+        if self.0.len() > WINDOW_LEN {
+            self.0.pop_front();
+        }
+        self.0.push_back(val);
+    }
+
+    /// Max value in the window.
+    fn max(&self) -> f64 {
+        self.0.iter().copied().fold(0.0_f64, f64::max)
+    }
+
+    /// Difference between newest and oldest value (for cumulative counters).
+    fn delta(&self) -> f64 {
+        if self.0.len() < 2 {
+            return 0.0;
+        }
+        self.0.back().unwrap() - self.0.front().unwrap()
+    }
+}
+
+// --- Limits coloring ---
+
+fn limit_color(val: f64, green_below: f64, yellow_below: f64) -> egui::Color32 {
+    if val < green_below {
+        egui::Color32::from_rgb(80, 200, 80)
+    } else if val < yellow_below {
+        egui::Color32::from_rgb(230, 180, 40)
     } else {
-        format!("{:.1} MB", b / MB)
+        egui::Color32::from_rgb(220, 60, 60)
     }
 }
 
@@ -41,15 +96,18 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 340.0])
-            .with_min_inner_size([320.0, 280.0]),
+            .with_inner_size([520.0, 260.0])
+            .with_min_inner_size([420.0, 200.0]),
         ..Default::default()
     };
 
     eframe::run_native(
         "Server Console",
         options,
-        Box::new(|_cc| Ok(Box::new(ConsoleApp::new(rx)))),
+        Box::new(|cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            Ok(Box::new(ConsoleApp::new(rx)))
+        }),
     )
 }
 
@@ -90,7 +148,7 @@ fn receiver_loop(tx: mpsc::Sender<ServerMetrics>) {
         };
 
         if tx.send(metrics).is_err() {
-            break; // GUI closed
+            break;
         }
     }
 }
@@ -101,6 +159,17 @@ struct ConsoleApp {
     previous: Option<ServerMetrics>,
     last_received: Option<Instant>,
     ticks_per_sec: f64,
+
+    // Sparkline histories (60 samples = 2 min at 2s intervals)
+    hist_frame: History,
+    hist_tick: History,
+    hist_mem: History,
+
+    // Rolling 2-minute windows for peaks and counters
+    window_frame_peak: RollingWindow,
+    window_frame_overruns: RollingWindow,
+    window_tick_peak: RollingWindow,
+    window_tick_overruns: RollingWindow,
 }
 
 impl ConsoleApp {
@@ -111,6 +180,13 @@ impl ConsoleApp {
             previous: None,
             last_received: None,
             ticks_per_sec: 0.0,
+            hist_frame: History::new(),
+            hist_tick: History::new(),
+            hist_mem: History::new(),
+            window_frame_peak: RollingWindow::new(),
+            window_frame_overruns: RollingWindow::new(),
+            window_tick_peak: RollingWindow::new(),
+            window_tick_overruns: RollingWindow::new(),
         }
     }
 
@@ -120,6 +196,23 @@ impl ConsoleApp {
             latest = Some(snapshot);
         }
         if let Some(snapshot) = latest {
+            // Record sparkline history
+            let frame_ms = snapshot.frame_duration_us as f64 / 1000.0;
+            let tick_ms = snapshot.tick_duration_us as f64 / 1000.0;
+            let mem_mb = snapshot.memory_bytes as f64 / (1024.0 * 1024.0);
+            self.hist_frame.push(frame_ms);
+            self.hist_tick.push(tick_ms);
+            self.hist_mem.push(mem_mb);
+
+            // Rolling windows — track per-snapshot peaks and cumulative counter
+            let frame_peak_ms = snapshot.frame_duration_max_us as f64 / 1000.0;
+            let tick_peak_ms = snapshot.tick_duration_max_us as f64 / 1000.0;
+            self.window_frame_peak.push(frame_peak_ms);
+            self.window_frame_overruns.push(snapshot.frame_overrun_count as f64);
+            self.window_tick_peak.push(tick_peak_ms);
+            self.window_tick_overruns.push(snapshot.tick_overrun_count as f64);
+
+            // Compute tick rate
             self.previous = self.current.take();
             self.current = Some(snapshot);
             self.last_received = Some(Instant::now());
@@ -141,6 +234,41 @@ impl ConsoleApp {
     }
 }
 
+/// Draw a sparkline into an allocated rect.
+/// `max_val` is the Y-axis ceiling. Values are clamped to it.
+fn draw_sparkline(
+    ui: &mut egui::Ui,
+    history: &VecDeque<f64>,
+    max_val: f64,
+    width: f32,
+    height: f32,
+    color: egui::Color32,
+) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    // Background
+    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(30, 30, 35));
+
+    if history.is_empty() || max_val <= 0.0 {
+        return;
+    }
+
+    let n = history.len();
+    let bar_w = rect.width() / HISTORY_LEN as f32;
+
+    for (i, &val) in history.iter().enumerate() {
+        let frac = (val / max_val).clamp(0.0, 1.0) as f32;
+        let x = rect.left() + (HISTORY_LEN - n + i) as f32 * bar_w;
+        let bar_h = frac * rect.height();
+        let bar_rect = egui::Rect::from_min_size(
+            egui::pos2(x, rect.bottom() - bar_h),
+            egui::vec2(bar_w.max(1.0), bar_h),
+        );
+        painter.rect_filled(bar_rect, 0.0, color.linear_multiply(0.7 + 0.3 * frac));
+    }
+}
+
 impl eframe::App for ConsoleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
@@ -148,152 +276,108 @@ impl eframe::App for ConsoleApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // --- Connection Status ---
+            // --- Connection status bar ---
             ui.horizontal(|ui| {
                 if self.is_connected() {
                     ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "\u{2B24}");
-                    ui.label("Connected");
+                    ui.monospace("CONNECTED");
                 } else {
                     ui.colored_label(egui::Color32::from_rgb(200, 80, 80), "\u{2B24}");
-                    ui.label("Waiting for server...");
+                    ui.monospace("NO SIGNAL");
                 }
 
-                if let Some(t) = self.last_received {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("{:.0}s ago", t.elapsed().as_secs_f64()));
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(m) = &self.current {
+                        let secs = m.snapshot_time_secs;
+                        let h = (secs / 3600.0) as u64;
+                        let min = ((secs % 3600.0) / 60.0) as u64;
+                        let s = (secs % 60.0) as u64;
+                        ui.monospace(format!("T+ {:02}:{:02}:{:02}", h, min, s));
+                    }
+                    if let Some(t) = self.last_received {
+                        let ago = t.elapsed().as_secs_f64();
+                        let stale_color = if ago < 4.0 {
+                            egui::Color32::from_rgb(120, 120, 120)
+                        } else {
+                            egui::Color32::from_rgb(200, 80, 80)
+                        };
+                        ui.colored_label(stale_color, format!("{:.0}s", ago));
+                    }
+                });
             });
 
             ui.separator();
 
             if let Some(m) = &self.current {
-                // --- Server Load (frame budget) ---
                 let frame_ms = m.frame_duration_us as f64 / 1000.0;
-                let frame_max_ms = m.frame_duration_max_us as f64 / 1000.0;
-                let load_pct = (frame_ms / 125.0 * 100.0).min(999.0);
+                let tick_ms = m.tick_duration_us as f64 / 1000.0;
+                let mem_mb = m.memory_bytes as f64 / (1024.0 * 1024.0);
+                let map_mb = m.memory_map_bytes as f64 / (1024.0 * 1024.0);
 
-                ui.heading(format!("Server Load: {:.0}%", load_pct));
-                ui.add_space(4.0);
+                // Rolling 2-min peaks and overrun counts
+                let frame_peak_2m = self.window_frame_peak.max();
+                let frame_overruns_2m = self.window_frame_overruns.delta() as u64;
+                let tick_peak_2m = self.window_tick_peak.max();
+                let tick_overruns_2m = self.window_tick_overruns.delta() as u64;
 
-                // Frame budget bar
-                let fraction = (frame_ms / 125.0).clamp(0.0, 1.0) as f32;
-                let bar_color = if load_pct < 40.0 {
-                    egui::Color32::from_rgb(80, 200, 80)
-                } else if load_pct < 80.0 {
-                    egui::Color32::from_rgb(230, 180, 40)
-                } else {
-                    egui::Color32::from_rgb(220, 60, 60)
-                };
+                let sparkline_w = 100.0;
+                let sparkline_h = 16.0;
 
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
-                let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
-                let mut fill = rect;
-                fill.set_right(rect.left() + rect.width() * fraction);
-                painter.rect_filled(fill, 3.0, bar_color);
-
-                ui.add_space(4.0);
-
-                egui::Grid::new("frame_grid").num_columns(2).show(ui, |ui| {
-                    ui.label("Frame:");
-                    ui.label(format!("{:.1} / 125 ms", frame_ms));
-                    ui.end_row();
-
-                    ui.label("Peak:");
-                    ui.label(format!("{:.1} ms", frame_max_ms));
-                    ui.end_row();
-
-                    ui.label("Tick rate:");
-                    ui.label(format!("{:.1} /s", self.ticks_per_sec));
-                    ui.end_row();
-
-                    ui.label("Players:");
-                    ui.label(format!("{}", m.connected_players));
-                    ui.end_row();
-
-                    ui.label("Loaded hexes:");
-                    ui.label(format!("{}", m.loaded_hexes));
-                    ui.end_row();
+                // --- FRAME row ---
+                ui.horizontal(|ui| {
+                    let color = limit_color(frame_ms, 50.0, 100.0);
+                    ui.monospace("FRAME ");
+                    ui.colored_label(color, egui::RichText::new(format!("{:>6.1}ms", frame_ms)).monospace());
+                    draw_sparkline(ui, &self.hist_frame.0, 125.0, sparkline_w, sparkline_h, color);
+                    let peak_color = limit_color(frame_peak_2m, 50.0, 100.0);
+                    ui.colored_label(peak_color, egui::RichText::new(format!("pk {:>6.1}", frame_peak_2m)).monospace());
+                    let overrun_color = if frame_overruns_2m > 0 {
+                        egui::Color32::from_rgb(220, 60, 60)
+                    } else {
+                        egui::Color32::from_rgb(120, 120, 120)
+                    };
+                    ui.colored_label(overrun_color, egui::RichText::new(format!("{:>3}!", frame_overruns_2m)).monospace());
                 });
 
-                ui.add_space(8.0);
-                ui.separator();
-
-                // --- Memory ---
-                ui.heading("Memory");
-                ui.add_space(4.0);
-
-                let total = m.memory_bytes;
-                let map = m.memory_map_bytes;
-                let other = total.saturating_sub(map);
-
-                ui.label(format!("Total: {}", format_bytes(total)));
-                ui.add_space(4.0);
-
-                // Stacked bar
-                if total > 0 {
-                    let map_frac = (map as f32 / total as f32).clamp(0.0, 1.0);
-
-                    let bar_height = 20.0;
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), bar_height),
-                        egui::Sense::hover(),
-                    );
-                    let painter = ui.painter_at(rect);
-                    painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
-
-                    let color_map = egui::Color32::from_rgb(100, 160, 220);
-                    let color_other = egui::Color32::from_rgb(160, 160, 160);
-
-                    // Map slice (left)
-                    if map_frac > 0.0 {
-                        let mut r = rect;
-                        r.set_right(rect.left() + rect.width() * map_frac);
-                        painter.rect_filled(r, 3.0, color_map);
-                    }
-
-                    // Other slice fills the rest (already painted as bg, just
-                    // paint over to get the right color)
-                    if map_frac < 1.0 {
-                        let mut r = rect;
-                        r.set_left(rect.left() + rect.width() * map_frac);
-                        painter.rect_filled(r, 3.0, color_other);
-                    }
-
-                    ui.add_space(6.0);
-
-                    // Legend
-                    egui::Grid::new("mem_legend").num_columns(3).show(ui, |ui| {
-                        ui.colored_label(color_map, "\u{25A0}");
-                        ui.label("Map");
-                        ui.label(format_bytes(map));
-                        ui.end_row();
-
-                        ui.colored_label(color_other, "\u{25A0}");
-                        ui.label("Other");
-                        ui.label(format_bytes(other));
-                        ui.end_row();
-                    });
-                }
-
-                ui.add_space(8.0);
-                ui.separator();
-
-                // --- Uptime ---
-                let secs = m.snapshot_time_secs;
-                let hours = (secs / 3600.0) as u64;
-                let mins = ((secs % 3600.0) / 60.0) as u64;
-                let s = (secs % 60.0) as u64;
+                // --- TICK row ---
                 ui.horizontal(|ui| {
-                    ui.label("Uptime:");
-                    ui.label(format!("{:02}:{:02}:{:02}", hours, mins, s));
+                    let color = limit_color(tick_ms, 5.0, 50.0);
+                    ui.monospace("TICK  ");
+                    ui.colored_label(color, egui::RichText::new(format!("{:>6.1}ms", tick_ms)).monospace());
+                    draw_sparkline(ui, &self.hist_tick.0, 125.0, sparkline_w, sparkline_h, color);
+                    let peak_color = limit_color(tick_peak_2m, 5.0, 50.0);
+                    ui.colored_label(peak_color, egui::RichText::new(format!("pk {:>6.1}", tick_peak_2m)).monospace());
+                    let overrun_color = if tick_overruns_2m > 0 {
+                        egui::Color32::from_rgb(220, 60, 60)
+                    } else {
+                        egui::Color32::from_rgb(120, 120, 120)
+                    };
+                    ui.colored_label(overrun_color, egui::RichText::new(format!("{:>3}!", tick_overruns_2m)).monospace());
+                });
+
+                // --- MEM row ---
+                ui.horizontal(|ui| {
+                    let color = limit_color(mem_mb, 512.0, 1024.0);
+                    ui.monospace("MEM   ");
+                    ui.colored_label(color, egui::RichText::new(format!("{:>6.1}MB", mem_mb)).monospace());
+                    draw_sparkline(ui, &self.hist_mem.0, mem_mb * 1.5 + 1.0, sparkline_w, sparkline_h, color);
+                    ui.monospace(format!("map{:>6.1}", map_mb));
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+
+                // --- Status row ---
+                ui.horizontal(|ui| {
+                    ui.monospace(format!(
+                        "PLAYERS {:>3}    HEXES {:>8}",
+                        m.connected_players, m.loaded_hexes,
+                    ));
                 });
             } else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label("No data received yet.");
+                    ui.monospace("AWAITING TELEMETRY...");
                 });
             }
         });

@@ -79,6 +79,9 @@ fn tick_timer_end(timer: Res<TickTimer>, mut metrics: ResMut<ServerMetrics>) {
         let us = start.elapsed().as_micros() as u64;
         metrics.tick_duration_us = us;
         metrics.tick_duration_max_us = metrics.tick_duration_max_us.max(us);
+        if us > 125_000 {
+            metrics.tick_overrun_count += 1;
+        }
         metrics.tick_count += 1;
     }
 }
@@ -90,6 +93,7 @@ fn track_frame_time(time: Res<Time>, mut metrics: ResMut<ServerMetrics>) {
     metrics.frame_duration_max_us = metrics.frame_duration_max_us.max(us);
 
     if us > 125_000 {
+        metrics.frame_overrun_count += 1;
         warn!("frame took {:.1}ms (budget 125ms)", us as f64 / 1000.0);
     }
 }
