@@ -79,9 +79,9 @@ pub fn setup(
             let center = content / 2.0;
             let diameter = 72.0_f32;
 
-            // 3 full-diameter lines through center (absolute positioning = independent centering)
+            // 3 full-diameter lines through center, rotated 30° for pointy-top hex directions
             let line_w = 2.0_f32;
-            for angle_deg in [0.0_f32, 60.0, 120.0] {
+            for angle_deg in [30.0_f32, 90.0, 150.0] {
                 parent.spawn((
                     Node {
                         position_type: PositionType::Absolute,
@@ -99,19 +99,21 @@ pub fn setup(
                 ));
             }
 
-            // Red north indicator (half-line, bottom edge at center, extends upward)
-            let north_w = 3.0_f32;
-            let north_h = diameter / 2.0;
+            // Red "N" label at true north (top of compass)
+            let font_size = 16.0_f32;
             parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(center - north_w / 2.0),
-                    top: Val::Px(center - north_h),
-                    width: Val::Px(north_w),
-                    height: Val::Px(north_h),
+                Text::new("N"),
+                TextFont {
+                    font_size,
                     ..default()
                 },
-                BackgroundColor(Color::srgb(1.0, 0.2, 0.2)),
+                TextColor(Color::srgb(1.0, 0.2, 0.2)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(center - font_size / 2.0 + 1.0),
+                    top: Val::Px(2.0),
+                    ..default()
+                },
             ));
         });
     });
