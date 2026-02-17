@@ -37,7 +37,8 @@ impl Plugin for MetricsPlugin {
                 (refresh_metric_gauges, push_metrics_snapshot)
                     .chain()
                     .run_if(snapshot_due),
-            );
+            )
+            .add_systems(Update, track_frame_time);
     }
 }
 
@@ -79,6 +80,17 @@ fn tick_timer_end(timer: Res<TickTimer>, mut metrics: ResMut<ServerMetrics>) {
         metrics.tick_duration_us = us;
         metrics.tick_duration_max_us = metrics.tick_duration_max_us.max(us);
         metrics.tick_count += 1;
+    }
+}
+
+/// Track total frame time (all schedules combined) as a server load metric.
+fn track_frame_time(time: Res<Time>, mut metrics: ResMut<ServerMetrics>) {
+    let us = time.delta().as_micros() as u64;
+    metrics.frame_duration_us = us;
+    metrics.frame_duration_max_us = metrics.frame_duration_max_us.max(us);
+
+    if us > 125_000 {
+        warn!("frame took {:.1}ms (budget 125ms)", us as f64 / 1000.0);
     }
 }
 
@@ -167,4 +179,5 @@ fn push_metrics_snapshot(
     let _ = transport.socket.send_to(&buf, transport.target);
 
     metrics.tick_duration_max_us = 0;
+    metrics.frame_duration_max_us = 0;
 }

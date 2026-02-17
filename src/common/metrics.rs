@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-pub const METRICS_VERSION: u16 = 3;
+pub const METRICS_VERSION: u16 = 4;
 
 /// Server metrics collection.
 ///
@@ -26,4 +26,8 @@ pub struct ServerMetrics {
     pub tick_duration_max_us: u64,
     pub memory_bytes: u64,
     pub memory_map_bytes: u64,
+
+    // -- Frame budget (all schedules) --
+    pub frame_duration_us: u64,
+    pub frame_duration_max_us: u64,
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 // Mirror of common::metrics — keep in sync, version check catches drift.
 const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-const METRICS_VERSION: u16 = 3;
+const METRICS_VERSION: u16 = 4;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ServerMetrics {
@@ -19,6 +19,8 @@ struct ServerMetrics {
     tick_duration_max_us: u64,
     memory_bytes: u64,
     memory_map_bytes: u64,
+    frame_duration_us: u64,
+    frame_duration_max_us: u64,
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -166,55 +168,47 @@ impl eframe::App for ConsoleApp {
             ui.separator();
 
             if let Some(m) = &self.current {
-                // --- Tick Health ---
-                ui.heading("Tick Health");
+                // --- Server Load (frame budget) ---
+                let frame_ms = m.frame_duration_us as f64 / 1000.0;
+                let frame_max_ms = m.frame_duration_max_us as f64 / 1000.0;
+                let load_pct = (frame_ms / 125.0 * 100.0).min(999.0);
+
+                ui.heading(format!("Server Load: {:.0}%", load_pct));
                 ui.add_space(4.0);
 
-                let tick_ms = m.tick_duration_us as f64 / 1000.0;
-                let max_ms = m.tick_duration_max_us as f64 / 1000.0;
-
-                egui::Grid::new("tick_grid").num_columns(2).show(ui, |ui| {
-                    ui.label("Duration:");
-                    ui.label(format!("{:.1} ms", tick_ms));
-                    ui.end_row();
-
-                    ui.label("Peak:");
-                    ui.label(format!("{:.1} ms", max_ms));
-                    ui.end_row();
-
-                    ui.label("Tick rate:");
-                    ui.label(format!("{:.1} /s", self.ticks_per_sec));
-                    ui.end_row();
-                });
-
-                ui.add_space(4.0);
-
-                // Tick health bar — proportion of the 125ms budget used
-                let fraction = (tick_ms / 125.0).clamp(0.0, 1.0) as f32;
-                let bar_color = if tick_ms < 50.0 {
+                // Frame budget bar
+                let fraction = (frame_ms / 125.0).clamp(0.0, 1.0) as f32;
+                let bar_color = if load_pct < 40.0 {
                     egui::Color32::from_rgb(80, 200, 80)
-                } else if tick_ms < 100.0 {
+                } else if load_pct < 80.0 {
                     egui::Color32::from_rgb(230, 180, 40)
                 } else {
                     egui::Color32::from_rgb(220, 60, 60)
                 };
 
                 let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
                 let painter = ui.painter_at(rect);
                 painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
                 let mut fill = rect;
                 fill.set_right(rect.left() + rect.width() * fraction);
                 painter.rect_filled(fill, 3.0, bar_color);
 
-                ui.add_space(8.0);
-                ui.separator();
-
-                // --- Server Load ---
-                ui.heading("Server Load");
                 ui.add_space(4.0);
 
-                egui::Grid::new("load_grid").num_columns(2).show(ui, |ui| {
+                egui::Grid::new("frame_grid").num_columns(2).show(ui, |ui| {
+                    ui.label("Frame:");
+                    ui.label(format!("{:.1} / 125 ms", frame_ms));
+                    ui.end_row();
+
+                    ui.label("Peak:");
+                    ui.label(format!("{:.1} ms", frame_max_ms));
+                    ui.end_row();
+
+                    ui.label("Tick rate:");
+                    ui.label(format!("{:.1} /s", self.ticks_per_sec));
+                    ui.end_row();
+
                     ui.label("Players:");
                     ui.label(format!("{}", m.connected_players));
                     ui.end_row();

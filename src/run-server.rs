@@ -130,7 +130,6 @@ fn main() {
         engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
         engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
         actor::try_discover,        // Legacy tile discovery (for compatibility)
-        server::systems::diagnostics::check_duplicate_tiles,
         common::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
 
@@ -153,7 +152,6 @@ fn main() {
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone
-    app.init_resource::<server::systems::diagnostics::TerrainTracker>();
 
     app.run();
 }

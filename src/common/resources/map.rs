@@ -638,6 +638,9 @@ impl Map {
     }
 
     pub fn insert(&mut self, qrz: Qrz, obj: EntityType) {
+        if self.0.get(qrz).is_some() {
+            warn!("duplicate tile insert at ({}, {}, {})", qrz.q, qrz.r, qrz.z);
+        }
         Arc::make_mut(&mut self.0).insert(qrz, obj);
     }
 
