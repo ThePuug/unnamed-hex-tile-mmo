@@ -77,10 +77,13 @@ pub enum Event {
         ent: Entity,
         might_grace_axis: i8,
         might_grace_spectrum: i8,
+        might_grace_shift: i8,
         vitality_focus_axis: i8,
         vitality_focus_spectrum: i8,
+        vitality_focus_shift: i8,
         instinct_presence_axis: i8,
         instinct_presence_spectrum: i8,
+        instinct_presence_shift: i8,
     },
 }
 

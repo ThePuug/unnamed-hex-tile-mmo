@@ -200,10 +200,13 @@ pub fn try_respec_attributes(
             ent,
             might_grace_axis,
             might_grace_spectrum,
+            might_grace_shift,
             vitality_focus_axis,
             vitality_focus_spectrum,
+            vitality_focus_shift,
             instinct_presence_axis,
             instinct_presence_spectrum,
+            instinct_presence_shift,
         } = event
         else {
             continue;
@@ -245,10 +248,13 @@ pub fn try_respec_attributes(
         attrs.apply_respec(
             might_grace_axis,
             might_grace_spectrum,
+            might_grace_shift,
             vitality_focus_axis,
             vitality_focus_spectrum,
+            vitality_focus_shift,
             instinct_presence_axis,
             instinct_presence_spectrum,
+            instinct_presence_shift,
         );
 
         // Broadcast confirmation

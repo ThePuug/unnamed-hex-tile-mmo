@@ -203,6 +203,13 @@ pub fn handle_attribute_buttons(
             }
         }
     }
+
+    // Auto-clamp shifts after any axis/spectrum change
+    if let Some(draft) = state.pending_respec.as_mut() {
+        draft.might_grace_shift = clamp_shift(draft.might_grace_shift, draft.might_grace_axis, draft.might_grace_spectrum);
+        draft.vitality_focus_shift = clamp_shift(draft.vitality_focus_shift, draft.vitality_focus_axis, draft.vitality_focus_spectrum);
+        draft.instinct_presence_shift = clamp_shift(draft.instinct_presence_shift, draft.instinct_presence_axis, draft.instinct_presence_spectrum);
+    }
 }
 
 /// Handle Apply button click - sends Try event
@@ -237,10 +244,13 @@ pub fn handle_apply_button(
                     ent,
                     might_grace_axis: draft.might_grace_axis,
                     might_grace_spectrum: draft.might_grace_spectrum,
+                    might_grace_shift: draft.might_grace_shift,
                     vitality_focus_axis: draft.vitality_focus_axis,
                     vitality_focus_spectrum: draft.vitality_focus_spectrum,
+                    vitality_focus_shift: draft.vitality_focus_shift,
                     instinct_presence_axis: draft.instinct_presence_axis,
                     instinct_presence_spectrum: draft.instinct_presence_spectrum,
+                    instinct_presence_shift: draft.instinct_presence_shift,
                 },
             });
         }
@@ -258,10 +268,13 @@ pub fn handle_respec_confirmed(
             ent,
             might_grace_axis,
             might_grace_spectrum,
+            might_grace_shift,
             vitality_focus_axis,
             vitality_focus_spectrum,
+            vitality_focus_shift,
             instinct_presence_axis,
             instinct_presence_spectrum,
+            instinct_presence_shift,
         } = event
         {
             // Apply to player's ActorAttributes
@@ -269,10 +282,13 @@ pub fn handle_respec_confirmed(
                 attrs.apply_respec(
                     might_grace_axis,
                     might_grace_spectrum,
+                    might_grace_shift,
                     vitality_focus_axis,
                     vitality_focus_spectrum,
+                    vitality_focus_shift,
                     instinct_presence_axis,
                     instinct_presence_spectrum,
+                    instinct_presence_shift,
                 );
 
                 // Clear pending state now that server confirmed

@@ -128,15 +128,18 @@ pub struct ApplyRespecButton;
 #[derive(Component)]
 pub struct ApplyButtonText;
 
-/// Draft attributes for respec (axis/spectrum only, shift is immediate)
+/// Draft attributes for respec (axis/spectrum/shift)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DraftAttributes {
     pub might_grace_axis: i8,
     pub might_grace_spectrum: i8,
+    pub might_grace_shift: i8,
     pub vitality_focus_axis: i8,
     pub vitality_focus_spectrum: i8,
+    pub vitality_focus_shift: i8,
     pub instinct_presence_axis: i8,
     pub instinct_presence_spectrum: i8,
+    pub instinct_presence_shift: i8,
 }
 
 impl DraftAttributes {
@@ -145,10 +148,13 @@ impl DraftAttributes {
         Self {
             might_grace_axis: attrs.might_grace_axis(),
             might_grace_spectrum: attrs.might_grace_spectrum(),
+            might_grace_shift: attrs.might_grace_shift(),
             vitality_focus_axis: attrs.vitality_focus_axis(),
             vitality_focus_spectrum: attrs.vitality_focus_spectrum(),
+            vitality_focus_shift: attrs.vitality_focus_shift(),
             instinct_presence_axis: attrs.instinct_presence_axis(),
             instinct_presence_spectrum: attrs.instinct_presence_spectrum(),
+            instinct_presence_shift: attrs.instinct_presence_shift(),
         }
     }
 
@@ -455,7 +461,7 @@ macro_rules! create_attribute_section {
                     },
                 ))
                 .with_children(|left_container| {
-                    // Plus button (left-side) - increases commitment (away from center, on outside)
+                    // Plus button (left-side) - increases commitment (outside, away from bar)
                     left_container.spawn((
                         $axis_inc_left_marker,
                         Button,
@@ -476,7 +482,20 @@ macro_rules! create_attribute_section {
                         ));
                     });
 
-                    // Minus button (left-side) - reduces commitment (toward center, on inside)
+                    // Left current value (centered between buttons)
+                    left_container.spawn((
+                        $left_current_marker,
+                        Text::new("0"),
+                        Node {
+                            flex_grow: 1.,
+                            ..default()
+                        },
+                        TextFont { font_size: 13.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                        TextLayout::new_with_justify(Justify::Center),
+                    ));
+
+                    // Minus button (left-side) - reduces commitment (inside, next to bar)
                     left_container.spawn((
                         $axis_dec_left_marker,
                         Button,
@@ -492,18 +511,10 @@ macro_rules! create_attribute_section {
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Text::new("−"),
+                            Text::new("-"),
                             TextFont { font_size: 10.0, ..default() },
                         ));
                     });
-
-                    // Left current value
-                    left_container.spawn((
-                        $left_current_marker,
-                        Text::new("0"),
-                        TextFont { font_size: 13.0, ..default() },
-                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                    ));
                 });
 
                 // Visual bar container (spectrum buttons centered on bar)
@@ -585,12 +596,12 @@ macro_rules! create_attribute_section {
                             $spectrum_dec_marker,
                             Button,
                             Node {
-                                width: Val::Px(20.),
-                                height: Val::Px(20.),
+                                width: Val::Px(16.),
+                                height: Val::Px(16.),
                                 position_type: PositionType::Absolute,
-                                // Position at center minus 12px (half of 20px button + 2px gap)
-                                left: Val::Px(105.5),  // 235px bar / 2 - 12px = 105.5px
-                                top: Val::Px(-24.),   // Above the bar to avoid occlusion
+                                // Position at center minus 18px (16px button + 2px gap)
+                                left: Val::Px(99.5),  // 235px bar / 2 - 18px = 99.5px
+                                top: Val::Px(-20.),   // Above the bar to avoid occlusion
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 ..default()
@@ -599,8 +610,8 @@ macro_rules! create_attribute_section {
                         ))
                         .with_children(|btn| {
                             btn.spawn((
-                                Text::new("−"),
-                                TextFont { font_size: 12.0, ..default() },
+                                Text::new("-"),
+                                TextFont { font_size: 10.0, ..default() },
                             ));
                         });
 
@@ -609,12 +620,12 @@ macro_rules! create_attribute_section {
                             $spectrum_inc_marker,
                             Button,
                             Node {
-                                width: Val::Px(20.),
-                                height: Val::Px(20.),
+                                width: Val::Px(16.),
+                                height: Val::Px(16.),
                                 position_type: PositionType::Absolute,
                                 // Position at center plus 2px gap
                                 left: Val::Px(119.5),  // 235px bar / 2 + 2px = 119.5px
-                                top: Val::Px(-24.),   // Above the bar to avoid occlusion
+                                top: Val::Px(-20.),   // Above the bar to avoid occlusion
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 ..default()
@@ -624,7 +635,7 @@ macro_rules! create_attribute_section {
                         .with_children(|btn| {
                             btn.spawn((
                                 Text::new("+"),
-                                TextFont { font_size: 12.0, ..default() },
+                                TextFont { font_size: 10.0, ..default() },
                             ));
                         });
                     });
@@ -642,7 +653,7 @@ macro_rules! create_attribute_section {
                     },
                 ))
                 .with_children(|right_container| {
-                    // Minus button (right-side) - reduces commitment (toward center)
+                    // Minus button (right-side) - reduces commitment (inside, next to bar)
                     right_container.spawn((
                         $axis_dec_right_marker,
                         Button,
@@ -658,12 +669,25 @@ macro_rules! create_attribute_section {
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Text::new("−"),
+                            Text::new("-"),
                             TextFont { font_size: 10.0, ..default() },
                         ));
                     });
 
-                    // Plus button (right-side) - increases commitment (away from center)
+                    // Right current value (centered between buttons)
+                    right_container.spawn((
+                        $right_current_marker,
+                        Text::new("0"),
+                        Node {
+                            flex_grow: 1.,
+                            ..default()
+                        },
+                        TextFont { font_size: 13.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                        TextLayout::new_with_justify(Justify::Center),
+                    ));
+
+                    // Plus button (right-side) - increases commitment (outside, away from bar)
                     right_container.spawn((
                         $axis_inc_right_marker,
                         Button,
@@ -683,14 +707,6 @@ macro_rules! create_attribute_section {
                             TextFont { font_size: 10.0, ..default() },
                         ));
                     });
-
-                    // Right current value
-                    right_container.spawn((
-                        $right_current_marker,
-                        Text::new("0"),
-                        TextFont { font_size: 13.0, ..default() },
-                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                    ));
                 });
             });
         });
@@ -711,7 +727,7 @@ pub fn setup(
                 left: Val::Px(20.),
                 top: Val::Px(100.),
                 width: Val::Px(770.),
-                padding: UiRect::all(Val::Px(20.)),
+                padding: UiRect::new(Val::Px(20.), Val::Px(20.), Val::Px(20.), Val::Px(10.)),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(15.),
                 border_radius: BorderRadius::all(Val::Px(8.)),
@@ -722,20 +738,6 @@ pub fn setup(
             Visibility::Hidden,
         ))
         .with_children(|parent| {
-            // Title
-            parent.spawn((
-                Text::new("Character Attributes"),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                Node {
-                    margin: UiRect::bottom(Val::Px(10.)),
-                    ..default()
-                },
-            ));
-
             // Main content: two columns (sliders left, stats right)
             parent.spawn((
                 Node {
@@ -860,10 +862,21 @@ pub fn toggle_panel(
     }
 }
 
-/// Handle mouse drag to adjust shift values
+/// Clamp a shift value given axis and spectrum (mirrors ActorAttributes::set_*_shift logic)
+pub fn clamp_shift(shift: i8, axis: i8, spectrum: i8) -> i8 {
+    if axis == 0 { return 0; }
+    let max_shift = spectrum.max(0);
+    if axis > 0 {
+        shift.clamp(-max_shift, 0)
+    } else {
+        shift.clamp(0, max_shift)
+    }
+}
+
+/// Handle mouse drag to adjust shift values (writes to draft)
 pub fn handle_shift_drag(
     mut state: ResMut<CharacterPanelState>,
-    mut player_query: Query<&mut ActorAttributes, With<Actor>>,
+    player_query: Query<&ActorAttributes, With<Actor>>,
     bar_query: Query<(Entity, &AttributeBar, &Interaction, &Node)>,
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
@@ -872,7 +885,7 @@ pub fn handle_shift_drag(
         return;
     }
 
-    let Ok(mut attrs) = player_query.single_mut() else {
+    let Ok(attrs) = player_query.single() else {
         return;
     };
 
@@ -893,11 +906,15 @@ pub fn handle_shift_drag(
                     AttributeBar::InstinctPresence => AttributeType::InstinctPresence,
                 };
 
-                // Get the current shift value for this attribute
+                // Initialize draft if needed
+                state.mark_dirty(attrs);
+                let draft = state.pending_respec.as_ref().unwrap();
+
+                // Get the current shift value from draft
                 let current_shift = match attr_type {
-                    AttributeType::MightGrace => attrs.might_grace_shift(),
-                    AttributeType::VitalityFocus => attrs.vitality_focus_shift(),
-                    AttributeType::InstinctPresence => attrs.instinct_presence_shift(),
+                    AttributeType::MightGrace => draft.might_grace_shift,
+                    AttributeType::VitalityFocus => draft.vitality_focus_shift,
+                    AttributeType::InstinctPresence => draft.instinct_presence_shift,
                 };
 
                 state.dragging = Some(DragState {
@@ -932,18 +949,20 @@ pub fn handle_shift_drag(
 
                 // Calculate new shift based on initial shift + delta
                 let new_shift_f32 = drag_state.initial_shift as f32 + delta_units;
-
-                // Update the appropriate shift value based on attribute type
                 let new_shift = new_shift_f32.round() as i8;
-                match drag_state.attribute {
-                    AttributeType::MightGrace => {
-                        attrs.set_might_grace_shift(new_shift);
-                    }
-                    AttributeType::VitalityFocus => {
-                        attrs.set_vitality_focus_shift(new_shift);
-                    }
-                    AttributeType::InstinctPresence => {
-                        attrs.set_instinct_presence_shift(new_shift);
+
+                // Update draft shift (clamped to valid range)
+                if let Some(draft) = state.pending_respec.as_mut() {
+                    match drag_state.attribute {
+                        AttributeType::MightGrace => {
+                            draft.might_grace_shift = clamp_shift(new_shift, draft.might_grace_axis, draft.might_grace_spectrum);
+                        }
+                        AttributeType::VitalityFocus => {
+                            draft.vitality_focus_shift = clamp_shift(new_shift, draft.vitality_focus_axis, draft.vitality_focus_spectrum);
+                        }
+                        AttributeType::InstinctPresence => {
+                            draft.instinct_presence_shift = clamp_shift(new_shift, draft.instinct_presence_axis, draft.instinct_presence_spectrum);
+                        }
                     }
                 }
             }
@@ -986,10 +1005,13 @@ pub fn update_attributes(
         temp_attrs.apply_respec(
             draft.might_grace_axis,
             draft.might_grace_spectrum,
+            draft.might_grace_shift,
             draft.vitality_focus_axis,
             draft.vitality_focus_spectrum,
+            draft.vitality_focus_shift,
             draft.instinct_presence_axis,
             draft.instinct_presence_spectrum,
+            draft.instinct_presence_shift,
         );
         Some(temp_attrs)
     } else {

@@ -233,9 +233,9 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::SetTierLock { ent, tier }});
                 }
-                Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+                Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
-                    writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum }});
+                    writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }});
                 }
                 _ => {}
             }
@@ -411,11 +411,11 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum } } => {
+            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
                 // Send respec confirmation only to the owning client
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, vitality_focus_axis, vitality_focus_spectrum, instinct_presence_axis, instinct_presence_spectrum }},
+                        Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
