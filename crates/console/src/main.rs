@@ -77,6 +77,14 @@ impl RollingWindow {
     }
 }
 
+/// Smallest power of 2 >= val (e.g. 28→32, 32→32, 33→64). Minimum 1.
+fn next_power_of_two_ceil(val: f64) -> f64 {
+    if val <= 1.0 {
+        return 1.0;
+    }
+    2.0_f64.powf(val.log2().ceil())
+}
+
 // --- Limits coloring ---
 
 fn limit_color(val: f64, green_below: f64, yellow_below: f64) -> egui::Color32 {
@@ -269,6 +277,60 @@ fn draw_sparkline(
     }
 }
 
+const GREEN: egui::Color32 = egui::Color32::from_rgb(60, 180, 60);
+const RED: egui::Color32 = egui::Color32::from_rgb(210, 50, 50);
+
+/// Draw a budget sparkline: each bar is full-height representing the budget.
+/// Green = remaining budget, red = consumed time. More red = worse.
+fn draw_budget_sparkline(
+    ui: &mut egui::Ui,
+    history: &VecDeque<f64>,
+    budget: f64,
+    width: f32,
+    height: f32,
+) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    // Background
+    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(30, 30, 35));
+
+    if history.is_empty() || budget <= 0.0 {
+        return;
+    }
+
+    let n = history.len();
+    let bar_w = rect.width() / HISTORY_LEN as f32;
+    let full_h = rect.height();
+
+    for (i, &val) in history.iter().enumerate() {
+        let consumed_frac = (val / budget).clamp(0.0, 1.0) as f32;
+        let x = rect.left() + (HISTORY_LEN - n + i) as f32 * bar_w;
+        let w = bar_w.max(1.0);
+
+        let red_h = consumed_frac * full_h;
+        let green_h = full_h - red_h;
+
+        // Green portion (remaining budget) — top of bar
+        if green_h > 0.5 {
+            let green_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.top()),
+                egui::vec2(w, green_h),
+            );
+            painter.rect_filled(green_rect, 0.0, GREEN.linear_multiply(0.6 + 0.4 * (1.0 - consumed_frac)));
+        }
+
+        // Red portion (consumed time) — bottom of bar
+        if red_h > 0.5 {
+            let red_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.bottom() - red_h),
+                egui::vec2(w, red_h),
+            );
+            painter.rect_filled(red_rect, 0.0, RED.linear_multiply(0.5 + 0.5 * consumed_frac));
+        }
+    }
+}
+
 impl eframe::App for ConsoleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
@@ -323,12 +385,14 @@ impl eframe::App for ConsoleApp {
                 let sparkline_w = 100.0;
                 let sparkline_h = 16.0;
 
+                let budget_ms = 125.0;
+
                 // --- FRAME row ---
                 ui.horizontal(|ui| {
                     let color = limit_color(frame_ms, 50.0, 100.0);
                     ui.monospace("FRAME ");
                     ui.colored_label(color, egui::RichText::new(format!("{:>6.1}ms", frame_ms)).monospace());
-                    draw_sparkline(ui, &self.hist_frame.0, 125.0, sparkline_w, sparkline_h, color);
+                    draw_budget_sparkline(ui, &self.hist_frame.0, budget_ms, sparkline_w, sparkline_h);
                     let peak_color = limit_color(frame_peak_2m, 50.0, 100.0);
                     ui.colored_label(peak_color, egui::RichText::new(format!("pk {:>6.1}", frame_peak_2m)).monospace());
                     let overrun_color = if frame_overruns_2m > 0 {
@@ -344,7 +408,7 @@ impl eframe::App for ConsoleApp {
                     let color = limit_color(tick_ms, 5.0, 50.0);
                     ui.monospace("TICK  ");
                     ui.colored_label(color, egui::RichText::new(format!("{:>6.1}ms", tick_ms)).monospace());
-                    draw_sparkline(ui, &self.hist_tick.0, 125.0, sparkline_w, sparkline_h, color);
+                    draw_budget_sparkline(ui, &self.hist_tick.0, budget_ms, sparkline_w, sparkline_h);
                     let peak_color = limit_color(tick_peak_2m, 5.0, 50.0);
                     ui.colored_label(peak_color, egui::RichText::new(format!("pk {:>6.1}", tick_peak_2m)).monospace());
                     let overrun_color = if tick_overruns_2m > 0 {
@@ -360,7 +424,9 @@ impl eframe::App for ConsoleApp {
                     let color = limit_color(mem_mb, 512.0, 1024.0);
                     ui.monospace("MEM   ");
                     ui.colored_label(color, egui::RichText::new(format!("{:>6.1}MB", mem_mb)).monospace());
-                    draw_sparkline(ui, &self.hist_mem.0, mem_mb * 1.5 + 1.0, sparkline_w, sparkline_h, color);
+                    let mem_rolling_max = self.hist_mem.0.iter().copied().fold(0.0_f64, f64::max);
+                    let mem_ceiling = next_power_of_two_ceil(mem_rolling_max);
+                    draw_sparkline(ui, &self.hist_mem.0, mem_ceiling, sparkline_w, sparkline_h, color);
                     ui.monospace(format!("map{:>6.1}", map_mb));
                 });
 
