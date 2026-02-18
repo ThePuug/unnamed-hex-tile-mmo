@@ -17,10 +17,12 @@ Client-server MMO built with Bevy ECS:
 - **Hexagonal Grid**: World uses Qrz (hexagonal) coordinates
 - **Shared Systems**: Physics and behaviour run on both client and server
 
-**Directories:**
-- `src/common/`: Shared code
-- `src/client/`: Client-only (rendering, input, networking)
-- `src/server/`: Server-only (AI, terrain, connections)
+**Workspace crates (all under `crates/`):**
+- `crates/common/`: Shared library crate (components, physics, messages)
+- `crates/client/`: Client binary crate (rendering, input, networking)
+- `crates/server/`: Server binary crate (AI, terrain, connections)
+- `crates/qrz/`: Hexagonal grid library
+- `crates/console/`: Server monitoring console
 
 ---
 
@@ -28,7 +30,7 @@ Client-server MMO built with Bevy ECS:
 
 **Location:** `docs/00-spec/` - Authoritative game design (what systems should do)
 **Location:** `GUIDANCE/` - Plugin implementation details
-**Location:** `lib/qrz/GUIDANCE.md` - Hex coordinate system
+**Location:** `crates/qrz/GUIDANCE.md` - Hex coordinate system
 
 ---
 

@@ -1,0 +1,22 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy_asset = "0.18"
+bevy_camera = "0.18"
+bevy_easings = "0.18"
+bevy_light = "0.18"
+bevy_mesh = "0.18"
+bevy_renet = "4"
+bimap = "0"
+bincode = { version = "2", default-features = false, features = ["std", "serde"] }
+chrono = "0"
+renet = "2"
+serde = { version = "1", features = ["derive"] }
+
+[dependencies.qrz]
+path = "../qrz"

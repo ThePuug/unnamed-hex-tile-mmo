@@ -31,23 +31,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build
 
 # Run (separate processes)
-cargo run --bin server
-cargo run --bin client
+cargo run -p server
+cargo run -p client
 
 # Tests
 cargo test                    # All tests
-cargo test physics            # Specific module tests
-cargo test actor
+cargo test -p common physics  # Specific module tests
+cargo test -p server actor
 ```
 
 ## Code Organization
 
-- `src/common/`: Shared code between client and server (components, physics, messages)
-- `src/client/`: Client-only code (rendering, input, camera)
-- `src/server/`: Server-only code (AI, terrain generation, connections)
-- `src/run-client.rs`: Client binary entry point
-- `src/run-server.rs`: Server binary entry point
-- `lib/qrz/`: Custom hexagonal grid library
+All workspace members live under `crates/`:
+
+- `crates/common/`: Shared library crate (components, physics, messages)
+- `crates/client/`: Client binary crate (rendering, input, camera)
+- `crates/server/`: Server binary crate (AI, terrain generation, connections)
+- `crates/qrz/`: Custom hexagonal grid library
+- `crates/console/`: Server monitoring console tool
 
 ## Documentation Map
 
@@ -174,7 +175,7 @@ PLAYER role perspectives on implemented features:
 
 ### Internal Library Documentation
 
-**[lib/qrz/GUIDANCE.md](lib/qrz/GUIDANCE.md)**
+**[crates/qrz/GUIDANCE.md](crates/qrz/GUIDANCE.md)**
 - Hexagonal coordinate system documentation
 - Qrz coordinate conversions
 - Map utilities

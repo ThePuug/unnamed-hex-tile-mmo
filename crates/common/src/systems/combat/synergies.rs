@@ -1,0 +1,240 @@
+use bevy::prelude::*;
+
+use crate::{
+    components::{recovery::{GlobalRecovery, SynergyUnlock}, ActorAttributes},
+    message::AbilityType,
+    systems::combat::damage as damage_calc,
+};
+
+/// Synergy trigger types for ability categorization
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynergyTrigger {
+    GapCloser,   // Lunge
+    HeavyStrike, // Overpower
+    Push,        // Knockback
+    Mitigate,    // Counter (ADR-014)
+    Defensive,   // Deflect
+}
+
+/// Synergy rule definition (what ability unlocks what)
+#[derive(Debug, Clone)]
+pub struct SynergyRule {
+    pub trigger: SynergyTrigger,
+    pub target: AbilityType,
+    pub unlock_reduction: f32, // How much earlier to unlock (in seconds)
+}
+
+/// MVP Synergy Rules (hardcoded for Phase 2, data-driven later in Phase 4)
+pub const MVP_SYNERGIES: &[SynergyRule] = &[
+    // Gap Closer → Heavy Strike: Overpower unlocks 0.5s early during Lunge recovery
+    SynergyRule {
+        trigger: SynergyTrigger::GapCloser,
+        target: AbilityType::Overpower,
+        unlock_reduction: 0.5, // Overpower available at 0.5s instead of 1.0s
+    },
+    // Heavy Strike → Mitigate: Counter unlocks 1.0s early during Overpower recovery (ADR-014)
+    SynergyRule {
+        trigger: SynergyTrigger::HeavyStrike,
+        target: AbilityType::Counter,
+        unlock_reduction: 1.0, // Counter available at 1.0s instead of 2.2s (0.2s window)
+    },
+];
+
+/// Get the synergy trigger type for an ability
+pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
+    match ability {
+        AbilityType::Lunge => Some(SynergyTrigger::GapCloser),
+        AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
+        AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // ADR-014: Mitigate type
+        AbilityType::Deflect => Some(SynergyTrigger::Defensive),
+        AbilityType::AutoAttack | AbilityType::Volley => None, // No synergies
+    }
+}
+
+/// Apply synergies when an ability is used.
+///
+/// Pattern 1 (Nullifying): 66% × gap × contest_factor
+/// - Calculates percentage reduction of effective_recovery_base
+/// - Creates early unlock window for synergized abilities
+/// - Stacks multiplicatively with composure reduction
+///
+/// This should be called immediately after creating GlobalRecovery.
+/// Both server and client run this function locally (no network broadcast needed).
+pub fn apply_synergies(
+    entity: Entity,
+    used_ability: AbilityType,
+    recovery: &GlobalRecovery,
+    attacker_attrs: &ActorAttributes,
+    defender_attrs: &ActorAttributes,
+    commands: &mut Commands,
+) {
+    // Get the trigger type for the used ability
+    let Some(trigger_type) = get_synergy_trigger(used_ability) else {
+        return; // No synergies for this ability
+    };
+
+    // Pattern 1 (Nullifying): base × gap × contest_factor
+    const BASE_REDUCTION: f32 = 0.66; // 66% max reduction
+    let gap = damage_calc::gap_factor(attacker_attrs.total_level(), defender_attrs.total_level());
+    let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning());
+
+    let synergy_reduction = (BASE_REDUCTION * gap * contest).min(0.66);
+
+    // Find and apply matching synergy rules
+    for _rule in MVP_SYNERGIES {
+        if _rule.trigger == trigger_type {
+            // Apply percentage reduction to effective_recovery_base
+            // recovery.remaining is already adjusted by composure, so this stacks multiplicatively
+            let unlock_at = (recovery.remaining * (1.0 - synergy_reduction)).max(0.0);
+
+            // Insert synergy unlock component (both server and client do this locally)
+            // Only insert if entity exists (may have been evicted client-side)
+            let synergy = SynergyUnlock::new(_rule.target, unlock_at, used_ability);
+            if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+                entity_cmd.insert(synergy);
+            }
+        }
+    }
+}
+
+/// System to clean up expired synergies when recovery expires
+pub fn synergy_cleanup_system(
+    mut commands: Commands,
+    recovery_query: Query<Entity, With<GlobalRecovery>>,
+    synergy_query: Query<(Entity, &SynergyUnlock)>,
+) {
+    // Collect entities with synergies but no recovery
+    let entities_with_recovery: std::collections::HashSet<Entity> =
+        recovery_query.iter().collect();
+
+    for (entity, _synergy) in synergy_query.iter() {
+        if !entities_with_recovery.contains(&entity) {
+            // Recovery expired, remove synergy
+            commands.entity(entity).remove::<SynergyUnlock>();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_synergy_trigger() {
+        assert_eq!(
+            get_synergy_trigger(AbilityType::Lunge),
+            Some(SynergyTrigger::GapCloser)
+        );
+        assert_eq!(
+            get_synergy_trigger(AbilityType::Overpower),
+            Some(SynergyTrigger::HeavyStrike)
+        );
+        assert_eq!(
+            get_synergy_trigger(AbilityType::Counter),
+            Some(SynergyTrigger::Mitigate)
+        );
+        assert_eq!(
+            get_synergy_trigger(AbilityType::Deflect),
+            Some(SynergyTrigger::Defensive)
+        );
+        assert_eq!(get_synergy_trigger(AbilityType::AutoAttack), None);
+        assert_eq!(get_synergy_trigger(AbilityType::Volley), None);
+    }
+
+    #[test]
+    fn test_mvp_synergies_rules() {
+        assert_eq!(MVP_SYNERGIES.len(), 2, "MVP should have 2 synergy rules");
+
+        // Lunge → Overpower
+        let lunge_synergy = &MVP_SYNERGIES[0];
+        assert_eq!(lunge_synergy.trigger, SynergyTrigger::GapCloser);
+        assert_eq!(lunge_synergy.target, AbilityType::Overpower);
+        assert_eq!(lunge_synergy.unlock_reduction, 0.5);
+
+        // Overpower → Counter (ADR-014: replaces Knockback)
+        let overpower_synergy = &MVP_SYNERGIES[1];
+        assert_eq!(overpower_synergy.trigger, SynergyTrigger::HeavyStrike);
+        assert_eq!(overpower_synergy.target, AbilityType::Counter);
+        assert_eq!(overpower_synergy.unlock_reduction, 1.0);
+    }
+
+    // Note: Following DEVELOPER role guidance to write durable unit tests.
+    // The can_use_ability function is designed to be called from systems with ECS queries,
+    // so we test the logic components (GlobalRecovery, SynergyUnlock) directly instead.
+
+    #[test]
+    fn test_ability_locked_by_recovery() {
+        // Test that recovery locks abilities
+        let recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
+        assert!(recovery.is_active(), "Recovery should be active");
+    }
+
+    #[test]
+    fn test_synergy_unlock_logic() {
+        // Test synergy unlock logic directly
+        let synergy = SynergyUnlock::new(AbilityType::Overpower, 0.5, AbilityType::Lunge);
+
+        // At 1.0s remaining (not unlocked yet)
+        assert!(
+            !synergy.is_unlocked(1.0),
+            "Should not be unlocked at 1.0s remaining"
+        );
+
+        // At 0.5s remaining (unlocked)
+        assert!(
+            synergy.is_unlocked(0.5),
+            "Should be unlocked at 0.5s remaining"
+        );
+
+        // At 0.3s remaining (unlocked)
+        assert!(
+            synergy.is_unlocked(0.3),
+            "Should be unlocked at 0.3s remaining"
+        );
+    }
+
+    #[test]
+    fn test_lunge_synergy_timing() {
+        // Test Lunge → Overpower synergy timing
+        let recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
+        let synergy = SynergyUnlock::new(AbilityType::Overpower, 0.5, AbilityType::Lunge);
+
+        // At start (1.0s remaining): locked
+        assert!(recovery.is_active());
+        assert!(!synergy.is_unlocked(recovery.remaining));
+
+        // After 0.5s (0.5s remaining): synergy unlocks
+        let mut recovery_mid = recovery.clone();
+        recovery_mid.tick(0.5);
+        assert!(recovery_mid.is_active());
+        assert!(
+            synergy.is_unlocked(recovery_mid.remaining),
+            "Overpower should unlock at 0.5s remaining"
+        );
+    }
+
+    #[test]
+    fn test_overpower_synergy_timing() {
+        // Test Overpower → Counter synergy timing (ADR-014: replaces Knockback)
+        let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
+        let synergy = SynergyUnlock::new(AbilityType::Counter, 1.0, AbilityType::Overpower);
+
+        // At start (2.0s remaining): locked
+        assert!(recovery.is_active());
+        assert!(!synergy.is_unlocked(recovery.remaining));
+
+        // After 0.5s (1.5s remaining): still locked
+        let mut recovery_early = recovery.clone();
+        recovery_early.tick(0.5);
+        assert!(!synergy.is_unlocked(recovery_early.remaining));
+
+        // After 1.0s (1.0s remaining): synergy unlocks
+        let mut recovery_mid = recovery.clone();
+        recovery_mid.tick(1.0);
+        assert!(
+            synergy.is_unlocked(recovery_mid.remaining),
+            "Counter should unlock at 1.0s remaining"
+        );
+    }
+
+}

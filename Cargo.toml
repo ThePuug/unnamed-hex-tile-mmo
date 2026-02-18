@@ -1,34 +1,12 @@
 [workspace]
-members = ["tools/console"]
-exclude = []
-
-[package]
-name = "unnamed-hex-tile-mmo"
-edition = "2021"
-version = "0.1.0"
-authors = ["Reed Debaets <reed.debaets@gmail.com>"]
-
-[dependencies]
-bevy = { version = "0.18", features = ["dynamic_linking"] }
-bevy_asset = "0.18"
-bevy_camera = "0.18"
-bevy_light = "0.18"
-bevy_mesh = "0.18"
-bevy_easings = "0.18"
-bevy_renet = "4"
-bimap = "0"
-bincode = { version = "2", default-features = false, features = ["std", "serde"] }
-chrono = "0"
-log = { version = "0", features = ["max_level_debug", "release_max_level_warn"] }
-lru = "0"
-noise = { version = "0" }
-pathfinding = "4"
-phf = { version = "0", features = ["macros"] }
-rand = "0"
-renet = "2"
-rstar = "0"
-serde = { version = "1", features = ["derive"] }
-tinyvec = { version = "1", features = ["serde"]}
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/client",
+    "crates/server",
+    "crates/qrz",
+    "crates/console",
+]
 
 [profile.dev]
 opt-level = 1
@@ -42,14 +20,3 @@ opt-level = 3
 codegen-units = 1
 incremental = false
 debug = false
-
-[dependencies.qrz]
-path = "lib/qrz"
-
-[[bin]]
-name = "server"
-path = "src/run-server.rs"
-
-[[bin]]
-name = "client"
-path = "src/run-client.rs"
