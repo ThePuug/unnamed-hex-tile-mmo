@@ -138,9 +138,9 @@ pub fn setup(
                 AbilityType::Lunge => "20".to_string(),       // 20 stamina
                 AbilityType::Overpower => "40".to_string(),   // 40 stamina
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
+                AbilityType::Counter => "30".to_string(),     // 30 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
-                AbilityType::Volley => String::new(),         // NPC-only (not on player bar)
-                AbilityType::Counter => String::new(),        // NPC-only (not on player bar)
+                AbilityType::Volley => String::new(),         // NPC-only
             };
 
             if !cost_text.is_empty() {

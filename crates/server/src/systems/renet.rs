@@ -69,9 +69,9 @@ pub fn do_manage_connections(
                 let qrz = Qrz { q: 0, r: 0, z: 4 };
                 let loc = Loc::new(qrz);
                 let attrs = ActorAttributes::new(
-                    -9, 13, 0,
-                    1, 5, 0,
-                    -9, 13, 0,
+                    -3, 4, 0,
+                    1, 0, 0,
+                    -3, 4, 0,
                 );
                 // Calculate initial resources from attributes
                 let max_health = attrs.max_health();

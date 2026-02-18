@@ -155,11 +155,15 @@ pub fn write_do(
                         continue
                     };
 
-                    commands.entity(local_ent).insert(
-                        crate::components::DeathMarker {
-                            death_time: time.elapsed(),
-                        }
-                    );
+                    if let Ok(mut cmd) = commands.get_entity(local_ent) {
+                        cmd.insert(
+                            crate::components::DeathMarker {
+                                death_time: time.elapsed(),
+                            }
+                        );
+                    } else {
+                        warn!("Despawn for already-dead local entity {:?} (server {:?})", local_ent, ent);
+                    }
                 }
             }
             Do { event: Event::Incremental { ent, component } } => {

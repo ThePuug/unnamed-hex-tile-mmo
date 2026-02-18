@@ -204,9 +204,9 @@ impl ConsoleApp {
             latest = Some(snapshot);
         }
         if let Some(snapshot) = latest {
-            // Record sparkline history
-            let frame_ms = snapshot.frame_duration_us as f64 / 1000.0;
-            let tick_ms = snapshot.tick_duration_us as f64 / 1000.0;
+            // Record sparkline history (peak per snapshot, not average)
+            let frame_ms = snapshot.frame_duration_max_us as f64 / 1000.0;
+            let tick_ms = snapshot.tick_duration_max_us as f64 / 1000.0;
             let mem_mb = snapshot.memory_bytes as f64 / (1024.0 * 1024.0);
             self.hist_frame.push(frame_ms);
             self.hist_tick.push(tick_ms);
@@ -371,8 +371,8 @@ impl eframe::App for ConsoleApp {
             ui.separator();
 
             if let Some(m) = &self.current {
-                let frame_ms = m.frame_duration_us as f64 / 1000.0;
-                let tick_ms = m.tick_duration_us as f64 / 1000.0;
+                let frame_ms = m.frame_duration_max_us as f64 / 1000.0;
+                let tick_ms = m.tick_duration_max_us as f64 / 1000.0;
                 let mem_mb = m.memory_bytes as f64 / (1024.0 * 1024.0);
                 let map_mb = m.memory_map_bytes as f64 / (1024.0 * 1024.0);
 

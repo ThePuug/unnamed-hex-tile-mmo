@@ -1230,14 +1230,14 @@ pub fn update_axis_button_visibility(
     // Update right-side buttons
     for (button, mut visibility) in &mut right_buttons {
         let should_show = match button {
-            // Show decrease when axis >= 0 (can move back left from right side)
-            AxisAdjustButtonRight::MightGraceDecrease => draft.might_grace_axis >= 0,
-            AxisAdjustButtonRight::VitalityFocusDecrease => draft.vitality_focus_axis >= 0,
-            AxisAdjustButtonRight::InstinctPresenceDecrease => draft.instinct_presence_axis >= 0,
-            // Show increase when axis > 0 (can increase right commitment)
-            AxisAdjustButtonRight::MightGraceIncrease => draft.might_grace_axis > 0,
-            AxisAdjustButtonRight::VitalityFocusIncrease => draft.vitality_focus_axis > 0,
-            AxisAdjustButtonRight::InstinctPresenceIncrease => draft.instinct_presence_axis > 0,
+            // Show decrease when axis > 0 (can reduce right commitment)
+            AxisAdjustButtonRight::MightGraceDecrease => draft.might_grace_axis > 0,
+            AxisAdjustButtonRight::VitalityFocusDecrease => draft.vitality_focus_axis > 0,
+            AxisAdjustButtonRight::InstinctPresenceDecrease => draft.instinct_presence_axis > 0,
+            // Show increase when axis >= 0 (can commit to right, or increase right commitment)
+            AxisAdjustButtonRight::MightGraceIncrease => draft.might_grace_axis >= 0,
+            AxisAdjustButtonRight::VitalityFocusIncrease => draft.vitality_focus_axis >= 0,
+            AxisAdjustButtonRight::InstinctPresenceIncrease => draft.instinct_presence_axis >= 0,
         };
 
         *visibility = if should_show {

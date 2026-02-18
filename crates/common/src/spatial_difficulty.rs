@@ -1,7 +1,7 @@
 //! # Spatial Difficulty System (ADR-014)
 //!
 //! Level-based enemy system with:
-//! - Distance-based difficulty scaling (100 tiles per level, 0-10)
+//! - Distance-based difficulty scaling (base 10, +1 per 100 tiles, max 20)
 //! - Directional enemy archetypes (Berserker/Juggernaut/Kiter/Defender)
 //! - Attribute distribution per archetype
 //! - Dynamic engagement spawning
@@ -14,28 +14,29 @@ pub const HAVEN_LOCATION: Qrz = Qrz { q: 0, r: 0, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 ///
-/// - <100 tiles = level 0
-/// - 1000+ tiles = level 10
-/// - Linear scaling: level = floor(distance / 100)
+/// Base level 10 near haven, +1 per 100 tiles, capped at 20.
 ///
 /// # Examples
 /// ```
 /// # use qrz::Qrz;
 /// # use common::spatial_difficulty::*;
 /// let spawn = Qrz { q: 5, r: 0, z: 0 };  // 5 tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 0);
+/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
 ///
-/// let spawn = Qrz { q: 50, r: 0, z: -50 };  // ~100 tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 1);
+/// let spawn = Qrz { q: 100, r: 0, z: 0 };  // 100 tiles from origin
+/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
 ///
-/// let spawn = Qrz { q: 100, r: 0, z: 0 };  // 100+ tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);  // Clamped at 10
+/// let spawn = Qrz { q: 500, r: 0, z: 0 };  // 500 tiles from origin
+/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 15);
+///
+/// let spawn = Qrz { q: 1000, r: 0, z: 0 };  // 1000+ tiles
+/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);  // Clamped at 20
 /// ```
 pub fn calculate_enemy_level(spawn_location: Qrz, haven_location: Qrz) -> u8 {
     let distance = haven_location.flat_distance(&spawn_location) as f32;
 
-    // Linear scaling: level = distance / 100, clamped to 0-10
-    (distance / 100.0).min(10.0) as u8
+    // Base 10, +1 per 100 tiles, clamped to 10-20
+    (10.0 + (distance / 100.0)).min(20.0) as u8
 }
 
 /// Directional zones based on angle from haven
@@ -285,37 +286,37 @@ mod tests {
     #[test]
     fn test_level_calculation_origin() {
         let spawn = HAVEN_LOCATION;
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 0);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
     }
 
     #[test]
     fn test_level_calculation_under_100() {
         let spawn = Qrz { q: 50, r: 0, z: 0 };  // 50 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 0);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
     }
 
     #[test]
     fn test_level_calculation_100_to_199() {
         let spawn = Qrz { q: 100, r: 0, z: 0 };  // 100 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 1);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
 
         let spawn = Qrz { q: 150, r: 0, z: 0 };  // 150 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 1);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
     }
 
     #[test]
     fn test_level_calculation_500_tiles() {
         let spawn = Qrz { q: 500, r: 0, z: 0 };  // 500 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 5);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 15);
     }
 
     #[test]
-    fn test_level_calculation_clamped_at_10() {
+    fn test_level_calculation_clamped_at_20() {
         let spawn = Qrz { q: 1000, r: 0, z: 0 };  // 1000 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);
 
         let spawn = Qrz { q: 2000, r: 0, z: 0 };  // 2000 tiles away (way beyond)
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);  // Still clamped
+        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);  // Still clamped
     }
 
     // ===== DIRECTIONAL ZONE TESTS =====

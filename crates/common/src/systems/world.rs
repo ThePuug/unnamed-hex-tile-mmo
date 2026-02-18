@@ -104,7 +104,9 @@ pub fn do_incremental(
 
                     // ADR-011: Clear movement prediction if it exists
                     if let Some(_prediction) = o_prediction {
-                        commands.entity(ent).remove::<crate::components::movement_prediction::MovementPrediction>();
+                        if let Ok(mut e) = commands.get_entity(ent) {
+                            e.remove::<crate::components::movement_prediction::MovementPrediction>();
+                        }
                     }
 
                     // Update Position for remote entity
@@ -132,59 +134,63 @@ pub fn do_incremental(
             Component::Behaviour(behaviour) => {
                 if let Some(mut behaviour0) = o_behaviour {
                     *behaviour0 = behaviour;
-                } else {
-                    commands.entity(ent).insert(behaviour);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(behaviour);
                 }
             }
             Component::KeyBits(keybits) => {
                 if let Some(mut keybits0) = o_keybits {
                     *keybits0 = keybits;
-                } else {
-                    commands.entity(ent).insert(keybits);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(keybits);
                 }
             }
             Component::Health(health) => {
                 if let Some(mut health0) = o_health {
                     *health0 = health;
-                } else {
-                    commands.entity(ent).insert(health);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(health);
                 }
             }
             Component::Stamina(stamina) => {
                 if let Some(mut stamina0) = o_stamina {
                     *stamina0 = stamina;
-                } else {
-                    commands.entity(ent).insert(stamina);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(stamina);
                 }
             }
             Component::Mana(mana) => {
                 if let Some(mut mana0) = o_mana {
                     *mana0 = mana;
-                } else {
-                    commands.entity(ent).insert(mana);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(mana);
                 }
             }
             Component::CombatState(combat_state) => {
                 if let Some(mut combat_state0) = o_combat_state {
                     *combat_state0 = combat_state;
-                } else {
-                    commands.entity(ent).insert(combat_state);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(combat_state);
                 }
             }
             Component::PlayerControlled(player_controlled) => {
                 if o_player_controlled.is_none() {
-                    commands.entity(ent).insert(player_controlled);
+                    if let Ok(mut e) = commands.get_entity(ent) {
+                        e.insert(player_controlled);
+                    }
                 }
             }
             Component::TierLock(tier_lock) => {
                 if let Some(mut tier_lock0) = o_tier_lock {
                     *tier_lock0 = tier_lock;
-                } else {
-                    commands.entity(ent).insert(tier_lock);
+                } else if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(tier_lock);
                 }
             }
             Component::Returning(returning) => {
-                commands.entity(ent).insert(returning);
+                if let Ok(mut e) = commands.get_entity(ent) {
+                    e.insert(returning);
+                }
             }
         }
     }

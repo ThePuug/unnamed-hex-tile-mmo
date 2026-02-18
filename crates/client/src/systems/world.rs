@@ -279,6 +279,7 @@ pub fn update(
 pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common::resources::map::Map>,
     map_state: Res<common::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
@@ -316,6 +317,7 @@ pub fn evict_distant_chunks(
             );
 
             if !is_player {
+                l2r.remove_by_left(&entity);
                 commands.entity(entity).despawn();
             }
         }
