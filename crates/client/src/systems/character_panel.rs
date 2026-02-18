@@ -61,7 +61,18 @@ pub enum AxisMarker {
     InstinctPresence,
 }
 
-/// Marker component for meta-attribute stat display (SOW-021)
+/// Marker component for absolute meta-attribute stat display
+#[derive(Component, Clone)]
+pub enum AbsoluteMetaAttributeStat {
+    Force,
+    Technique,
+    Constitution,
+    Discipline,
+    Intuition,
+    Gravitas,
+}
+
+/// Marker component for relative meta-attribute stat display (SOW-021)
 #[derive(Component, Clone)]
 pub enum MetaAttributeStat {
     Impact,
@@ -205,8 +216,49 @@ pub enum AttributeType {
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
-macro_rules! create_stat_row {
-    ($parent:expr, $left_stat:expr, $right_stat:expr) => {
+macro_rules! create_absolute_stat_display {
+    ($parent:expr, $stat:expr) => {
+        {
+            let (name, color) = match $stat {
+                AbsoluteMetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5)),
+                AbsoluteMetaAttributeStat::Technique => ("Technique", Color::srgb(0.9, 0.9, 0.5)),
+                AbsoluteMetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5)),
+                AbsoluteMetaAttributeStat::Discipline => ("Discipline", Color::srgb(0.5, 0.7, 0.9)),
+                AbsoluteMetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9)),
+                AbsoluteMetaAttributeStat::Gravitas => ("Gravitas", Color::srgb(0.9, 0.6, 0.3)),
+            };
+
+            $parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(4.),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.),
+                    ..default()
+                },
+            ))
+            .with_children(|stat_col| {
+                // Stat name (colored)
+                stat_col.spawn((
+                    Text::new(name),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(color),
+                ));
+                // Stat value
+                stat_col.spawn((
+                    $stat,
+                    Text::new("(0)"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                ));
+            });
+        }
+    };
+}
+
+/// Groups absolute + relative stat rows into one container with no internal gap
+macro_rules! create_stat_section {
+    ($parent:expr, $left_abs:expr, $right_abs:expr, $left_rel:expr, $right_rel:expr) => {
         $parent.spawn((
             Node {
                 flex_direction: FlexDirection::Column,
@@ -218,7 +270,7 @@ macro_rules! create_stat_row {
             BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
         ))
         .with_children(|section| {
-            // Two-column layout for stats
+            // Absolute row (label + value only)
             section.spawn((
                 Node {
                     flex_direction: FlexDirection::Row,
@@ -228,11 +280,22 @@ macro_rules! create_stat_row {
                 },
             ))
             .with_children(|row| {
-                // Left stat column
-                create_stat_display!(row, $left_stat);
+                create_absolute_stat_display!(row, $left_abs);
+                create_absolute_stat_display!(row, $right_abs);
+            });
 
-                // Right stat column
-                create_stat_display!(row, $right_stat);
+            // Relative row (label + value + effect)
+            section.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(10.),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                create_stat_display!(row, $left_rel);
+                create_stat_display!(row, $right_rel);
             });
         });
     };
@@ -255,6 +318,7 @@ macro_rules! create_stat_display {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(3.),
                     flex_grow: 1.0,
+                    flex_basis: Val::Px(0.),
                     ..default()
                 },
             ))
@@ -456,7 +520,7 @@ macro_rules! create_attribute_section {
                     bar_wrapper.spawn((
                         $bar_marker,
                         Node {
-                            width: Val::Px(250.),
+                            width: Val::Px(235.),
                             height: Val::Px(20.),
                             position_type: PositionType::Relative,
                             ..default()
@@ -525,7 +589,7 @@ macro_rules! create_attribute_section {
                                 height: Val::Px(20.),
                                 position_type: PositionType::Absolute,
                                 // Position at center minus 12px (half of 20px button + 2px gap)
-                                left: Val::Px(113.),  // 250px bar / 2 - 12px = 113px
+                                left: Val::Px(105.5),  // 235px bar / 2 - 12px = 105.5px
                                 top: Val::Px(-24.),   // Above the bar to avoid occlusion
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -549,7 +613,7 @@ macro_rules! create_attribute_section {
                                 height: Val::Px(20.),
                                 position_type: PositionType::Absolute,
                                 // Position at center plus 2px gap
-                                left: Val::Px(127.),  // 250px bar / 2 + 2px = 127px
+                                left: Val::Px(119.5),  // 235px bar / 2 + 2px = 119.5px
                                 top: Val::Px(-24.),   // Above the bar to avoid occlusion
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -724,19 +788,25 @@ pub fn setup(
                     Node {
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(15.),
-                        width: Val::Px(360.),
+                        width: Val::Px(375.),
                         ..default()
                     },
                 ))
                 .with_children(|right| {
-                    // Row 1: Impact (left) & Finesse (right) - from MIGHT ↔ GRACE
-                    create_stat_row!(right, MetaAttributeStat::Impact, MetaAttributeStat::Finesse);
+                    // MIGHT ↔ GRACE section (grouped container)
+                    create_stat_section!(right,
+                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Technique,
+                        MetaAttributeStat::Impact, MetaAttributeStat::Finesse);
 
-                    // Row 2: Toughness (left) & Composure (right) - from VITALITY ↔ FOCUS
-                    create_stat_row!(right, MetaAttributeStat::Toughness, MetaAttributeStat::Composure);
+                    // VITALITY ↔ FOCUS section (grouped container)
+                    create_stat_section!(right,
+                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Discipline,
+                        MetaAttributeStat::Toughness, MetaAttributeStat::Composure);
 
-                    // Row 3: Cunning (left) & Dominance (right) - from INSTINCT ↔ PRESENCE
-                    create_stat_row!(right, MetaAttributeStat::Cunning, MetaAttributeStat::Dominance);
+                    // INSTINCT ↔ PRESENCE section (grouped container)
+                    create_stat_section!(right,
+                        AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Gravitas,
+                        MetaAttributeStat::Cunning, MetaAttributeStat::Dominance);
                 });
             });
 
@@ -846,7 +916,7 @@ pub fn handle_shift_drag(
         if buttons.pressed(MouseButton::Left) {
             // Get the bar's width to calculate pixels per unit
             if let Ok((_entity, _bar_type, _interaction, bar_node)) = bar_query.get(drag_state.bar_entity) {
-                let bar_width = if let Val::Px(w) = bar_node.width { w } else { 250.0 };
+                let bar_width = if let Val::Px(w) = bar_node.width { w } else { 235.0 };
 
                 // Calculate max attribute value based on current level
                 let level = attrs.total_level();
@@ -895,6 +965,7 @@ pub fn update_attributes(
     right_value_query: Query<(Entity, &RightCurrentValue)>,
     bar_query: Query<(Entity, &AttributeBar)>,
     meta_query: Query<(&MetaAttributeStat, Entity)>,
+    abs_meta_query: Query<(&AbsoluteMetaAttributeStat, Entity)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
     mut axis_query: Query<(&AxisMarker, &mut Node), Without<SpectrumRange>>,
     mut text_query: Query<&mut Text>,
@@ -1016,6 +1087,26 @@ pub fn update_attributes(
                 if let Ok((_, mut node)) = axis_query.get_mut(child) {
                     update_axis_bar(&mut node, left_current, right_current, max_attr_scaled);
                 }
+            }
+        }
+    }
+
+    // Update absolute meta-attribute values
+    // All use the same formula pattern: (10 + attr * 0.3) * damage_level_multiplier
+    let level_mult = display_attrs.damage_level_multiplier();
+    for (abs_stat, entity) in &abs_meta_query {
+        if let Ok(mut text) = text_query.get_mut(entity) {
+            let raw_attr = match abs_stat {
+                AbsoluteMetaAttributeStat::Force => Some(display_attrs.might() as f32),
+                AbsoluteMetaAttributeStat::Technique => Some(display_attrs.grace() as f32),
+                AbsoluteMetaAttributeStat::Constitution => Some(display_attrs.vitality() as f32),
+                AbsoluteMetaAttributeStat::Discipline => Some(display_attrs.focus() as f32),
+                AbsoluteMetaAttributeStat::Intuition => Some(display_attrs.instinct() as f32),
+                AbsoluteMetaAttributeStat::Gravitas => Some(display_attrs.presence() as f32),
+            };
+            if let Some(attr) = raw_attr {
+                let value = (10.0 + attr * 0.3) * level_mult;
+                **text = format!("({:.0})", value);
             }
         }
     }

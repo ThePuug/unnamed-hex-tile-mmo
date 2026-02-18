@@ -29,7 +29,7 @@ The attribute system uses **three bipolar pairs** of attributes, managed through
 
 | Pair | Left | Right |
 |------|------|-------|
-| **Might ↔ Grace** | Raw power — the energy behind every action | Technique and precision — efficiency of execution |
+| **Might ↔ Grace** | Raw power — offensive damage scaling | Technique and precision — defensive damage scaling |
 | **Vitality ↔ Focus** | Physical constitution — capacity to endure | Mental discipline — clarity under pressure |
 | **Instinct ↔ Presence** | Gut sense — reading and adapting to the battlefield | Gravitational force — commanding the space around you |
 
@@ -53,8 +53,8 @@ Absolute values are the **progression metric**. They grow as you level. Super-li
 
 | Attribute | Absolute | Stat | Description |
 |-----------|----------|------|-------------|
-| Might | **Force** | Damage | How hard your attacks hit. Scales super-linearly with level. |
-| Grace | **Technique** | — | Raw skill and practiced ability. Grows with experience. |
+| Might | **Force** | Offensive Damage | How hard your offensive attacks hit. Scales super-linearly with level. |
+| Grace | **Technique** | Defensive Damage | How hard your defensive/reactive abilities hit. Scales super-linearly with level. |
 | Vitality | **Constitution** | HP | Health pool. Scales super-linearly with level. HP exponent > Damage exponent, ensuring higher-level fights have more exchanges. |
 | Focus | **Discipline** | — | Trained mental sharpness. Grows with experience. |
 | Instinct | **Intuition** | — | Deepening gut sense. Grows with experience. |
@@ -62,7 +62,7 @@ Absolute values are the **progression metric**. They grow as you level. Super-li
 
 **Super-linear scaling:** Applied as a polynomial level multiplier after computing base stats from attribute points. The multiplier is uniform across all entities at the same level, preserving balance ratios. HP scales with a higher exponent than Damage, ensuring more exchanges at higher levels. See [ADR-020](../02-adr/020-super-linear-level-multiplier.md) for formula details.
 
-**Open absolute stats:** Technique, Discipline, Intuition, and Gravitas do not yet have concrete mechanical stats mapped. They are named and defined as progression categories. Specific stats will be assigned as gameplay testing reveals needs.
+**Open absolute stats:** Discipline, Intuition, and Gravitas do not yet have concrete mechanical stats mapped. They are named and defined as progression categories. Specific stats will be assigned as gameplay testing reveals needs.
 
 ### Relative — Build Benefit
 
@@ -122,8 +122,8 @@ Each attribute has three named sub-attributes, one per scaling mode:
 
 | Attribute | Absolute (progression) | Relative (build benefit) | Commitment (build identity) |
 |-----------|----------------------|---------------------------|----------------------------|
-| Might | Force: Damage | Impact: Recovery pushback | Ferocity |
-| Grace | Technique | Finesse: Synergy recovery reduction | Poise: Evasion |
+| Might | Force: Offensive Damage | Impact: Recovery pushback | Ferocity |
+| Grace | Technique: Defensive Damage | Finesse: Synergy recovery reduction | Poise: Evasion |
 | Vitality | Constitution: HP | Toughness: Mitigation | Grit |
 | Focus | Discipline | Composure: Recovery reduction | Concentration: Queue capacity |
 | Instinct | Intuition | Cunning: Reaction window | Flow |
@@ -132,7 +132,7 @@ Each attribute has three named sub-attributes, one per scaling mode:
 ### Framing Sentences
 
 - **Might**: Force is the raw energy generated which grows as you grow stronger. The tempo pressure that force exerts on an opponent's actions is its impact. The amount of effort you put into generating that force is your ferocity.
-- **Grace**: Technique is the practiced skill that grows as you grow more experienced. How fluidly that technique chains abilities together is its finesse. The dedication to honing that technique into fluid movement is your poise.
+- **Grace**: Technique is the practiced skill that grows as you grow more experienced — it determines the power of defensive and reactive abilities like Counter. How fluidly that technique chains abilities together is its finesse. The dedication to honing that technique into fluid movement is your poise.
 - **Vitality**: Constitution is the raw endurance that grows as you grow hardier. How well that constitution absorbs punishment from a source is its toughness. The mental stubbornness behind that physical resilience is your grit.
 - **Focus**: Discipline is the trained mental strength that grows as you grow sharper. How well that discipline maintains composure and recovers quickly is its composure. The dedication to sustaining that mental effort is your concentration.
 - **Instinct**: Intuition is the gut sense that deepens as you grow wiser. How well that intuition reads incoming threats and extends your reaction time is your cunning. Letting go of conscious thought and letting that intuition guide your actions is your flow.
@@ -162,6 +162,8 @@ See [ADR-028](../02-adr/028-attribute-triumvirate-decoupling.md) for decoupling 
 
 The following systems interact with this attribute system:
 
+- **Offensive abilities**: Force (Might → absolute) scales offensive abilities: Lunge (100% Force), Overpower (150% Force), AutoAttack (50% Force), Volley (100% Force).
+- **Defensive abilities**: Technique (Grace → absolute) scales defensive/reactive abilities: Counter reflected damage (20% Technique base + 30% threat damage, capped at 200% Technique).
 - **Reaction queue (ADR-003/006)**: Queue capacity is driven by Focus → Concentration commitment tier. Reaction window duration is driven by Instinct → Cunning relative stat (extends threat timer duration).
 - **Universal lockout (ADR-017)**: Recovery reduction (Focus → Composure) and recovery pushback (Might → Impact) affect the lockout/recovery timeline. Synergy recovery reduction (Grace → Finesse) vs reaction window (Instinct → Cunning) creates lockout-vs-window equation.
 - **Dismiss mechanic (ADR-022)**: Dismissed threats resolve at full damage minus passive defenses. Vitality → Toughness provides mitigation. (Note: Critical hits removed in ADR-031.)
@@ -178,7 +180,6 @@ The following systems interact with this attribute system:
 These are intentionally left as design space for future iteration:
 
 **Empty absolute stats:**
-- Technique (Grace absolute) — no specific stat yet
 - Discipline (Focus absolute) — no specific stat yet
 - Intuition (Instinct absolute) — no specific stat yet
 - Gravitas (Presence absolute) — no specific stat yet

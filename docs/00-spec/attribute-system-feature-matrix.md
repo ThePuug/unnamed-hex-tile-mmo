@@ -36,15 +36,15 @@
 
 | Feature | Status | ADR/Impl | Notes |
 |---------|--------|----------|-------|
-| Force (Might absolute) → Damage | 🚧 Partial | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | Damage exists, uses might() scaling |
+| Force (Might absolute) → Offensive Damage | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | All offensive abilities scale with Force: Lunge (100%), Overpower (150%), AutoAttack (50%) |
 | Constitution (Vitality absolute) → HP | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | max_health() uses vitality() with shift sensitivity (SOW-020 Phase 2) |
-| Technique (Grace absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
+| Technique (Grace absolute) → Defensive Damage | ✅ Complete | — | Counter reflected damage scales with Technique (20% base + 30% threat, cap 200%) |
 | Discipline (Focus absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
 | Intuition (Instinct absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
 | Gravitas (Presence absolute) | ❌ Not Started | — | Open — no concrete stat mapped |
 | Super-linear level multiplier | ✅ Complete | [ADR-020](../02-adr/020-super-linear-level-multiplier.md) | Polynomial multiplier implemented |
 
-**Category Status:** 2/7 complete (29%) — HP rewired via Phase 2, damage partially rewired
+**Category Status:** 4/7 complete (57%) — Force, Technique, Constitution, level multiplier all complete
 
 ---
 
@@ -126,11 +126,10 @@ The following v1.0 features are **superseded** or deferred:
 - ~~**Relative Stat Contest Framework:** Three opposing pairs (SOW-020 Phase 4)~~ ✅ Complete
 
 ### Medium Priority
-- **Absolute Stat Rewiring:** Force (damage) still partial — needs full rewiring (SOW-020 Phase 2 remainder)
 - **Decoupling Migration:** Remove archetype-attribute coupling (SOW-020 Phase 5)
 
 ### Low Priority (Post-Launch)
-- **Open Stats:** Technique, Discipline, Intuition, Gravitas, Ferocity, Grit, Flow
+- **Open Stats:** Discipline, Intuition, Gravitas, Ferocity, Grit, Flow
 - **Equipment Attribute Modifiers:** Separate RFC
 - **Commitment Tier Tuning:** Specific values for Poise/Intensity breakpoints
 - **Healing System Expansion:** Minimal healing in SOW-021 Phase 3, full system separate RFC

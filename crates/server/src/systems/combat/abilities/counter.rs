@@ -12,7 +12,7 @@ use crate::resources::RunTime;
 /// - 1 hex range (melee)
 /// - Counters ALL visible threats in your reaction window (ADR-030)
 /// - Reflects damage back for each countered threat
-/// - Reflected damage per threat: base (20% force) + bonus (30% threat damage), capped at 2× force
+/// - Reflected damage per threat: base (20% technique) + bonus (30% threat damage), capped at 2× technique
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -160,11 +160,11 @@ pub fn handle_counter(
                 continue;
             }
 
-            // Calculate reflected damage for this specific threat
-            let base_reflect = caster_attrs.force() * 0.2;  // 20% force minimum
-            let threat_bonus = threat.damage * 0.3;          // 30% of countered damage
+            // Calculate reflected damage for this specific threat (scales with Technique, not Force)
+            let base_reflect = caster_attrs.technique() * 0.2;  // 20% technique minimum
+            let threat_bonus = threat.damage * 0.3;              // 30% of countered damage
             let uncapped = base_reflect + threat_bonus;
-            let cap = caster_attrs.force() * 2.0;            // Cap at 2× defender's force
+            let cap = caster_attrs.technique() * 2.0;            // Cap at 2× defender's technique
             let reflected_damage = uncapped.min(cap);
 
             // Get target's queue and attributes

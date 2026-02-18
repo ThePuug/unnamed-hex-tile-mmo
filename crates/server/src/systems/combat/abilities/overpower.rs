@@ -7,7 +7,7 @@ use common::{
 
 /// Handle Overpower ability (W key)
 /// - 40 stamina cost
-/// - 80 base damage
+/// - Base damage from Force meta-attribute × 1.5 (scales with might + level)
 /// - Melee range (adjacent hex)
 pub fn handle_overpower(
     mut commands: Commands,
@@ -136,7 +136,6 @@ pub fn handle_overpower(
 
         // Check stamina cost (40)
         let stamina_cost = 40.0;
-        let base_damage = 80.0;
 
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
@@ -162,6 +161,10 @@ pub fn handle_overpower(
                 component: common::message::Component::Stamina(*stamina),
             },
         });
+
+        // Deal damage (base damage from Force meta-attribute × 1.5, heaviest offensive ability)
+        let attrs = attrs_query.get(*ent).expect("Overpower caster must have ActorAttributes");
+        let base_damage = attrs.force() * 1.5;
 
         // Emit DealDamage event
         commands.trigger(

@@ -515,23 +515,30 @@ max_health = ActorAttributes::max_health()
 
 ### Outgoing Damage
 
-**Physical Damage:**
+**Offensive Abilities (scale with Force = Might → absolute):**
 ```
-damage = base_damage * (1.0 + might / 100.0) * (1.0 - target_armor)
+base_damage = ability_multiplier × Force
+Force = (10 + might × 0.3) × damage_level_multiplier
+
+Ability multipliers:
+- AutoAttack: 0.5× Force
+- Lunge: 1.0× Force
+- Overpower: 1.5× Force
+- Volley: 1.0× Force
 ```
 
-**Magic Damage:**
+**Defensive/Reactive Abilities (scale with Technique = Grace → absolute):**
 ```
-damage = base_damage * (1.0 + focus / 100.0) * (1.0 - target_resistance)
+base_damage = ability_formula(Technique, threat)
+Technique = (10 + grace × 0.3) × damage_level_multiplier
+
+Counter reflected damage:
+- Base: 0.2× Technique
+- Bonus: 0.3× countered threat damage
+- Cap: 2.0× Technique
 ```
 
-**Critical Hits:**
-```
-crit_chance = base_crit + (instinct / 200.0)
-crit_multiplier = 1.5 + (instinct / 200.0)
-
-If crit: damage *= crit_multiplier
-```
+**Critical Hits:** Removed (ADR-031). Damage is deterministic and contest-driven.
 
 ### Passive Modifiers (No Reaction)
 
@@ -742,8 +749,8 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 
 **Fluid spectrum/axis sliders** (not locked by gear):
 
-* **Might** - Physical damage scaling, stamina pool size
-* **Grace** - Movement speed, hit chance, dodge recovery
+* **Might** - Offensive damage scaling (Force), stamina pool size
+* **Grace** - Defensive damage scaling (Technique), dodge recovery, evasion
 * **Vitality** - Health pool, armor rating, stagger resistance
 * **Focus** - Magic damage scaling, mana pool size, reaction queue capacity
 * **Instinct** - Critical hit chance, reaction window duration
@@ -813,7 +820,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
   - Range: Adjacent hex (1 hex away)
   - Targeting: Nearest hostile in facing direction (60° cone) within range
   - Attack speed: Every 1.5 seconds while in combat
-  - Damage: 20 physical (100% base), scales with Might
+  - Damage: 50% of Force (scales with Might + level)
   - Pauses when not adjacent to target
   - Visual: Character automatically swings weapon at adjacent target
   - Audio: Weapon swoosh + impact sound
@@ -826,8 +833,8 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
   - Cost: 20 stamina
   - Cooldown: None
   - Targeting: Nearest hostile in facing direction (60° cone) within range
-  - Effect: Instantly teleport adjacent to target, deal 40 physical damage (200% base)
-  - Damage scales with Might (Direct approach scales with physical power)
+  - Effect: Instantly teleport adjacent to target, deal 100% Force physical damage
+  - Damage scales with Force (Might → absolute, offensive damage scaling)
   - Visual: Quick dash to target, attack animation on arrival
   - Audio: Dash sound + impact
   - Player interaction: Face enemy, press Q to close distance and attack
@@ -835,11 +842,12 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * **Counter (W key)** - Patient approach skill (from Shield off-hand)
   - Defensive reaction skill
   - Range: Self-target
-  - Cost: 35 stamina
+  - Cost: 30 stamina
   - Cooldown: 0.5s GCD (shared with other reactions)
-  - Targeting: Self (clears first queued threat)
-  - Effect: Reflect first queued threat back to attacker
-  - Clears 1 threat (leftmost in queue)
+  - Targeting: Self (clears all visible window threats)
+  - Effect: Reflect all visible threats back to attackers
+  - Reflected damage scales with Technique (Grace → absolute, defensive damage scaling)
+  - Per threat: 20% Technique base + 30% countered threat damage, capped at 200% Technique
   - Visual: Parry animation, attack bounces back
   - Audio: Clashing metal
   - Player interaction: Press W when threats in queue to reflect damage back
@@ -899,7 +907,8 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
    - Instinct → reaction window duration
    - Focus → queue capacity
    - Vitality → stamina pool
-   - Might → outgoing damage
+   - Might → offensive damage (Force: Lunge, Overpower, AutoAttack)
+   - Grace → defensive damage (Technique: Counter reflected damage)
 
 6. **Resources:**
    - Stamina bar UI

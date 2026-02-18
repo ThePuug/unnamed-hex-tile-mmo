@@ -689,11 +689,20 @@ impl ActorAttributes {
     // --- ABSOLUTE META-ATTRIBUTES (scaled by level multiplier) ---
 
     /// Force: Offensive power from might (absolute meta-attribute)
-    /// Fully scaled damage output including level progression. Used as base damage for abilities.
+    /// Fully scaled damage output including level progression. Used as base damage for offensive abilities.
     pub fn force(&self) -> f32 {
         let might = self.might() as f32;
         let base = 10.0;
         let linear = base + (might * 0.3);
+        linear * self.damage_level_multiplier()
+    }
+
+    /// Technique: Defensive power from grace (absolute meta-attribute)
+    /// Fully scaled damage output including level progression. Used as base damage for defensive/reactive abilities.
+    pub fn technique(&self) -> f32 {
+        let grace = self.grace() as f32;
+        let base = 10.0;
+        let linear = base + (grace * 0.3);
         linear * self.damage_level_multiplier()
     }
 
