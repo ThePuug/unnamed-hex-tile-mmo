@@ -37,7 +37,7 @@ pub fn handle_apply_damage(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     _health_query: Query<&mut Health>,
-    mut queue_query: Query<&mut ReactionQueue>,
+    _queue_query: Query<&ReactionQueue>,
     input_queues: Res<common::resources::InputQueues>,
     transform_query: Query<&Transform>,
     time: Res<Time>,
@@ -46,7 +46,7 @@ pub fn handle_apply_damage(
     let player_entity = input_queues.entities().next().copied();
 
     for event in reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
+        if let GameEvent::ApplyDamage { ent, damage, source: _ } = event.event {
             // Don't remove from queue - ClearQueue event already did that!
             // This was causing double-removal and queue desync
             // (ApplyDamage is for damage display only, not queue management)

@@ -324,15 +324,11 @@ impl Map {
         let mut colors: Vec<[f32; 4]> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
-        let mut tile_count = 0;
-
         // Filter tiles to only those in this chunk
         for (&tile_qrz, _) in map.iter() {
             if loc_to_chunk(tile_qrz) != chunk_id {
                 continue;
             }
-
-            tile_count += 1;
 
             // Get RAW vertices (without slope adjustments to avoid gaps at boundaries)
             // Only apply slopes if explicitly enabled AND we're okay with gaps

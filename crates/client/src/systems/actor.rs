@@ -13,7 +13,7 @@ use common::{
         reaction_queue::ReactionQueue,
         *
     },
-    message::{ Event, Component, * },
+    message::{ Event, * },
     plugins::nntree::NearestNeighbor,
     resources::{map::Map, InputQueues},
 };

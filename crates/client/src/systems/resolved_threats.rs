@@ -196,7 +196,6 @@ fn spawn_resolved_threat_entry(
             ResolvedThreatEntry {
                 spawn_time,
                 lifetime: ENTRY_LIFETIME,
-                damage,
                 severity,
                 appear_delay,
             },

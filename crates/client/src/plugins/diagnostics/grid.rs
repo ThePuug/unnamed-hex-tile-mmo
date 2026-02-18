@@ -218,11 +218,6 @@ impl HexGridBuilder {
         }
     }
 
-    /// Returns true if no lines have been added
-    fn is_empty(&self) -> bool {
-        self.positions.is_empty()
-    }
-
     /// Converts the builder into a Bevy mesh with correct AABB
     fn into_mesh(self) -> (Mesh, Aabb) {
         let mut mesh = Mesh::new(

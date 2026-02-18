@@ -115,10 +115,10 @@ impl NetworkMetrics {
 pub struct NetworkUiRootMarker;
 
 #[derive(Component)]
-pub(super) struct BandwidthText;
+pub(crate) struct BandwidthText;
 
 #[derive(Component)]
-pub(super) struct MessagesText;
+pub(crate) struct MessagesText;
 
 // ============================================================================
 // Systems

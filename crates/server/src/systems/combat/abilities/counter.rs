@@ -88,7 +88,7 @@ pub fn handle_counter(
         };
 
         // Get all visible window threats to counter (collect and drop borrow)
-        let (visible_threats, window_size) = {
+        let (visible_threats, _window_size) = {
             let Ok((_, queue)) = queue_query.get(*ent) else {
                 continue;
             };

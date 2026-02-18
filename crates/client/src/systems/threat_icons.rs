@@ -302,7 +302,7 @@ pub fn update(
         }
     } else if hidden_count > 0 && counter_exists {
         // Update counter text
-        if let Ok(counter) = overflow_query.single() {
+        if let Ok(_counter) = overflow_query.single() {
             if let Ok(children) = container_children.get(container) {
                 for child in children.iter() {
                     if overflow_query.get(child).is_ok() {

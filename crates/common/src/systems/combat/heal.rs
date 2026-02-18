@@ -8,7 +8,7 @@ use crate::{
 /// Handles Dominance-based healing reduction aura
 pub fn apply_healing_system(
     mut commands: Commands,
-    mut heal_query: Query<(Entity, &PendingHeal)>,
+    heal_query: Query<(Entity, &PendingHeal)>,
     mut health_query: Query<&mut Health>,
     attrs_query: Query<&ActorAttributes>,
     loc_query: Query<&Loc>,

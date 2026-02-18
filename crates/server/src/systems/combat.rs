@@ -13,7 +13,7 @@ use common::{
 /// Rolls for crit, calculates outgoing damage, inserts into reaction queue
 pub fn process_deal_damage(
     trigger: On<Try>,
-    mut commands: Commands,
+    _commands: Commands,
     mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut common::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
@@ -75,7 +75,7 @@ pub fn process_deal_damage(
         );
 
         // Try to insert threat into queue
-        let overflow = queue_utils::insert_threat(&mut queue, threat, now);
+        let _overflow = queue_utils::insert_threat(&mut queue, threat, now);
 
         // Enter combat for both attacker and target AFTER threat is successfully inserted
         // Handle case where source == target (self-damage)

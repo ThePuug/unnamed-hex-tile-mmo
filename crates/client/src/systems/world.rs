@@ -3,10 +3,9 @@ use std::f32::consts::PI;
 use bevy::{
     math::ops::*,
     prelude::*,
-    tasks::{block_on, futures_lite::future, AsyncComputeTaskPool},
+    tasks::{block_on, futures_lite::future},
 };
 
-pub const TILE_RISE: f32 = 0.8;
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
@@ -20,7 +19,7 @@ use common::{
         behaviour::PlayerControlled,
         entity_type::*,
     },
-    message::{Event, Component, *},
+    message::{Event, *},
     systems::*,
 };
 

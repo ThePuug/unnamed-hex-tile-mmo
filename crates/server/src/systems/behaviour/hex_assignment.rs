@@ -18,7 +18,7 @@ use common::{
     },
     plugins::nntree::NNTree,
     resources::map::Map,
-    spatial_difficulty::{EnemyArchetype, PositioningStrategy},
+    spatial_difficulty::PositioningStrategy,
 };
 use crate::systems::behaviour::chase::Chase;
 

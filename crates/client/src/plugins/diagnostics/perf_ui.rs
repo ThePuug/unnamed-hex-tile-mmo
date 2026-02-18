@@ -16,16 +16,16 @@ use super::config::DiagnosticsState;
 pub struct PerfUiRootMarker;
 
 #[derive(Component)]
-pub(super) struct FpsText;
+pub(crate) struct FpsText;
 
 #[derive(Component)]
-pub(super) struct FrameTimeText;
+pub(crate) struct FrameTimeText;
 
 #[derive(Component)]
-pub(super) struct EntityCountText;
+pub(crate) struct EntityCountText;
 
 #[derive(Component)]
-pub(super) struct TerrainTilesText;
+pub(crate) struct TerrainTilesText;
 
 // ============================================================================
 // Systems

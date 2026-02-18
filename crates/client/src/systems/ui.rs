@@ -1,8 +1,6 @@
 use bevy::prelude::*;
 use bevy::math::Rot2;
 use bevy::ui::UiTransform;
-use std::f32::consts::PI;
-
 use crate::{
     components::*,
     resources::Server,
@@ -133,7 +131,7 @@ pub fn update(
     player_query: Query<&Loc, With<Actor>>,
     server: Res<Server>,
     time: Res<Time>,
-    camera_angle: Res<CameraOrbitAngle>,
+    _camera_angle: Res<CameraOrbitAngle>,
 ) {
     for (mut span, info) in &mut query {
         **span = match info {

@@ -113,7 +113,7 @@ pub fn on_damage_applied(
             };
 
             // Spawn log entry
-            spawn_log_entry(&mut commands, content, entry_text, timestamp, is_player_damage, color);
+            spawn_log_entry(&mut commands, content, entry_text, color);
         }
     }
 }
@@ -158,7 +158,7 @@ pub fn on_queue_cleared(
             let color = Color::srgb(0.6, 0.6, 0.6);
 
             // Spawn log entry
-            spawn_log_entry(&mut commands, content, entry_text, timestamp, false, color);
+            spawn_log_entry(&mut commands, content, entry_text, color);
         }
     }
 }
@@ -250,8 +250,6 @@ fn spawn_log_entry(
     commands: &mut Commands,
     content: Entity,
     text: String,
-    timestamp: String,
-    is_player_damage: bool,
     color: Color,
 ) {
     commands.entity(content).with_children(|parent| {
@@ -262,10 +260,7 @@ fn spawn_log_entry(
                 ..default()
             },
             TextColor(color),
-            CombatLogEntry {
-                timestamp,
-                is_player_damage,
-            },
+            CombatLogEntry,
         ));
     });
 }

@@ -81,7 +81,7 @@ pub fn terrain_y_at(floor_qrz: Qrz, entity_tile: Qrz, map: &Map) -> f32 {
 /// Blends toward a fixed offset (±0.5 × rise) based on whether the neighbor is higher
 /// or lower, matching the visual terrain mesh slopes. The neighbor's actual elevation
 /// difference doesn't affect the slope amount - only the direction (up/down).
-pub fn blended_terrain_y(world_xz: Vec2, current_hx: Qrz, terrain_y: f32, entity_tile: Qrz, current_floor_qrz: Qrz, map: &Map) -> f32 {
+pub fn blended_terrain_y(world_xz: Vec2, current_hx: Qrz, terrain_y: f32, _entity_tile: Qrz, current_floor_qrz: Qrz, map: &Map) -> f32 {
     let tile_center: Vec3 = map.convert(current_hx);
     let offset_xz = world_xz - tile_center.xz();
 

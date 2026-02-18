@@ -40,7 +40,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButton::MightGraceDecrease => {
                     let new_axis = draft.might_grace_axis + 1; // Decrease commitment = less negative
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.might_grace_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -60,7 +59,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButton::VitalityFocusDecrease => {
                     let new_axis = draft.vitality_focus_axis + 1;
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.vitality_focus_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -80,7 +78,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButton::InstinctPresenceDecrease => {
                     let new_axis = draft.instinct_presence_axis + 1;
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.instinct_presence_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -111,7 +108,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButtonRight::MightGraceIncrease => {
                     let new_axis = draft.might_grace_axis + 1;
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.might_grace_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -131,7 +127,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButtonRight::VitalityFocusIncrease => {
                     let new_axis = draft.vitality_focus_axis + 1;
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.vitality_focus_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -151,7 +146,6 @@ pub fn handle_attribute_buttons(
                 }
                 AxisAdjustButtonRight::InstinctPresenceIncrease => {
                     let new_axis = draft.instinct_presence_axis + 1;
-                    if new_axis > 127 { continue; }
                     if new_axis.abs() > draft.instinct_presence_axis.abs()
                         && draft.total_investment() >= max_level
                     {
@@ -208,116 +202,6 @@ pub fn handle_attribute_buttons(
                 }
             }
         }
-    }
-}
-
-/// Update button colors based on cost/refund
-pub fn update_button_colors(
-    state: Res<CharacterPanelState>,
-    player_query: Query<&ActorAttributes, With<Actor>>,
-    mut axis_buttons: Query<(&AxisAdjustButton, &mut BackgroundColor)>,
-    mut spectrum_buttons: Query<
-        (&SpectrumAdjustButton, &mut BackgroundColor),
-        Without<AxisAdjustButton>,
-    >,
-) {
-    let Ok(attrs) = player_query.single() else {
-        return;
-    };
-
-    let default_draft = DraftAttributes::from_current(attrs);
-    let draft = state
-        .pending_respec
-        .as_ref()
-        .unwrap_or(&default_draft);
-    let budget_available = draft.total_investment() < attrs.total_level();
-
-    // Color axis buttons
-    for (button, mut color) in &mut axis_buttons {
-        let (current_axis, would_cost) = match button {
-            AxisAdjustButton::MightGraceDecrease => {
-                let current = draft.might_grace_axis;
-                (current, (current - 1).abs() > current.abs())
-            }
-            AxisAdjustButton::MightGraceIncrease => {
-                let current = draft.might_grace_axis;
-                (current, (current + 1).abs() > current.abs())
-            }
-            AxisAdjustButton::VitalityFocusDecrease => {
-                let current = draft.vitality_focus_axis;
-                (current, (current - 1).abs() > current.abs())
-            }
-            AxisAdjustButton::VitalityFocusIncrease => {
-                let current = draft.vitality_focus_axis;
-                (current, (current + 1).abs() > current.abs())
-            }
-            AxisAdjustButton::InstinctPresenceDecrease => {
-                let current = draft.instinct_presence_axis;
-                (current, (current - 1).abs() > current.abs())
-            }
-            AxisAdjustButton::InstinctPresenceIncrease => {
-                let current = draft.instinct_presence_axis;
-                (current, (current + 1).abs() > current.abs())
-            }
-        };
-
-        *color = if would_cost {
-            // Moving away from center - costs point
-            if budget_available {
-                BackgroundColor(Color::srgb(0.8, 0.8, 0.4)) // Yellow (cost)
-            } else {
-                BackgroundColor(Color::srgb(0.6, 0.3, 0.3)) // Red (no budget)
-            }
-        } else {
-            // Moving toward center - refunds point
-            if current_axis.abs() > 0 {
-                BackgroundColor(Color::srgb(0.4, 0.8, 0.4)) // Green (refund)
-            } else {
-                BackgroundColor(Color::srgb(0.4, 0.4, 0.4)) // Gray (at center)
-            }
-        };
-    }
-
-    // Color spectrum buttons
-    for (button, mut color) in &mut spectrum_buttons {
-        *color = match button {
-            SpectrumAdjustButton::MightGraceDecrease
-            | SpectrumAdjustButton::VitalityFocusDecrease
-            | SpectrumAdjustButton::InstinctPresenceDecrease => {
-                let has_spectrum = match button {
-                    SpectrumAdjustButton::MightGraceDecrease => draft.might_grace_spectrum > 0,
-                    SpectrumAdjustButton::VitalityFocusDecrease => draft.vitality_focus_spectrum > 0,
-                    SpectrumAdjustButton::InstinctPresenceDecrease => {
-                        draft.instinct_presence_spectrum > 0
-                    }
-                    _ => false,
-                };
-
-                if has_spectrum {
-                    BackgroundColor(Color::srgb(0.4, 0.8, 0.4)) // Green (refund)
-                } else {
-                    BackgroundColor(Color::srgb(0.4, 0.4, 0.4)) // Gray (disabled)
-                }
-            }
-            SpectrumAdjustButton::MightGraceIncrease
-            | SpectrumAdjustButton::VitalityFocusIncrease
-            | SpectrumAdjustButton::InstinctPresenceIncrease => {
-                let at_max = match button {
-                    SpectrumAdjustButton::MightGraceIncrease => draft.might_grace_spectrum >= 10,
-                    SpectrumAdjustButton::VitalityFocusIncrease => draft.vitality_focus_spectrum >= 10,
-                    SpectrumAdjustButton::InstinctPresenceIncrease => {
-                        draft.instinct_presence_spectrum >= 10
-                    }
-                    _ => false,
-                };
-
-                if at_max || !budget_available {
-                    BackgroundColor(Color::srgb(0.6, 0.3, 0.3)) // Red (no budget/max)
-                } else {
-                    BackgroundColor(Color::srgb(0.8, 0.8, 0.4)) // Yellow (cost)
-                }
-            }
-        };
     }
 }
 

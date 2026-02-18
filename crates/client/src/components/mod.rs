@@ -1,5 +1,4 @@
-use bevy::{prelude::*, tasks::Task};
-use bevy_camera::primitives::Aabb;
+use bevy::prelude::*;
 
 use common::chunk::ChunkId;
 
@@ -16,13 +15,6 @@ pub struct AnimatedBy(Entity);
 pub enum Info {
     Time,
     DistanceIndicator,  // ADR-014 Phase 4: Shows distance from haven, zone, and expected enemy level
-}
-
-#[derive(Component, Default)]
-pub struct Terrain {
-    pub task_regenerate_mesh: Option<Task<(Mesh,Aabb)>>,
-    pub task_start_regenerate_mesh: bool,
-    pub last_tile_count: usize,
 }
 
 /// Component linking mesh entities to their chunk for eviction
@@ -95,7 +87,6 @@ pub struct ThreatCapacityDot {
 pub struct ResolvedThreatEntry {
     pub spawn_time: std::time::Duration,
     pub lifetime: f32,  // 4.0 seconds
-    pub damage: f32,
     pub severity: f32,       // estimated_damage / max_health for color
     pub appear_delay: f32,   // seconds before entry becomes visible (synced with pop travel)
 }
@@ -123,10 +114,7 @@ pub struct CombatLogContent;
 
 /// Combat log entry with metadata for color coding (ADR-025)
 #[derive(Component)]
-pub struct CombatLogEntry {
-    pub timestamp: String,  // Pre-formatted "HH:MM:SS"
-    pub is_player_damage: bool,  // true = dealt, false = taken
-}
+pub struct CombatLogEntry;
 
 /// Marker for NPC entities in death pose (lying on side for 3s before despawn)
 #[derive(Component)]
@@ -137,12 +125,3 @@ pub struct DeathMarker {
 /// Marker for compass container
 #[derive(Component)]
 pub struct CompassContainer;
-
-/// Marker for compass direction line
-#[derive(Component)]
-pub struct CompassLine {
-    /// Base angle in radians (0, 60°, 120°, etc.)
-    pub base_angle: f32,
-    /// Whether this is the north indicator
-    pub is_north: bool,
-}

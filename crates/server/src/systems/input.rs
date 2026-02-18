@@ -5,7 +5,7 @@ use qrz::Convert;
 
 use common::{
     components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, position::Position, * },
-    message::{Component, Event, *},
+    message::{Event, *},
     resources::map::Map,
 };
 use crate::*;

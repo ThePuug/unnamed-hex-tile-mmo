@@ -10,11 +10,9 @@ use std::time::*;
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
 use bevy_easings::*;
 use bevy_renet::{
-    renet::ConnectionConfig,
-    netcode::{NetcodeErrorEvent, NetcodeServerPlugin, NetcodeServerTransport},
-    RenetServer, RenetServerPlugin,
+    netcode::{NetcodeErrorEvent, NetcodeServerPlugin},
+    RenetServerPlugin,
 };
-use ::renet::DefaultChannel;
 use serde::{Deserialize, Serialize};
 
 use common::{

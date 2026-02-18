@@ -330,17 +330,6 @@ impl ActorAttributes {
         self.set_instinct_presence_shift(self.instinct_presence_shift);
     }
 
-    // === Private: Get current scaled position (for derived stats like movement speed) ===
-    // These calculate the NET position (might vs grace) factoring in both axis and shift
-    // Positive = grace side, Negative = might side
-    // Returns scaled value based on investment
-
-    fn might_grace_position(&self) -> i16 {
-        let axis_scaled = (self.might_grace_axis as i16) * 6;
-        let shift_scaled = (self.might_grace_shift as i16) * 12;
-        axis_scaled + shift_scaled
-    }
-
     // === MIGHT ↔ GRACE ===
 
     /// Maximum Might reach (including maximum shift)
