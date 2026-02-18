@@ -91,87 +91,40 @@ Define different perspectives for development work:
 
 **Update when:** Refining role principles or adding new specialized roles
 
-### Specifications (`docs/00-spec/`)
+### Design Specifications (`docs/design/`)
 
-High-level game design documents describing **what the game should be**:
+Game design documents describing **what systems should be** and tracking implementation progress:
 
-- **[combat-system.md](docs/00-spec/combat-system.md)** - Combat philosophy, mechanics, MVP scope
-- **[attribute-system.md](docs/00-spec/attribute-system.md)** - Axis/Spectrum/Shift progression, derived stats
-- **[triumvirate.md](docs/00-spec/triumvirate.md)** - Origin/Approach/Resilience classification system
-- **[hub-system.md](docs/00-spec/hub-system.md)** - Dynamic settlements, influence, merging
-- **[siege-system.md](docs/00-spec/siege-system.md)** - Encroachment, anger, siege mechanics
-- **[haven-system.md](docs/00-spec/haven-system.md)** - Starter havens, bootstrap problem solution
-- **[combat-hud.md](docs/00-spec/combat-hud.md)** - UI/UX specifications for combat interface
+**Specs:**
+- **[combat.md](docs/design/combat.md)** - Combat philosophy, mechanics, abilities, MVP scope, combat UI
+- **[attributes.md](docs/design/attributes.md)** - Bipolar pairs, Axis/Spectrum/Shift, three scaling modes
+- **[combat-balance.md](docs/design/combat-balance.md)** - Super-linear scaling, queue capacity, dismiss, NPC coordination
+- **[triumvirate.md](docs/design/triumvirate.md)** - Origin/Approach/Resilience classification system
+- **[hubs.md](docs/design/hubs.md)** - Dynamic settlements, influence, merging
+- **[siege.md](docs/design/siege.md)** - Encroachment, anger, siege mechanics
+- **[haven.md](docs/design/haven.md)** - Starter havens, bootstrap problem solution
 
-**Purpose:** Define ideal game systems (aspirational, not necessarily implemented)
-**Update when:** Major design decisions or feature scope changes (rare)
-
-### Feature Matrices (`docs/00-spec/`)
-
-Living documents tracking **spec vs. implementation** for each specification:
-
-- [combat-system-feature-matrix.md](docs/00-spec/combat-system-feature-matrix.md)
-- [attribute-system-feature-matrix.md](docs/00-spec/attribute-system-feature-matrix.md)
-- [triumvirate-feature-matrix.md](docs/00-spec/triumvirate-feature-matrix.md)
-- [hub-system-feature-matrix.md](docs/00-spec/hub-system-feature-matrix.md)
-- [siege-system-feature-matrix.md](docs/00-spec/siege-system-feature-matrix.md)
-- [haven-system-feature-matrix.md](docs/00-spec/haven-system-feature-matrix.md)
-
-**See detailed [Feature Matrices](#feature-matrices) section below for when/how to update.**
+Each spec includes **Implementation Deviations** and **Implementation Gaps** sections at the bottom tracking where the codebase differs from the spec and what remains to be built.
 
 ### Architecture Decision Records (`docs/adr/`)
 
-Documents recording **implementation decisions** and their rationale:
+Documents recording **non-obvious implementation decisions** and their rationale. Only decisions where the "why" isn't self-evident are preserved here.
 
-**Pattern:** `NNN-title.md` (e.g., `002-combat-foundation.md`)
+- **001** - Chunk-based world partitioning (8x8 chunks, 3 invariants, bandwidth analysis)
+- **007** - Timer synchronization via insertion time (latency compensation pattern)
+- **010** - Two-phase damage pipeline (attacker snapshot at insertion, defender at resolution)
+- **012** - AI TargetLock and behavior tree integration (sticky targeting, dual FaceTarget)
+- **016** - Movement intent architecture (intent-then-confirmation, 70% lag reduction)
+- **018** - Ability execution pipeline (3-stage architecture, pure function extraction)
+- **019** - Unified interpolation model (Position + VisualPosition, jitter fix)
+- **020** - Super-linear level multiplier (polynomial stat scaling)
+- **027** - Commitment tiers (20/40/60% thresholds, tier-based identity)
+- **030** - Reaction queue window mechanic (unbounded queue, visibility window)
+- **031** - Relative meta-attributes rework (rotated oppositions, contest function)
 
-**Key ADRs:**
-- **001** - Chunk-based terrain discovery
-- **002** - Combat foundation
-- **003** - Reaction queue system
-- **004** - Ability system and targeting
-- **005** - Damage pipeline
-- **006** - AI behavior and ability integration
-- **007** - Developer console
-- **008** - Combat HUD implementation
-- **009** - MVP ability set
-
-**Purpose:** Record architectural decisions, context, consequences, and implementation details
+**Purpose:** Preserve non-obvious architectural decisions someone would re-ask about
 
 **Update when:** Making significant architectural decisions (create new ADR via ARCHITECT role)
-
-### Acceptance Documents (`docs/adr/`)
-
-ARCHITECT role reviews of completed ADRs:
-
-**Pattern:** `NNN-acceptance.md` (e.g., `008-acceptance.md`)
-
-**Contents:**
-- Implementation status by phase
-- Architectural assessment
-- Code quality review
-- Outstanding items
-- Final accept/reject recommendation
-
-**Purpose:** Verify ADR implementation meets requirements before merging to main
-
-**Update when:** ADR implementation is complete and ready for review (ARCHITECT role creates)
-
-### Player Feedback Documents (`docs/adr/`)
-
-PLAYER role perspectives on implemented features:
-
-**Pattern:** `NNN-player-feedback.md` (e.g., `008-player-feedback.md`)
-
-**Contents:**
-- UX assessment
-- Fun factor analysis
-- Confusion points
-- Improvement suggestions
-
-**Purpose:** Evaluate features from end-user perspective
-
-**Update when:** Feature is playable and PLAYER role can provide feedback
 
 ### Internal Library Documentation
 
@@ -190,98 +143,20 @@ PLAYER role perspectives on implemented features:
 ### When Starting Work
 1. **Read role document** (default: DEVELOPER)
 2. **Read [GUIDANCE.md](GUIDANCE.md)** (architectural patterns)
-3. **Check feature matrix** for relevant spec (implementation status)
+3. **Check relevant design spec** (including deviations/gaps sections at bottom)
 4. **Review related ADRs** (implementation decisions)
 
 ### During Development
 1. **Follow TDD** (GUIDANCE.md Rule 1)
 2. **Write tests first**
-3. **Update feature matrix** when completing features
-4. **Consult specs** for design intent
+3. **Consult specs** for design intent
 
 ### After Completing Feature
-1. **Update feature matrix** (mark ✅, add ADR references, recalculate totals)
+1. **Update design spec** deviations/gaps sections if implementation differs from spec
 2. **Create/update ADR** if architectural decision made
 3. **Update GUIDANCE.md** only after user confirms solution works
 
 ### When Creating New Systems
-1. **ARCHITECT role** creates ADR documenting decision
-2. **DEVELOPER role** implements per ADR
-3. **ARCHITECT role** creates acceptance document when complete
-4. **PLAYER role** creates feedback document when playable
-5. **Update feature matrix** throughout
-
----
-
-## Feature Matrices
-
-**Each specification has a companion feature matrix** that tracks implementation status against the spec. These living documents help maintain alignment between design and implementation.
-
-### Location Pattern
-
-```
-docs/00-spec/
-├── [spec-name].md
-└── [spec-name]-feature-matrix.md
-```
-
-**Available Feature Matrices:**
-- [combat-system-feature-matrix.md](docs/00-spec/combat-system-feature-matrix.md)
-- [attribute-system-feature-matrix.md](docs/00-spec/attribute-system-feature-matrix.md)
-- [triumvirate-feature-matrix.md](docs/00-spec/triumvirate-feature-matrix.md)
-- [hub-system-feature-matrix.md](docs/00-spec/hub-system-feature-matrix.md)
-- [siege-system-feature-matrix.md](docs/00-spec/siege-system-feature-matrix.md)
-- [haven-system-feature-matrix.md](docs/00-spec/haven-system-feature-matrix.md)
-
-### When to Consult Feature Matrices
-
-**ALWAYS consult the relevant feature matrix when:**
-- Starting work on a new feature
-- Planning implementation for a spec requirement
-- Prioritizing which features to build next
-- Reviewing what's already been completed
-- Identifying gaps between spec and implementation
-
-### When to Update Feature Matrices
-
-**ALWAYS update the relevant feature matrix when:**
-- Completing a feature (change status from ❌/🚧 to ✅)
-- Accepting an ADR that implements spec features
-- Starting work on a feature (change status to 🔄 In Progress)
-- Making an intentional deviation from spec (add to "Implementation Deviations")
-- Deferring a planned feature (change status to ⏸️ Deferred with rationale)
-
-### Update Process
-
-1. **Locate the matrix:** Find `docs/00-spec/[spec-name]-feature-matrix.md`
-2. **Update feature status:** Change status symbols (❌ → ✅ or 🔄)
-3. **Add ADR references:** Link to relevant ADR documents
-4. **Update category totals:** Recalculate "X/Y complete" for each category
-5. **Update overall status:** Recalculate total completion percentage
-6. **Update "Last Updated" date:** Set to current date
-7. **Document deviations:** If implementation differs from spec, add to "Implementation Deviations" section with rationale
-
-### Status Symbols
-
-- ✅ **Complete** - Fully implemented per spec
-- 🚧 **Partial** - Partially implemented or MVP version
-- ❌ **Not Started** - Planned but not implemented
-- ⏸️ **Deferred** - Intentionally postponed to post-MVP
-- 🔄 **In Progress** - Currently being developed
-
-### Example Workflow
-
-```
-User: "Implement tier lock targeting (1/2/3 keys)"
-
-DEVELOPER:
-1. Reads combat-system-feature-matrix.md
-2. Sees "Tier lock (1/2/3 keys): 🚧 Partial"
-3. Implements the feature
-4. Updates matrix:
-   - Changes status to ✅ Complete
-   - Adds ADR reference
-   - Updates "Targeting System: 5/10 complete (50%)"
-   - Updates overall percentage
-   - Sets "Last Updated: 2025-11-01"
-```
+1. **ARCHITECT role** creates ADR documenting decision (only if non-obvious "why")
+2. **DEVELOPER role** implements per design spec
+3. **Update design spec** deviations/gaps as needed

@@ -651,7 +651,7 @@ impl ActorAttributes {
     //   - COMMITMENT (build identity): window_size(), cadence_interval(),
     //     evasion_chance() — discrete tiers based on % of total budget
     //
-    // See docs/00-spec/attribute-system.md for full design.
+    // See docs/design/attributes.md for full design.
 
     /// Total attribute budget: sum of all six derived attribute values.
     ///

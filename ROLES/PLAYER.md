@@ -215,7 +215,7 @@ When real player data becomes available:
 
 ### 1. Creating Game Design Specs
 
-**Create and maintain game design specs** (`docs/00-spec/`) that define systems from player perspective:
+**Create and maintain game design specs** (`docs/design/`) that define systems from player perspective:
 
 **Purpose:**
 - Define mechanics and player experience (authoritative game design reference)
@@ -227,7 +227,7 @@ When real player data becomes available:
 2. **Define Experience**: How should players interact with this?
 3. **Establish Mechanics**: What are the rules and behaviors?
 4. **Consider Fun Factor**: Will players enjoy this? Is it clear?
-5. **Document Spec**: Write `docs/00-spec/[system-name].md`
+5. **Document Spec**: Write `docs/design/[system-name].md`
 
 **What Belongs in Specs (PLAYER domain):**
 - Player-facing mechanics and rules
@@ -246,17 +246,15 @@ When real player data becomes available:
 
 ### 2. Creating RFCs (Feature Requests)
 
-**When you identify a needed feature, create an RFC** (`docs/01-rfc/`):
+**When you identify a needed feature, propose it as a design spec update or new spec** (`docs/design/`):
 
-**Your Part (Feature Request section):**
+**Your Part:**
 - Player Need + Desired Experience + Specification Requirements + MVP Scope + Priority Justification
 
 **Collaboration:**
-- ARCHITECT adds Feasibility Analysis → Both iterate in Discussion → Approve when: ✅ Solves need ✅ Feasible ✅ ≤20 hours ✅ Consensus
+- ARCHITECT evaluates feasibility → Both iterate → Approve when: ✅ Solves need ✅ Feasible ✅ Consensus
 
-**Lifecycle:** Draft → Under Review → Approved (frozen)
-
-**Then:** ARCHITECT extracts ADRs (if architectural), creates SOW → DEVELOPER implements
+**Then:** ARCHITECT creates ADR if decision is non-obvious → DEVELOPER implements
 
 **Spec Template:**
 ```markdown

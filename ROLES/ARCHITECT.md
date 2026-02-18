@@ -195,32 +195,20 @@ terrain generation. Should I create an ADR for splitting it?"
 - What alternatives were considered
 - What tradeoffs were accepted
 
-## RFC→ADR→SOW Workflow
+## Design → ADR → Implementation Workflow
 
 **As ARCHITECT, you guide features from concept to implementation:**
 
-### 1. RFC Collaboration (Feasibility → Iteration → Approval)
+### 1. Design Spec Updates
 
-When PLAYER creates an RFC (`docs/01-rfc/`):
+**When a new system or significant change is needed:**
+- Update or create the relevant design spec in `docs/design/`
+- Iterate with PLAYER on player-facing mechanics
+- Iterate with DEVELOPER on feasibility
 
-**Add Feasibility Analysis:**
-- Evaluate: Can we build this? Technical constraints? Integration points?
-- Estimate: Does it fit in one SOW (≤20 hours)?
-- Propose: Technical approaches to achieve player goals
-- Update status to "Under Review"
+### 2. ADR Creation (If Applicable)
 
-**Iterate in Discussion section:**
-- PLAYER raises player experience concerns → You propose solutions
-- Refine until consensus (player need met + technically feasible + ≤20 hours)
-
-**Approve when criteria met:**
-- ✅ PLAYER: Solves player need | ✅ ARCHITECT: Feasible and maintainable
-- ✅ Scope: ≤20 hours | ✅ No unresolved conflicts
-- Update status to "Approved" (RFC now frozen)
-
-### 2. ADR Extraction (If Applicable)
-
-**Extract ADRs from approved RFCs containing significant architectural decisions:**
+**Create ADR when a decision is non-obvious and someone would re-ask "why?":**
 
 **Create ADR when:**
 - ✅ Affects multiple systems | ✅ Non-obvious tradeoffs | ✅ Hard to change later
@@ -228,47 +216,17 @@ When PLAYER creates an RFC (`docs/01-rfc/`):
 
 **Format:** One decision per document (~200 lines), focus on why over what, list alternatives and consequences
 
-**Examples:** RFC-002 → 4 ADRs (resource management decisions) | RFC-009 → 0 ADRs (just game design)
+**Location:** `docs/adr/NNN-title.md`
 
-### 3. SOW Creation
-
-**Create SOW from approved RFC:**
-
-**SOW Structure:**
-- Implementation plan (phases, deliverables, estimates)
-- Architectural constraints (what/why/constraints, NOT how)
-- Acceptance criteria (how we know it's done)
-- Reference to RFC (and ADRs if applicable)
-
-**SOW Philosophy:**
-- Define **WHAT** to build and **WHY**, not **HOW**
-- Specify constraints, not implementation steps
-- Give DEVELOPER autonomy over "how"
-- Target ~200 lines at draft, can grow to ~300 with Discussion/Review sections
-
-**Output:**
-- `docs/03-sow/NNN-[feature].md` (matches RFC number)
-- Status: Planned
-- Update feature matrix (mark "Planned" with RFC/SOW links)
-
-### 4. Implementation Review and Merge
+### 3. Implementation and Review
 
 **When DEVELOPER completes implementation:**
 
 **Review:** Code/tests meet acceptance criteria? Deviations documented? Tests pass? No regressions?
 
-**Add Acceptance Review to SOW:** Scope completion, architectural compliance, quality assessment, decision (✅ Approved / 🔄 Needs Changes / ❌ RFC Revision Required)
-
 **After merge to main:**
-- Update SOW status: Approved → Merged
-- Update feature matrix: Status "Complete", link RFC/ADRs/SOW, document deviations
-- If spec deviation: Update spec (better design) OR document deviation (MVP vs ideal) OR reject (rare)
-
-### 5. Feature Matrix Maintenance
-
-**Keep `docs/00-spec/[system]-feature-matrix.md` current:**
-
-**Update triggers:** Spec changes → RFC approved ("Planned") → SOW started ("In Progress") → SOW merged ("Complete")
+- Update design spec: Add to Implementation Deviations/Gaps sections if implementation differs from spec
+- If spec deviation: Update spec (better design) OR document deviation (MVP vs ideal)
 
 ## Code Organization Checklist
 

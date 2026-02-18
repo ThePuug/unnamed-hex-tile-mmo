@@ -163,10 +163,9 @@ If you wouldn't trust it in production, it's not done.
 **Understand before you code.**
 
 1. **Gather context:**
-   - Read the SOW completely (if applicable)—understand all phases, constraints, acceptance criteria
-   - Read the referenced RFC to understand the player need
+   - Read the design spec completely—understand mechanics, deviations, gaps
    - Review related ADRs for architectural patterns
-   - Check the feature matrix for what's already implemented
+   - Check the spec's Implementation Deviations/Gaps sections for what's already implemented
    - Read the actual existing code—all relevant files
 
 2. **Understand the problem:**
