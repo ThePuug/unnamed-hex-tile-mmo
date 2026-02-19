@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common::{
-    components::recovery::{GlobalRecovery, get_ability_recovery_duration},
+    components::{recovery::{GlobalRecovery, get_ability_recovery_duration}, target::Target},
     message::{Do, Event as GameEvent, AbilityType},
     systems::combat::synergies::apply_synergies,
 };
@@ -12,6 +12,7 @@ pub fn handle_ability_used(
     mut commands: Commands,
     mut do_reader: MessageReader<Do>,
     attrs_query: Query<&common::components::ActorAttributes>,
+    target_query: Query<&Target>,
 ) {
     for event in do_reader.read() {
         let Do { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
@@ -30,10 +31,15 @@ pub fn handle_ability_used(
         if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
             entity_cmd.insert(recovery);
 
-            // Apply synergies (same as server, SOW-021 Phase 2)
-            // Self-cast: both attacker and defender are the same entity
-            if let Ok(attrs) = attrs_query.get(*ent) {
-                apply_synergies(*ent, *ability, &recovery, attrs, attrs, &mut commands);
+            // Apply synergies (optimistic client-side, SOW-021 Phase 2)
+            // Contest: player's finesse vs target's cunning
+            if let Ok(attacker_attrs) = attrs_query.get(*ent) {
+                let target_result = target_query.get(*ent);
+                let target_entity = target_result.ok().and_then(|t| t.entity);
+                let defender_attrs_opt = target_entity.and_then(|te| attrs_query.get(te).ok());
+
+                let defender_attrs = defender_attrs_opt.unwrap_or(attacker_attrs);
+                apply_synergies(*ent, *ability, &recovery, attacker_attrs, defender_attrs, &mut commands);
             }
         }
     }

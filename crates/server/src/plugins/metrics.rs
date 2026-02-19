@@ -110,9 +110,11 @@ fn refresh_metric_gauges(
     mut metrics: ResMut<ServerMetrics>,
     map: Res<Map>,
     lobby: Res<Lobby>,
+    npc_query: Query<(), (With<common::components::entity_type::EntityType>, Without<common::components::behaviour::PlayerControlled>)>,
 ) {
     metrics.loaded_hexes = map.len() as u32;
     metrics.connected_players = lobby.len() as u32;
+    metrics.npc_count = npc_query.iter().count() as u32;
     metrics.memory_bytes = process_working_set_bytes();
     metrics.memory_map_bytes = map.heap_size_estimate() as u64;
 }

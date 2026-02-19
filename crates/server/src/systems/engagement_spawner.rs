@@ -294,6 +294,9 @@ fn spawn_engagement_at(
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
+                    common::components::AttackRange(6),  // Ranged auto-attack
+                    LastAutoAttack::default(),
+                    NpcRecovery::for_archetype(archetype),
                 ));
             }
         }

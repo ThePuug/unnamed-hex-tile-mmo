@@ -127,6 +127,7 @@ pub fn do_spawn(
                         common::components::gcd::Gcd::new(),
                         common::components::target::Target::default(), // For targeting system
                         common::components::LastAutoAttack::default(), // For auto-attack cooldown
+                        common::components::AttackRange::default(), // Auto-attack range (melee default)
                         common::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
                     ))
                     .observe(ready);

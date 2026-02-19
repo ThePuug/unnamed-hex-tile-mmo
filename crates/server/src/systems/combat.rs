@@ -219,7 +219,8 @@ pub fn process_passive_auto_attack(
          Option<&mut common::components::npc_recovery::NpcRecovery>,
          Option<&common::components::hex_assignment::AssignedHex>,
          Option<&common::components::recovery::GlobalRecovery>,
-         &ActorAttributes),
+         &ActorAttributes,
+         Option<&common::components::AttackRange>),
         Without<common::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -232,7 +233,7 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, global_recovery_opt, attrs) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, global_recovery_opt, attrs, attack_range_opt) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
@@ -284,9 +285,10 @@ pub fn process_passive_auto_attack(
             continue;
         }
 
-        // Check if target is within range (same hex or adjacent: distance <= 1)
-        let distance = loc.flat_distance(target_loc);
-        if distance <= 1 {
+        // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
+        let distance = loc.distance(target_loc);
+        let max_range = attack_range_opt.map_or(1, |r| r.0);
+        if distance <= max_range {
             // Target is in range - trigger auto-attack
             writer.write(Try {
                 event: GameEvent::UseAbility {

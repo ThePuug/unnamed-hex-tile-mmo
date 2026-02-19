@@ -16,6 +16,7 @@ pub fn handle_auto_attack(
     entity_query: Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
     attrs_query: Query<&common::components::ActorAttributes>,
+    range_query: Query<&common::components::AttackRange>,
     respawn_query: Query<&common::components::resources::RespawnTimer>,
     nntree: Res<NNTree>,
     mut writer: MessageWriter<Do>,
@@ -52,12 +53,12 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Validate target hex is within range (same hex or adjacent)
-        // Range: 0 (same hex) or 1 (adjacent hex)
+        // Validate target hex is within range (manhattan: flat hex distance + z difference)
         let target_loc = Loc::new(*target_qrz);
-        let distance = caster_loc.flat_distance(&target_loc);
+        let distance = caster_loc.distance(&target_loc);
+        let max_range = range_query.get(*ent).map_or(1, |r| r.0);
 
-        if distance > 1 {
+        if distance > max_range {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,

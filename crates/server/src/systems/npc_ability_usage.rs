@@ -21,7 +21,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is 2-4 hexes away (gap closer)
 /// - Juggernaut (Overpower): Use when adjacent to target (heavy strike)
-/// - Kiter (Volley): Use when at optimal distance 5-8 hexes (ranged attack)
+/// - Kiter: No signature ability — relies on kite behavior + ranged auto-attack
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 ///
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
@@ -61,8 +61,10 @@ pub fn npc_ability_usage(
             _ => continue, // Not an NPC
         };
 
-        // Get signature ability for this archetype
-        let ability = archetype.ability();
+        // Get signature ability for this archetype (None = auto-attack only, skip)
+        let Some(ability) = archetype.ability() else {
+            continue;
+        };
 
         // Handle Defender Counter specially - reactive ability triggered by threats in queue
         if ability == AbilityType::Counter {
@@ -110,14 +112,9 @@ pub fn npc_ability_usage(
                 let overpower_stamina_cost = 40.0;
                 distance == 1 && stamina.state >= overpower_stamina_cost
             }
-            EnemyArchetype::Kiter => {
-                // Volley: Ranged attack at optimal distance (5-8 hexes)
-                // Kiter already uses Volley via its own system, but we provide fallback logic
-                let volley_stamina_cost = 25.0;
-                distance >= 5 && distance <= 8 && stamina.state >= volley_stamina_cost
-            }
-            EnemyArchetype::Defender => {
-                // Counter is reactive only - never proactively triggered
+            EnemyArchetype::Kiter | EnemyArchetype::Defender => {
+                // Kiter: auto-attack only (no signature ability)
+                // Defender: Counter is reactive only (handled above)
                 false
             }
         };

@@ -127,6 +127,7 @@ pub fn do_manage_connections(
                 commands.entity(ent).insert((
                     NearestNeighbor::new(ent, loc),
                     common::components::loaded_by::LoadedBy::default(),
+                    common::components::AttackRange::default(),
                 ));
 
                 // init input buffer for client

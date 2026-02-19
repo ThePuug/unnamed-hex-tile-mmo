@@ -200,10 +200,11 @@ pub fn handle_overpower(
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state, SOW-021 Phase 2)
-        // Self-cast: both attacker and defender are the same entity
-        let Ok(attrs) = attrs_query.get(*ent) else {
+        // Contest: player's finesse vs target's cunning
+        let Ok(attacker_attrs) = attrs_query.get(*ent) else {
             continue;
         };
-        apply_synergies(*ent, AbilityType::Overpower, &recovery, attrs, attrs, &mut commands);
+        let defender_attrs = attrs_query.get(target_ent).unwrap_or(attacker_attrs);
+        apply_synergies(*ent, AbilityType::Overpower, &recovery, attacker_attrs, defender_attrs, &mut commands);
     }
 }

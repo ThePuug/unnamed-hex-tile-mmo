@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-pub const METRICS_VERSION: u16 = 6;
+pub const METRICS_VERSION: u16 = 7;
 
 /// Server metrics collection.
 ///
@@ -22,6 +22,7 @@ pub struct ServerMetrics {
     // -- Critical gauges --
     pub loaded_hexes: u32,
     pub connected_players: u32,
+    pub npc_count: u32,
     pub tick_duration_us: u64,
     pub tick_duration_max_us: u64,
     pub tick_overrun_count: u64,

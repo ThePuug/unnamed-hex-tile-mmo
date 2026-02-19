@@ -35,6 +35,14 @@ impl Loc {
         Loc(qrz)
     }
 
+    /// Combat distance accounting for elevation.
+    /// Single z-level differences are slopes (free), 2+ z-levels are cliffs
+    /// that add their excess height to the distance.
+    pub fn distance(&self, other: &Loc) -> i16 {
+        let z_diff = (self.z - other.z).abs();
+        self.flat_distance(other) + (z_diff - 1).max(0)
+    }
+
     /// Check if two locations are adjacent for melee combat with sloping terrain
     ///
     /// Two locations are considered adjacent if:
@@ -107,6 +115,70 @@ mod loc_tests {
         let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let loc2 = Loc::new(Qrz { q: 0, r: 0, z: 1 });
         assert!(loc1.is_adjacent(&loc2), "Same tile, different z should be adjacent");
+    }
+
+    #[test]
+    fn test_distance_flat() {
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 3, r: 0, z: 0 });
+        assert_eq!(a.distance(&b), 3);
+    }
+
+    #[test]
+    fn test_distance_slope_is_free() {
+        // Single z-level = slope, no extra distance
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 5, r: 0, z: 1 });
+        assert_eq!(a.distance(&b), 5, "slope adds no distance");
+    }
+
+    #[test]
+    fn test_distance_cliff_adds_excess() {
+        // z_diff=3, excess=2 above slope threshold
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 5, r: 0, z: 3 });
+        assert_eq!(a.distance(&b), 7, "5 flat + (3-1) cliff = 7");
+    }
+
+    #[test]
+    fn test_distance_adjacent_slope_is_melee() {
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 1, r: 0, z: 1 });
+        assert_eq!(a.distance(&b), 1, "adjacent tile on slope is melee range");
+    }
+
+    #[test]
+    fn test_distance_adjacent_cliff_blocks_melee() {
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 1, r: 0, z: 2 });
+        assert_eq!(a.distance(&b), 2, "adjacent tile on cliff exceeds melee range");
+    }
+
+    #[test]
+    fn test_distance_vertical_cliff() {
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 0, r: 0, z: 10 });
+        assert_eq!(a.distance(&b), 9, "0 flat + (10-1) cliff = 9");
+    }
+
+    #[test]
+    fn test_distance_ranged_blocked_by_steep_cliff() {
+        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let b = Loc::new(Qrz { q: 5, r: 0, z: 5 });
+        assert_eq!(a.distance(&b), 9, "5 flat + (5-1) cliff = 9, exceeds range 6");
+    }
+
+    #[test]
+    fn test_distance_symmetric() {
+        let a = Loc::new(Qrz { q: 2, r: -1, z: 5 });
+        let b = Loc::new(Qrz { q: -3, r: 4, z: 1 });
+        assert_eq!(a.distance(&b), b.distance(&a));
+    }
+
+    #[test]
+    fn test_distance_same_loc() {
+        let a = Loc::new(Qrz { q: 3, r: 2, z: 7 });
+        assert_eq!(a.distance(&a), 0);
     }
 
 }
@@ -837,11 +909,22 @@ pub struct LastAutoAttack {
     pub last_attack_time: std::time::Duration,
 }
 
+/// Auto-attack range in hex tiles. Default is 1 (melee).
+/// Eventually sourced from equipped weapon; for now set per-archetype at spawn.
+#[derive(Clone, Component, Copy, Debug)]
+pub struct AttackRange(pub i16);
+
 impl Default for LastAutoAttack {
     fn default() -> Self {
         Self {
             last_attack_time: std::time::Duration::ZERO,
         }
+    }
+}
+
+impl Default for AttackRange {
+    fn default() -> Self {
+        Self(1)
     }
 }
 

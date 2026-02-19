@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 // Mirror of common::metrics — keep in sync, version check catches drift.
 const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-const METRICS_VERSION: u16 = 6;
+const METRICS_VERSION: u16 = 7;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ServerMetrics {
@@ -16,6 +16,7 @@ struct ServerMetrics {
     snapshot_time_secs: f64,
     loaded_hexes: u32,
     connected_players: u32,
+    npc_count: u32,
     tick_duration_us: u64,
     tick_duration_max_us: u64,
     tick_overrun_count: u64,
@@ -436,8 +437,8 @@ impl eframe::App for ConsoleApp {
                 // --- Status row ---
                 ui.horizontal(|ui| {
                     ui.monospace(format!(
-                        "PLAYERS {:>3}    HEXES {:>8}",
-                        m.connected_players, m.loaded_hexes,
+                        "PLAYERS {:>3}    NPCS {:>4}    HEXES {:>8}",
+                        m.connected_players, m.npc_count, m.loaded_hexes,
                     ));
                 });
             } else {

@@ -33,6 +33,10 @@ pub struct SlotCost;
 #[derive(Component)]
 pub struct SynergyGlow;
 
+/// Marker for cooldown overlay (dark rect that shrinks as recovery depletes)
+#[derive(Component)]
+pub struct CooldownOverlay;
+
 /// Setup action bar UI below resource bars
 /// Creates 4 ability slots (Q, W, E, R)
 pub fn setup(
@@ -162,6 +166,20 @@ pub fn setup(
             }
         }
 
+        // Cooldown overlay: dark rect anchored at bottom, height = lockout %
+        parent.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.),
+                height: Val::Percent(0.),
+                bottom: Val::Px(0.),
+                left: Val::Px(0.),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            CooldownOverlay,
+        ));
+
         // Synergy glow overlay (ADR-012: BRIGHT gold glow when synergy unlocked)
         // Positioned absolutely to cover the entire slot, hidden by default
         // INTENTIONALLY VERY BRIGHT for testing - will tone down once confirmed working
@@ -191,6 +209,7 @@ pub fn setup(
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
+    mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
@@ -207,6 +226,7 @@ pub fn update(
     // Check recovery lockout and synergy state
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
     let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
+    let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
 
     for (slot, mut border_color, children) in &mut slot_query {
         if let Some(ability) = slot.ability {
@@ -239,7 +259,23 @@ pub fn update(
             };
             *border_color = border;
 
-            // Update synergy glow visibility (ADR-012: Show gold glow when synergy unlocked)
+            // Cooldown overlay: height = proportion of lockout remaining
+            let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
+                0.0
+            } else {
+                let synergy_unlock_at = synergy_opt
+                    .filter(|s| s.ability == ability)
+                    .map(|s| s.unlock_at);
+                let ratio = match synergy_unlock_at {
+                    Some(unlock_at) if recovery_duration > unlock_at => {
+                        (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
+                    }
+                    _ => recovery_remaining / recovery_duration,
+                };
+                ratio.clamp(0.0, 1.0) * 100.0
+            };
+
+            // Update synergy glow and cooldown overlay
             for child in children.iter() {
                 if let Ok(mut visibility) = glow_query.get_mut(child) {
                     *visibility = if show_synergy_glow {
@@ -248,13 +284,19 @@ pub fn update(
                         Visibility::Hidden
                     };
                 }
+                if let Ok(mut node) = overlay_query.get_mut(child) {
+                    node.height = Val::Percent(overlay_pct);
+                }
             }
         } else {
-            // Empty slot: dark gray, no glow
+            // Empty slot: dark gray, no glow, no overlay
             *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
             for child in children.iter() {
                 if let Ok(mut visibility) = glow_query.get_mut(child) {
                     *visibility = Visibility::Hidden;
+                }
+                if let Ok(mut node) = overlay_query.get_mut(child) {
+                    node.height = Val::Percent(0.0);
                 }
             }
         }

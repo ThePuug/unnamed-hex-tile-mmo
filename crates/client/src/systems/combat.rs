@@ -163,14 +163,14 @@ pub fn apply_gcd(
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common::components::LastAutoAttack, Option<&Gcd>, &common::components::ActorAttributes)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut common::components::LastAutoAttack, Option<&Gcd>, &common::components::ActorAttributes, Option<&common::components::AttackRange>)>,
     target_query: Query<&Loc>,
     input_queues: Res<common::resources::InputQueues>,
     time: Res<Time>,
 ) {
     let now = time.elapsed();
 
-    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs) in &mut player_query {
+    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt) in &mut player_query {
         // Only process local player (entity with InputQueue)
         if input_queues.get(&player_ent).is_none() {
             continue;
@@ -200,9 +200,10 @@ pub fn player_auto_attack(
             continue; // Target not found (may have despawned)
         };
 
-        // Check if target is adjacent (considering slopes)
-        if !player_loc.is_adjacent(target_loc) {
-            continue; // Target not adjacent
+        // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
+        let max_range = attack_range_opt.map_or(1, |r| r.0);
+        if player_loc.distance(target_loc) > max_range {
+            continue; // Target out of range
         }
 
         // Send AutoAttack Try event with target location
