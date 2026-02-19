@@ -76,6 +76,31 @@ fn broadcast_intent(
     });
 }
 
+/// Score a neighbor tile for kite movement.
+/// Higher score = more preferred destination.
+/// Balances staying at optimal distance from player with staying near spawn.
+fn score_neighbor(
+    neighbor: &Qrz,
+    player: &Qrz,
+    spawn: &Qrz,
+    optimal_mid: i16,
+    leash_distance: i16,
+) -> i32 {
+    let dist_to_player = neighbor.flat_distance(player) as i32;
+    let dist_to_spawn = neighbor.flat_distance(spawn) as i32;
+    let leash = leash_distance as i32;
+
+    // Prefer being at optimal distance from player (weight: 3)
+    let range_score = -(dist_to_player - optimal_mid as i32).abs() * 3;
+
+    // Prefer being closer to spawn, with increasing urgency near leash boundary
+    // Weight ramps from 1 (at spawn) to 3 (at leash distance)
+    let leash_weight = 1 + dist_to_spawn * 2 / leash;
+    let leash_score = -dist_to_spawn * leash_weight;
+
+    range_score + leash_score
+}
+
 /// Kite behavior - ranged hostile that maintains optimal distance (ADR-010 Phase 4)
 ///
 /// Implements distance-based state machine for ranged kiting enemies:
@@ -368,23 +393,29 @@ pub fn kite(
         let desired_heading = Heading::new(direction);
         *npc_heading = desired_heading;
 
+        // Fetch spawn location for score-based neighbor selection
+        let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
+            continue;
+        };
+        let spawn_qrz = *spawner_loc;
+        let optimal_mid = (kite_config.optimal_distance_min + kite_config.optimal_distance_max) / 2;
+
         // 4. EXECUTE ACTION
         match action {
             KiteAction::Flee | KiteAction::Reposition => {
-                // INVERSE PATHFINDING: Move AWAY from target
+                // Score-based neighbor selection: balances optimal range + leash safety
                 let target_qrz = **target_loc;
                 let Some((start, _)) = map.find(**npc_loc, -60) else {
                     continue;
                 };
 
-                // Find neighbor that is FURTHEST from target (inverse of chase)
                 let neighbors = map.neighbors(start);
                 let best_neighbor = neighbors
                     .iter()
                     .filter(|(neighbor, _)| {
                         nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
                     })
-                    .max_by_key(|(neighbor, _)| neighbor.distance(&target_qrz));
+                    .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, optimal_mid, kite_config.leash_distance));
 
                 if let Some((next_tile, _)) = best_neighbor {
                     // Move away from target
@@ -421,7 +452,7 @@ pub fn kite(
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             }
             KiteAction::Advance => {
-                // Move toward target (similar to chase behavior)
+                // Score-based: when too far, score naturally prefers moving toward optimal range
                 let target_qrz = **target_loc;
                 let Some((start, _)) = map.find(**npc_loc, -60) else {
                     continue;
@@ -433,7 +464,7 @@ pub fn kite(
                     .filter(|(neighbor, _)| {
                         nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
                     })
-                    .min_by_key(|(neighbor, _)| neighbor.distance(&target_qrz));
+                    .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, optimal_mid, kite_config.leash_distance));
 
                 if let Some((next_tile, _)) = best_neighbor {
                     if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
@@ -578,6 +609,79 @@ mod tests {
 
         // Player too far (10 hexes) - ADVANCE
         assert_eq!(kite.determine_action(10), KiteAction::Advance, "Should advance at 10 hexes");
+    }
+
+    #[test]
+    fn test_score_prefers_optimal_distance() {
+        let player = Qrz { q: 0, r: 0, z: 0 };
+        let spawn = Qrz { q: 0, r: 0, z: 0 };
+        let optimal_mid = 6;
+        let leash_distance = 30;
+
+        let at_optimal = Qrz { q: 6, r: 0, z: 0 };
+        let too_close = Qrz { q: 2, r: 0, z: 0 };
+        let too_far = Qrz { q: 12, r: 0, z: 0 };
+
+        let score_optimal = score_neighbor(&at_optimal, &player, &spawn, optimal_mid, leash_distance);
+        let score_close = score_neighbor(&too_close, &player, &spawn, optimal_mid, leash_distance);
+        let score_far = score_neighbor(&too_far, &player, &spawn, optimal_mid, leash_distance);
+
+        assert!(score_optimal > score_close, "Optimal distance ({}) should score higher than too close ({})", score_optimal, score_close);
+        assert!(score_optimal > score_far, "Optimal distance ({}) should score higher than too far ({})", score_optimal, score_far);
+    }
+
+    #[test]
+    fn test_score_prefers_closer_to_spawn() {
+        // Player and spawn in different locations
+        let player = Qrz { q: 0, r: 0, z: 0 };
+        let spawn = Qrz { q: 10, r: -10, z: 0 };
+        let optimal_mid = 6;
+        let leash_distance = 30;
+
+        // Both at distance 5 from player, but different distances from spawn
+        // (5, -5): dist_to_player = 5, dist_to_spawn = 5
+        // (-5, 5): dist_to_player = 5, dist_to_spawn = 15
+        let closer_to_spawn = Qrz { q: 5, r: -5, z: 0 };
+        let farther_from_spawn = Qrz { q: -5, r: 5, z: 0 };
+
+        assert_eq!(
+            closer_to_spawn.flat_distance(&player),
+            farther_from_spawn.flat_distance(&player),
+            "Both should be equidistant from player"
+        );
+
+        let score_closer = score_neighbor(&closer_to_spawn, &player, &spawn, optimal_mid, leash_distance);
+        let score_farther = score_neighbor(&farther_from_spawn, &player, &spawn, optimal_mid, leash_distance);
+
+        assert!(score_closer > score_farther,
+            "Closer to spawn ({}) should score higher than farther ({})", score_closer, score_farther);
+    }
+
+    #[test]
+    fn test_score_leash_ramp() {
+        // Verify that moving 1 hex farther from spawn is penalized more
+        // when already far from spawn (leash weight ramps up).
+        let player = Qrz { q: -20, r: 0, z: 0 };
+        let spawn = Qrz { q: 0, r: 0, z: 0 };
+        let optimal_mid = 6;
+        let leash_distance = 20;
+
+        // Near-spawn pair: 5→6 hexes from spawn
+        let near_a = Qrz { q: 5, r: 0, z: 0 };
+        let near_b = Qrz { q: 6, r: 0, z: 0 };
+
+        // Far-from-spawn pair: 9→10 hexes from spawn (crosses weight threshold)
+        let far_a = Qrz { q: 9, r: 0, z: 0 };
+        let far_b = Qrz { q: 10, r: 0, z: 0 };
+
+        let cost_near = score_neighbor(&near_a, &player, &spawn, optimal_mid, leash_distance)
+            - score_neighbor(&near_b, &player, &spawn, optimal_mid, leash_distance);
+        let cost_far = score_neighbor(&far_a, &player, &spawn, optimal_mid, leash_distance)
+            - score_neighbor(&far_b, &player, &spawn, optimal_mid, leash_distance);
+
+        assert!(cost_far > cost_near,
+            "Marginal cost of 1 hex from spawn should be higher when far (far: {}, near: {})",
+            cost_far, cost_near);
     }
 
 }
