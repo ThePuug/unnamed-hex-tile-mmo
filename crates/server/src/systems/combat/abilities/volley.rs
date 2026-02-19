@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use common::{
     components::{entity_type::*, Loc, reaction_queue::DamageType},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-    plugins::nntree::*,
 };
 
 /// Handle Volley ability (NPC ranged attack)
@@ -18,11 +17,10 @@ pub fn handle_volley(
     loc_query: Query<&Loc>,
     attrs_query: Query<&common::components::ActorAttributes>,
     respawn_query: Query<&common::components::resources::RespawnTimer>,
-    nntree: Res<NNTree>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: ability_target_loc } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability, target: ability_target } } = event else {
             continue;
         };
 
@@ -37,8 +35,8 @@ pub fn handle_volley(
             continue;
         };
 
-        // Validate target_loc is provided
-        let Some(target_qrz) = ability_target_loc else {
+        // Validate target entity is provided
+        let Some(target_ent) = *ability_target else {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -53,10 +51,23 @@ pub fn handle_volley(
             continue;
         };
 
+        // Skip dead targets
+        if respawn_query.get(target_ent).is_ok() {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
+
         // Validate target is within range (optimal 5-8 hexes for kite behavior)
         // Allow slightly wider range (1-10 hexes) for flexibility
-        let target_loc = Loc::new(*target_qrz);
-        let distance = caster_loc.flat_distance(&target_loc);
+        let Ok(target_loc) = loc_query.get(target_ent) else {
+            continue;
+        };
+        let distance = caster_loc.flat_distance(target_loc);
 
         if distance < 1 || distance > 10 {
             writer.write(Do {
@@ -68,49 +79,22 @@ pub fn handle_volley(
             continue;
         }
 
-        // Determine if caster is a player (for asymmetric targeting)
+        // Validate target is a hostile actor (asymmetric targeting)
         let caster_is_player = entity_query
             .get(*ent)
             .ok()
             .and_then(|(_, _, pc_opt)| pc_opt)
             .is_some();
 
-        // Find single hostile target on target hex using NNTree
-        let target_entity: Option<Entity> = nntree
-            .locate_within_distance(target_loc, 0) // Distance 0 = exact location match
-            .filter_map(|nn| {
-                let target_ent = nn.ent;
-
-                // Skip self
-                if target_ent == *ent {
-                    return None;
-                }
-
-                // Skip dead players (with RespawnTimer)
-                if respawn_query.get(target_ent).is_ok() {
-                    return None;
-                }
-
-                // Check if this is a valid hostile target (asymmetric targeting)
-                entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                    // Check if it's an Actor
-                    if !matches!(et, EntityType::Actor(_)) {
-                        return None;
-                    }
-
-                    let target_is_player = player_controlled_opt.is_some();
-                    // Asymmetric targeting: NPCs can only attack players
-                    if caster_is_player != target_is_player {
-                        Some(target_ent)
-                    } else {
-                        None
-                    }
-                })
+        let target_valid = entity_query
+            .get(target_ent)
+            .ok()
+            .map(|(et, _, pc_opt)| {
+                matches!(et, EntityType::Actor(_)) && pc_opt.is_some() != caster_is_player
             })
-            .next(); // Take first valid target
+            .unwrap_or(false);
 
-        // If no valid target found, fail the ability
-        let Some(target) = target_entity else {
+        if !target_valid {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -129,7 +113,7 @@ pub fn handle_volley(
             Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
-                    target,
+                    target: target_ent,
                     base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Volley),

@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_severity_rgb_low() {
-        let (r, g, b) = severity_rgb(0.05);
+        let (r, g, _) = severity_rgb(0.05);
         // Between yellow-green and yellow
         assert!(r > 0.7, "r={r}");
         assert!(g > 0.5, "g={g}");

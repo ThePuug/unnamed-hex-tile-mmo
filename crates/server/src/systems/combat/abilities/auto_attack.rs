@@ -1,44 +1,43 @@
 use bevy::prelude::*;
 use common::{
-    components::{entity_type::*, Loc, reaction_queue::DamageType},
+    components::{
+        entity_type::*, Loc, reaction_queue::DamageType,
+    },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-    plugins::nntree::*,
 };
 
-/// Handle AutoAttack ability
+/// Handle AutoAttack ability — entity-based, single-target
+///
 /// - Passive ability (no stamina cost, no GCD)
-/// - Attacks ALL hostile entities on target hex
-/// - Base damage from Force meta-attribute (scales with might + level)
-/// - Requires target_loc to be adjacent (distance == 1)
+/// - Reads target entity from the UseAbility event (player's intended target)
+/// - Server-side range check using current positions (not stale client data)
+/// - Deals damage to exactly one entity
 pub fn handle_auto_attack(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
-    entity_query: Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
+    entity_type_query: Query<(&EntityType, Option<&common::components::behaviour::PlayerControlled>)>,
     attrs_query: Query<&common::components::ActorAttributes>,
     range_query: Query<&common::components::AttackRange>,
     respawn_query: Query<&common::components::resources::RespawnTimer>,
-    nntree: Res<NNTree>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: ability_target_loc } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability, target: event_target } } = event else {
             continue;
         };
 
-        // Filter for AutoAttack only
-        let Some(AbilityType::AutoAttack) = (ability == &AbilityType::AutoAttack).then_some(ability) else {
-            continue;
-        };
-
-        // Check if caster is dead (has RespawnTimer)
-        if respawn_query.get(*ent).is_ok() {
-            // Dead players can't use abilities - silently ignore
+        if *ability != AbilityType::AutoAttack {
             continue;
         }
 
-        // Validate target_loc is provided
-        let Some(target_qrz) = ability_target_loc else {
+        // Dead casters can't attack
+        if respawn_query.get(*ent).is_ok() {
+            continue;
+        }
+
+        // Read target from the event (player's intended target)
+        let Some(target_ent) = *event_target else {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -48,17 +47,52 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        // Get caster's location
+        // Skip dead targets
+        if respawn_query.get(target_ent).is_ok() {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
+
+        // Validate target is a hostile actor (asymmetric targeting)
+        let caster_is_player = entity_type_query
+            .get(*ent)
+            .ok()
+            .and_then(|(_, pc)| pc)
+            .is_some();
+
+        let target_valid = entity_type_query
+            .get(target_ent)
+            .ok()
+            .map(|(et, pc)| {
+                matches!(et, EntityType::Actor(_)) && pc.is_some() != caster_is_player
+            })
+            .unwrap_or(false);
+
+        if !target_valid {
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
+
+        // Server-side range check using current positions
         let Ok(caster_loc) = loc_query.get(*ent) else {
             continue;
         };
+        let Ok(target_loc) = loc_query.get(target_ent) else {
+            continue;
+        };
 
-        // Validate target hex is within range (manhattan: flat hex distance + z difference)
-        let target_loc = Loc::new(*target_qrz);
-        let distance = caster_loc.distance(&target_loc);
         let max_range = range_query.get(*ent).map_or(1, |r| r.0);
-
-        if distance > max_range {
+        if caster_loc.distance(target_loc) > max_range {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {
                     ent: *ent,
@@ -68,77 +102,20 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Determine if caster is a player (for asymmetric targeting)
-        let caster_is_player = entity_query
-            .get(*ent)
-            .ok()
-            .and_then(|(_, _, pc_opt)| pc_opt)
-            .is_some();
-
-        // Find ALL hostile entities on target hex using NNTree
-        let target_entities: Vec<Entity> = nntree
-            .locate_within_distance(target_loc, 0) // Distance 0 = exact location match
-            .filter_map(|nn| {
-                let target_ent = nn.ent;
-
-                // Skip self
-                if target_ent == *ent {
-                    return None;
-                }
-
-                // Skip dead players (with RespawnTimer)
-                if respawn_query.get(target_ent).is_ok() {
-                    return None;
-                }
-
-                // Check if this is a valid hostile target (asymmetric targeting)
-                entity_query.get(target_ent).ok().and_then(|(et, _, player_controlled_opt)| {
-                    // Check if it's an Actor
-                    if !matches!(et, EntityType::Actor(_)) {
-                        return None;
-                    }
-
-                    let target_is_player = player_controlled_opt.is_some();
-                    // Asymmetric targeting: can only attack entities on opposite "team"
-                    if caster_is_player != target_is_player {
-                        Some(target_ent)
-                    } else {
-                        None  // Same team - no friendly fire
-                    }
-                })
-            })
-            .collect();
-
-        // If no valid targets on the hex, fail
-        if target_entities.is_empty() {
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::NoTargets,
-                },
-            });
-            continue;
-        }
-
-        // Deal damage to ALL hostile entities on the target hex
-        // Base damage from Force meta-attribute (50% of Lunge damage)
+        // Deal damage — Force meta-attribute at 50% (same as before)
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
         let base_damage = attrs.force() * 0.5;
 
-        for target_ent in target_entities {
-            commands.trigger(
-                Try {
-                    event: GameEvent::DealDamage {
-                        source: *ent,
-                        target: target_ent,
-                        base_damage,
-                        damage_type: DamageType::Physical,
-                        ability: Some(AbilityType::AutoAttack),
-                    },
+        commands.trigger(
+            Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target: target_ent,
+                    base_damage,
+                    damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::AutoAttack),
                 },
-            );
-        }
-
-        // AutoAttack does NOT trigger GCD (passive ability) - no event emitted
+            },
+        );
     }
 }

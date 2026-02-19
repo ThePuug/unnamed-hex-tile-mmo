@@ -785,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_generate_chunk_mesh() {
-        use crate::chunk::{ChunkId, chunk_to_tile, CHUNK_SIZE};
+        use crate::chunk::{ChunkId, chunk_to_tile};
 
         // Create a map with tiles in multiple chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8);

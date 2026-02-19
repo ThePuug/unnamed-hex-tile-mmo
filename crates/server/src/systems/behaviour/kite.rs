@@ -9,7 +9,7 @@ use common::{
         returning::Returning,
         engagement::EngagementMember,
     },
-    message::{Event, Do, Try, Event as GameEvent, Component as MessageComponent},
+    message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
     systems::physics,
@@ -97,8 +97,6 @@ pub struct Kite {
     pub optimal_distance_min: i16,   // Min optimal attack range (e.g., 5 hexes)
     pub optimal_distance_max: i16,   // Max optimal attack range (e.g., 8 hexes)
     pub disengage_distance: i16,     // Flee threshold when target too close (e.g., 3 hexes)
-    pub attack_interval_ms: u32,     // Cooldown between attacks (e.g., 3000ms)
-    pub last_attack_time: u128,      // Server-side state: timestamp of last attack (default 0)
 }
 
 impl Kite {
@@ -110,15 +108,7 @@ impl Kite {
             optimal_distance_min: 5,      // 5-8 hex optimal zone
             optimal_distance_max: 8,
             disengage_distance: 3,        // Flee if < 3 hexes
-            attack_interval_ms: 3000,     // 3 second attack speed
-            last_attack_time: 0,
         }
-    }
-
-    /// Check if enough time has elapsed to attack again
-    pub fn can_attack(&self, current_time: u128) -> bool {
-        let elapsed = current_time.saturating_sub(self.last_attack_time);
-        elapsed >= self.attack_interval_ms as u128
     }
 
     /// Determine what action the kiter should take based on distance to target
@@ -166,11 +156,8 @@ pub fn kite(
     map: Res<Map>,
     dt: Res<Time>,
     mut writer: MessageWriter<common::message::Do>,
-    mut try_writer: MessageWriter<common::message::Try>,
 ) {
-    let current_time = dt.elapsed().as_millis();
-
-    for (npc_entity, mut kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member) in &mut query {
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -430,20 +417,7 @@ pub fn kite(
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             }
             KiteAction::Attack => {
-                // Stay in place and attack if cooldown ready
-                if kite_config.can_attack(current_time) {
-                    // Use Volley ability - ranged attack with telegraph
-                    try_writer.write(Try {
-                        event: GameEvent::UseAbility {
-                            ent: npc_entity,
-                            ability: common::message::AbilityType::Volley,
-                            target_loc: Some(**target_loc),
-                        },
-                    });
-
-                    kite_config.last_attack_time = current_time;
-                }
-
+                // Stay in place — process_passive_auto_attack handles damage via AttackRange(6)
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             }
             KiteAction::Advance => {
@@ -506,31 +480,6 @@ mod tests {
         assert_eq!(kite.optimal_distance_min, 5);
         assert_eq!(kite.optimal_distance_max, 8);
         assert_eq!(kite.disengage_distance, 3);
-        assert_eq!(kite.attack_interval_ms, 3000);
-    }
-
-    #[test]
-    fn test_can_attack_returns_false_before_cooldown() {
-        let mut kite = Kite::forest_sprite();
-        kite.last_attack_time = 1000;
-
-        // Check at 1000ms (right after attack) - should be false
-        assert!(!kite.can_attack(1000), "Should not be able to attack immediately");
-
-        // Check at 2500ms (500ms before cooldown expires) - should be false
-        assert!(!kite.can_attack(2500), "Should not be able to attack before cooldown expires");
-    }
-
-    #[test]
-    fn test_can_attack_returns_true_after_cooldown() {
-        let mut kite = Kite::forest_sprite();
-        kite.last_attack_time = 1000;
-
-        // Check at 4000ms (3000ms after last attack) - should be true
-        assert!(kite.can_attack(4000), "Should be able to attack after cooldown expires");
-
-        // Check at 5000ms (4000ms after last attack) - should still be true
-        assert!(kite.can_attack(5000), "Should be able to attack well after cooldown expires");
     }
 
     #[test]
@@ -609,54 +558,6 @@ mod tests {
 
         // Just above optimal (9 hexes) - ADVANCE
         assert_eq!(kite.determine_action(9), KiteAction::Advance);
-    }
-
-    // ===== INTEGRATION TESTS (ADR-010 Phase 5) =====
-
-    /// Test that Forest Sprite attacks when in optimal range (ADR-010 Phase 5)
-    ///
-    /// Validation Criteria:
-    /// - Sprite kites to 5-8 hex range
-    /// - Sprite attacks every 3 seconds
-    /// - Attacks are instant hit
-    #[test]
-    fn test_forest_sprite_attacks_at_optimal_range() {
-        // This test validates the integration of:
-        // - Kite behavior state machine
-        // - Instant hit attacks in Attack state
-        // - Attack cooldown timing
-
-        let kite = Kite::forest_sprite();
-
-        // Sprite at distance 6 hexes (optimal range)
-        let action = kite.determine_action(6);
-        assert_eq!(action, KiteAction::Attack, "Sprite should attack at 6 hexes");
-
-        // First attack is allowed (cooldown expired)
-        let current_time = 5000; // 5 seconds elapsed
-        assert!(kite.can_attack(current_time), "Should be able to attack initially");
-
-        // After attacking, update last_attack_time
-        let mut kite_after_attack = kite;
-        kite_after_attack.last_attack_time = current_time;
-
-        // Immediately after attack, cooldown not ready
-        assert!(!kite_after_attack.can_attack(current_time), "Should not attack immediately after");
-
-        // 2 seconds later (2000ms < 3000ms cooldown)
-        assert!(!kite_after_attack.can_attack(current_time + 2000), "Should not attack before cooldown");
-
-        // 3 seconds later (cooldown expired)
-        assert!(kite_after_attack.can_attack(current_time + 3000), "Should attack after 3 second cooldown");
-    }
-
-    /// Test that Kite behavior uses instant hit damage (ADR-010 Phase 5)
-    #[test]
-    fn test_forest_sprite_attack_stats() {
-        let kite = Kite::forest_sprite();
-
-        // Verify attack stats match ADR-010 specifications
-        assert_eq!(kite.attack_interval_ms, 3000, "Should attack every 3 seconds");
     }
 
     /// Test that Kite behavior handles distance transitions correctly (ADR-010 Phase 5)

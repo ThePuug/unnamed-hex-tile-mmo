@@ -15,7 +15,7 @@ pub fn handle_ability_used(
     target_query: Query<&Target>,
 ) {
     for event in do_reader.read() {
-        let Do { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
+        let Do { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
             continue;
         };
 

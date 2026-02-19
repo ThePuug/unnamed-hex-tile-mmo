@@ -78,7 +78,7 @@ pub fn npc_ability_usage(
                             event: Event::UseAbility {
                                 ent: npc_entity,
                                 ability: AbilityType::Counter,
-                                target_loc: None,
+                                target: None,
                             },
                         });
                     }
@@ -120,12 +120,12 @@ pub fn npc_ability_usage(
         };
 
         if should_use_ability {
-            // Trigger ability (no target_loc needed - targeting handles it server-side)
+            // Send target entity from NPC's Target component
             writer.write(Try {
                 event: Event::UseAbility {
                     ent: npc_entity,
                     ability,
-                    target_loc: None,
+                    target: target.entity,
                 },
             });
         }

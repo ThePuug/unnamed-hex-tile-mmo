@@ -18,7 +18,7 @@ pub fn handle_deflect(
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
             continue;
         };
 
@@ -106,7 +106,7 @@ pub fn handle_deflect(
             event: GameEvent::UseAbility {
                 ent: *ent,
                 ability: AbilityType::Deflect,
-                target_loc: None, // Deflect doesn't use target_loc
+                target: None, // Deflect is self-targeted
             },
         });
 

@@ -168,7 +168,7 @@ pub fn validate_ability_prerequisites(
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        if let GameEvent::UseAbility { ent, ability: _, target_loc: _ } = event.event {
+        if let GameEvent::UseAbility { ent, ability: _, target: _ } = event.event {
             // Ignore abilities from dead players (those with RespawnTimer)
             if caster_respawn_query.get(ent).is_ok() {
                 writer.write(Do {
@@ -294,7 +294,7 @@ pub fn process_passive_auto_attack(
                 event: GameEvent::UseAbility {
                     ent,
                     ability: AbilityType::AutoAttack,
-                    target_loc: Some(**target_loc),
+                    target: Some(target_ent),
                 },
             });
 

@@ -524,10 +524,7 @@ pub fn update_targets_impl(
 mod tests {
     use super::*;
     use qrz::Qrz;
-    use crate::components::{
-        behaviour::PlayerControlled,
-        entity_type::{actor::*, *},
-    };
+    use crate::components::behaviour::PlayerControlled;
 
     // ===== HEADING TO ANGLE CONVERSION TESTS =====
 
@@ -764,7 +761,7 @@ mod tests {
 
     // Helper function to create a test world with entities
     fn setup_test_world() -> (World, NNTree) {
-        let mut world = World::new();
+        let world = World::new();
         let nntree = NNTree::new_for_test();
         (world, nntree)
     }

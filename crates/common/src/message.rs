@@ -47,8 +47,8 @@ pub enum Event {
     ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server (Try): Request to use an ability (ADR-012)
     /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
-    /// target_loc: Optional target hex location (for validation and targeting)
-    UseAbility { ent: Entity, ability: AbilityType, target_loc: Option<Qrz> },
+    /// target: Optional target entity (player's intended target, server validates)
+    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
     /// Server → Client: Ability usage failed (ADR-012)
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue

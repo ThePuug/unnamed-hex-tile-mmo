@@ -8,6 +8,7 @@ use common::{
     components::{
         heading::*,
         keybits::*,
+        target::Target,
     },
     message::{AbilityType, Component, Event},
     resources::*,
@@ -75,11 +76,11 @@ fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     camera_angle: Res<CameraOrbitAngle>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&common::components::gcd::Gcd>), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&common::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     dt: Res<Time>,
 ) {
-    if let Ok((ent, &heading, mut keybits0, gcd_opt)) = query.single_mut() {
+    if let Ok((ent, &heading, mut keybits0, gcd_opt, target)) = query.single_mut() {
         // Note: We removed client-side death prediction
         // The server will reject inputs for dead players, preventing premature input blocking
         let delta_ns = dt.delta().as_nanos();
@@ -92,22 +93,22 @@ pub fn update_keybits(
 
         // Lunge ability (Q key) - Gap closer
         if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target_loc: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target: target.entity }});
         }
 
         // Overpower ability (W key) - Heavy strike
         if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target_loc: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
         }
 
         // Counter ability (E key) - Reactive counter-attack (ADR-014)
         if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target_loc: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
         }
 
         // Deflect ability (R key) - Clear all threats
         if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target_loc: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target: None }});
         }
 
         // ADR-022: Dismiss front queue threat (no GCD check — independent of ability system)

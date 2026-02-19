@@ -229,13 +229,13 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
             }
-            Do { event: Event::UseAbility { ent, ability, target_loc } } => {
+            Do { event: Event::UseAbility { ent, ability, target } } => {
                 // Map entity ID and forward to ability_prediction system (ADR-012)
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                do_writer.write(Do { event: Event::UseAbility { ent, ability, target_loc } });
+                do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
             }
             Do { event: Event::Pong { client_time } } => {
                 // Forward Pong to Do writer for handle_pong system
@@ -303,11 +303,13 @@ pub fn send_try(
                     ent, typ, qrz, attrs
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::UseAbility { ent, ability, target_loc } } => {
+            Try { event: Event::UseAbility { ent, ability, target } } => {
+                // Map target entity local→remote; if not in bimap, send None
+                let remote_target = target.and_then(|t| l2r.get_by_left(&t).copied());
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
                     ent: *l2r.get_by_left(&ent).unwrap(),
                     ability,
-                    target_loc
+                    target: remote_target
                 }}, bincode::config::legacy()).unwrap());
             }
             Try { event: Event::Ping { client_time } } => {

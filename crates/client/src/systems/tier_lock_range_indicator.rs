@@ -258,9 +258,9 @@ mod tests {
 
     #[test]
     fn test_tier_ranges_do_not_overlap() {
-        let (close_min, close_max) = get_tier_range(RangeTier::Close);
+        let (_, close_max) = get_tier_range(RangeTier::Close);
         let (mid_min, mid_max) = get_tier_range(RangeTier::Mid);
-        let (far_min, far_max) = get_tier_range(RangeTier::Far);
+        let (far_min, _) = get_tier_range(RangeTier::Far);
 
         // Close and Mid should not overlap
         assert!(close_max < mid_min, "Tier 1 should not overlap with Tier 2");

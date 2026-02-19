@@ -36,7 +36,6 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::app::App;
     use qrz::{Convert, Qrz};
     use crate::systems::movement::{GRAVITY, JUMP_DURATION_MS, MOVEMENT_SPEED};
 
@@ -48,17 +47,6 @@ mod tests {
     /// Helper to create an empty NNTree for testing
     fn create_test_nntree() -> NNTree {
         NNTree::new_for_test()
-    }
-
-    /// Helper to spawn a physics entity at a specific location
-    fn spawn_physics_entity(app: &mut App, qrz: Qrz, offset: Vec3) -> Entity {
-        app.world_mut().spawn((
-            Loc::new(qrz),
-            Heading::default(),
-            Position::new(qrz, offset),
-            AirTime { state: None, step: None },
-            Physics,
-        )).id()
     }
 
     // ===== INVARIANT TESTS =====

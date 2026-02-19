@@ -206,12 +206,12 @@ pub fn player_auto_attack(
             continue; // Target out of range
         }
 
-        // Send AutoAttack Try event with target location
+        // Send AutoAttack Try event with target entity
         writer.write(Try {
             event: GameEvent::UseAbility {
                 ent: player_ent,
                 ability: AbilityType::AutoAttack,
-                target_loc: Some(**target_loc),
+                target: Some(target_ent),
             },
         });
 

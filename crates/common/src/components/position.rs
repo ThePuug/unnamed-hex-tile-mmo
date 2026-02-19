@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_visual_position_current_lerps_correctly() {
-        let mut vis = VisualPosition {
+        let vis = VisualPosition {
             from: Vec3::new(0.0, 0.0, 0.0),
             to: Vec3::new(10.0, 20.0, 30.0),
             progress: 0.25,

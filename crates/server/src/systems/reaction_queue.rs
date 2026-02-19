@@ -121,8 +121,6 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time>();
 
-        // Create entity with queue and one threat
-        let entity = Entity::from_raw_u32(0).unwrap();
         let threat_entity = Entity::from_raw_u32(1).unwrap();
 
         let mut queue = ReactionQueue::new(3);
@@ -139,11 +137,8 @@ mod tests {
 
         let ent_id = world.spawn((queue, attrs)).id();
 
-        // Advance time to 1.5 seconds (threat should expire at 1.0s)
-        let mut time = world.resource_mut::<Time>();
         // Note: In real game, Time::elapsed() is updated by Bevy
         // For testing, we need to manually advance time or use a mock
-        drop(time);
 
         // Run the system
         // Note: This test is simplified - in practice we'd use proper Bevy test infrastructure

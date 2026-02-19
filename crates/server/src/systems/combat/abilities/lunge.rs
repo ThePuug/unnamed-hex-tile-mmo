@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common::{
-    components::{resources::*, tier_lock::TierLock, target::Target, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
 };
@@ -14,7 +14,7 @@ pub fn handle_lunge(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     entity_query: Query<&Loc>,
-    loc_target_query: Query<(&Loc, &Target, Option<&TierLock>)>,
+    loc_tierlock_query: Query<(&Loc, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
     attrs_query: Query<&common::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
@@ -22,7 +22,7 @@ pub fn handle_lunge(
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability, target: event_target } } = event else {
             continue;
         };
 
@@ -50,13 +50,13 @@ pub fn handle_lunge(
             }
         }
 
-        // Get caster's location, current target, and targeting state
-        let Ok((caster_loc, target, targeting_state_opt)) = loc_target_query.get(*ent) else {
+        // Read target from the event (player's intended target)
+        let target_ent_opt = *event_target;
+
+        // Get caster's location and targeting state
+        let Ok((caster_loc, targeting_state_opt)) = loc_tierlock_query.get(*ent) else {
             continue;
         };
-
-        // Get the current target from Target component
-        let target_ent_opt = target.entity;  // Get the entity field (Option<Entity>)
 
         // If tier locked, validate target is in correct tier
         let validated_target = if let (Some(targeting_state), Some(target_ent)) = (targeting_state_opt, target_ent_opt) {
@@ -191,7 +191,7 @@ pub fn handle_lunge(
             event: GameEvent::UseAbility {
                 ent: *ent,
                 ability: AbilityType::Lunge,
-                target_loc: Some(**target_loc),
+                target: Some(target_ent),
             },
         });
 

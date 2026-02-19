@@ -215,9 +215,9 @@ pub fn write_try(
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
-                Try { event: Event::UseAbility { ent: _, ability, target_loc } } => {
+                Try { event: Event::UseAbility { ent: _, ability, target } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
-                    writer.write(Try { event: Event::UseAbility { ent, ability, target_loc }});
+                    writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
                 Try { event: Event::Ping { client_time } } => {
                     // Immediately respond with Pong (echo client timestamp)
@@ -382,10 +382,10 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Do { event: Event::UseAbility { ent, ability, target_loc } } => {
+            Do { event: Event::UseAbility { ent, ability, target } } => {
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::UseAbility { ent, ability, target_loc }},
+                        Do { event: Event::UseAbility { ent, ability, target }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
@@ -394,7 +394,7 @@ pub fn write_try(
                     if player_ent == ent { continue; }
                     if let Some(client_id) = lobby.get_by_right(&player_ent) {
                         let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::UseAbility { ent, ability, target_loc }},
+                            Do { event: Event::UseAbility { ent, ability, target }},
                             bincode::config::legacy()).unwrap();
                         conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                     }

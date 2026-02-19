@@ -28,7 +28,7 @@ pub fn handle_counter(
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target_loc: _ } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
             continue;
         };
 
@@ -218,7 +218,7 @@ pub fn handle_counter(
             event: GameEvent::UseAbility {
                 ent: *ent,
                 ability: AbilityType::Counter,
-                target_loc: None,  // Counter doesn't use target_loc
+                target: None,  // Counter is self-targeted
             },
         });
 
