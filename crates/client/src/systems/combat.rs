@@ -1,22 +1,24 @@
 use bevy::prelude::*;
 use common::{
-    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, Loc},
+    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, Loc, ActorAttributes},
     message::{AbilityType, Do, Event as GameEvent, Try},
-    systems::combat::{queue as queue_utils, gcd::GcdType},
+    systems::combat::{damage as damage_calc, queue as queue_utils, gcd::GcdType},
 };
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
+/// Also applies recovery pushback (Impact vs Composure) to match server behavior
 /// No deduplication needed - we don't predict threat insertions
 pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
-    mut query: Query<&mut ReactionQueue>,
+    mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common::components::recovery::GlobalRecovery>)>,
+    attrs_query: Query<&ActorAttributes>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
-            if let Ok(mut queue) = query.get_mut(ent) {
+            if let Ok((mut queue, defender_attrs, recovery_opt)) = query.get_mut(ent) {
                 // Calculate current server time
                 let client_now = time.elapsed().as_millis();
                 let server_now_ms = server.current_time(client_now);
@@ -24,6 +26,19 @@ pub fn handle_insert_threat(
 
                 // ADR-030: Insert always succeeds (unbounded queue)
                 queue_utils::insert_threat(&mut queue, threat, server_now);
+
+                // Recovery pushback: mirror server's Impact vs Composure contest
+                if let Some(mut recovery) = recovery_opt {
+                    if let Ok(source_attrs) = attrs_query.get(threat.source) {
+                        let pushback_pct = damage_calc::calculate_recovery_pushback(
+                            source_attrs.impact(),
+                            defender_attrs.composure(),
+                            source_attrs.total_level(),
+                            defender_attrs.total_level(),
+                        );
+                        recovery.apply_pushback(pushback_pct);
+                    }
+                }
             }
         }
     }

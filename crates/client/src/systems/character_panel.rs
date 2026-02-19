@@ -419,12 +419,6 @@ macro_rules! create_attribute_section {
                     TextFont { font_size: 14.0, ..default() },
                     TextColor($left_color),
                 ));
-                // Arrow separator
-                title_row.spawn((
-                    Text::new("↔"),
-                    TextFont { font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.7, 0.7, 0.7)),
-                ));
                 // Right attribute name
                 title_row.spawn((
                     Text::new($right_name),
@@ -1036,13 +1030,13 @@ pub fn update_attributes(
 
         // Update the reach text values (first and last child)
         if let Ok(title_children) = children.get(title_entity) {
-            if title_children.len() >= 5 {
+            if title_children.len() >= 4 {
                 // First child: left reach value
                 if let Ok(mut text) = text_query.get_mut(title_children[0]) {
                     **text = format!("{}", left_reach);
                 }
                 // Last child: right reach value
-                if let Ok(mut text) = text_query.get_mut(title_children[4]) {
+                if let Ok(mut text) = text_query.get_mut(title_children[3]) {
                     **text = format!("{}", right_reach);
                 }
             }

@@ -112,6 +112,21 @@ pub struct CombatLogPanel;
 #[derive(Component)]
 pub struct CombatLogContent;
 
+/// World-space recovery bar component with interpolation state
+#[derive(Component)]
+pub struct WorldRecoveryBar {
+    /// Current displayed fill ratio (0.0 to 1.0) for smooth interpolation
+    pub current_fill: f32,
+}
+
+/// Marker for hostile target recovery bar
+#[derive(Component)]
+pub struct HostileRecoveryBar;
+
+/// Marker for ally target recovery bar
+#[derive(Component)]
+pub struct AllyRecoveryBar;
+
 /// Combat log entry with metadata for color coding (ADR-025)
 #[derive(Component)]
 pub struct CombatLogEntry;

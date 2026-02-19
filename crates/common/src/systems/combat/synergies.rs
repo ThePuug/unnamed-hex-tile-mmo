@@ -80,6 +80,11 @@ pub fn apply_synergies(
 
     let synergy_reduction = (BASE_REDUCTION * gap * contest).min(0.66);
 
+    // No synergy unlock without meaningful finesse investment
+    if synergy_reduction < f32::EPSILON {
+        return;
+    }
+
     // Find and apply matching synergy rules
     for _rule in MVP_SYNERGIES {
         if _rule.trigger == trigger_type {
@@ -235,6 +240,20 @@ mod tests {
             synergy.is_unlocked(recovery_mid.remaining),
             "Counter should unlock at 1.0s remaining"
         );
+    }
+
+    #[test]
+    fn test_zero_finesse_produces_no_synergy_reduction() {
+        // With 0 finesse, contest_factor returns 0, so synergy_reduction = 0
+        // apply_synergies should NOT insert a SynergyUnlock component
+        let finesse = 0u16;
+        let cunning = 0u16;
+        let contest = damage_calc::contest_factor(finesse, cunning);
+        assert_eq!(contest, 0.0, "contest_factor(0, 0) should be 0");
+
+        let synergy_reduction = (0.66_f32 * 1.0 * contest).min(0.66);
+        assert!(synergy_reduction < f32::EPSILON,
+            "No synergy reduction without finesse investment");
     }
 
 }

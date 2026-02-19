@@ -73,13 +73,14 @@ impl Plugin for UiPlugin {
             ),
         );
 
-        // Combat UI feedback systems (floating damage numbers, health bars, threat dots)
+        // Combat UI feedback systems (floating damage numbers, health bars, recovery bars, threat dots)
         app.add_systems(
             Update,
             (
                 combat_ui::update_floating_text,
                 combat_ui::update_health_bars,
-                combat_ui::update_threat_queue_dots, // Threat queue capacity dots above health bars
+                combat_ui::update_recovery_bars,
+                combat_ui::update_threat_queue_dots,
             ),
         );
 

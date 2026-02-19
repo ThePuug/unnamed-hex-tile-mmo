@@ -93,6 +93,49 @@ pub fn setup_health_bars(mut commands: Commands) {
 
     commands.entity(hostile_container).add_children(&[hostile_bg, hostile_fg]);
 
+    // Spawn hostile target recovery bar (hidden by default, stacked under health bar)
+    let hostile_recovery_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(-10000.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::components::WorldRecoveryBar {
+            current_fill: 1.0,
+        },
+        crate::components::HostileRecoveryBar,
+    )).id();
+
+    let hostile_recovery_bg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+    )).id();
+
+    let hostile_recovery_fg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.1, 0.9, 0.1)),
+        ZIndex(1),
+    )).id();
+
+    commands.entity(hostile_recovery_container).add_children(&[hostile_recovery_bg, hostile_recovery_fg]);
+
     // Spawn ally target health bar (hidden by default)
     let ally_container = commands.spawn((
         Node {
@@ -137,6 +180,49 @@ pub fn setup_health_bars(mut commands: Commands) {
     )).id();
 
     commands.entity(ally_container).add_children(&[ally_bg, ally_fg]);
+
+    // Spawn ally target recovery bar (hidden by default, stacked under health bar)
+    let ally_recovery_container = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(-10000.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        crate::components::WorldRecoveryBar {
+            current_fill: 1.0,
+        },
+        crate::components::AllyRecoveryBar,
+    )).id();
+
+    let ally_recovery_bg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+    )).id();
+
+    let ally_recovery_fg = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(BAR_WIDTH),
+            height: Val::Px(BAR_HEIGHT),
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.1, 0.9, 0.1)),
+        ZIndex(1),
+    )).id();
+
+    commands.entity(ally_recovery_container).add_children(&[ally_recovery_bg, ally_recovery_fg]);
 
     // Spawn hostile target threat queue dots container (hidden by default)
     let hostile_dots_container = commands.spawn((
@@ -461,7 +547,7 @@ pub fn update_threat_queue_dots(
         }
     }
 
-    // Update ally dots container
+    // Update ally dots container (same logic as hostile)
     if let Ok((children, mut container_node, mut visibility)) = ally_query.single_mut() {
         if let Some(target_ent) = ally_target {
             // Target exists - check if it has a queue
@@ -550,5 +636,119 @@ pub fn update_threat_queue_dots(
                 }
             }
         }
+    }
+}
+
+/// System to update recovery bar positions and fill
+/// Positioned flush beneath the health bar for each target
+pub fn update_recovery_bars(
+    mut hostile_query: Query<
+        (&mut crate::components::WorldRecoveryBar, &Children, &mut Node, &mut Visibility),
+        (With<crate::components::HostileRecoveryBar>, Without<crate::components::AllyRecoveryBar>)
+    >,
+    mut ally_query: Query<
+        (&mut crate::components::WorldRecoveryBar, &Children, &mut Node, &mut Visibility),
+        (With<crate::components::AllyRecoveryBar>, Without<crate::components::HostileRecoveryBar>)
+    >,
+    mut child_node_query: Query<&mut Node, (
+        Without<crate::components::WorldRecoveryBar>,
+        Without<crate::components::HostileRecoveryBar>,
+        Without<crate::components::AllyRecoveryBar>,
+        Without<crate::components::WorldHealthBar>,
+    )>,
+    entity_query: Query<(Option<&common::components::recovery::GlobalRecovery>, &Transform)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget), With<common::components::Actor>>,
+    time: Res<Time>,
+) {
+    let Ok((camera, camera_transform)) = camera_query.single() else {
+        return;
+    };
+
+    let Ok((player_target, player_ally_target)) = player_query.single() else {
+        return;
+    };
+
+    let hostile_target = player_target.entity;
+    let ally_target = player_ally_target.entity;
+
+    const INTERPOLATION_SPEED: f32 = 5.0;
+    const BAR_WIDTH: f32 = 50.0;
+    const BAR_HEIGHT: f32 = 6.0;
+    let delta = time.delta_secs();
+
+    // Helper: calculate fill and update a recovery bar
+    fn update_bar(
+        target: Option<Entity>,
+        bar: &mut crate::components::WorldRecoveryBar,
+        children: &Children,
+        container_node: &mut Node,
+        visibility: &mut Visibility,
+        child_node_query: &mut Query<&mut Node, (
+            Without<crate::components::WorldRecoveryBar>,
+            Without<crate::components::HostileRecoveryBar>,
+            Without<crate::components::AllyRecoveryBar>,
+            Without<crate::components::WorldHealthBar>,
+        )>,
+        entity_query: &Query<(Option<&common::components::recovery::GlobalRecovery>, &Transform)>,
+        camera: &Camera,
+        camera_transform: &GlobalTransform,
+        delta: f32,
+    ) {
+        let Some(target_ent) = target else {
+            *visibility = Visibility::Hidden;
+            return;
+        };
+
+        let Ok((recovery_opt, transform)) = entity_query.get(target_ent) else {
+            *visibility = Visibility::Hidden;
+            return;
+        };
+
+        // Calculate target fill ratio
+        let target_ratio = match recovery_opt {
+            Some(recovery) if recovery.is_active() && recovery.duration > 0.0 => {
+                1.0 - (recovery.remaining / recovery.duration)
+            }
+            _ => 1.0, // No recovery or expired: full bar (entity can act)
+        };
+
+        *visibility = Visibility::Visible;
+
+        // Smoothly interpolate current fill toward target
+        bar.current_fill = bar.current_fill.lerp(target_ratio, INTERPOLATION_SPEED * delta);
+
+        // Position flush under health bar: same X, offset Y by BAR_HEIGHT
+        let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);
+
+        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, world_pos) {
+            container_node.left = Val::Px(viewport_pos.x - (BAR_WIDTH / 2.0));
+            container_node.top = Val::Px(viewport_pos.y + BAR_HEIGHT);
+
+            // Update foreground bar width (children[1])
+            if children.len() >= 2 {
+                if let Ok(mut foreground_node) = child_node_query.get_mut(children[1]) {
+                    foreground_node.width = Val::Px(BAR_WIDTH * bar.current_fill);
+                }
+            }
+        } else {
+            container_node.left = Val::Px(-10000.0);
+        }
+    }
+
+    // Update hostile recovery bar
+    if let Ok((mut bar, children, mut container_node, mut visibility)) = hostile_query.single_mut() {
+        update_bar(
+            hostile_target, &mut bar, &children, &mut container_node, &mut visibility,
+            &mut child_node_query, &entity_query, camera, camera_transform, delta,
+        );
+    }
+
+    // Update ally recovery bar
+    if let Ok((mut bar, children, mut container_node, mut visibility)) = ally_query.single_mut() {
+        update_bar(
+            ally_target, &mut bar, &children, &mut container_node, &mut visibility,
+            &mut child_node_query, &entity_query, camera, camera_transform, delta,
+        );
     }
 }
