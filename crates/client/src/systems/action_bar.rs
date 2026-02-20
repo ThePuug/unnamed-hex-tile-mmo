@@ -75,7 +75,7 @@ pub fn setup(
                 (0, KeyCode::KeyQ, Some(AbilityType::Lunge)),      // Q = Lunge (gap closer)
                 (1, KeyCode::KeyW, Some(AbilityType::Overpower)),  // W = Overpower (heavy strike)
                 (2, KeyCode::KeyE, Some(AbilityType::Counter)),    // E = Counter (reactive counter-attack)
-                (3, KeyCode::KeyR, Some(AbilityType::Deflect)),    // R = Deflect (clear queue)
+                (3, KeyCode::KeyR, Some(AbilityType::Kick)),       // R = Kick (reactive knockback)
             ];
 
             for (_slot_index, keybind, ability) in slots {
@@ -101,7 +101,8 @@ pub fn setup(
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
             Some(AbilityType::Volley) => "🏹",     // NPC ranged attack (not on bar)
-            Some(AbilityType::Counter) => "↩",     // Counter / reflect (NPC-only)
+            Some(AbilityType::Counter) => "↩",     // Counter / reflect
+            Some(AbilityType::Kick) => "🦶",       // Kick / knockback
             None => "🔒",
         };
 
@@ -143,6 +144,7 @@ pub fn setup(
                 AbilityType::Overpower => "40".to_string(),   // 40 stamina
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
                 AbilityType::Counter => "30".to_string(),     // 30 stamina
+                AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Volley => String::new(),         // NPC-only
             };
@@ -422,8 +424,20 @@ fn get_ability_state(
             AbilityState::Ready
         }
         AbilityType::Counter => {
-            // NPC-only ability - not on player action bar
-            AbilityState::Ready
+            // Counter: self-target, no range check, 30 stamina
+            if stamina.step >= 30.0 {
+                AbilityState::Ready
+            } else {
+                AbilityState::InsufficientResources
+            }
+        }
+        AbilityType::Kick => {
+            // Kick: self-target, no range check, 40 stamina
+            if stamina.step >= 40.0 {
+                AbilityState::Ready
+            } else {
+                AbilityState::InsufficientResources
+            }
         }
     }
 }

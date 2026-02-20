@@ -14,6 +14,7 @@ pub enum SynergyTrigger {
     Push,        // Knockback
     Mitigate,    // Counter (ADR-014)
     Defensive,   // Deflect
+    Kick,        // Kick (self-synergy)
 }
 
 /// Synergy rule definition (what ability unlocks what)
@@ -38,6 +39,12 @@ pub const MVP_SYNERGIES: &[SynergyRule] = &[
         target: AbilityType::Counter,
         unlock_reduction: 1.0, // Counter available at 1.0s instead of 2.2s (0.2s window)
     },
+    // Kick → Kick: Self-synergy rewards chaining kicks (contest-driven reduction)
+    SynergyRule {
+        trigger: SynergyTrigger::Kick,
+        target: AbilityType::Kick,
+        unlock_reduction: 1.0, // Kick available early during own recovery
+    },
 ];
 
 /// Get the synergy trigger type for an ability
@@ -47,6 +54,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
         AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // ADR-014: Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
+        AbilityType::Kick => Some(SynergyTrigger::Kick),        // Kick: self-synergy
         AbilityType::AutoAttack | AbilityType::Volley => None, // No synergies
     }
 }
@@ -142,13 +150,17 @@ mod tests {
             get_synergy_trigger(AbilityType::Deflect),
             Some(SynergyTrigger::Defensive)
         );
+        assert_eq!(
+            get_synergy_trigger(AbilityType::Kick),
+            Some(SynergyTrigger::Kick)
+        );
         assert_eq!(get_synergy_trigger(AbilityType::AutoAttack), None);
         assert_eq!(get_synergy_trigger(AbilityType::Volley), None);
     }
 
     #[test]
     fn test_mvp_synergies_rules() {
-        assert_eq!(MVP_SYNERGIES.len(), 2, "MVP should have 2 synergy rules");
+        assert_eq!(MVP_SYNERGIES.len(), 3, "MVP should have 3 synergy rules");
 
         // Lunge → Overpower
         let lunge_synergy = &MVP_SYNERGIES[0];
@@ -161,6 +173,12 @@ mod tests {
         assert_eq!(overpower_synergy.trigger, SynergyTrigger::HeavyStrike);
         assert_eq!(overpower_synergy.target, AbilityType::Counter);
         assert_eq!(overpower_synergy.unlock_reduction, 1.0);
+
+        // Kick → Kick (self-synergy)
+        let kick_synergy = &MVP_SYNERGIES[2];
+        assert_eq!(kick_synergy.trigger, SynergyTrigger::Kick);
+        assert_eq!(kick_synergy.target, AbilityType::Kick);
+        assert_eq!(kick_synergy.unlock_reduction, 1.0);
     }
 
     // Note: Following DEVELOPER role guidance to write durable unit tests.

@@ -102,6 +102,8 @@ pub enum AbilityType {
     Volley,
     /// ADR-014: Counter - Negate front threat and reflect 50% damage back (30 stam, 1.2s recovery)
     Counter,
+    /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
+    Kick,
 }
 
 /// Reasons why an ability usage might fail

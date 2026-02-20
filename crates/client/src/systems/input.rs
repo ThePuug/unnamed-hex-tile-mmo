@@ -106,9 +106,9 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
         }
 
-        // Deflect ability (R key) - Clear all threats
+        // Kick ability (R key) - Reactive knockback
         if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Deflect, target: None }});
+            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
         }
 
         // ADR-022: Dismiss front queue threat (no GCD check — independent of ability system)

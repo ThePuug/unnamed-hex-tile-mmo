@@ -85,6 +85,7 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
         AbilityType::Volley => 4.0,     // NPC ranged: 4s lockout
         AbilityType::Counter => 4.0,    // ADR-014: Counter-attack: 4s lockout (long window for attacks to land)
+        AbilityType::Kick => 4.0,       // Kick: 4s lockout (rewards chaining via self-synergy)
     }
 }
 
@@ -236,6 +237,7 @@ mod tests {
         assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
         assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 4.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Counter), 4.0);
+        assert_eq!(get_ability_recovery_duration(AbilityType::Kick), 4.0);
     }
 
     // ===== Integration Tests =====

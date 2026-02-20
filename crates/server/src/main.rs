@@ -105,6 +105,7 @@ fn main() {
         combat::abilities::overpower::handle_overpower,
         combat::abilities::lunge::handle_lunge,
         combat::abilities::counter::handle_counter,  // ADR-014: Counter ability
+        combat::abilities::kick::handle_kick,        // Kick: reactive knockback
         combat::abilities::deflect::handle_deflect,
         combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
