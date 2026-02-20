@@ -282,6 +282,7 @@ fn spawn_engagement_at(
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
+                    common::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
             EnemyArchetype::Kiter => {
@@ -297,6 +298,7 @@ fn spawn_engagement_at(
                     common::components::AttackRange(6),  // Ranged auto-attack
                     LastAutoAttack::default(),
                     NpcRecovery::for_archetype(archetype),
+                    common::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
         }

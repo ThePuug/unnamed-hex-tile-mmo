@@ -19,16 +19,21 @@ fn calculate_knockback_destination(
     distance: i16,
     map: &Map,
 ) -> (Qrz, i16) {
+    // Find floor tile under source (source_loc may be standing height = floor + Z)
+    let Some((floor, _)) = map.find(source_loc, -60) else {
+        return (source_loc, 0);
+    };
+
     // Project far target well beyond knockback range
     let far_target = Qrz {
-        q: source_loc.q + direction.q * 20,
-        r: source_loc.r + direction.r * 20,
+        q: floor.q + direction.q * 20,
+        r: floor.r + direction.r * 20,
         z: 0,
     };
 
-    let path = map.greedy_path(source_loc, far_target, distance as usize);
+    let path = map.greedy_path(floor, far_target, distance as usize);
     if path.is_empty() {
-        (source_loc, 0)
+        (floor, 0)
     } else {
         (*path.last().unwrap(), path.len() as i16)
     }

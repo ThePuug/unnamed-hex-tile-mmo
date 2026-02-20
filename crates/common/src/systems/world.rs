@@ -77,19 +77,23 @@ pub fn do_incremental(
                             if let Some(mut vis) = o_visual {
                                 if hex_distance > 1 {
                                     // Multi-tile: greedy path for terrain following
-                                    let path = map.greedy_path(**loc0, *loc, hex_distance as usize);
+                                    // Use floor-level tiles (Loc is standing height = floor + Z)
+                                    let old_floor = map.find(**loc0, -60).map(|(f, _)| f).unwrap_or(**loc0);
+                                    let new_floor = map.find(*loc, -60).map(|(f, _)| f).unwrap_or(*loc);
+                                    let path = map.greedy_path(old_floor, new_floor, hex_distance as usize);
                                     if !path.is_empty() {
                                         let waypoints: Vec<Vec3> = path.iter()
                                             .map(|&tile| map.convert(tile + qrz::Qrz::Z))
                                             .collect();
                                         vis.interpolate_along_path(&waypoints, duration_secs);
                                     } else {
-                                        let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                                        // Loc is already at standing height; no +Z needed
+                                        let target_world: Vec3 = map.convert(*loc);
                                         vis.interpolate_toward(target_world, duration_secs);
                                     }
                                 } else {
-                                    // Single tile: direct interpolation
-                                    let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                                    // Single tile: Loc is already at standing height; no +Z needed
+                                    let target_world: Vec3 = map.convert(*loc);
                                     vis.interpolate_toward(target_world, duration_secs);
                                 }
                             }
@@ -154,11 +158,11 @@ pub fn do_incremental(
                     }
 
                     // If no MovementIntent preceded this Loc update (e.g., unexpected movement),
-                    // start visual interpolation at standing height (+Z matches
-                    // MovementIntent convention for entities standing ON terrain).
+                    // start visual interpolation toward the new tile center.
+                    // Loc is already at standing height (floor + 1), so no +Z needed.
                     if !had_prediction {
-                        let standing_center: Vec3 = map.convert(*loc + qrz::Qrz::Z);
-                        let visual_target = standing_center + Vec3::new(target_offset.x, 0.0, target_offset.y);
+                        let tile_center: Vec3 = map.convert(*loc);
+                        let visual_target = tile_center + Vec3::new(target_offset.x, 0.0, target_offset.y);
                         if let Some(mut vis) = o_visual {
                             vis.interpolate_toward(visual_target, 0.125);
                         }

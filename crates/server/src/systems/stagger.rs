@@ -45,9 +45,14 @@ pub fn process_knockback(
             continue;
         }
 
+        // Find floor tile under current Loc (Loc is at standing height = floor + Z)
+        let Some((floor, _)) = map.find(**loc, -60) else {
+            commands.entity(ent).remove::<Knockback>();
+            continue;
+        };
+
         // Greedy: pick walkable neighbor closest to destination
-        let current = **loc;
-        let best = map.neighbors(current)
+        let best = map.neighbors(floor)
             .into_iter()
             .min_by_key(|(n, _)| n.flat_distance(&knockback.destination));
 
@@ -57,13 +62,13 @@ pub fn process_knockback(
         };
 
         // No progress check
-        if next_qrz.flat_distance(&knockback.destination) >= current.flat_distance(&knockback.destination) {
+        if next_qrz.flat_distance(&knockback.destination) >= floor.flat_distance(&knockback.destination) {
             commands.entity(ent).remove::<Knockback>();
             continue;
         }
 
-        // Move to next tile
-        let new_loc = Loc::new(next_qrz);
+        // Move to next tile (Loc is standing height: floor + Z)
+        let new_loc = Loc::new(next_qrz + Qrz::Z);
         *loc = new_loc;
 
         writer.write(Do {

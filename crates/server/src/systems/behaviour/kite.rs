@@ -45,14 +45,17 @@ fn broadcast_intent(
     }
 
     // Calculate distance and duration (to heading-adjusted destination position)
-    let current_world = map.convert(**npc_loc) + Vec3::ZERO; // At tile center when deciding
-    let dest_tile_center = map.convert(next_tile);
+    // Both source and destination use standing height for consistent distance
+    let current_world: Vec3 = map.convert(**npc_loc); // Standing height
+    let dest_standing = next_tile + qrz::Qrz::Z;     // Standing height
+    let dest_tile_center: Vec3 = map.convert(dest_standing);
 
     // Calculate heading-adjusted offset at destination (movement direction)
+    // Y is dropped via .xz() so z-level of movement_direction doesn't matter
     let movement_direction = next_tile - **npc_loc;
     let dest_offset = if movement_direction != qrz::Qrz::default() {
         use common::components::heading::HERE;
-        let heading_neighbor = map.convert(next_tile + movement_direction);
+        let heading_neighbor: Vec3 = map.convert(dest_standing + movement_direction);
         let direction = heading_neighbor - dest_tile_center;
         (direction * HERE).xz()
     } else {
@@ -70,7 +73,7 @@ fn broadcast_intent(
     writer.write(Do {
         event: Event::MovementIntent {
             ent: npc_entity,
-            destination: next_tile + qrz::Qrz::Z, // Entity stands ON terrain (one tile above)
+            destination: dest_standing,
             duration_ms,
         }
     });

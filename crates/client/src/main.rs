@@ -140,7 +140,11 @@ fn main() {
         combat::handle_clear_queue,
         combat::handle_ability_failed,
         common::systems::world::try_incremental,
-        common::systems::world::do_incremental,
+        // do_incremental must run AFTER apply_movement_intent so that
+        // MovementPrediction exists when Loc updates arrive. Otherwise the
+        // no-prediction fallback fires every frame, setting wrong visual targets.
+        common::systems::world::do_incremental
+            .after(actor::apply_movement_intent),
     ));
 
     // Attack telegraph systems
