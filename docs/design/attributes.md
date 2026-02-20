@@ -17,8 +17,8 @@ The attribute system uses **three bipolar pairs** of attributes, managed through
 
 | Pair | Left | Right |
 |------|------|-------|
-| **Might ↔ Grace** | Raw power — offensive damage scaling | Technique and precision — defensive damage scaling |
-| **Vitality ↔ Focus** | Physical constitution — capacity to endure | Mental discipline — clarity under pressure |
+| **Might ↔ Grace** | Raw power — offensive ability potency | Technique and precision — defensive ability potency |
+| **Vitality ↔ Focus** | Physical constitution — HP buffer | Mental discipline — sustained exertion (Endurance) |
 | **Instinct ↔ Presence** | Gut sense — reading and adapting to the battlefield | Gravitational force — commanding the space around you |
 
 These six attributes are organized as three **bipolar pairs** using the existing **Axis/Spectrum/Shift** model:
@@ -45,16 +45,28 @@ Absolute values are the **progression metric**. They grow as you level. Super-li
 
 | Attribute | Absolute | Stat | Description |
 |-----------|----------|------|-------------|
-| Might | **Force** | Offensive Damage | How hard your offensive attacks hit. Scales super-linearly with level. |
-| Grace | **Technique** | Defensive Damage | How hard your defensive/reactive abilities hit. Scales super-linearly with level. |
+| Might | **Force** | Offensive ability potency | Scales the potency of all offensive abilities and auto-attacks — all outgoing offensive effects (Lunge, Overpower, Knockback damage, DoTs, future offensive abilities). Scales super-linearly with level. |
+| Grace | **Technique** | Defensive ability potency | Scales the effectiveness of all active defensive responses: Counter, Deflect, Parry, Ward, and all future reaction abilities. Does NOT affect passive mitigation (Toughness). Scales super-linearly with level. |
 | Vitality | **Constitution** | HP | Health pool. Scales super-linearly with level. HP exponent > Damage exponent, ensuring higher-level fights have more exchanges. |
-| Focus | **Discipline** | — | Trained mental sharpness. Grows with experience. |
+| Focus | **Discipline** | Endurance pool | A combat resource that depletes through active exertion. Resets out of combat. Penalties ramp on a continuous curve as Endurance depletes (recovery times lengthen, reaction windows compress). Scales super-linearly with level. |
 | Instinct | **Intuition** | — | Deepening gut sense. Grows with experience. |
 | Presence | **Gravitas** | — | Weight of your presence on the battlefield. Grows with power. |
 
 **Super-linear scaling:** Applied as a polynomial level multiplier `(1 + level × k)^p` after computing base stats from attribute points. The multiplier is uniform across all entities at the same level, preserving balance ratios. HP scales with a higher exponent than Damage, ensuring more exchanges at higher levels. See [combat-balance.md](combat-balance.md) for formula details and constants.
 
-**Open absolute stats:** Discipline, Intuition, and Gravitas do not yet have concrete mechanical stats mapped. They are named and defined as progression categories. Specific stats will be assigned as gameplay testing reveals needs.
+**Force vs Technique opposition:** Might builds hit hard but active defenses are weak. Grace builds hit lighter but active responses are exceptionally effective. This creates three independent survival axes: Toughness (things you ignore), Technique (things you actively respond to), Endurance (how long you can sustain either approach).
+
+**Discipline vs Constitution opposition:** HP pool vs Endurance pool. Tanky builds absorb punishment but gas out faster. High-Focus builds sustain peak performance longer but have less HP buffer.
+
+**Endurance depletion rules:**
+- Offensive ability use: Endurance cost proportional to damage dealt
+- Defensive ability use (Counter, Deflect, Parry, Ward): Endurance cost proportional to damage mitigated by the ability
+- Dismiss: zero Endurance cost (no active exertion)
+- Threat timer expiry: zero Endurance cost (passive, player didn't act)
+- Passive mitigation (Toughness): no Endurance interaction
+- Penalty curve: continuous (no discrete tiers) — specific curve shape TBD through playtesting
+
+**Open absolute stats:** Intuition and Gravitas do not yet have concrete mechanical stats mapped. They are named and defined as progression categories. Specific stats will be assigned as gameplay testing reveals needs.
 
 ### Relative — Build Benefit
 
@@ -100,21 +112,29 @@ Commitment scales in **discrete tiers**, not linearly:
 | Attribute | Commitment | Stat | Description |
 |-----------|-----------|------|-------------|
 | Might | **Ferocity** | — | The internal aggression driving your force. |
-| Grace | **Poise** | Evasion | Physical grace under fire. Chance to avoid incoming threats entirely. |
+| Grace | **Poise** | — | Physical grace under fire. Currently open. |
 | Vitality | **Grit** | — | Mental stubbornness behind physical toughness. Refusing to go down. |
-| Focus | **Concentration** | Queue capacity | Sustained mental effort. Determines how many pending threats you can hold in the reaction queue before auto-resolution. |
-| Instinct | **Flow** | — | Surrendering conscious thought, letting instinct guide action. |
-| Presence | **Intensity** | Cadence | Raw energy projection. Determines auto-attack speed. |
+| Focus | **Concentration** | Queue visibility window | Sustained mental effort. Determines how many threats the player can see and interact with in the reaction queue. The queue is unbounded — all threats enter regardless. Threats outside the visibility window still resolve on their timers but the player cannot see or respond to them. |
+| Instinct | **Flow** | Threat stacking/compression | Surrendering conscious thought, letting instinct guide action. Similar incoming threats can appear as a single combined threat in the reaction queue. Flow commitment tiers gate how aggressively threats compress. Opposes Concentration (Instinct↔Focus commitment axis). Specific tier definitions TBD through playtesting. |
+| Presence | **Intensity** | AoE projection | Raw energy projection. All attack ranges extended at higher tiers. Enables cone targeting that hits multiple targets with damage split based on actual targets hit. |
 
 **Implemented commitment stat values:**
 
 | Stat | T0 | T1 | T2 | T3 |
 |------|-----|-----|-----|-----|
-| Poise (evasion %) | 0% | 10% | 20% | 30% |
-| Concentration (queue slots) | 1 | 2 | 3 | 4 |
-| Intensity (cadence ms) | 3000 | 2500 | 2000 | 1500 |
+| Concentration (visible threats) | 1 | 2 | 3 | 4 |
+| Intensity (AoE projection) | Single target, base range | 2 targets, 60° cone, range +1 | 3 targets, 180° cone, range +2 | 4 targets, 300° cone, range +3 |
 
-**Open commitment stats:** Ferocity, Grit, and Flow do not yet have concrete mechanical stats mapped. Specific stats will be assigned as gameplay testing reveals needs.
+**Intensity AoE projection details:**
+- T0: Single target, base range (no cone)
+- T1: 2 targets, 60° cone, range +1, 80% damage to each when hitting 2 targets
+- T2: 3 targets, 180° cone, range +2, 60% damage to each when hitting 3 targets
+- T3: 4 targets, 300° cone, range +3, 50% damage to each when hitting 4 targets
+- All targets in cone take equal damage including primary target
+- Damage reduction based on actual targets hit (hitting only 1 target = 100% damage regardless of tier)
+- Cone angles are hex-native: 60° = 1 hex direction, 180° = 3 hex directions (front half), 300° = 5 hex directions (everything except directly behind)
+
+**Open commitment stats:** Ferocity, Poise, and Grit do not yet have concrete mechanical stats mapped. Specific stats will be assigned as gameplay testing reveals needs.
 
 ---
 
@@ -124,21 +144,21 @@ Each attribute has three named sub-attributes, one per scaling mode:
 
 | Attribute | Absolute (progression) | Relative (build benefit) | Commitment (build identity) |
 |-----------|----------------------|---------------------------|----------------------------|
-| Might | Force: Offensive Damage | Impact: Recovery pushback | Ferocity |
-| Grace | Technique: Defensive Damage | Finesse: Synergy recovery reduction | Poise: Evasion |
+| Might | Force: Offensive ability potency | Impact: Recovery pushback | Ferocity |
+| Grace | Technique: Defensive ability potency | Finesse: Synergy recovery reduction | Poise |
 | Vitality | Constitution: HP | Toughness: Mitigation | Grit |
-| Focus | Discipline | Composure: Recovery reduction | Concentration: Queue capacity |
-| Instinct | Intuition | Cunning: Reaction window | Flow |
-| Presence | Gravitas | Dominance: Healing reduction (aura) | Intensity: Cadence |
+| Focus | Discipline: Endurance pool | Composure: Recovery reduction | Concentration: Queue visibility window |
+| Instinct | Intuition | Cunning: Reaction window | Flow: Threat stacking/compression |
+| Presence | Gravitas | Dominance: Healing reduction (aura) | Intensity: AoE projection |
 
 ### Framing Sentences
 
-- **Might**: Force is the raw energy generated which grows as you grow stronger. The tempo pressure that force exerts on an opponent's actions is its impact. The amount of effort you put into generating that force is your ferocity.
-- **Grace**: Technique is the practiced skill that grows as you grow more experienced — it determines the power of defensive and reactive abilities like Counter. How fluidly that technique chains abilities together is its finesse. The dedication to honing that technique into fluid movement is your poise.
-- **Vitality**: Constitution is the raw endurance that grows as you grow hardier. How well that constitution absorbs punishment from a source is its toughness. The mental stubbornness behind that physical resilience is your grit.
-- **Focus**: Discipline is the trained mental strength that grows as you grow sharper. How well that discipline maintains composure and recovers quickly is its composure. The dedication to sustaining that mental effort is your concentration.
-- **Instinct**: Intuition is the gut sense that deepens as you grow wiser. How well that intuition reads incoming threats and extends your reaction time is your cunning. Letting go of conscious thought and letting that intuition guide your actions is your flow.
-- **Presence**: Gravitas is the weight of your presence that grows as you grow more powerful. How effectively that gravitas suppresses healing in the space around you is your dominance. The raw energy you project into every action is your intensity.
+- **Might**: Force is the raw offensive potency that grows as you grow stronger — it drives all offensive abilities and auto-attacks. The tempo pressure that force exerts on an opponent's actions is its impact. The amount of effort you put into generating that force is your ferocity.
+- **Grace**: Technique is the practiced defensive skill that grows as you grow more experienced — it determines the power of active defensive responses like Counter, Deflect, Parry, and Ward. How fluidly that technique chains abilities together is its finesse. The physical grace you maintain under fire is your poise.
+- **Vitality**: Constitution is the raw durability that grows as you grow hardier. How well that constitution absorbs punishment from a source is its toughness. The mental stubbornness behind that physical resilience is your grit.
+- **Focus**: Discipline is the trained mental endurance that grows as you grow sharper — it fuels sustained exertion through the Endurance pool. How well that discipline maintains composure and recovers quickly is its composure. The dedication to sustaining that mental effort is your concentration — it determines how many threats you can perceive and react to.
+- **Instinct**: Intuition is the gut sense that deepens as you grow wiser. How well that intuition reads incoming threats and extends your reaction time is your cunning. Letting go of conscious thought and letting that intuition compress and merge similar threats is your flow.
+- **Presence**: Gravitas is the weight of your presence that grows as you grow more powerful. How effectively that gravitas suppresses healing in the space around you is your dominance. The raw energy you project outward, striking multiple foes at once, is your intensity.
 
 ---
 
@@ -164,14 +184,17 @@ The Triumvirate defines behavior and skill kit. Attributes define stat scaling. 
 
 The following systems interact with this attribute system:
 
-- **Offensive abilities**: Force (Might → absolute) scales offensive abilities: Lunge (100% Force), Overpower (150% Force), AutoAttack (50% Force), Volley (100% Force).
-- **Defensive abilities**: Technique (Grace → absolute) scales defensive/reactive abilities: Counter reflected damage (20% Technique base + 30% threat damage, capped at 200% Technique).
-- **Reaction queue**: Queue capacity is driven by Focus → Concentration commitment tier. Reaction window duration is driven by Instinct → Cunning relative stat (extends threat timer duration).
+- **Offensive abilities**: Force (Might → absolute) scales the potency of all offensive abilities and auto-attacks: Lunge, Overpower, Knockback damage, DoTs, and all future offensive effects.
+- **Defensive abilities**: Technique (Grace → absolute) scales all active defensive responses: Counter, Deflect, Parry, Ward, and all future reaction abilities. Does NOT affect passive mitigation (Toughness).
+- **Endurance pool**: Discipline (Focus → absolute) provides the Endurance resource pool. Depletes through offensive ability use (cost proportional to damage dealt) and defensive ability use (cost proportional to damage mitigated). Dismiss and threat timer expiry cost zero. Penalties ramp on a continuous curve as Endurance depletes.
+- **Reaction queue**: Queue visibility window is driven by Focus → Concentration commitment tier. The queue is unbounded — all threats enter. Concentration determines how many the player can see and interact with. Threats outside the window still resolve on their timers. Reaction window duration is driven by Instinct → Cunning relative stat (extends threat timer duration).
+- **Threat compression**: Flow (Instinct → commitment tier) gates how aggressively similar threats merge in the reaction queue.
+- **AoE projection**: Intensity (Presence → commitment tier) extends attack ranges and enables cone targeting that hits multiple targets with damage split.
 - **Universal lockout**: Recovery reduction (Focus → Composure) and recovery pushback (Might → Impact) affect the lockout/recovery timeline. Synergy recovery reduction (Grace → Finesse) vs reaction window (Instinct → Cunning) creates the lockout-vs-window equation: `chain_gap + reaction_window > lockout`.
-- **Dismiss mechanic**: Dismissed threats resolve at full damage minus passive defenses. Vitality → Toughness provides mitigation.
+- **Dismiss mechanic**: Dismissed threats resolve at full damage minus passive defenses. Zero Endurance cost. Vitality → Toughness provides mitigation.
 - **Healing system**: Healing reduction aura (Presence → Dominance) opposes mitigation (Vitality → Toughness) on the sustain ratio layer.
 - **Spatial difficulty**: Distance from haven determines NPC level, which determines absolute stat scaling.
-- **Auto-attack timeline**: One action timeline per entity. Cadence (Presence → Intensity commitment tier) determines auto-attack speed. Recovery pushback/reduction affects the timeline between actions.
+- **Auto-attack timeline**: One action timeline per entity. Recovery pushback/reduction affects the timeline between actions.
 - **Super-linear scaling**: Polynomial level multiplier applied to absolute stats. Level 0 multiplier = 1.0 (backward compatible).
 - **Character panel**: Displays bipolar pairs with Axis/Spectrum/Shift visualization. Shift drag redistributes within pairs. Three scaling modes are derived from these values.
 
@@ -181,8 +204,7 @@ The following systems interact with this attribute system:
 
 These are intentionally left as design space for future iteration:
 
-**Empty absolute stats:**
-- Discipline (Focus absolute) — no specific stat yet
+**Open absolute stats:**
 - Intuition (Instinct absolute) — no specific stat yet
 - Gravitas (Presence absolute) — no specific stat yet
 
@@ -194,13 +216,24 @@ These are intentionally left as design space for future iteration:
 - Dominance (Presence relative) — Healing reduction aura (5 hex radius, worst-effect-wins)
 - Toughness (Vitality relative) — Flat damage mitigation per hit (implemented)
 
-**Empty commitment stats:**
+**Open commitment stats:**
 - Ferocity (Might commitment) — no specific stat yet
+- Poise (Grace commitment) — no longer evasion, currently open
 - Grit (Vitality commitment) — no specific stat yet
-- Flow (Instinct commitment) — no specific stat yet
+
+**Homeless mechanics** (removed from their previous homes, no new assignment):
+- **Crit** — removed from relative layer in ADR-031, no new home assigned
+- **Cadence** — removed from Intensity commitment, no new home assigned
+- **Evasion** — removed from Poise commitment, no new home assigned
 
 **Super-linear scaling exponents:**
 - HP and Damage exponents are tuning knobs. HP exponent must be > Damage exponent. See [combat-balance.md](combat-balance.md) for current values.
+
+**Endurance depletion curve:**
+- Continuous penalty ramp shape TBD through playtesting
+
+**Flow tier definitions:**
+- Threat compression aggressiveness per tier TBD through playtesting
 
 Do **not** fill open cells — document them as explicitly open design space.
 
@@ -232,16 +265,27 @@ Where the current implementation intentionally differs from spec:
 | 4 | Overclock mechanic | Temporary stat boost beyond normal limits | Not implemented | Deferred to future design |
 | 5 | Critical hit system | Instinct drives crit chance/multiplier | Removed entirely (ADR-031) | Damage now deterministic and contest-driven |
 | 6 | NPC attribute generation | Suggested leanings per archetype | Data-driven from EnemyArchetype, no leanings | ADR-028; archetype defines stats directly |
+| 7 | Concentration | Queue capacity (hard limit with overflow) | Queue visibility window (unbounded queue, ADR-030) | Overflow punishment replaced by visibility mechanic |
+| 8 | Intensity | Cadence (auto-attack speed) | AoE projection (cone targeting) | Cadence unparented; Intensity now drives spatial offense |
+| 9 | Poise | Evasion (dodge chance) | Open — no stat mapped | Evasion unparented; Poise awaiting new mechanic |
 
 ## Implementation Gaps
 
 **Medium:** Attribute-Triumvirate decoupling migration (remove archetype-attribute coupling code)
 
+**Not yet implemented (absolute stats):** Endurance pool (Focus → Discipline) — depletion through ability use, continuous penalty curve
+
 **Not yet implemented (relative stats):** Impact/Composure (recovery timeline), Finesse/Cunning (lockout-vs-window), Dominance/Toughness (sustain ratio) — all designed in ADR-031, awaiting implementation
 
-**Open design space:** Discipline, Intuition, Gravitas (absolute); Ferocity, Grit, Flow (commitment) — intentionally unmapped, see "What Remains Open" above
+**Not yet implemented (commitment stats):** Intensity AoE projection (cone targeting, range extension), Flow threat compression (tier-gated merging)
 
-**Post-MVP:** Equipment attribute modifiers, commitment tier tuning for Poise/Intensity breakpoints, full healing system
+**Open design space:** Intuition, Gravitas (absolute); Ferocity, Poise, Grit (commitment) — intentionally unmapped, see "What Remains Open" above
+
+**Homeless mechanics:** Crit, Cadence, Evasion — removed from previous homes, no new assignment yet
+
+**Post-MVP:** Equipment attribute modifiers, full healing system, Endurance depletion curve tuning, Flow compression tier definitions
+
+**Cross-reference note:** `docs/design/combat-balance.md` System 2 still references "Queue Capacity" and slot-based language. `docs/design/combat.md` references queue capacity and cadence from Intensity. These documents need separate updates to align with visibility window, AoE projection, and Endurance pool changes.
 
 ---
 
