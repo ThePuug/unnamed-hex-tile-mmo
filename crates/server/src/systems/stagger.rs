@@ -7,11 +7,11 @@ use common::{
 };
 
 /// Server-only: entity being pushed tile-by-tile over multiple ticks.
-/// Each FixedUpdate tick (125ms) moves the entity 1 tile in the knockback direction.
-/// Stops early on cliffs or map edges.
+/// Each FixedUpdate tick (125ms) moves the entity 1 tile toward the destination.
+/// Uses greedy neighbor selection (terrain-following). Stops on cliff or no progress.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Knockback {
-    pub direction: Qrz,
+    pub destination: Qrz,
     pub remaining_tiles: i16,
 }
 
@@ -30,9 +30,9 @@ pub fn tick_stagger(
     }
 }
 
-/// Process knockback: move entity 1 tile per tick in knockback direction.
+/// Process knockback: move entity 1 tile per tick toward destination via greedy pathfinding.
 /// Broadcasts Loc incremental for each step so clients see smooth 1-hex crossings.
-/// Stops on cliff (elevation diff > 1) or missing floor.
+/// Stops when: no progress, no walkable neighbors, or remaining_tiles exhausted.
 pub fn process_knockback(
     mut commands: Commands,
     mut query: Query<(Entity, &mut Loc, &mut Knockback)>,
@@ -45,21 +45,19 @@ pub fn process_knockback(
             continue;
         }
 
-        // Try to move 1 tile in knockback direction
-        let next_flat = Qrz {
-            q: loc.q + knockback.direction.q,
-            r: loc.r + knockback.direction.r,
-            z: 0,
-        };
-        let next_floor = map.find(next_flat + Qrz { q: 0, r: 0, z: loc.z + 30 }, -60);
+        // Greedy: pick walkable neighbor closest to destination
+        let current = **loc;
+        let best = map.neighbors(current)
+            .into_iter()
+            .min_by_key(|(n, _)| n.flat_distance(&knockback.destination));
 
-        let Some((next_qrz, _)) = next_floor else {
+        let Some((next_qrz, _)) = best else {
             commands.entity(ent).remove::<Knockback>();
             continue;
         };
 
-        let elevation_diff = (next_qrz.z - loc.z).abs();
-        if elevation_diff > 1 {
+        // No progress check
+        if next_qrz.flat_distance(&knockback.destination) >= current.flat_distance(&knockback.destination) {
             commands.entity(ent).remove::<Knockback>();
             continue;
         }

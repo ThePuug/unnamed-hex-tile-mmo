@@ -10,35 +10,28 @@ use crate::{resources::RunTime, systems::stagger::Knockback};
 
 use qrz::Qrz;
 
-/// Calculate knockback destination by walking tiles along a direction.
-/// Stops at cliffs (elevation diff > 1) or missing floor tiles.
-/// Returns the last valid position.
+/// Calculate knockback destination using greedy terrain-following pathfinding.
+/// Projects a far target in the knockback direction, then uses `greedy_path`
+/// to find the actual terrain-following path. Returns (destination, tiles_pushed).
 fn calculate_knockback_destination(
     source_loc: Qrz,
     direction: Qrz,
     distance: i16,
     map: &Map,
-) -> Qrz {
-    let mut current = source_loc;
+) -> (Qrz, i16) {
+    // Project far target well beyond knockback range
+    let far_target = Qrz {
+        q: source_loc.q + direction.q * 20,
+        r: source_loc.r + direction.r * 20,
+        z: 0,
+    };
 
-    for _ in 0..distance {
-        let next_flat = Qrz { q: current.q + direction.q, r: current.r + direction.r, z: 0 };
-        // Find floor at next position (search up 30 then down 60)
-        let next_floor = map.find(next_flat + Qrz { q: 0, r: 0, z: current.z + 30 }, -60);
-
-        let Some((next_qrz, _)) = next_floor else {
-            break; // No floor — stop
-        };
-
-        let elevation_diff = (next_qrz.z - current.z).abs();
-        if elevation_diff > 1 {
-            break; // Cliff — stop
-        }
-
-        current = next_qrz;
+    let path = map.greedy_path(source_loc, far_target, distance as usize);
+    if path.is_empty() {
+        (source_loc, 0)
+    } else {
+        (*path.last().unwrap(), path.len() as i16)
     }
-
-    current
 }
 
 /// Handle Kick ability — REACTIVE KICK
@@ -217,9 +210,8 @@ pub fn handle_kick(
                 z: 0,
             };
 
-            // Calculate full knockback destination for advance visual notice
-            let kb_destination = calculate_knockback_destination(**source_loc, direction, 4, &map);
-            let tiles_pushed = source_loc.flat_distance(&kb_destination);
+            // Calculate full knockback destination via greedy terrain-following path
+            let (kb_destination, tiles_pushed) = calculate_knockback_destination(**source_loc, direction, 4, &map);
 
             if tiles_pushed > 0 {
                 // Send MovementIntent so client starts visual slide immediately.
@@ -236,7 +228,7 @@ pub fn handle_kick(
                 // Tile-by-tile knockback: process_knockback moves 1 tile per server tick (125ms).
                 // Stagger freezes AI movement; Knockback handles the physical push.
                 commands.entity(threat.source).insert((
-                    Knockback { direction, remaining_tiles: tiles_pushed },
+                    Knockback { destination: kb_destination, remaining_tiles: tiles_pushed },
                     Stagger::new(0.5),
                 ));
             } else {
@@ -302,9 +294,10 @@ mod tests {
         let source = Qrz { q: 0, r: 0, z: 0 };
         let direction = Qrz { q: 1, r: 0, z: 0 }; // East
 
-        let dest = calculate_knockback_destination(source, direction, 4, &map);
+        let (dest, tiles) = calculate_knockback_destination(source, direction, 4, &map);
         assert_eq!(dest.q, 4);
         assert_eq!(dest.r, 0);
+        assert_eq!(tiles, 4);
     }
 
     #[test]
@@ -314,7 +307,7 @@ mod tests {
         let source = Qrz { q: 4, r: 0, z: 0 };
         let direction = Qrz { q: 1, r: 0, z: 0 };
 
-        let dest = calculate_knockback_destination(source, direction, 4, &map);
+        let (dest, _) = calculate_knockback_destination(source, direction, 4, &map);
         // Should stop at q=5 (last tile with floor)
         assert_eq!(dest.q, 5);
         assert_eq!(dest.r, 0);
@@ -334,11 +327,12 @@ mod tests {
         let source = Qrz { q: 0, r: 0, z: 0 };
         let direction = Qrz { q: 1, r: 0, z: 0 };
 
-        let dest = calculate_knockback_destination(source, direction, 4, &map);
+        let (dest, tiles) = calculate_knockback_destination(source, direction, 4, &map);
         // Should stop at q=2 (before cliff at q=3)
         assert_eq!(dest.q, 2);
         assert_eq!(dest.r, 0);
         assert_eq!(dest.z, 0);
+        assert_eq!(tiles, 2);
     }
 
     #[test]
@@ -347,8 +341,9 @@ mod tests {
         let source = Qrz { q: 0, r: 0, z: 0 };
         let direction = Qrz { q: 1, r: 0, z: 0 };
 
-        let dest = calculate_knockback_destination(source, direction, 0, &map);
+        let (dest, tiles) = calculate_knockback_destination(source, direction, 0, &map);
         assert_eq!(dest, source);
+        assert_eq!(tiles, 0);
     }
 
     #[test]
@@ -357,10 +352,11 @@ mod tests {
         let source = Qrz { q: 0, r: 0, z: 0 };
 
         for dir in qrz::DIRECTIONS.iter() {
-            let dest = calculate_knockback_destination(source, *dir, 2, &map);
+            let (dest, tiles) = calculate_knockback_destination(source, *dir, 2, &map);
             let flat = Qrz { q: 0, r: 0, z: 0 };
             assert_eq!(dest.flat_distance(&flat), 2,
                 "Direction ({},{}) should push 2 tiles", dir.q, dir.r);
+            assert_eq!(tiles, 2);
         }
     }
 
@@ -376,7 +372,7 @@ mod tests {
         let source = Qrz { q: 0, r: 0, z: 0 };
         let direction = Qrz { q: 1, r: 0, z: 0 };
 
-        let dest = calculate_knockback_destination(source, direction, 4, &map);
+        let (dest, _) = calculate_knockback_destination(source, direction, 4, &map);
         assert_eq!(dest.q, 4);
         assert_eq!(dest.z, 4);
     }

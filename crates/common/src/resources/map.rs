@@ -660,6 +660,36 @@ impl Map {
         self.0.neighbors(qrz)
     }
 
+    /// Greedily walk toward `toward`, picking the neighbor closest each step.
+    /// Uses `neighbors()` which is elevation-aware (±1 z-level, walkable only).
+    /// Stops on: arrival, no walkable neighbors, no progress, or `max_steps`.
+    /// Returns floor-level tiles visited (does NOT include `from`).
+    pub fn greedy_path(&self, from: Qrz, toward: Qrz, max_steps: usize) -> Vec<Qrz> {
+        let mut path = Vec::new();
+        let mut current = from;
+
+        for _ in 0..max_steps {
+            if current.flat_distance(&toward) == 0 {
+                break;
+            }
+
+            let best = self.neighbors(current)
+                .into_iter()
+                .min_by_key(|(n, _)| n.flat_distance(&toward));
+
+            let Some((next, _)) = best else { break };
+
+            if next.flat_distance(&toward) >= current.flat_distance(&toward) {
+                break; // No progress
+            }
+
+            current = next;
+            path.push(current);
+        }
+
+        path
+    }
+
     pub fn iter_tiles(&self) -> impl Iterator<Item = (Qrz, EntityType)> + '_ {
         self.0.iter().map(|(&qrz, &typ)| (qrz, typ))
     }
@@ -681,6 +711,100 @@ impl Convert<Vec3, Qrz> for Map {
 mod tests {
     use super::*;
     use qrz::Qrz;
+
+    fn make_flat_map() -> Map {
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        for q in -5..=5 {
+            for r in -5..=5 {
+                qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
+            }
+        }
+        Map::new(qrz_map)
+    }
+
+    #[test]
+    fn greedy_path_flat_terrain() {
+        let map = make_flat_map();
+        let path = map.greedy_path(
+            Qrz { q: 0, r: 0, z: 0 },
+            Qrz { q: 3, r: 0, z: 0 },
+            10,
+        );
+        assert_eq!(path.len(), 3);
+        assert_eq!(path.last().unwrap().flat_distance(&Qrz { q: 3, r: 0, z: 0 }), 0);
+    }
+
+    #[test]
+    fn greedy_path_follows_slope() {
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        // Gradual uphill: z increases by 1 each tile
+        for q in 0..=4 {
+            qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
+        }
+        let map = Map::new(qrz_map);
+
+        let path = map.greedy_path(
+            Qrz { q: 0, r: 0, z: 0 },
+            Qrz { q: 4, r: 0, z: 4 },
+            10,
+        );
+        assert_eq!(path.len(), 4);
+        assert_eq!(*path.last().unwrap(), Qrz { q: 4, r: 0, z: 4 });
+    }
+
+    #[test]
+    fn greedy_path_stops_at_cliff() {
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
+        qrz_map.insert(Qrz { q: 1, r: 0, z: 0 }, EntityType::Decorator(default()));
+        // Cliff: q=2 is 5 levels higher (not walkable via neighbors)
+        qrz_map.insert(Qrz { q: 2, r: 0, z: 5 }, EntityType::Decorator(default()));
+        let map = Map::new(qrz_map);
+
+        let path = map.greedy_path(
+            Qrz { q: 0, r: 0, z: 0 },
+            Qrz { q: 3, r: 0, z: 0 },
+            10,
+        );
+        // Should reach q=1 then stop (cliff blocks further progress)
+        assert_eq!(path.len(), 1);
+        assert_eq!(path[0], Qrz { q: 1, r: 0, z: 0 });
+    }
+
+    #[test]
+    fn greedy_path_already_at_dest() {
+        let map = make_flat_map();
+        let origin = Qrz { q: 0, r: 0, z: 0 };
+        let path = map.greedy_path(origin, origin, 10);
+        assert!(path.is_empty());
+    }
+
+    #[test]
+    fn greedy_path_max_steps_limits() {
+        let map = make_flat_map();
+        let path = map.greedy_path(
+            Qrz { q: 0, r: 0, z: 0 },
+            Qrz { q: 5, r: 0, z: 0 },
+            2,
+        );
+        assert_eq!(path.len(), 2);
+    }
+
+    #[test]
+    fn greedy_path_no_progress_stops() {
+        // Island with no walkable path toward destination
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
+        // No neighbors at all
+        let map = Map::new(qrz_map);
+
+        let path = map.greedy_path(
+            Qrz { q: 0, r: 0, z: 0 },
+            Qrz { q: 5, r: 0, z: 0 },
+            10,
+        );
+        assert!(path.is_empty());
+    }
 
     #[test]
     fn test_normals_consider_neighboring_hexes() {

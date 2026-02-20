@@ -202,25 +202,43 @@ pub fn apply_movement_intent(
             continue;
         }
 
-        let Ok((_loc, heading, mut visual)) = query.get_mut(ent) else {
+        let Ok((loc, heading, mut visual)) = query.get_mut(ent) else {
             continue;
         };
 
-        // Calculate target position (destination tile + heading-adjusted offset)
-        let dest_tile_center: Vec3 = map.convert(destination);
-
-        let dest_offset = if **heading != default() {
-            use common::components::heading::HERE;
-            let heading_neighbor: Vec3 = map.convert(destination + **heading);
-            let direction = heading_neighbor - dest_tile_center;
-            (direction * HERE).xz()
-        } else {
-            Vec2::ZERO
-        };
-        let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
         let duration_secs = duration_ms as f32 / 1000.0;
+        let flat_dist = loc.flat_distance(&destination);
 
-        visual.interpolate_toward(dest_world, duration_secs);
+        if flat_dist > 1 {
+            // Multi-tile movement: compute greedy terrain-following path
+            // Use floor-level destination (strip the +Z standing offset)
+            let dest_floor = qrz::Qrz { q: destination.q, r: destination.r, z: destination.z - 1 };
+            let path = map.greedy_path(**loc, dest_floor, flat_dist as usize);
+            if !path.is_empty() {
+                let waypoints: Vec<Vec3> = path.iter()
+                    .map(|&tile| map.convert(tile + qrz::Qrz::Z))
+                    .collect();
+                visual.interpolate_along_path(&waypoints, duration_secs);
+            } else {
+                // Fallback: direct interpolation
+                let dest_world: Vec3 = map.convert(destination);
+                visual.interpolate_toward(dest_world, duration_secs);
+            }
+        } else {
+            // Single-tile movement: existing heading-adjusted interpolation
+            let dest_tile_center: Vec3 = map.convert(destination);
+
+            let dest_offset = if **heading != default() {
+                use common::components::heading::HERE;
+                let heading_neighbor: Vec3 = map.convert(destination + **heading);
+                let direction = heading_neighbor - dest_tile_center;
+                (direction * HERE).xz()
+            } else {
+                Vec2::ZERO
+            };
+            let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
+            visual.interpolate_toward(dest_world, duration_secs);
+        }
 
         if let Ok(mut entity_cmd) = commands.get_entity(ent) {
             entity_cmd.insert(common::components::movement_prediction::MovementPrediction {

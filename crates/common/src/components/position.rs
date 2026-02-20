@@ -94,6 +94,10 @@ pub struct VisualPosition {
     pub progress: f32,
     /// Total duration for this interpolation in seconds
     pub duration: f32,
+    /// Remaining waypoints after current `to` (multi-segment paths)
+    path: [Vec3; 4],
+    /// Number of valid entries in `path`
+    path_len: u8,
 }
 
 impl Default for VisualPosition {
@@ -103,6 +107,8 @@ impl Default for VisualPosition {
             to: Vec3::ZERO,
             progress: 1.0, // Start complete (at destination)
             duration: 0.0,
+            path: [Vec3::ZERO; 4],
+            path_len: 0,
         }
     }
 }
@@ -115,6 +121,8 @@ impl VisualPosition {
             to: position,
             progress: 1.0,
             duration: 0.0,
+            path: [Vec3::ZERO; 4],
+            path_len: 0,
         }
     }
 
@@ -127,6 +135,7 @@ impl VisualPosition {
         self.to = target;
         self.progress = 0.0;
         self.duration = duration.max(0.001); // Avoid division by zero
+        self.path_len = 0;
     }
 
     /// Get the current visual position (lerp between from and to)
@@ -134,16 +143,55 @@ impl VisualPosition {
         self.from.lerp(self.to, self.progress.clamp(0.0, 1.0))
     }
 
-    /// Advance the interpolation by delta time (in seconds)
-    ///
-    /// Returns true if interpolation is complete (progress >= 1.0)
+    /// Set up multi-segment interpolation along a path of waypoints.
+    /// `waypoints` are world-space positions (up to 5: the first becomes `to`,
+    /// the rest go into the path buffer). `total_duration` is split evenly.
+    pub fn interpolate_along_path(&mut self, waypoints: &[Vec3], total_duration: f32) {
+        if waypoints.is_empty() {
+            return;
+        }
+        let segments = waypoints.len() as f32;
+        let seg_duration = (total_duration / segments).max(0.001);
+
+        self.from = self.current();
+        self.to = waypoints[0];
+        self.progress = 0.0;
+        self.duration = seg_duration;
+
+        let extra = &waypoints[1..];
+        let count = extra.len().min(4);
+        for i in 0..count {
+            self.path[i] = extra[i];
+        }
+        self.path_len = count as u8;
+    }
+
+    /// Advance the interpolation by delta time (in seconds).
+    /// Chains to the next path segment when the current one completes.
+    /// Returns true when ALL segments are complete (progress >= 1.0 and no path remaining).
     pub fn advance(&mut self, delta_seconds: f32) -> bool {
         if self.duration > 0.0 {
             self.progress += delta_seconds / self.duration;
         } else {
             self.progress = 1.0;
         }
-        self.progress >= 1.0
+
+        // Chain to next segment if current is done and path has more waypoints
+        while self.progress >= 1.0 && self.path_len > 0 {
+            let overshoot = (self.progress - 1.0) * self.duration;
+            self.from = self.to;
+            self.to = self.path[0];
+            // Shift path entries down
+            for i in 0..3 {
+                self.path[i] = self.path[i + 1];
+            }
+            self.path[3] = Vec3::ZERO;
+            self.path_len -= 1;
+            // duration stays the same (even split)
+            self.progress = if self.duration > 0.0 { overshoot / self.duration } else { 1.0 };
+        }
+
+        self.progress >= 1.0 && self.path_len == 0
     }
 
     /// Check if interpolation is complete
@@ -157,6 +205,7 @@ impl VisualPosition {
         self.to = position;
         self.progress = 1.0;
         self.duration = 0.0;
+        self.path_len = 0;
     }
 }
 
@@ -243,6 +292,8 @@ mod tests {
             to: Vec3::new(10.0, 20.0, 30.0),
             progress: 0.25,
             duration: 1.0,
+            path: [Vec3::ZERO; 4],
+            path_len: 0,
         };
 
         let current = vis.current();
@@ -309,10 +360,96 @@ mod tests {
             to: Vec3::new(10.0, 0.0, 0.0),
             progress: 2.0, // Over 100%
             duration: 1.0,
+            path: [Vec3::ZERO; 4],
+            path_len: 0,
         };
 
         let current = vis.current();
         assert_eq!(current, Vec3::new(10.0, 0.0, 0.0), "Progress > 1.0 should clamp to target");
+    }
+
+    // ===== Multi-Segment Path Tests =====
+
+    #[test]
+    fn test_interpolate_along_path_two_segments() {
+        let mut vis = VisualPosition::at(Vec3::ZERO);
+        vis.interpolate_along_path(
+            &[Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)],
+            2.0,
+        );
+
+        // First segment: duration=1.0, from=ZERO, to=(10,0,0)
+        assert_eq!(vis.from, Vec3::ZERO);
+        assert_eq!(vis.to, Vec3::new(10.0, 0.0, 0.0));
+        assert!(!vis.advance(0.5)); // midway through segment 1
+        let c = vis.current();
+        assert!((c.x - 5.0).abs() < 0.01);
+
+        assert!(!vis.advance(0.5)); // end of segment 1 → chains to segment 2
+        // Now interpolating from (10,0,0) to (20,0,0)
+        let c2 = vis.current();
+        assert!((c2.x - 10.0).abs() < 0.5, "Should be near start of segment 2, got {}", c2.x);
+
+        assert!(vis.advance(1.0)); // complete segment 2
+        let c3 = vis.current();
+        assert!((c3.x - 20.0).abs() < 0.01, "Should reach end, got {}", c3.x);
+    }
+
+    #[test]
+    fn test_path_overshoot_carries() {
+        let mut vis = VisualPosition::at(Vec3::ZERO);
+        vis.interpolate_along_path(
+            &[Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)],
+            2.0,
+        );
+        // Advance 1.5s in one shot: should overshoot seg1 by 0.5s into seg2
+        assert!(!vis.advance(1.5));
+        let c = vis.current();
+        assert!((c.x - 15.0).abs() < 0.5, "Overshoot should carry into segment 2, got {}", c.x);
+    }
+
+    #[test]
+    fn test_interpolate_toward_clears_path() {
+        let mut vis = VisualPosition::at(Vec3::ZERO);
+        vis.interpolate_along_path(
+            &[Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)],
+            2.0,
+        );
+        vis.interpolate_toward(Vec3::new(5.0, 0.0, 0.0), 1.0);
+        // Should complete after single segment
+        assert!(vis.advance(1.0));
+    }
+
+    #[test]
+    fn test_snap_to_clears_path() {
+        let mut vis = VisualPosition::at(Vec3::ZERO);
+        vis.interpolate_along_path(
+            &[Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)],
+            2.0,
+        );
+        vis.snap_to(Vec3::new(50.0, 0.0, 0.0));
+        assert!(vis.is_complete());
+        assert_eq!(vis.current(), Vec3::new(50.0, 0.0, 0.0));
+        // advance should return true immediately (no path)
+        assert!(vis.advance(0.1));
+    }
+
+    #[test]
+    fn test_single_waypoint_same_as_interpolate_toward() {
+        let mut vis = VisualPosition::at(Vec3::ZERO);
+        vis.interpolate_along_path(&[Vec3::new(10.0, 0.0, 0.0)], 1.0);
+        assert!(!vis.advance(0.5));
+        let c = vis.current();
+        assert!((c.x - 5.0).abs() < 0.01);
+        assert!(vis.advance(0.5));
+    }
+
+    #[test]
+    fn test_empty_waypoints_noop() {
+        let mut vis = VisualPosition::at(Vec3::new(5.0, 0.0, 0.0));
+        vis.interpolate_along_path(&[], 1.0);
+        assert_eq!(vis.current(), Vec3::new(5.0, 0.0, 0.0));
+        assert!(vis.is_complete());
     }
 
     #[test]
@@ -322,6 +459,8 @@ mod tests {
             to: Vec3::new(10.0, 0.0, 0.0),
             progress: -0.5,
             duration: 1.0,
+            path: [Vec3::ZERO; 4],
+            path_len: 0,
         };
 
         let current = vis.current();

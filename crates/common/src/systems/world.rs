@@ -72,12 +72,26 @@ pub fn do_incremental(
 
                     if hex_distance >= TELEPORT_THRESHOLD_HEXES {
                         if let Some(displacement) = o_ability_displacement {
-                            // Ability-driven displacement (lunge): interpolate instead of snapping
+                            // Ability-driven displacement (lunge/knockback): terrain-following path
                             let duration_secs = displacement.duration_ms as f32 / 1000.0;
                             if let Some(mut vis) = o_visual {
-                                // +Z: entities stand ON terrain (matches MovementIntent convention)
-                                let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
-                                vis.interpolate_toward(target_world, duration_secs);
+                                if hex_distance > 1 {
+                                    // Multi-tile: greedy path for terrain following
+                                    let path = map.greedy_path(**loc0, *loc, hex_distance as usize);
+                                    if !path.is_empty() {
+                                        let waypoints: Vec<Vec3> = path.iter()
+                                            .map(|&tile| map.convert(tile + qrz::Qrz::Z))
+                                            .collect();
+                                        vis.interpolate_along_path(&waypoints, duration_secs);
+                                    } else {
+                                        let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                                        vis.interpolate_toward(target_world, duration_secs);
+                                    }
+                                } else {
+                                    // Single tile: direct interpolation
+                                    let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                                    vis.interpolate_toward(target_world, duration_secs);
+                                }
                             }
                             if let Some(mut pos) = o_position {
                                 pos.tile = *loc;
