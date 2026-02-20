@@ -6,7 +6,7 @@ use common::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
         behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
-        returning::Returning,
+        returning::Returning, stagger::Stagger,
         engagement::EngagementMember,
     },
     message::{Event, Do, Component as MessageComponent},
@@ -174,6 +174,7 @@ pub fn kite(
         Option<&Returning>,
         Option<&mut common::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &EngagementMember,
+        Option<&Stagger>,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
     q_spawner: Query<&Loc, Without<Kite>>,
@@ -182,7 +183,12 @@ pub fn kite(
     dt: Res<Time>,
     mut writer: MessageWriter<common::message::Do>,
 ) {
-    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, stagger_opt) in &mut query {
+
+        // Staggered — skip all movement and intent broadcasting
+        if stagger_opt.is_some() {
+            continue;
+        }
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {

@@ -6,7 +6,7 @@ use common::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
         behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
-        returning::Returning,
+        returning::Returning, stagger::Stagger,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
     },
@@ -108,6 +108,7 @@ pub fn chase(
         Option<&mut common::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &EngagementMember,
         Option<&AssignedHex>,  // SOW-018: Path to assigned hex
+        Option<&Stagger>,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
     q_spawner: Query<&Loc, Without<Chase>>,  // Query spawner locations
@@ -115,7 +116,12 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, assigned_hex_opt) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, assigned_hex_opt, stagger_opt) in &mut query {
+
+        // Staggered — skip all movement and intent broadcasting
+        if stagger_opt.is_some() {
+            continue;
+        }
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {

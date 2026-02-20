@@ -16,6 +16,7 @@ pub mod reaction_queue;
 pub mod recovery;
 pub mod resources;
 pub mod returning;
+pub mod stagger;
 pub mod target;
 pub mod tier_lock;
 
@@ -926,6 +927,14 @@ impl Default for AttackRange {
     fn default() -> Self {
         Self(1)
     }
+}
+
+/// Marker: entity is undergoing ability-driven displacement (don't snap, interpolate).
+/// Inserted by client when MovementIntent arrives for local player from server.
+/// Consumed by do_incremental to interpolate instead of snapping on teleport-distance Loc updates.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct AbilityDisplacement {
+    pub duration_ms: u16,
 }
 
 #[cfg(test)]

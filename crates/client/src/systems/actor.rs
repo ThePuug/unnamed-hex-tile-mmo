@@ -192,8 +192,13 @@ pub fn apply_movement_intent(
         let Do { event: Event::MovementIntent { ent, destination, duration_ms } } = message
             else { continue };
 
-        // Skip intent for local player (we predict using Input, not Intent)
+        // Local player: normal movement is predicted via Input, not Intent.
+        // But ability-driven displacement (lunge, etc.) sends MovementIntent from server.
+        // Insert AbilityDisplacement marker so do_incremental interpolates instead of snapping.
         if buffers.get(&ent).is_some() {
+            if let Ok(mut entity_cmd) = commands.get_entity(ent) {
+                entity_cmd.insert(common::components::AbilityDisplacement { duration_ms });
+            }
             continue;
         }
 

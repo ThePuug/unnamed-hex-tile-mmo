@@ -9,5 +9,6 @@ pub mod input;
 pub mod npc_ability_usage;
 pub mod reaction_queue;
 pub mod renet;
+pub mod stagger;
 pub mod targeting;
 pub mod world;

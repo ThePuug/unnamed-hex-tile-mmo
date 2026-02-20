@@ -1,19 +1,19 @@
 use bevy::prelude::*;
 use std::time::Duration;
 use common::{
-    components::{entity_type::*, resources::*, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
     systems::combat::synergies::apply_synergies,
 };
-use crate::resources::RunTime;
+use crate::{resources::RunTime, systems::stagger::Knockback};
 
 use qrz::Qrz;
 
 /// Calculate knockback destination by walking tiles along a direction.
 /// Stops at cliffs (elevation diff > 1) or missing floor tiles.
 /// Returns the last valid position.
-pub fn calculate_knockback_destination(
+fn calculate_knockback_destination(
     source_loc: Qrz,
     direction: Qrz,
     distance: i16,
@@ -217,18 +217,31 @@ pub fn handle_kick(
                 z: 0,
             };
 
-            let destination = calculate_knockback_destination(**source_loc, direction, 4, &map);
+            // Calculate full knockback destination for advance visual notice
+            let kb_destination = calculate_knockback_destination(**source_loc, direction, 4, &map);
+            let tiles_pushed = source_loc.flat_distance(&kb_destination);
 
-            if destination != **source_loc {
-                let new_loc = Loc::new(destination);
-                commands.entity(threat.source).insert(new_loc);
-
+            if tiles_pushed > 0 {
+                // Send MovementIntent so client starts visual slide immediately.
+                // +Z: entities stand ON terrain (matches MovementIntent convention).
+                let knockback_duration_ms = tiles_pushed as u16 * 125;
                 writer.write(Do {
-                    event: GameEvent::Incremental {
+                    event: GameEvent::MovementIntent {
                         ent: threat.source,
-                        component: common::message::Component::Loc(new_loc),
+                        destination: kb_destination + Qrz::Z,
+                        duration_ms: knockback_duration_ms,
                     },
                 });
+
+                // Tile-by-tile knockback: process_knockback moves 1 tile per server tick (125ms).
+                // Stagger freezes AI movement; Knockback handles the physical push.
+                commands.entity(threat.source).insert((
+                    Knockback { direction, remaining_tiles: tiles_pushed },
+                    Stagger::new(0.5),
+                ));
+            } else {
+                // Can't push (immediately blocked), just stagger
+                commands.entity(threat.source).insert(Stagger::new(0.5));
             }
         }
 

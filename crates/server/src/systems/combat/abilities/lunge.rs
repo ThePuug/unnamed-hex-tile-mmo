@@ -158,11 +158,20 @@ pub fn handle_lunge(
             .copied()
             .unwrap_or(**target_loc); // Fallback to target loc if no neighbors
 
-        // Update caster's location (teleport 2+ hexes to target's neighbor)
+        // Send MovementIntent for visual charge (fast dash)
+        let charge_duration_ms = (distance as u16 * 50).max(100);
+        writer.write(Do {
+            event: GameEvent::MovementIntent {
+                ent: *ent,
+                destination: landing_loc + qrz::Qrz::Z,
+                duration_ms: charge_duration_ms,
+            },
+        });
+
+        // Update caster's location
         commands.entity(*ent).insert(Loc::new(landing_loc));
 
         // Broadcast Loc update to clients
-        // NOTE: Client detects teleport by hex distance (>=2 hexes) and snaps VisualPosition automatically
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,

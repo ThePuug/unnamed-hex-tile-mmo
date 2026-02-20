@@ -37,14 +37,15 @@ pub fn do_incremental(
         Option<&mut crate::components::tier_lock::TierLock>,
         Option<&crate::components::movement_prediction::MovementPrediction>,
         Option<&mut Position>,
-        Option<&mut VisualPosition>)>,
+        Option<&mut VisualPosition>,
+        Option<&crate::components::AbilityDisplacement>)>,
     map: Res<Map>,
     buffers: Res<crate::resources::InputQueues>,
 ) {
     for &message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
 
-        let Ok((o_loc, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual, o_ability_displacement)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -70,14 +71,31 @@ pub fn do_incremental(
                     let hex_distance = loc0.flat_distance(&loc);
 
                     if hex_distance >= TELEPORT_THRESHOLD_HEXES {
-                        // Teleport: snap to new position
-                        if let Some(mut vis) = o_visual {
-                            let teleport_world: Vec3 = map.convert(*loc);
-                            vis.snap_to(teleport_world);
-                        }
-                        if let Some(mut pos) = o_position {
-                            pos.tile = *loc;
-                            pos.offset = Vec3::ZERO;
+                        if let Some(displacement) = o_ability_displacement {
+                            // Ability-driven displacement (lunge): interpolate instead of snapping
+                            let duration_secs = displacement.duration_ms as f32 / 1000.0;
+                            if let Some(mut vis) = o_visual {
+                                // +Z: entities stand ON terrain (matches MovementIntent convention)
+                                let target_world: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                                vis.interpolate_toward(target_world, duration_secs);
+                            }
+                            if let Some(mut pos) = o_position {
+                                pos.tile = *loc;
+                                pos.offset = Vec3::ZERO;
+                            }
+                            if let Ok(mut e) = commands.get_entity(ent) {
+                                e.remove::<crate::components::AbilityDisplacement>();
+                            }
+                        } else {
+                            // Teleport: snap to new position
+                            if let Some(mut vis) = o_visual {
+                                let teleport_world: Vec3 = map.convert(*loc);
+                                vis.snap_to(teleport_world);
+                            }
+                            if let Some(mut pos) = o_position {
+                                pos.tile = *loc;
+                                pos.offset = Vec3::ZERO;
+                            }
                         }
                     } else {
                         // Smooth tile crossing: update Position tile, adjust offset for new coordinate system
@@ -102,8 +120,14 @@ pub fn do_incremental(
                         Vec2::ZERO
                     };
 
-                    // ADR-011: Clear movement prediction if it exists
-                    if let Some(_prediction) = o_prediction {
+                    // ADR-011: Only clear prediction when arriving at predicted destination.
+                    // Intermediate Loc updates (e.g. during knockback) keep prediction alive
+                    // so the visual interpolation from MovementIntent continues smoothly.
+                    let had_prediction = o_prediction.is_some();
+                    let arrived_at_predicted = o_prediction
+                        .as_ref()
+                        .map_or(false, |p| loc.flat_distance(&p.predicted_dest) == 0);
+                    if arrived_at_predicted {
                         if let Ok(mut e) = commands.get_entity(ent) {
                             e.remove::<crate::components::movement_prediction::MovementPrediction>();
                         }
@@ -114,7 +138,17 @@ pub fn do_incremental(
                         pos.tile = *loc;
                         pos.offset = Vec3::new(target_offset.x, 0.0, target_offset.y);
                     }
-                    // VisualPosition continues interpolating in world space - no adjustment needed
+
+                    // If no MovementIntent preceded this Loc update (e.g., unexpected movement),
+                    // start visual interpolation at standing height (+Z matches
+                    // MovementIntent convention for entities standing ON terrain).
+                    if !had_prediction {
+                        let standing_center: Vec3 = map.convert(*loc + qrz::Qrz::Z);
+                        let visual_target = standing_center + Vec3::new(target_offset.x, 0.0, target_offset.y);
+                        if let Some(mut vis) = o_visual {
+                            vis.interpolate_toward(visual_target, 0.125);
+                        }
+                    }
                 }
 
                 *loc0 = loc;
