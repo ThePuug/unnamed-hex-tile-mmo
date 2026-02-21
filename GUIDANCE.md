@@ -20,7 +20,9 @@ Client-server MMO built with Bevy ECS:
 **Workspace crates (all under `crates/`):**
 - `crates/common/`: Shared library crate (components, physics, messages)
 - `crates/client/`: Client binary crate (rendering, input, networking)
-- `crates/server/`: Server binary crate (AI, terrain, connections)
+- `crates/server/`: Server binary crate (AI, terrain serving, connections)
+- `crates/terrain/`: Terrain generation library (pure functions, no Bevy dependency)
+- `crates/terrain-viewer/`: Headless CLI tool for rendering terrain heightmaps to PNG
 - `crates/qrz/`: Hexagonal grid library
 - `crates/console/`: Server monitoring console
 

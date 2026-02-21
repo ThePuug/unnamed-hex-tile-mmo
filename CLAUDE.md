@@ -46,7 +46,9 @@ All workspace members live under `crates/`:
 
 - `crates/common/`: Shared library crate (components, physics, messages)
 - `crates/client/`: Client binary crate (rendering, input, camera)
-- `crates/server/`: Server binary crate (AI, terrain generation, connections)
+- `crates/server/`: Server binary crate (AI, terrain serving, connections)
+- `crates/terrain/`: Terrain generation library (pure functions, no Bevy)
+- `crates/terrain-viewer/`: Headless terrain visualization tool (renders heightmap PNGs)
 - `crates/qrz/`: Custom hexagonal grid library
 - `crates/console/`: Server monitoring console tool
 
@@ -55,6 +57,12 @@ All workspace members live under `crates/`:
 The repository contains several interconnected documentation systems. Understanding where to find information and when to update documentation is critical.
 
 ### Root-Level Documents
+
+**[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Build prerequisites (Windows native, WSL/Linux)
+- System dependency installation instructions
+- Development tools (terrain-viewer, console)
+- **Update when:** Adding new build dependencies, tools, or platform-specific setup steps
 
 **[README.md](README.md)**
 - User-facing overview of the game
@@ -71,8 +79,7 @@ The repository contains several interconnected documentation systems. Understand
 - Client-side prediction mechanics
 - Common pitfalls and anti-patterns
 - System execution order
-- **Update when:** User confirms a solution works AND pattern should be documented for future reference
-- **Never commit** - only update the file locally
+- **Update when:** Patterns are confirmed, pitfalls discovered, or architecture changes
 
 **[CLAUDE.md](CLAUDE.md)** (this file)
 - Instructions for Claude Code sessions
@@ -154,7 +161,7 @@ Documents recording **non-obvious implementation decisions** and their rationale
 ### After Completing Feature
 1. **Update design spec** deviations/gaps sections if implementation differs from spec
 2. **Create/update ADR** if architectural decision made
-3. **Update GUIDANCE.md** only after user confirms solution works
+3. **Update GUIDANCE.md** with patterns and pitfalls discovered
 
 ### When Creating New Systems
 1. **ARCHITECT role** creates ADR documenting decision (only if non-obvious "why")
