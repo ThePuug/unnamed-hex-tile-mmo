@@ -12,72 +12,146 @@ Height at any tile is evaluated as a pure function of tile coordinates and world
 
 ```
 tile_height(q, r) =
-    plate_base_elevation(q, r)          // which plate, its base height
-  + boundary_contribution(q, r)         // proximity to plate boundaries
-  + feature_envelope(q, r)              // nearby geographic features (mountains, swamps, etc.)
-  + biome_detail_noise(q, r)            // biome-specific surface texture
-  + post_processing(q, r)               // stratification, channel carving, smoothing
+    continental_base_elevation(q, r)       // which continental plate, its base height
+  + continental_boundary_contribution(q, r) // proximity to continental plate boundaries
+  + regional_boundary_contribution(q, r)    // proximity to regional plate boundaries
+  + feature_envelope(q, r)                  // nearby geographic features (mountains, swamps, etc.)
+  + biome_detail_noise(q, r)               // biome-specific surface texture
+  + post_processing(q, r)                   // stratification, channel carving, smoothing
 ```
 
 Each layer depends only on tile coordinates, the world seed, and (for the dynamic layer) a small set of evolving boundary intensity parameters. Chunk caching means each tile is evaluated once and stored immutably per ADR-001.
 
 ---
 
-## Layer 1: Tectonic Plates (Continental Structure)
+## Layer 1: Tectonic Plates (Hierarchical Dual-Scale)
 
-### Plate Placement
+Terrain structure uses a **hierarchical two-scale plate system**. Continental plates define macro geography (continents, ocean basins, major mountain ranges). Regional plates exist *within* continental plates and add mid-scale structural variation (secondary ridges, rifts, and terrain texture) without contributing independent base elevation.
 
-Plates are defined by a Voronoi tessellation over procedurally placed plate centers. Centers live on a coarse grid (5,000 × 5,000 tiles per cell). Each cell's center position is determined by hashing `(cell_q, cell_r, seed)` to produce:
+### Continental Plate Placement
 
-* **Position offset** (jitter within cell): 0–40% of cell size
-* **Plate character**: continental or oceanic, biased by regional context (stable regions favor continental, chaotic regions favor oceanic)
+Continental plates are defined by a Voronoi tessellation over procedurally placed plate centers. Centers live on a coarse grid (4,000 × 4,000 tiles per cell). Each cell's center position is determined by hashing `(cell_q, cell_r, seed)` to produce:
+
+* **Position offset** (jitter within cell): fixed fraction (30%) of cell size
+* **Plate character**: continental or oceanic, determined by hash threshold
 * **Base elevation**: bimodal distribution driven by plate character — continental plates sit in the 400–1,200 range, oceanic plates sit in the 50–200 range. The ~200–400 gap between them is where coastlines naturally form.
 * **Drift vector**: direction and magnitude of plate movement (used for boundary classification)
 
-The continental/oceanic ratio should be approximately 60/40, producing significant coastline without making the world feel mostly submerged. This ratio is influenced by the jitter field: stable (low-jitter) regions favor continental plates, producing large landmasses. Chaotic (high-jitter) regions favor oceanic plates, producing island chains and fragmented coastlines between small plates.
+The continental/oceanic ratio is approximately 60/40, producing significant coastline without making the world feel mostly submerged.
 
-Coastlines emerge naturally at Voronoi boundaries between continental and oceanic plates — a continental plate at base elevation 500 adjacent to an oceanic plate at 150 creates a slope that reads as shoreline. This produces distinct coastal terrain (rocky shores, tidal flats, coastal cliffs) without requiring a dedicated coastline feature type or water rendering. The boundary classification still applies: a convergent continental-oceanic boundary creates coastal mountain ranges (subduction zones), while a divergent one creates broad shallow coastal shelves.
+Coastlines emerge naturally at Voronoi boundaries between continental and oceanic plates — a continental plate at base elevation 500 adjacent to an oceanic plate at 150 creates a slope that reads as shoreline. The boundary classification still applies: a convergent continental-oceanic boundary creates coastal mountain ranges (subduction zones), while a divergent one creates broad shallow coastal shelves.
 
-For any tile, determining plate membership requires checking the surrounding grid cells (typically 9), computing distance to each plate center, and selecting the nearest — standard Voronoi evaluation.
+For any tile, determining plate membership requires checking surrounding grid cells (5×5 neighborhood), computing distance to each plate center, and selecting the nearest — standard Voronoi evaluation.
 
-### Variable Plate Size
+### Regional Plates
 
-Plate center jitter is not uniform. A very-large-scale noise field (scale ~1/50,000) controls jitter intensity regionally:
+Regional plates provide mid-scale structural variation within continental plate interiors. They live on a finer grid (1,200 × 1,200 tiles per cell) and contribute **boundary effects only** — no independent base elevation. A tile's base elevation comes exclusively from its continental plate.
 
-* **Low jitter regions**: Centers stay near cell centers, producing large stable plates with broad interiors. These are geologically quiet zones — good locations for havens and player settlement.
-* **High jitter regions**: Centers cluster irregularly, producing small fractured plates with dense boundary networks. These are tectonically chaotic zones — broken terrain, frequent ridges, and concentrated geological event potential.
+Regional plate properties:
 
-This creates a world where tectonic chaos is regionally clustered rather than uniformly distributed. Some parts of the world are geologically stable. Others are shattered. The jitter noise field is the coarsest, cheapest evaluation in the entire pipeline — it changes imperceptibly over thousands of tiles.
+* **Grid size**: 1,200 tiles per cell (roughly 3× finer than continental)
+* **Jitter**: noise-driven, varying between 15–45% of cell size. High-jitter regions produce more irregular plate shapes; low-jitter regions produce more regular ones.
+* **Skip probability**: some regional grid cells produce no plate. Skip probability is inversely correlated with jitter intensity — chaotic (high-jitter) regions have more regional plates, stable (low-jitter) regions have fewer. Skip ranges from 0% to 80%.
+* **Continental membership**: each regional plate belongs to the continental plate whose Voronoi cell contains its center. Regional plates do not cross continental boundaries. Membership is computed by running the continental Voronoi lookup on each regional center's position.
 
-### Boundary Classification
+The regional Voronoi search uses a wider neighborhood (9×9) than continental (5×5) because the smaller grid size means more candidates at similar distances.
 
-At any tile near a Voronoi edge (the boundary between two plates), the relationship between the two plates' drift vectors determines the boundary type. The key input is the dot product of each plate's drift vector with the boundary normal:
+### Domain Warping (Curl Noise)
 
-**Convergent** (plates pushing toward each other): Both drift vectors have positive components toward the boundary. This produces uplift — mountain ranges, highland ridges, elevated terrain along the boundary line. The elevation contribution scales with convergence intensity (how directly the plates collide). Strong head-on convergence creates major ranges. Oblique convergence creates lower, broader uplift.
+Both plate scales apply domain warping to their Voronoi lookup coordinates, producing organic boundary shapes instead of geometric polygons. The warp uses **curl noise** — displacement derived from the gradient of a single scalar noise field, rotated 90°.
 
-**Divergent** (plates pulling apart): Both drift vectors have components away from the boundary. This produces subsidence — rift valleys, depressions, low points along the boundary. At extreme intensity, divergent boundaries become candidates for flooding or magma events.
+Curl noise produces a divergence-free vector field: adjacent tiles always get smoothly varying displacement, with no opposing vectors. This eliminates cusp artifacts that occur with independent-axis warping, where two independent noise fields for q and r displacement can produce opposing vectors at adjacent tiles, causing boundaries to fold sharply where warp direction reverses.
 
-**Transform** (plates sliding past each other): Drift vectors are roughly parallel to the boundary. This produces moderate terrain disruption — fault lines, broken terrain, but without the dramatic elevation changes of convergent or divergent boundaries. These create interesting traversal challenges without major altitude shifts.
+Implementation:
+1. Evaluate a scalar noise field at the tile's Cartesian position
+2. Compute finite-difference partial derivatives (∂n/∂x, ∂n/∂y)
+3. Rotate 90° to get displacement: warp_x = ∂n/∂y, warp_y = -∂n/∂x
+4. Convert Cartesian displacement back to hex axial coordinates
+5. Add displacement to tile coordinates before Voronoi lookup
+
+Parameters:
+* **Continental**: amplitude ~600 tiles, noise scale ~1/3,000
+* **Regional**: amplitude ~150 tiles, noise scale ~1/800
+* One noise seed per scale (curl uses a single field, not two)
+
+#### Alternatives tried and rejected
+
+* **Independent-axis warping** (two noise fields for q and r): Produced cusp artifacts where warp vectors reversed direction along boundaries.
+* **Lower warp frequency** (1/8,000 continental): Reduced cusps but revealed polygon geometry by removing boundary meandering.
+* **Center-based warping** (evaluate noise at plate centers, blend by proximity): Produced rigid plate translations with straight edges — too coarse for organic shapes.
+
+### Boundary Classification (Per-Pair)
+
+Boundary type is determined **per plate pair**, not per tile. The pair normal is the vector from plate A's center to plate B's center (constant along the entire shared boundary). The relative drift vector (`drift_A - drift_B`) dotted with this pair normal determines the boundary type:
+
+**Convergent** (convergence > threshold): Plates pushing toward each other. Produces uplift — mountain ranges, highland ridges. Intensity scales with convergence magnitude above threshold.
+
+**Divergent** (convergence < -threshold): Plates pulling apart. Produces subsidence — rift valleys, depressions. Intensity scales with divergence magnitude above threshold.
+
+**Transform** (|convergence| ≤ threshold): Plates sliding past each other. Produces moderate terrain disruption — fault lines, broken terrain. The threshold (0.15) prevents weakly-convergent boundaries from flickering between types.
+
+Per-pair classification ensures every tile along a shared boundary gets the same type — a convergent boundary produces a continuous mountain range along its entire length, not isolated hotspots.
+
+### Boundary Intensity Variation (Per-Tile)
+
+While boundary *type* is uniform per pair, boundary *intensity* varies along the edge via per-tile noise modulation:
+
+```
+final_intensity = pair_intensity × (0.5 + 0.5 × noise(tile_position, variation_seed))
+```
+
+This breaks up uniform polygon outlines while preserving continuous type classification. A convergent boundary becomes a mountain range with tall peaks and lower passes rather than a uniform ridge tracing the polygon edge.
+
+* **Continental boundaries**: noise scale ~1/1,000 (~4 cycles per boundary)
+* **Regional boundaries**: noise scale ~1/300 (~4 cycles per boundary)
+* Dedicated noise seed, decorrelated from terrain and domain warp noise
+
+### Triple Junction Dampening
+
+Where three or more plates meet, the Voronoi boundary math breaks down — the second-nearest plate assignment changes rapidly and multiple boundary contributions interact unpredictably, producing spikes and discontinuities.
+
+The fix tracks the **third-nearest** plate center alongside the nearest two:
+
+```
+junction_factor = ((d3 - d2) / d2).clamp(0.0, 1.0)
+```
+
+* Far from triple junction (d3 >> d2): junction_factor → 1.0 (full boundary contribution)
+* At triple junction (d3 ≈ d2): junction_factor → 0.0 (suppressed)
+
+Applied as a multiplier on boundary contribution at both continental and regional scales. Smoothly fades contributions to zero near junction vertices without affecting normal two-plate boundaries.
 
 ### Boundary Elevation Contribution
 
-The boundary's effect on tile height follows a falloff curve from the Voronoi edge:
+The boundary's effect on tile height follows a quadratic falloff curve from the Voronoi edge:
 
 ```
-boundary_contribution = intensity × envelope(distance_to_boundary)
+boundary_contribution = peak × pair_intensity × local_variation × falloff(distance) × junction_factor
+falloff = 1 - (distance / max_distance)²
 ```
 
-The envelope tapers from maximum effect at the boundary to zero at a type-dependent distance:
+The influence distance and peak contribution depend on boundary type and scale:
 
-* **Major convergent**: up to 2,000–3,000 tiles of influence, producing broad mountain range foothill zones
-* **Minor convergent/divergent**: 500–1,500 tiles of influence
-* **Transform**: 200–800 tiles, localized disruption
+| Scale | Type | Max Distance | Peak Elevation |
+|-------|------|-------------|----------------|
+| Continental | Convergent | 1,500 tiles | +800 |
+| Continental | Divergent | 600 tiles | -300 |
+| Continental | Transform | 300 tiles | ±40 (noise) |
+| Regional | Convergent | 400 tiles | +100 |
+| Regional | Divergent | 200 tiles | -80 |
+| Regional | Transform | 150 tiles | ±15 (noise) |
 
-Convergent boundaries add elevation (positive contribution). Divergent boundaries subtract it (negative contribution). Transform boundaries add noise amplitude rather than elevation bias.
+Convergent boundaries add elevation (positive contribution). Divergent boundaries subtract it (negative contribution). Transform boundaries add noise-modulated variation rather than elevation bias.
+
+Base elevation blends linearly across continental boundaries over 300 tiles, preventing cliff-height discontinuities where different-elevation plates meet.
 
 ### Drift Vector Generation
 
-Drift vectors need to produce a good mix of boundary types across the world. If all plates drift the same direction, most boundaries are transform (boring). The hash that generates drift vectors uses a rotational component — plates tend to drift with a regional rotational bias, creating natural convergence zones where rotation fields oppose each other.
+Drift vectors need to produce a good mix of boundary types across the world. If all plates drift the same direction, most boundaries are transform (boring). Drift direction uses a regional noise field (scale ~1/5,000) combined with per-plate hash variation (±π/2):
+
+* The noise field creates regionally coherent drift patterns
+* Per-plate hash variation creates local divergence within regions
+* Drift magnitude ranges 0.5–1.0 (hash-determined)
 
 This means some regions of the world have mostly convergent boundaries (mountain-heavy), some have mostly divergent (rift-heavy), and some have a healthy mix. The distribution emerges from the drift field rather than being manually tuned.
 
@@ -85,15 +159,13 @@ This means some regions of the world have mostly convergent boundaries (mountain
 
 ## Layer 2: Base Terrain (Ambient Geography)
 
-On top of the tectonic structure, three noise sub-layers provide the surface variation that makes terrain feel natural rather than mathematical:
+On top of the tectonic structure, two noise sub-layers provide surface variation that makes terrain feel natural rather than mathematical. Tectonic plates provide ALL structural geography; noise provides only texture with no structural meaning.
 
-**Continental texture** (scale ~1/2,000, ±100 units): Broad undulation within plate interiors. This is what makes crossing a large stable plate feel like traversing varied terrain rather than a flat shelf. A player walking for thousands of tiles across a single plate's interior should experience gradual elevation changes from this layer.
+**Continental texture** (scale ~1/800, ±100 units): Broad undulation within plate interiors. This is what makes crossing a large stable plate feel like traversing varied terrain rather than a flat shelf. A player walking for thousands of tiles across a single plate's interior should experience gradual elevation changes from this layer.
 
-**Regional texture** (scale ~1/500, ±40 units): Rolling hills, shallow valleys, the terrain you'd describe as "gently hilly." This layer provides the medium-scale variation that's visible from any given position — the hills on the horizon, the shallow depression ahead.
+**Micro-texture** (scale ~1/30, ±3 units): Subtle per-tile variation preventing uncanny smoothness. Almost imperceptible in isolation but prevents flat areas from looking artificially generated.
 
-**Micro-texture** (scale ~1/80, ±3 units): Subtle per-tile variation preventing uncanny smoothness. Almost imperceptible in isolation but prevents flat areas from looking artificially generated.
-
-These layers are simple Perlin noise evaluations with no conditional logic. They provide texture, not structure. The tectonic layer provides structure.
+The original three-layer design included a regional texture layer (~1/500, ±40 units), but this was dropped. At ~1/200 scale, regional texture puts ~6 noise cycles per regional plate — the regional plate system already provides mid-scale structural variation through boundary ridges and rifts. Adding smooth rolling-hill noise at a similar spatial frequency muddies the plate signal rather than enhancing it.
 
 ---
 
@@ -166,7 +238,7 @@ Per-biome rules applied as final adjustments:
 
 ### Static vs Dynamic State
 
-**Static** (determined by seed, never changes): Plate centers, Voronoi structure, drift vectors, base elevations, jitter field. This is the world's geological skeleton.
+**Static** (determined by seed, never changes): Plate centers, Voronoi structure, drift vectors, base elevations. This is the world's geological skeleton.
 
 **Dynamic** (evolves over game time, persisted as world state): Boundary intensities. One float per plate boundary — a tiny state footprint for the entire world. These values creep slowly over game time, representing geological pressure building or releasing.
 
@@ -190,8 +262,9 @@ The height function becomes:
 
 ```
 tile_height(q, r, boundary_state) =
-    plate_base_elevation(q, r)
-  + boundary_contribution(q, r, boundary_state)   // intensity from dynamic state
+    continental_base_elevation(q, r)
+  + continental_boundary_contribution(q, r, boundary_state)
+  + regional_boundary_contribution(q, r)
   + feature_envelope(q, r)
   + biome_detail_noise(q, r)
   + post_processing(q, r)
@@ -247,15 +320,30 @@ The continental base layer varies within roughly 200–1,200. Mountain peak feat
 
 These values are expected to change during development. They become locked once world persistence is implemented (saved chunk state, player builds, hub positions tied to terrain).
 
-**Feature grid cell size** (starting: 500 × 500 tiles): Controls feature density and minimum spacing. Interacts with plate grid size — features should be meaningfully smaller than plates so multiple features exist within a single plate interior. Adjust based on visual results and gameplay feel.
-
-**Plate grid cell size** (starting: 5,000 × 5,000 tiles): Controls plate density and boundary frequency. Smaller cells produce more boundaries and more chaotic terrain.
-
-**Continental/oceanic ratio** (starting: 60/40): Controls how much of the world is landmass vs sea floor. Influenced by jitter field bias.
-
-**Base elevation ranges** (starting: continental 400–1,200, oceanic 50–200): The gap between ranges defines coastline width. Wider gap = more dramatic coastal transitions.
-
-**Noise amplitudes and scales**: All noise layer parameters (continental texture, regional texture, micro-texture, biome detail) are tuning values. Starting points are documented in their respective layer sections.
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Continental grid cell size | 4,000 tiles | |
+| Regional grid cell size | 1,200 tiles | Hierarchical within continental |
+| Continental jitter | 30% fixed | |
+| Regional jitter range | 15–45% noise-driven | |
+| Regional skip range | 0–80% | Inversely correlated with jitter |
+| Continental warp amplitude | ~600 tiles | Curl noise |
+| Regional warp amplitude | ~150 tiles | Curl noise |
+| Continental warp noise scale | ~1/3,000 | |
+| Regional warp noise scale | ~1/800 | |
+| Drift noise scale | ~1/5,000 | Regional coherence |
+| Continental elevation | 400–1,200 | |
+| Oceanic elevation | 50–200 | |
+| Continental ratio | 60% | Hash threshold, no jitter bias |
+| Continental convergent | 1,500 tiles max, +800 peak | |
+| Continental divergent | 600 tiles max, -300 peak | |
+| Continental transform | 300 tiles max, ±40 noise | |
+| Regional convergent | 400 tiles max, +100 peak | |
+| Regional divergent | 200 tiles max, -80 peak | |
+| Regional transform | 150 tiles max, ±15 noise | |
+| Base elevation blend width | 300 tiles | Linear blend at continental boundaries |
+| Boundary intensity noise | ~1/1,000 (cont), ~1/300 (reg) | Per-tile variation |
+| Transform threshold | 0.15 | Deadzone for per-pair classification |
 
 ---
 
@@ -265,34 +353,17 @@ Where the current implementation intentionally differs from spec:
 
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
-| 1 | Height generation | Full pipeline: plates + features + biome noise + post-processing | Phase 1: tectonic plates + boundary elevation only (no noise, features, or biomes) | Incremental implementation; plates are the structural foundation |
+| 1 | Height generation | Full pipeline: plates + features + biome noise + post-processing | Phase 1: dual-scale tectonic plates + boundary elevation only (no noise, features, or biomes) | Incremental implementation; plates are the structural foundation |
 | 2 | Terrain API | `tile_height(q, r)` as pure function of tile coords | `terrain::Terrain::get_height(q, r)` in standalone `crates/terrain/` library; server wraps with Bevy Resource | Enables `terrain-viewer` CLI without server dependency; hex coords are natural input |
-| 3 | Base elevation blend | Not explicitly specified | Linear blend over 1,500 tiles at plate boundaries to prevent cliff-height discontinuities | Walkability invariant: adjacent tile height difference must be ≤ 1 for traversal |
-| 4 | Feature placement | Grid-hashed feature seeds with distance-field envelopes | Not yet implemented | Phase 3 |
-| 5 | Biome system | Biome derived from tectonic context + feature influence | Not yet implemented | Phase 4 |
-| 6 | Dynamic tectonics | Evolving boundary intensities with event thresholds | Static terrain generation only | Event system not yet implemented |
-| 7 | Stratification | Per-biome post-processing (mountain only) | Not yet implemented | Phase 4 |
-| 8 | Base terrain noise | Three sub-layers (continental/regional/micro) | Not yet implemented | Phase 2 — plate interiors are currently flat |
-
-### Phase 1 Tuning Parameter Values
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Plate grid cell size | 5,000 tiles | |
-| Max jitter fraction | 40% | |
-| Jitter noise scale | 1/50,000 | Very large scale, coherent over ~10 plate cells |
-| Drift regional scale | 1/25,000 | Coherent over ~5 plate cells |
-| Continental elevation | 400–1,200 | |
-| Oceanic elevation | 50–200 | |
-| Continental ratio | 60% (+ 15% bias in stable regions) | |
-| Convergent max distance | 2,500 tiles | Peak elevation +800 |
-| Divergent max distance | 1,000 tiles | Peak elevation -300 |
-| Transform max distance | 500 tiles | Noise amplitude ±40 |
-| Base blend width | 1,500 tiles | Ensures max gradient < 1/tile |
+| 3 | Feature placement | Grid-hashed feature seeds with distance-field envelopes | Not yet implemented | Phase 3 |
+| 4 | Biome system | Biome derived from tectonic context + feature influence | Not yet implemented | Phase 4 |
+| 5 | Dynamic tectonics | Evolving boundary intensities with event thresholds | Static terrain generation only | Event system not yet implemented |
+| 6 | Stratification | Per-biome post-processing (mountain only) | Not yet implemented | Phase 4 |
+| 7 | Base terrain noise | Two sub-layers (continental texture + micro-texture) | Not yet implemented | Phase 2 — plate interiors are currently flat |
 
 ## Implementation Gaps
 
-**Next (Phase 2)**: Base terrain noise layers (continental ~1/2,000 ±100, regional ~1/500 ±40, micro ~1/80 ±3)
+**Next (Phase 2)**: Base terrain noise layers (continental texture ~1/800 ±100, micro-texture ~1/30 ±3)
 
 **High (Phase 3)**: Feature placement grid and envelope evaluation, mountain feature type with ridge noise and peak geometry
 

@@ -235,6 +235,7 @@ struct ContinentalResult {
     plate: PlateInfo,
     neighbor: PlateInfo,
     dist_to_boundary: f64,
+    junction_factor: f64,
 }
 
 // ──── Continental Plates ────
@@ -305,22 +306,35 @@ fn continental_eval(q: i32, r: i32, seed: u64, noise: &Perlin) -> ContinentalRes
 
     let mut nearest = (f64::MAX, None::<PlateInfo>);
     let mut second = (f64::MAX, None::<PlateInfo>);
+    let mut third_dist = f64::MAX;
 
     for dq in -2..=2 {
         for dr in -2..=2 {
             let plate = continental_plate_for_cell(cell_q + dq, cell_r + dr, seed, noise);
             let d2 = hex_dist_sq(wq - plate.center_hex_q, wr - plate.center_hex_r);
             if d2 < nearest.0 {
+                third_dist = second.0;
                 second = nearest;
                 nearest = (d2, Some(plate));
             } else if d2 < second.0 {
+                third_dist = second.0;
                 second = (d2, Some(plate));
+            } else if d2 < third_dist {
+                third_dist = d2;
             }
         }
     }
 
     let plate = nearest.1.expect("continental eval must find nearest");
     let neighbor = second.1.expect("continental eval must find second-nearest");
+
+    // Triple-junction dampening: fade boundary contributions where three plates meet
+    let d2_sqrt = second.0.sqrt();
+    let junction_factor = if d2_sqrt > 1e-10 {
+        ((third_dist.sqrt() - d2_sqrt) / d2_sqrt).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
     let mid_x = (plate.center_x + neighbor.center_x) / 2.0;
     let mid_y = (plate.center_y + neighbor.center_y) / 2.0;
@@ -335,7 +349,7 @@ fn continental_eval(q: i32, r: i32, seed: u64, noise: &Perlin) -> ContinentalRes
         0.0
     };
 
-    ContinentalResult { plate, neighbor, dist_to_boundary }
+    ContinentalResult { plate, neighbor, dist_to_boundary, junction_factor }
 }
 
 /// Which continental plate does the given hex position belong to?
@@ -584,12 +598,12 @@ impl Terrain {
         let base = cont.plate.base_elevation * (1.0 - blend_t)
             + cont.neighbor.base_elevation * blend_t;
 
-        // Continental boundary contribution
+        // Continental boundary contribution (dampened at triple junctions)
         let (cont_kind, cont_intensity) = classify_boundary(&cont.plate, &cont.neighbor);
         let cont_elev = boundary_elevation(
             &cont_kind, BoundaryScale::Continental, cont_intensity, cont_dist_tiles,
             &self.noise, px, py,
-        );
+        ) * cont.junction_factor;
 
         // ── Step 2: Regional evaluation (scoped to continental plate) ──
         let cont_id = (cont.plate.cell_q, cont.plate.cell_r);
@@ -601,6 +615,7 @@ impl Terrain {
 
         let mut reg_nearest = (f64::MAX, None::<PlateInfo>);
         let mut reg_second = (f64::MAX, None::<PlateInfo>);
+        let mut reg_third_dist = f64::MAX;
 
         for dq in -4..=4 {
             for dr in -4..=4 {
@@ -619,26 +634,36 @@ impl Terrain {
 
                     let d2 = hex_dist_sq(rwq - plate.center_hex_q, rwr - plate.center_hex_r);
                     if d2 < reg_nearest.0 {
+                        reg_third_dist = reg_second.0;
                         reg_second = reg_nearest;
                         reg_nearest = (d2, Some(plate));
                     } else if d2 < reg_second.0 {
+                        reg_third_dist = reg_second.0;
                         reg_second = (d2, Some(plate));
+                    } else if d2 < reg_third_dist {
+                        reg_third_dist = d2;
                     }
                 }
             }
         }
 
-        // Regional boundary contribution (additive, fades near continental boundaries)
+        // Regional boundary contribution (dampened at triple junctions)
         let (regional_plate, regional_boundary, regional_elev) =
             match (reg_nearest.1, reg_second.1) {
                 (Some(plate), Some(neighbor)) => {
                     let dist = voronoi_boundary(&plate, &neighbor, reg_px, reg_py);
                     let dist_tiles = dist / HEX_SPACING;
                     let (kind, intensity) = classify_boundary(&plate, &neighbor);
+                    let d2_sqrt = reg_second.0.sqrt();
+                    let reg_junction = if d2_sqrt > 1e-10 {
+                        ((reg_third_dist.sqrt() - d2_sqrt) / d2_sqrt).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     let elev = boundary_elevation(
                         &kind, BoundaryScale::Regional, intensity, dist_tiles,
                         &self.noise, px, py,
-                    );
+                    ) * reg_junction;
                     (
                         Some(PlateId { cell_q: plate.cell_q, cell_r: plate.cell_r }),
                         Some(BoundaryInfo { kind, intensity, distance: dist_tiles }),
