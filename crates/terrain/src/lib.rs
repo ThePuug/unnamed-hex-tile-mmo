@@ -35,9 +35,6 @@ const OCEANIC_ELEV_MAX: f64 = 100.0;
 /// Target fraction of plates that are continental.
 const CONTINENTAL_RATIO: f64 = 0.6;
 
-/// Base elevation blend width across continental boundaries (tiles).
-const BASE_BLEND_TILES: f64 = 150.0;
-
 /// Domain warp: distort Voronoi input coordinates for organic boundaries.
 const CONT_WARP_AMPLITUDE: f64 = 300.0;
 const CONT_WARP_SCALE: f64 = 1.0 / 1_500.0;
@@ -72,6 +69,9 @@ const REG_TRANSFORM_MAX_DIST: f64 = 75.0;
 const REG_CONVERGENT_PEAK: f64 = 50.0;
 const REG_DIVERGENT_PEAK: f64 = -40.0;
 const REG_TRANSFORM_AMP: f64 = 7.5;
+
+/// How much transform boundaries close the base-elevation gap (0=none, 1=full).
+const TRANSFORM_GAP_FACTOR: f64 = 0.4;
 
 /// Per-tile boundary intensity modulation noise scales.
 /// Continental: ~4 cycles per boundary (~4,000 tile edges).
@@ -495,6 +495,9 @@ fn boundary_elevation(
     noise: &Perlin,
     px: f64,
     py: f64,
+    my_base: f64,
+    neighbor_base: f64,
+    junction_factor: f64,
 ) -> f64 {
     let (max_dist, peak_elev, transform_amp) = match (kind, scale) {
         (BoundaryKind::Convergent, BoundaryScale::Continental) => (CONT_CONVERGENT_MAX_DIST, CONT_CONVERGENT_PEAK, 0.0),
@@ -525,12 +528,24 @@ fn boundary_elevation(
     ]);
 
     match kind {
-        BoundaryKind::Convergent | BoundaryKind::Divergent => {
-            peak_elev * intensity * variation * falloff
+        BoundaryKind::Convergent => {
+            let uplift = peak_elev * intensity * variation * junction_factor;
+            let shared_peak = my_base.max(neighbor_base) + uplift;
+            let delta = shared_peak - my_base;
+            delta * falloff
+        }
+        BoundaryKind::Divergent => {
+            let depression = peak_elev.abs() * intensity * variation * junction_factor;
+            let shared_valley = my_base.min(neighbor_base) - depression;
+            let delta = shared_valley - my_base;
+            delta * falloff
         }
         BoundaryKind::Transform => {
+            let shared_mid = (my_base + neighbor_base) / 2.0;
+            let gap_closure = (shared_mid - my_base) * TRANSFORM_GAP_FACTOR;
             let n = noise.get([px * 0.025 + 7777.0, py * 0.025 + 8888.0]);
-            transform_amp * intensity * variation * falloff * n
+            let rugosity = transform_amp * intensity * variation * junction_factor * n;
+            (gap_closure + rugosity) * falloff
         }
     }
 }
@@ -589,21 +604,15 @@ impl Terrain {
         let cont = continental_eval(q, r, self.seed, &self.noise);
         let cont_dist_tiles = cont.dist_to_boundary / HEX_SPACING;
 
-        // Blend base elevation across continental boundaries
-        let blend_t = if cont_dist_tiles < BASE_BLEND_TILES {
-            0.5 * (1.0 - cont_dist_tiles / BASE_BLEND_TILES)
-        } else {
-            0.0
-        };
-        let base = cont.plate.base_elevation * (1.0 - blend_t)
-            + cont.neighbor.base_elevation * blend_t;
+        let base = cont.plate.base_elevation;
 
-        // Continental boundary contribution (dampened at triple junctions)
+        // Continental boundary contribution (gap-aware, dampened at triple junctions)
         let (cont_kind, cont_intensity) = classify_boundary(&cont.plate, &cont.neighbor);
         let cont_elev = boundary_elevation(
             &cont_kind, BoundaryScale::Continental, cont_intensity, cont_dist_tiles,
             &self.noise, px, py,
-        ) * cont.junction_factor;
+            cont.plate.base_elevation, cont.neighbor.base_elevation, cont.junction_factor,
+        );
 
         // ── Step 2: Regional evaluation (scoped to continental plate) ──
         let cont_id = (cont.plate.cell_q, cont.plate.cell_r);
@@ -663,7 +672,8 @@ impl Terrain {
                     let elev = boundary_elevation(
                         &kind, BoundaryScale::Regional, intensity, dist_tiles,
                         &self.noise, px, py,
-                    ) * reg_junction;
+                        plate.base_elevation, neighbor.base_elevation, reg_junction,
+                    );
                     (
                         Some(PlateId { cell_q: plate.cell_q, cell_r: plate.cell_r }),
                         Some(BoundaryInfo { kind, intensity, distance: dist_tiles }),
@@ -790,7 +800,7 @@ mod tests {
         };
         let (kind, intensity) = classify_boundary(&a, &b);
         assert_eq!(kind, BoundaryKind::Convergent);
-        let elev = boundary_elevation(&kind, BoundaryScale::Continental, intensity, 0.0, &Perlin::new(0), 50.0, 0.0);
+        let elev = boundary_elevation(&kind, BoundaryScale::Continental, intensity, 0.0, &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0);
         assert!(elev > 0.0, "Convergent should add elevation, got {elev}");
     }
 
@@ -808,7 +818,7 @@ mod tests {
         };
         let (kind, _) = classify_boundary(&a, &b);
         assert_eq!(kind, BoundaryKind::Divergent);
-        let elev = boundary_elevation(&kind, BoundaryScale::Continental, 1.0, 0.0, &Perlin::new(0), 50.0, 0.0);
+        let elev = boundary_elevation(&kind, BoundaryScale::Continental, 1.0, 0.0, &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0);
         assert!(elev < 0.0, "Divergent should subtract elevation, got {elev}");
     }
 
@@ -818,7 +828,7 @@ mod tests {
         let elev = boundary_elevation(
             &BoundaryKind::Convergent, BoundaryScale::Continental, 1.0,
             CONT_CONVERGENT_MAX_DIST,
-            &noise, 0.0, 0.0,
+            &noise, 0.0, 0.0, 500.0, 500.0, 1.0,
         );
         assert_eq!(elev, 0.0);
     }
