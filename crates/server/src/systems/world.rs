@@ -88,7 +88,7 @@ pub fn setup(
 
     // ADR-014: Static spawners disabled in favor of dynamic engagement system
     // ADR-009: Amp up combat - spawn Wild Dog spawners for isolated encounters
-    // Player spawns at Qrz { q: 0, r: 0, z: 4 }
+    // Player spawns at origin (0,0) with terrain-aware height (see SpawnPoint resource)
     // Place spawners 30+ hexes away on hex plane (q,r), at actual terrain elevation
     // Spread in different hex directions for isolated 1v1 encounters
     // let spawner_hex_positions = vec![

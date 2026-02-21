@@ -6,6 +6,8 @@ members = [
     "crates/server",
     "crates/qrz",
     "crates/console",
+    "crates/terrain",
+    "crates/terrain-viewer",
 ]
 
 [profile.dev]

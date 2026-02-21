@@ -120,14 +120,12 @@ pub fn process_respawn(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
+    spawn_point: Res<SpawnPoint>,
     mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::components::behaviour::PlayerControlled>)>,
 ) {
-    use qrz::Qrz;
-
     for (ent, timer, mut health, mut stamina, mut mana, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
-            // Teleport to origin
-            let spawn_qrz = Qrz { q: 0, r: 0, z: 4 };
+            let spawn_qrz = spawn_point.0;
             *loc = Loc::new(spawn_qrz);
 
             // Reset position to snap to new location

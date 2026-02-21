@@ -112,9 +112,7 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
                 (qrz, typ)
             } else {
                 // Generate new procedural tile with actual terrain height
-                // Use .xz() to get horizontal world coordinates (x=left-right, z=forward-back)
-                let px = map.convert(qrz_base).xz();
-                let z = terrain.get(px.x, px.y);
+                let z = terrain.get(qrz_base.q, qrz_base.r);
                 let qrz = Qrz { q: qrz_base.q, r: qrz_base.r, z };
                 let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
                 (qrz, typ)
@@ -200,9 +198,7 @@ pub fn try_discover(
             if let Some((qrz, typ)) = map.find(qrz + Qrz{q:0,r:0,z:30}, -60) {
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             } else {
-                // Use .xz() to get horizontal world coordinates (x=left-right, z=forward-back)
-                let px = map.convert(qrz).xz();
-                let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(px.x, px.y)};
+                let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(qrz.q, qrz.r)};
                 let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
                 map.insert(qrz, typ);
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });

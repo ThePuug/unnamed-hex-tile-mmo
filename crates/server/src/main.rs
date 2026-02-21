@@ -153,7 +153,10 @@ fn main() {
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
-    app.init_resource::<Terrain>();
+    let terrain = Terrain::default();
+    let spawn_z = terrain.get(0, 0) + 1;
+    app.insert_resource(common::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
+    app.insert_resource(terrain);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone

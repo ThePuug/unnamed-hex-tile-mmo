@@ -20,3 +20,6 @@ tinyvec = { version = "1", features = ["serde"] }
 
 [dependencies.qrz]
 path = "../qrz"
+
+[dependencies.terrain]
+path = "../terrain"

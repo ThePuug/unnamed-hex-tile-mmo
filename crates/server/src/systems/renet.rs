@@ -55,6 +55,7 @@ pub fn do_manage_connections(
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     runtime: Res<RunTime>,
+    spawn_point: Res<common::components::resources::SpawnPoint>,
 ) {
     {
         let event = &trigger.event().0;
@@ -66,7 +67,7 @@ pub fn do_manage_connections(
                     Approach::Direct,
                     Resilience::Vital,
                     ActorIdentity::Player));
-                let qrz = Qrz { q: 0, r: 0, z: 4 };
+                let qrz = spawn_point.0;
                 let loc = Loc::new(qrz);
                 let attrs = ActorAttributes::new(
                     -3, 4, 0,

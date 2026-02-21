@@ -107,8 +107,12 @@ impl Default for CombatState {
     }
 }
 
+/// The location players respawn at after death.
+/// Initialized by the server with terrain-aware height.
+#[derive(Clone, Copy, Debug, Resource)]
+pub struct SpawnPoint(pub qrz::Qrz);
+
 /// Respawn timer for dead players
-/// Tracks time until respawn at origin (0,0,4)
 #[derive(Clone, Component, Copy, Debug)]
 pub struct RespawnTimer {
     /// Time when death occurred

@@ -4,7 +4,7 @@
 //! Replaces static spawners with exploration-driven content discovery.
 
 use bevy::prelude::*;
-use qrz::{Convert, Qrz};
+use qrz::Qrz;
 use rand::Rng;
 
 use common::{
@@ -153,11 +153,10 @@ fn spawn_engagement_at(
     budget: &mut EngagementBudget,
     time: &Time,
     terrain: &crate::resources::terrain::Terrain,
-    map: &crate::Map,
+    _map: &crate::Map,
 ) {
     // Calculate terrain height at spawn location (spawn on top of terrain, not in it)
-    let px = map.convert(location).xz();
-    let terrain_z = terrain.get(px.x, px.y);
+    let terrain_z = terrain.get(location.q, location.r);
     let location = Qrz { q: location.q, r: location.r, z: terrain_z + 1 };
 
     // Calculate level from distance to haven
@@ -197,8 +196,7 @@ fn spawn_engagement_at(
         let npc_location_base = location + offset;
 
         // Calculate terrain height at NPC location (spawn on top of terrain, not in it)
-        let npc_px = map.convert(npc_location_base).xz();
-        let npc_z = terrain.get(npc_px.x, npc_px.y);
+        let npc_z = terrain.get(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
 
         // Create NPC ActorImpl with triumvirate based on archetype (ADR-014)
