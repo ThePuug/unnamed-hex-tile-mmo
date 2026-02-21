@@ -67,7 +67,7 @@ pub fn do_incremental(
 
                 if is_local {
                     // Teleport detection: Check if this Loc update is a smooth tile crossing or a teleport.
-                    const TELEPORT_THRESHOLD_HEXES: i16 = 2;
+                    const TELEPORT_THRESHOLD_HEXES: i32 = 2;
                     let hex_distance = loc0.flat_distance(&loc);
 
                     if hex_distance >= TELEPORT_THRESHOLD_HEXES {
@@ -301,7 +301,7 @@ mod tests {
         let old_offset = Vec3::new(0.5, 1.0, 0.3);
 
         // Teleport detection (from do_incremental line 82-87)
-        const TELEPORT_THRESHOLD_HEXES: i16 = 2;
+        const TELEPORT_THRESHOLD_HEXES: i32 = 2;
         let hex_distance = old_loc.flat_distance(&new_loc);
 
         let new_offset = if hex_distance >= TELEPORT_THRESHOLD_HEXES {

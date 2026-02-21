@@ -53,7 +53,7 @@ pub const MOVEMENT_SPEED: f32 = 0.005;
 pub const FLOOR_SEARCH_RANGE_DOWN: i8 = -60;
 
 /// Vertical search offset for floor detection (upward)
-pub const FLOOR_SEARCH_OFFSET_UP: i16 = 30;
+pub const FLOOR_SEARCH_OFFSET_UP: i32 = 30;
 
 /// Terrain slope following speed (0.0 = no following, 1.0 = instant)
 pub const SLOPE_FOLLOW_SPEED: f32 = 0.95;

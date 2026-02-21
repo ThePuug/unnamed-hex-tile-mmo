@@ -77,9 +77,9 @@ pub const DIRECTIONS: [Qrz; 6] = [
 /// ```
 #[derive(Clone, Copy, Debug, Default, Deserialize, Hash, Serialize)]
 pub struct Qrz {
-    pub q: i16,
-    pub r: i16,
-    pub z: i16,
+    pub q: i32,
+    pub r: i32,
+    pub z: i32,
 }
 
 impl Ord for Qrz {
@@ -105,7 +105,7 @@ impl Qrz {
     pub const R: Qrz = Qrz{q:0,r:1,z:0};
     pub const Z: Qrz = Qrz{q:0,r:0,z:1};
 
-    pub fn flat_distance(&self, other: &Qrz) -> i16 {
+    pub fn flat_distance(&self, other: &Qrz) -> i32 {
         *[
             (self.q - other.q).abs(),
             (self.r - other.r).abs(),
@@ -121,16 +121,16 @@ impl Qrz {
             z: 0 } 
     }
 
-    pub fn distance(&self, other: &Qrz) -> i16 {
+    pub fn distance(&self, other: &Qrz) -> i32 {
         self.flat_distance(other) + (self.z-other.z).abs()
     }
 
 
     pub fn arc(&self, dir: &Qrz, radius: u8) -> Vec<Qrz> {
-        let start = *dir * radius as i16;
+        let start = *dir * radius as i32;
         let idx = DIRECTIONS.iter().position(|i| { *i == *dir}).unwrap();
-        (1..=radius).map(|i| start + DIRECTIONS[(idx + 2) % 6] * i as i16).chain(
-        (0..=radius).map(|i| start + DIRECTIONS[(idx + 4) % 6] * i as i16))
+        (1..=radius).map(|i| start + DIRECTIONS[(idx + 2) % 6] * i as i32).chain(
+        (0..=radius).map(|i| start + DIRECTIONS[(idx + 4) % 6] * i as i32))
             .map(|i| *self + i)
             .collect()
     }
@@ -150,18 +150,18 @@ impl Qrz {
         ]
     }
 
-    pub fn into_doublewidth(&self) -> (i32,i32,i32) {
+    pub fn into_doublewidth(&self) -> (i64,i64,i32) {
         (
-            2 * self.q as i32 + self.r as i32,
-            self.r as i32,
-            self.z as i32
+            2 * self.q as i64 + self.r as i64,
+            self.r as i64,
+            self.z
         )
     }
 }
 
-impl Mul<i16> for Qrz {
+impl Mul<i32> for Qrz {
     type Output = Qrz;
-    fn mul(self, rhs: i16) -> Self::Output {
+    fn mul(self, rhs: i32) -> Self::Output {
         Qrz { q: self.q * rhs, r: self.r * rhs, z: self.z * rhs }
     }
 }
@@ -193,7 +193,7 @@ pub fn round(q0: f64, r0: f64, z0: f64) -> Qrz {
     if q_diff > r_diff && q_diff > s_diff { q = -r-s; }
     else if r_diff > s_diff { r = -q-s; }
 
-    Qrz { q: q as i16, r: r as i16, z: z0.round() as i16 }
+    Qrz { q: q as i32, r: r as i32, z: z0.round() as i32 }
 }
 
 #[cfg(test)]

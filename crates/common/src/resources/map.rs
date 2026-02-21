@@ -161,7 +161,7 @@ impl Map {
 
     /// Calculate height-based color tint for a given elevation.
     /// Pure computation - no lock needed.
-    fn height_color_tint(elevation: i16) -> [f32; 4] {
+    fn height_color_tint(elevation: i32) -> [f32; 4] {
         // Base grass color (dark greenish)
         let base_color = [0.04, 0.09, 0.04];
 

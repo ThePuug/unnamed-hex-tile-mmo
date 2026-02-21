@@ -12,7 +12,7 @@ use common::{
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Knockback {
     pub destination: Qrz,
-    pub remaining_tiles: i16,
+    pub remaining_tiles: i32,
 }
 
 /// Tick stagger timers and remove expired ones.

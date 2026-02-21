@@ -9,14 +9,14 @@ use std::num::NonZeroUsize;
 use crate::components::entity_type::*;
 
 /// Chunk size in tiles (16x16 = 256 tiles per chunk)
-pub const CHUNK_SIZE: i16 = 16;
+pub const CHUNK_SIZE: i32 = 16;
 
 /// Field of view distance in chunks (expanded to prevent visible chunk edges when zoomed out)
 pub const FOV_CHUNK_RADIUS: u8 = 5;
 
 /// Chunk identifier in chunk-coordinate space
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub struct ChunkId(pub i16, pub i16);
+pub struct ChunkId(pub i32, pub i32);
 
 impl ChunkId {
     /// Get the center tile of this chunk (for spawning engagements)
@@ -93,8 +93,8 @@ pub fn loc_to_chunk(loc: Qrz) -> ChunkId {
 /// Convert a chunk ID and offset within the chunk to a tile Qrz
 /// offset_q and offset_r must be in range [0, CHUNK_SIZE)
 pub fn chunk_to_tile(chunk_id: ChunkId, offset_q: u8, offset_r: u8) -> Qrz {
-    let tile_q = chunk_id.0 * CHUNK_SIZE + offset_q as i16;
-    let tile_r = chunk_id.1 * CHUNK_SIZE + offset_r as i16;
+    let tile_q = chunk_id.0 * CHUNK_SIZE + offset_q as i32;
+    let tile_r = chunk_id.1 * CHUNK_SIZE + offset_r as i32;
     Qrz { q: tile_q, r: tile_r, z: 0 }
 }
 
@@ -102,7 +102,7 @@ pub fn chunk_to_tile(chunk_id: ChunkId, offset_q: u8, offset_r: u8) -> Qrz {
 /// For FOV distance 10, we use chunk radius 2
 pub fn calculate_visible_chunks(center: ChunkId, radius: u8) -> Vec<ChunkId> {
     let mut visible = Vec::new();
-    let r = radius as i16;
+    let r = radius as i32;
 
     // Generate a square of chunks around the center
     // This is a conservative approximation of the circular FOV

@@ -6,12 +6,12 @@ use common::components::Loc;
 #[derive(Component, Clone, Copy, Debug)]
 pub struct TargetLock {
     pub locked_target: Entity,
-    pub max_chase_distance: i16,    // Leash distance (0 = infinite)
+    pub max_chase_distance: i32,    // Leash distance (0 = infinite)
     pub origin: Loc,                // Where the NPC was when lock was created (leash anchor point)
 }
 
 impl TargetLock {
-    pub fn new(target: Entity, leash: i16, origin: Loc) -> Self {
+    pub fn new(target: Entity, leash: i32, origin: Loc) -> Self {
         Self {
             locked_target: target,
             max_chase_distance: leash,

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub struct Loc(Qrz);
 
 impl Loc {
-    pub fn from_qrz(q: i16, r: i16, z: i16) -> Self {
+    pub fn from_qrz(q: i32, r: i32, z: i32) -> Self {
         Loc(Qrz { q, r, z })
     }
 
@@ -39,7 +39,7 @@ impl Loc {
     /// Combat distance accounting for elevation.
     /// Single z-level differences are slopes (free), 2+ z-levels are cliffs
     /// that add their excess height to the distance.
-    pub fn distance(&self, other: &Loc) -> i16 {
+    pub fn distance(&self, other: &Loc) -> i32 {
         let z_diff = (self.z - other.z).abs();
         self.flat_distance(other) + (z_diff - 1).max(0)
     }
@@ -913,7 +913,7 @@ pub struct LastAutoAttack {
 /// Auto-attack range in hex tiles. Default is 1 (melee).
 /// Eventually sourced from equipped weapon; for now set per-archetype at spawn.
 #[derive(Clone, Component, Copy, Debug)]
-pub struct AttackRange(pub i16);
+pub struct AttackRange(pub i32);
 
 impl Default for LastAutoAttack {
     fn default() -> Self {

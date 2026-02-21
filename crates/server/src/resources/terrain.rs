@@ -16,7 +16,7 @@ const MOUNTAIN_MEDIUM_SCALE: f64 = 1. / 65.;
 const MOUNTAIN_DETAIL_SCALE: f64 = 1. / 20.;
 
 impl Terrain {
-    pub fn get(&self, x: f32, y: f32) -> i16 {
+    pub fn get(&self, x: f32, y: f32) -> i32 {
         let x = x as f64;
         let y = y as f64;
         
@@ -80,14 +80,14 @@ impl Terrain {
             // Blend based on local slope
             let blended = smooth + (stratified - smooth) * stratification_factor;
             
-            blended as i16
+            blended as i32
         } else {
             // Flat/gentle regions: NO stratification, natural slopes with z changes of 1
             let flat_detail = self.generator.get([x * (BASE_SCALE * 1.5) + 5000., y * (BASE_SCALE * 1.5) + 5000.]) * 3.0;
             let combined = base + flat_detail;
             
             // Round to nearest integer for natural z=1 slopes
-            combined.round() as i16
+            combined.round() as i32
         }
     }
 }

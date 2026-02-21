@@ -86,12 +86,11 @@ impl PointDistance for NearestNeighbor {
     ) -> <<Self::Envelope as rstar::Envelope>::Point as rstar::Point>::Scalar {
         let self_s = -self.loc.q-self.loc.r;
         let point_s = -point.q-point.r;
-        // Calculate distance using i32 to prevent overflow
         let dist = [
-            (self.loc.q - point.q).abs() as i32,
-            (self.loc.r - point.r).abs() as i32,
-            (self_s - point_s).abs() as i32
-        ].iter().max().unwrap() + (self.loc.z - point.z).abs() as i32;
+            (self.loc.q - point.q).abs(),
+            (self.loc.r - point.r).abs(),
+            (self_s - point_s).abs()
+        ].iter().max().unwrap() + (self.loc.z - point.z).abs();
         dist * dist
     }
 }
@@ -103,14 +102,14 @@ impl Point for Loc {
     const DIMENSIONS: usize = 3;
 
     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-        Loc::from_qrz(generator(0) as i16, generator(1) as i16, generator(2) as i16)
+        Loc::from_qrz(generator(0), generator(1), generator(2))
     }
 
     fn nth(&self, index: usize) -> Self::Scalar {
         match index {
-            0 => self.q as i32,
-            1 => self.r as i32,
-            2 => self.z as i32,
+            0 => self.q,
+            1 => self.r,
+            2 => self.z,
             _ => unreachable!(),
         }
     }

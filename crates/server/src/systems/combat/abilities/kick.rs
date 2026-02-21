@@ -16,9 +16,9 @@ use qrz::Qrz;
 fn calculate_knockback_destination(
     source_loc: Qrz,
     direction: Qrz,
-    distance: i16,
+    distance: i32,
     map: &Map,
-) -> (Qrz, i16) {
+) -> (Qrz, i32) {
     // Find floor tile under source (source_loc may be standing height = floor + Z)
     let Some((floor, _)) = map.find(source_loc, -60) else {
         return (source_loc, 0);
@@ -35,7 +35,7 @@ fn calculate_knockback_destination(
     if path.is_empty() {
         (floor, 0)
     } else {
-        (*path.last().unwrap(), path.len() as i16)
+        (*path.last().unwrap(), path.len() as i32)
     }
 }
 

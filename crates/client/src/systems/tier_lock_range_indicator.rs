@@ -124,7 +124,7 @@ pub fn update(
     let mut tiles_in_range = Vec::new();
 
     // Search in a square bounding box (max_dist * 2 + 1) around player
-    let search_radius = max_dist as i16;
+    let search_radius = max_dist as i32;
     for dq in -search_radius..=search_radius {
         for dr in -search_radius..=search_radius {
             let tile_qrz = Qrz {

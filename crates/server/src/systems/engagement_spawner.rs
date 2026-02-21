@@ -126,7 +126,7 @@ fn try_spawn_engagement_at_chunk(
         }
 
         let distance = chunk_center.flat_distance(&**player_loc);
-        if distance < MIN_DISTANCE_FROM_PLAYER as i16 {
+        if distance < MIN_DISTANCE_FROM_PLAYER as i32 {
             return; // Too close to a player
         }
     }
@@ -134,7 +134,7 @@ fn try_spawn_engagement_at_chunk(
     // Stage 4: Engagement proximity check (min 50 tiles from other engagements)
     for engagement_loc in engagement_query.iter() {
         let distance = chunk_center.flat_distance(&**engagement_loc);
-        if distance < MIN_DISTANCE_FROM_ENGAGEMENT as i16 {
+        if distance < MIN_DISTANCE_FROM_ENGAGEMENT as i32 {
             return; // Too close to another engagement
         }
     }

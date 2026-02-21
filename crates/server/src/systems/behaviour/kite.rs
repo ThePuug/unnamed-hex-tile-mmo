@@ -86,15 +86,15 @@ fn score_neighbor(
     neighbor: &Qrz,
     player: &Qrz,
     spawn: &Qrz,
-    optimal_mid: i16,
-    leash_distance: i16,
+    optimal_mid: i32,
+    leash_distance: i32,
 ) -> i32 {
-    let dist_to_player = neighbor.flat_distance(player) as i32;
-    let dist_to_spawn = neighbor.flat_distance(spawn) as i32;
-    let leash = leash_distance as i32;
+    let dist_to_player = neighbor.flat_distance(player);
+    let dist_to_spawn = neighbor.flat_distance(spawn);
+    let leash = leash_distance;
 
     // Prefer being at optimal distance from player (weight: 3)
-    let range_score = -(dist_to_player - optimal_mid as i32).abs() * 3;
+    let range_score = -(dist_to_player - optimal_mid).abs() * 3;
 
     // Prefer being closer to spawn, with increasing urgency near leash boundary
     // Weight ramps from 1 (at spawn) to 3 (at leash distance)
@@ -121,10 +121,10 @@ fn score_neighbor(
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Kite {
     pub acquisition_range: u32,      // How far to search for targets (e.g., 15 hexes)
-    pub leash_distance: i16,         // Max chase distance from spawn (e.g., 30 hexes)
-    pub optimal_distance_min: i16,   // Min optimal attack range (e.g., 5 hexes)
-    pub optimal_distance_max: i16,   // Max optimal attack range (e.g., 8 hexes)
-    pub disengage_distance: i16,     // Flee threshold when target too close (e.g., 3 hexes)
+    pub leash_distance: i32,         // Max chase distance from spawn (e.g., 30 hexes)
+    pub optimal_distance_min: i32,   // Min optimal attack range (e.g., 5 hexes)
+    pub optimal_distance_max: i32,   // Max optimal attack range (e.g., 8 hexes)
+    pub disengage_distance: i32,     // Flee threshold when target too close (e.g., 3 hexes)
 }
 
 impl Kite {
@@ -140,7 +140,7 @@ impl Kite {
     }
 
     /// Determine what action the kiter should take based on distance to target
-    pub fn determine_action(&self, distance_to_target: i16) -> KiteAction {
+    pub fn determine_action(&self, distance_to_target: i32) -> KiteAction {
         if distance_to_target < self.disengage_distance {
             KiteAction::Flee
         } else if distance_to_target < self.optimal_distance_min {

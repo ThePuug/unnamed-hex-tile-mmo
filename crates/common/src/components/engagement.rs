@@ -20,8 +20,8 @@ impl ZoneId {
     /// Calculate zone ID from position (240-tile zones)
     pub fn from_position(pos: Qrz) -> Self {
         ZoneId(
-            pos.q as i32 / Self::ZONE_RADIUS,
-            pos.r as i32 / Self::ZONE_RADIUS,
+            pos.q / Self::ZONE_RADIUS,
+            pos.r / Self::ZONE_RADIUS,
         )
     }
 }

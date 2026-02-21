@@ -23,7 +23,7 @@ const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Must exceed the minimum client eviction distance to prevent ghost NPCs.
 /// With FOV_CHUNK_RADIUS=5 and CHUNK_SIZE=16, eviction distance is ~104 tiles.
 /// Set to 120 to exceed AOI EXIT_RADIUS (112) with safety margin.
-const PROXIMITY_RANGE: i16 = 120;
+const PROXIMITY_RANGE: i32 = 120;
 
 /// System that cleans up completed or abandoned engagements
 ///
@@ -64,7 +64,7 @@ pub fn cleanup_engagements(
                     .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
                     .map(|(player_loc, _)| engagement_loc.flat_distance(&**player_loc))
                     .min()
-                    .unwrap_or(i16::MAX);
+                    .unwrap_or(i32::MAX);
 
                 let any_player_nearby = closest_player_dist < PROXIMITY_RANGE;
 
@@ -149,10 +149,10 @@ mod tests {
         //
         // Client keeps chunks in square of radius (FOV_CHUNK_RADIUS + 1)
         // Minimum eviction occurs when player moves to chunk just outside this square.
-        let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i16;
+        let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i32;
 
         // Test all edges of the eviction boundary (just outside the square)
-        let mut min_eviction_distance = i16::MAX;
+        let mut min_eviction_distance = i32::MAX;
 
         // Test chunks just outside each edge of the square
         for dq in -(eviction_radius + 1)..=(eviction_radius + 1) {
@@ -216,9 +216,9 @@ mod tests {
         // Calculate minimum eviction distance (from previous test logic)
         let engagement_chunk = ChunkId(0, 0);
         let engagement_loc = Loc::new(engagement_chunk.center());
-        let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i16;
+        let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i32;
 
-        let mut min_eviction_distance = i16::MAX;
+        let mut min_eviction_distance = i32::MAX;
         for dq in -(eviction_radius + 1)..=(eviction_radius + 1) {
             for dr in -(eviction_radius + 1)..=(eviction_radius + 1) {
                 if dq.abs() <= eviction_radius && dr.abs() <= eviction_radius {

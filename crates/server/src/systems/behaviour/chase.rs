@@ -91,8 +91,8 @@ fn broadcast_intent(
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Chase {
     pub acquisition_range: u32,  // How far to search for targets
-    pub leash_distance: i16,     // Max chase distance (0 = infinite)
-    pub attack_range: i16,       // Distance to engage (typically 1 for melee)
+    pub leash_distance: i32,     // Max chase distance (0 = infinite)
+    pub attack_range: i32,       // Distance to engage (typically 1 for melee)
 }
 
 pub fn chase(

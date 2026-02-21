@@ -103,7 +103,7 @@ where T : Copy {
 
     pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, T)> {
         for i in 0..=dist.abs() {
-            let z = if dist < 0 { -i as i16 } else { i as i16 };
+            let z = if dist < 0 { -i as i32 } else { i as i32 };
             let qrz = qrz + Qrz { q: 0, r: 0, z };
             if let Some(obj) = self.get(qrz) { return Some((qrz, *obj)); }
         }
@@ -405,7 +405,7 @@ mod tests {
 
         // Line length should be approximately distance + 1
         assert!(
-            line.len() as i16 >= distance,
+            line.len() as i32 >= distance,
             "Line should have at least {} tiles, got {}",
             distance, line.len()
         );
