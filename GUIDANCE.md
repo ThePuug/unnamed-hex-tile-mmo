@@ -38,13 +38,21 @@ Client-server MMO built with Bevy ECS:
 
 ## Chunk-Based Terrain System
 
-**Constants:** `CHUNK_SIZE=8` (64 tiles), `FOV_CHUNK_RADIUS=2` (25 visible chunks)
+**Constants:** `CHUNK_SIZE=16` (256 tiles), `FOV_CHUNK_RADIUS=5` (base visible radius / LoD boundary), `MAX_TERRAIN_CHUNK_RADIUS=12`
 
-**Server:** Discovers chunks in FOV when player moves. Mirrors client eviction (`FOV_CHUNK_RADIUS + 1`) to know when to re-send chunks. No network messages for eviction - inferred from position.
+**Adaptive loading:** `visibility_radius(player_z, ground_z, half_viewport)` computes per-chunk visibility using orthographic ray-ground intersection. Chunks below the player extend further; chunks at or above player elevation stay at base radius. Discovery shape is asymmetric — extends toward valleys, tight toward ridges.
 
-**Client:** Evicts chunks outside `FOV_CHUNK_RADIUS + 1` every 5 seconds (max 49 chunks = 3,136 tiles). Receives `Event::ChunkData` (64 tiles) unpacked to individual spawns.
+**Two-ring LoD (ADR-032):** Chunks split into inner ring (≤ `FOV_CHUNK_RADIUS`, full 64-tile detail) and outer ring (beyond, summary hexes only). `calculate_visible_chunks_adaptive` returns `(inner, outer)`. Inner ring tiles go in the Map; outer ring summaries go in `ChunkSummaries` resource. Physics/movement/pathfinding ONLY read the Map — never summaries.
 
-**Critical Invariant:** Server and client eviction logic MUST match exactly (both use `FOV_CHUNK_RADIUS + 1`).
+**ChunkSummary:** ~12 bytes per chunk (chunk_id, average elevation, dominant biome). Server sends `Event::ChunkSummary` for outer ring, `Event::ChunkData` for inner ring. Ring transitions: inner↔outer sends the appropriate message type; chunk is never absent from both.
+
+**Summary mesh:** 7-vertex hex — center at chunk average elevation, 6 corners averaged across 3 neighboring chunks. Deferred if neighbor summaries missing. Produces continuous terrain silhouette at distance.
+
+**Server:** `VisibleChunkCache` component caches inner/outer ring sets plus eviction mirrors, recomputed on chunk boundary crossings using `chunk_max_z` (conservative). `do_incremental` handles four transition types: enter inner, enter outer, inner↔outer upgrade/downgrade, leave outer. Mirrors client per-chunk eviction logic via `compute_eviction_set`.
+
+**Client:** `evict_distant_chunks` (5s timer) runs two passes: (1) full-detail chunks beyond `FOV_CHUNK_RADIUS + 1` evicted from Map, (2) summary chunks beyond per-chunk `visibility_radius + 1` evicted from `ChunkSummaries`.
+
+**Critical Invariant:** Server and client eviction logic MUST match — both use per-chunk `visibility_radius + 1`. Server uses `chunk_max_z` (superset guarantee). Ring separation: summaries are rendering-only, never gameplay data.
 
 ---
 

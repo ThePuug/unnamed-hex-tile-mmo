@@ -301,6 +301,15 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
+            Do { event: Event::ChunkSummary { ent, chunk_id, elevation, biome } } => {
+                // Send chunk summary directly to the specific player
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let message = bincode::serde::encode_to_vec(
+                        Do { event: Event::ChunkSummary { ent, chunk_id, elevation, biome }},
+                        bincode::config::legacy()).unwrap();
+                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+            }
             Do { event: Event::InsertThreat { ent, threat } } => {
                 // Send to owning client (player receiving threat needs to see it)
                 if let Some(client_id) = lobby.get_by_right(&ent) {

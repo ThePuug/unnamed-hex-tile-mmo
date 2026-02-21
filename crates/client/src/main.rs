@@ -176,6 +176,7 @@ fn main() {
         world::do_spawn,
         world::spawn_missing_chunk_meshes.run_if(on_timer(Duration::from_millis(100))), // Check for chunks needing meshes every 100ms
         world::poll_chunk_mesh_tasks, // Poll async chunk mesh tasks
+        world::spawn_summary_meshes, // Spawn/despawn summary LoD meshes (outer ring)
         world::update,
     ));
 
@@ -192,6 +193,7 @@ fn main() {
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
+    app.init_resource::<crate::resources::ChunkSummaries>();
     app.init_resource::<crate::resources::PendingChunkMeshes>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
 

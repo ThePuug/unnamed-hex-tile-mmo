@@ -147,6 +147,7 @@ pub struct TerrainChunk {
 - Adds significant protocol complexity
 - Premature optimization
 - Deferred to future ADR if needed
+- **Update (2026-02):** Revisited in [ADR-032](032-two-ring-lod-chunk-loading.md) as two-ring LoD — inner ring full-detail, outer ring summary hexes. Not variable chunk sizes but variable detail per chunk, keeping the 16×16 chunk as the spatial unit.
 
 **No chunking (optimize tile-level):**
 - Doesn't address fundamental hub clustering problem
@@ -163,6 +164,7 @@ pub struct TerrainChunk {
 
 ## Related ADRs
 
+- [ADR-032](032-two-ring-lod-chunk-loading.md) — Two-ring LoD chunk loading (inner full-detail, outer summary hexes)
 - (Future) ADR on persistent world state (chunk serialization to disk)
 - (Future) ADR on protocol versioning and migration
 

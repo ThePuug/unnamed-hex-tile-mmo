@@ -14,6 +14,73 @@ pub const CHUNK_SIZE: i32 = 16;
 /// Field of view distance in chunks (expanded to prevent visible chunk edges when zoomed out)
 pub const FOV_CHUNK_RADIUS: u8 = 5;
 
+/// Absolute cap on elevation-adaptive chunk radius
+pub const MAX_TERRAIN_CHUNK_RADIUS: u8 = 12;
+
+/// Compute the chunk distance at which terrain at `ground_z` is visible from
+/// a player at `player_z`, using orthographic ray-ground intersection.
+///
+/// Uses worst-case camera geometry (21:9 aspect). When `ground_z >= player_z`,
+/// returns `FOV_CHUNK_RADIUS` (nearby terrain always within base radius).
+///
+/// `half_viewport` is the orthographic half-height in world units
+/// (e.g. 40.0 for normal gameplay at max zoom, 20.0 × scale for flyover).
+pub fn visibility_radius(player_z: i32, ground_z: i32, half_viewport: f32) -> u8 {
+    // Ground at or above player fills the viewport at base radius
+    if ground_z >= player_z {
+        return FOV_CHUNK_RADIUS;
+    }
+
+    // Camera geometry (matches camera.rs constants)
+    let camera_d: f32 = 40.0; // CAMERA_DISTANCE
+    let camera_h: f32 = 30.0; // CAMERA_HEIGHT
+    let look_r: f32 = 1.0;    // look target offset
+    let arm = ((camera_h - look_r).powi(2) + camera_d.powi(2)).sqrt(); // ≈49.41
+
+    // Camera basis vectors (orbit angle 0, worst case)
+    let up_y = camera_d / arm;              // 0.8098
+    let up_z = (camera_h - look_r) / arm;   // 0.5871
+    let fwd_y = up_z;                       // 0.5871
+    let fwd_z = up_y;                       // 0.8098
+
+    // World elevations (terrain z → world y via 0.8 hex rise)
+    let player_y = player_z as f32 * 0.8;
+    let ground_y = ground_z as f32 * 0.8;
+
+    // Top-center viewport ray origin
+    let origin_y = player_y + camera_h + half_viewport * up_y;
+
+    // Time for ray to descend to ground plane
+    let t = (origin_y - ground_y) / fwd_y;
+
+    // Forward ground distance from player
+    let forward = t * fwd_z - (camera_d - half_viewport * up_z);
+
+    // Worst-case lateral extent (21:9 aspect ratio)
+    let lateral = half_viewport * (21.0 / 9.0);
+
+    let max_dist = (forward * forward + lateral * lateral).sqrt();
+    let chunk_extent = CHUNK_SIZE as f32 * 1.5;
+    let needed = (max_dist / chunk_extent).ceil().min(255.0) as u8;
+
+    needed.max(FOV_CHUNK_RADIUS)
+}
+
+/// Raw (uncapped) chunk radius needed at a given terrain height.
+///
+/// Equivalent to `visibility_radius(player_z, 0, 40.0)` — worst case
+/// (sea-level ground, max zoom-out, 21:9 aspect).
+pub fn elevation_chunk_radius_raw(player_z: i32) -> u8 {
+    visibility_radius(player_z, 0, 40.0)
+}
+
+/// Compute the chunk loading radius for normal gameplay at a given terrain height.
+///
+/// Capped at `MAX_TERRAIN_CHUNK_RADIUS` to bound server/client load.
+pub fn terrain_chunk_radius(player_z: i32) -> u8 {
+    elevation_chunk_radius_raw(player_z).min(MAX_TERRAIN_CHUNK_RADIUS)
+}
+
 /// Chunk identifier in chunk-coordinate space
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ChunkId(pub i32, pub i32);
@@ -24,6 +91,17 @@ impl ChunkId {
         // Center is at offset (8, 8) in a 16x16 chunk
         chunk_to_tile(*self, 8, 8)
     }
+}
+
+/// Summary data for a chunk rendered at low detail (outer ring LoD).
+///
+/// Contains only the representative elevation and biome — no individual tiles.
+/// Reduces network traffic from ~2.6KB to ~12 bytes per chunk.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct ChunkSummary {
+    pub chunk_id: ChunkId,
+    pub elevation: i32,
+    pub biome: EntityType,
 }
 
 /// A chunk of terrain containing up to 256 tiles (16x16)
@@ -113,6 +191,79 @@ pub fn calculate_visible_chunks(center: ChunkId, radius: u8) -> Vec<ChunkId> {
     }
 
     visible
+}
+
+/// Calculate visible chunks using per-chunk elevation-aware filtering.
+///
+/// Returns `(inner, outer)` where:
+/// - `inner`: chunks within `FOV_CHUNK_RADIUS` (full 64-tile detail)
+/// - `outer`: chunks beyond `FOV_CHUNK_RADIUS` that pass visibility (summary LoD)
+///
+/// Chunks within `base_radius` are always included (skip height query).
+/// This is typically `terrain_chunk_radius(player_z)` — the old symmetric
+/// radius — so flat terrain loads at least as many chunks as before.
+/// Outer chunks beyond `base_radius` are included only if their ground
+/// elevation puts them within the camera's visible range from `player_z`.
+///
+/// `height_fn(q, r)` returns terrain height at tile (q, r).
+pub fn calculate_visible_chunks_adaptive(
+    center: ChunkId,
+    player_z: i32,
+    base_radius: u8,
+    max_radius: u8,
+    half_viewport: f32,
+    height_fn: impl Fn(i32, i32) -> i32,
+) -> (Vec<ChunkId>, Vec<ChunkId>) {
+    let mut inner = Vec::new();
+    let mut outer = Vec::new();
+    let r = max_radius as i32;
+    let base = base_radius as i32;
+    let fov = FOV_CHUNK_RADIUS as i32;
+
+    for dq in -r..=r {
+        for dr in -r..=r {
+            let chebyshev = dq.abs().max(dr.abs());
+            let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
+
+            // Determine if chunk is visible
+            let included = if chebyshev <= base {
+                true // Always include within base radius
+            } else {
+                let center_tile = chunk_id.center();
+                let chunk_z = height_fn(center_tile.q, center_tile.r);
+                let vis_radius = visibility_radius(player_z, chunk_z, half_viewport) as i32;
+                chebyshev <= vis_radius
+            };
+
+            if included {
+                if chebyshev <= fov {
+                    inner.push(chunk_id);
+                } else {
+                    outer.push(chunk_id);
+                }
+            }
+        }
+    }
+
+    (inner, outer)
+}
+
+/// Returns the maximum elevation across all tiles in a chunk.
+///
+/// Used to compute worst-case visibility: any position within this chunk
+/// can see at most what `visibility_radius(max_z, ...)` would return.
+pub fn chunk_max_z(chunk_id: ChunkId, height_fn: impl Fn(i32, i32) -> i32) -> i32 {
+    let mut max_z = i32::MIN;
+    for oq in 0..CHUNK_SIZE as u8 {
+        for or_ in 0..CHUNK_SIZE as u8 {
+            let tile = chunk_to_tile(chunk_id, oq, or_);
+            let z = height_fn(tile.q, tile.r);
+            if z > max_z {
+                max_z = z;
+            }
+        }
+    }
+    max_z
 }
 
 /// Check if a location (Qrz) is within a specific chunk
@@ -284,5 +435,222 @@ mod tests {
         assert!(cache.chunks.contains_key(&chunk2));
         assert!(cache.chunks.contains_key(&chunk3));
         assert!(cache.chunks.contains_key(&chunk4));
+    }
+
+    #[test]
+    fn terrain_chunk_radius_sea_level_returns_base() {
+        assert_eq!(terrain_chunk_radius(0), FOV_CHUNK_RADIUS);
+    }
+
+    #[test]
+    fn terrain_chunk_radius_negative_z_returns_base() {
+        assert_eq!(terrain_chunk_radius(-10), FOV_CHUNK_RADIUS);
+        assert_eq!(terrain_chunk_radius(-100), FOV_CHUNK_RADIUS);
+    }
+
+    #[test]
+    fn terrain_chunk_radius_monotonically_increasing() {
+        let mut prev = terrain_chunk_radius(0);
+        for z in (10..=200).step_by(10) {
+            let current = terrain_chunk_radius(z);
+            assert!(current >= prev, "radius decreased at z={z}: {prev} -> {current}");
+            prev = current;
+        }
+    }
+
+    #[test]
+    fn terrain_chunk_radius_caps_at_max() {
+        assert_eq!(terrain_chunk_radius(500), MAX_TERRAIN_CHUNK_RADIUS);
+        assert_eq!(terrain_chunk_radius(1000), MAX_TERRAIN_CHUNK_RADIUS);
+    }
+
+    #[test]
+    fn terrain_chunk_radius_spot_check_known_values() {
+        assert_eq!(terrain_chunk_radius(0), 5);
+        assert_eq!(terrain_chunk_radius(50), 7);
+        assert_eq!(terrain_chunk_radius(100), 9);
+        assert_eq!(terrain_chunk_radius(200), MAX_TERRAIN_CHUNK_RADIUS);
+    }
+
+    // ── visibility_radius tests ──
+
+    #[test]
+    fn visibility_radius_same_elevation_returns_base() {
+        for z in [0, 50, 100, 200, 500] {
+            assert_eq!(
+                visibility_radius(z, z, 40.0), FOV_CHUNK_RADIUS,
+                "same elevation z={z} should give base radius"
+            );
+        }
+    }
+
+    #[test]
+    fn visibility_radius_ground_zero_matches_old_formula() {
+        for z in (0..=300).step_by(10) {
+            assert_eq!(
+                visibility_radius(z, 0, 40.0),
+                elevation_chunk_radius_raw(z),
+                "ground_z=0 should match elevation_chunk_radius_raw at z={z}"
+            );
+        }
+    }
+
+    #[test]
+    fn visibility_radius_higher_ground_returns_base() {
+        assert_eq!(visibility_radius(50, 100, 40.0), FOV_CHUNK_RADIUS);
+        assert_eq!(visibility_radius(0, 50, 40.0), FOV_CHUNK_RADIUS);
+        assert_eq!(visibility_radius(200, 300, 40.0), FOV_CHUNK_RADIUS);
+    }
+
+    #[test]
+    fn visibility_radius_monotonic_with_player_z() {
+        let mut prev = visibility_radius(0, 0, 40.0);
+        for z in (10..=300).step_by(10) {
+            let current = visibility_radius(z, 0, 40.0);
+            assert!(current >= prev, "radius decreased at z={z}: {prev} -> {current}");
+            prev = current;
+        }
+    }
+
+    #[test]
+    fn visibility_radius_spot_checks() {
+        // Raw (uncapped) values — terrain_chunk_radius applies the cap
+        assert_eq!(visibility_radius(0, 0, 40.0), 5);
+        assert_eq!(visibility_radius(50, 0, 40.0), 7);
+        assert_eq!(visibility_radius(100, 0, 40.0), 9);
+        assert_eq!(visibility_radius(200, 0, 40.0), 13); // capped to 12 by terrain_chunk_radius
+    }
+
+    #[test]
+    fn visibility_radius_deeper_valley_extends_further() {
+        // Looking from z=200 at ground z=0 should see further than at ground z=100
+        let deep = visibility_radius(200, 0, 40.0);
+        let shallow = visibility_radius(200, 100, 40.0);
+        assert!(deep >= shallow, "deeper valley should extend at least as far");
+    }
+
+    // ── calculate_visible_chunks_adaptive tests ──
+
+    #[test]
+    fn adaptive_flat_world_equals_base_square() {
+        let center = ChunkId(5, 5);
+        let player_z = 100;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0, |_, _| player_z,
+        );
+        // Flat world: all outer chunks have ground=player, visibility_radius=5 < chebyshev,
+        // so only the base_radius square is included (split into inner ≤ FOV and outer > FOV)
+        let base = calculate_visible_chunks(center, base_radius);
+        let all_set: std::collections::HashSet<_> = inner.into_iter().chain(outer).collect();
+        let base_set: std::collections::HashSet<_> = base.into_iter().collect();
+        assert_eq!(all_set, base_set, "flat world should equal base radius set");
+    }
+
+    #[test]
+    fn adaptive_sea_level_world_includes_all_visible() {
+        let center = ChunkId(0, 0);
+        let player_z = 200;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0, |_, _| 0,
+        );
+        // Sea-level world: all chunks visible (vis_radius >= max_radius for ground=0)
+        let full = calculate_visible_chunks(center, max_radius);
+        let all_set: std::collections::HashSet<_> = inner.into_iter().chain(outer).collect();
+        let full_set: std::collections::HashSet<_> = full.into_iter().collect();
+        assert_eq!(all_set, full_set, "sea-level world should include all chunks up to max_radius");
+    }
+
+    #[test]
+    fn adaptive_asymmetry_more_chunks_on_low_side() {
+        let center = ChunkId(0, 0);
+        let player_z = 200;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        // Left side (negative dq) is high terrain, right side is low
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0,
+            |q, _r| if q < center.0 * CHUNK_SIZE { player_z } else { 0 },
+        );
+        let chunks: Vec<_> = inner.into_iter().chain(outer).collect();
+
+        let left: Vec<_> = chunks.iter().filter(|c| c.0 < center.0).collect();
+        let right: Vec<_> = chunks.iter().filter(|c| c.0 > center.0).collect();
+        assert!(right.len() > left.len(),
+            "low side should have more chunks: left={} right={}", left.len(), right.len());
+    }
+
+    #[test]
+    fn adaptive_always_superset_of_base() {
+        let center = ChunkId(3, -2);
+        let player_z = 150;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0, |_, _| 0,
+        );
+        let base = calculate_visible_chunks(center, base_radius);
+        let all_set: std::collections::HashSet<_> = inner.into_iter().chain(outer).collect();
+        for chunk in base {
+            assert!(all_set.contains(&chunk), "base chunk {:?} missing from adaptive set", chunk);
+        }
+    }
+
+    #[test]
+    fn adaptive_always_subset_of_max() {
+        let center = ChunkId(0, 0);
+        let player_z = 200;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0, |_, _| 50,
+        );
+        let max_set: std::collections::HashSet<_> =
+            calculate_visible_chunks(center, max_radius).into_iter().collect();
+        for chunk in inner.into_iter().chain(outer) {
+            assert!(max_set.contains(&chunk), "adaptive chunk {:?} outside max radius", chunk);
+        }
+    }
+
+    #[test]
+    fn adaptive_inner_within_fov_radius() {
+        let center = ChunkId(0, 0);
+        let player_z = 200;
+        let base_radius = terrain_chunk_radius(player_z);
+        let max_radius = elevation_chunk_radius_raw(player_z);
+        let (inner, outer) = calculate_visible_chunks_adaptive(
+            center, player_z, base_radius, max_radius, 40.0, |_, _| 0,
+        );
+        // All inner chunks must be within FOV_CHUNK_RADIUS
+        for chunk in &inner {
+            let chebyshev = (chunk.0 - center.0).abs().max((chunk.1 - center.1).abs());
+            assert!(chebyshev <= FOV_CHUNK_RADIUS as i32,
+                "inner chunk {:?} at distance {} exceeds FOV_CHUNK_RADIUS {}", chunk, chebyshev, FOV_CHUNK_RADIUS);
+        }
+        // All outer chunks must be beyond FOV_CHUNK_RADIUS
+        for chunk in &outer {
+            let chebyshev = (chunk.0 - center.0).abs().max((chunk.1 - center.1).abs());
+            assert!(chebyshev > FOV_CHUNK_RADIUS as i32,
+                "outer chunk {:?} at distance {} within FOV_CHUNK_RADIUS {}", chunk, chebyshev, FOV_CHUNK_RADIUS);
+        }
+    }
+
+    // ── chunk_max_z tests ──
+
+    #[test]
+    fn chunk_max_z_returns_maximum() {
+        let chunk = ChunkId(0, 0);
+        let max = chunk_max_z(chunk, |q, r| q + r);
+        // Max q+r in chunk (0,0) is at tile (15,15) = 30
+        assert_eq!(max, 30);
+    }
+
+    #[test]
+    fn chunk_max_z_constant_height() {
+        let chunk = ChunkId(1, 1);
+        assert_eq!(chunk_max_z(chunk, |_, _| 42), 42);
     }
 }

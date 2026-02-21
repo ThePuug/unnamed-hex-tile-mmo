@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bimap::BiMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use common::chunk::ChunkId;
+use common::chunk::{ChunkId, ChunkSummary};
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
@@ -41,7 +41,6 @@ impl Server {
 
 use bevy::tasks::Task;
 use bevy_camera::primitives::Aabb;
-use std::collections::HashMap;
 
 /// Shared material for all chunk meshes
 #[derive(Resource)]
@@ -61,6 +60,13 @@ pub struct PendingChunkMeshes {
 #[derive(Debug, Default, Resource)]
 pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
+}
+
+/// Stores chunk summaries for outer-ring LoD rendering.
+/// Separate from the tile Map to avoid collision with physics/pathfinding.
+#[derive(Debug, Default, Resource)]
+pub struct ChunkSummaries {
+    pub summaries: HashMap<ChunkId, ChunkSummary>,
 }
 
 /// Tracks which chunks have been received on the client

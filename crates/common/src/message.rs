@@ -14,12 +14,21 @@ pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
     /// Server-side only: request to discover a chunk
-    DiscoverChunk { ent: Entity, chunk_id: ChunkId },
+    /// When `summary_only` is true, sends ChunkSummary instead of ChunkData
+    DiscoverChunk { ent: Entity, chunk_id: ChunkId, summary_only: bool },
     /// Server → Client: chunk data containing up to 256 tiles (16x16)
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
         tiles: ArrayVec<[(Qrz, EntityType); 256]>,
+    },
+    /// Server → Client: chunk summary for outer-ring LoD (elevation + biome only)
+    /// ~12 bytes vs ~2.6KB for full ChunkData
+    ChunkSummary {
+        ent: Entity,
+        chunk_id: ChunkId,
+        elevation: i32,
+        biome: EntityType,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },

@@ -4,7 +4,11 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 
 use common::{
-    chunk::{ChunkId, CHUNK_SIZE, FOV_CHUNK_RADIUS, calculate_visible_chunks, chunk_to_tile, loc_to_chunk},
+    chunk::{
+        ChunkId, CHUNK_SIZE,
+        calculate_visible_chunks_adaptive,
+        chunk_to_tile, loc_to_chunk, visibility_radius,
+    },
     components::{
         behaviour::PlayerControlled,
         entity_type::{EntityType, decorator::Decorator},
@@ -17,7 +21,7 @@ use qrz::Convert;
 use crate::{
     components::ChunkMesh,
     plugins::console::DevConsoleAction,
-    resources::{LoadedChunks, SkipNeighborRegen},
+    resources::{ChunkSummaries, LoadedChunks, SkipNeighborRegen},
     systems::camera::{CameraOrbitAngle, CAMERA_DISTANCE, CAMERA_HEIGHT},
 };
 
@@ -30,7 +34,10 @@ pub struct FlyoverState {
     pub world_position: Vec3,
     pub speed_multiplier: f32,
     pub hold_time: f32,
+    /// Full-detail chunks owned by flyover (inner ring)
     pub admin_chunks: HashSet<ChunkId>,
+    /// Summary chunks owned by flyover (outer ring)
+    pub admin_summary_chunks: HashSet<ChunkId>,
     pub saved_camera_scale: f32,
 }
 
@@ -42,6 +49,7 @@ impl Default for FlyoverState {
             speed_multiplier: 1.0,
             hold_time: 0.0,
             admin_chunks: HashSet::new(),
+            admin_summary_chunks: HashSet::new(),
             saved_camera_scale: 1.0,
         }
     }
@@ -81,16 +89,17 @@ const NORMAL_ZOOM_MIN: f32 = 0.08;
 const NORMAL_ZOOM_MAX: f32 = 2.0;
 const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 
-/// Absolute cap on flyover generation radius
-const MAX_FLYOVER_RADIUS: u8 = 15;
+/// Absolute cap on flyover generation radius (practically unlimited)
+const MAX_FLYOVER_RADIUS: u8 = 255;
 
-/// Compute a generation radius that scales with the camera's orthographic zoom.
-/// At scale 1.0 the normal FOV radius suffices; at scale 20.0 we need much more.
-fn flyover_radius(camera_scale: f32) -> u8 {
-    // Each chunk ≈ 28 world units across. Orthographic viewport is ~40*scale
-    // vertically, wider horizontally. Diagonal half-extent ≈ 1.2 * scale chunks.
-    let zoom_chunks = (camera_scale * 1.2).ceil() as u8;
-    FOV_CHUNK_RADIUS.max(zoom_chunks).min(MAX_FLYOVER_RADIUS)
+/// Compute a generation radius from camera zoom AND player elevation combined.
+///
+/// Delegates to the shared `visibility_radius` (ground at sea level, flyover viewport)
+/// and caps at `MAX_FLYOVER_RADIUS`.
+fn flyover_radius(camera_scale: f32, player_z: i32) -> u8 {
+    // FixedVertical { viewport_height: 40 } → half-height = 20 * scale
+    let half_viewport = 20.0 * camera_scale;
+    visibility_radius(player_z, 0, half_viewport).min(MAX_FLYOVER_RADIUS)
 }
 
 // ──── Systems ────
@@ -107,6 +116,7 @@ pub fn execute_admin_actions(
     admin_terrain: Res<AdminTerrain>,
     map_state: Res<MapState>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
 ) {
     for action in reader.read() {
         let DevConsoleAction::ToggleFlyover = action else { continue };
@@ -134,7 +144,7 @@ pub fn execute_admin_actions(
                 commands.entity(entity).despawn();
             }
 
-            // Despawn tiles for admin-only chunks (skip server-loaded ones)
+            // Despawn tiles for admin-only full-detail chunks (skip server-loaded ones)
             for &chunk_id in &flyover.admin_chunks {
                 if loaded_chunks.chunks.contains(&chunk_id) {
                     continue;
@@ -148,7 +158,14 @@ pub fn execute_admin_actions(
                     }
                 }
             }
+
+            // Remove admin summary chunks from ChunkSummaries
+            for &chunk_id in &flyover.admin_summary_chunks {
+                chunk_summaries.summaries.remove(&chunk_id);
+            }
+
             flyover.admin_chunks.clear();
+            flyover.admin_summary_chunks.clear();
             skip_regen.chunks.clear();
 
             // Restore camera scale (clamped to normal range)
@@ -268,9 +285,8 @@ pub fn flyover_camera_update(
 }
 
 /// Generates terrain chunks around the flyover camera position.
-/// Generates all missing chunks at once — the neighbor mesh cascade is prevented
-/// by adding generated chunk IDs to `SkipNeighborRegen` so `spawn_missing_chunk_meshes`
-/// won't trigger redundant neighbor regeneration.
+/// Inner ring: full tiles (prevents mesh cascade via SkipNeighborRegen).
+/// Outer ring: summaries stored in ChunkSummaries resource.
 /// Radius scales with camera zoom so zoomed-out views stay filled.
 pub fn flyover_generate_chunks(
     mut flyover: ResMut<FlyoverState>,
@@ -279,22 +295,34 @@ pub fn flyover_generate_chunks(
     admin_terrain: Res<AdminTerrain>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
         if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
     });
-    let radius = flyover_radius(scale);
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
+    let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
     let center = loc_to_chunk(qrz);
+    let half_viewport = 20.0 * scale;
 
-    let candidates: Vec<ChunkId> = calculate_visible_chunks(center, radius)
-        .into_iter()
+    // Always extend beyond FOV_CHUNK_RADIUS so there's an outer LoD ring
+    let vis_radius = flyover_radius(scale, player_z);
+    let max_radius = vis_radius.max(common::chunk::FOV_CHUNK_RADIUS + 3);
+    let base_radius = vis_radius;
+
+    let (inner, outer) = calculate_visible_chunks_adaptive(
+        center, player_z, base_radius, max_radius, half_viewport,
+        |q, r| admin_terrain.0.get_height(q, r),
+    );
+
+    // Inner ring: full tile generation
+    let inner_candidates: Vec<ChunkId> = inner.into_iter()
         .filter(|id| !flyover.admin_chunks.contains(id) && !loaded_chunks.chunks.contains(id))
         .collect();
 
-    for chunk_id in candidates {
+    for chunk_id in inner_candidates {
         for oq in 0..CHUNK_SIZE {
             for or in 0..CHUNK_SIZE {
                 let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
@@ -305,16 +333,42 @@ pub fn flyover_generate_chunks(
             }
         }
 
+        // Clean up summary if this chunk was previously outer ring
+        if flyover.admin_summary_chunks.remove(&chunk_id) {
+            chunk_summaries.summaries.remove(&chunk_id);
+        }
+
         flyover.admin_chunks.insert(chunk_id);
         skip_regen.chunks.insert(chunk_id);
+    }
+
+    // Outer ring: summary generation (no tiles in Map)
+    let outer_candidates: Vec<ChunkId> = outer.into_iter()
+        .filter(|id| {
+            !flyover.admin_chunks.contains(id)
+            && !flyover.admin_summary_chunks.contains(id)
+            && !loaded_chunks.chunks.contains(id)
+        })
+        .collect();
+
+    for chunk_id in outer_candidates {
+        let ct = chunk_id.center();
+        let elevation = admin_terrain.0.get_height(ct.q, ct.r);
+        chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+            chunk_id,
+            elevation,
+            biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
+        });
+        flyover.admin_summary_chunks.insert(chunk_id);
     }
 }
 
 /// Tags newly spawned chunk meshes that belong to admin-generated chunks.
+/// Excludes SummaryChunk entities — those are managed by spawn_summary_meshes.
 pub fn tag_admin_chunks(
     mut commands: Commands,
     flyover: Res<FlyoverState>,
-    new_chunks: Query<(Entity, &ChunkMesh), Added<ChunkMesh>>,
+    new_chunks: Query<(Entity, &ChunkMesh), (Added<ChunkMesh>, Without<crate::components::SummaryChunk>)>,
 ) {
     for (entity, chunk_mesh) in new_chunks.iter() {
         if flyover.admin_chunks.contains(&chunk_mesh.chunk_id) {
@@ -323,7 +377,7 @@ pub fn tag_admin_chunks(
     }
 }
 
-/// Evicts admin chunks that are far from the camera position.
+/// Evicts admin chunks (full-detail and summary) that are far from the camera position.
 pub fn flyover_evict_chunks(
     mut commands: Commands,
     mut flyover: ResMut<FlyoverState>,
@@ -332,54 +386,88 @@ pub fn flyover_evict_chunks(
     admin_terrain: Res<AdminTerrain>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
     admin_chunk_query: Query<(Entity, &ChunkMesh), With<AdminChunk>>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
         if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
     });
-    let radius = flyover_radius(scale);
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
+    let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
+    let radius = flyover_radius(scale, player_z);
     let center = loc_to_chunk(qrz);
-    let keep: HashSet<ChunkId> = calculate_visible_chunks(center, radius + 1)
-        .into_iter()
-        .collect();
+    let half_viewport = 20.0 * scale;
 
+    // Keep set: adaptive visibility + 1 buffer per chunk
+    let keep: HashSet<ChunkId> = {
+        let r = (radius as i32) + 1;
+        let base_plus_buffer = radius as i32 + 1;
+        let mut kept = HashSet::new();
+        for dq in -r..=r {
+            for dr in -r..=r {
+                let chebyshev = dq.abs().max(dr.abs());
+                let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
+                if chebyshev <= base_plus_buffer {
+                    kept.insert(chunk_id);
+                    continue;
+                }
+                let ct = chunk_id.center();
+                let cz = admin_terrain.0.get_height(ct.q, ct.r);
+                let vis = visibility_radius(player_z, cz, half_viewport) as i32 + 1;
+                if chebyshev <= vis {
+                    kept.insert(chunk_id);
+                }
+            }
+        }
+        kept
+    };
+
+    // Evict full-detail admin chunks
     let evictable: Vec<ChunkId> = flyover.admin_chunks
         .iter()
         .filter(|id| !keep.contains(id))
         .copied()
         .collect();
 
-    if evictable.is_empty() {
-        return;
-    }
+    if !evictable.is_empty() {
+        let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
 
-    let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
-
-    // Despawn mesh entities for evicted admin chunks
-    for (entity, chunk_mesh) in admin_chunk_query.iter() {
-        if evict_set.contains(&chunk_mesh.chunk_id) {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    // Queue tile despawns (skip server-loaded chunks)
-    for &chunk_id in &evictable {
-        if loaded_chunks.chunks.contains(&chunk_id) {
-            continue;
-        }
-        for oq in 0..CHUNK_SIZE {
-            for or in 0..CHUNK_SIZE {
-                let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
-                let z = admin_terrain.0.get_height(tile.q, tile.r);
-                let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
-                map_state.queue_event(TileEvent::Despawn(qrz));
+        for (entity, chunk_mesh) in admin_chunk_query.iter() {
+            if evict_set.contains(&chunk_mesh.chunk_id) {
+                commands.entity(entity).despawn();
             }
         }
+
+        for &chunk_id in &evictable {
+            if loaded_chunks.chunks.contains(&chunk_id) {
+                continue;
+            }
+            for oq in 0..CHUNK_SIZE {
+                for or in 0..CHUNK_SIZE {
+                    let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
+                    let z = admin_terrain.0.get_height(tile.q, tile.r);
+                    let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
+                    map_state.queue_event(TileEvent::Despawn(qrz));
+                }
+            }
+        }
+
+        flyover.admin_chunks.retain(|id| !evict_set.contains(id));
+        skip_regen.chunks.retain(|id| !evict_set.contains(id));
     }
 
-    flyover.admin_chunks.retain(|id| !evict_set.contains(id));
-    skip_regen.chunks.retain(|id| !evict_set.contains(id));
+    // Evict summary admin chunks
+    let summary_evictable: Vec<ChunkId> = flyover.admin_summary_chunks
+        .iter()
+        .filter(|id| !keep.contains(id))
+        .copied()
+        .collect();
+
+    for &chunk_id in &summary_evictable {
+        chunk_summaries.summaries.remove(&chunk_id);
+    }
+    flyover.admin_summary_chunks.retain(|id| keep.contains(id));
+    // Summary mesh entities cleaned up by spawn_summary_meshes (change detection)
 }

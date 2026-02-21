@@ -110,6 +110,7 @@ Game design documents describing **what systems should be** and tracking impleme
 - **[hubs.md](docs/design/hubs.md)** - Dynamic settlements, influence, merging
 - **[siege.md](docs/design/siege.md)** - Encroachment, anger, siege mechanics
 - **[haven.md](docs/design/haven.md)** - Starter havens, bootstrap problem solution
+- **[world-generation.md](docs/design/world-generation.md)** - Terrain generation pipeline, tectonic plates, chunk streaming & LoD
 
 Each spec includes **Implementation Deviations** and **Implementation Gaps** sections at the bottom tracking where the codebase differs from the spec and what remains to be built.
 
@@ -128,6 +129,7 @@ Documents recording **non-obvious implementation decisions** and their rationale
 - **027** - Commitment tiers (20/40/60% thresholds, tier-based identity)
 - **030** - Reaction queue window mechanic (unbounded queue, visibility window)
 - **031** - Relative meta-attributes rework (rotated oppositions, contest function)
+- **032** - Two-ring LoD chunk loading (inner full-detail, outer summary hexes, ring transitions)
 
 **Purpose:** Preserve non-obvious architectural decisions someone would re-ask about
 

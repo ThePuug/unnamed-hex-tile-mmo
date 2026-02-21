@@ -8,7 +8,7 @@ use ::renet::DefaultChannel;
 
 use crate::{
     plugins::diagnostics::network_ui::NetworkMetrics,
-    resources::{EntityMap, LoadedChunks},
+    resources::{ChunkSummaries, EntityMap, LoadedChunks},
 };
 use crate::*;
 use common::{
@@ -41,6 +41,7 @@ fn get_message_type_name(message: &Do) -> String {
         },
         Event::Gcd { .. } => "Gcd".to_string(),
         Event::ChunkData { .. } => "ChunkData".to_string(),
+        Event::ChunkSummary { .. } => "ChunkSummary".to_string(),
         Event::InsertThreat { .. } => "InsertThreat".to_string(),
         Event::ApplyDamage { .. } => "ApplyDamage".to_string(),
         Event::ClearQueue { .. } => "ClearQueue".to_string(),
@@ -81,6 +82,7 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
@@ -189,6 +191,19 @@ pub fn write_do(
 
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
+
+                // Remove summary if this is an upgrade (outer → inner)
+                chunk_summaries.summaries.remove(&chunk_id);
+            }
+            Do { event: Event::ChunkSummary { ent: _, chunk_id, elevation, biome } } => {
+                // Don't downgrade full-detail chunks to summaries
+                if !loaded_chunks.chunks.contains(&chunk_id) {
+                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                        chunk_id,
+                        elevation,
+                        biome,
+                    });
+                }
             }
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

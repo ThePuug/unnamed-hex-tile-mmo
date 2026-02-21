@@ -347,6 +347,88 @@ These values are expected to change during development. They become locked once 
 
 ---
 
+## Chunk Streaming & Level of Detail
+
+### Problem
+
+Standing on a cliff, the camera sees far toward lower terrain but barely past the cliff wall uphill. The existing adaptive loading (per-chunk `visibility_radius`) already produces an asymmetric shape that extends toward valleys and retracts toward ridges. However, every discovered chunk transmits full 64-tile data (~2.6KB) and inserts 64 entries into the client's Map regardless of distance. At outer-ring distances, tiles are sub-pixel — meshes are built for geometry nobody can distinguish, and the Map grows with entries that physics, movement, and pathfinding never touch.
+
+### Two-Ring Architecture
+
+Chunk loading splits into two concentric rings separated by `FOV_CHUNK_RADIUS`:
+
+**Inner ring** (Chebyshev distance ≤ `FOV_CHUNK_RADIUS`): Full 64-tile chunks. Gameplay happens here — physics, pathfinding, combat, and all tile-level interactions use these tiles from the Map. This ring is symmetric and always loaded.
+
+**Outer ring** (`FOV_CHUNK_RADIUS` < distance ≤ max_radius): Each chunk is summarized as a single 7-vertex hex. One Map entry instead of 64. ~12 bytes network instead of ~2.6KB. The outer ring's shape is asymmetric — extends toward valleys, stays tight toward ridges — using the existing `visibility_radius` per-chunk filtering.
+
+The boundary between rings is `FOV_CHUNK_RADIUS`, which doubles as the minimum gameplay-safe loading distance. Chunks transitioning between rings upgrade (summary → full detail) or downgrade (full detail → summary) without terrain vanishing.
+
+### ChunkSummary
+
+Each outer-ring chunk is represented by a lightweight summary:
+
+- **chunk_id**: Which chunk
+- **elevation**: Average elevation across the chunk's 64 tiles
+- **biome**: Dominant terrain type (most common EntityType)
+
+The server computes summaries from full chunk data (average elevation, most common EntityType) or generates them cheaply from terrain noise at the chunk center point if the full chunk hasn't been generated yet.
+
+### Summary Mesh Rendering
+
+Summary hexes render through the existing per-chunk mesh pipeline with simpler geometry:
+
+- Center vertex at the chunk's world position, y = chunk average elevation
+- 6 corner vertices, each shared by 3 chunks — y = average of those 3 chunks' elevations
+- This produces a continuous terrain surface: mountain ridges slope naturally between adjacent summaries, valleys dip, the landscape reads as coherent from distance
+- 6 triangles (center to each edge), single color from biome
+- If any neighbor chunk's summary hasn't arrived, skip rendering that hex entirely — retry next pass (deferred rendering for missing neighbors)
+
+### Ring Transitions
+
+When a player moves and chunks change rings:
+
+- **Entering inner from outer**: Server sends full `ChunkData` (upgrade)
+- **Entering outer from nothing**: Server sends `ChunkSummary`
+- **Leaving inner to outer**: Server sends `ChunkSummary` (downgrade — terrain doesn't vanish)
+- **Leaving outer entirely**: Client evicts summary
+
+### Client Storage
+
+Summaries are stored in a separate `ChunkSummaries` resource, not in the tile Map. This prevents summary entries from colliding with real tiles during physics, movement, or pathfinding. On receiving full `ChunkData`, the corresponding summary is removed. On receiving a `ChunkSummary`, any existing full tiles for that chunk are removed from the Map.
+
+### Cache on Boundary Crossing
+
+The adaptive visibility set is only recomputed when the player crosses a chunk boundary, not on every `Loc` change. `do_incremental` fires ~3×/sec/player — at 200 players with radius-12 worst cases, that's 375K visibility checks/sec if recomputed every tick. Caching on boundary crossing reduces this to ~0.5 recomputations/sec/player (average boundary crossing rate). The `VisibleChunkCache` component stores both inner and outer ring sets plus eviction mirrors.
+
+### Eviction
+
+Client eviction runs in two passes:
+
+1. **Full-detail chunks**: Chebyshev distance > `FOV_CHUNK_RADIUS + 1` → evict from Map
+2. **Summary chunks**: Per-chunk `visibility_radius(player_z, elevation, 40.0) + 1` → evict from `ChunkSummaries`
+
+Server eviction mirrors this logic using `chunk_max_z` for worst-case guarantees.
+
+### Flyover
+
+Flyover mode uses the same two-ring architecture: inner ring gets full tiles for immediate terrain, outer ring gets summaries filling the horizon. The flyover-specific `half_viewport` (20.0 × camera scale) flows through the same `visibility_radius` function.
+
+### Invariants
+
+**6. Ring separation**: Physics, movement, and pathfinding only read from the Map (inner ring tiles), never from `ChunkSummaries`. Summary data is rendering-only.
+
+**7. Continuous surface**: Adjacent summary hexes share corner vertices via neighbor elevation averaging. No floating platforms or gaps between summaries.
+
+**8. No terrain vanishing**: Ring downgrade (inner → outer) sends a summary before the client evicts full tiles. The chunk is never absent from both representations simultaneously.
+
+### Future Work
+
+- **Camera-terrain collision**: Pass actual camera distance as `half_viewport` instead of fixed 40.0. Loading shape tightens dynamically. Function signature already supports this.
+- **Additional LoD tiers**: Intermediate tiers (e.g. 4×4 sample grid) slot between inner and outer using the same ring architecture.
+- **Summary generation shortcut**: Generate summaries directly from terrain noise at chunk center without computing full 64 tiles. Saves server-side generation cost for chunks that may never enter the inner ring.
+
+---
+
 ## Implementation Deviations
 
 Where the current implementation intentionally differs from spec:
@@ -360,6 +442,7 @@ Where the current implementation intentionally differs from spec:
 | 5 | Dynamic tectonics | Evolving boundary intensities with event thresholds | Static terrain generation only | Event system not yet implemented |
 | 6 | Stratification | Per-biome post-processing (mountain only) | Not yet implemented | Phase 4 |
 | 7 | Base terrain noise | Two sub-layers (continental texture + micro-texture) | Not yet implemented | Phase 2 — plate interiors are currently flat |
+| 8 | Chunk streaming | Two-ring LoD: inner full-detail, outer summary hexes | Single-ring: all discovered chunks are full 64-tile detail | See ADR-032; adaptive visibility already implemented, LoD layer not yet added |
 
 ## Implementation Gaps
 
@@ -370,6 +453,8 @@ Where the current implementation intentionally differs from spec:
 **High (Phase 4)**: Biome assignment from feature/tectonic context, per-biome detail noise, biome transition blending, stratification as biome parameter
 
 **Medium**: Swamp and plains feature types, rift/canyon features
+
+**High (LoD)**: Two-ring chunk streaming — `ChunkSummary` struct, `Event::ChunkSummary` network message, `ChunkSummaries` client resource, summary mesh rendering with neighbor-gated corner vertices, ring transition logic (upgrade/downgrade), two-pass eviction, flyover two-tier support. See ADR-032.
 
 **Deferred**: Dynamic boundary intensity evolution, tectonic event triggers (earthquakes, eruptions), vertical biome layering on mountains, river systems, cave/underground generation
 
@@ -384,3 +469,4 @@ Where the current implementation intentionally differs from spec:
 
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation invariant
+- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Two-ring LoD: inner full-detail, outer summary hexes

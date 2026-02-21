@@ -163,7 +163,7 @@ impl Map {
     /// Topographic color ramp matching terrain-viewer elevation mode.
     /// Deep blue (ocean) → cyan (coast) → green (lowland) → yellow (mid) → brown (high) → white (peak).
     /// Returns linear RGB [0..1] with alpha.
-    fn height_color_tint(elevation: i32) -> [f32; 4] {
+    pub fn height_color_tint(elevation: i32) -> [f32; 4] {
         const RAMP: &[(f64, f64, f64, f64)] = &[
             (-300.0, 10.0, 20.0, 80.0),    // deep ocean
             (50.0, 30.0, 60.0, 160.0),     // ocean

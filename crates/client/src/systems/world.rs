@@ -9,12 +9,12 @@ use bevy::{
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
-    components::ChunkMesh,
+    components::{ChunkMesh, SummaryChunk},
     plugins::diagnostics::DiagnosticsState,
-    resources::{LoadedChunks, PendingChunkMeshes, Server, SkipNeighborRegen, TerrainMaterial},
+    resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, Server, SkipNeighborRegen, TerrainMaterial},
 };
 use common::{
-    chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
+    chunk::{chunk_to_tile, loc_to_chunk, terrain_chunk_radius, visibility_radius, CHUNK_SIZE},
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -63,7 +63,7 @@ pub fn setup(
 /// processes tile events, avoiding the need for coordination between systems
 pub fn spawn_missing_chunk_meshes(
     map: Res<common::resources::map::Map>,
-    chunk_mesh_query: Query<&ChunkMesh>,
+    chunk_mesh_query: Query<&ChunkMesh, Without<SummaryChunk>>,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     diagnostics_state: Res<DiagnosticsState>,
     skip_neighbor_regen: Res<SkipNeighborRegen>,
@@ -73,7 +73,7 @@ pub fn spawn_missing_chunk_meshes(
     use common::chunk::{ChunkId, calculate_visible_chunks, loc_to_chunk};
     use bevy::tasks::AsyncComputeTaskPool;
 
-    // Get chunks that already have mesh entities
+    // Get chunks that already have full-detail mesh entities (exclude summary LoD)
     let chunks_with_meshes: HashSet<ChunkId> = chunk_mesh_query
         .iter()
         .map(|mesh| mesh.chunk_id)
@@ -149,7 +149,7 @@ pub fn poll_chunk_mesh_tasks(
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     terrain_material: Res<TerrainMaterial>,
-    chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh)>,
+    chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh), Without<SummaryChunk>>,
 ) {
     use common::chunk::ChunkId;
 
@@ -189,6 +189,177 @@ pub fn poll_chunk_mesh_tasks(
             }
         }
     }
+}
+
+/// Spawn or update mesh entities for chunk summaries (outer ring LoD).
+/// Regenerates neighbor meshes when new summaries appear so interpolation stays consistent.
+pub fn spawn_summary_meshes(
+    mut commands: Commands,
+    summaries: Res<ChunkSummaries>,
+    map: Res<common::resources::map::Map>,
+    terrain_material: Res<TerrainMaterial>,
+    existing_meshes: Query<(Entity, &ChunkMesh), With<SummaryChunk>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut prev_keys: Local<std::collections::HashSet<common::chunk::ChunkId>>,
+) {
+    use std::collections::HashSet;
+    use common::chunk::ChunkId;
+
+    if !summaries.is_changed() {
+        return;
+    }
+
+    let current_keys: HashSet<ChunkId> = summaries.summaries.keys().copied().collect();
+
+    // Identify added and removed chunks
+    let added: HashSet<ChunkId> = current_keys.difference(&prev_keys).copied().collect();
+    let removed: HashSet<ChunkId> = prev_keys.difference(&current_keys).copied().collect();
+
+    // Chunks needing mesh (re)generation: new chunks + existing neighbors of new/removed
+    let mut regen: HashSet<ChunkId> = added.clone();
+    for changed in added.iter().chain(removed.iter()) {
+        for dq in -1..=1_i32 {
+            for dr in -1..=1_i32 {
+                if dq == 0 && dr == 0 { continue; }
+                let nid = ChunkId(changed.0 + dq, changed.1 + dr);
+                if current_keys.contains(&nid) {
+                    regen.insert(nid);
+                }
+            }
+        }
+    }
+
+    // Despawn removed + stale meshes
+    for (entity, chunk_mesh) in existing_meshes.iter() {
+        if removed.contains(&chunk_mesh.chunk_id) || regen.contains(&chunk_mesh.chunk_id) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Spawn meshes for new/regenerated chunks
+    for &chunk_id in &regen {
+        if !current_keys.contains(&chunk_id) { continue; }
+        let mesh = generate_summary_mesh(chunk_id, &summaries.summaries, &map);
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(terrain_material.handle.clone()),
+            ChunkMesh { chunk_id },
+            SummaryChunk,
+        ));
+    }
+
+    *prev_keys = current_keys;
+}
+
+/// Generate a hex-grid mesh for a chunk summary.
+///
+/// Elevation is bilinearly interpolated PER VERTEX (not per tile) from this chunk
+/// and its 8 neighbors. Since adjacent hex tiles share edge vertices at the same
+/// axial position, both tiles compute the same interpolated elevation for shared
+/// vertices — eliminating seams. Each vertex is colored by `height_color_tint`.
+fn generate_summary_mesh(
+    chunk_id: common::chunk::ChunkId,
+    summaries: &std::collections::HashMap<common::chunk::ChunkId, common::chunk::ChunkSummary>,
+    map: &common::resources::map::Map,
+) -> Mesh {
+    use common::chunk::ChunkId;
+    use common::resources::map::Map as CommonMap;
+    use qrz::{Convert, Qrz};
+
+    let inner = map.inner_arc();
+    let radius = inner.radius();
+    let rise = inner.rise();
+    let w = (radius as f64 * (3.0_f64).sqrt() / 2.0) as f32;
+    let h = radius / 2.0;
+
+    let self_elev = summaries.get(&chunk_id).map(|s| s.elevation as f32).unwrap_or(0.0);
+
+    let nelev = |dq: i32, dr: i32| -> f32 {
+        summaries.get(&ChunkId(chunk_id.0 + dq, chunk_id.1 + dr))
+            .map(|s| s.elevation as f32)
+            .unwrap_or(self_elev)
+    };
+
+    // 4 corner elevations averaged from self + 3 adjacent neighbors
+    let c00 = (self_elev + nelev(-1, 0) + nelev(0, -1) + nelev(-1, -1)) * 0.25;
+    let c10 = (self_elev + nelev( 1, 0) + nelev(0, -1) + nelev( 1, -1)) * 0.25;
+    let c01 = (self_elev + nelev(-1, 0) + nelev(0,  1) + nelev(-1,  1)) * 0.25;
+    let c11 = (self_elev + nelev( 1, 0) + nelev(0,  1) + nelev( 1,  1)) * 0.25;
+
+    // World-space XZ offsets for each vertex relative to hex center.
+    // Order: Center, N, NE, SE, S, SW, NW  (center pushed first in mesh)
+    let xz_offsets: [[f32; 2]; 7] = [
+        [0.0, 0.0],        // Center
+        [0.0, -radius],    // N
+        [w, -h],            // NE
+        [w, h],             // SE
+        [0.0, radius],     // S
+        [-w, h],            // SW
+        [-w, -h],           // NW
+    ];
+
+    // Axial-space offsets for bilinear interpolation.
+    // Adjacent tiles sharing an edge vertex compute the same (dq,dr) at the same
+    // axial position, so the interpolated elevation matches → no seam.
+    let dq_axial: [f32; 7] = [0.0,  1.0/3.0, 2.0/3.0, 1.0/3.0, -1.0/3.0, -2.0/3.0, -1.0/3.0];
+    let dr_axial: [f32; 7] = [0.0, -2.0/3.0, -1.0/3.0, 1.0/3.0,  2.0/3.0,  1.0/3.0, -1.0/3.0];
+
+    // Y offset: center vertex flush, outer vertices raised by `rise` (concave hex shape)
+    let y_rise: [f32; 7] = [0.0, rise, rise, rise, rise, rise, rise];
+
+    let normal_arr: [f32; 3] = [0.0, 1.0, 0.0];
+    let cs = CHUNK_SIZE as f32;
+    let tile_count = (CHUNK_SIZE * CHUNK_SIZE) as usize;
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(tile_count * 7);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(tile_count * 7);
+    let mut colors: Vec<[f32; 4]> = Vec::with_capacity(tile_count * 7);
+    let mut indices: Vec<u32> = Vec::with_capacity(tile_count * 18);
+
+    for oq in 0..CHUNK_SIZE {
+        for or in 0..CHUNK_SIZE {
+            let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
+            let center_flat: Vec3 = inner.convert(Qrz { q: tile.q, r: tile.r, z: 0 });
+
+            let base = positions.len() as u32;
+
+            // 7 vertices: center first, then 6 outer
+            for vi in 0..7 {
+                let fq = (oq as f32 + dq_axial[vi]) / cs;
+                let fr = (or as f32 + dr_axial[vi]) / cs;
+
+                // Bilinear interpolation (allow slight extrapolation at chunk edges)
+                let e_top = c00 + (c10 - c00) * fq;
+                let e_bot = c01 + (c11 - c01) * fq;
+                let elev = e_top + (e_bot - e_top) * fr;
+
+                positions.push([
+                    center_flat.x + xz_offsets[vi][0],
+                    elev * rise + y_rise[vi],
+                    center_flat.z + xz_offsets[vi][1],
+                ]);
+                normals.push(normal_arr);
+                colors.push(CommonMap::height_color_tint(elev.round() as i32));
+            }
+
+            // 6 triangles: center(base) → outer pairs
+            for i in 0..6u32 {
+                let v1 = base + 1 + i;
+                let v2 = base + 1 + ((i + 1) % 6);
+                indices.extend_from_slice(&[base, v2, v1]);
+            }
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        bevy_mesh::PrimitiveTopology::TriangleList,
+        bevy_asset::RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(bevy_mesh::Indices::U32(indices));
+
+    mesh
 }
 
 pub fn do_init(
@@ -284,85 +455,118 @@ pub fn update(
     m_transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
-/// Evict chunks that are outside the player's FOV radius
-/// This prevents unlimited memory growth as the player explores
-/// Also despawns any actors (NPCs/players) on evicted chunks
+/// Evict chunks that are outside the player's FOV radius.
+/// Two-pass: evicts full-detail chunks (tiles in Map) and summary chunks
+/// (entries in ChunkSummaries). Also despawns actors on evicted chunks.
 pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common::resources::map::Map>,
     map_state: Res<common::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
-    chunk_mesh_query: Query<(Entity, &ChunkMesh)>,
+    chunk_mesh_query: Query<(Entity, &ChunkMesh), Without<SummaryChunk>>,
 ) {
     // Only evict if we have a player
     let Ok(player_loc) = player_query.single() else {
         return;
     };
 
-    // Calculate which chunks should be kept (FOV + 1 buffer to prevent flickering)
     let player_chunk = loc_to_chunk(**player_loc);
-    let active_chunks: std::collections::HashSet<_> = calculate_visible_chunks(player_chunk, FOV_CHUNK_RADIUS + 1)
-        .into_iter()
+    let player_z = player_loc.z;
+    let base_plus_buffer = terrain_chunk_radius(player_z) as i32 + 1;
+
+    // Pass 1: Evict full-detail chunks (tiles in Map)
+    let active_chunks: std::collections::HashSet<_> = loaded_chunks.chunks.iter().copied()
+        .filter(|chunk_id| {
+            let chebyshev = (chunk_id.0 - player_chunk.0).abs()
+                .max((chunk_id.1 - player_chunk.1).abs());
+
+            if chebyshev <= base_plus_buffer {
+                return true;
+            }
+
+            let center_tile = chunk_id.center();
+            let chunk_z = map.get_by_qr(center_tile.q, center_tile.r)
+                .map(|(qrz, _)| qrz.z)
+                .unwrap_or(player_z);
+
+            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
+            chebyshev <= vis
+        })
         .collect();
 
-    // Find chunks to evict
     let evictable = loaded_chunks.get_evictable(&active_chunks);
-    if evictable.is_empty() {
-        return;
-    }
 
-    // Despawn all actors on evicted chunks (prevents "ghost NPCs")
-    for (entity, loc, entity_type) in actor_query.iter() {
-        let actor_chunk = loc_to_chunk(**loc);
-        if evictable.contains(&actor_chunk) {
-            // Only despawn non-player actors (players handle their own despawn)
-            let is_player = matches!(
-                entity_type,
-                EntityType::Actor(actor_impl) if matches!(
-                    actor_impl.identity,
-                    common::components::entity_type::actor::ActorIdentity::Player
-                )
-            );
+    if !evictable.is_empty() {
+        // Despawn actors on evicted chunks
+        for (entity, loc, entity_type) in actor_query.iter() {
+            let actor_chunk = loc_to_chunk(**loc);
+            if evictable.contains(&actor_chunk) {
+                let is_player = matches!(
+                    entity_type,
+                    EntityType::Actor(actor_impl) if matches!(
+                        actor_impl.identity,
+                        common::components::entity_type::actor::ActorIdentity::Player
+                    )
+                );
+                if !is_player {
+                    l2r.remove_by_left(&entity);
+                    commands.entity(entity).despawn();
+                }
+            }
+        }
 
-            if !is_player {
-                l2r.remove_by_left(&entity);
+        // Despawn mesh entities for evicted full-detail chunks
+        for (entity, chunk_mesh) in chunk_mesh_query.iter() {
+            if evictable.contains(&chunk_mesh.chunk_id) {
                 commands.entity(entity).despawn();
             }
         }
-    }
 
-    // Despawn mesh entities for evicted chunks
-    for (entity, chunk_mesh) in chunk_mesh_query.iter() {
-        if evictable.contains(&chunk_mesh.chunk_id) {
-            commands.entity(entity).despawn();
+        // Queue tile despawns
+        {
+            use common::resources::map::TileEvent;
+
+            let tiles_to_remove: Vec<_> = map.iter_tiles()
+                .filter_map(|(qrz, _typ)| {
+                    let tile_chunk = loc_to_chunk(qrz);
+                    if evictable.contains(&tile_chunk) { Some(qrz) } else { None }
+                })
+                .collect();
+
+            if !tiles_to_remove.is_empty() {
+                for qrz in &tiles_to_remove {
+                    map_state.queue_event(TileEvent::Despawn(*qrz));
+                }
+                loaded_chunks.evict(&evictable);
+            }
         }
     }
 
-    // Queue despawn events for all tiles in evicted chunks
-    {
-        use common::resources::map::TileEvent;
+    // Pass 2: Evict summary chunks
+    let summary_evictable: Vec<_> = chunk_summaries.summaries.keys().copied()
+        .filter(|chunk_id| {
+            let chebyshev = (chunk_id.0 - player_chunk.0).abs()
+                .max((chunk_id.1 - player_chunk.1).abs());
 
-        let tiles_to_remove: Vec<_> = map.iter_tiles()
-            .filter_map(|(qrz, _typ)| {
-                let tile_chunk = loc_to_chunk(qrz);
-                if evictable.contains(&tile_chunk) {
-                    Some(qrz)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !tiles_to_remove.is_empty() {
-            for qrz in &tiles_to_remove {
-                map_state.queue_event(TileEvent::Despawn(*qrz));
+            if chebyshev <= base_plus_buffer {
+                return false; // keep
             }
 
-            // Remove chunk from LoadedChunks
-            loaded_chunks.evict(&evictable);
-        }
+            let chunk_z = chunk_summaries.summaries.get(chunk_id)
+                .map(|s| s.elevation)
+                .unwrap_or(player_z);
+
+            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
+            chebyshev > vis // evict if beyond visibility
+        })
+        .collect();
+
+    for chunk_id in &summary_evictable {
+        chunk_summaries.summaries.remove(chunk_id);
     }
+    // Summary mesh entities are cleaned up by spawn_summary_meshes (change detection)
 }

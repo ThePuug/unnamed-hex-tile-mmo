@@ -23,6 +23,10 @@ pub struct ChunkMesh {
     pub chunk_id: ChunkId,
 }
 
+/// Marker for summary LoD chunk mesh entities (outer ring)
+#[derive(Component)]
+pub struct SummaryChunk;
+
 /// Debug sphere marker - shows actor origin position (toggles with terrain grid)
 #[derive(Component)]
 pub struct PlayerOriginDebug;
