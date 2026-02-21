@@ -51,6 +51,8 @@ pub fn handle_console_input(
         MenuPath::Root => handle_root_menu(&mut keyboard, &mut console),
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut action_writer),
         MenuPath::Performance => handle_performance_menu(&mut keyboard, &mut action_writer),
+        #[cfg(feature = "admin")]
+        MenuPath::Admin => handle_admin_menu(&mut keyboard, &mut action_writer),
     }
 }
 
@@ -65,6 +67,13 @@ fn handle_root_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConsol
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::Performance;
         consumed = Some(KeyCode::Numpad2);
+    }
+
+    #[cfg(feature = "admin")]
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::Admin;
+        consumed = Some(KeyCode::Numpad3);
     }
 
     // Consume the input
@@ -110,6 +119,23 @@ fn handle_performance_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
         action_writer.write(DevConsoleAction::ToggleNetworkUI);
         consumed = Some(KeyCode::Numpad2);
+    }
+
+    if let Some(key) = consumed {
+        keyboard.clear_just_pressed(key);
+    }
+}
+
+#[cfg(feature = "admin")]
+fn handle_admin_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    let mut consumed = None;
+
+    if keyboard.just_pressed(KeyCode::Numpad1) {
+        action_writer.write(DevConsoleAction::ToggleFlyover);
+        consumed = Some(KeyCode::Numpad1);
     }
 
     if let Some(key) = consumed {

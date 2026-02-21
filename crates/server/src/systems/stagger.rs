@@ -46,7 +46,7 @@ pub fn process_knockback(
         }
 
         // Find floor tile under current Loc (Loc is at standing height = floor + Z)
-        let Some((floor, _)) = map.find(**loc, -60) else {
+        let Some((floor, _)) = map.get_by_qr(loc.q, loc.r) else {
             commands.entity(ent).remove::<Knockback>();
             continue;
         };

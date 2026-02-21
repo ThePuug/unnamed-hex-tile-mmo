@@ -53,8 +53,8 @@ pub fn update(
             // Calculate the hex direction from the player's heading
             let target_direction = **loc + **heading;
             
-            // Find the actual terrain tile in that direction, searching vertically
-            if let Some((actual_tile, _)) = map.find(target_direction, -60) {
+            // Find the actual terrain tile in that direction
+            if let Some((actual_tile, _)) = map.get_by_qr(target_direction.q, target_direction.r) {
                 // Get the vertices for this tile (respecting slope toggle)
                 let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
                 

@@ -82,12 +82,14 @@ pub struct Map<T> {
     #[into_iterator(owned)]
     tree: BTreeMap<Qrz, T>,
     hash: HashMap<Qrz, T>,
+    /// Flat index: (q, r) → z for O(1) lookup by column.
+    flat: HashMap<(i32, i32), i32>,
 }
 
 impl<T> Map<T> 
 where T : Copy {
     pub fn new(radius: f32, rise: f32) -> Self {
-        Self { radius, rise, tree: BTreeMap::new(), hash: HashMap::new() }
+        Self { radius, rise, tree: BTreeMap::new(), hash: HashMap::new(), flat: HashMap::new() }
     }
 
     pub fn radius(&self) -> f32 { self.radius }
@@ -101,27 +103,33 @@ where T : Copy {
         }).collect()
     }
 
-    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, T)> {
-        for i in 0..=dist.abs() {
-            let z = if dist < 0 { -i as i32 } else { i as i32 };
-            let qrz = qrz + Qrz { q: 0, r: 0, z };
-            if let Some(obj) = self.get(qrz) { return Some((qrz, *obj)); }
-        }
-        None
-    }
-
-    pub fn get(&self, qrz: Qrz) -> Option<&T> {
+pub fn get(&self, qrz: Qrz) -> Option<&T> {
         self.hash.get(&qrz)
     }
 
     pub fn insert(&mut self, qrz: Qrz, obj: T) {
         self.tree.insert(qrz, obj);
         self.hash.insert(qrz, obj);
+        self.flat.insert((qrz.q, qrz.r), qrz.z);
     }
 
     pub fn remove(&mut self, qrz: Qrz) -> Option<T> {
         self.tree.remove(&qrz);
-        self.hash.remove(&qrz)
+        let removed = self.hash.remove(&qrz);
+        if removed.is_some() {
+            // Only remove flat entry if the z matches (avoid clobbering a newer insert)
+            if self.flat.get(&(qrz.q, qrz.r)) == Some(&qrz.z) {
+                self.flat.remove(&(qrz.q, qrz.r));
+            }
+        }
+        removed
+    }
+
+    /// O(1) lookup by (q, r) column — returns the Qrz and value for the tile at this column.
+    pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, T)> {
+        let &z = self.flat.get(&(q, r))?;
+        let qrz = Qrz { q, r, z };
+        Some((qrz, *self.hash.get(&qrz)?))
     }
 
     pub fn len(&self) -> usize {
@@ -143,14 +151,17 @@ where T : Copy {
         ]
     }
 
-    /// Estimate heap bytes used by the internal BTreeMap + HashMap.
+    /// Estimate heap bytes used by the internal BTreeMap + HashMap + flat index.
     pub fn heap_size_estimate(&self) -> usize {
         let entry = std::mem::size_of::<Qrz>() + std::mem::size_of::<T>();
         // hashbrown: 1 control byte per slot + entry storage
         let hash_bytes = self.hash.capacity() * (entry + 1);
         // BTreeMap: ~40 bytes node overhead per entry (pointers, metadata, padding)
         let btree_bytes = self.tree.len() * (entry + 40);
-        hash_bytes + btree_bytes
+        // flat index: (i32,i32) key + i32 value + 1 control byte per slot
+        let flat_entry = std::mem::size_of::<(i32, i32)>() + std::mem::size_of::<i32>();
+        let flat_bytes = self.flat.capacity() * (flat_entry + 1);
+        hash_bytes + btree_bytes + flat_bytes
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&Qrz, &T)> {
@@ -160,8 +171,12 @@ where T : Copy {
     pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz,T)> {
         let mut neighbors = Vec::new();
         for check in qrz.neighbors() {
-            let Some(neighbor) = self.find(check + Qrz::Z, -2) else { continue };
-            neighbors.extend_one(neighbor);
+            // Use flat index for O(1) lookup, then filter by walkable z range (±1)
+            if let Some((neighbor_qrz, val)) = self.get_by_qr(check.q, check.r) {
+                if (neighbor_qrz.z - qrz.z).abs() <= 1 {
+                    neighbors.push((neighbor_qrz, val));
+                }
+            }
         }
         neighbors
     }
@@ -318,38 +333,6 @@ mod tests {
     }
 
     // ===== MAP OPERATION TESTS =====
-
-    #[test]
-    fn test_find_exact_match() {
-        let mut map = Map::new(1.0, 0.8);
-        let coord = Qrz { q: 1, r: 2, z: 3 };
-        map.insert(coord, 42);
-
-        let result = map.find(coord, 0);
-        assert_eq!(result, Some((coord, 42)), "Should find exact coordinate");
-    }
-
-    #[test]
-    fn test_find_searches_vertically() {
-        let mut map = Map::new(1.0, 0.8);
-        let base = Qrz { q: 1, r: 2, z: 5 };
-        map.insert(base, 42);
-
-        // Search from Z=10 downward by 10 levels
-        let search_start = Qrz { q: 1, r: 2, z: 10 };
-        let result = map.find(search_start, -10);
-
-        assert_eq!(result, Some((base, 42)), "Should find tile 5 levels below search start");
-    }
-
-    #[test]
-    fn test_find_returns_none_when_not_found() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let search_start = Qrz { q: 1, r: 2, z: 10 };
-        let result = map.find(search_start, -5);
-
-        assert_eq!(result, None, "Should return None when no tile found");
-    }
 
     #[test]
     fn test_vertices_returns_seven() {

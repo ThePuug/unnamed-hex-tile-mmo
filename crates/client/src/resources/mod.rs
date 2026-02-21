@@ -55,6 +55,14 @@ pub struct PendingChunkMeshes {
     pub tasks: HashMap<ChunkId, Task<(Mesh, Aabb)>>,
 }
 
+/// Chunks whose appearance should NOT trigger neighbor mesh regeneration.
+/// When the admin flyover generates all chunks (including a buffer zone) at once,
+/// the mesh pipeline already has correct neighbor data — no cascade needed.
+#[derive(Debug, Default, Resource)]
+pub struct SkipNeighborRegen {
+    pub chunks: HashSet<ChunkId>,
+}
+
 /// Tracks which chunks have been received on the client
 #[derive(Debug, Default, Resource)]
 pub struct LoadedChunks {

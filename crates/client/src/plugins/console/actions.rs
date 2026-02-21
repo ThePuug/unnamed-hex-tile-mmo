@@ -18,6 +18,10 @@ pub enum DevConsoleAction {
     // Performance actions
     TogglePerfUI,
     ToggleNetworkUI,
+
+    // Admin actions
+    #[cfg(feature = "admin")]
+    ToggleFlyover,
 }
 
 /// System that executes console actions
@@ -145,6 +149,10 @@ pub fn execute_console_actions(
 
                 info!("Network UI: {}", if diagnostics_state.network_ui_visible { "ON" } else { "OFF" });
             }
+
+            // Admin actions (handled by admin module's own system)
+            #[cfg(feature = "admin")]
+            DevConsoleAction::ToggleFlyover => {}
         }
     }
 }

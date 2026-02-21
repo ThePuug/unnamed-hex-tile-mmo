@@ -20,7 +20,7 @@ fn calculate_knockback_destination(
     map: &Map,
 ) -> (Qrz, i32) {
     // Find floor tile under source (source_loc may be standing height = floor + Z)
-    let Some((floor, _)) = map.find(source_loc, -60) else {
+    let Some((floor, _)) = map.get_by_qr(source_loc.q, source_loc.r) else {
         return (source_loc, 0);
     };
 

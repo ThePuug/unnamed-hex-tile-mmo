@@ -11,7 +11,7 @@ pub const TILE_SIZE: f32 = 1.;
 use crate::{
     components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
-    resources::{LoadedChunks, PendingChunkMeshes, Server, TerrainMaterial},
+    resources::{LoadedChunks, PendingChunkMeshes, Server, SkipNeighborRegen, TerrainMaterial},
 };
 use common::{
     chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
@@ -66,6 +66,8 @@ pub fn spawn_missing_chunk_meshes(
     chunk_mesh_query: Query<&ChunkMesh>,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     diagnostics_state: Res<DiagnosticsState>,
+    skip_neighbor_regen: Res<SkipNeighborRegen>,
+    loaded_chunks: Res<LoadedChunks>,
 ) {
     use std::collections::HashSet;
     use common::chunk::{ChunkId, calculate_visible_chunks, loc_to_chunk};
@@ -77,10 +79,17 @@ pub fn spawn_missing_chunk_meshes(
         .map(|mesh| mesh.chunk_id)
         .collect();
 
-    // Scan the map to find which chunks have tiles
+    // Scan the map to find which chunks have tiles, but only consider chunks
+    // that are actively tracked. Tiles queued for despawn may still linger in
+    // the map snapshot — without this filter we'd re-mesh evicted chunks.
+    // Accept: server-loaded chunks (LoadedChunks) and admin-generated chunks
+    // (SkipNeighborRegen, which tracks flyover-generated chunks).
     let mut chunks_with_tiles: HashSet<ChunkId> = HashSet::new();
     for (qrz, _) in map.iter_tiles() {
-        chunks_with_tiles.insert(loc_to_chunk(qrz));
+        let chunk = loc_to_chunk(qrz);
+        if loaded_chunks.chunks.contains(&chunk) || skip_neighbor_regen.chunks.contains(&chunk) {
+            chunks_with_tiles.insert(chunk);
+        }
     }
 
     // Spawn mesh tasks for chunks with tiles but no mesh (and no pending task)
@@ -104,11 +113,13 @@ pub fn spawn_missing_chunk_meshes(
         pending_meshes.tasks.insert(chunk_id, task);
     }
 
-    // Also regenerate adjacent chunks when a new chunk appears (fixes edge vertices)
+    // Also regenerate adjacent chunks when a new chunk appears (fixes edge vertices).
+    // Skip cascade for chunks in SkipNeighborRegen — their meshes were generated with
+    // complete neighbor data already present (e.g. admin flyover buffer zone).
     let mut chunks_to_regenerate: HashSet<ChunkId> = HashSet::new();
     for chunk_id in &chunks_with_tiles {
-        // If this chunk is new (no mesh yet), regenerate its neighbors too
-        if !chunks_with_meshes.contains(chunk_id) {
+        // If this chunk is new (no mesh yet) and not marked to skip cascade
+        if !chunks_with_meshes.contains(chunk_id) && !skip_neighbor_regen.chunks.contains(chunk_id) {
             for adjacent_chunk in calculate_visible_chunks(*chunk_id, 1) {
                 if chunks_with_tiles.contains(&adjacent_chunk) && chunks_with_meshes.contains(&adjacent_chunk) {
                     chunks_to_regenerate.insert(adjacent_chunk);

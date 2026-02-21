@@ -212,7 +212,7 @@ pub fn kite(
 
             // Path back to spawn using greedy movement
             let spawn_qrz = *spawner_loc;
-            let Some((start, _)) = map.find(**npc_loc, -60) else {
+            let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                 continue;
             };
 
@@ -306,7 +306,7 @@ pub fn kite(
                 if distance_from_spawn > kite_config.leash_distance {
                     // Too far from spawn - return to spawn
                     let spawn_qrz = *spawner_loc;
-                    let Some((start, _)) = map.find(**npc_loc, -60) else {
+                    let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                         continue;
                     };
 
@@ -414,7 +414,7 @@ pub fn kite(
             KiteAction::Flee | KiteAction::Reposition => {
                 // Score-based neighbor selection: balances optimal range + leash safety
                 let target_qrz = **target_loc;
-                let Some((start, _)) = map.find(**npc_loc, -60) else {
+                let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                     continue;
                 };
 
@@ -463,7 +463,7 @@ pub fn kite(
             KiteAction::Advance => {
                 // Score-based: when too far, score naturally prefers moving toward optimal range
                 let target_qrz = **target_loc;
-                let Some((start, _)) = map.find(**npc_loc, -60) else {
+                let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                     continue;
                 };
 

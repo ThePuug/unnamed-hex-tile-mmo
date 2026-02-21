@@ -130,7 +130,7 @@ pub fn update(
                 // Get target's location
                 if let Ok((_, target_loc)) = entity_query.get(target_ent) {
                     // Find the actual terrain tile at target location (handles elevation)
-                    if let Some((actual_tile, _)) = map.find(**target_loc, -60) {
+                    if let Some((actual_tile, _)) = map.get_by_qr(target_loc.q, target_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
                         let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
 
@@ -208,7 +208,7 @@ pub fn update(
                 // Get ally's location
                 if let Ok((_, ally_loc)) = entity_query.get(ally_ent) {
                     // Find the actual terrain tile at ally location (handles elevation)
-                    if let Some((actual_tile, _)) = map.find(**ally_loc, -60) {
+                    if let Some((actual_tile, _)) = map.get_by_qr(ally_loc.q, ally_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
                         let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
 

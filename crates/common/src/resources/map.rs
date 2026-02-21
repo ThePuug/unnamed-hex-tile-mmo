@@ -116,8 +116,9 @@ fn drain_loop(
             *pub_lock = Arc::new(working.clone());
         }
 
-        // Delay to yield to mesh generators after processing events
-        std::thread::sleep(Duration::from_millis(500));
+        // Brief yield after publishing — one frame is enough for mesh tasks
+        // to grab the new snapshot before the next batch arrives.
+        std::thread::sleep(Duration::from_millis(16));
     }
 }
 
@@ -159,28 +160,55 @@ impl Map {
         self.0.rise()
     }
 
-    /// Calculate height-based color tint for a given elevation.
-    /// Pure computation - no lock needed.
+    /// Topographic color ramp matching terrain-viewer elevation mode.
+    /// Deep blue (ocean) → cyan (coast) → green (lowland) → yellow (mid) → brown (high) → white (peak).
+    /// Returns linear RGB [0..1] with alpha.
     fn height_color_tint(elevation: i32) -> [f32; 4] {
-        // Base grass color (dark greenish)
-        let base_color = [0.04, 0.09, 0.04];
+        const RAMP: &[(f64, f64, f64, f64)] = &[
+            (-300.0, 10.0, 20.0, 80.0),    // deep ocean
+            (50.0, 30.0, 60.0, 160.0),     // ocean
+            (150.0, 60.0, 130.0, 200.0),   // shallow ocean
+            (250.0, 80.0, 180.0, 180.0),   // coastal
+            (400.0, 80.0, 160.0, 80.0),    // lowland green
+            (700.0, 160.0, 180.0, 60.0),   // mid elevation yellow-green
+            (1000.0, 200.0, 170.0, 50.0),  // yellow
+            (1400.0, 170.0, 120.0, 50.0),  // brown
+            (2000.0, 200.0, 190.0, 180.0), // light brown / gray
+            (3000.0, 255.0, 255.0, 255.0), // white peaks
+        ];
 
-        // Apply elevation-based tinting
-        // Lower elevations (valleys): darker, more saturated green
-        // Higher elevations (peaks): lighter, with hints of brown/gray (suggesting rocky terrain)
-        let elevation_factor = (elevation as f32) / 15.0; // Normalize to roughly 0-1 range
+        let h = elevation as f64;
 
-        // Darker at low elevations, lighter at high elevations
-        let brightness_mult = 1.0 + (elevation_factor * 2.0).clamp(0.0, 2.0);
-
-        // At high elevations, add brown/gray tint (reduce green, add red)
-        let high_elevation_tint = elevation_factor.clamp(0.0, 1.0);
+        // Clamp to ramp endpoints
+        let (r, g, b) = if h <= RAMP[0].0 {
+            (RAMP[0].1, RAMP[0].2, RAMP[0].3)
+        } else if h >= RAMP[RAMP.len() - 1].0 {
+            let last = RAMP[RAMP.len() - 1];
+            (last.1, last.2, last.3)
+        } else {
+            // Find segment and interpolate
+            let mut result = (128.0, 128.0, 128.0);
+            for i in 0..RAMP.len() - 1 {
+                let (e0, r0, g0, b0) = RAMP[i];
+                let (e1, r1, g1, b1) = RAMP[i + 1];
+                if h >= e0 && h < e1 {
+                    let t = (h - e0) / (e1 - e0);
+                    result = (
+                        r0 + (r1 - r0) * t,
+                        g0 + (g1 - g0) * t,
+                        b0 + (b1 - b0) * t,
+                    );
+                    break;
+                }
+            }
+            result
+        };
 
         [
-            (base_color[0] * brightness_mult + high_elevation_tint * 0.15).clamp(0.0, 1.0), // Red increases with height
-            (base_color[1] * brightness_mult * (1.0 - high_elevation_tint * 0.3)).clamp(0.0, 1.0), // Green slightly decreases
-            (base_color[2] * brightness_mult).clamp(0.0, 1.0), // Blue stays similar
-            1.0, // Alpha
+            (r / 255.0) as f32,
+            (g / 255.0) as f32,
+            (b / 255.0) as f32,
+            1.0,
         ]
     }
 
@@ -217,10 +245,8 @@ impl Map {
         for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
             let neighbor_qrz = qrz + *direction;
 
-            // Try to find the neighbor tile across this edge (search both up and down)
-            // Use map.find() directly to avoid nested lock acquisition
-            let found_neighbor = map.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
-                .or_else(|| map.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+            // O(1) flat lookup for neighbor tile at this (q, r) column
+            let found_neighbor = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r);
 
             if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                 // Calculate elevation difference
@@ -383,9 +409,8 @@ impl Map {
             for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
                 let neighbor_qrz = tile_qrz + *direction;
 
-                // Find neighbor at different elevation (search up/down)
-                let found_neighbor = map.find(neighbor_qrz + Qrz{q:0,r:0,z:30}, -60)
-                    .or_else(|| map.find(neighbor_qrz + Qrz{q:0,r:0,z:-30}, 60));
+                // O(1) flat lookup for neighbor tile
+                let found_neighbor = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r);
 
                 if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                     let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
@@ -512,7 +537,8 @@ impl Map {
                 }
             }
 
-            let sw_result = map.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[1], -60);
+            let sw_neighbor = it_qrz + qrz::DIRECTIONS[1];
+            let sw_result = map.get_by_qr(sw_neighbor.q, sw_neighbor.r);
             let sw_data = sw_result.map(|(qrz, _)| Self::vertices_and_colors_with_slopes_inner(&map, qrz, apply_slopes));
 
             if skip_sw {
@@ -559,7 +585,8 @@ impl Map {
                 skip_sw = true;
             }
 
-            let we_result = map.find(it_qrz + Qrz{q:0,r:0,z:30} + qrz::DIRECTIONS[0], -60);
+            let we_neighbor = it_qrz + qrz::DIRECTIONS[0];
+            let we_result = map.get_by_qr(we_neighbor.q, we_neighbor.r);
             let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
             // Only use sloped vertices if the tile actually exists in the map
             let (mut we_vrt, we_col) = if we_result.is_some() {
@@ -625,8 +652,9 @@ impl Map {
         )
     }
 
-    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, EntityType)> {
-        self.0.find(qrz, dist)
+    /// O(1) lookup by (q, r) column — returns the Qrz (with correct z) and value.
+    pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, EntityType)> {
+        self.0.get_by_qr(q, r)
     }
 
     pub fn get(&self, qrz: Qrz) -> Option<EntityType> {

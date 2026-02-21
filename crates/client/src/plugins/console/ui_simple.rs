@@ -132,6 +132,13 @@ pub fn update_console_menu(
                         TextColor(Color::WHITE),
                     ));
 
+                    #[cfg(feature = "admin")]
+                    parent.spawn((
+                        Text::new("3. Admin"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
@@ -195,6 +202,25 @@ pub fn update_console_menu(
                         Text::new(format!("2. Toggle Network UI        [{}]", on_off(diagnostics_state.network_ui_visible))),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(state_color(diagnostics_state.network_ui_visible)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: 8.0, ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("0. Back to Main Menu"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                #[cfg(feature = "admin")]
+                MenuPath::Admin => {
+                    parent.spawn((
+                        Text::new("1. Toggle Flyover Camera"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
                     ));
 
                     parent.spawn((

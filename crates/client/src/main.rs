@@ -35,6 +35,8 @@ use crate::{
     resources::*,
     systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
 };
+#[cfg(feature = "admin")]
+use crate::systems::admin;
 
 const PROTOCOL_ID: u64 = 7;
 
@@ -90,11 +92,12 @@ fn main() {
     ));
 
 
-    app.add_systems(PreUpdate, (
-        // Ensure proper ordering: update_keybits -> tick -> do_input
-        input::update_keybits,
-        common::resources::map::refresh_map,
-    ));
+    // Ensure proper ordering: update_keybits -> tick -> do_input
+    #[cfg(feature = "admin")]
+    app.add_systems(PreUpdate, input::update_keybits.run_if(admin::not_in_flyover));
+    #[cfg(not(feature = "admin"))]
+    app.add_systems(PreUpdate, input::update_keybits);
+    app.add_systems(PreUpdate, common::resources::map::refresh_map);
 
     app.add_systems(FixedUpdate, (
         input::do_input.after(common::systems::behaviour::controlled::tick),
@@ -119,12 +122,20 @@ fn main() {
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
         animator::update,
-        camera::update,
         targeting::update_targets, // Update hostile targets every frame (detects when targets move)
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)
         combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
         combat::apply_gcd,
     ));
+
+    // Camera: conditional on flyover state in admin builds
+    #[cfg(feature = "admin")]
+    app.add_systems(Update, (
+        camera::update.run_if(admin::not_in_flyover),
+        admin::flyover_camera_update.run_if(admin::flyover_active),
+    ));
+    #[cfg(not(feature = "admin"))]
+    app.add_systems(Update, camera::update);
 
     // ADR-012: Client-side recovery (authoritative server, no prediction)
     app.add_systems(Update, (
@@ -182,11 +193,37 @@ fn main() {
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
     app.init_resource::<crate::resources::PendingChunkMeshes>();
+    app.init_resource::<crate::resources::SkipNeighborRegen>();
+
+    // Admin resources and systems (compile-time feature gate)
+    #[cfg(feature = "admin")]
+    {
+        app.init_resource::<admin::FlyoverState>();
+        app.insert_resource(admin::AdminTerrain::default());
+
+        app.add_systems(Update, (
+            admin::execute_admin_actions,
+            admin::flyover_movement.run_if(admin::flyover_active),
+            admin::tag_admin_chunks,
+            admin::flyover_generate_chunks
+                .run_if(admin::flyover_active)
+                .run_if(on_timer(Duration::from_millis(200))),
+            admin::flyover_evict_chunks
+                .run_if(admin::flyover_active)
+                .run_if(on_timer(Duration::from_secs(1))),
+        ));
+    }
 
     // Add chunk eviction system (runs periodically to cleanup distant chunks)
     // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction
     // Server mirrors client eviction logic in do_incremental to track which chunks
     // the client has evicted, allowing them to be re-sent when player returns
+    // Disabled during flyover — admin module handles its own eviction
+    #[cfg(feature = "admin")]
+    app.add_systems(Update, world::evict_distant_chunks
+        .run_if(on_timer(Duration::from_secs(5)))
+        .run_if(admin::not_in_flyover));
+    #[cfg(not(feature = "admin"))]
     app.add_systems(Update, world::evict_distant_chunks.run_if(on_timer(Duration::from_secs(5))));
 
     app.run();

@@ -27,6 +27,8 @@ pub enum MenuPath {
     Root,
     Terrain,
     Performance,
+    #[cfg(feature = "admin")]
+    Admin,
 }
 
 impl MenuPath {
@@ -36,6 +38,8 @@ impl MenuPath {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
             MenuPath::Performance => "Performance Monitoring",
+            #[cfg(feature = "admin")]
+            MenuPath::Admin => "Admin Tools",
         }
     }
 }

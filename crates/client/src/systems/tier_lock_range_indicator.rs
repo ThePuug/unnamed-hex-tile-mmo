@@ -152,7 +152,7 @@ pub fn update(
 
     for tile_qrz in tiles_in_range {
         // Find the actual terrain tile at this location (handles elevation)
-        if let Some((actual_tile, _)) = map.find(tile_qrz, -60) {
+        if let Some((actual_tile, _)) = map.get_by_qr(tile_qrz.q, tile_qrz.r) {
             // Get the vertices for this tile (respecting slope toggle)
             let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
 

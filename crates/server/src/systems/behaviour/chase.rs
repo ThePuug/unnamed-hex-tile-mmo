@@ -145,7 +145,7 @@ pub fn chase(
 
             // Path back to spawn using greedy movement
             let spawn_qrz = *spawner_loc;
-            let Some((start, _)) = map.find(**npc_loc, -60) else {
+            let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                 continue;
             };
 
@@ -241,7 +241,7 @@ pub fn chase(
                 if distance_from_spawn > chase_config.leash_distance {
                     // Too far from spawn - return to spawn instead of acquiring new target
                     let spawn_qrz = *spawner_loc;
-                    let Some((start, _)) = map.find(**npc_loc, -60) else {
+                    let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                         continue;
                     };
 
@@ -359,7 +359,7 @@ pub fn chase(
         let target_qrz = move_target;
 
         // Find terrain under current location and target
-        let Some((start, _)) = map.find(**npc_loc, -60) else {
+        let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
             continue;
         };
 

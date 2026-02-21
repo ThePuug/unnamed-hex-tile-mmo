@@ -19,8 +19,8 @@ impl Default for CameraOrbitAngle {
 }
 
 /// Camera distance from player and height
-const CAMERA_DISTANCE: f32 = 40.0;
-const CAMERA_HEIGHT: f32 = 30.0;
+pub const CAMERA_DISTANCE: f32 = 40.0;
+pub const CAMERA_HEIGHT: f32 = 30.0;
 
 pub fn setup(
     mut commands: Commands,

@@ -49,12 +49,6 @@ pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 /// Base movement speed in world units per millisecond
 pub const MOVEMENT_SPEED: f32 = 0.005;
 
-/// Vertical search range for floor detection (downward)
-pub const FLOOR_SEARCH_RANGE_DOWN: i8 = -60;
-
-/// Vertical search offset for floor detection (upward)
-pub const FLOOR_SEARCH_OFFSET_UP: i32 = 30;
-
 /// Terrain slope following speed (0.0 = no following, 1.0 = instant)
 pub const SLOPE_FOLLOW_SPEED: f32 = 0.95;
 
@@ -121,7 +115,7 @@ pub fn blended_terrain_y(world_xz: Vec2, current_hx: Qrz, terrain_y: f32, _entit
         return terrain_y;
     }
 
-    let Some((nf_qrz, _)) = map.find(neighbor + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN) else {
+    let Some((nf_qrz, _)) = map.get_by_qr(neighbor.q, neighbor.r) else {
         return terrain_y;
     };
 
@@ -278,10 +272,7 @@ pub fn clamp_to_floor(
     let world_pos = px0 + offset;
     let current_hex: Qrz = map.convert(world_pos);
 
-    let floor = map.find(
-        current_hex + Qrz::Z * FLOOR_SEARCH_OFFSET_UP,
-        FLOOR_SEARCH_RANGE_DOWN,
-    );
+    let floor = map.get_by_qr(current_hex.q, current_hex.r);
 
     if let Some((floor_qrz, _)) = floor {
         let terrain_y = terrain_y_at(floor_qrz, current_tile, map);
@@ -318,7 +309,7 @@ pub fn is_tile_blocked(
 ) -> bool {
     let px0: Vec3 = map.convert(current_tile);
     let step_hx: Qrz = map.convert(px0 + current_offset);
-    let floor = map.find(step_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+    let floor = map.get_by_qr(step_hx.q, step_hx.r);
 
     // Compute direction toward destination as a move heading
     let rel_px: Vec3 = map.convert(destination) - px0;
@@ -326,7 +317,7 @@ pub fn is_tile_blocked(
     let move_heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));
     let next_hx = step_hx + *move_heading;
 
-    let next_floor = map.find(next_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+    let next_floor = map.get_by_qr(next_hx.q, next_hx.r);
 
     // Check cliff transition (elevation diff > 1 going upward)
     let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
@@ -391,7 +382,7 @@ pub fn calculate_movement(
 
         let px0: Vec3 = map.convert(tile);
         let step_hx: Qrz = map.convert(px0 + offset);
-        let floor = map.find(step_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+        let floor = map.get_by_qr(step_hx.q, step_hx.r);
 
         // Check if we should start falling
         if airtime.is_none() {
@@ -446,7 +437,7 @@ pub fn calculate_movement(
             let move_heading = Heading::from(KeyBits::from(Heading::new(rel_hx)));
             let next_hx = step_hx + *move_heading;
 
-            let next_floor = map.find(next_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+            let next_floor = map.get_by_qr(next_hx.q, next_hx.r);
 
             let is_cliff_transition = if let (Some((current_floor_qrz, _)), Some((next_floor_qrz, _))) = (floor, next_floor) {
                 let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
@@ -490,7 +481,7 @@ pub fn calculate_movement(
 
         // Terrain following / floor clamping
         let current_hx: Qrz = map.convert(px0 + offset);
-        let current_floor = map.find(current_hx + Qrz::Z * FLOOR_SEARCH_OFFSET_UP, FLOOR_SEARCH_RANGE_DOWN);
+        let current_floor = map.get_by_qr(current_hx.q, current_hx.r);
 
         if let Some((floor_qrz, _)) = current_floor {
             let terrain_y = terrain_y_at(floor_qrz, tile, map);

@@ -78,8 +78,8 @@ pub fn do_incremental(
                                 if hex_distance > 1 {
                                     // Multi-tile: greedy path for terrain following
                                     // Use floor-level tiles (Loc is standing height = floor + Z)
-                                    let old_floor = map.find(**loc0, -60).map(|(f, _)| f).unwrap_or(**loc0);
-                                    let new_floor = map.find(*loc, -60).map(|(f, _)| f).unwrap_or(*loc);
+                                    let old_floor = map.get_by_qr(loc0.q, loc0.r).map(|(f, _)| f).unwrap_or(**loc0);
+                                    let new_floor = map.get_by_qr(loc.q, loc.r).map(|(f, _)| f).unwrap_or(*loc);
                                     let path = map.greedy_path(old_floor, new_floor, hex_distance as usize);
                                     if !path.is_empty() {
                                         let waypoints: Vec<Vec3> = path.iter()

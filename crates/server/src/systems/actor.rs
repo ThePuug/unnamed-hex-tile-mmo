@@ -108,7 +108,7 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
             let qrz_base = chunk_to_tile(chunk_id, offset_q, offset_r);
 
             // Check if tile already exists in map (player-modified or pre-placed)
-            let (qrz, typ) = if let Some((qrz, typ)) = map.find(qrz_base + Qrz{q:0,r:0,z:30}, -60) {
+            let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(qrz_base.q, qrz_base.r) {
                 (qrz, typ)
             } else {
                 // Generate new procedural tile with actual terrain height
@@ -195,7 +195,7 @@ pub fn try_discover(
         if let Try { event: Event::Discover { ent, qrz } } = message {
             let (&loc, _) = query.get(ent).unwrap();
             if loc.flat_distance(&qrz) > 25 { continue; }
-            if let Some((qrz, typ)) = map.find(qrz + Qrz{q:0,r:0,z:30}, -60) {
+            if let Some((qrz, typ)) = map.get_by_qr(qrz.q, qrz.r) {
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             } else {
                 let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(qrz.q, qrz.r)};

@@ -212,7 +212,7 @@ pub fn apply_movement_intent(
         if flat_dist > 1 {
             // Multi-tile movement: compute greedy terrain-following path
             // Use floor-level coordinates for pathfinding (Loc is standing height = floor + Z)
-            let current_floor = map.find(**loc, -60).map(|(f, _)| f).unwrap_or(**loc);
+            let current_floor = map.get_by_qr(loc.q, loc.r).map(|(f, _)| f).unwrap_or(**loc);
             let dest_floor = qrz::Qrz { q: destination.q, r: destination.r, z: destination.z - 1 };
             let path = map.greedy_path(current_floor, dest_floor, flat_dist as usize);
             if !path.is_empty() {

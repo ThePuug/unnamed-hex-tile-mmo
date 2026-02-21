@@ -225,7 +225,7 @@ pub fn assign_hexes(
             .collect();
 
         // Find available adjacent hexes (neighbors of player tile that exist in terrain)
-        let terrain_tile = map.find(player_tile, -60);
+        let terrain_tile = map.get_by_qr(player_tile.q, player_tile.r);
         let Some((terrain_qrz, _)) = terrain_tile else { continue; };
 
         let neighbors = map.neighbors(terrain_qrz);
