@@ -333,11 +333,11 @@ pub fn flyover_generate_chunks(
             }
         }
 
-        // Clean up summary if this chunk was previously outer ring
-        if flyover.admin_summary_chunks.remove(&chunk_id) {
-            chunk_summaries.summaries.remove(&chunk_id);
-        }
-
+        // Track as inner ring. If this chunk was previously outer ring,
+        // stop tracking it as a summary chunk — but leave the summary DATA
+        // in ChunkSummaries so the summary mesh persists until
+        // resolve_lod_overlap despawns it (once the full-detail mesh exists).
+        flyover.admin_summary_chunks.remove(&chunk_id);
         flyover.admin_chunks.insert(chunk_id);
         skip_regen.chunks.insert(chunk_id);
     }
@@ -379,7 +379,6 @@ pub fn tag_admin_chunks(
 
 /// Evicts admin chunks (full-detail and summary) that are far from the camera position.
 pub fn flyover_evict_chunks(
-    mut commands: Commands,
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
     map_state: Res<MapState>,
@@ -387,7 +386,6 @@ pub fn flyover_evict_chunks(
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut chunk_summaries: ResMut<ChunkSummaries>,
-    admin_chunk_query: Query<(Entity, &ChunkMesh), With<AdminChunk>>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
@@ -427,7 +425,9 @@ pub fn flyover_evict_chunks(
         kept
     };
 
-    // Evict full-detail admin chunks beyond FOV + 1
+    // Evict full-detail admin chunk data beyond FOV + 1.
+    // Mesh entities are cleaned up by resolve_lod_overlap once a summary
+    // mesh exists for the same chunk.
     let evictable: Vec<ChunkId> = flyover.admin_chunks
         .iter()
         .filter(|id| {
@@ -438,13 +438,22 @@ pub fn flyover_evict_chunks(
         .collect();
 
     if !evictable.is_empty() {
-        let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
-
-        for (entity, chunk_mesh) in admin_chunk_query.iter() {
-            if evict_set.contains(&chunk_mesh.chunk_id) {
-                commands.entity(entity).despawn();
+        // Generate summaries from tile data before tiles are removed.
+        for &chunk_id in &evictable {
+            if !chunk_summaries.summaries.contains_key(&chunk_id) {
+                let center_tile = chunk_to_tile(chunk_id, 8, 8);
+                if let Some((tile_qrz, biome)) = map.get_by_qr(center_tile.q, center_tile.r) {
+                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                        chunk_id,
+                        elevation: tile_qrz.z,
+                        biome,
+                    });
+                    flyover.admin_summary_chunks.insert(chunk_id);
+                }
             }
         }
+
+        let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
 
         for &chunk_id in &evictable {
             if loaded_chunks.chunks.contains(&chunk_id) {

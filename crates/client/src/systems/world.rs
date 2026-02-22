@@ -180,12 +180,93 @@ pub fn poll_chunk_mesh_tasks(
                     *mesh_asset = chunk_mesh;
                 }
             } else {
-                // Spawn new mesh entity
+                // Spawn new mesh entity. If a summary mesh exists for
+                // this chunk, resolve_lod_overlap will remove it.
                 commands.spawn((
                     Mesh3d(meshes.add(chunk_mesh)),
                     MeshMaterial3d(terrain_material.handle.clone()),
                     ChunkMesh { chunk_id },
                 ));
+            }
+        }
+    }
+}
+
+/// When a chunk has both a full-detail mesh and a summary mesh, remove whichever
+/// is wrong based on FOV distance. Inside FOV: full-detail wins (remove summary).
+/// Outside FOV: summary wins (remove full-detail). Because the surviving mesh
+/// already exists when the other is despawned, there is never a visible gap.
+pub fn resolve_lod_overlap(
+    mut commands: Commands,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
+    full_detail_meshes: Query<(Entity, &ChunkMesh), Without<SummaryChunk>>,
+    summary_meshes: Query<(Entity, &ChunkMesh), With<SummaryChunk>>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
+    #[cfg(feature = "admin")]
+    flyover: Option<Res<crate::systems::admin::FlyoverState>>,
+) {
+    let Ok(player_loc) = player_query.single() else { return };
+    let player_chunk = loc_to_chunk(**player_loc);
+    let player_z = player_loc.z;
+    let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
+
+    let full_detail_set: std::collections::HashSet<common::chunk::ChunkId> =
+        full_detail_meshes.iter().map(|(_, cm)| cm.chunk_id).collect();
+
+    let summary_set: std::collections::HashSet<common::chunk::ChunkId> =
+        summary_meshes.iter().map(|(_, cm)| cm.chunk_id).collect();
+
+    // During flyover, use admin_chunks membership instead of FOV distance
+    // to decide whether full-detail or summary wins. Flyover chunks are near
+    // the camera but far from the player, so the FOV check would be wrong.
+    #[cfg(feature = "admin")]
+    let flyover_inner = flyover.as_ref()
+        .filter(|f| f.active)
+        .map(|f| &f.admin_chunks);
+    #[cfg(not(feature = "admin"))]
+    let flyover_inner: Option<&std::collections::HashSet<common::chunk::ChunkId>> = None;
+
+    // Pass 1: Resolve overlaps (both full-detail and summary exist for same chunk)
+    for (entity, cm) in full_detail_meshes.iter() {
+        if !summary_set.contains(&cm.chunk_id) { continue; }
+
+        let full_detail_wins = if let Some(admin_chunks) = flyover_inner {
+            admin_chunks.contains(&cm.chunk_id)
+        } else {
+            let chebyshev = (cm.chunk_id.0 - player_chunk.0).abs()
+                .max((cm.chunk_id.1 - player_chunk.1).abs());
+            chebyshev <= fov_buffer
+        };
+
+        if full_detail_wins {
+            // Full-detail wins, remove summary data
+            // (spawn_summary_meshes handles entity despawn via change detection)
+            chunk_summaries.summaries.remove(&cm.chunk_id);
+        } else {
+            // Summary wins, remove full-detail mesh
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Pass 2: Despawn summary meshes beyond max visibility (no overlap, just too far)
+    // Skipped during flyover — flyover_evict_chunks handles this using camera position.
+    let skip_pass2 = flyover_inner.is_some();
+
+    if !skip_pass2 {
+        let base_plus_buffer = terrain_chunk_radius(player_z) as i32 + 1;
+        for (_entity, cm) in summary_meshes.iter() {
+            if full_detail_set.contains(&cm.chunk_id) { continue; } // handled above
+
+            let chebyshev = (cm.chunk_id.0 - player_chunk.0).abs()
+                .max((cm.chunk_id.1 - player_chunk.1).abs());
+            if chebyshev <= base_plus_buffer { continue; }
+
+            let chunk_z = chunk_summaries.summaries.get(&cm.chunk_id)
+                .map(|s| s.elevation).unwrap_or(player_z);
+            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
+            if chebyshev > vis {
+                // Remove data only; spawn_summary_meshes handles entity despawn
+                chunk_summaries.summaries.remove(&cm.chunk_id);
             }
         }
     }
@@ -455,9 +536,9 @@ pub fn update(
     m_transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
-/// Evict chunks that are outside the player's FOV radius.
-/// Two-pass: evicts full-detail chunks (tiles in Map) and summary chunks
-/// (entries in ChunkSummaries). Also despawns actors on evicted chunks.
+/// Evict full-detail chunks that are outside the player's FOV radius.
+/// Removes tile data from Map, despawns actors, and generates summary data
+/// for evicted chunks. Summary mesh eviction is handled by `resolve_lod_overlap`.
 pub fn evict_distant_chunks(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
@@ -467,7 +548,6 @@ pub fn evict_distant_chunks(
     map_state: Res<common::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
-    chunk_mesh_query: Query<(Entity, &ChunkMesh), Without<SummaryChunk>>,
 ) {
     // Only evict if we have a player
     let Ok(player_loc) = player_query.single() else {
@@ -475,12 +555,11 @@ pub fn evict_distant_chunks(
     };
 
     let player_chunk = loc_to_chunk(**player_loc);
-    let player_z = player_loc.z;
     let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
-    let base_plus_buffer = terrain_chunk_radius(player_z) as i32 + 1;
 
-    // Pass 1: Evict full-detail chunks (tiles in Map)
-    // Full-detail chunks are loaded at FOV_CHUNK_RADIUS, so evict at FOV + 1
+    // Pass 1: Evict full-detail chunk data (tiles + actors)
+    // Full-detail mesh entities are cleaned up by resolve_lod_overlap once
+    // a summary mesh exists for the same chunk.
     let active_chunks: std::collections::HashSet<_> = loaded_chunks.chunks.iter().copied()
         .filter(|chunk_id| {
             let chebyshev = (chunk_id.0 - player_chunk.0).abs()
@@ -492,6 +571,22 @@ pub fn evict_distant_chunks(
     let evictable = loaded_chunks.get_evictable(&active_chunks);
 
     if !evictable.is_empty() {
+        // Generate summaries from tile data before tiles are removed.
+        // resolve_lod_overlap will despawn the full-detail mesh entity once
+        // spawn_summary_meshes has created the summary mesh from this data.
+        for &chunk_id in &evictable {
+            if !chunk_summaries.summaries.contains_key(&chunk_id) {
+                let center = chunk_to_tile(chunk_id, 8, 8);
+                if let Some((qrz, biome)) = map.get_by_qr(center.q, center.r) {
+                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                        chunk_id,
+                        elevation: qrz.z,
+                        biome,
+                    });
+                }
+            }
+        }
+
         // Despawn actors on evicted chunks
         for (entity, loc, entity_type) in actor_query.iter() {
             let actor_chunk = loc_to_chunk(**loc);
@@ -507,13 +602,6 @@ pub fn evict_distant_chunks(
                     l2r.remove_by_left(&entity);
                     commands.entity(entity).despawn();
                 }
-            }
-        }
-
-        // Despawn mesh entities for evicted full-detail chunks
-        for (entity, chunk_mesh) in chunk_mesh_query.iter() {
-            if evictable.contains(&chunk_mesh.chunk_id) {
-                commands.entity(entity).despawn();
             }
         }
 
@@ -537,27 +625,5 @@ pub fn evict_distant_chunks(
         }
     }
 
-    // Pass 2: Evict summary chunks
-    let summary_evictable: Vec<_> = chunk_summaries.summaries.keys().copied()
-        .filter(|chunk_id| {
-            let chebyshev = (chunk_id.0 - player_chunk.0).abs()
-                .max((chunk_id.1 - player_chunk.1).abs());
-
-            if chebyshev <= base_plus_buffer {
-                return false; // keep
-            }
-
-            let chunk_z = chunk_summaries.summaries.get(chunk_id)
-                .map(|s| s.elevation)
-                .unwrap_or(player_z);
-
-            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
-            chebyshev > vis // evict if beyond visibility
-        })
-        .collect();
-
-    for chunk_id in &summary_evictable {
-        chunk_summaries.summaries.remove(chunk_id);
-    }
-    // Summary mesh entities are cleaned up by spawn_summary_meshes (change detection)
+    // Summary mesh eviction is handled by resolve_lod_overlap (Pass 2).
 }

@@ -192,8 +192,8 @@ pub fn write_do(
                 // Track that we received this chunk
                 loaded_chunks.insert(chunk_id);
 
-                // Remove summary if this is an upgrade (outer → inner)
-                chunk_summaries.summaries.remove(&chunk_id);
+                // Summary is kept — resolve_lod_overlap removes it once
+                // the full-detail mesh entity exists.
             }
             Do { event: Event::ChunkSummary { ent: _, chunk_id, elevation, biome } } => {
                 // Don't downgrade full-detail chunks to summaries

@@ -216,6 +216,12 @@ fn main() {
         ));
     }
 
+    // LoD mesh lifecycle: resolve overlaps (always) and evict distant summaries
+    // Pass 1 (overlap resolution) runs always — needed during flyover too.
+    // Pass 2 (summary eviction by player distance) skipped during flyover
+    // because flyover_evict_chunks handles that using camera position.
+    app.add_systems(Update, world::resolve_lod_overlap);
+
     // Add chunk eviction system (runs periodically to cleanup distant chunks)
     // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction
     // Server mirrors client eviction logic in do_incremental to track which chunks
