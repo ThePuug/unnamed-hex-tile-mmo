@@ -53,25 +53,32 @@ const REGIONAL_SEED_OFFSET: u64 = 0xA77E_C701_1C00_0001;
 /// Continental boundary influence distances (tiles).
 const CONT_CONVERGENT_MAX_DIST: f64 = 750.0;
 const CONT_DIVERGENT_MAX_DIST: f64 = 300.0;
-const CONT_TRANSFORM_MAX_DIST: f64 = 150.0;
+const CONT_TRANSFORM_MAX_DIST: f64 = 800.0;
 
 /// Continental peak elevation contributions at boundary center.
 const CONT_CONVERGENT_PEAK: f64 = 400.0;
 const CONT_DIVERGENT_PEAK: f64 = -150.0;
-const CONT_TRANSFORM_AMP: f64 = 20.0;
+
+/// Continental transform crumple zone parameters.
+const CONT_TRANSFORM_BIAS_SCALE: f64 = 50.0;
+const CONT_TRANSFORM_DISRUPTION_SCALE: f64 = 40.0;
+const CONT_TRANSFORM_CRUMPLE_WIDTH: f64 = 500.0;
+const CONT_TRANSFORM_NOISE_SCALE: f64 = 1.0 / 150.0;
 
 /// Regional boundary influence distances (tiles).
 const REG_CONVERGENT_MAX_DIST: f64 = 200.0;
 const REG_DIVERGENT_MAX_DIST: f64 = 100.0;
-const REG_TRANSFORM_MAX_DIST: f64 = 75.0;
+const REG_TRANSFORM_MAX_DIST: f64 = 250.0;
 
 /// Regional peak elevation contributions at boundary center.
 const REG_CONVERGENT_PEAK: f64 = 50.0;
 const REG_DIVERGENT_PEAK: f64 = -40.0;
-const REG_TRANSFORM_AMP: f64 = 7.5;
 
-/// How much transform boundaries close the base-elevation gap (0=none, 1=full).
-const TRANSFORM_GAP_FACTOR: f64 = 0.4;
+/// Regional transform crumple zone parameters.
+const REG_TRANSFORM_BIAS_SCALE: f64 = 15.0;
+const REG_TRANSFORM_DISRUPTION_SCALE: f64 = 12.0;
+const REG_TRANSFORM_CRUMPLE_WIDTH: f64 = 150.0;
+const REG_TRANSFORM_NOISE_SCALE: f64 = 1.0 / 50.0;
 
 /// Per-tile boundary intensity modulation noise scales.
 /// Continental: ~4 cycles per boundary (~4,000 tile edges).
@@ -236,6 +243,19 @@ struct ContinentalResult {
     neighbor: PlateInfo,
     dist_to_boundary: f64,
     junction_factor: f64,
+}
+
+/// Decomposed drift between two plates: perpendicular (across boundary)
+/// and parallel (along boundary) components plus classification.
+struct BoundaryClassification {
+    kind: BoundaryKind,
+    intensity: f64,
+    /// Signed perpendicular component (positive = converging, negative = diverging).
+    /// Small for transform boundaries — drives transpression/transtension bias.
+    perpendicular: f64,
+    /// Signed parallel component (shear). Large for transform boundaries —
+    /// drives crumple disruption amplitude.
+    parallel: f64,
 }
 
 // ──── Continental Plates ────
@@ -462,28 +482,43 @@ fn regional_plate_for_cell(cell_q: i32, cell_r: i32, seed: u64, noise: &Perlin) 
 
 // ──── Boundary Classification & Elevation ────
 
-fn classify_boundary(plate: &PlateInfo, neighbor: &PlateInfo) -> (BoundaryKind, f64) {
+fn classify_boundary(plate: &PlateInfo, neighbor: &PlateInfo) -> BoundaryClassification {
     let dx = neighbor.center_x - plate.center_x;
     let dy = neighbor.center_y - plate.center_y;
     let len = (dx * dx + dy * dy).sqrt();
     if len < 1e-10 {
-        return (BoundaryKind::Transform, 0.0);
+        return BoundaryClassification {
+            kind: BoundaryKind::Transform, intensity: 0.0,
+            perpendicular: 0.0, parallel: 0.0,
+        };
     }
     let nx = dx / len;
     let ny = dy / len;
 
     let rel_x = plate.drift_x - neighbor.drift_x;
     let rel_y = plate.drift_y - neighbor.drift_y;
-    let convergence = rel_x * nx + rel_y * ny;
+    let perpendicular = rel_x * nx + rel_y * ny;
+    let parallel = -rel_x * ny + rel_y * nx;
 
     const TRANSFORM_THRESHOLD: f64 = 0.15;
-    if convergence > TRANSFORM_THRESHOLD {
-        (BoundaryKind::Convergent, ((convergence - TRANSFORM_THRESHOLD) / 1.5).min(1.0))
-    } else if convergence < -TRANSFORM_THRESHOLD {
-        (BoundaryKind::Divergent, ((-convergence - TRANSFORM_THRESHOLD) / 1.5).min(1.0))
+    if perpendicular > TRANSFORM_THRESHOLD {
+        BoundaryClassification {
+            kind: BoundaryKind::Convergent,
+            intensity: ((perpendicular - TRANSFORM_THRESHOLD) / 1.5).min(1.0),
+            perpendicular, parallel,
+        }
+    } else if perpendicular < -TRANSFORM_THRESHOLD {
+        BoundaryClassification {
+            kind: BoundaryKind::Divergent,
+            intensity: ((-perpendicular - TRANSFORM_THRESHOLD) / 1.5).min(1.0),
+            perpendicular, parallel,
+        }
     } else {
-        let tangential = (-rel_x * ny + rel_y * nx).abs();
-        (BoundaryKind::Transform, tangential.min(1.0))
+        BoundaryClassification {
+            kind: BoundaryKind::Transform,
+            intensity: parallel.abs().min(1.0),
+            perpendicular, parallel,
+        }
     }
 }
 
@@ -498,23 +533,9 @@ fn boundary_elevation(
     my_base: f64,
     neighbor_base: f64,
     junction_factor: f64,
+    perpendicular: f64,
+    parallel: f64,
 ) -> f64 {
-    let (max_dist, peak_elev, transform_amp) = match (kind, scale) {
-        (BoundaryKind::Convergent, BoundaryScale::Continental) => (CONT_CONVERGENT_MAX_DIST, CONT_CONVERGENT_PEAK, 0.0),
-        (BoundaryKind::Divergent, BoundaryScale::Continental) => (CONT_DIVERGENT_MAX_DIST, CONT_DIVERGENT_PEAK, 0.0),
-        (BoundaryKind::Transform, BoundaryScale::Continental) => (CONT_TRANSFORM_MAX_DIST, 0.0, CONT_TRANSFORM_AMP),
-        (BoundaryKind::Convergent, BoundaryScale::Regional) => (REG_CONVERGENT_MAX_DIST, REG_CONVERGENT_PEAK, 0.0),
-        (BoundaryKind::Divergent, BoundaryScale::Regional) => (REG_DIVERGENT_MAX_DIST, REG_DIVERGENT_PEAK, 0.0),
-        (BoundaryKind::Transform, BoundaryScale::Regional) => (REG_TRANSFORM_MAX_DIST, 0.0, REG_TRANSFORM_AMP),
-    };
-
-    if dist_tiles >= max_dist {
-        return 0.0;
-    }
-
-    let t = dist_tiles / max_dist;
-    let falloff = 1.0 - t * t;
-
     // Per-tile intensity variation: breaks up uniform polygon outlines into
     // peaks and passes along a boundary. Dedicated noise offset (210k/250k)
     // decorrelates from surface texture and domain warp.
@@ -528,26 +549,112 @@ fn boundary_elevation(
     ]);
 
     match kind {
-        BoundaryKind::Convergent => {
-            let uplift = peak_elev * intensity * variation * junction_factor;
-            let shared_peak = my_base.max(neighbor_base) + uplift;
-            let delta = shared_peak - my_base;
-            delta * falloff
-        }
-        BoundaryKind::Divergent => {
-            let depression = peak_elev.abs() * intensity * variation * junction_factor;
-            let shared_valley = my_base.min(neighbor_base) - depression;
-            let delta = shared_valley - my_base;
-            delta * falloff
+        BoundaryKind::Convergent | BoundaryKind::Divergent => {
+            let (max_dist, peak_elev) = match (kind, scale) {
+                (BoundaryKind::Convergent, BoundaryScale::Continental) => (CONT_CONVERGENT_MAX_DIST, CONT_CONVERGENT_PEAK),
+                (BoundaryKind::Divergent, BoundaryScale::Continental) => (CONT_DIVERGENT_MAX_DIST, CONT_DIVERGENT_PEAK),
+                (BoundaryKind::Convergent, BoundaryScale::Regional) => (REG_CONVERGENT_MAX_DIST, REG_CONVERGENT_PEAK),
+                (BoundaryKind::Divergent, BoundaryScale::Regional) => (REG_DIVERGENT_MAX_DIST, REG_DIVERGENT_PEAK),
+                _ => unreachable!(),
+            };
+
+            if dist_tiles >= max_dist {
+                return 0.0;
+            }
+
+            let t = dist_tiles / max_dist;
+            let falloff = 1.0 - t * t;
+
+            match kind {
+                BoundaryKind::Convergent => {
+                    let uplift = peak_elev * intensity * variation * junction_factor;
+                    let shared_peak = my_base.max(neighbor_base) + uplift;
+                    (shared_peak - my_base) * falloff
+                }
+                BoundaryKind::Divergent => {
+                    let depression = peak_elev.abs() * intensity * variation * junction_factor;
+                    let shared_valley = my_base.min(neighbor_base) - depression;
+                    (shared_valley - my_base) * falloff
+                }
+                _ => unreachable!(),
+            }
         }
         BoundaryKind::Transform => {
-            let shared_mid = (my_base + neighbor_base) / 2.0;
-            let gap_closure = (shared_mid - my_base) * TRANSFORM_GAP_FACTOR;
-            let n = noise.get([px * 0.025 + 7777.0, py * 0.025 + 8888.0]);
-            let rugosity = transform_amp * intensity * variation * junction_factor * n;
-            (gap_closure + rugosity) * falloff
+            transform_crumple(
+                scale, dist_tiles, noise, px, py,
+                my_base, neighbor_base, junction_factor, variation,
+                perpendicular, parallel,
+            )
         }
     }
+}
+
+/// Transform boundary crumple zone: shear stress creates ridges and basins.
+///
+/// Two components:
+/// 1. **Gap-aware bias**: transpression (positive perpendicular) raises the shared
+///    target, transtension (negative) lowers it. Falls off with distance from boundary.
+/// 2. **Disruption noise**: high-frequency crumple texture driven by total shear energy
+///    (parallel + perpendicular magnitudes). Creates irregular ridges and troughs in a
+///    band along the fault.
+fn transform_crumple(
+    scale: BoundaryScale,
+    dist_tiles: f64,
+    noise: &Perlin,
+    px: f64,
+    py: f64,
+    my_base: f64,
+    neighbor_base: f64,
+    junction_factor: f64,
+    variation: f64,
+    perpendicular: f64,
+    parallel: f64,
+) -> f64 {
+    let (falloff_dist, crumple_width, bias_scale, disruption_scale, noise_scale) = match scale {
+        BoundaryScale::Continental => (
+            CONT_TRANSFORM_MAX_DIST, CONT_TRANSFORM_CRUMPLE_WIDTH,
+            CONT_TRANSFORM_BIAS_SCALE, CONT_TRANSFORM_DISRUPTION_SCALE,
+            CONT_TRANSFORM_NOISE_SCALE,
+        ),
+        BoundaryScale::Regional => (
+            REG_TRANSFORM_MAX_DIST, REG_TRANSFORM_CRUMPLE_WIDTH,
+            REG_TRANSFORM_BIAS_SCALE, REG_TRANSFORM_DISRUPTION_SCALE,
+            REG_TRANSFORM_NOISE_SCALE,
+        ),
+    };
+
+    let effective_max = falloff_dist.max(crumple_width);
+    if dist_tiles >= effective_max {
+        return 0.0;
+    }
+
+    // 1. Gap-aware bias from transpression/transtension
+    let bias = perpendicular * bias_scale;
+    let shared_target = (my_base + neighbor_base) / 2.0 + bias;
+    let gap_falloff = if dist_tiles < falloff_dist {
+        let t = dist_tiles / falloff_dist;
+        1.0 - t * t
+    } else {
+        0.0
+    };
+    let gap_contribution = (shared_target - my_base) * gap_falloff;
+
+    // 2. Crumple disruption noise — high-frequency ridges and basins
+    let shear_energy = parallel.abs() + perpendicular.abs();
+    let crumple_amplitude = shear_energy * disruption_scale;
+    let disruption = noise.get([
+        px * noise_scale + 310_000.0,
+        py * noise_scale + 350_000.0,
+    ]);
+    let crumple_falloff = if dist_tiles < crumple_width {
+        let t = dist_tiles / crumple_width;
+        1.0 - t * t
+    } else {
+        0.0
+    };
+    let crumple = disruption * crumple_amplitude * crumple_falloff;
+
+    (gap_contribution + crumple) * variation * junction_factor
 }
 
 /// Compute perpendicular-bisector distance between two plates.
@@ -607,11 +714,12 @@ impl Terrain {
         let base = cont.plate.base_elevation;
 
         // Continental boundary contribution (gap-aware, dampened at triple junctions)
-        let (cont_kind, cont_intensity) = classify_boundary(&cont.plate, &cont.neighbor);
+        let cont_class = classify_boundary(&cont.plate, &cont.neighbor);
         let cont_elev = boundary_elevation(
-            &cont_kind, BoundaryScale::Continental, cont_intensity, cont_dist_tiles,
+            &cont_class.kind, BoundaryScale::Continental, cont_class.intensity, cont_dist_tiles,
             &self.noise, px, py,
             cont.plate.base_elevation, cont.neighbor.base_elevation, cont.junction_factor,
+            cont_class.perpendicular, cont_class.parallel,
         );
 
         // ── Step 2: Regional evaluation (scoped to continental plate) ──
@@ -662,7 +770,7 @@ impl Terrain {
                 (Some(plate), Some(neighbor)) => {
                     let dist = voronoi_boundary(&plate, &neighbor, reg_px, reg_py);
                     let dist_tiles = dist / HEX_SPACING;
-                    let (kind, intensity) = classify_boundary(&plate, &neighbor);
+                    let reg_class = classify_boundary(&plate, &neighbor);
                     let d2_sqrt = reg_second.0.sqrt();
                     let reg_junction = if d2_sqrt > 1e-10 {
                         ((reg_third_dist.sqrt() - d2_sqrt) / d2_sqrt).clamp(0.0, 1.0)
@@ -670,13 +778,14 @@ impl Terrain {
                         0.0
                     };
                     let elev = boundary_elevation(
-                        &kind, BoundaryScale::Regional, intensity, dist_tiles,
+                        &reg_class.kind, BoundaryScale::Regional, reg_class.intensity, dist_tiles,
                         &self.noise, px, py,
                         plate.base_elevation, neighbor.base_elevation, reg_junction,
+                        reg_class.perpendicular, reg_class.parallel,
                     );
                     (
                         Some(PlateId { cell_q: plate.cell_q, cell_r: plate.cell_r }),
-                        Some(BoundaryInfo { kind, intensity, distance: dist_tiles }),
+                        Some(BoundaryInfo { kind: reg_class.kind, intensity: reg_class.intensity, distance: dist_tiles }),
                         elev,
                     )
                 }
@@ -700,8 +809,8 @@ impl Terrain {
             is_continental: cont.plate.is_continental,
             base_elevation: base,
             continental_boundary: BoundaryInfo {
-                kind: cont_kind,
-                intensity: cont_intensity,
+                kind: cont_class.kind,
+                intensity: cont_class.intensity,
                 distance: cont_dist_tiles,
             },
             continental_neighbor: PlateId {
@@ -798,9 +907,13 @@ mod tests {
             center_x: 100.0, center_y: 0.0, base_elevation: 500.0,
             drift_x: -1.0, drift_y: 0.0, is_continental: true,
         };
-        let (kind, intensity) = classify_boundary(&a, &b);
-        assert_eq!(kind, BoundaryKind::Convergent);
-        let elev = boundary_elevation(&kind, BoundaryScale::Continental, intensity, 0.0, &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0);
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Convergent);
+        let elev = boundary_elevation(
+            &c.kind, BoundaryScale::Continental, c.intensity, 0.0,
+            &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0,
+            c.perpendicular, c.parallel,
+        );
         assert!(elev > 0.0, "Convergent should add elevation, got {elev}");
     }
 
@@ -816,9 +929,13 @@ mod tests {
             center_x: 100.0, center_y: 0.0, base_elevation: 500.0,
             drift_x: 1.0, drift_y: 0.0, is_continental: true,
         };
-        let (kind, _) = classify_boundary(&a, &b);
-        assert_eq!(kind, BoundaryKind::Divergent);
-        let elev = boundary_elevation(&kind, BoundaryScale::Continental, 1.0, 0.0, &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0);
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Divergent);
+        let elev = boundary_elevation(
+            &c.kind, BoundaryScale::Continental, 1.0, 0.0,
+            &Perlin::new(0), 50.0, 0.0, 500.0, 500.0, 1.0,
+            c.perpendicular, c.parallel,
+        );
         assert!(elev < 0.0, "Divergent should subtract elevation, got {elev}");
     }
 
@@ -829,8 +946,152 @@ mod tests {
             &BoundaryKind::Convergent, BoundaryScale::Continental, 1.0,
             CONT_CONVERGENT_MAX_DIST,
             &noise, 0.0, 0.0, 500.0, 500.0, 1.0,
+            0.0, 0.0,
         );
         assert_eq!(elev, 0.0);
+    }
+
+    // ── Transform crumple zone tests ──
+
+    /// Helper: create two plates sliding past each other (pure shear along x-axis).
+    /// Plate A at x=0 drifts +y, plate B at x=100 drifts -y.
+    /// Normal is (1,0), relative drift is (0, 2). perpendicular ≈ 0, parallel ≈ 2.
+    fn make_transform_plates(perpendicular_bias: f64) -> (PlateInfo, PlateInfo) {
+        let a = PlateInfo {
+            cell_q: 0, cell_r: 0, center_hex_q: 0.0, center_hex_r: 0.0,
+            center_x: 0.0, center_y: 0.0, base_elevation: 300.0,
+            drift_x: perpendicular_bias / 2.0, drift_y: 1.0, is_continental: true,
+        };
+        let b = PlateInfo {
+            cell_q: 1, cell_r: 0, center_hex_q: 100.0, center_hex_r: 0.0,
+            center_x: 100.0, center_y: 0.0, base_elevation: 500.0,
+            drift_x: -perpendicular_bias / 2.0, drift_y: -1.0, is_continental: true,
+        };
+        (a, b)
+    }
+
+    #[test]
+    fn classify_transform_pure_shear() {
+        let (a, b) = make_transform_plates(0.0);
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Transform);
+        assert!(c.perpendicular.abs() < 0.01, "pure shear should have near-zero perpendicular: {}", c.perpendicular);
+        assert!(c.parallel.abs() > 1.0, "pure shear should have large parallel: {}", c.parallel);
+    }
+
+    #[test]
+    fn classify_returns_perpendicular_and_parallel() {
+        // Convergent: strong perpendicular, some parallel
+        let a = PlateInfo {
+            cell_q: 0, cell_r: 0, center_hex_q: 0.0, center_hex_r: 0.0,
+            center_x: 0.0, center_y: 0.0, base_elevation: 400.0,
+            drift_x: 0.8, drift_y: 0.5, is_continental: true,
+        };
+        let b = PlateInfo {
+            cell_q: 1, cell_r: 0, center_hex_q: 100.0, center_hex_r: 0.0,
+            center_x: 100.0, center_y: 0.0, base_elevation: 400.0,
+            drift_x: -0.8, drift_y: -0.5, is_continental: true,
+        };
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Convergent);
+        assert!(c.perpendicular > 0.0, "convergent should have positive perpendicular");
+        // parallel is the shear residual — nonzero because drift has a y-component
+        // but classification is convergent because perpendicular dominates
+    }
+
+    #[test]
+    fn transpression_creates_uplift_bias() {
+        // Small positive perpendicular (plates slightly converging while shearing)
+        let (a, b) = make_transform_plates(0.1);
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Transform, "should classify as transform with small perpendicular");
+
+        let noise = Perlin::new(0);
+        // For plate A (base 300, neighbor 500): shared_target = 400 + bias > 400
+        // gap_contribution = (shared_target - 300) * falloff > 0
+        // Isolate bias by zeroing parallel (no disruption noise)
+        let elev_no_shear = transform_crumple(
+            BoundaryScale::Continental, 0.0, &noise, 50.0, 0.0,
+            300.0, 500.0, 1.0, 1.0, c.perpendicular, 0.0,
+        );
+        // With transpression bias, gap should close toward the higher side + some uplift
+        assert!(elev_no_shear > 0.0, "transpression should produce positive contribution for lower plate, got {elev_no_shear}");
+    }
+
+    #[test]
+    fn transtension_creates_depression_bias() {
+        // Small negative perpendicular (plates slightly diverging while shearing)
+        let (a, b) = make_transform_plates(-0.1);
+        let c = classify_boundary(&a, &b);
+        assert_eq!(c.kind, BoundaryKind::Transform);
+
+        let noise = Perlin::new(0);
+        // For the HIGHER plate (base 500, neighbor 300):
+        // shared_target = 400 + (negative bias) < 400
+        // gap_contribution = (shared_target - 500) < 0 → depression
+        let elev_no_shear = transform_crumple(
+            BoundaryScale::Continental, 0.0, &noise, 50.0, 0.0,
+            500.0, 300.0, 1.0, 1.0, -c.perpendicular, 0.0,
+        );
+        assert!(elev_no_shear < 0.0, "transtension should depress higher plate, got {elev_no_shear}");
+    }
+
+    #[test]
+    fn crumple_amplitude_scales_with_shear() {
+        let noise = Perlin::new(0);
+        let low_shear = transform_crumple(
+            BoundaryScale::Continental, 100.0, &noise, 50.0, 0.0,
+            400.0, 400.0, 1.0, 1.0, 0.0, 0.3,
+        );
+        let high_shear = transform_crumple(
+            BoundaryScale::Continental, 100.0, &noise, 50.0, 0.0,
+            400.0, 400.0, 1.0, 1.0, 0.0, 0.9,
+        );
+        // Equal base elevations → no gap contribution → pure crumple noise
+        // Higher shear = larger amplitude
+        assert!(high_shear.abs() > low_shear.abs(),
+            "higher shear should produce larger crumple: low={low_shear:.2}, high={high_shear:.2}");
+    }
+
+    #[test]
+    fn crumple_zero_beyond_effective_max() {
+        let noise = Perlin::new(0);
+        let effective_max = CONT_TRANSFORM_MAX_DIST.max(CONT_TRANSFORM_CRUMPLE_WIDTH);
+        let elev = transform_crumple(
+            BoundaryScale::Continental, effective_max, &noise, 50.0, 0.0,
+            300.0, 500.0, 1.0, 1.0, 0.05, 0.8,
+        );
+        assert_eq!(elev, 0.0, "should be zero at effective max distance");
+    }
+
+    #[test]
+    fn crumple_decreases_with_distance() {
+        let noise = Perlin::new(0);
+        let near = transform_crumple(
+            BoundaryScale::Continental, 10.0, &noise, 50.0, 0.0,
+            400.0, 400.0, 1.0, 1.0, 0.0, 0.8,
+        );
+        let far = transform_crumple(
+            BoundaryScale::Continental, 400.0, &noise, 50.0, 0.0,
+            400.0, 400.0, 1.0, 1.0, 0.0, 0.8,
+        );
+        // Equal bases → pure crumple. Near should have higher amplitude than far.
+        assert!(near.abs() > far.abs(),
+            "crumple should decrease with distance: near={near:.2}, far={far:.2}");
+    }
+
+    #[test]
+    fn transform_max_distance_reflects_crumple_zone() {
+        // max_distance() should return the larger of the two influence distances
+        let cont_max = BoundaryKind::Transform.max_distance(BoundaryScale::Continental);
+        assert!(cont_max >= CONT_TRANSFORM_CRUMPLE_WIDTH,
+            "continental max_distance should cover crumple width");
+        assert!(cont_max >= CONT_TRANSFORM_MAX_DIST,
+            "continental max_distance should cover gap falloff");
+
+        let reg_max = BoundaryKind::Transform.max_distance(BoundaryScale::Regional);
+        assert!(reg_max >= REG_TRANSFORM_CRUMPLE_WIDTH,
+            "regional max_distance should cover crumple width");
     }
 
     #[test]

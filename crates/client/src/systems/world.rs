@@ -14,7 +14,7 @@ use crate::{
     resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, Server, SkipNeighborRegen, TerrainMaterial},
 };
 use common::{
-    chunk::{chunk_to_tile, loc_to_chunk, terrain_chunk_radius, visibility_radius, CHUNK_SIZE},
+    chunk::{chunk_to_tile, loc_to_chunk, terrain_chunk_radius, visibility_radius, CHUNK_SIZE, FOV_CHUNK_RADIUS},
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -476,25 +476,16 @@ pub fn evict_distant_chunks(
 
     let player_chunk = loc_to_chunk(**player_loc);
     let player_z = player_loc.z;
+    let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
     let base_plus_buffer = terrain_chunk_radius(player_z) as i32 + 1;
 
     // Pass 1: Evict full-detail chunks (tiles in Map)
+    // Full-detail chunks are loaded at FOV_CHUNK_RADIUS, so evict at FOV + 1
     let active_chunks: std::collections::HashSet<_> = loaded_chunks.chunks.iter().copied()
         .filter(|chunk_id| {
             let chebyshev = (chunk_id.0 - player_chunk.0).abs()
                 .max((chunk_id.1 - player_chunk.1).abs());
-
-            if chebyshev <= base_plus_buffer {
-                return true;
-            }
-
-            let center_tile = chunk_id.center();
-            let chunk_z = map.get_by_qr(center_tile.q, center_tile.r)
-                .map(|(qrz, _)| qrz.z)
-                .unwrap_or(player_z);
-
-            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
-            chebyshev <= vis
+            chebyshev <= fov_buffer
         })
         .collect();
 

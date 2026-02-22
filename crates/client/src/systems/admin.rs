@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use common::{
     chunk::{
-        ChunkId, CHUNK_SIZE,
+        ChunkId, CHUNK_SIZE, FOV_CHUNK_RADIUS,
         calculate_visible_chunks_adaptive,
         chunk_to_tile, loc_to_chunk, visibility_radius,
     },
@@ -400,8 +400,11 @@ pub fn flyover_evict_chunks(
     let center = loc_to_chunk(qrz);
     let half_viewport = 20.0 * scale;
 
-    // Keep set: adaptive visibility + 1 buffer per chunk
-    let keep: HashSet<ChunkId> = {
+    // Full-detail keep: FOV_CHUNK_RADIUS + 1 (matches generation inner ring)
+    let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
+
+    // Summary keep: wider adaptive visibility + 1 buffer per chunk
+    let summary_keep: HashSet<ChunkId> = {
         let r = (radius as i32) + 1;
         let base_plus_buffer = radius as i32 + 1;
         let mut kept = HashSet::new();
@@ -424,10 +427,13 @@ pub fn flyover_evict_chunks(
         kept
     };
 
-    // Evict full-detail admin chunks
+    // Evict full-detail admin chunks beyond FOV + 1
     let evictable: Vec<ChunkId> = flyover.admin_chunks
         .iter()
-        .filter(|id| !keep.contains(id))
+        .filter(|id| {
+            let chebyshev = (id.0 - center.0).abs().max((id.1 - center.1).abs());
+            chebyshev > fov_buffer
+        })
         .copied()
         .collect();
 
@@ -461,13 +467,13 @@ pub fn flyover_evict_chunks(
     // Evict summary admin chunks
     let summary_evictable: Vec<ChunkId> = flyover.admin_summary_chunks
         .iter()
-        .filter(|id| !keep.contains(id))
+        .filter(|id| !summary_keep.contains(id))
         .copied()
         .collect();
 
     for &chunk_id in &summary_evictable {
         chunk_summaries.summaries.remove(&chunk_id);
     }
-    flyover.admin_summary_chunks.retain(|id| keep.contains(id));
+    flyover.admin_summary_chunks.retain(|id| summary_keep.contains(id));
     // Summary mesh entities cleaned up by spawn_summary_meshes (change detection)
 }

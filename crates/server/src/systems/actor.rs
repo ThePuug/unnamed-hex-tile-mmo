@@ -171,10 +171,15 @@ pub fn do_incremental(
         );
         let new_eviction = compute_eviction_set(new_chunk, max_z, base_radius, max_radius, &terrain);
 
-        // Mirror client eviction: retain only chunks the client would keep
-        player_state.seen_chunks.retain(|chunk_id| new_eviction.contains(chunk_id));
-        cache.full_detail.retain(|id| new_eviction.contains(id));
+        // Mirror client eviction: full-detail uses FOV_CHUNK_RADIUS + 1 (matches loading),
+        // summaries use the wider adaptive eviction set
+        let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
+        cache.full_detail.retain(|id| {
+            let chebyshev = (id.0 - new_chunk.0).abs().max((id.1 - new_chunk.1).abs());
+            chebyshev <= fov_buffer
+        });
         cache.summary.retain(|id| new_eviction.contains(id));
+        player_state.seen_chunks.retain(|id| cache.full_detail.contains(id) || cache.summary.contains(id));
 
         // Inner ring: send full data for new chunks or upgrades (was summary → now inner)
         for &chunk_id in &new_inner {
