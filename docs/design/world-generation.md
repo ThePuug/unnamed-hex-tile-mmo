@@ -442,7 +442,7 @@ Where the current implementation intentionally differs from spec:
 | 5 | Dynamic tectonics | Evolving boundary intensities with event thresholds | Static terrain generation only | Event system not yet implemented |
 | 6 | Stratification | Per-biome post-processing (mountain only) | Not yet implemented | Phase 4 |
 | 7 | Base terrain noise | Two sub-layers (continental texture + micro-texture) | Not yet implemented | Phase 2 — plate interiors are currently flat |
-| 8 | Chunk streaming | Two-ring LoD: inner full-detail, outer summary hexes | Single-ring: all discovered chunks are full 64-tile detail | See ADR-032; adaptive visibility already implemented, LoD layer not yet added |
+| 8 | Chunk streaming | Two-ring LoD: inner full-detail, outer summary hexes | Client-side two-ring implemented: `ChunkSummaries` resource, summary mesh rendering, two-pass eviction, flyover two-tier. Server-side `Event::ChunkSummary` not yet implemented — summaries generated client-side from evicted tile data. | See ADR-032 |
 
 ## Implementation Gaps
 
@@ -454,7 +454,7 @@ Where the current implementation intentionally differs from spec:
 
 **Medium**: Swamp and plains feature types, rift/canyon features
 
-**High (LoD)**: Two-ring chunk streaming — `ChunkSummary` struct, `Event::ChunkSummary` network message, `ChunkSummaries` client resource, summary mesh rendering with neighbor-gated corner vertices, ring transition logic (upgrade/downgrade), two-pass eviction, flyover two-tier support. See ADR-032.
+**Medium (LoD server-side)**: Server-side two-ring streaming — `Event::ChunkSummary` network message, `VisibleChunkCache` inner/outer fields, `do_incremental` ring transition diff logic (enter inner, enter outer, inner↔outer upgrade/downgrade, leave outer), server eviction mirrors. Client-side LoD is complete: `ChunkSummaries` resource, async summary mesh rendering, two-pass eviction, flyover two-tier with async tile generation. See ADR-032.
 
 **Deferred**: Dynamic boundary intensity evolution, tectonic event triggers (earthquakes, eruptions), vertical biome layering on mountains, river systems, cave/underground generation
 

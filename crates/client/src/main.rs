@@ -176,7 +176,8 @@ fn main() {
         world::do_spawn,
         world::spawn_missing_chunk_meshes.run_if(on_timer(Duration::from_millis(100))), // Check for chunks needing meshes every 100ms
         world::poll_chunk_mesh_tasks, // Poll async chunk mesh tasks
-        world::spawn_summary_meshes, // Spawn/despawn summary LoD meshes (outer ring)
+        world::spawn_summary_meshes, // Dispatch async summary LoD mesh tasks (outer ring)
+        world::poll_summary_mesh_tasks, // Poll async summary mesh tasks
         world::update,
     ));
 
@@ -195,18 +196,21 @@ fn main() {
     app.init_resource::<LoadedChunks>();
     app.init_resource::<crate::resources::ChunkSummaries>();
     app.init_resource::<crate::resources::PendingChunkMeshes>();
+    app.init_resource::<crate::resources::PendingSummaryMeshes>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
     {
         app.init_resource::<admin::FlyoverState>();
+        app.init_resource::<admin::PendingFlyoverTiles>();
         app.insert_resource(admin::AdminTerrain::default());
 
         app.add_systems(Update, (
             admin::execute_admin_actions,
             admin::flyover_movement.run_if(admin::flyover_active),
             admin::tag_admin_chunks,
+            admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
             admin::flyover_generate_chunks
                 .run_if(admin::flyover_active)
                 .run_if(on_timer(Duration::from_millis(200))),

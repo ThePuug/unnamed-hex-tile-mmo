@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
+use std::sync::Arc;
 
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
 use common::{
     chunk::{
@@ -60,13 +62,21 @@ impl Default for FlyoverState {
 pub struct AdminChunk;
 
 /// Wraps terrain::Terrain for local chunk generation.
+/// Arc-wrapped so async tile generation tasks can share it cheaply.
 #[derive(Resource)]
-pub struct AdminTerrain(pub terrain::Terrain);
+pub struct AdminTerrain(pub Arc<terrain::Terrain>);
 
 impl Default for AdminTerrain {
     fn default() -> Self {
-        Self(terrain::Terrain::default())
+        Self(Arc::new(terrain::Terrain::default()))
     }
+}
+
+/// Tracks pending async flyover tile/summary generation tasks.
+#[derive(Default, Resource)]
+pub struct PendingFlyoverTiles {
+    pub inner: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
+    pub outer: HashMap<ChunkId, Task<common::chunk::ChunkSummary>>,
 }
 
 // ──── Run Conditions ────
@@ -113,10 +123,11 @@ pub fn execute_admin_actions(
     mut commands: Commands,
     admin_chunk_query: Query<Entity, With<AdminChunk>>,
     loaded_chunks: Res<LoadedChunks>,
-    admin_terrain: Res<AdminTerrain>,
+    map: Res<Map>,
     map_state: Res<MapState>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut chunk_summaries: ResMut<ChunkSummaries>,
+    mut pending_tiles: ResMut<PendingFlyoverTiles>,
 ) {
     for action in reader.read() {
         let DevConsoleAction::ToggleFlyover = action else { continue };
@@ -144,17 +155,22 @@ pub fn execute_admin_actions(
                 commands.entity(entity).despawn();
             }
 
+            // Cancel all pending async flyover tasks
+            pending_tiles.inner.clear();
+            pending_tiles.outer.clear();
+
             // Despawn tiles for admin-only full-detail chunks (skip server-loaded ones)
+            // Use O(1) map lookup instead of terrain evaluation
             for &chunk_id in &flyover.admin_chunks {
                 if loaded_chunks.chunks.contains(&chunk_id) {
                     continue;
                 }
-                for oq in 0..CHUNK_SIZE {
-                    for or in 0..CHUNK_SIZE {
-                        let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
-                        let z = admin_terrain.0.get_height(tile.q, tile.r);
-                        let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
-                        map_state.queue_event(TileEvent::Despawn(qrz));
+                for oq in 0..CHUNK_SIZE as u8 {
+                    for or_ in 0..CHUNK_SIZE as u8 {
+                        let tile = chunk_to_tile(chunk_id, oq, or_);
+                        if let Some((qrz, _)) = map.get_by_qr(tile.q, tile.r) {
+                            map_state.queue_event(TileEvent::Despawn(qrz));
+                        }
                     }
                 }
             }
@@ -291,11 +307,10 @@ pub fn flyover_camera_update(
 pub fn flyover_generate_chunks(
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
-    map_state: Res<MapState>,
     admin_terrain: Res<AdminTerrain>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
+    mut pending_tiles: ResMut<PendingFlyoverTiles>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
@@ -317,32 +332,39 @@ pub fn flyover_generate_chunks(
         |q, r| admin_terrain.0.get_height(q, r),
     );
 
-    // Inner ring: full tile generation
+    // Inner ring: dispatch async tile generation (height computation off main thread)
     let inner_candidates: Vec<ChunkId> = inner.into_iter()
         .filter(|id| !flyover.admin_chunks.contains(id) && !loaded_chunks.chunks.contains(id))
         .collect();
 
-    for chunk_id in inner_candidates {
-        for oq in 0..CHUNK_SIZE {
-            for or in 0..CHUNK_SIZE {
-                let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
-                let z = admin_terrain.0.get_height(tile.q, tile.r);
-                let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
-                let decorator = Decorator { index: 3, is_solid: true };
-                map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
-            }
-        }
+    let pool = AsyncComputeTaskPool::get();
 
-        // Track as inner ring. If this chunk was previously outer ring,
-        // stop tracking it as a summary chunk — but leave the summary DATA
-        // in ChunkSummaries so the summary mesh persists until
+    for chunk_id in inner_candidates {
+        // Track immediately to prevent re-generation on next tick.
+        // Leave summary DATA in ChunkSummaries so summary mesh persists until
         // resolve_lod_overlap despawns it (once the full-detail mesh exists).
         flyover.admin_summary_chunks.remove(&chunk_id);
         flyover.admin_chunks.insert(chunk_id);
         skip_regen.chunks.insert(chunk_id);
+
+        let terrain = admin_terrain.0.clone();
+        let task = pool.spawn(async move {
+            let mut tiles = Vec::with_capacity((CHUNK_SIZE * CHUNK_SIZE) as usize);
+            for oq in 0..CHUNK_SIZE as u8 {
+                for or_ in 0..CHUNK_SIZE as u8 {
+                    let tile = chunk_to_tile(chunk_id, oq, or_);
+                    let z = terrain.get_height(tile.q, tile.r);
+                    let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
+                    let decorator = Decorator { index: 3, is_solid: true };
+                    tiles.push((qrz, EntityType::Decorator(decorator)));
+                }
+            }
+            tiles
+        });
+        pending_tiles.inner.insert(chunk_id, task);
     }
 
-    // Outer ring: summary generation (no tiles in Map)
+    // Outer ring: dispatch async summary generation (no tiles in Map)
     let outer_candidates: Vec<ChunkId> = outer.into_iter()
         .filter(|id| {
             !flyover.admin_chunks.contains(id)
@@ -352,15 +374,49 @@ pub fn flyover_generate_chunks(
         .collect();
 
     for chunk_id in outer_candidates {
-        let ct = chunk_id.center();
-        let elevation = admin_terrain.0.get_height(ct.q, ct.r);
-        chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
-            chunk_id,
-            elevation,
-            biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
-        });
         flyover.admin_summary_chunks.insert(chunk_id);
+
+        let terrain = admin_terrain.0.clone();
+        let task = pool.spawn(async move {
+            let ct = chunk_id.center();
+            let elevation = terrain.get_height(ct.q, ct.r);
+            common::chunk::ChunkSummary {
+                chunk_id,
+                elevation,
+                biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
+            }
+        });
+        pending_tiles.outer.insert(chunk_id, task);
     }
+}
+
+/// Poll pending flyover tile/summary tasks and queue events when ready.
+pub fn poll_flyover_tile_tasks(
+    mut pending: ResMut<PendingFlyoverTiles>,
+    map_state: Res<MapState>,
+    mut chunk_summaries: ResMut<ChunkSummaries>,
+) {
+    // Poll inner tile generation tasks
+    pending.inner.retain(|_chunk_id, task| {
+        if let Some(tiles) = block_on(future::poll_once(task)) {
+            for (qrz, entity_type) in tiles {
+                map_state.queue_event(TileEvent::Spawn(qrz, entity_type));
+            }
+            false
+        } else {
+            true
+        }
+    });
+
+    // Poll outer summary generation tasks
+    pending.outer.retain(|&chunk_id, task| {
+        if let Some(summary) = block_on(future::poll_once(task)) {
+            chunk_summaries.summaries.insert(chunk_id, summary);
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// Tags newly spawned chunk meshes that belong to admin-generated chunks.
@@ -386,6 +442,7 @@ pub fn flyover_evict_chunks(
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut chunk_summaries: ResMut<ChunkSummaries>,
+    mut pending_tiles: ResMut<PendingFlyoverTiles>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
@@ -456,15 +513,19 @@ pub fn flyover_evict_chunks(
         let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
 
         for &chunk_id in &evictable {
+            // Cancel pending tile generation task if still running
+            pending_tiles.inner.remove(&chunk_id);
+
             if loaded_chunks.chunks.contains(&chunk_id) {
                 continue;
             }
-            for oq in 0..CHUNK_SIZE {
-                for or in 0..CHUNK_SIZE {
-                    let tile = chunk_to_tile(chunk_id, oq as u8, or as u8);
-                    let z = admin_terrain.0.get_height(tile.q, tile.r);
-                    let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
-                    map_state.queue_event(TileEvent::Despawn(qrz));
+            // Use O(1) map lookup instead of terrain evaluation for despawn
+            for oq in 0..CHUNK_SIZE as u8 {
+                for or_ in 0..CHUNK_SIZE as u8 {
+                    let tile = chunk_to_tile(chunk_id, oq, or_);
+                    if let Some((qrz, _)) = map.get_by_qr(tile.q, tile.r) {
+                        map_state.queue_event(TileEvent::Despawn(qrz));
+                    }
                 }
             }
         }
@@ -473,7 +534,7 @@ pub fn flyover_evict_chunks(
         skip_regen.chunks.retain(|id| !evict_set.contains(id));
     }
 
-    // Evict summary admin chunks
+    // Evict summary admin chunks (cancel pending tasks too)
     let summary_evictable: Vec<ChunkId> = flyover.admin_summary_chunks
         .iter()
         .filter(|id| !summary_keep.contains(id))
@@ -481,6 +542,7 @@ pub fn flyover_evict_chunks(
         .collect();
 
     for &chunk_id in &summary_evictable {
+        pending_tiles.outer.remove(&chunk_id);
         chunk_summaries.summaries.remove(&chunk_id);
     }
     flyover.admin_summary_chunks.retain(|id| summary_keep.contains(id));

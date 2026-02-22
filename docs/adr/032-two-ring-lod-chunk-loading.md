@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned - 2026-02-21
+Accepted - 2026-02-21 (client-side implemented 2026-02-22; server-side LoD messages pending)
 
 ## Context
 

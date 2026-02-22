@@ -52,6 +52,8 @@ Client-server MMO built with Bevy ECS:
 
 **Client:** `evict_distant_chunks` (5s timer) runs two passes: (1) full-detail chunks beyond `FOV_CHUNK_RADIUS + 1` evicted from Map, (2) summary chunks beyond per-chunk `visibility_radius + 1` evicted from `ChunkSummaries`.
 
+**Async mesh pipeline:** All mesh generation runs off the main thread via `AsyncComputeTaskPool`. Full-detail: `PendingChunkMeshes` (dispatch in `spawn_missing_chunk_meshes`, poll in `poll_chunk_mesh_tasks`). Summary: `PendingSummaryMeshes` (dispatch in `spawn_summary_meshes`, poll in `poll_summary_mesh_tasks`). Flyover tile generation: `PendingFlyoverTiles` (dispatch in `flyover_generate_chunks`, poll in `poll_flyover_tile_tasks`). When regenerating an existing mesh, the old entity stays visible and its mesh asset is updated in place when the task completes — no visual gap.
+
 **Critical Invariant:** Server and client eviction logic MUST match — both use per-chunk `visibility_radius + 1`. Server uses `chunk_max_z` (superset guarantee). Ring separation: summaries are rendering-only, never gameplay data.
 
 ---

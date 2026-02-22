@@ -11,7 +11,7 @@ pub const TILE_SIZE: f32 = 1.;
 use crate::{
     components::{ChunkMesh, SummaryChunk},
     plugins::diagnostics::DiagnosticsState,
-    resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, Server, SkipNeighborRegen, TerrainMaterial},
+    resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes, Server, SkipNeighborRegen, TerrainMaterial},
 };
 use common::{
     chunk::{chunk_to_tile, loc_to_chunk, terrain_chunk_radius, visibility_radius, CHUNK_SIZE, FOV_CHUNK_RADIUS},
@@ -70,7 +70,7 @@ pub fn spawn_missing_chunk_meshes(
     loaded_chunks: Res<LoadedChunks>,
 ) {
     use std::collections::HashSet;
-    use common::chunk::{ChunkId, calculate_visible_chunks, loc_to_chunk};
+    use common::chunk::{ChunkId, calculate_visible_chunks};
     use bevy::tasks::AsyncComputeTaskPool;
 
     // Get chunks that already have full-detail mesh entities (exclude summary LoD)
@@ -79,16 +79,18 @@ pub fn spawn_missing_chunk_meshes(
         .map(|mesh| mesh.chunk_id)
         .collect();
 
-    // Scan the map to find which chunks have tiles, but only consider chunks
-    // that are actively tracked. Tiles queued for despawn may still linger in
-    // the map snapshot — without this filter we'd re-mesh evicted chunks.
-    // Accept: server-loaded chunks (LoadedChunks) and admin-generated chunks
-    // (SkipNeighborRegen, which tracks flyover-generated chunks).
+    // Build set of actively-tracked chunks that have at least one tile in the map.
+    // Iterates known chunk IDs and spot-checks a single tile (center) instead of
+    // scanning every tile in the map.
+    let candidate_chunks = loaded_chunks.chunks.iter()
+        .chain(skip_neighbor_regen.chunks.iter());
+
     let mut chunks_with_tiles: HashSet<ChunkId> = HashSet::new();
-    for (qrz, _) in map.iter_tiles() {
-        let chunk = loc_to_chunk(qrz);
-        if loaded_chunks.chunks.contains(&chunk) || skip_neighbor_regen.chunks.contains(&chunk) {
-            chunks_with_tiles.insert(chunk);
+    for &chunk_id in candidate_chunks {
+        // Spot-check center tile — if the chunk is loaded, its center tile exists
+        let center = chunk_to_tile(chunk_id, 8, 8);
+        if map.get_by_qr(center.q, center.r).is_some() {
+            chunks_with_tiles.insert(chunk_id);
         }
     }
 
@@ -272,19 +274,20 @@ pub fn resolve_lod_overlap(
     }
 }
 
-/// Spawn or update mesh entities for chunk summaries (outer ring LoD).
-/// Regenerates neighbor meshes when new summaries appear so interpolation stays consistent.
+/// Detect summary changes, despawn removed meshes, and dispatch async tasks for regen set.
+/// Chunks being regenerated keep their existing mesh entity visible until the async task
+/// completes (poll_summary_mesh_tasks updates the mesh asset in place).
 pub fn spawn_summary_meshes(
     mut commands: Commands,
     summaries: Res<ChunkSummaries>,
     map: Res<common::resources::map::Map>,
-    terrain_material: Res<TerrainMaterial>,
     existing_meshes: Query<(Entity, &ChunkMesh), With<SummaryChunk>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut pending: ResMut<PendingSummaryMeshes>,
     mut prev_keys: Local<std::collections::HashSet<common::chunk::ChunkId>>,
 ) {
-    use std::collections::HashSet;
-    use common::chunk::ChunkId;
+    use std::collections::{HashMap, HashSet};
+    use common::chunk::{ChunkId, ChunkSummary};
+    use bevy::tasks::AsyncComputeTaskPool;
 
     if !summaries.is_changed() {
         return;
@@ -292,7 +295,6 @@ pub fn spawn_summary_meshes(
 
     let current_keys: HashSet<ChunkId> = summaries.summaries.keys().copied().collect();
 
-    // Identify added and removed chunks
     let added: HashSet<ChunkId> = current_keys.difference(&prev_keys).copied().collect();
     let removed: HashSet<ChunkId> = prev_keys.difference(&current_keys).copied().collect();
 
@@ -310,26 +312,87 @@ pub fn spawn_summary_meshes(
         }
     }
 
-    // Despawn removed + stale meshes
+    // Despawn only removed meshes (regen meshes stay visible until async task completes)
     for (entity, chunk_mesh) in existing_meshes.iter() {
-        if removed.contains(&chunk_mesh.chunk_id) || regen.contains(&chunk_mesh.chunk_id) {
+        if removed.contains(&chunk_mesh.chunk_id) {
             commands.entity(entity).despawn();
         }
     }
 
-    // Spawn meshes for new/regenerated chunks
+    // Spawn async tasks for regen set
+    let pool = AsyncComputeTaskPool::get();
     for &chunk_id in &regen {
         if !current_keys.contains(&chunk_id) { continue; }
-        let mesh = generate_summary_mesh(chunk_id, &summaries.summaries, &map);
-        commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(terrain_material.handle.clone()),
-            ChunkMesh { chunk_id },
-            SummaryChunk,
-        ));
+
+        // Cancel any pending task for this chunk
+        pending.tasks.remove(&chunk_id);
+
+        // Capture self + 8 neighbors (9 entries max) — small clone
+        let mut neighbor_summaries: HashMap<ChunkId, ChunkSummary> = HashMap::with_capacity(9);
+        for dq in -1..=1_i32 {
+            for dr in -1..=1_i32 {
+                let nid = ChunkId(chunk_id.0 + dq, chunk_id.1 + dr);
+                if let Some(s) = summaries.summaries.get(&nid) {
+                    neighbor_summaries.insert(nid, *s);
+                }
+            }
+        }
+
+        let map_snapshot = map.clone();
+
+        let task = pool.spawn(async move {
+            generate_summary_mesh(chunk_id, &neighbor_summaries, &map_snapshot)
+        });
+
+        pending.tasks.insert(chunk_id, task);
     }
 
     *prev_keys = current_keys;
+}
+
+/// Poll pending summary mesh tasks and spawn/update mesh entities when ready.
+pub fn poll_summary_mesh_tasks(
+    mut commands: Commands,
+    mut pending: ResMut<PendingSummaryMeshes>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    terrain_material: Res<TerrainMaterial>,
+    summary_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh), With<SummaryChunk>>,
+) {
+    use common::chunk::ChunkId;
+
+    let mut completed: Vec<(ChunkId, Mesh)> = Vec::new();
+
+    pending.tasks.retain(|&chunk_id, task| {
+        let result = block_on(future::poll_once(task));
+        if let Some(mesh) = result {
+            completed.push((chunk_id, mesh));
+            false
+        } else {
+            true
+        }
+    });
+
+    for (chunk_id, summary_mesh) in completed {
+        // Check if a summary mesh entity already exists for this chunk
+        let existing = summary_mesh_query.iter()
+            .find(|(_, _, cm)| cm.chunk_id == chunk_id)
+            .map(|(entity, mesh_handle, _)| (entity, mesh_handle.clone()));
+
+        if let Some((_entity, mesh_handle)) = existing {
+            // Update mesh asset in place — no despawn, no visual gap
+            if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
+                *mesh_asset = summary_mesh;
+            }
+        } else {
+            // Spawn new summary mesh entity
+            commands.spawn((
+                Mesh3d(meshes.add(summary_mesh)),
+                MeshMaterial3d(terrain_material.handle.clone()),
+                ChunkMesh { chunk_id },
+                SummaryChunk,
+            ));
+        }
+    }
 }
 
 /// Generate a hex-grid mesh for a chunk summary.
@@ -605,21 +668,25 @@ pub fn evict_distant_chunks(
             }
         }
 
-        // Queue tile despawns
+        // Queue tile despawns — enumerate tile coords from chunk IDs instead
+        // of scanning every tile in the map (O(evicted × 256) vs O(all tiles)).
         {
             use common::resources::map::TileEvent;
 
-            let tiles_to_remove: Vec<_> = map.iter_tiles()
-                .filter_map(|(qrz, _typ)| {
-                    let tile_chunk = loc_to_chunk(qrz);
-                    if evictable.contains(&tile_chunk) { Some(qrz) } else { None }
-                })
-                .collect();
-
-            if !tiles_to_remove.is_empty() {
-                for qrz in &tiles_to_remove {
-                    map_state.queue_event(TileEvent::Despawn(*qrz));
+            let mut any_despawned = false;
+            for &chunk_id in &evictable {
+                for oq in 0..CHUNK_SIZE as u8 {
+                    for or_ in 0..CHUNK_SIZE as u8 {
+                        let tile = chunk_to_tile(chunk_id, oq, or_);
+                        if let Some((qrz, _)) = map.get_by_qr(tile.q, tile.r) {
+                            map_state.queue_event(TileEvent::Despawn(qrz));
+                            any_despawned = true;
+                        }
+                    }
                 }
+            }
+
+            if any_despawned {
                 loaded_chunks.evict(&evictable);
             }
         }
