@@ -3,7 +3,7 @@ use std::time::Instant;
 use clap::{Parser, ValueEnum};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
-use terrain::{hex_to_world, Terrain, ThermalChunkCache};
+use terrain::{hex_to_world, Terrain, ThermalChunkCache, FlowChunkCache};
 
 const SQRT_3: f64 = 1.7320508075688772;
 
@@ -72,6 +72,8 @@ enum Mode {
     Thermal,
     /// Raw hotspot-layer cells before surface expansion (diagnostic)
     Hotspots,
+    /// Thermal gradient flow field visualized with Line Integral Convolution
+    Flow,
 }
 
 /// Material density → color: dense = dark red/brown, light = white/gray
@@ -130,6 +132,45 @@ fn thermal_color(temperature: f64) -> Rgb<u8> {
     ])
 }
 
+// ──── LIC (Line Integral Convolution) ────
+
+/// Steps in each direction (forward + backward) along the streamline.
+const LIC_LENGTH: usize = 30;
+
+/// World units per LIC step at scale 1.
+const LIC_STEP_SIZE: f64 = 8.0;
+
+/// Pixels per noise cell at scale 1. Scaled by render --scale so streaks
+/// survive downscaling (e.g. scale 8 → 96px blocks → visible at 1080p).
+const LIC_NOISE_BLOCK: u32 = 12;
+
+/// Scale factor for flow magnitude → brightness.
+/// Single-source peak gradient ≈ 6e-5; cluster convergence ≈ 2e-4.
+/// 5000 × 2e-4 = 1.0 → full brightness at convergence zones.
+const FLOW_VIS_SCALE: f64 = 5_000.0;
+
+/// Deterministic white noise at block-quantized pixel coordinates.
+fn lic_noise(px: i64, py: i64, block: i64, seed: u64) -> f64 {
+    let bx = px.div_euclid(block);
+    let by = py.div_euclid(block);
+    let mut h = seed;
+    h = h.wrapping_add(bx as u64).wrapping_mul(0x517cc1b727220a95);
+    h = h.wrapping_add(by as u64).wrapping_mul(0x6c62272e07bb0142);
+    h ^= h >> 32;
+    h = h.wrapping_mul(0x2545f4914f6cdd1d);
+    ((h >> 33) as f64) / ((1u64 << 31) as f64)
+}
+
+/// Flow brightness → color: dark navy (no flow) to bright white (strong flow).
+fn flow_color(brightness: f64) -> Rgb<u8> {
+    let b = brightness.clamp(0.0, 1.0);
+    Rgb([
+        (10.0 + b * 230.0) as u8,
+        (10.0 + b * 235.0) as u8,
+        (40.0 + b * 215.0) as u8,
+    ])
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -139,6 +180,8 @@ fn main() {
     let radius_f = cli.radius as f64;
     let scale_f = scale as f64;
     let (center_x, center_y) = hex_to_world(cli.center_q, cli.center_r);
+    let origin_x = center_x - radius_f;
+    let origin_y = center_y - radius_f;
     let pixel_diameter = (radius_f * 2.0 / scale_f) as u32;
     let width = pixel_diameter;
     let height = pixel_diameter;
@@ -153,15 +196,18 @@ fn main() {
     let mode = cli.mode;
     let seed = cli.seed;
     let tick = cli.tick;
+    let lic_step = LIC_STEP_SIZE * scale_f;
+    let lic_block = (LIC_NOISE_BLOCK * scale as u32).max(1) as i64;
     let terrain_ref = &terrain;
     let pixels: Vec<(u32, u32, Rgb<u8>)> = (0..height)
         .into_par_iter()
         .flat_map(|py| {
-            // Per-row thermal cache — amortizes chunk computation across pixels in the same row
+            // Per-row caches — amortize chunk computation across pixels in the same row
             let mut thermal_cache = ThermalChunkCache::new(seed, tick);
+            let mut flow_cache = FlowChunkCache::new(seed, tick);
             (0..width).map(move |px| {
-                let cart_x = center_x - radius_f + (px as f64) * scale_f;
-                let cart_y = center_y - radius_f + (py as f64) * scale_f;
+                let cart_x = origin_x + (px as f64) * scale_f;
+                let cart_y = origin_y + (py as f64) * scale_f;
                 let (hq, hr) = cart_to_hex(cart_x, cart_y);
                 let (q, r) = hex_round(hq, hr);
 
@@ -172,6 +218,55 @@ fn main() {
                         thermal_color(temp)
                     }
                     Mode::Hotspots => thermal_color(terrain_ref.hotspot_temperature(q, r)),
+                    Mode::Flow => {
+                        let (fx0, fy0) = flow_cache.flow_at(cart_x, cart_y);
+                        let mag = (fx0 * fx0 + fy0 * fy0).sqrt();
+
+                        if mag < 1e-12 {
+                            flow_color(0.0)
+                        } else {
+                            let mut noise_sum = lic_noise(px as i64, py as i64, lic_block, seed);
+                            let mut mag_sum = mag;
+                            let mut count = 1.0;
+
+                            // Forward trace
+                            let mut x = cart_x;
+                            let mut y = cart_y;
+                            for _ in 0..LIC_LENGTH {
+                                let (fx, fy) = flow_cache.flow_at(x, y);
+                                let fmag = (fx * fx + fy * fy).sqrt();
+                                if fmag < 1e-12 { break; }
+                                x += (fx / fmag) * lic_step;
+                                y += (fy / fmag) * lic_step;
+                                let npx = ((x - origin_x) / scale_f).round() as i64;
+                                let npy = ((y - origin_y) / scale_f).round() as i64;
+                                noise_sum += lic_noise(npx, npy, lic_block, seed);
+                                mag_sum += fmag;
+                                count += 1.0;
+                            }
+
+                            // Backward trace
+                            x = cart_x;
+                            y = cart_y;
+                            for _ in 0..LIC_LENGTH {
+                                let (fx, fy) = flow_cache.flow_at(x, y);
+                                let fmag = (fx * fx + fy * fy).sqrt();
+                                if fmag < 1e-12 { break; }
+                                x -= (fx / fmag) * lic_step;
+                                y -= (fy / fmag) * lic_step;
+                                let npx = ((x - origin_x) / scale_f).round() as i64;
+                                let npy = ((y - origin_y) / scale_f).round() as i64;
+                                noise_sum += lic_noise(npx, npy, lic_block, seed);
+                                mag_sum += fmag;
+                                count += 1.0;
+                            }
+
+                            let lic = noise_sum / count;
+                            let avg_mag = mag_sum / count;
+                            let brightness = lic * (avg_mag * FLOW_VIS_SCALE).min(1.0);
+                            flow_color(brightness)
+                        }
+                    }
                 };
 
                 (px, py, color)
@@ -202,5 +297,6 @@ fn mode_name(mode: Mode) -> &'static str {
         Mode::Material => "material",
         Mode::Thermal => "thermal",
         Mode::Hotspots => "hotspots",
+        Mode::Flow => "flow",
     }
 }

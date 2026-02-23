@@ -28,9 +28,7 @@ pub(crate) fn hotspot_center(cell_q: i32, cell_r: i32) -> (f64, f64) {
 /// Find nearest active hotspot cell center (density >= HOTSPOT_THRESHOLD on the fixed grid).
 /// Returns Some((x, y, cell_q, cell_r, dist)) or None if no active cell nearby.
 pub(crate) fn nearest_hotspot(wx: f64, wy: f64, seed: u64) -> Option<(f64, f64, i32, i32, f64)> {
-    let (approx_q, approx_r) = cart_to_hex(wx, wy);
-    let gq = div_floor(approx_q as i64, HOTSPOT_GRID_SPACING as i64) as i32;
-    let gr = div_floor(approx_r as i64, HOTSPOT_GRID_SPACING as i64) as i32;
+    let (gq, gr) = cart_to_grid_cell(wx, wy);
 
     let mut best_dist_sq = f64::MAX;
     let mut best: Option<(f64, f64, i32, i32)> = None;
@@ -100,10 +98,12 @@ pub struct HotspotCell {
 
 /// Convert world cartesian coordinates to the hotspot grid cell that contains them.
 pub fn cart_to_grid_cell(wx: f64, wy: f64) -> (i32, i32) {
-    let (approx_q, approx_r) = cart_to_hex(wx, wy);
-    let gq = div_floor(approx_q as i64, HOTSPOT_GRID_SPACING as i64) as i32;
-    let gr = div_floor(approx_r as i64, HOTSPOT_GRID_SPACING as i64) as i32;
-    (gq, gr)
+    let (hq, hr) = cart_to_hex(wx, wy);
+    // Undo the half-spacing offset that hotspot_center adds,
+    // then hex_round to find the nearest grid point on the hex lattice.
+    let fq = (hq - HOTSPOT_GRID_SPACING * 0.5) / HOTSPOT_GRID_SPACING;
+    let fr = (hr - HOTSPOT_GRID_SPACING * 0.5) / HOTSPOT_GRID_SPACING;
+    crate::hex_round(fq, fr)
 }
 
 /// Check if a grid cell is active (material density >= threshold at its center).
@@ -433,6 +433,52 @@ mod tests {
             }
             assert!(checked > 100,
                 "seed={seed}: only checked {checked} tiles — sampling too sparse");
+        }
+    }
+
+    /// Invariant: hotspot grid points form a hex lattice — all 6 nearest
+    /// neighbors are equidistant at HOTSPOT_GRID_SPACING cartesian units.
+    /// QR axes are 60° apart, so equal spacing in QR already produces hex
+    /// packing. An odd-row offset would BREAK this (3 different distances).
+    #[test]
+    fn grid_points_form_hex_lattice() {
+        let origin = hotspot_center(0, 0);
+        let neighbors = [
+            hotspot_center(1, 0),
+            hotspot_center(-1, 0),
+            hotspot_center(0, 1),
+            hotspot_center(0, -1),
+            hotspot_center(1, -1),
+            hotspot_center(-1, 1),
+        ];
+
+        for (i, &(nx, ny)) in neighbors.iter().enumerate() {
+            let dx = nx - origin.0;
+            let dy = ny - origin.1;
+            let dist = (dx * dx + dy * dy).sqrt();
+            assert!(
+                (dist - HOTSPOT_GRID_SPACING).abs() < 1e-6,
+                "Neighbor {i} at distance {dist}, expected {HOTSPOT_GRID_SPACING} — \
+                 grid is not a hex lattice"
+            );
+        }
+
+        // Verify across multiple grid centers (not just origin)
+        for gq in [-5, 0, 3, 10] {
+            for gr in [-7, 0, 4, 8] {
+                let (cx, cy) = hotspot_center(gq, gr);
+                for (dq, dr) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
+                    let (nx, ny) = hotspot_center(gq + dq, gr + dr);
+                    let dx = nx - cx;
+                    let dy = ny - cy;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    assert!(
+                        (dist - HOTSPOT_GRID_SPACING).abs() < 1e-6,
+                        "From ({gq},{gr}) to ({},{}) distance={dist}, expected {HOTSPOT_GRID_SPACING}",
+                        gq + dq, gr + dr
+                    );
+                }
+            }
         }
     }
 

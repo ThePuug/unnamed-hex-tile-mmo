@@ -9,7 +9,7 @@ use crate::{cart_to_hex, div_floor};
 
 /// Gaussian plume spread (cartesian units). Larger = wider plumes.
 /// σ=1200 → ~7200 tile diameter influence (3σ each side).
-const THERMAL_SIGMA: f64 = 1_200.0;
+pub(crate) const THERMAL_SIGMA: f64 = 1_200.0;
 
 /// Maximum intensity a single thermal source can emit.
 /// At 0.12, a strong margin cluster of ~5 peaking cells reaches 0.3–0.5
@@ -35,7 +35,7 @@ const THERMAL_CHUNK_SIZE: i64 = 4_500;
 
 /// Hotspot grid cells per thermal chunk along each axis.
 /// THERMAL_CHUNK_SIZE / HOTSPOT_GRID_SPACING = 4500 / 750 = 6.
-const GRID_CELLS_PER_CHUNK: i32 = 6;
+pub(crate) const GRID_CELLS_PER_CHUNK: i32 = 6;
 
 /// Six hex-direction neighbor offsets (pointy-top hex grid, axial coordinates).
 const HEX_NEIGHBORS: [(i32, i32); 6] = [
@@ -165,7 +165,7 @@ pub fn tile_to_thermal_chunk(q: i32, r: i32) -> (i32, i32) {
 }
 
 /// Assign a hotspot grid cell to the thermal chunk containing its center.
-fn grid_cell_to_chunk(gq: i32, gr: i32) -> (i32, i32) {
+pub(crate) fn grid_cell_to_chunk(gq: i32, gr: i32) -> (i32, i32) {
     crate::hex_round(
         (gq as f64 + 0.5) / GRID_CELLS_PER_CHUNK as f64,
         (gr as f64 + 0.5) / GRID_CELLS_PER_CHUNK as f64,

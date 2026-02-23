@@ -2,10 +2,12 @@ mod types;
 mod material;
 mod hotspots;
 mod thermal;
+mod flow;
 
 pub use types::*;
 pub use hotspots::{HotspotCell, HotspotChunkCache, cart_to_grid_cell, tile_to_chunk, CHUNK_RADIUS};
 pub use thermal::{ThermalChunkCache, ThermalSource, temperature_at, tile_to_thermal_chunk};
+pub use flow::{flow_at, flow_at_tile, FlowChunkCache};
 
 use hotspots::{
     nearest_hotspot, nearest_hotspot_cached, hotspot_lifecycle, hotspot_phase_offset,
@@ -116,6 +118,7 @@ impl Terrain {
         TerrainEval {
             height: 0,
             temperature: self.temperature(q, r),
+            flow: self.flow(q, r),
         }
     }
 
@@ -136,6 +139,18 @@ impl Terrain {
     /// Additive Gaussian surface temperature at a tile, using a shared cache.
     pub fn temperature_cached(&self, q: i32, r: i32, cache: &mut ThermalChunkCache) -> f64 {
         cache.temperature_at_tile(q, r)
+    }
+
+    /// Thermal gradient flow vector at a tile (grid-snapped).
+    /// Creates a temporary cache — prefer `flow_cached` for bulk evaluation.
+    pub fn flow(&self, q: i32, r: i32) -> (f64, f64) {
+        let mut cache = flow::FlowChunkCache::new(self.seed, self.world_tick);
+        cache.flow_at_tile(q, r)
+    }
+
+    /// Thermal gradient flow vector at a tile, using a shared cache.
+    pub fn flow_cached(&self, q: i32, r: i32, cache: &mut flow::FlowChunkCache) -> (f64, f64) {
+        cache.flow_at_tile(q, r)
     }
 
     /// Raw sub-lid convection: every cell beneath the dense lid, all lifecycle phases.
