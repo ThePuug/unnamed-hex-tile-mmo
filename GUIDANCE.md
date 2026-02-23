@@ -62,11 +62,12 @@ Client-server MMO built with Bevy ECS:
 
 **Library:** `crates/terrain/` — Pure functions, no Bevy dependency. `(position, seed, tick) → value`.
 
-**Four-layer pipeline:**
+**Five-layer pipeline:**
 1. **Material** (`material.rs`): Simplex noise → density in [0, 1]. Three discordant wavelengths (12.5k, 20.3k, 32.8k tiles). Dense regions (≥ 0.55) support hotspots; light regions are quiescent.
 2. **Hotspots** (`hotspots.rs`): Fixed grid (750-tile spacing) of convection cells under dense lid. Asymmetric lifecycle: 60% rise, 10% peak, 30% collapse over 1000 ticks. Diagnostic layer only.
 3. **Thermal** (`thermal.rs`): Active hotspot cells become point sources. Intensity = `exp(-lid * 8) * lifecycle * 0.12`. Additive Gaussian diffusion (σ=1200 tiles). Sum clamped to [0, 1]. This is the primary terrain signal.
 4. **Flow** (`flow.rs`): Gradient of the thermal field — `F(p) = -∇T(p)`. Each source contributes `I·(r/σ²)·exp(-r²/2σ²)·r̂`. `FlowChunkCache` precomputes flow vectors at hotspot grid points; downstream layers and LIC visualization read cached vectors. Consumed by future shell accumulation (`div(F)`) and fracturing (`F` directly).
+5. **Crust** (`crust.rs`): Primordial crustal solidification. Reads material density (supply) and thermal intensity (inhibitor). `crust = density × exp(-thermal × 6)`. Thick far from plumes, thin/absent near active heat sources. `CrustChunkCache` precomputes at grid points with IDW interpolation (same pattern as flow).
 
 **Hex Voronoi chunk caching (ADR-033):** Hotspot, thermal, and flow layers cache data in hexagonal chunks assigned via cube-coordinate rounding (`hex_round`). Each query gathers center + 6 hex neighbors (7 chunks). No diagonal gaps. Shared utility: `tile_to_hex_chunk(q, r, spacing)` in `lib.rs`.
 
@@ -76,7 +77,7 @@ Client-server MMO built with Bevy ECS:
 
 **Server wrapper:** `crates/server/src/resources/terrain.rs` — thin Bevy Resource wrapping `terrain::Terrain`.
 
-**Viewer:** `crates/terrain-viewer/` — CLI renders terrain to PNG (modes: Material, Hotspots, Thermal, Flow). Flow mode uses LIC (Line Integral Convolution) — traces streamlines through the cached flow field, averages noise along path, modulates by magnitude.
+**Viewer:** `crates/terrain-viewer/` — CLI renders terrain to PNG (modes: Material, Hotspots, Thermal, Flow, Crust). Flow mode uses LIC (Line Integral Convolution) — traces streamlines through the cached flow field, averages noise along path, modulates by magnitude. Crust mode shows crustal thickness with navy→cream color ramp.
 
 **Height is placeholder** — `get_height` returns 0. Elevation system will rebuild on top of material + thermal.
 

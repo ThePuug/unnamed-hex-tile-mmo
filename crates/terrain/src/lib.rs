@@ -3,11 +3,13 @@ mod material;
 mod hotspots;
 mod thermal;
 mod flow;
+mod crust;
 
 pub use types::*;
 pub use hotspots::{HotspotCell, HotspotChunkCache, cart_to_grid_cell, tile_to_chunk, CHUNK_RADIUS};
 pub use thermal::{ThermalChunkCache, ThermalSource, temperature_at, tile_to_thermal_chunk};
 pub use flow::{flow_at, flow_at_tile, FlowChunkCache};
+pub use crust::{crust_thickness, CrustChunkCache};
 
 use hotspots::{
     nearest_hotspot, nearest_hotspot_cached, hotspot_lifecycle, hotspot_phase_offset,
@@ -119,6 +121,7 @@ impl Terrain {
             height: 0,
             temperature: self.temperature(q, r),
             flow: self.flow(q, r),
+            crust: self.crust(q, r),
         }
     }
 
@@ -127,6 +130,12 @@ impl Terrain {
     pub fn material_density(&self, q: i32, r: i32) -> f64 {
         let (cx, cy) = hex_to_world(q, r);
         material_density_cart(cx, cy, self.seed)
+    }
+
+    /// Primordial material density at world (cartesian) coordinates.
+    /// Continuous — no grid snapping. Use for pixel-resolution rendering.
+    pub fn material_density_world(&self, wx: f64, wy: f64) -> f64 {
+        material_density_cart(wx, wy, self.seed)
     }
 
     /// Additive Gaussian surface temperature at a tile.
@@ -151,6 +160,18 @@ impl Terrain {
     /// Thermal gradient flow vector at a tile, using a shared cache.
     pub fn flow_cached(&self, q: i32, r: i32, cache: &mut flow::FlowChunkCache) -> (f64, f64) {
         cache.flow_at_tile(q, r)
+    }
+
+    /// Crust thickness at a tile. Thick where cold + dense, thin/absent near heat.
+    /// Creates a temporary cache — prefer `crust_cached` for bulk evaluation.
+    pub fn crust(&self, q: i32, r: i32) -> f64 {
+        let mut cache = crust::CrustChunkCache::new(self.seed, self.world_tick);
+        cache.crust_at_tile(q, r)
+    }
+
+    /// Crust thickness at a tile, using a shared cache.
+    pub fn crust_cached(&self, q: i32, r: i32, cache: &mut crust::CrustChunkCache) -> f64 {
+        cache.crust_at_tile(q, r)
     }
 
     /// Raw sub-lid convection: every cell beneath the dense lid, all lifecycle phases.

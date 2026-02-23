@@ -3,7 +3,10 @@ use std::time::Instant;
 use clap::{Parser, ValueEnum};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
-use terrain::{hex_to_world, Terrain, ThermalChunkCache, FlowChunkCache};
+use terrain::{
+    hex_to_world, Terrain, ThermalChunkCache, FlowChunkCache,
+    temperature_at, tile_to_thermal_chunk, crust_thickness,
+};
 
 const SQRT_3: f64 = 1.7320508075688772;
 
@@ -74,6 +77,8 @@ enum Mode {
     Hotspots,
     /// Thermal gradient flow field visualized with Line Integral Convolution
     Flow,
+    /// Crustal thickness: bright where cold+dense (cratons), dark near plumes
+    Crust,
 }
 
 /// Material density → color: dense = dark red/brown, light = white/gray
@@ -171,6 +176,38 @@ fn flow_color(brightness: f64) -> Rgb<u8> {
     ])
 }
 
+/// Crust thickness → color: dark navy (no crust) to bright cream (thick craton)
+fn crust_color(thickness: f64) -> Rgb<u8> {
+    let t = thickness.clamp(0.0, 1.0);
+
+    let (r, g, b) = if t < 0.01 {
+        // No crust — deep navy
+        (0.04, 0.04, 0.12)
+    } else if t < 0.2 {
+        // Thin oceanic — dark blue-grey
+        let s = (t - 0.01) / 0.19;
+        (0.04 + s * 0.2, 0.04 + s * 0.2, 0.12 + s * 0.18)
+    } else if t < 0.5 {
+        // Transitional — muted earth tones
+        let s = (t - 0.2) / 0.3;
+        (0.24 + s * 0.36, 0.24 + s * 0.26, 0.30 - s * 0.1)
+    } else if t < 0.8 {
+        // Continental — warm tan/brown
+        let s = (t - 0.5) / 0.3;
+        (0.60 + s * 0.2, 0.50 + s * 0.2, 0.20 + s * 0.15)
+    } else {
+        // Thick craton — bright cream/white
+        let s = (t - 0.8) / 0.2;
+        (0.80 + s * 0.15, 0.70 + s * 0.2, 0.35 + s * 0.4)
+    };
+
+    Rgb([
+        (r * 255.0) as u8,
+        (g * 255.0) as u8,
+        (b * 255.0) as u8,
+    ])
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -218,6 +255,13 @@ fn main() {
                         thermal_color(temp)
                     }
                     Mode::Hotspots => thermal_color(terrain_ref.hotspot_temperature(q, r)),
+                    Mode::Crust => {
+                        let density = terrain_ref.material_density_world(cart_x, cart_y);
+                        let (tcq, tcr) = tile_to_thermal_chunk(q, r);
+                        let sources = thermal_cache.gather_sources(tcq, tcr);
+                        let temp = temperature_at(cart_x, cart_y, &sources);
+                        crust_color(crust_thickness(density, temp))
+                    }
                     Mode::Flow => {
                         let (fx0, fy0) = flow_cache.flow_at(cart_x, cart_y);
                         let mag = (fx0 * fx0 + fy0 * fy0).sqrt();
@@ -298,5 +342,6 @@ fn mode_name(mode: Mode) -> &'static str {
         Mode::Thermal => "thermal",
         Mode::Hotspots => "hotspots",
         Mode::Flow => "flow",
+        Mode::Crust => "crust",
     }
 }
