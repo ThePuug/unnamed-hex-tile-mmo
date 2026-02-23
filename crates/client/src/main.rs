@@ -19,7 +19,7 @@ use bevy_renet::{
     RenetClientPlugin,
 };
 
-use common::{
+use common_bevy::{
     components::{entity_type::*, *},
     message::*,
     plugins::nntree,
@@ -71,7 +71,7 @@ fn main() {
         NetcodeClientPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        common::plugins::controlled::ControlledPlugin,
+        common_bevy::plugins::controlled::ControlledPlugin,
         DevConsolePlugin,
         DiagnosticsPlugin,
         UiPlugin,
@@ -97,11 +97,11 @@ fn main() {
     app.add_systems(PreUpdate, input::update_keybits.run_if(admin::not_in_flyover));
     #[cfg(not(feature = "admin"))]
     app.add_systems(PreUpdate, input::update_keybits);
-    app.add_systems(PreUpdate, common::resources::map::refresh_map);
+    app.add_systems(PreUpdate, common_bevy::resources::map::refresh_map);
 
     app.add_systems(FixedUpdate, (
-        input::do_input.after(common::systems::behaviour::controlled::tick),
-        common::systems::combat::resources::regenerate_resources,
+        input::do_input.after(common_bevy::systems::behaviour::controlled::tick),
+        common_bevy::systems::combat::resources::regenerate_resources,
     ));
 
     // ADR-019: Predict local player position by replaying InputQueue from confirmed state
@@ -140,9 +140,9 @@ fn main() {
     // ADR-012: Client-side recovery (authoritative server, no prediction)
     app.add_systems(Update, (
         ability_prediction::handle_ability_used, // Apply recovery/synergies when server confirms ability use
-        common::systems::combat::recovery::global_recovery_system, // Tick down recovery timer
-        common::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
-        common::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
+        common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery timer
+        common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
+        common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
     ));
 
     app.add_systems(Update, (
@@ -150,11 +150,11 @@ fn main() {
         combat::handle_apply_damage,
         combat::handle_clear_queue,
         combat::handle_ability_failed,
-        common::systems::world::try_incremental,
+        common_bevy::systems::world::try_incremental,
         // do_incremental must run AFTER apply_movement_intent so that
         // MovementPrediction exists when Loc updates arrive. Otherwise the
         // no-prediction fallback fires every frame, setting wrong visual targets.
-        common::systems::world::do_incremental
+        common_bevy::systems::world::do_incremental
             .after(actor::apply_movement_intent),
     ));
 
@@ -185,7 +185,7 @@ fn main() {
         renet::send_try,
     ));
 
-    let map_state = common::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8));
+    let map_state = common_bevy::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8));
     let map = map_state.as_map(); // Create Map that shares the same Arc
     app.insert_resource(map_state);
     app.insert_resource(map);

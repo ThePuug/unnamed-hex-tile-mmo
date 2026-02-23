@@ -7,7 +7,7 @@ use bevy_asset::RenderAssetUsages;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use common::resources::map::Map;
+use common_bevy::resources::map::Map;
 use super::config::DiagnosticsState;
 
 // ============================================================================

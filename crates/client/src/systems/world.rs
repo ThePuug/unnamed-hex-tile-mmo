@@ -13,7 +13,7 @@ use crate::{
     plugins::diagnostics::DiagnosticsState,
     resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes, Server, SkipNeighborRegen, TerrainMaterial},
 };
-use common::{
+use common_bevy::{
     chunk::{chunk_to_tile, loc_to_chunk, terrain_chunk_radius, visibility_radius, CHUNK_SIZE, FOV_CHUNK_RADIUS},
     components::{ *,
         behaviour::PlayerControlled,
@@ -62,7 +62,7 @@ pub fn setup(
 /// This system runs periodically and automatically generates meshes after the drain loop
 /// processes tile events, avoiding the need for coordination between systems
 pub fn spawn_missing_chunk_meshes(
-    map: Res<common::resources::map::Map>,
+    map: Res<common_bevy::resources::map::Map>,
     chunk_mesh_query: Query<&ChunkMesh, Without<SummaryChunk>>,
     mut pending_meshes: ResMut<PendingChunkMeshes>,
     diagnostics_state: Res<DiagnosticsState>,
@@ -70,7 +70,7 @@ pub fn spawn_missing_chunk_meshes(
     loaded_chunks: Res<LoadedChunks>,
 ) {
     use std::collections::HashSet;
-    use common::chunk::{ChunkId, calculate_visible_chunks};
+    use common_bevy::chunk::{ChunkId, calculate_visible_chunks};
     use bevy::tasks::AsyncComputeTaskPool;
 
     // Get chunks that already have full-detail mesh entities (exclude summary LoD)
@@ -153,7 +153,7 @@ pub fn poll_chunk_mesh_tasks(
     terrain_material: Res<TerrainMaterial>,
     chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh), Without<SummaryChunk>>,
 ) {
-    use common::chunk::ChunkId;
+    use common_bevy::chunk::ChunkId;
 
     let mut completed_chunks: Vec<(ChunkId, Mesh)> = Vec::new();
 
@@ -212,10 +212,10 @@ pub fn resolve_lod_overlap(
     let player_z = player_loc.z;
     let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
 
-    let full_detail_set: std::collections::HashSet<common::chunk::ChunkId> =
+    let full_detail_set: std::collections::HashSet<common_bevy::chunk::ChunkId> =
         full_detail_meshes.iter().map(|(_, cm)| cm.chunk_id).collect();
 
-    let summary_set: std::collections::HashSet<common::chunk::ChunkId> =
+    let summary_set: std::collections::HashSet<common_bevy::chunk::ChunkId> =
         summary_meshes.iter().map(|(_, cm)| cm.chunk_id).collect();
 
     // During flyover, use admin_chunks membership instead of FOV distance
@@ -226,7 +226,7 @@ pub fn resolve_lod_overlap(
         .filter(|f| f.active)
         .map(|f| &f.admin_chunks);
     #[cfg(not(feature = "admin"))]
-    let flyover_inner: Option<&std::collections::HashSet<common::chunk::ChunkId>> = None;
+    let flyover_inner: Option<&std::collections::HashSet<common_bevy::chunk::ChunkId>> = None;
 
     // Pass 1: Resolve overlaps (both full-detail and summary exist for same chunk)
     for (entity, cm) in full_detail_meshes.iter() {
@@ -280,13 +280,13 @@ pub fn resolve_lod_overlap(
 pub fn spawn_summary_meshes(
     mut commands: Commands,
     summaries: Res<ChunkSummaries>,
-    map: Res<common::resources::map::Map>,
+    map: Res<common_bevy::resources::map::Map>,
     existing_meshes: Query<(Entity, &ChunkMesh), With<SummaryChunk>>,
     mut pending: ResMut<PendingSummaryMeshes>,
-    mut prev_keys: Local<std::collections::HashSet<common::chunk::ChunkId>>,
+    mut prev_keys: Local<std::collections::HashSet<common_bevy::chunk::ChunkId>>,
 ) {
     use std::collections::{HashMap, HashSet};
-    use common::chunk::{ChunkId, ChunkSummary};
+    use common_bevy::chunk::{ChunkId, ChunkSummary};
     use bevy::tasks::AsyncComputeTaskPool;
 
     if !summaries.is_changed() {
@@ -358,7 +358,7 @@ pub fn poll_summary_mesh_tasks(
     terrain_material: Res<TerrainMaterial>,
     summary_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh), With<SummaryChunk>>,
 ) {
-    use common::chunk::ChunkId;
+    use common_bevy::chunk::ChunkId;
 
     let mut completed: Vec<(ChunkId, Mesh)> = Vec::new();
 
@@ -402,12 +402,12 @@ pub fn poll_summary_mesh_tasks(
 /// axial position, both tiles compute the same interpolated elevation for shared
 /// vertices — eliminating seams. Each vertex is colored by `height_color_tint`.
 fn generate_summary_mesh(
-    chunk_id: common::chunk::ChunkId,
-    summaries: &std::collections::HashMap<common::chunk::ChunkId, common::chunk::ChunkSummary>,
-    map: &common::resources::map::Map,
+    chunk_id: common_bevy::chunk::ChunkId,
+    summaries: &std::collections::HashMap<common_bevy::chunk::ChunkId, common_bevy::chunk::ChunkSummary>,
+    map: &common_bevy::resources::map::Map,
 ) -> Mesh {
-    use common::chunk::ChunkId;
-    use common::resources::map::Map as CommonMap;
+    use common_bevy::chunk::ChunkId;
+    use common_bevy::resources::map::Map as CommonMap;
     use qrz::{Convert, Qrz};
 
     let inner = map.inner_arc();
@@ -530,9 +530,9 @@ pub fn do_init(
 
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
-    map_state: Res<common::resources::map::MapState>,
+    map_state: Res<common_bevy::resources::map::MapState>,
 ) {
-    use common::resources::map::TileEvent;
+    use common_bevy::resources::map::TileEvent;
 
     // Queue tile spawn events (drain loop will process them)
     // refresh_map system will swap in new snapshot and trigger Bevy change detection
@@ -607,8 +607,8 @@ pub fn evict_distant_chunks(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut chunk_summaries: ResMut<ChunkSummaries>,
     mut l2r: ResMut<crate::resources::EntityMap>,
-    map: Res<common::resources::map::Map>,
-    map_state: Res<common::resources::map::MapState>,
+    map: Res<common_bevy::resources::map::Map>,
+    map_state: Res<common_bevy::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
 ) {
@@ -641,7 +641,7 @@ pub fn evict_distant_chunks(
             if !chunk_summaries.summaries.contains_key(&chunk_id) {
                 let center = chunk_to_tile(chunk_id, 8, 8);
                 if let Some((qrz, biome)) = map.get_by_qr(center.q, center.r) {
-                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
                         chunk_id,
                         elevation: qrz.z,
                         biome,
@@ -658,7 +658,7 @@ pub fn evict_distant_chunks(
                     entity_type,
                     EntityType::Actor(actor_impl) if matches!(
                         actor_impl.identity,
-                        common::components::entity_type::actor::ActorIdentity::Player
+                        common_bevy::components::entity_type::actor::ActorIdentity::Player
                     )
                 );
                 if !is_player {
@@ -671,7 +671,7 @@ pub fn evict_distant_chunks(
         // Queue tile despawns — enumerate tile coords from chunk IDs instead
         // of scanning every tile in the map (O(evicted × 256) vs O(all tiles)).
         {
-            use common::resources::map::TileEvent;
+            use common_bevy::resources::map::TileEvent;
 
             let mut any_despawned = false;
             for &chunk_id in &evictable {

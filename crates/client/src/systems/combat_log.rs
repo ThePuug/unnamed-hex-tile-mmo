@@ -5,7 +5,7 @@ use bevy::picking::hover::HoverMap;
 use chrono::Local;
 
 use crate::components::{CombatLogContent, CombatLogEntry, CombatLogPanel};
-use common::components::entity_type::EntityType;
+use common_bevy::components::entity_type::EntityType;
 
 const PANEL_WIDTH: f32 = 400.0;
 const PANEL_HEIGHT: f32 = 250.0;
@@ -62,10 +62,10 @@ pub fn on_damage_applied(
     content_query: Query<Entity, With<CombatLogContent>>,
     entry_query: Query<Entity, With<CombatLogEntry>>,
     entity_type_query: Query<&EntityType>,
-    input_queues: Res<common::resources::InputQueues>,
-    mut event_reader: MessageReader<common::message::Do>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
+    mut event_reader: MessageReader<common_bevy::message::Do>,
 ) {
-    use common::message::Event as GameEvent;
+    use common_bevy::message::Event as GameEvent;
 
     let Ok(content) = content_query.single() else {
         return;
@@ -125,9 +125,9 @@ pub fn on_queue_cleared(
     content_query: Query<Entity, With<CombatLogContent>>,
     entry_query: Query<Entity, With<CombatLogEntry>>,
     entity_type_query: Query<&EntityType>,
-    mut event_reader: MessageReader<common::message::Do>,
+    mut event_reader: MessageReader<common_bevy::message::Do>,
 ) {
-    use common::message::Event as GameEvent;
+    use common_bevy::message::Event as GameEvent;
 
     let Ok(content) = content_query.single() else {
         return;

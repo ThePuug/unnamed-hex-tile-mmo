@@ -100,7 +100,7 @@ fn setup_diagnostics_root(mut commands: Commands) {
 mod tests {
     use super::*;
     use super::grid::HexGridOverlay;
-    use common::resources::map::Map;
+    use common_bevy::resources::map::Map;
 
     #[test]
     fn test_update_grid_triggers_on_map_change() {

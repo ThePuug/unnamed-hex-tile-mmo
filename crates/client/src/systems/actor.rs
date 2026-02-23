@@ -4,7 +4,7 @@ use bevy::{prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
 use crate::components::*;
-use common::{
+use common_bevy::{
     components::{
         behaviour::Behaviour,
         entity_type::{ actor::*, * },
@@ -124,11 +124,11 @@ pub fn do_spawn(
                     .insert((
                         attrs_val,
                         reaction_queue,
-                        common::components::gcd::Gcd::new(),
-                        common::components::target::Target::default(), // For targeting system
-                        common::components::LastAutoAttack::default(), // For auto-attack cooldown
-                        common::components::AttackRange::default(), // Auto-attack range (melee default)
-                        common::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
+                        common_bevy::components::gcd::Gcd::new(),
+                        common_bevy::components::target::Target::default(), // For targeting system
+                        common_bevy::components::LastAutoAttack::default(), // For auto-attack cooldown
+                        common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
+                        common_bevy::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
                     ))
                     .observe(ready);
 
@@ -197,7 +197,7 @@ pub fn apply_movement_intent(
         // Insert AbilityDisplacement marker so do_incremental interpolates instead of snapping.
         if buffers.get(&ent).is_some() {
             if let Ok(mut entity_cmd) = commands.get_entity(ent) {
-                entity_cmd.insert(common::components::AbilityDisplacement { duration_ms });
+                entity_cmd.insert(common_bevy::components::AbilityDisplacement { duration_ms });
             }
             continue;
         }
@@ -230,7 +230,7 @@ pub fn apply_movement_intent(
             let dest_tile_center: Vec3 = map.convert(destination);
 
             let dest_offset = if **heading != default() {
-                use common::components::heading::HERE;
+                use common_bevy::components::heading::HERE;
                 let heading_neighbor: Vec3 = map.convert(destination + **heading);
                 let direction = heading_neighbor - dest_tile_center;
                 (direction * HERE).xz()
@@ -242,7 +242,7 @@ pub fn apply_movement_intent(
         }
 
         if let Ok(mut entity_cmd) = commands.get_entity(ent) {
-            entity_cmd.insert(common::components::movement_prediction::MovementPrediction {
+            entity_cmd.insert(common_bevy::components::movement_prediction::MovementPrediction {
                 predicted_dest: destination,
                 predicted_arrival: time.elapsed() + Duration::from_millis(duration_ms as u64),
                 prediction_start: time.elapsed(),

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_hanabi::prelude::*;
 
 use crate::resources::*;
-use common::{
+use common_bevy::{
     components::{
         heading::*,
         qrz::*,

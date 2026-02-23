@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common::{
+use common_bevy::{
     components::{recovery::{GlobalRecovery, get_ability_recovery_duration}, target::Target},
     message::{Do, Event as GameEvent, AbilityType},
     systems::combat::synergies::apply_synergies,
@@ -11,7 +11,7 @@ use common::{
 pub fn handle_ability_used(
     mut commands: Commands,
     mut do_reader: MessageReader<Do>,
-    attrs_query: Query<&common::components::ActorAttributes>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     target_query: Query<&Target>,
 ) {
     for event in do_reader.read() {

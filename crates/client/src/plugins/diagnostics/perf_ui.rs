@@ -81,7 +81,7 @@ pub fn setup_performance_ui(
 /// Updates the performance UI text every frame
 pub fn update_performance_ui(
     diagnostics: Res<DiagnosticsStore>,
-    map: Res<common::resources::map::Map>,
+    map: Res<common_bevy::resources::map::Map>,
     mut fps_q: Query<(&mut Text, &mut TextColor), (With<FpsText>, Without<FrameTimeText>, Without<EntityCountText>, Without<TerrainTilesText>)>,
     mut frame_q: Query<(&mut Text, &mut TextColor), (With<FrameTimeText>, Without<FpsText>, Without<EntityCountText>, Without<TerrainTilesText>)>,
     mut entity_q: Query<&mut Text, (With<EntityCountText>, Without<FpsText>, Without<FrameTimeText>, Without<TerrainTilesText>)>,

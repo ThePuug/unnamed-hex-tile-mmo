@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
-use common::chunk::{ChunkId, ChunkSummary};
+use common_bevy::chunk::{ChunkId, ChunkSummary};
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);

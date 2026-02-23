@@ -5,7 +5,7 @@
 This prevents repeating documented mistakes and architectural violations.
 
 ## Contents
-[Core Architecture](#core-architecture) • [Specs & Docs](#game-design-specifications) • [Chunks](#chunk-based-terrain-system) • [Position/Movement](#position--movement-system) • [Prediction](#client-side-prediction) • [Components](#key-components--resources) • [System Order](#system-execution-order) • [Pitfalls](#common-pitfalls)
+[Core Architecture](#core-architecture) • [Specs & Docs](#game-design-specifications) • [Chunks](#chunk-based-terrain-system) • [Terrain Generation](#terrain-generation) • [Position/Movement](#position--movement-system) • [Prediction](#client-side-prediction) • [Components](#key-components--resources) • [System Order](#system-execution-order) • [Pitfalls](#common-pitfalls)
 
 ---
 
@@ -55,6 +55,29 @@ Client-server MMO built with Bevy ECS:
 **Async mesh pipeline:** All mesh generation runs off the main thread via `AsyncComputeTaskPool`. Full-detail: `PendingChunkMeshes` (dispatch in `spawn_missing_chunk_meshes`, poll in `poll_chunk_mesh_tasks`). Summary: `PendingSummaryMeshes` (dispatch in `spawn_summary_meshes`, poll in `poll_summary_mesh_tasks`). Flyover tile generation: `PendingFlyoverTiles` (dispatch in `flyover_generate_chunks`, poll in `poll_flyover_tile_tasks`). When regenerating an existing mesh, the old entity stays visible and its mesh asset is updated in place when the task completes — no visual gap.
 
 **Critical Invariant:** Server and client eviction logic MUST match — both use per-chunk `visibility_radius + 1`. Server uses `chunk_max_z` (superset guarantee). Ring separation: summaries are rendering-only, never gameplay data.
+
+---
+
+## Terrain Generation
+
+**Library:** `crates/terrain/` — Pure functions, no Bevy dependency. `(position, seed, tick) → value`.
+
+**Three-layer pipeline:**
+1. **Material** (`material.rs`): Simplex noise → density in [0, 1]. Three discordant wavelengths (12.5k, 20.3k, 32.8k tiles). Dense regions (≥ 0.55) support hotspots; light regions are quiescent.
+2. **Hotspots** (`hotspots.rs`): Fixed grid (750-tile spacing) of convection cells under dense lid. Asymmetric lifecycle: 60% rise, 10% peak, 30% collapse over 1000 ticks. Diagnostic layer only.
+3. **Thermal** (`thermal.rs`): Active hotspot cells become point sources. Intensity = `exp(-lid * 8) * lifecycle * 0.12`. Additive Gaussian diffusion (σ=1200 tiles). Sum clamped to [0, 1]. This is the primary terrain signal.
+
+**Hex Voronoi chunk caching (ADR-033):** Both hotspot and thermal layers cache data in hexagonal chunks assigned via cube-coordinate rounding (`hex_round`). Each query gathers center + 6 hex neighbors (7 chunks). No diagonal gaps. Shared utility: `tile_to_hex_chunk(q, r, spacing)` in `lib.rs`.
+
+**Boundary invariant:** `missed_sources_beyond_neighborhood_are_negligible` test proves ring-2 sources contribute < 1%. Chunk size ≥ 3σ ensures this.
+
+**Key constants:** `HOTSPOT_THRESHOLD=0.55`, `HOTSPOT_GRID_SPACING=750`, `THERMAL_SIGMA=1200`, `MAX_SOURCE_INTENSITY=0.12`, `LID_SUPPRESSION=8.0`, `THERMAL_CHUNK_SIZE=4500`.
+
+**Server wrapper:** `crates/server/src/resources/terrain.rs` — thin Bevy Resource wrapping `terrain::Terrain`.
+
+**Viewer:** `crates/terrain-viewer/` — CLI renders terrain to PNG (modes: Material, Hotspots, Thermal).
+
+**Height is placeholder** — `get_height` returns 0. Elevation system will rebuild on top of material + thermal.
 
 ---
 

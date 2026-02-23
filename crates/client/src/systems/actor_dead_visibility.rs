@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::components::{Actor, resources::Health};
+use common_bevy::components::{Actor, resources::Health};
 use crate::components::DeathMarker;
 
 /// Restore visibility for actors that were hidden (e.g. after respawn)

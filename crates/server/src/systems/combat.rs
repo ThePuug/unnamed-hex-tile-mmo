@@ -1,7 +1,7 @@
 pub mod abilities;
 
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{entity_type::*, reaction_queue::*, resources::*, gcd::Gcd, LastAutoAttack, *},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     systems::{
@@ -14,7 +14,7 @@ use common::{
 pub fn process_deal_damage(
     trigger: On<Try>,
     _commands: Commands,
-    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut common::components::recovery::GlobalRecovery>)>,
+    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
@@ -81,16 +81,16 @@ pub fn process_deal_damage(
         // Handle case where source == target (self-damage)
         if source == target {
             if let Ok(mut combat_state) = combat_query.get_mut(*source) {
-                common::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
+                common_bevy::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
             }
         } else {
             // Enter combat for attacker (put threat in queue)
             if let Ok(mut attacker_combat) = combat_query.get_mut(*source) {
-                common::systems::combat::state::enter_combat(*source, &mut attacker_combat, &time, &mut writer);
+                common_bevy::systems::combat::state::enter_combat(*source, &mut attacker_combat, &time, &mut writer);
             }
             // Enter combat for target (received threat in queue)
             if let Ok(mut target_combat) = combat_query.get_mut(*target) {
-                common::systems::combat::state::enter_combat(*target, &mut target_combat, &time, &mut writer);
+                common_bevy::systems::combat::state::enter_combat(*target, &mut target_combat, &time, &mut writer);
             }
         }
 
@@ -148,7 +148,7 @@ pub fn resolve_threat(
             writer.write(Do {
                 event: GameEvent::Incremental {
                     ent: *ent,
-                    component: common::message::Component::Health(*health),
+                    component: common_bevy::message::Component::Health(*health),
                 },
             });
 
@@ -215,13 +215,13 @@ pub fn do_nothing(){}
 /// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)
 pub fn process_passive_auto_attack(
     mut query: Query<
-        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common::components::target::Target,
-         Option<&mut common::components::npc_recovery::NpcRecovery>,
-         Option<&common::components::hex_assignment::AssignedHex>,
-         Option<&common::components::recovery::GlobalRecovery>,
+        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
+         Option<&mut common_bevy::components::npc_recovery::NpcRecovery>,
+         Option<&common_bevy::components::hex_assignment::AssignedHex>,
+         Option<&common_bevy::components::recovery::GlobalRecovery>,
          &ActorAttributes,
-         Option<&common::components::AttackRange>),
-        Without<common::components::behaviour::PlayerControlled>
+         Option<&common_bevy::components::AttackRange>),
+        Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
     time: Res<Time>,
@@ -257,7 +257,7 @@ pub fn process_passive_auto_attack(
 
         // SOW-018: Check NPC is on assigned hex (if it has one)
         if let Some(assigned) = assigned_hex_opt {
-            if loc.flat_distance(&common::components::Loc::new(assigned.0)) != 0 {
+            if loc.flat_distance(&common_bevy::components::Loc::new(assigned.0)) != 0 {
                 continue; // Not on assigned hex yet
             }
         }

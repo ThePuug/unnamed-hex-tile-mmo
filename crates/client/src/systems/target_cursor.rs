@@ -6,7 +6,7 @@ use crate::{
     components::TargetCursor,
     plugins::diagnostics::DiagnosticsState,
 };
-use common::{
+use common_bevy::{
     components::{
         heading::Heading,
         Loc, Actor,

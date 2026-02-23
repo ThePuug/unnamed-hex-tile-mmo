@@ -21,7 +21,7 @@
 use bevy::prelude::*;
 use qrz::Convert;
 
-use common::{
+use common_bevy::{
     components::{
         heading::*,
         keybits::*,
@@ -107,7 +107,7 @@ pub fn advance_interpolation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::components::position::Position;
+    use common_bevy::components::position::Position;
     use qrz::Qrz;
 
     #[test]

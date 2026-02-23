@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use qrz::{Convert, Qrz};
 use std::sync::Arc;
 
-use common::{
+use common_bevy::{
     chunk::*,
     components::{
         entity_type::{ decorator::*, *},

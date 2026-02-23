@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use qrz::Qrz;
-use common::{
+use common_bevy::{
     components::{position::Position, stagger::Stagger, Loc},
     message::{Do, Event as GameEvent},
     resources::map::Map,
@@ -74,7 +74,7 @@ pub fn process_knockback(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent,
-                component: common::message::Component::Loc(new_loc),
+                component: common_bevy::message::Component::Loc(new_loc),
             },
         });
 

@@ -3,7 +3,7 @@ use bevy_camera::ScalingMode;
 use std::f32::consts::PI;
 
 use crate::plugins::vignette::VignetteSettings;
-use common::{
+use common_bevy::{
     components::*,
     resources::map::Map,
 };

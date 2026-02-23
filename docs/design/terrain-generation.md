@@ -2,223 +2,227 @@
 
 ## Design Philosophy
 
-The world should feel like a place with real geography, not a noise field with textures. Terrain generation uses a **weighted influence field model** where every tile computes elevation from the smooth, continuous, weighted influence of all nearby tectonic plates. There is no discrete plate membership in the elevation function, no boundaries as objects, no profile catalog. Terrain features emerge naturally from tectonic stress between competing plate influences.
+The world should feel alive — heat boils up through dense primordial material, breaking through at margins and erupting in identifiable plumes. Terrain generation uses a **three-layer pipeline** where each layer is a pure function of tile coordinates, world seed, and world tick. No global precomputation, no simulation state — every value is procedurally evaluable per-tile, satisfying ADR-001's deterministic generation invariant.
 
-This produces terrain with identifiable continents, organic coastlines, mountain ranges at convergent zones, rift valleys at divergent zones, and broken ground at shear zones — all from a single unified model.
+1. **Material distribution** — large-scale geological provinces (dense vs light)
+2. **Hotspot convection** — sub-lid cellular structure where dense material traps heat
+3. **Thermal diffusion** — additive Gaussian heat field radiating from active sources
+
+Temperature is the primary terrain signal. Dense regions trap heat from convection cells below; thin margins let it through. The result: identifiable hot plumes at province margins, cooler interiors, and quiescent light regions.
 
 ## Player Experience Goals
 
-- **Continental structure**: Large landmasses with clear identity, separated by ocean basins
-- **Readable geology**: Players can learn to read terrain — mountain ranges mean plate collision, rift valleys mean plates pulling apart
-- **Traversal variety**: No monotonous ramps; terrain character changes as you cross plate boundaries
-- **Coastal variety**: Coastlines range from cliffs to beaches to rocky shores depending on tectonic context
-- **Interior texture**: Plate interiors have gentle variation, not dead flat
-- **Dramatic boundaries**: Where plates meet, terrain is visually interesting and geologically motivated
-
-## Generation Pipeline
-
-Height at any tile is evaluated as a pure function of tile coordinates and world seed. No global precomputation, no startup pass — every layer is procedurally evaluable per-tile, satisfying ADR-001's deterministic generation invariant.
-
-```
-tile_height(q, r) =
-    blended_base_elevation(q, r)           // weighted sum of nearby plate base elevations
-  + compression_contribution(q, r)         // smooth uplift/depression from converging/diverging plates
-  + shear_contribution(q, r)               // noise-driven disruption from sliding plates
-  + broad_undulation(q, r)                 // continental texture (~1/800 scale)
-  + micro_texture(q, r)                    // per-tile variation (~1/30 scale)
-```
-
-Each layer depends only on tile coordinates and the world seed. Chunk caching means each tile is evaluated once and stored immutably per ADR-001.
+- **Readable geology**: Dense provinces are hot, light regions are cool — players learn to read the landscape
+- **Identifiable plumes**: Thermal breakthroughs at province margins create distinct warm zones
+- **Temporal variation**: Hotspot lifecycle creates slow pulses of activity (rise → peak → collapse)
+- **Smooth transitions**: Gaussian diffusion produces soft thermal gradients, no hard edges
+- **Province variety**: Material density varies at continental scale — no two regions feel identical
+- **Deterministic**: Same seed + tick always produces the same temperature at any tile
 
 ---
 
-## Layer 1: Tectonic Plates
+## Layer 1: Material Distribution
 
-### Plate Placement
+Material density defines the geological provinces of the world. Dense regions (above threshold) support sub-lid convection; light regions are quiescent.
 
-Plates are defined by a Voronoi tessellation over procedurally placed plate centers. Centers live on a coarse grid (~4,000 tiles per cell). Each cell's center position is determined by hashing `(cell_q, cell_r, seed)` to produce:
+### Simplex Noise Field
 
-* **Position offset** (jitter within cell): fixed fraction of cell size
-* **Base elevation**: range 25–600, producing a mix of low ocean plates and high continental plates
-* **Drift vector**: direction and magnitude of plate movement (Vec2), used for stress computation
+Material density is computed from three overlapping simplex noise waves at near-golden-ratio wavelength spacing (~1.618x). The incommensurate wavelengths ensure the sum never repeats, producing unique structure everywhere without any single wavelength being enormous.
 
-### Domain Warping (Curl Noise)
+**Implementation:** `crates/terrain/src/material.rs`
 
-Voronoi lookup coordinates are domain-warped using curl noise, producing organic boundary shapes instead of geometric polygons. Curl noise uses a divergence-free vector field derived from a single scalar noise field, eliminating cusp artifacts that occur with independent-axis warping.
+### Constants
 
-Implementation:
-1. Evaluate a scalar noise field at the tile's Cartesian position
-2. Compute finite-difference partial derivatives (dn/dx, dn/dy)
-3. Rotate 90 degrees to get displacement: warp_x = dn/dy, warp_y = -dn/dx
-4. Add displacement to tile coordinates before Voronoi lookup
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Wave 1 wavelength | 12,547 tiles | ~2x hotspot cell size — regional variation |
+| Wave 1 amplitude | 1.0 | Reference amplitude |
+| Wave 2 wavelength | 20,297 tiles | ~3.4x cell size — provincial character |
+| Wave 2 amplitude | 0.7 | |
+| Wave 3 wavelength | 32,833 tiles | ~5.5x cell size — broad structure |
+| Wave 3 amplitude | 0.5 | |
+| MATERIAL_AMPLITUDE | 0.8 | How much density varies from midpoint (0.0–0.5) |
+| MATERIAL_CONTRAST | 0.7 | Power curve exponent for province separation |
 
-Parameters:
-* **Warp amplitude**: ~600 tiles
-* **Noise scale**: ~1/3,000
+### Output
 
----
+`material_density(q, r)` returns a value in [0.0, 1.0]:
+- **< 0.55** (HOTSPOT_THRESHOLD): Light region — no convection cells, no thermal sources
+- **>= 0.55**: Dense region — supports hotspot activity, lid thickness = density - threshold
 
-## Layer 2: Weighted Influence Field
-
-For each tile, elevation is computed from the weighted influence of ALL nearby plates, not just the nearest one. This is the core innovation — there are no discrete boundaries, only smooth transitions.
-
-### Weight Function
-
-Each plate's influence on a tile uses exponential decay:
-
-```
-weight_i = exp(-warped_distance_i / sigma)
-```
-
-Where `sigma` ~ plate_grid / 3 (~1,300 tiles). Weights are normalized so they sum to 1.0.
-
-This gives:
-- 95%+ weight for the owning plate at half-radius from center
-- Smooth transitions over ~500-800 tiles at boundaries
-- The blended zone (15-20% of plate radius) IS the coastline/boundary
-
-### Blended Base Elevation
-
-```
-blended_elevation = sum(weight_i * base_elevation_i) for all significant plates
-```
-
-At world scale, continents are clearly defined — 80%+ of a plate's area is at 95%+ that plate's base elevation. The blended edges produce natural coastlines and transitions.
+The contrast curve (`|x|^0.7 * sign(x)`) sharpens the boundary between dense and light provinces while keeping transitions smooth at the tile level.
 
 ---
 
-## Layer 3: Tectonic Stress Fields
+## Layer 2: Hotspot Convection
 
-Where multiple plates have significant weight, their competing drift vectors create tectonic stress. Stress is computed as pairwise interactions between all plates with non-trivial influence.
+Dense material acts as a lid trapping heat from below. Convection cells on a fixed grid represent sub-lid activity — rising plumes of heat that cycle through birth, peak, and collapse.
 
-### Contest Factor
+### Grid Structure
 
-For each plate pair (i, j):
-```
-contest = weight_i * weight_j
-```
+Hotspot cells sit on a fixed hexagonal grid at `HOTSPOT_GRID_SPACING` intervals. Not all grid cells are active — only those where the material density at their center exceeds `HOTSPOT_THRESHOLD`. This means:
 
-This is only significant near shared boundaries where both plates have meaningful weight. Deep in a plate's interior, contest approaches zero.
+- Dense province interiors: nearly all grid cells active → continuous cellular texture
+- Province margins: sparse active cells → isolated hotspots at the boundary
+- Light regions: no active cells → quiescent
 
-### Compression
+### Lifecycle
 
-How much the plates push toward or pull away from each other along the line connecting their centers:
+Each active cell cycles through an asymmetric lifecycle:
+- **Rise** (0–60% of cycle): Slow quadratic ramp (`t²`)
+- **Peak** (60–70%): Full intensity plateau
+- **Collapse** (70–100%): Fast quadratic decay (`(1-t)²`)
 
-```
-pair_direction = normalize(center_j - center_i)
-relative_drift = drift_i - drift_j
-compression = dot(relative_drift, pair_direction) * contest
-```
+Phase offsets are deterministic per-cell (hashed from cell coordinates and seed), so neighboring cells peak at different times. The asymmetry means heat builds slowly and dissipates quickly — a geological "breathe in slowly, exhale fast" rhythm.
 
-- **Positive compression**: plates converging → uplift (mountains)
-- **Negative compression**: plates diverging → depression (rifts)
+### Nearest-Cell Lookup
 
-### Shear
+For the sub-lid diagnostic view (`Terrain::hotspot_temperature`), each tile finds its nearest active grid cell via brute-force ±2 search, then combines radial falloff with lifecycle vigor. This produces the raw cellular structure visible in the "hotspot" terrain viewer mode.
 
-How much the plates slide past each other:
+### Constants
 
-```
-shear = |cross(relative_drift, pair_direction)| * contest
-```
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| HOTSPOT_THRESHOLD | 0.55 | Minimum material density for activity |
+| HOTSPOT_GRID_SPACING | 750 tiles | Fixed grid interval |
+| HOTSPOT_CYCLE_TICKS | 1,000 | One full lifecycle in world ticks |
 
-Shear drives terrain disruption — broken, chaotic ground at transform boundaries.
-
-### Accumulation
-
-Total compression and shear at a tile are summed across all significant plate pairs.
+**Implementation:** `crates/terrain/src/hotspots.rs`
 
 ---
 
-## Layer 4: Terrain from Stress
+## Layer 3: Thermal Diffusion
 
-### Compression → Elevation
+Active hotspot cells become point sources of heat. Each source radiates outward as an additive Gaussian, and the sum of all nearby sources produces the surface temperature field.
 
-Compression drives smooth uplift or depression using a soft nonlinear curve:
+### Source Intensity
 
-```
-compression_elevation = sign(compression) * |compression|^0.7 * amplitude
-```
-
-The 0.7 exponent ensures moderate compression is visible without extreme compression producing absurd peaks. Amplitude in the range of 100-300 units — comparable to base elevation differences so features are visible.
-
-### Shear → Disruption
-
-Shear drives noise amplitude:
+Every active hotspot cell (density >= threshold) is a potential thermal source. The intensity uses a continuous penetration model:
 
 ```
-shear_noise = noise(tile_position, shear_seed) * shear_magnitude * amplitude
+lid_thickness = density - HOTSPOT_THRESHOLD
+penetration   = exp(-lid_thickness * LID_SUPPRESSION)
+intensity     = penetration * lifecycle * MAX_SOURCE_INTENSITY
 ```
 
-With 2-3 octaves at ~1/80 tile wavelength. The noise includes an elevation-bridging bias — trending from one base elevation toward the other across the shear zone — so the noise bridges elevation gaps rather than sitting on top of a cliff.
+- **Thin lid** (margin): penetration ≈ 0.9 → strong source when lifecycle peaks
+- **Thick lid** (interior): penetration ≈ 0.1 → heavily suppressed
+- **No threshold gates** beyond the density boundary — exponential decay handles the transition continuously
 
-### Scaling
+Sources below `NOISE_FLOOR` (0.001) are filtered for performance.
 
-Both compression and shear effects scale with relative drift magnitude (faster plates = more dramatic terrain).
+### Gaussian Diffusion
+
+Each source radiates heat via:
+
+```
+contribution = intensity * exp(-dist² / 2σ²)
+```
+
+Sources overlap additively. The sum is clamped to [0, 1]. A 3σ cutoff skips negligible contributions.
+
+With σ=1,200 tiles, a single strong source (intensity ~0.12) creates a warm spot ~7,200 tiles in diameter. Clusters of margin sources produce brighter, more identifiable plumes.
+
+### Boundary Bleed
+
+Gaussian tails carry heat past the dense/light boundary. Tiles in light regions near a dense margin can have non-zero temperature from nearby sources. This is intentional — it creates a soft warm halo around dense provinces rather than a hard temperature cliff.
+
+### Constants
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| THERMAL_SIGMA | 1,200 tiles | Gaussian spread; 3σ = 3,600 tile radius |
+| MAX_SOURCE_INTENSITY | 0.12 | Cap per source; cluster of ~5 reaches 0.3–0.5 |
+| LID_SUPPRESSION | 8.0 | Exponential decay rate for lid thickness |
+| NOISE_FLOOR | 0.001 | Sources below this filtered out |
+
+**Implementation:** `crates/terrain/src/thermal.rs`
 
 ---
 
-## Layer 5: Noise Layers
+## Chunk Caching
 
-Two additive noise layers prevent flat interiors and add surface texture. These are simple Perlin noise with no plate interaction.
+Both hotspot and thermal layers use hex-Voronoi chunk caching to amortize noise evaluation costs across many tile lookups. See [ADR-033](../adr/033-hex-voronoi-chunk-addressing.md) for the addressing decision.
 
-**Broad undulation** (~1/800 scale, +/-100 units): Makes plate interiors feel like varied terrain rather than flat shelves. A player walking thousands of tiles across a stable plate experiences gradual elevation changes.
+### Hex Voronoi Addressing
 
-**Micro-texture** (~1/30 scale, +/-3 units): Subtle per-tile variation preventing uncanny smoothness. Almost imperceptible in isolation but prevents flat areas from looking artificially generated.
+Chunks are assigned via cube-coordinate rounding — each tile maps to its nearest chunk center in hex distance. This produces hexagonal regions where 6 neighbors fully surround each chunk with no diagonal gaps.
+
+```
+tile_to_hex_chunk(q, r, spacing):
+    hex_round(q / spacing, r / spacing)
+```
+
+### Hotspot Chunk Cache
+
+Precomputes which grid cells are active (density >= threshold) for chunks in a 1-ring neighborhood (center + 6 neighbors). Used by `Terrain::hotspot_temperature_cached` for the sub-lid diagnostic view.
+
+| Parameter | Value |
+|-----------|-------|
+| CHUNK_RADIUS | 750 tiles |
+| CHUNK_SPACING | 1,500 tiles |
+
+### Thermal Chunk Cache
+
+Precomputes thermal sources (position + intensity) per chunk. Gathers sources from the center chunk + 6 hex neighbors for each query. The 1-ring of chunks at `THERMAL_CHUNK_SIZE >= 3σ` ensures ring-2 sources contribute < 1% (verified by test).
+
+| Parameter | Value |
+|-----------|-------|
+| THERMAL_CHUNK_SIZE | 4,500 tiles |
+| GRID_CELLS_PER_CHUNK | 6 |
+
+### Boundary Invariant
+
+The `missed_sources_beyond_neighborhood_are_negligible` test proves that sources outside the hex 1-ring neighborhood contribute less than 1% to any tile in the center chunk. This bounds the error introduced by finite gather radius.
 
 ---
 
 ## Coordinate Space
 
-All coordinates use i32 for horizontal (q, r) and vertical (z) axes.
+All terrain functions operate in hex tile coordinates (q, r). Cartesian conversion for noise evaluation:
 
-| Zone | Approximate Z Range | Purpose |
-|------|-------------------|---------|
-| Deep underground | -16,000 to 0 | Future cave systems |
-| Sea level baseline | ~200 | Reference for ocean/coast |
-| Surface band | 0 to 1,000 | Normal terrain |
-| High atmosphere | 1,000+ | Future content |
+```
+hex_to_world(q, r) → (x, y)   // q + r*0.5, r*√3/2
+```
 
-Base plate elevations range 25-600. Compression can add 100-300 units. Total surface range roughly 0-1,000.
+Temperature is a `f64` in [0.0, 1.0]. Material density is a `f64` in [0.0, 1.0].
 
----
-
-## Desired Outcomes
-
-1. Continental structure: distinct landmasses with clear identity
-2. Ocean basins: low-elevation plates clearly distinguishable from high
-3. Mountain ranges at convergent plate boundaries
-4. Rift valleys at divergent plate boundaries
-5. Broken/chaotic terrain at transform (shear) boundaries
-6. Smooth transitions between plate interiors (no hard edges)
-7. Organic plate shapes (curl noise warp, not polygons)
-8. Coastlines with varied character (cliffs, gradual slopes)
-9. No monotonous ramps across large distances
-10. Plate interiors with gentle texture (not dead flat)
-11. No unintentional cliffs (bright lines in slope mode)
-12. Geologically motivated worst-case elevation transitions
-13. Deterministic: same seed always produces same terrain
-14. Per-tile evaluable: no global precomputation required
+Height is currently a placeholder (`get_height` returns 0) — the elevation system will be rebuilt on top of material + thermal layers.
 
 ---
 
-## Tuning Parameters
+## Public API
 
-These values are expected to change during development.
+```rust
+// Core evaluation
+Terrain::new(seed) → Terrain
+Terrain::with_tick(seed, world_tick) → Terrain
+Terrain::material_density(q, r) → f64       // [0, 1]
+Terrain::temperature(q, r) → f64            // [0, 1] (uncached)
+Terrain::temperature_cached(q, r, cache) → f64  // [0, 1] (cached)
+Terrain::hotspot_temperature(q, r) → f64    // Sub-lid diagnostic
+Terrain::evaluate(q, r) → TerrainEval       // { height: 0, temperature }
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Plate grid cell size | ~4,000 tiles | |
-| Plate jitter | ~30% of cell size | |
-| Base elevation range | 25–600 | |
-| Curl warp amplitude | ~600 tiles | |
-| Curl warp noise scale | ~1/3,000 | |
-| Influence sigma | ~1,300 (grid/3) | Exponential decay |
-| Compression exponent | 0.7 | Soft nonlinear curve |
-| Compression amplitude | 100–300 | |
-| Shear noise frequency | ~1/80 tiles | 2-3 octaves |
-| Shear amplitude | 100–300 | |
-| Broad undulation scale | ~1/800 | +/-100 units |
-| Micro-texture scale | ~1/30 | +/-3 units |
+// Caching
+ThermalChunkCache::new(seed, world_tick)
+HotspotChunkCache::new(seed)
+
+// Chunk addressing
+tile_to_chunk(q, r) → (chunk_q, chunk_r)           // Hotspot chunks
+tile_to_thermal_chunk(q, r) → (chunk_q, chunk_r)   // Thermal chunks
+```
+
+---
+
+## Visualization
+
+The `terrain-viewer` crate renders terrain layers to PNG for development diagnostics:
+
+| Mode | What It Shows |
+|------|---------------|
+| Material | Material density field — bright = dense, dark = light |
+| Hotspots | Sub-lid cellular structure — radial falloff × lifecycle |
+| Thermal | Surface temperature field — additive Gaussian plumes |
 
 ---
 
@@ -230,15 +234,7 @@ Chunk loading splits into two concentric rings separated by `FOV_CHUNK_RADIUS`:
 
 **Inner ring** (Chebyshev distance <= `FOV_CHUNK_RADIUS`): Full 64-tile chunks. Gameplay happens here — physics, pathfinding, combat use these tiles from the Map.
 
-**Outer ring** (beyond, up to max_radius): Each chunk summarized as a single 7-vertex hex. One Map entry instead of 64. ~12 bytes network instead of ~2.6KB. Shape is asymmetric — extends toward valleys, stays tight toward ridges.
-
-### Summary Mesh Rendering
-
-Summary hexes render through the existing per-chunk mesh pipeline:
-- Center vertex at chunk world position, y = chunk average elevation
-- 6 corner vertices shared by 3 chunks, y = average of those 3 chunks' elevations
-- Continuous terrain surface at distance
-- Deferred if neighbor summaries missing
+**Outer ring** (beyond, up to max_radius): Each chunk summarized as a single 7-vertex hex. One Map entry instead of 64. ~12 bytes network instead of ~2.6KB.
 
 ### Invariants
 
@@ -257,14 +253,15 @@ Where the current implementation intentionally differs from spec:
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
 | 1 | Chunk streaming | Two-ring LoD with server-side streaming | Client-side two-ring implemented; server-side Event::ChunkSummary not yet | See ADR-032 |
+| 2 | Height | Height derives from material + thermal | `get_height` returns 0 (placeholder) | Elevation system rebuild pending |
 
 ## Implementation Gaps
 
-**Current (Phase 1)**: Full terrain generation rewrite — weighted influence field model replacing boundary deformation system
+**Current**: Height/elevation system — rebuild from material density + thermal field to produce terrain features
 
 **Medium (LoD server-side)**: Server-side two-ring streaming — Event::ChunkSummary, VisibleChunkCache, do_incremental ring transitions
 
-**Deferred**: Dynamic boundary intensity evolution, tectonic events, feature envelopes (mountains, swamps, plains), biome system, river systems, cave/underground generation
+**Deferred**: Biome system, feature envelopes (mountains, swamps, plains), river systems, cave/underground generation, dynamic temporal events
 
 **Blocked by other systems**: Water rendering (ocean/coast), haven placement validation
 
@@ -278,3 +275,4 @@ Where the current implementation intentionally differs from spec:
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation
 - [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Two-ring LoD: inner full-detail, outer summary hexes
+- [ADR-033](../adr/033-hex-voronoi-chunk-addressing.md) — Hex Voronoi chunk addressing via cube-coordinate rounding

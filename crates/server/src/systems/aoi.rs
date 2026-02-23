@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use bevy_renet::RenetServer;
 use ::renet::DefaultChannel;
 
-use common::{
+use common_bevy::{
     chunk::{FOV_CHUNK_RADIUS, CHUNK_SIZE},
     components::{
         behaviour::PlayerControlled,
@@ -136,7 +136,7 @@ pub fn update_area_of_interest(
                 // Send Despawn(E) to player
                 if let Some(client_id) = lobby.get_by_right(&player_ent) {
                     let message = bincode::serde::encode_to_vec(
-                        common::message::Do { event: common::message::Event::Despawn { ent } },
+                        common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent } },
                         bincode::config::legacy(),
                     ).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
@@ -168,7 +168,7 @@ pub fn update_area_of_interest(
                         // Send Despawn(other) to E
                         if let Some(client_id) = client_id {
                             let message = bincode::serde::encode_to_vec(
-                                common::message::Do { event: common::message::Event::Despawn { ent: other_ent } },
+                                common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent: other_ent } },
                                 bincode::config::legacy(),
                             ).unwrap();
                             conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);

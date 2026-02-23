@@ -4,7 +4,7 @@
 /// based on archetype when appropriate conditions are met.
 
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{
         entity_type::{EntityType, actor::ActorIdentity},
         resources::*, Loc, target::Target,
@@ -28,10 +28,10 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common::components::reaction_queue::ReactionQueue>),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>),
         Or<(With<Chase>, With<Kite>)>
     >,
-    target_query: Query<&Loc, With<common::components::behaviour::PlayerControlled>>,
+    target_query: Query<&Loc, With<common_bevy::components::behaviour::PlayerControlled>>,
     _time: Res<Time>,
     mut writer: MessageWriter<Try>,
 ) {
@@ -50,7 +50,7 @@ pub fn npc_ability_usage(
 
         let archetype = match actor_impl.identity {
             ActorIdentity::Npc(npc_type) => {
-                use common::components::entity_type::actor::NpcType;
+                use common_bevy::components::entity_type::actor::NpcType;
                 match npc_type {
                     NpcType::WildDog => EnemyArchetype::Berserker,
                     NpcType::Juggernaut => EnemyArchetype::Juggernaut,

@@ -3,7 +3,7 @@ use bevy_renet::RenetServer;
 use ::renet::DefaultChannel;
 use qrz::Convert;
 
-use common::{
+use common_bevy::{
     components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, position::Position, * },
     message::{Event, *},
     resources::map::Map,
@@ -13,7 +13,7 @@ use crate::*;
 pub fn try_input(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
-    respawn_query: Query<&common::components::resources::RespawnTimer>,
+    respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
 ) {
     for &message in reader.read() {
         let Try { event } = message;
@@ -88,7 +88,7 @@ pub fn try_set_tier_lock(
             writer.write(Do {
                 event: Event::Incremental {
                     ent,
-                    component: common::message::Component::TierLock(*tier_lock),
+                    component: common_bevy::message::Component::TierLock(*tier_lock),
                 },
             });
         }
@@ -104,7 +104,7 @@ pub fn broadcast_player_movement_intent(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     buffers: Res<InputQueues>,
-    mut query: Query<(&Loc, &Heading, &Position, Option<&ActorAttributes>, Option<&mut common::components::movement_intent_state::MovementIntentState>)>,
+    mut query: Query<(&Loc, &Heading, &Position, Option<&ActorAttributes>, Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>)>,
     map: Res<Map>,
 ) {
     for (ent, buffer) in buffers.iter() {
@@ -122,7 +122,7 @@ pub fn broadcast_player_movement_intent(
             state
         } else {
             // First time - add component and skip (will process next frame)
-            commands.entity(ent).insert(common::components::movement_intent_state::MovementIntentState::default());
+            commands.entity(ent).insert(common_bevy::components::movement_intent_state::MovementIntentState::default());
             continue;
         };
 

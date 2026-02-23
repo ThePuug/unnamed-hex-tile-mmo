@@ -34,7 +34,7 @@
 //! # Usage
 //!
 //! ```
-//! # use common::components::keybits::*;
+//! # use common_bevy::components::keybits::*;
 //! let mut input = KeyBits::default();
 //!
 //! // Set multiple keys pressed

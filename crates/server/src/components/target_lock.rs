@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::components::Loc;
+use common_bevy::components::Loc;
 
 /// Target lock component for sticky target acquisition
 /// Prevents NPCs from switching targets until the current target becomes invalid

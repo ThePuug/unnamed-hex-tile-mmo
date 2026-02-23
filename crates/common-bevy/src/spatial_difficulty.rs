@@ -19,7 +19,7 @@ pub const HAVEN_LOCATION: Qrz = Qrz { q: 0, r: 0, z: 0 };
 /// # Examples
 /// ```
 /// # use qrz::Qrz;
-/// # use common::spatial_difficulty::*;
+/// # use common_bevy::spatial_difficulty::*;
 /// let spawn = Qrz { q: 5, r: 0, z: 0 };  // 5 tiles from origin
 /// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
 ///
@@ -53,7 +53,7 @@ pub enum DirectionalZone {
 /// # Examples
 /// ```
 /// # use qrz::Qrz;
-/// # use common::spatial_difficulty::*;
+/// # use common_bevy::spatial_difficulty::*;
 /// let north = Qrz { q: 0, r: -10, z: 0 };
 /// assert_eq!(get_directional_zone(north, HAVEN_LOCATION), DirectionalZone::North);
 ///
@@ -303,7 +303,7 @@ fn distribute_points(level: u8, allocations: &[Allocation]) -> [u8; 6] {
 ///
 /// # Examples
 /// ```
-/// # use common::spatial_difficulty::*;
+/// # use common_bevy::spatial_difficulty::*;
 /// let attrs = calculate_enemy_attributes(10, EnemyArchetype::Berserker);
 /// // Level 10 Berserker: all 10 points to MightGraceAxis, direction -1
 /// assert_eq!(attrs.might_grace_axis(), -10);

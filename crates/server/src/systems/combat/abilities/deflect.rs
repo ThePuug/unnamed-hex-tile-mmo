@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{reaction_queue::*, resources::*, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     systems::combat::{queue as queue_utils, synergies::apply_synergies},
@@ -13,7 +13,7 @@ pub fn handle_deflect(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
-    attrs_query: Query<&common::components::ActorAttributes>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -61,7 +61,7 @@ pub fn handle_deflect(
             writer.write(Do {
                 event: GameEvent::Incremental {
                     ent: *ent,
-                    component: common::message::Component::Stamina(*stamina),
+                    component: common_bevy::message::Component::Stamina(*stamina),
                 },
             });
             continue;
@@ -97,7 +97,7 @@ pub fn handle_deflect(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
-                component: common::message::Component::Stamina(*stamina),
+                component: common_bevy::message::Component::Stamina(*stamina),
             },
         });
 

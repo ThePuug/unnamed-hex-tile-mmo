@@ -4,7 +4,7 @@ use bevy_renet::{RenetServer, RenetServerEvent, renet::ConnectionConfig, netcode
 use qrz::*;
 use ::renet::{DefaultChannel, ServerEvent};
 
-use common::{
+use common_bevy::{
     chunk::PlayerDiscoveryState,
     components::{ *,
         behaviour::*,
@@ -51,11 +51,11 @@ pub fn do_manage_connections(
     mut conn: ResMut<RenetServer>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    mut loaded_by_query: Query<&mut common::components::loaded_by::LoadedBy>,
+    mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     runtime: Res<RunTime>,
-    spawn_point: Res<common::components::resources::SpawnPoint>,
+    spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
 ) {
     {
         let event = &trigger.event().0;
@@ -123,12 +123,12 @@ pub fn do_manage_connections(
                     LastAutoAttack::default(),
                     PlayerDiscoveryState::default(),
                     TierLock::new(),
-                    common::components::target::Target::default(),
+                    common_bevy::components::target::Target::default(),
                 )).id();
                 commands.entity(ent).insert((
                     NearestNeighbor::new(ent, loc),
-                    common::components::loaded_by::LoadedBy::default(),
-                    common::components::AttackRange::default(),
+                    common_bevy::components::loaded_by::LoadedBy::default(),
+                    common_bevy::components::AttackRange::default(),
                 ));
 
                 // init input buffer for client
@@ -248,7 +248,7 @@ pub fn write_try(
  pub fn send_do(
     mut conn: ResMut<RenetServer>,
     mut reader: MessageReader<Do>,
-    loaded_by_query: Query<&common::components::loaded_by::LoadedBy>,
+    loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
 ) {
     for &message in reader.read() {

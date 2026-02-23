@@ -4,7 +4,7 @@ use std::f32::consts::PI;
 
 use crate::systems::camera::CameraOrbitAngle;
 use crate::*;
-use common::{
+use common_bevy::{
     components::{
         heading::*,
         keybits::*,
@@ -76,7 +76,7 @@ fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     camera_angle: Res<CameraOrbitAngle>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&common::components::gcd::Gcd>, &Target), With<Actor>>,
+    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     dt: Res<Time>,
 ) {

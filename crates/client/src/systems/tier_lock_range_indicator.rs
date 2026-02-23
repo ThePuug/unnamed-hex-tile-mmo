@@ -23,7 +23,7 @@ use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
 use crate::plugins::diagnostics::DiagnosticsState;
-use common::{
+use common_bevy::{
     components::{tier_lock::*, *},
     resources::map::Map,
     systems::targeting::RangeTier,
@@ -68,7 +68,7 @@ pub fn update(
     mut commands: Commands,
     local_player_query: Query<(Entity, &Loc, &TierLock), With<Actor>>,
     mut indicator_query: Query<(Entity, &mut TierLockRangeIndicator, &mut Visibility, Option<&MeshMaterial3d<StandardMaterial>>)>,
-    input_queues: Res<common::resources::InputQueues>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
     map: Res<Map>,
     diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,

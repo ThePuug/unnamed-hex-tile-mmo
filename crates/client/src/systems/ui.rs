@@ -6,7 +6,7 @@ use crate::{
     resources::Server,
     systems::camera::CameraOrbitAngle,
 };
-use common::{
+use common_bevy::{
     components::{Actor, Loc},
     spatial_difficulty::*,
     systems::*,

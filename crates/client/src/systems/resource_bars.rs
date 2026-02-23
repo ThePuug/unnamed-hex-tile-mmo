@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common::components::{Actor, resources::*};
+use common_bevy::components::{Actor, resources::*};
 
 /// Component for the health bar UI element with interpolation state
 #[derive(Component)]

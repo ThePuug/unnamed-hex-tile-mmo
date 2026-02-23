@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use crate::components::{ResolvedThreatEntry, ResolvedThreatsContainer};
 use crate::systems::threat_icons::{self, severity_rgb};
-use common::components::reaction_queue::ReactionQueue;
-use common::components::resources::Health;
+use common_bevy::components::reaction_queue::ReactionQueue;
+use common_bevy::components::resources::Health;
 
 const ENTRY_SIZE: f32 = 30.0;
 const ENTRY_SPACING: f32 = 3.0;
@@ -50,12 +50,12 @@ pub fn on_damage_resolved(
     mut commands: Commands,
     container_query: Query<Entity, With<ResolvedThreatsContainer>>,
     entry_query: Query<Entity, With<ResolvedThreatEntry>>,
-    input_queues: Res<common::resources::InputQueues>,
-    player_health: Query<&Health, With<common::components::Actor>>,
-    mut event_reader: MessageReader<common::message::Do>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
+    player_health: Query<&Health, With<common_bevy::components::Actor>>,
+    mut event_reader: MessageReader<common_bevy::message::Do>,
     time: Res<Time>,
 ) {
-    use common::message::Event as GameEvent;
+    use common_bevy::message::Event as GameEvent;
 
     let Ok(container) = container_query.single() else {
         return;
@@ -151,7 +151,7 @@ pub fn update_entries(
 /// Only runs when ReactionQueue is mutated (capacity/threat changes).
 pub fn sync_container_position(
     mut container_query: Query<&mut Node, With<ResolvedThreatsContainer>>,
-    player_query: Query<&ReactionQueue, (With<common::components::Actor>, Changed<ReactionQueue>)>,
+    player_query: Query<&ReactionQueue, (With<common_bevy::components::Actor>, Changed<ReactionQueue>)>,
 ) {
     let Some(queue) = player_query.iter().next() else {
         return;

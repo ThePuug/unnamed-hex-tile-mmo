@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
-use common::{
+use common_bevy::{
     chunk::{
         ChunkId, CHUNK_SIZE, FOV_CHUNK_RADIUS,
         calculate_visible_chunks_adaptive,
@@ -76,7 +76,7 @@ impl Default for AdminTerrain {
 #[derive(Default, Resource)]
 pub struct PendingFlyoverTiles {
     pub inner: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
-    pub outer: HashMap<ChunkId, Task<common::chunk::ChunkSummary>>,
+    pub outer: HashMap<ChunkId, Task<common_bevy::chunk::ChunkSummary>>,
 }
 
 // ──── Run Conditions ────
@@ -324,7 +324,7 @@ pub fn flyover_generate_chunks(
 
     // Always extend beyond FOV_CHUNK_RADIUS so there's an outer LoD ring
     let vis_radius = flyover_radius(scale, player_z);
-    let max_radius = vis_radius.max(common::chunk::FOV_CHUNK_RADIUS + 3);
+    let max_radius = vis_radius.max(common_bevy::chunk::FOV_CHUNK_RADIUS + 3);
     let base_radius = vis_radius;
 
     let (inner, outer) = calculate_visible_chunks_adaptive(
@@ -380,7 +380,7 @@ pub fn flyover_generate_chunks(
         let task = pool.spawn(async move {
             let ct = chunk_id.center();
             let elevation = terrain.get_height(ct.q, ct.r);
-            common::chunk::ChunkSummary {
+            common_bevy::chunk::ChunkSummary {
                 chunk_id,
                 elevation,
                 biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
@@ -500,7 +500,7 @@ pub fn flyover_evict_chunks(
             if !chunk_summaries.summaries.contains_key(&chunk_id) {
                 let center_tile = chunk_to_tile(chunk_id, 8, 8);
                 if let Some((tile_qrz, biome)) = map.get_by_qr(center_tile.q, center_tile.r) {
-                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
                         chunk_id,
                         elevation: tile_qrz.z,
                         biome,

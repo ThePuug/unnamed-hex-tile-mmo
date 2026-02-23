@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
@@ -16,7 +16,7 @@ pub fn handle_lunge(
     entity_query: Query<&Loc>,
     loc_tierlock_query: Query<(&Loc, Option<&TierLock>)>,
     mut stamina_query: Query<&mut Stamina>,
-    attrs_query: Query<&common::components::ActorAttributes>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     mut writer: MessageWriter<Do>,
@@ -146,7 +146,7 @@ pub fn handle_lunge(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
-                component: common::message::Component::Stamina(*stamina),
+                component: common_bevy::message::Component::Stamina(*stamina),
             },
         });
 
@@ -175,7 +175,7 @@ pub fn handle_lunge(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
-                component: common::message::Component::Loc(Loc::new(landing_loc)),
+                component: common_bevy::message::Component::Loc(Loc::new(landing_loc)),
             },
         });
 

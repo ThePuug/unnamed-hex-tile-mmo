@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::platform::collections::HashMap;
 use qrz::Qrz;
 
-use common::{
+use common_bevy::{
     components::{
         Loc,
         behaviour::PlayerControlled,

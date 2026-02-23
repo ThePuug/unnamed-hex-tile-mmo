@@ -4,7 +4,7 @@ use chrono::{
 };
 use qrz::*;
 
-use common::{
+use common_bevy::{
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,

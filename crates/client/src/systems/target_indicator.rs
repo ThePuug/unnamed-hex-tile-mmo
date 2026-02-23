@@ -22,7 +22,7 @@ use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
 use crate::{components::TargetIndicator, plugins::diagnostics::DiagnosticsState};
-use common::{
+use common_bevy::{
     components::{entity_type::*, *},
     resources::map::Map,
 };
@@ -96,7 +96,7 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget, &common::components::resources::Health), With<Actor>>,
+    local_player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget, &common_bevy::components::resources::Health), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
     diagnostics_state: Res<DiagnosticsState>,

@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use common::metrics::{METRICS_MAGIC, METRICS_VERSION, ServerMetrics};
-use common::resources::map::Map;
+use common_bevy::metrics::{METRICS_MAGIC, METRICS_VERSION, ServerMetrics};
+use common_bevy::resources::map::Map;
 use crate::resources::Lobby;
 
 const DEFAULT_METRICS_PORT: u16 = 5100;
@@ -110,7 +110,7 @@ fn refresh_metric_gauges(
     mut metrics: ResMut<ServerMetrics>,
     map: Res<Map>,
     lobby: Res<Lobby>,
-    npc_query: Query<(), (With<common::components::entity_type::EntityType>, Without<common::components::behaviour::PlayerControlled>)>,
+    npc_query: Query<(), (With<common_bevy::components::entity_type::EntityType>, Without<common_bevy::components::behaviour::PlayerControlled>)>,
 ) {
     metrics.loaded_hexes = map.len() as u32;
     metrics.connected_players = lobby.len() as u32;

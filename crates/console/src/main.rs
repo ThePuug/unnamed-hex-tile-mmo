@@ -6,7 +6,7 @@ use std::time::Instant;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-// Mirror of common::metrics — keep in sync, version check catches drift.
+// Mirror of common_bevy::metrics — keep in sync, version check catches drift.
 const METRICS_MAGIC: [u8; 4] = *b"GMSV";
 const METRICS_VERSION: u16 = 7;
 

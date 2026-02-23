@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common::{
+use common_bevy::{
     components::{Actor, ActorAttributes},
     systems::combat::damage::contest_factor,
 };

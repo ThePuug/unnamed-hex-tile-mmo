@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/common",
+    "crates/common-bevy",
     "crates/client",
     "crates/server",
     "crates/qrz",

@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use std::time::Duration;
 
-use common::{
+use common_bevy::{
     components::{
         behaviour::Behaviour,
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
@@ -118,7 +118,7 @@ pub fn update_engagement_proximity(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{
+    use common_bevy::{
         chunk::{CHUNK_SIZE, FOV_CHUNK_RADIUS, ChunkId, chunk_to_tile},
         components::Loc,
     };

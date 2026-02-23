@@ -15,7 +15,7 @@ use bevy_renet::{
 };
 use serde::{Deserialize, Serialize};
 
-use common::{
+use common_bevy::{
     chunk::WorldDiscoveryCache,
     components::{behaviour::*, entity_type::*},
     message::*,
@@ -56,7 +56,7 @@ fn main() {
         NetcodeServerPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        common::plugins::controlled::ControlledPlugin,
+        common_bevy::plugins::controlled::ControlledPlugin,
         crate::plugins::behaviour::BehaviourPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
     ));
@@ -76,10 +76,10 @@ fn main() {
     ));
 
     app.add_systems(FixedUpdate, (
-        common::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
-        common::systems::combat::state::update_combat_state,
-        common::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
-        common::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies
+        common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
+        common_bevy::systems::combat::state::update_combat_state,
+        common_bevy::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
+        common_bevy::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies
         reaction_queue::process_expired_threats,
     ));
 
@@ -110,19 +110,19 @@ fn main() {
         combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
         reaction_queue::process_dismiss, // ADR-022: Dismiss front queue threat (no GCD/lockout)
-        common::systems::combat::resources::check_death, // Check for death from ANY source
+        common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 
     // World, network, and spawner systems
     app.add_systems(Update, (
-        common::systems::world::try_incremental,
-        common::systems::world::do_incremental,
+        common_bevy::systems::world::try_incremental,
+        common_bevy::systems::world::do_incremental,
         input::send_input,
         input::try_gcd,
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
-        common::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
+        common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
         world::do_spawn,
@@ -135,7 +135,7 @@ fn main() {
         engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
         engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
         actor::try_discover,        // Legacy tile discovery (for compatibility)
-        common::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
+        common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
 
     app.add_systems(PostUpdate, (
@@ -155,7 +155,7 @@ fn main() {
     app.init_resource::<InputQueues>();
     let terrain = Terrain::default();
     let spawn_z = terrain.get(0, 0) + 1;
-    app.insert_resource(common::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
+    app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
     app.insert_resource(terrain);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();

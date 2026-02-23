@@ -4,7 +4,7 @@ use crate::{
     plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay, perf_ui::PerfUiRootMarker, network_ui::NetworkUiRootMarker},
     components::PlayerOriginDebug,
 };
-use common::components::behaviour::Behaviour;
+use common_bevy::components::behaviour::Behaviour;
 
 /// Events that can be triggered from the developer console
 #[derive(Event, Message, Debug)]
@@ -29,7 +29,7 @@ pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut reader: MessageReader<DevConsoleAction>,
-    map: Res<common::resources::map::Map>,
+    map: Res<common_bevy::resources::map::Map>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,

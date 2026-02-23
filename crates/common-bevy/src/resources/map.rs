@@ -160,56 +160,11 @@ impl Map {
         self.0.rise()
     }
 
-    /// Topographic color ramp matching terrain-viewer elevation mode.
-    /// Deep blue (ocean) → cyan (coast) → green (lowland) → yellow (mid) → brown (high) → white (peak).
+    /// Topographic color from shared elevation ramp (sea level at 0).
     /// Returns linear RGB [0..1] with alpha.
     pub fn height_color_tint(elevation: i32) -> [f32; 4] {
-        const RAMP: &[(f64, f64, f64, f64)] = &[
-            (-300.0, 10.0, 20.0, 80.0),    // deep ocean
-            (50.0, 30.0, 60.0, 160.0),     // ocean
-            (150.0, 60.0, 130.0, 200.0),   // shallow ocean
-            (250.0, 80.0, 180.0, 180.0),   // coastal
-            (400.0, 80.0, 160.0, 80.0),    // lowland green
-            (700.0, 160.0, 180.0, 60.0),   // mid elevation yellow-green
-            (1000.0, 200.0, 170.0, 50.0),  // yellow
-            (1400.0, 170.0, 120.0, 50.0),  // brown
-            (2000.0, 200.0, 190.0, 180.0), // light brown / gray
-            (3000.0, 255.0, 255.0, 255.0), // white peaks
-        ];
-
-        let h = elevation as f64;
-
-        // Clamp to ramp endpoints
-        let (r, g, b) = if h <= RAMP[0].0 {
-            (RAMP[0].1, RAMP[0].2, RAMP[0].3)
-        } else if h >= RAMP[RAMP.len() - 1].0 {
-            let last = RAMP[RAMP.len() - 1];
-            (last.1, last.2, last.3)
-        } else {
-            // Find segment and interpolate
-            let mut result = (128.0, 128.0, 128.0);
-            for i in 0..RAMP.len() - 1 {
-                let (e0, r0, g0, b0) = RAMP[i];
-                let (e1, r1, g1, b1) = RAMP[i + 1];
-                if h >= e0 && h < e1 {
-                    let t = (h - e0) / (e1 - e0);
-                    result = (
-                        r0 + (r1 - r0) * t,
-                        g0 + (g1 - g0) * t,
-                        b0 + (b1 - b0) * t,
-                    );
-                    break;
-                }
-            }
-            result
-        };
-
-        [
-            (r / 255.0) as f32,
-            (g / 255.0) as f32,
-            (b / 255.0) as f32,
-            1.0,
-        ]
+        let (r, g, b) = common::elevation_color_rgb(elevation);
+        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
     }
 
     /// Inner implementation of vertices_and_colors_with_slopes that operates on a map reference.

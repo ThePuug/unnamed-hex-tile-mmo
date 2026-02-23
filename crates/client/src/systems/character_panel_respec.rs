@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::systems::character_panel::*;
-use common::{
+use common_bevy::{
     components::{Actor, ActorAttributes},
     message::{Do, Event as GameEvent, Try},
 };

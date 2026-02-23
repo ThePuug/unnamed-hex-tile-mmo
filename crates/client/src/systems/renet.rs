@@ -11,7 +11,7 @@ use crate::{
     resources::{ChunkSummaries, EntityMap, LoadedChunks},
 };
 use crate::*;
-use common::{
+use common_bevy::{
     components::{behaviour::*, entity_type::*, reaction_queue::QueuedThreat},
     message::{Component, Event, *},
     resources::*,
@@ -104,9 +104,9 @@ pub fn write_do(
                     Actor,
                     Behaviour::Controlled,
                     PlayerControlled,
-                    common::components::target::Target::default(), // For unified targeting system
-                    common::components::ally_target::AllyTarget::default(), // For ally targeting
-                    common::components::tier_lock::TierLock::default(), // For tier lock
+                    common_bevy::components::target::Target::default(), // For unified targeting system
+                    common_bevy::components::ally_target::AllyTarget::default(), // For ally targeting
+                    common_bevy::components::tier_lock::TierLock::default(), // For tier lock
                 )).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
@@ -198,7 +198,7 @@ pub fn write_do(
             Do { event: Event::ChunkSummary { ent: _, chunk_id, elevation, biome } } => {
                 // Don't downgrade full-detail chunks to summaries
                 if !loaded_chunks.chunks.contains(&chunk_id) {
-                    chunk_summaries.summaries.insert(chunk_id, common::chunk::ChunkSummary {
+                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
                         chunk_id,
                         elevation,
                         biome,
