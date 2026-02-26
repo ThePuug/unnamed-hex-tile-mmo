@@ -1,0 +1,837 @@
+use std::collections::HashMap;
+
+use crate::noise::{hash_u64, hash_f64, simplex_2d};
+use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX, CELL_SUPPRESSION_RATE,
+            WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C,
+            WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
+            GRAD_STEP, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS, MAX_ELONGATION};
+
+/// Row height factor for hex grid: sqrt(3)/2.
+/// Odd rows are shifted right by half a cell width.
+const HEX_ROW_HEIGHT: f64 = 0.8660254037844386;
+
+const SUPPRESS_SEED: u64 = 0xDEAD_CAFE_0000;
+
+/// A macro plate center with position, grid cell identity, and unique ID.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlateCenter {
+    pub wx: f64,
+    pub wy: f64,
+    pub cell_q: i32,
+    pub cell_r: i32,
+    pub id: u64,
+}
+
+// ──── Hex grid helpers ────
+
+/// Center + ring-1 (6) + ring-2 (12) = 19 cells for the 2-ring hex neighborhood.
+/// Ring-2 is needed because cell suppression means the nearest center can be 2 cells away.
+fn two_ring_offsets(cr: i32) -> [(i32, i32); 19] {
+    if cr & 1 == 0 {
+        [
+            (0, 0),
+            // Ring 1
+            (-1, 0), (1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1),
+            // Ring 2
+            (-2, 0), (-2, -1), (-2, 1), (2, 0), (1, -1), (1, 1),
+            (-1, -2), (0, -2), (1, -2), (-1, 2), (0, 2), (1, 2),
+        ]
+    } else {
+        [
+            (0, 0),
+            // Ring 1
+            (-1, 0), (1, 0), (0, -1), (1, -1), (0, 1), (1, 1),
+            // Ring 2
+            (-2, 0), (-1, -1), (-1, 1), (2, 0), (2, -1), (2, 1),
+            (-1, -2), (0, -2), (1, -2), (-1, 2), (0, 2), (1, 2),
+        ]
+    }
+}
+
+// ──── Grid cell → plate center ────
+
+/// Jitter factor at a world position. Simplex noise at very low frequency
+/// modulates how far plate centers deviate from cell centers.
+/// Returns a value in [JITTER_MIN, JITTER_MAX].
+fn jitter_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    let noise_seed = seed ^ 0xA1B2C3D4E5F6;
+    let n = simplex_2d(wx / JITTER_NOISE_WAVELENGTH, wy / JITTER_NOISE_WAVELENGTH, noise_seed);
+    let t = (n + 1.0) * 0.5;
+    JITTER_MIN + t * (JITTER_MAX - JITTER_MIN)
+}
+
+/// Whether a cell is suppressed (produces no plate center).
+fn cell_is_suppressed(cell_q: i32, cell_r: i32, seed: u64) -> bool {
+    hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED) < CELL_SUPPRESSION_RATE
+}
+
+// ──── Warped Voronoi distance ────
+
+const WARP_NOISE_SEED: u64 = 0xCCCC_DDDD_0001;
+const WARP_STRENGTH_SEED_A: u64 = 0xCCCC_DDDD_0002;
+const WARP_STRENGTH_SEED_B: u64 = 0xCCCC_DDDD_0003;
+const WARP_STRENGTH_SEED_C: u64 = 0xCCCC_DDDD_0004;
+
+/// Raw triple-prime noise value at position, normalized to [0, 1].
+/// Three summed simplex octaves at prime wavelengths (29989, 17393, 11003)
+/// with weights 1.0 / 0.5 / 0.25. LCM ≈ 5.7 trillion tiles — never repeats.
+/// Used for regime classification (water/land threshold in viewer).
+pub fn regime_value_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    let a = simplex_2d(wx / WARP_PRIME_A, wy / WARP_PRIME_A, seed ^ WARP_STRENGTH_SEED_A);
+    let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
+    let c = simplex_2d(wx / WARP_PRIME_C, wy / WARP_PRIME_C, seed ^ WARP_STRENGTH_SEED_C);
+    let combined = (a + b * 0.5 + c * 0.25) / 1.75;
+    ((combined + 1.0) * 0.5).clamp(0.0, 1.0)
+}
+
+/// Sigmoid contrast filter. Maps x through a smooth step centered at `midpoint`
+/// with sharpness controlled by `steepness`.
+pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
+    1.0 / (1.0 + (-steepness * (x - midpoint)).exp())
+}
+
+/// Estimated max gradient magnitude of the regime field per world unit,
+/// derived from the triple-prime octave weights and wavelengths.
+pub(crate) const GRAD_MAX_ESTIMATE: f64 =
+    (1.0 / WARP_PRIME_C + 0.5 / WARP_PRIME_B + 0.25 / WARP_PRIME_A) / 1.75;
+
+/// Warp strength derived from gradient magnitude of the regime field.
+/// High gradient (regime transitions, i.e. coastlines) → high warp → irregular plates.
+/// Low gradient (deep water or deep inland) → low warp → regular, convex plates.
+/// Returns a value in [WARP_STRENGTH_MIN, WARP_STRENGTH_MAX].
+pub fn warp_strength_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    let dx = regime_value_at(wx + GRAD_STEP, wy, seed)
+           - regime_value_at(wx - GRAD_STEP, wy, seed);
+    let dy = regime_value_at(wx, wy + GRAD_STEP, seed)
+           - regime_value_at(wx, wy - GRAD_STEP, seed);
+    let gradient_mag = (dx * dx + dy * dy).sqrt() / (2.0 * GRAD_STEP);
+    let normalized = gradient_mag / GRAD_MAX_ESTIMATE;
+    let contrasted = sigmoid(normalized, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS);
+    WARP_STRENGTH_MIN + contrasted * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN)
+}
+
+/// Per-candidate warp noise at a world position.
+/// Uses candidate ID as seed offset so each candidate has its own noise field.
+/// Returns a value in approximately [-1, 1].
+fn warp_noise(wx: f64, wy: f64, candidate_id: u64, seed: u64) -> f64 {
+    simplex_2d(
+        wx / WARP_NOISE_WAVELENGTH,
+        wy / WARP_NOISE_WAVELENGTH,
+        seed ^ WARP_NOISE_SEED ^ candidate_id,
+    )
+}
+
+// ──── Anisotropic macro plate assignment ────
+
+/// Precomputed anisotropy context at a query point.
+/// Derived from regime gradient — coastlines stretch macro plates along the shore,
+/// interiors stay isotropic.
+struct AnisoContext {
+    across: (f64, f64),
+    along: (f64, f64),
+    elongation: f64,
+}
+
+impl AnisoContext {
+    fn at(wx: f64, wy: f64, seed: u64) -> Self {
+        let gx = regime_value_at(wx + GRAD_STEP, wy, seed)
+               - regime_value_at(wx - GRAD_STEP, wy, seed);
+        let gy = regime_value_at(wx, wy + GRAD_STEP, seed)
+               - regime_value_at(wx, wy - GRAD_STEP, seed);
+        let raw_mag = (gx * gx + gy * gy).sqrt();
+
+        let (across, along) = if raw_mag > 1e-12 {
+            let ax = gx / raw_mag;
+            let ay = gy / raw_mag;
+            ((ax, ay), (-ay, ax))
+        } else {
+            ((1.0, 0.0), (0.0, 1.0))
+        };
+
+        let grad_mag = raw_mag / (2.0 * GRAD_STEP);
+        let normalized = grad_mag / GRAD_MAX_ESTIMATE;
+        let t = sigmoid(normalized, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS);
+        let elongation = 1.0 + (MAX_ELONGATION - 1.0) * t;
+
+        Self { across, along, elongation }
+    }
+
+    /// Anisotropic distance. Compresses the along-coast axis
+    /// so macro plates stretch parallel to the shore.
+    fn dist(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
+        let dx = px - cx;
+        let dy = py - cy;
+        let d_across = dx * self.across.0 + dy * self.across.1;
+        let d_along = (dx * self.along.0 + dy * self.along.1) / self.elongation;
+        (d_across * d_across + d_along * d_along).sqrt()
+    }
+}
+
+/// Extra search rings needed for anisotropic distance.
+const ANISO_SEARCH: i32 = 2 + MAX_ELONGATION as i32;
+
+/// Effective distance for warped Voronoi assignment.
+/// Uses anisotropic geometric distance + per-candidate noise perturbation.
+fn effective_distance(wx: f64, wy: f64, candidate: &PlateCenter, strength: f64, ctx: &AnisoContext, seed: u64) -> f64 {
+    let geo = ctx.dist(wx, wy, candidate.wx, candidate.wy);
+    let noise = warp_noise(wx, wy, candidate.id, seed);
+    geo + noise * strength
+}
+
+// ──── Grid cell → plate center ────
+
+/// Compute the plate center for a specific hex grid cell (odd-r offset).
+/// Returns None if the cell is suppressed.
+pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Option<PlateCenter> {
+    if cell_is_suppressed(cell_q, cell_r, seed) {
+        return None;
+    }
+
+    let odd_shift = if cell_r & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
+    let nominal_wx = cell_q as f64 * MACRO_CELL_SIZE + odd_shift;
+    let nominal_wy = cell_r as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+
+    let jitter = jitter_at(nominal_wx, nominal_wy, seed);
+
+    let offset_x = hash_f64(cell_q as i64, cell_r as i64, seed ^ 0x1111) - 0.5;
+    let offset_y = hash_f64(cell_q as i64, cell_r as i64, seed ^ 0x2222) - 0.5;
+
+    let wx = nominal_wx + offset_x * jitter * MACRO_CELL_SIZE;
+    let wy = nominal_wy + offset_y * jitter * MACRO_CELL_SIZE;
+
+    let id = hash_u64(cell_q as i64, cell_r as i64, seed);
+
+    Some(PlateCenter { wx, wy, cell_q, cell_r, id })
+}
+
+// ──── Grid cell lookup ────
+
+/// Which hex grid cell contains a world position (before Voronoi assignment).
+fn world_to_cell(wx: f64, wy: f64) -> (i32, i32) {
+    let row_height = MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+    let cr = (wy / row_height).round() as i32;
+    let odd_shift = if cr & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
+    let cq = ((wx - odd_shift) / MACRO_CELL_SIZE).round() as i32;
+    (cq, cr)
+}
+
+// ──── Public API ────
+
+/// Returns the geometrically nearest macro plate center to (wx, wy).
+/// Pure Euclidean distance — no warp. Used for seed enumeration, neighbor
+/// finding, and as the base for warped assignment.
+pub fn macro_plate_at(wx: f64, wy: f64, seed: u64) -> PlateCenter {
+    let (cq, cr) = world_to_cell(wx, wy);
+
+    let mut best: Option<PlateCenter> = None;
+    let mut best_dist_sq = f64::MAX;
+
+    for (dq, dr) in two_ring_offsets(cr) {
+        if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+            let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
+            if d < best_dist_sq {
+                best = Some(candidate);
+                best_dist_sq = d;
+            }
+        }
+    }
+
+    best.expect("no plate center found in 2-ring neighborhood — suppression rate too high")
+}
+
+/// Returns the macro plate that owns position (wx, wy) via anisotropic warped distance.
+/// At coastlines (high regime gradient), the distance metric stretches along the shore,
+/// so macro plates collect micro cells further along the coast than across it.
+/// Each candidate seed also gets a per-candidate noise perturbation scaled by
+/// regional warp strength, producing non-convex plate shapes.
+pub fn warped_plate_at(wx: f64, wy: f64, seed: u64) -> PlateCenter {
+    let (cq, cr) = world_to_cell(wx, wy);
+    let strength = warp_strength_at(wx, wy, seed);
+    let ctx = AnisoContext::at(wx, wy, seed);
+
+    let mut best: Option<PlateCenter> = None;
+    let mut best_eff_dist = f64::MAX;
+
+    for dr in -ANISO_SEARCH..=ANISO_SEARCH {
+        for dq in -ANISO_SEARCH..=ANISO_SEARCH {
+            if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+                let d = effective_distance(wx, wy, &candidate, strength, &ctx, seed);
+                if d < best_eff_dist {
+                    best = Some(candidate);
+                    best_eff_dist = d;
+                }
+            }
+        }
+    }
+
+    best.expect("no plate center found in expanded neighborhood — suppression rate too high")
+}
+
+/// Returns all macro plate centers within `radius` of world position (wx, wy).
+pub fn macro_plates_in_radius(wx: f64, wy: f64, radius: f64, seed: u64) -> Vec<PlateCenter> {
+    let row_height = MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+    let cell_reach = (radius / row_height).ceil() as i32 + 2;
+    let (cq, cr) = world_to_cell(wx, wy);
+    let radius_sq = radius * radius;
+
+    let mut result = Vec::new();
+    for dq in -cell_reach..=cell_reach {
+        for dr in -cell_reach..=cell_reach {
+            if let Some(plate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+                if dist_sq(wx, wy, plate.wx, plate.wy) <= radius_sq {
+                    result.push(plate);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Returns the macro plate centers that are Voronoi neighbors of the plate
+/// owning position (wx, wy).
+pub fn macro_plate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<PlateCenter> {
+    let owner = macro_plate_at(wx, wy, seed);
+    let search_radius = MACRO_CELL_SIZE * 4.0;
+    let candidates = macro_plates_in_radius(owner.wx, owner.wy, search_radius, seed);
+
+    let mut neighbors = Vec::new();
+    for candidate in &candidates {
+        if candidate.id == owner.id { continue; }
+
+        let mid_x = (owner.wx + candidate.wx) * 0.5;
+        let mid_y = (owner.wy + candidate.wy) * 0.5;
+        let at_mid = macro_plate_at(mid_x, mid_y, seed);
+
+        if at_mid.id == owner.id || at_mid.id == candidate.id {
+            neighbors.push(candidate.clone());
+        }
+    }
+    neighbors
+}
+
+fn dist_sq(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x1 - x2;
+    let dy = y1 - y2;
+    dx * dx + dy * dy
+}
+
+// ──── Cached API ────
+
+/// Lazy cache for plate center lookups. Amortizes `plate_center_for_cell`
+/// across spatially-adjacent queries (e.g. scanning pixels in a row).
+pub struct PlateCache {
+    cells: HashMap<(i32, i32), Option<PlateCenter>>,
+    seed: u64,
+}
+
+impl PlateCache {
+    pub fn new(seed: u64) -> Self {
+        Self { cells: HashMap::new(), seed }
+    }
+
+    /// Ensure a grid cell is in the cache.
+    fn ensure_cell(&mut self, cq: i32, cr: i32) {
+        let seed = self.seed;
+        self.cells.entry((cq, cr))
+            .or_insert_with(|| plate_center_for_cell(cq, cr, seed));
+    }
+
+    /// Cached pure Euclidean nearest-seed lookup.
+    pub fn plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
+        let (cq, cr) = world_to_cell(wx, wy);
+
+        for (dq, dr) in two_ring_offsets(cr) {
+            self.ensure_cell(cq + dq, cr + dr);
+        }
+
+        let mut best: Option<PlateCenter> = None;
+        let mut best_dist_sq = f64::MAX;
+
+        for (dq, dr) in two_ring_offsets(cr) {
+            if let Some(candidate) = &self.cells[&(cq + dq, cr + dr)] {
+                let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
+                if d < best_dist_sq {
+                    best = Some(candidate.clone());
+                    best_dist_sq = d;
+                }
+            }
+        }
+
+        best.expect("no plate center found in 2-ring neighborhood")
+    }
+
+    /// Cached anisotropic warped-distance plate assignment. Used by micro cell → macro
+    /// assignment in the bottom-up flow.
+    pub fn warped_plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
+        let (cq, cr) = world_to_cell(wx, wy);
+        let strength = warp_strength_at(wx, wy, self.seed);
+        let ctx = AnisoContext::at(wx, wy, self.seed);
+
+        for dr in -ANISO_SEARCH..=ANISO_SEARCH {
+            for dq in -ANISO_SEARCH..=ANISO_SEARCH {
+                self.ensure_cell(cq + dq, cr + dr);
+            }
+        }
+
+        let mut best: Option<PlateCenter> = None;
+        let mut best_eff_dist = f64::MAX;
+
+        for dr in -ANISO_SEARCH..=ANISO_SEARCH {
+            for dq in -ANISO_SEARCH..=ANISO_SEARCH {
+                if let Some(candidate) = &self.cells[&(cq + dq, cr + dr)] {
+                    let d = effective_distance(wx, wy, candidate, strength, &ctx, self.seed);
+                    if d < best_eff_dist {
+                        best = Some(candidate.clone());
+                        best_eff_dist = d;
+                    }
+                }
+            }
+        }
+
+        best.expect("no plate center found in expanded neighborhood")
+    }
+}
+
+// ──── Tests ────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn deterministic_center_generation() {
+        for cq in -10..10 {
+            for cr in -10..10 {
+                let a = plate_center_for_cell(cq, cr, 42);
+                let b = plate_center_for_cell(cq, cr, 42);
+                assert_eq!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn different_seeds_different_centers() {
+        let mut differ = 0;
+        for cq in -10..10 {
+            for cr in -10..10 {
+                let a = plate_center_for_cell(cq, cr, 0);
+                let b = plate_center_for_cell(cq, cr, 99999);
+                match (&a, &b) {
+                    (Some(a), Some(b)) if (a.wx - b.wx).abs() > 1e-6 || (a.wy - b.wy).abs() > 1e-6 => {
+                        differ += 1;
+                    }
+                    (None, Some(_)) | (Some(_), None) => { differ += 1; }
+                    _ => {}
+                }
+            }
+        }
+        let total = 20 * 20;
+        assert!(differ > total / 2,
+            "Different seeds should produce mostly different centers: {differ}/{total}");
+    }
+
+    #[test]
+    fn suppressed_cells_produce_no_center() {
+        let seed = 42u64;
+        let mut suppressed = 0;
+        let mut total = 0;
+        for cq in -20..20 {
+            for cr in -20..20 {
+                total += 1;
+                if plate_center_for_cell(cq, cr, seed).is_none() {
+                    suppressed += 1;
+                }
+            }
+        }
+        let rate = suppressed as f64 / total as f64;
+        assert!(rate > 0.05 && rate < 0.30,
+            "Suppression rate {rate:.3} ({suppressed}/{total}) should be near {CELL_SUPPRESSION_RATE}");
+    }
+
+    #[test]
+    fn macro_plate_at_returns_nearest() {
+        let seed = 42u64;
+        for test_x in (-5000..5000).step_by(1700) {
+            for test_y in (-5000..5000).step_by(1700) {
+                let wx = test_x as f64;
+                let wy = test_y as f64;
+
+                let result = macro_plate_at(wx, wy, seed);
+                let result_dist = dist_sq(wx, wy, result.wx, result.wy);
+
+                // Brute force over a wide range
+                let (cq, cr) = world_to_cell(wx, wy);
+                for dq in -5..=5 {
+                    for dr in -5..=5 {
+                        if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+                            let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
+                            assert!(result_dist <= d + 1e-6,
+                                "macro_plate_at({wx}, {wy}) returned plate at ({}, {}) dist²={result_dist}, \
+                                 but cell ({}, {}) has plate at ({}, {}) dist²={d}",
+                                result.wx, result.wy,
+                                cq + dq, cr + dr, candidate.wx, candidate.wy);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn warped_plate_at_returns_best_effective_distance() {
+        let seed = 42u64;
+        let search = ANISO_SEARCH + 2; // wider than implementation to verify
+        for test_x in (-5000..5000).step_by(1700) {
+            for test_y in (-5000..5000).step_by(1700) {
+                let wx = test_x as f64;
+                let wy = test_y as f64;
+
+                let result = warped_plate_at(wx, wy, seed);
+                let strength = warp_strength_at(wx, wy, seed);
+                let ctx = AnisoContext::at(wx, wy, seed);
+                let result_eff = effective_distance(wx, wy, &result, strength, &ctx, seed);
+
+                let (cq, cr) = world_to_cell(wx, wy);
+                for dq in -search..=search {
+                    for dr in -search..=search {
+                        if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+                            let d = effective_distance(wx, wy, &candidate, strength, &ctx, seed);
+                            assert!(result_eff <= d + 1e-6,
+                                "warped_plate_at({wx}, {wy}) returned id={} eff={result_eff:.1}, \
+                                 but cell ({}, {}) id={} eff={d:.1}",
+                                result.id, cq + dq, cr + dr, candidate.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn warped_plate_at_is_deterministic() {
+        let seed = 42u64;
+        for x in (-5000..5000).step_by(2000) {
+            for y in (-5000..5000).step_by(2000) {
+                let a = warped_plate_at(x as f64, y as f64, seed);
+                let b = warped_plate_at(x as f64, y as f64, seed);
+                assert_eq!(a.id, b.id);
+            }
+        }
+    }
+
+    #[test]
+    fn warp_differs_from_pure_voronoi() {
+        let seed = 42u64;
+        let mut differ = 0;
+        let mut total = 0;
+        for x in (-15000..15000).step_by(500) {
+            for y in (-15000..15000).step_by(500) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let pure = macro_plate_at(wx, wy, seed);
+                let warped = warped_plate_at(wx, wy, seed);
+                total += 1;
+                if pure.id != warped.id {
+                    differ += 1;
+                }
+            }
+        }
+        // In high-warp regions, assignments should differ from pure Voronoi
+        assert!(differ > 0, "Warped assignment should differ from pure Voronoi somewhere");
+        // But not everywhere — low-warp regions should be nearly identical
+        let pct = differ as f64 / total as f64 * 100.0;
+        assert!(pct < 50.0,
+            "Warp changed {pct:.1}% of assignments — too many, expected < 50%");
+    }
+
+    #[test]
+    fn no_duplicate_ids() {
+        let seed = 42u64;
+        let mut ids = HashSet::new();
+        for cq in -50..50 {
+            for cr in -50..50 {
+                if let Some(plate) = plate_center_for_cell(cq, cr, seed) {
+                    assert!(ids.insert(plate.id),
+                        "Duplicate ID {} at cell ({cq}, {cr})", plate.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn jitter_modulation_creates_density_variation() {
+        let seed = 42u64;
+        let mut distances_stable = Vec::new();
+        let mut distances_chaotic = Vec::new();
+
+        for x in (-30000..30000).step_by(3000) {
+            for y in (-30000..30000).step_by(3000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let plate = macro_plate_at(wx, wy, seed);
+                let d = dist_sq(wx, wy, plate.wx, plate.wy).sqrt();
+                let j = jitter_at(wx, wy, seed);
+                if j < (JITTER_MIN + JITTER_MAX) * 0.35 {
+                    distances_stable.push(d);
+                } else if j > (JITTER_MIN + JITTER_MAX) * 0.65 {
+                    distances_chaotic.push(d);
+                }
+            }
+        }
+
+        assert!(!distances_stable.is_empty(), "Should find stable regions");
+        assert!(!distances_chaotic.is_empty(), "Should find chaotic regions");
+    }
+
+    #[test]
+    fn plates_in_radius_contains_nearest() {
+        let seed = 42u64;
+        let wx = 500.0;
+        let wy = 500.0;
+        let nearest = macro_plate_at(wx, wy, seed);
+        let in_radius = macro_plates_in_radius(wx, wy, MACRO_CELL_SIZE * 2.0, seed);
+        assert!(in_radius.iter().any(|p| p.id == nearest.id),
+            "plates_in_radius should contain the nearest plate");
+    }
+
+    #[test]
+    fn neighbors_are_symmetric() {
+        let seed = 42u64;
+        let owner = macro_plate_at(0.0, 0.0, seed);
+        let neighbors = macro_plate_neighbors(0.0, 0.0, seed);
+
+        assert!(!neighbors.is_empty(), "Origin plate should have neighbors");
+
+        for neighbor in &neighbors {
+            let reverse = macro_plate_neighbors(neighbor.wx, neighbor.wy, seed);
+            assert!(reverse.iter().any(|p| p.id == owner.id),
+                "Neighbor ({}, {}) id={} doesn't list owner id={} as its neighbor",
+                neighbor.cell_q, neighbor.cell_r, neighbor.id, owner.id);
+        }
+    }
+
+    #[test]
+    fn neighbor_count_is_reasonable() {
+        let seed = 42u64;
+        for x in (-5000..5000).step_by(2000) {
+            for y in (-5000..5000).step_by(2000) {
+                let neighbors = macro_plate_neighbors(x as f64, y as f64, seed);
+                assert!(neighbors.len() >= 3 && neighbors.len() <= 12,
+                    "Unexpected neighbor count {} at ({x}, {y})", neighbors.len());
+            }
+        }
+    }
+
+    #[test]
+    fn typical_neighbor_count_is_six() {
+        let seed = 42u64;
+        let mut total_neighbors = 0;
+        let mut samples = 0;
+        for x in (-20000..20000).step_by(2000) {
+            for y in (-20000..20000).step_by(2000) {
+                let neighbors = macro_plate_neighbors(x as f64, y as f64, seed);
+                total_neighbors += neighbors.len();
+                samples += 1;
+            }
+        }
+        let avg = total_neighbors as f64 / samples as f64;
+        // With suppression, expanded plates can have more neighbors
+        assert!(avg >= 5.0 && avg <= 8.5,
+            "Average neighbor count {avg:.2} should be near 6-7 for hex lattice with suppression");
+    }
+
+    #[test]
+    fn edge_angles_are_not_axis_aligned() {
+        let seed = 42u64;
+        let mut angle_buckets = [0u32; 12];
+        let mut total = 0u32;
+
+        for x in (-15000..15000).step_by(3000) {
+            for y in (-15000..15000).step_by(3000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let owner = macro_plate_at(wx, wy, seed);
+                let neighbors = macro_plate_neighbors(wx, wy, seed);
+
+                for nbr in &neighbors {
+                    let dx = nbr.wx - owner.wx;
+                    let dy = nbr.wy - owner.wy;
+                    let angle = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+                    let bucket = (angle / 30.0) as usize;
+                    angle_buckets[bucket.min(11)] += 1;
+                    total += 1;
+                }
+            }
+        }
+
+        let expected_per_bucket = total as f64 / 12.0;
+        let min_threshold = expected_per_bucket * 0.3;
+        for (i, &count) in angle_buckets.iter().enumerate() {
+            assert!(count as f64 >= min_threshold,
+                "Angle bucket {}°-{}° has only {} edges (expected ~{:.0})",
+                i * 30, (i + 1) * 30, count, expected_per_bucket);
+        }
+    }
+
+    #[test]
+    fn plate_size_variance_from_suppression() {
+        let seed = 42u64;
+        // Sample a region, assign each point to its nearest plate, count per plate
+        let step = 100.0;
+        let half = 10000.0;
+        let mut counts: HashMap<u64, u32> = HashMap::new();
+
+        let mut x = -half;
+        while x < half {
+            let mut y = -half;
+            while y < half {
+                let plate = macro_plate_at(x, y, seed);
+                *counts.entry(plate.id).or_default() += 1;
+                y += step;
+            }
+            x += step;
+        }
+
+        // Compute coefficient of variation
+        let areas: Vec<f64> = counts.values().map(|&c| c as f64).collect();
+        let mean = areas.iter().sum::<f64>() / areas.len() as f64;
+        let variance = areas.iter().map(|a| (a - mean).powi(2)).sum::<f64>() / areas.len() as f64;
+        let std_dev = variance.sqrt();
+        let cv = std_dev / mean;
+
+        assert!(cv > 0.20,
+            "Coefficient of variation {cv:.3} should be > 0.20 with cell suppression");
+    }
+
+    #[test]
+    fn regime_value_is_deterministic() {
+        let seed = 42u64;
+        for x in (-30000..30000).step_by(3000) {
+            for y in (-30000..30000).step_by(3000) {
+                let a = regime_value_at(x as f64, y as f64, seed);
+                let b = regime_value_at(x as f64, y as f64, seed);
+                assert_eq!(a, b, "regime_value_at({x}, {y}) not deterministic");
+            }
+        }
+    }
+
+    #[test]
+    fn regime_value_stays_in_unit_range() {
+        let seed = 42u64;
+        for x in (-50000..50000).step_by(500) {
+            for y in (-50000..50000).step_by(500) {
+                let v = regime_value_at(x as f64, y as f64, seed);
+                assert!(v >= 0.0 && v <= 1.0,
+                    "regime_value_at({x}, {y}) = {v}, outside [0, 1]");
+            }
+        }
+    }
+
+    #[test]
+    fn warp_strength_is_deterministic() {
+        let seed = 42u64;
+        for x in (-30000..30000).step_by(3000) {
+            for y in (-30000..30000).step_by(3000) {
+                let a = warp_strength_at(x as f64, y as f64, seed);
+                let b = warp_strength_at(x as f64, y as f64, seed);
+                assert_eq!(a, b, "warp_strength_at({x}, {y}) not deterministic");
+            }
+        }
+    }
+
+    #[test]
+    fn warp_strength_stays_in_range() {
+        let seed = 42u64;
+        for x in (-50000..50000).step_by(500) {
+            for y in (-50000..50000).step_by(500) {
+                let v = warp_strength_at(x as f64, y as f64, seed);
+                assert!(v >= WARP_STRENGTH_MIN && v <= WARP_STRENGTH_MAX,
+                    "warp_strength_at({x}, {y}) = {v}, outside [{}, {}]",
+                    WARP_STRENGTH_MIN, WARP_STRENGTH_MAX);
+            }
+        }
+    }
+
+    #[test]
+    fn sigmoid_extremes() {
+        // Very negative input → near 0
+        assert!(sigmoid(-10.0, 0.5, 6.0) < 0.01);
+        // Very positive input → near 1
+        assert!(sigmoid(10.0, 0.5, 6.0) > 0.99);
+        // At midpoint → exactly 0.5
+        assert!((sigmoid(0.5, 0.5, 6.0) - 0.5).abs() < 1e-10);
+        // Zero steepness → 0.5 everywhere
+        let v = sigmoid(100.0, 0.5, 0.0);
+        assert!((v - 0.5).abs() < 1e-10, "sigmoid with steepness=0 should be 0.5, got {v}");
+    }
+
+    #[test]
+    fn aniso_context_no_nan_at_zero_gradient() {
+        let seed = 42u64;
+        for x in (-20000..20000).step_by(2000) {
+            for y in (-20000..20000).step_by(2000) {
+                let ctx = AnisoContext::at(x as f64, y as f64, seed);
+                assert!(ctx.elongation.is_finite(), "NaN elongation at ({x}, {y})");
+                assert!(ctx.elongation >= 1.0, "elongation < 1.0 at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn interior_isotropic_matches_euclidean() {
+        // At zero gradient, aniso distance should equal euclidean distance
+        let ctx = AnisoContext { across: (1.0, 0.0), along: (0.0, 1.0), elongation: 1.0 };
+        let d_aniso = ctx.dist(0.0, 0.0, 300.0, 400.0);
+        let d_euclid = dist_sq(0.0, 0.0, 300.0, 400.0).sqrt();
+        assert!((d_aniso - d_euclid).abs() < 1e-6,
+            "With elongation=1.0, aniso dist {d_aniso} should equal euclidean {d_euclid}");
+    }
+
+    #[test]
+    fn coastal_warped_differs_from_isotropic() {
+        // At coastal points (high gradient), anisotropic warped assignment should
+        // sometimes differ from what isotropic warped assignment would produce
+        let seed = 42u64;
+        let mut differ = 0;
+        let mut total_coastal = 0;
+        for x in (-30000..30000).step_by(500) {
+            for y in (-30000..30000).step_by(500) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let ctx = AnisoContext::at(wx, wy, seed);
+                if ctx.elongation > 2.0 {
+                    total_coastal += 1;
+                    let aniso_result = warped_plate_at(wx, wy, seed);
+
+                    // Isotropic warped: euclidean + warp noise (no aniso)
+                    let strength = warp_strength_at(wx, wy, seed);
+                    let iso_ctx = AnisoContext { across: (1.0, 0.0), along: (0.0, 1.0), elongation: 1.0 };
+                    let (cq, cr) = world_to_cell(wx, wy);
+                    let mut iso_best: Option<PlateCenter> = None;
+                    let mut iso_best_d = f64::MAX;
+                    for dr in -ANISO_SEARCH..=ANISO_SEARCH {
+                        for dq in -ANISO_SEARCH..=ANISO_SEARCH {
+                            if let Some(c) = plate_center_for_cell(cq + dq, cr + dr, seed) {
+                                let d = effective_distance(wx, wy, &c, strength, &iso_ctx, seed);
+                                if d < iso_best_d {
+                                    iso_best = Some(c);
+                                    iso_best_d = d;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(iso) = iso_best {
+                        if aniso_result.id != iso.id {
+                            differ += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(total_coastal > 0, "Should find coastal points with elongation > 2");
+        assert!(differ > 0,
+            "Anisotropic assignment should differ from isotropic at some coastal points ({differ}/{total_coastal})");
+    }
+
+}

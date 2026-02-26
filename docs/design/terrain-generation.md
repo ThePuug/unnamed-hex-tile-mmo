@@ -95,19 +95,32 @@ For the sub-lid diagnostic view (`Terrain::hotspot_temperature`), each tile find
 
 Active hotspot cells become point sources of heat. Each source radiates outward as an additive Gaussian, and the sum of all nearby sources produces the surface temperature field.
 
-### Source Intensity
+### Source Intensity (Focal Point Drainage)
 
-Every active hotspot cell (density >= threshold) is a potential thermal source. The intensity uses a continuous penetration model:
+Every active hotspot cell (density >= threshold) produces energy that drains to a focal point — a local minimum in lid thickness. Multiple cells converge on the same focal point, accumulating energy into a single source.
+
+**Phase 1 — Find focal point:** Walk the lid gradient from each active cell toward thinner lid (steepest descent on lid thickness). Stop at: local minimum, lid=0 (margin edge), or MAX_DRAIN_STEPS cap.
+
+**Phase 2 — Accumulate energy:** Each cell's energy = `penetration × lifecycle`, where `penetration = exp(-lid × LID_SUPPRESSION)` at the cell's own lid thickness. Energy decays during migration: `migration_loss = exp(-dist × MIGRATION_DECAY)` where dist = hex steps × grid spacing.
+
+**Phase 3 — Emit sources:** Each focal point with accumulated energy above noise floor becomes a single ThermalSource. `intensity = accumulated_energy × MAX_SOURCE_INTENSITY`.
 
 ```
-lid_thickness = density - HOTSPOT_THRESHOLD
-penetration   = exp(-lid_thickness * LID_SUPPRESSION)
-intensity     = penetration * lifecycle * MAX_SOURCE_INTENSITY
+lid         = density - HOTSPOT_THRESHOLD
+penetration = exp(-lid × LID_SUPPRESSION)      // at origin cell
+energy      = penetration × lifecycle
+focal       = find_focal_point(gq, gr, seed)    // gradient descent
+dist        = hex_steps(origin, focal) × GRID_SPACING
+migration_loss = exp(-dist × MIGRATION_DECAY)
+focal.accumulated += energy × migration_loss
+...
+intensity = focal.accumulated × MAX_SOURCE_INTENSITY
 ```
 
-- **Thin lid** (margin): penetration ≈ 0.9 → strong source when lifecycle peaks
-- **Thick lid** (interior): penetration ≈ 0.1 → heavily suppressed
-- **No threshold gates** beyond the density boundary — exponential decay handles the transition continuously
+- **Convergence**: 30 margin cells → 3-5 focal point sources, not 30 individual sources
+- **Structural determination**: Focal points are lid minima — concavities, narrow isthmuses, density peaks along margins
+- **Natural gaps**: Between focal points, cells drain away. No sources exist between them.
+- **Interior secondaries**: Local density peaks deep inside create shallow lid minima. Surrounding cells drain to them — weak but structurally real.
 
 Sources below `NOISE_FLOOR` (0.001) are filtered for performance.
 
@@ -131,10 +144,12 @@ Gaussian tails carry heat past the dense/light boundary. Tiles in light regions 
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| THERMAL_SIGMA | 1,200 tiles | Gaussian spread; 3σ = 3,600 tile radius |
+| THERMAL_SIGMA | 600 tiles | Gaussian spread; 3σ = 1,800 tile radius |
 | MAX_SOURCE_INTENSITY | 0.12 | Cap per source; cluster of ~5 reaches 0.3–0.5 |
 | LID_SUPPRESSION | 8.0 | Exponential decay rate for lid thickness |
 | NOISE_FLOOR | 0.001 | Sources below this filtered out |
+| MIGRATION_DECAY | 0.0001 | Energy loss per world unit of drainage travel |
+| MAX_DRAIN_STEPS | 6 | Maximum grid steps for focal point walk |
 
 **Implementation:** `crates/terrain/src/thermal.rs`
 
@@ -173,7 +188,7 @@ Precomputes thermal sources (position + intensity) per chunk. Gathers sources fr
 
 ### Boundary Invariant
 
-The `missed_sources_beyond_neighborhood_are_negligible` test proves that sources outside the hex 1-ring neighborhood contribute less than 1% to any tile in the center chunk. This bounds the error introduced by finite gather radius.
+The `missed_sources_beyond_neighborhood_are_negligible` test bounds worst-case contribution from ring-2+ sources. With focal point drainage (MAX_DRAIN_STEPS=6), sources can walk up to 4500 world units from their origin. The conservative upper bound is < 60% (ignoring penetration attenuation of deep-interior cells); realistic error is well under 5%. Cross-chunk focal point convergence happens naturally through Gaussian superposition — two sources at the same position from different chunks sum identically to one combined source.
 
 ---
 

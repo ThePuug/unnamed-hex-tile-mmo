@@ -60,26 +60,27 @@ Client-server MMO built with Bevy ECS:
 
 ## Terrain Generation
 
-**Library:** `crates/terrain/` — Pure functions, no Bevy dependency. `(position, seed, tick) → value`.
+**Library:** `crates/terrain/` — Pure functions, no Bevy dependency. `(position, seed) → value`.
 
-**Five-layer pipeline:**
-1. **Material** (`material.rs`): Simplex noise → density in [0, 1]. Three discordant wavelengths (12.5k, 20.3k, 32.8k tiles). Dense regions (≥ 0.55) support hotspots; light regions are quiescent.
-2. **Hotspots** (`hotspots.rs`): Fixed grid (750-tile spacing) of convection cells under dense lid. Asymmetric lifecycle: 60% rise, 10% peak, 30% collapse over 1000 ticks. Diagnostic layer only.
-3. **Thermal** (`thermal.rs`): Active hotspot cells become point sources. Intensity = `exp(-lid * 8) * lifecycle * 0.12`. Additive Gaussian diffusion (σ=1200 tiles). Sum clamped to [0, 1]. This is the primary terrain signal.
-4. **Flow** (`flow.rs`): Gradient of the thermal field — `F(p) = -∇T(p)`. Each source contributes `I·(r/σ²)·exp(-r²/2σ²)·r̂`. `FlowChunkCache` precomputes flow vectors at hotspot grid points; downstream layers and LIC visualization read cached vectors. Consumed by future shell accumulation (`div(F)`) and fracturing (`F` directly).
-5. **Crust** (`crust.rs`): Primordial crustal solidification. Reads material density (supply) and thermal intensity (inhibitor). `crust = density × exp(-thermal × 6)`. Thick far from plumes, thin/absent near active heat sources. `CrustChunkCache` precomputes at grid points with IDW interpolation (same pattern as flow).
+**Two-level Voronoi skeleton (bottom-up flow):**
+- **Micro cells** are the primary spatial layer. `micro_cell_at(wx, wy, seed)` → nearest micro center via **euclidean distance** (no macro dependency). Sub-grid hex lattice (MICRO_CELL_SIZE=450, odd-r offset) with own simplex jitter (wavelength=5000) and suppression (20%). Micro cells are equidimensional everywhere.
+- **Macro plates** are labels assigned to micro cells via **anisotropic warped distance**. `warped_plate_at(wx, wy, seed)` evaluates `effective_distance = aniso_distance + per_candidate_noise × warp_strength` against nearby macro seeds. `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient — coastal macro plates stretch along the shore (collecting a long string of equidimensional micro cells), interior plates stay equidimensional. Per-candidate noise uses the candidate's ID as seed offset. Warp strength derived from **gradient magnitude** of the regime field through a sigmoid contrast filter — high gradient (coastlines) produces irregular, elongated plates; low gradient (interiors) produces regular convex plates. Expanded search radius (2 + MAX_ELONGATION rings) to find aniso-nearest seeds.
+- **Macro seed generation** (`plates.rs`): Hex-lattice scatter (odd-r offset, MACRO_CELL_SIZE=1800) with simplex jitter modulation and 15% cell suppression. `macro_plate_at` is pure Euclidean nearest-seed (for enumeration/neighbors). `warped_plate_at` is the warped version (for micro→macro assignment).
+- **Noise** (`noise.rs`): Hash primitives (FNV-1a variant), simplex 2D noise. Shared by all layers.
 
-**Hex Voronoi chunk caching (ADR-033):** Hotspot, thermal, and flow layers cache data in hexagonal chunks assigned via cube-coordinate rounding (`hex_round`). Each query gathers center + 6 hex neighbors (7 chunks). No diagonal gaps. Shared utility: `tile_to_hex_chunk(q, r, spacing)` in `lib.rs`.
+**Bottom-up API:** `micro_cell_at(wx, wy, seed)` → `macro_plate_for(micro, seed)` → or `plate_info_at(wx, wy, seed)` for both. `micro_cells_for_macro(macro_seed, seed)` scans sub-grid within `(MACRO_CELL_SIZE + WARP_STRENGTH_MAX) × MAX_ELONGATION` radius (expanded for anisotropy).
 
-**Boundary invariant:** `missed_sources_beyond_neighborhood_are_negligible` test proves ring-2 sources contribute < 1%. Chunk size ≥ 3σ ensures this.
+**Key constants:** Macro: `MACRO_CELL_SIZE=1800`, `JITTER_NOISE_WAVELENGTH=30000`, `JITTER_MIN=0.1`, `JITTER_MAX=0.45`, `CELL_SUPPRESSION_RATE=0.15`. Micro: `MICRO_CELL_SIZE=450`, `MICRO_JITTER_WAVELENGTH=5000`, `MICRO_JITTER_MIN=0.10`, `MICRO_JITTER_MAX=0.40`, `MICRO_SUPPRESSION_RATE=0.20`. Warp: `WARP_NOISE_WAVELENGTH=800`, `WARP_STRENGTH_MIN=0.0`, `WARP_STRENGTH_MAX=600.0`. Regime: `WARP_PRIME_A=29989`, `WARP_PRIME_B=17393`, `WARP_PRIME_C=11003` (triple-prime noise). Gradient: `GRAD_STEP=100`, `CONTRAST_MIDPOINT=0.5`, `CONTRAST_STEEPNESS=6.0`. Anisotropy: `MAX_ELONGATION=4.0` (macro plate stretch ratio at coastlines).
 
-**Key constants:** `HOTSPOT_THRESHOLD=0.55`, `HOTSPOT_GRID_SPACING=750`, `THERMAL_SIGMA=1200`, `MAX_SOURCE_INTENSITY=0.12`, `LID_SUPPRESSION=8.0`, `THERMAL_CHUNK_SIZE=4500`.
+**Caches:** `PlateCache` (macro grid cell → PlateCenter, supports both `plate_at` and `warped_plate_at`). `MicroplateCache` (micro sub-grid cell cache + macro assignment cache per micro ID, nests PlateCache). Per rayon row in viewer.
 
 **Server wrapper:** `crates/server/src/resources/terrain.rs` — thin Bevy Resource wrapping `terrain::Terrain`.
 
-**Viewer:** `crates/terrain-viewer/` — CLI renders terrain to PNG (modes: Material, Hotspots, Thermal, Flow, Crust). Flow mode uses LIC (Line Integral Convolution) — traces streamlines through the cached flow field, averages noise along path, modulates by magnitude. Crust mode shows crustal thickness with navy→cream color ramp.
+**Viewer:** `crates/terrain-viewer/` — CLI renders terrain to PNG. Terrain-like coloring: regime value as elevation proxy (blue=water, green=land, sandy=coastal transitions). Per-macro-plate hue variation, per-micro-cell ±15% saturation offset. Macro borders as thick white lines (radius 3), micro borders as subtle brightening. Red dots at macro centers, yellow dots at micro centers.
 
-**Height is placeholder** — `get_height` returns 0. Elevation system will rebuild on top of material + thermal.
+**Key functions:** `regime_value_at(wx, wy, seed)` → [0, 1] raw triple-prime noise (regime classification). `warp_strength_at(wx, wy, seed)` → gradient-based plate shape irregularity.
+
+**Height is placeholder** — `get_height` returns 0. Properties, events, and elevation will be layered on top of this skeleton.
 
 ---
 
