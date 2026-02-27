@@ -1,12 +1,18 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use clap::Parser;
-use image::{Rgb, RgbImage};
+use clap::{Parser, ValueEnum};
+use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 use terrain::{
-    MicroplateCache, MACRO_CELL_SIZE, regime_value_at, warp_strength_at,
+    MicroplateCache, PlateCache, MACRO_CELL_SIZE,
 };
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Format {
+    Qoi,
+    Png,
+}
 
 #[derive(Parser)]
 #[command(name = "terrain-viewer", about = "Render terrain Voronoi skeleton to PNG")]
@@ -23,8 +29,12 @@ struct Cli {
     #[arg(long, default_value_t = 15000.0)]
     radius: f64,
 
-    #[arg(long, default_value = "terrain.png")]
-    output: String,
+    #[arg(long)]
+    output: Option<String>,
+
+    /// Output image format
+    #[arg(long, value_enum, default_value_t = Format::Qoi)]
+    format: Format,
 
     /// World units per pixel
     #[arg(long, default_value_t = 8.0)]
@@ -37,10 +47,14 @@ struct Cli {
 // ── Terrain coloring constants ──
 
 /// Regime value below this → water; above → land.
-const MID_THRESHOLD: f64 = 0.45;
+/// With the pre-gradient sigmoid, regime values cluster near 0 and 1,
+/// so 0.5 is the natural center of the transition.
+const MID_THRESHOLD: f64 = 0.5;
 
 /// Warp strength above this → coastal (regime transition zone).
-const COASTAL_WARP_THRESHOLD: f64 = 500.0;
+/// Lowered from 500 because the pre-gradient sigmoid eliminates false
+/// coastal signal — only real coastlines have nonzero warp now.
+const COASTAL_WARP_THRESHOLD: f64 = 150.0;
 
 /// Per-micro-cell saturation offset range (±).
 const MICRO_SAT_RANGE: f64 = 0.15;
@@ -80,9 +94,9 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (f64, f64, f64) {
 
 /// Classify a macro plate by sampling warp strength and regime at its center.
 /// Returns the plate's flat HSV color.
-fn classify_plate(wx: f64, wy: f64, plate_id: u64, seed: u64) -> (f64, f64, f64) {
-    let strength = warp_strength_at(wx, wy, seed);
-    let regime = regime_value_at(wx, wy, seed);
+fn classify_plate(wx: f64, wy: f64, plate_id: u64, cache: &mut PlateCache) -> (f64, f64, f64) {
+    let strength = cache.warp_strength_at(wx, wy);
+    let regime = cache.regime_value_at(wx, wy);
     let shade = id_to_shade(plate_id);
 
     if strength > COASTAL_WARP_THRESHOLD {
@@ -100,6 +114,11 @@ fn classify_plate(wx: f64, wy: f64, plate_id: u64, seed: u64) -> (f64, f64, f64)
 fn main() {
     let cli = Cli::parse();
 
+    let output = cli.output.unwrap_or_else(|| match cli.format {
+        Format::Qoi => "terrain.qoi".to_string(),
+        Format::Png => "terrain.png".to_string(),
+    });
+
     let scale = cli.scale.max(0.5);
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
@@ -114,42 +133,49 @@ fn main() {
         cli.center_x, cli.center_y, cli.radius, scale, cli.seed, width, height
     );
 
-    let start = Instant::now();
     let seed = cli.seed;
+    let pixel_count = w * h;
+    let mut lap = Instant::now();
+
+    fn log_step(name: &str, count: usize, unit: &str, elapsed: std::time::Duration) {
+        let secs = elapsed.as_secs_f64();
+        let rate = count as f64 / secs;
+        eprintln!("{name}: {count} {unit} in {secs:.2}s ({rate:.0} {unit}/s)");
+    }
 
     // ── Classify macro plates (once per plate, not per pixel) ──
 
-    let plates = terrain::macro_plates_in_radius(
-        cli.center_x, cli.center_y, cli.radius + MACRO_CELL_SIZE * 2.0, seed
+    let mut plate_cache = PlateCache::new(seed);
+    let plates = plate_cache.plates_in_radius(
+        cli.center_x, cli.center_y, cli.radius * std::f64::consts::SQRT_2 + MACRO_CELL_SIZE * 2.0,
     );
     let plate_colors: HashMap<u64, (f64, f64, f64)> = plates.iter().map(|p| {
-        (p.id, classify_plate(p.wx, p.wy, p.id, seed))
+        (p.id, classify_plate(p.wx, p.wy, p.id, &mut plate_cache))
     }).collect();
 
-    eprintln!("Classified {} plates", plate_colors.len());
+    log_step("Classify", plate_colors.len(), "plates", lap.elapsed());
+    lap = Instant::now();
 
     // ── Pass 1: compute plate IDs per pixel (cached, parallel by row) ──
 
     let id_grid: Vec<(u64, u64)> = (0..h)
         .into_par_iter()
-        .flat_map(|py| {
-            let mut cache = MicroplateCache::new(seed);
-            (0..w).map(move |px| {
-                let wx = origin_x + (px as f64) * scale;
-                let wy = origin_y + (py as f64) * scale;
-                let (macro_plate, micro) = cache.plate_info_at(wx, wy);
-                (macro_plate.id, micro.id)
-            }).collect::<Vec<_>>()
-        })
+        .map_init(
+            || MicroplateCache::new(seed),
+            |cache, py| {
+                (0..w).map(|px| {
+                    let wx = origin_x + (px as f64) * scale;
+                    let wy = origin_y + (py as f64) * scale;
+                    let (macro_plate, micro) = cache.plate_info_at(wx, wy);
+                    (macro_plate.id, micro.id)
+                }).collect::<Vec<_>>()
+            },
+        )
+        .flatten()
         .collect();
 
-    let elapsed_ids = start.elapsed();
-    let pixel_count = w * h;
-    eprintln!("Pass 1 (IDs): {} pixels in {:.2}s ({:.0} px/s)",
-        pixel_count,
-        elapsed_ids.as_secs_f64(),
-        pixel_count as f64 / elapsed_ids.as_secs_f64()
-    );
+    log_step("IDs", pixel_count, "px", lap.elapsed());
+    lap = Instant::now();
 
     // ── Pass 2: flat plate coloring + micro offset + borders ──
 
@@ -158,7 +184,7 @@ fn main() {
     let colors = &plate_colors;
     let default_hsv = (0.28, 0.40, 0.40); // fallback for edge plates
 
-    let pixels: Vec<Rgb<u8>> = (0..h)
+    let pixels: Vec<[u8; 3]> = (0..h)
         .into_par_iter()
         .flat_map(|py| {
             (0..w).map(move |px| {
@@ -171,11 +197,11 @@ fn main() {
                 let sat_offset = (micro_shade * 2.0 - 1.0) * MICRO_SAT_RANGE;
                 let sat = (sat + sat_offset).clamp(0.0, 1.0);
                 let (r, g, b) = hsv_to_rgb(hue, sat, v);
-                let base = Rgb([
+                let base = [
                     (r * 255.0).min(255.0) as u8,
                     (g * 255.0).min(255.0) as u8,
                     (b * 255.0).min(255.0) as u8,
-                ]);
+                ];
 
                 // Check for macro border
                 let mut is_macro_border = false;
@@ -196,7 +222,7 @@ fn main() {
                 }
 
                 if is_macro_border {
-                    return Rgb([220, 220, 220]);
+                    return [220, 220, 220];
                 }
 
                 // Check for micro border
@@ -212,12 +238,11 @@ fn main() {
                 });
 
                 if is_micro_border {
-                    let Rgb([r, g, b]) = base;
-                    return Rgb([
-                        r.saturating_add(20),
-                        g.saturating_add(20),
-                        b.saturating_add(20),
-                    ]);
+                    return [
+                        base[0].saturating_add(20),
+                        base[1].saturating_add(20),
+                        base[2].saturating_add(20),
+                    ];
                 }
 
                 base
@@ -225,65 +250,80 @@ fn main() {
         })
         .collect();
 
-    let elapsed_eval = start.elapsed();
-    eprintln!("Pass 2 (coloring): {:.2}s",
-        (elapsed_eval - elapsed_ids).as_secs_f64()
-    );
-    eprintln!("Total eval: {} pixels in {:.2}s ({:.0} px/s)",
-        pixel_count,
-        elapsed_eval.as_secs_f64(),
-        pixel_count as f64 / elapsed_eval.as_secs_f64()
-    );
+    log_step("Color", pixel_count, "px", lap.elapsed());
+    lap = Instant::now();
 
-    // ── Assemble image ──
+    let mut buf: Vec<u8> = pixels.into_flattened();
 
-    let mut img = RgbImage::new(width, height);
-    for (i, color) in pixels.into_iter().enumerate() {
-        let px = (i % w) as u32;
-        let py = (i / w) as u32;
-        img.put_pixel(px, py, color);
+    // ── Draw markers directly into the buffer ──
+
+    let set_pixel = |buf: &mut Vec<u8>, x: i32, y: i32, rgb: [u8; 3]| {
+        if x >= 0 && x < w as i32 && y >= 0 && y < h as i32 {
+            let off = (y as usize * w + x as usize) * 3;
+            buf[off]     = rgb[0];
+            buf[off + 1] = rgb[1];
+            buf[off + 2] = rgb[2];
+        }
+    };
+
+    // Microplate centers — yellow (centroids from id_grid)
+    let mut micro_accum: HashMap<u64, (u64, u64, u64)> = HashMap::new();
+    for py in 0..h {
+        for px in 0..w {
+            let (_, micro_id) = ids[py * w + px];
+            let entry = micro_accum.entry(micro_id).or_insert((0, 0, 0));
+            entry.0 += px as u64;
+            entry.1 += py as u64;
+            entry.2 += 1;
+        }
+    }
+    let micro_dot = (2.0 / scale).max(1.0) as i32;
+    for &(sx, sy, count) in micro_accum.values() {
+        let cx = (sx / count) as i32;
+        let cy = (sy / count) as i32;
+        for dy in -micro_dot..=micro_dot {
+            for dx in -micro_dot..=micro_dot {
+                if dx * dx + dy * dy <= micro_dot * micro_dot {
+                    set_pixel(&mut buf, cx + dx, cy + dy, [255, 220, 50]);
+                }
+            }
+        }
     }
 
-    // Draw macro plate centers as red markers
+    // Macro plate centers — red (drawn on top of micro dots)
     let dot_radius = (4.0 / scale).max(2.0) as i32;
     for plate in &plates {
-        let px = ((plate.wx - origin_x) / scale) as i32;
-        let py = ((plate.wy - origin_y) / scale) as i32;
-        for dx in -dot_radius..=dot_radius {
-            for dy in -dot_radius..=dot_radius {
+        let cx = ((plate.wx - origin_x) / scale) as i32;
+        let cy = ((plate.wy - origin_y) / scale) as i32;
+        for dy in -dot_radius..=dot_radius {
+            for dx in -dot_radius..=dot_radius {
                 if dx * dx + dy * dy <= dot_radius * dot_radius {
-                    let x = px + dx;
-                    let y = py + dy;
-                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                        img.put_pixel(x as u32, y as u32, Rgb([255, 50, 50]));
-                    }
+                    set_pixel(&mut buf, cx + dx, cy + dy, [255, 50, 50]);
                 }
             }
         }
     }
 
-    // Draw microplate centers as smaller yellow dots
-    let micro_dot = (2.0 / scale).max(1.0) as i32;
-    for plate in &plates {
-        let children = terrain::micro_cells_for_macro(plate, seed);
-        for child in &children {
-            let px = ((child.wx - origin_x) / scale) as i32;
-            let py = ((child.wy - origin_y) / scale) as i32;
-            for dx in -micro_dot..=micro_dot {
-                for dy in -micro_dot..=micro_dot {
-                    if dx * dx + dy * dy <= micro_dot * micro_dot {
-                        let x = px + dx;
-                        let y = py + dy;
-                        if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
-                            img.put_pixel(x as u32, y as u32, Rgb([255, 220, 50]));
-                        }
-                    }
-                }
-            }
+    let marker_count = micro_accum.len() + plates.len();
+    log_step("Markers", marker_count, "dots", lap.elapsed());
+    lap = Instant::now();
+
+    // ── Encode ──
+
+    match cli.format {
+        Format::Qoi => {
+            let encoded = Qoi {
+                width,
+                height,
+                colors: Colors::Rgb,
+            }.encode_alloc(&buf).expect("QOI encode failed");
+            std::fs::write(&output, &encoded).expect("Failed to write QOI");
+        }
+        Format::Png => {
+            image::save_buffer(&output, &buf, width, height, image::ColorType::Rgb8)
+                .expect("Failed to save PNG");
         }
     }
-
-    img.save(&cli.output).expect("Failed to save PNG");
-    let total = start.elapsed();
-    eprintln!("Saved {} ({:.2}s total)", cli.output, total.as_secs_f64());
+    log_step("Encode", buf.len(), "bytes", lap.elapsed());
+    eprintln!("Saved {output}");
 }

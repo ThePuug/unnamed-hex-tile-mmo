@@ -4,7 +4,7 @@ use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX, CELL_SUPPRESSION_RATE,
             WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
-            GRAD_STEP, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS, MAX_ELONGATION};
+            GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION};
 
 /// Row height factor for hex grid: sqrt(3)/2.
 /// Odd rows are shifted right by half a cell width.
@@ -24,29 +24,6 @@ pub struct PlateCenter {
 
 // ──── Hex grid helpers ────
 
-/// Center + ring-1 (6) + ring-2 (12) = 19 cells for the 2-ring hex neighborhood.
-/// Ring-2 is needed because cell suppression means the nearest center can be 2 cells away.
-fn two_ring_offsets(cr: i32) -> [(i32, i32); 19] {
-    if cr & 1 == 0 {
-        [
-            (0, 0),
-            // Ring 1
-            (-1, 0), (1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1),
-            // Ring 2
-            (-2, 0), (-2, -1), (-2, 1), (2, 0), (1, -1), (1, 1),
-            (-1, -2), (0, -2), (1, -2), (-1, 2), (0, 2), (1, 2),
-        ]
-    } else {
-        [
-            (0, 0),
-            // Ring 1
-            (-1, 0), (1, 0), (0, -1), (1, -1), (0, 1), (1, 1),
-            // Ring 2
-            (-2, 0), (-1, -1), (-1, 1), (2, 0), (2, -1), (2, 1),
-            (-1, -2), (0, -2), (1, -2), (-1, 2), (0, 2), (1, 2),
-        ]
-    }
-}
 
 // ──── Grid cell → plate center ────
 
@@ -75,13 +52,22 @@ const WARP_STRENGTH_SEED_C: u64 = 0xCCCC_DDDD_0004;
 /// Raw triple-prime noise value at position, normalized to [0, 1].
 /// Three summed simplex octaves at prime wavelengths (29989, 17393, 11003)
 /// with weights 1.0 / 0.5 / 0.25. LCM ≈ 5.7 trillion tiles — never repeats.
-/// Used for regime classification (water/land threshold in viewer).
-pub fn regime_value_at(wx: f64, wy: f64, seed: u64) -> f64 {
+fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
     let a = simplex_2d(wx / WARP_PRIME_A, wy / WARP_PRIME_A, seed ^ WARP_STRENGTH_SEED_A);
     let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
     let c = simplex_2d(wx / WARP_PRIME_C, wy / WARP_PRIME_C, seed ^ WARP_STRENGTH_SEED_C);
     let combined = (a + b * 0.5 + c * 0.25) / 1.75;
     ((combined + 1.0) * 0.5).clamp(0.0, 1.0)
+}
+
+/// UNCACHED — evaluates 3 simplex noise calls per invocation.
+/// Use `PlateCache::regime_value_at` for the cached API surface.
+///
+/// Sigmoidized regime field — flat plateaus with sharp transition at midpoint.
+/// Values cluster near 0 (water) and 1 (land). The sigmoid flattens deep
+/// water and deep land regions, concentrating all gradient at the coastline.
+pub fn regime_value_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    sigmoid(raw_regime_noise(wx, wy, seed), REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS)
 }
 
 /// Sigmoid contrast filter. Maps x through a smooth step centered at `midpoint`
@@ -90,14 +76,21 @@ pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
     1.0 / (1.0 + (-steepness * (x - midpoint)).exp())
 }
 
-/// Estimated max gradient magnitude of the regime field per world unit,
-/// derived from the triple-prime octave weights and wavelengths.
-pub(crate) const GRAD_MAX_ESTIMATE: f64 =
+/// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.
+const RAW_GRAD_MAX: f64 =
     (1.0 / WARP_PRIME_C + 0.5 / WARP_PRIME_B + 0.25 / WARP_PRIME_A) / 1.75;
 
-/// Warp strength derived from gradient magnitude of the regime field.
-/// High gradient (regime transitions, i.e. coastlines) → high warp → irregular plates.
-/// Low gradient (deep water or deep inland) → low warp → regular, convex plates.
+/// Estimated max gradient of the sigmoidized regime field per world unit.
+/// The sigmoid's peak derivative is steepness/4 (at the midpoint), so
+/// the contrasted field's max gradient is the raw max scaled by that factor.
+pub(crate) const GRAD_MAX_ESTIMATE: f64 = RAW_GRAD_MAX * REGIME_SIGMOID_STEEPNESS / 4.0;
+
+/// UNCACHED — evaluates 12 simplex noise calls per invocation (4× regime_value_at).
+/// Use `PlateCache::warp_strength_at` for gradient-cached access.
+///
+/// Warp strength derived from gradient magnitude of the sigmoidized regime field.
+/// The pre-gradient sigmoid flattens deep water and deep land, so only the
+/// coastline transition band produces meaningful gradient.
 /// Returns a value in [WARP_STRENGTH_MIN, WARP_STRENGTH_MAX].
 pub fn warp_strength_at(wx: f64, wy: f64, seed: u64) -> f64 {
     let dx = regime_value_at(wx + GRAD_STEP, wy, seed)
@@ -105,9 +98,8 @@ pub fn warp_strength_at(wx: f64, wy: f64, seed: u64) -> f64 {
     let dy = regime_value_at(wx, wy + GRAD_STEP, seed)
            - regime_value_at(wx, wy - GRAD_STEP, seed);
     let gradient_mag = (dx * dx + dy * dy).sqrt() / (2.0 * GRAD_STEP);
-    let normalized = gradient_mag / GRAD_MAX_ESTIMATE;
-    let contrasted = sigmoid(normalized, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS);
-    WARP_STRENGTH_MIN + contrasted * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN)
+    let normalized = (gradient_mag / GRAD_MAX_ESTIMATE).clamp(0.0, 1.0);
+    WARP_STRENGTH_MIN + normalized * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN)
 }
 
 /// Per-candidate warp noise at a world position.
@@ -126,6 +118,7 @@ fn warp_noise(wx: f64, wy: f64, candidate_id: u64, seed: u64) -> f64 {
 /// Precomputed anisotropy context at a query point.
 /// Derived from regime gradient — coastlines stretch macro plates along the shore,
 /// interiors stay isotropic.
+#[derive(Clone, Copy)]
 struct AnisoContext {
     across: (f64, f64),
     along: (f64, f64),
@@ -133,6 +126,26 @@ struct AnisoContext {
 }
 
 impl AnisoContext {
+    /// Anisotropic distance. Compresses the along-coast axis
+    /// so macro plates stretch parallel to the shore.
+    fn dist(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
+        let dx = px - cx;
+        let dy = py - cy;
+        let d_across = dx * self.across.0 + dy * self.across.1;
+        let d_along = (dx * self.along.0 + dy * self.along.1) / self.elongation;
+        (d_across * d_across + d_along * d_along).sqrt()
+    }
+}
+
+/// Merged regime gradient — computes warp strength and aniso context from
+/// a single 4-point stencil (4 regime_value_at calls instead of 8).
+#[derive(Clone, Copy)]
+struct RegimeGradient {
+    warp_strength: f64,
+    ctx: AnisoContext,
+}
+
+impl RegimeGradient {
     fn at(wx: f64, wy: f64, seed: u64) -> Self {
         let gx = regime_value_at(wx + GRAD_STEP, wy, seed)
                - regime_value_at(wx - GRAD_STEP, wy, seed);
@@ -149,26 +162,71 @@ impl AnisoContext {
         };
 
         let grad_mag = raw_mag / (2.0 * GRAD_STEP);
-        let normalized = grad_mag / GRAD_MAX_ESTIMATE;
-        let t = sigmoid(normalized, CONTRAST_MIDPOINT, CONTRAST_STEEPNESS);
-        let elongation = 1.0 + (MAX_ELONGATION - 1.0) * t;
+        let normalized = (grad_mag / GRAD_MAX_ESTIMATE).clamp(0.0, 1.0);
 
-        Self { across, along, elongation }
-    }
+        let warp_strength = WARP_STRENGTH_MIN + normalized * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN);
+        let elongation = 1.0 + (MAX_ELONGATION - 1.0) * normalized;
 
-    /// Anisotropic distance. Compresses the along-coast axis
-    /// so macro plates stretch parallel to the shore.
-    fn dist(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
-        let dx = px - cx;
-        let dy = py - cy;
-        let d_across = dx * self.across.0 + dy * self.across.1;
-        let d_along = (dx * self.along.0 + dy * self.along.1) / self.elongation;
-        (d_across * d_across + d_along * d_along).sqrt()
+        Self {
+            warp_strength,
+            ctx: AnisoContext { across, along, elongation },
+        }
     }
 }
 
-/// Extra search rings needed for anisotropic distance.
-const ANISO_SEARCH: i32 = 2 + MAX_ELONGATION as i32;
+// ──── Hex chunk cache for plate lookups ────
+
+/// Spatial cache chunk size. Sized so a 1-ring hex neighborhood
+/// covers the maximum anisotropic search distance.
+const PLATE_CHUNK_SIZE: f64 = MACRO_CELL_SIZE * MAX_ELONGATION; // 7200.0
+
+/// All macro cell centers whose world position falls within one hex chunk.
+struct PlateChunk {
+    centers: Vec<PlateCenter>,
+}
+
+/// Convert world position to chunk hex coordinate (odd-r offset hex grid).
+fn plate_chunk_coord(wx: f64, wy: f64) -> (i32, i32) {
+    let row_height = PLATE_CHUNK_SIZE * HEX_ROW_HEIGHT;
+    let cr = (wy / row_height).round() as i32;
+    let odd_shift = if cr & 1 != 0 { PLATE_CHUNK_SIZE * 0.5 } else { 0.0 };
+    let cq = ((wx - odd_shift) / PLATE_CHUNK_SIZE).round() as i32;
+    (cq, cr)
+}
+
+
+/// Center + 6 hex neighbors (odd-r offset) for chunk lookups.
+fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
+    if cr & 1 == 0 {
+        [(0, 0), (-1, 0), (1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1)]
+    } else {
+        [(0, 0), (-1, 0), (1, 0), (0, -1), (1, -1), (0, 1), (1, 1)]
+    }
+}
+
+/// Populate a chunk by scanning macro grid cells near it.
+/// Each PlateCenter is owned by the chunk containing its world position.
+fn populate_chunk(cq: i32, cr: i32, seed: u64) -> PlateChunk {
+    let odd_shift = if cr & 1 != 0 { PLATE_CHUNK_SIZE * 0.5 } else { 0.0 };
+    let chunk_wx = cq as f64 * PLATE_CHUNK_SIZE + odd_shift;
+    let chunk_wy = cr as f64 * PLATE_CHUNK_SIZE * HEX_ROW_HEIGHT;
+
+    let (center_mcq, center_mcr) = world_to_cell(chunk_wx, chunk_wy);
+    let scan = (PLATE_CHUNK_SIZE / MACRO_CELL_SIZE) as i32 + 2;
+
+    let mut centers = Vec::new();
+    for dr in -scan..=scan {
+        for dq in -scan..=scan {
+            if let Some(plate) = plate_center_for_cell(center_mcq + dq, center_mcr + dr, seed) {
+                if plate_chunk_coord(plate.wx, plate.wy) == (cq, cr) {
+                    centers.push(plate);
+                }
+            }
+        }
+    }
+
+    PlateChunk { centers }
+}
 
 /// Effective distance for warped Voronoi assignment.
 /// Uses anisotropic geometric distance + per-candidate noise perturbation.
@@ -217,96 +275,28 @@ fn world_to_cell(wx: f64, wy: f64) -> (i32, i32) {
 
 // ──── Public API ────
 
-/// Returns the geometrically nearest macro plate center to (wx, wy).
-/// Pure Euclidean distance — no warp. Used for seed enumeration, neighbor
-/// finding, and as the base for warped assignment.
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `PlateCache::plate_at` for repeated lookups.
 pub fn macro_plate_at(wx: f64, wy: f64, seed: u64) -> PlateCenter {
-    let (cq, cr) = world_to_cell(wx, wy);
-
-    let mut best: Option<PlateCenter> = None;
-    let mut best_dist_sq = f64::MAX;
-
-    for (dq, dr) in two_ring_offsets(cr) {
-        if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
-            let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
-            if d < best_dist_sq {
-                best = Some(candidate);
-                best_dist_sq = d;
-            }
-        }
-    }
-
-    best.expect("no plate center found in 2-ring neighborhood — suppression rate too high")
+    PlateCache::new(seed).plate_at(wx, wy)
 }
 
-/// Returns the macro plate that owns position (wx, wy) via anisotropic warped distance.
-/// At coastlines (high regime gradient), the distance metric stretches along the shore,
-/// so macro plates collect micro cells further along the coast than across it.
-/// Each candidate seed also gets a per-candidate noise perturbation scaled by
-/// regional warp strength, producing non-convex plate shapes.
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `PlateCache::warped_plate_at` for repeated lookups.
 pub fn warped_plate_at(wx: f64, wy: f64, seed: u64) -> PlateCenter {
-    let (cq, cr) = world_to_cell(wx, wy);
-    let strength = warp_strength_at(wx, wy, seed);
-    let ctx = AnisoContext::at(wx, wy, seed);
-
-    let mut best: Option<PlateCenter> = None;
-    let mut best_eff_dist = f64::MAX;
-
-    for dr in -ANISO_SEARCH..=ANISO_SEARCH {
-        for dq in -ANISO_SEARCH..=ANISO_SEARCH {
-            if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
-                let d = effective_distance(wx, wy, &candidate, strength, &ctx, seed);
-                if d < best_eff_dist {
-                    best = Some(candidate);
-                    best_eff_dist = d;
-                }
-            }
-        }
-    }
-
-    best.expect("no plate center found in expanded neighborhood — suppression rate too high")
+    PlateCache::new(seed).warped_plate_at(wx, wy)
 }
 
-/// Returns all macro plate centers within `radius` of world position (wx, wy).
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `PlateCache::plates_in_radius` for repeated lookups.
 pub fn macro_plates_in_radius(wx: f64, wy: f64, radius: f64, seed: u64) -> Vec<PlateCenter> {
-    let row_height = MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
-    let cell_reach = (radius / row_height).ceil() as i32 + 2;
-    let (cq, cr) = world_to_cell(wx, wy);
-    let radius_sq = radius * radius;
-
-    let mut result = Vec::new();
-    for dq in -cell_reach..=cell_reach {
-        for dr in -cell_reach..=cell_reach {
-            if let Some(plate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
-                if dist_sq(wx, wy, plate.wx, plate.wy) <= radius_sq {
-                    result.push(plate);
-                }
-            }
-        }
-    }
-    result
+    PlateCache::new(seed).plates_in_radius(wx, wy, radius)
 }
 
-/// Returns the macro plate centers that are Voronoi neighbors of the plate
-/// owning position (wx, wy).
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `PlateCache::plate_neighbors` for repeated lookups.
 pub fn macro_plate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<PlateCenter> {
-    let owner = macro_plate_at(wx, wy, seed);
-    let search_radius = MACRO_CELL_SIZE * 4.0;
-    let candidates = macro_plates_in_radius(owner.wx, owner.wy, search_radius, seed);
-
-    let mut neighbors = Vec::new();
-    for candidate in &candidates {
-        if candidate.id == owner.id { continue; }
-
-        let mid_x = (owner.wx + candidate.wx) * 0.5;
-        let mid_y = (owner.wy + candidate.wy) * 0.5;
-        let at_mid = macro_plate_at(mid_x, mid_y, seed);
-
-        if at_mid.id == owner.id || at_mid.id == candidate.id {
-            neighbors.push(candidate.clone());
-        }
-    }
-    neighbors
+    PlateCache::new(seed).plate_neighbors(wx, wy)
 }
 
 fn dist_sq(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
@@ -317,38 +307,61 @@ fn dist_sq(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 
 // ──── Cached API ────
 
-/// Lazy cache for plate center lookups. Amortizes `plate_center_for_cell`
-/// across spatially-adjacent queries (e.g. scanning pixels in a row).
+/// Gradient cache grid spacing in world units. The regime gradient is smooth
+/// over GRAD_STEP (100), so adjacent queries within this cell share one
+/// gradient computation. Must be < GRAD_STEP to avoid sampling artifacts.
+const GRAD_CACHE_CELL: f64 = 64.0;
+
+/// Lazy cache for plate lookups. Pre-enumerates macro cell centers per chunk;
+/// queries gather candidates from a 1-ring hex neighborhood (7 chunks)
+/// instead of iterating individual grid cells per pixel.
 pub struct PlateCache {
-    cells: HashMap<(i32, i32), Option<PlateCenter>>,
+    chunks: HashMap<(i32, i32), PlateChunk>,
+    gradients: HashMap<(i64, i64), RegimeGradient>,
     seed: u64,
 }
 
 impl PlateCache {
     pub fn new(seed: u64) -> Self {
-        Self { cells: HashMap::new(), seed }
+        Self { chunks: HashMap::new(), gradients: HashMap::new(), seed }
     }
 
-    /// Ensure a grid cell is in the cache.
-    fn ensure_cell(&mut self, cq: i32, cr: i32) {
+    /// Cached gradient lookup. Snaps to a coarse grid so adjacent
+    /// pixels share the same gradient computation.
+    fn cached_gradient(&mut self, wx: f64, wy: f64) -> (f64, AnisoContext) {
+        let cx = (wx / GRAD_CACHE_CELL).floor() as i64;
+        let cy = (wy / GRAD_CACHE_CELL).floor() as i64;
         let seed = self.seed;
-        self.cells.entry((cq, cr))
-            .or_insert_with(|| plate_center_for_cell(cq, cr, seed));
+        let rg = self.gradients.entry((cx, cy)).or_insert_with(|| {
+            RegimeGradient::at(
+                (cx as f64 + 0.5) * GRAD_CACHE_CELL,
+                (cy as f64 + 0.5) * GRAD_CACHE_CELL,
+                seed,
+            )
+        });
+        (rg.warp_strength, rg.ctx)
+    }
+
+    /// Ensure a chunk is populated in the cache.
+    fn ensure_chunk(&mut self, cq: i32, cr: i32) {
+        let seed = self.seed;
+        self.chunks.entry((cq, cr))
+            .or_insert_with(|| populate_chunk(cq, cr, seed));
     }
 
     /// Cached pure Euclidean nearest-seed lookup.
     pub fn plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
-        let (cq, cr) = world_to_cell(wx, wy);
+        let (cq, cr) = plate_chunk_coord(wx, wy);
 
-        for (dq, dr) in two_ring_offsets(cr) {
-            self.ensure_cell(cq + dq, cr + dr);
+        for (dq, dr) in chunk_1ring(cr) {
+            self.ensure_chunk(cq + dq, cr + dr);
         }
 
         let mut best: Option<PlateCenter> = None;
         let mut best_dist_sq = f64::MAX;
 
-        for (dq, dr) in two_ring_offsets(cr) {
-            if let Some(candidate) = &self.cells[&(cq + dq, cr + dr)] {
+        for (dq, dr) in chunk_1ring(cr) {
+            for candidate in &self.chunks[&(cq + dq, cr + dr)].centers {
                 let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
                 if d < best_dist_sq {
                     best = Some(candidate.clone());
@@ -357,38 +370,89 @@ impl PlateCache {
             }
         }
 
-        best.expect("no plate center found in 2-ring neighborhood")
+        best.expect("no plate center found in chunk neighborhood")
+    }
+
+    /// Cached regime value at a world position. Delegates to the standalone
+    /// computation (3 simplex calls). Provides a uniform cache-method API surface.
+    pub fn regime_value_at(&self, wx: f64, wy: f64) -> f64 {
+        regime_value_at(wx, wy, self.seed)
+    }
+
+    /// Cached warp strength via the gradient cache. Returns the warp_strength
+    /// field from the cached RegimeGradient at the snapped grid position.
+    pub fn warp_strength_at(&mut self, wx: f64, wy: f64) -> f64 {
+        self.cached_gradient(wx, wy).0
+    }
+
+    /// All plate centers within `radius` of a world position, gathered from chunks.
+    pub fn plates_in_radius(&mut self, wx: f64, wy: f64, radius: f64) -> Vec<PlateCenter> {
+        let radius_sq = radius * radius;
+        let row_height = PLATE_CHUNK_SIZE * HEX_ROW_HEIGHT;
+        let chunk_reach = ((radius + PLATE_CHUNK_SIZE) / row_height).ceil() as i32 + 1;
+        let (cq, cr) = plate_chunk_coord(wx, wy);
+
+        let mut result = Vec::new();
+        for dr in -chunk_reach..=chunk_reach {
+            for dq in -chunk_reach..=chunk_reach {
+                self.ensure_chunk(cq + dq, cr + dr);
+                for center in &self.chunks[&(cq + dq, cr + dr)].centers {
+                    if dist_sq(wx, wy, center.wx, center.wy) <= radius_sq {
+                        result.push(center.clone());
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Voronoi neighbors of the plate owning position (wx, wy).
+    /// Uses midpoint sampling to test adjacency.
+    pub fn plate_neighbors(&mut self, wx: f64, wy: f64) -> Vec<PlateCenter> {
+        let owner = self.plate_at(wx, wy);
+        let search_radius = MACRO_CELL_SIZE * 4.0;
+        let candidates = self.plates_in_radius(owner.wx, owner.wy, search_radius);
+
+        let mut neighbors = Vec::new();
+        for candidate in &candidates {
+            if candidate.id == owner.id { continue; }
+
+            let mid_x = (owner.wx + candidate.wx) * 0.5;
+            let mid_y = (owner.wy + candidate.wy) * 0.5;
+            let at_mid = self.plate_at(mid_x, mid_y);
+
+            if at_mid.id == owner.id || at_mid.id == candidate.id {
+                neighbors.push(candidate.clone());
+            }
+        }
+        neighbors
     }
 
     /// Cached anisotropic warped-distance plate assignment. Used by micro cell → macro
-    /// assignment in the bottom-up flow.
+    /// assignment in the bottom-up flow. Gathers candidates from a 1-ring chunk
+    /// neighborhood and uses gradient cache for anisotropy context.
     pub fn warped_plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
-        let (cq, cr) = world_to_cell(wx, wy);
-        let strength = warp_strength_at(wx, wy, self.seed);
-        let ctx = AnisoContext::at(wx, wy, self.seed);
+        let (cq, cr) = plate_chunk_coord(wx, wy);
+        let (strength, ctx) = self.cached_gradient(wx, wy);
 
-        for dr in -ANISO_SEARCH..=ANISO_SEARCH {
-            for dq in -ANISO_SEARCH..=ANISO_SEARCH {
-                self.ensure_cell(cq + dq, cr + dr);
-            }
+        for (dq, dr) in chunk_1ring(cr) {
+            self.ensure_chunk(cq + dq, cr + dr);
         }
 
         let mut best: Option<PlateCenter> = None;
         let mut best_eff_dist = f64::MAX;
 
-        for dr in -ANISO_SEARCH..=ANISO_SEARCH {
-            for dq in -ANISO_SEARCH..=ANISO_SEARCH {
-                if let Some(candidate) = &self.cells[&(cq + dq, cr + dr)] {
-                    let d = effective_distance(wx, wy, candidate, strength, &ctx, self.seed);
-                    if d < best_eff_dist {
-                        best = Some(candidate.clone());
-                        best_eff_dist = d;
-                    }
+        for (dq, dr) in chunk_1ring(cr) {
+            for candidate in &self.chunks[&(cq + dq, cr + dr)].centers {
+                let d = effective_distance(wx, wy, candidate, strength, &ctx, self.seed);
+                if d < best_eff_dist {
+                    best = Some(candidate.clone());
+                    best_eff_dist = d;
                 }
             }
         }
 
-        best.expect("no plate center found in expanded neighborhood")
+        best.expect("no plate center found in chunk neighborhood")
     }
 }
 
@@ -479,31 +543,42 @@ mod tests {
     }
 
     #[test]
-    fn warped_plate_at_returns_best_effective_distance() {
+    fn chunk_1ring_covers_best_warped_candidate() {
+        // Brute-force find the best candidate over a wide cell search,
+        // then verify it lives in the chunk 1-ring.
         let seed = 42u64;
-        let search = ANISO_SEARCH + 2; // wider than implementation to verify
+        let brute_search = (2 + MAX_ELONGATION as i32) + 2;
         for test_x in (-5000..5000).step_by(1700) {
             for test_y in (-5000..5000).step_by(1700) {
                 let wx = test_x as f64;
                 let wy = test_y as f64;
 
-                let result = warped_plate_at(wx, wy, seed);
-                let strength = warp_strength_at(wx, wy, seed);
-                let ctx = AnisoContext::at(wx, wy, seed);
-                let result_eff = effective_distance(wx, wy, &result, strength, &ctx, seed);
-
+                let rg = RegimeGradient::at(wx, wy, seed);
                 let (cq, cr) = world_to_cell(wx, wy);
-                for dq in -search..=search {
-                    for dr in -search..=search {
+                let mut best: Option<PlateCenter> = None;
+                let mut best_eff = f64::MAX;
+                for dr in -brute_search..=brute_search {
+                    for dq in -brute_search..=brute_search {
                         if let Some(candidate) = plate_center_for_cell(cq + dq, cr + dr, seed) {
-                            let d = effective_distance(wx, wy, &candidate, strength, &ctx, seed);
-                            assert!(result_eff <= d + 1e-6,
-                                "warped_plate_at({wx}, {wy}) returned id={} eff={result_eff:.1}, \
-                                 but cell ({}, {}) id={} eff={d:.1}",
-                                result.id, cq + dq, cr + dr, candidate.id);
+                            let d = effective_distance(wx, wy, &candidate, rg.warp_strength, &rg.ctx, seed);
+                            if d < best_eff {
+                                best = Some(candidate);
+                                best_eff = d;
+                            }
                         }
                     }
                 }
+                let best = best.unwrap();
+
+                let winner_chunk = plate_chunk_coord(best.wx, best.wy);
+                let (qcq, qcr) = plate_chunk_coord(wx, wy);
+                let in_ring = chunk_1ring(qcr).iter().any(|&(dq, dr)| {
+                    (qcq + dq, qcr + dr) == winner_chunk
+                });
+                assert!(in_ring,
+                    "Best candidate id={} at ({:.0}, {:.0}) chunk {:?} \
+                     not in 1-ring of query chunk {:?} at ({wx}, {wy})",
+                    best.id, best.wx, best.wy, winner_chunk, (qcq, qcr));
             }
         }
     }
@@ -767,13 +842,14 @@ mod tests {
     }
 
     #[test]
-    fn aniso_context_no_nan_at_zero_gradient() {
+    fn regime_gradient_no_nan_at_zero_gradient() {
         let seed = 42u64;
         for x in (-20000..20000).step_by(2000) {
             for y in (-20000..20000).step_by(2000) {
-                let ctx = AnisoContext::at(x as f64, y as f64, seed);
-                assert!(ctx.elongation.is_finite(), "NaN elongation at ({x}, {y})");
-                assert!(ctx.elongation >= 1.0, "elongation < 1.0 at ({x}, {y})");
+                let rg = RegimeGradient::at(x as f64, y as f64, seed);
+                assert!(rg.ctx.elongation.is_finite(), "NaN elongation at ({x}, {y})");
+                assert!(rg.ctx.elongation >= 1.0, "elongation < 1.0 at ({x}, {y})");
+                assert!(rg.warp_strength.is_finite(), "NaN warp_strength at ({x}, {y})");
             }
         }
     }
@@ -799,8 +875,8 @@ mod tests {
             for y in (-30000..30000).step_by(500) {
                 let wx = x as f64;
                 let wy = y as f64;
-                let ctx = AnisoContext::at(wx, wy, seed);
-                if ctx.elongation > 2.0 {
+                let rg = RegimeGradient::at(wx, wy, seed);
+                if rg.ctx.elongation > 2.0 {
                     total_coastal += 1;
                     let aniso_result = warped_plate_at(wx, wy, seed);
 
@@ -808,10 +884,11 @@ mod tests {
                     let strength = warp_strength_at(wx, wy, seed);
                     let iso_ctx = AnisoContext { across: (1.0, 0.0), along: (0.0, 1.0), elongation: 1.0 };
                     let (cq, cr) = world_to_cell(wx, wy);
+                    let search = 2 + MAX_ELONGATION as i32;
                     let mut iso_best: Option<PlateCenter> = None;
                     let mut iso_best_d = f64::MAX;
-                    for dr in -ANISO_SEARCH..=ANISO_SEARCH {
-                        for dq in -ANISO_SEARCH..=ANISO_SEARCH {
+                    for dr in -search..=search {
+                        for dq in -search..=search {
                             if let Some(c) = plate_center_for_cell(cq + dq, cr + dr, seed) {
                                 let d = effective_distance(wx, wy, &c, strength, &iso_ctx, seed);
                                 if d < iso_best_d {
@@ -832,6 +909,178 @@ mod tests {
         assert!(total_coastal > 0, "Should find coastal points with elongation > 2");
         assert!(differ > 0,
             "Anisotropic assignment should differ from isotropic at some coastal points ({differ}/{total_coastal})");
+    }
+
+    #[test]
+    fn regime_gradient_matches_standalone() {
+        // RegimeGradient should produce identical warp_strength as standalone
+        let seed = 42u64;
+        for x in (-20000..20000).step_by(2000) {
+            for y in (-20000..20000).step_by(2000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let rg = RegimeGradient::at(wx, wy, seed);
+                let standalone = warp_strength_at(wx, wy, seed);
+                assert!((rg.warp_strength - standalone).abs() < 1e-10,
+                    "RegimeGradient warp={} vs standalone={} at ({wx}, {wy})",
+                    rg.warp_strength, standalone);
+            }
+        }
+    }
+
+    #[test]
+    fn regime_values_are_bimodal() {
+        // After sigmoid, values should cluster near 0 and 1.
+        // Count how many fall in the "flat" zones vs the transition band.
+        let seed = 42u64;
+        let mut near_zero = 0;
+        let mut near_one = 0;
+        let mut in_transition = 0;
+        for x in (-50000..50000).step_by(500) {
+            for y in (-50000..50000).step_by(500) {
+                let v = regime_value_at(x as f64, y as f64, seed);
+                if v < 0.1 {
+                    near_zero += 1;
+                } else if v > 0.9 {
+                    near_one += 1;
+                } else {
+                    in_transition += 1;
+                }
+            }
+        }
+        let total = near_zero + near_one + in_transition;
+        let plateau_pct = (near_zero + near_one) as f64 / total as f64 * 100.0;
+        assert!(plateau_pct > 50.0,
+            "Sigmoid should push most values to plateaus: {plateau_pct:.1}% in plateaus \
+             ({near_zero} near 0, {near_one} near 1, {in_transition} in transition)");
+    }
+
+    #[test]
+    fn warp_strength_near_zero_far_from_transition() {
+        // Sample deep-water and deep-land points — their warp should be very low.
+        let seed = 42u64;
+        let mut low_warp_count = 0;
+        let mut total_deep = 0;
+        let threshold = WARP_STRENGTH_MAX * 0.15;
+        for x in (-50000..50000).step_by(1000) {
+            for y in (-50000..50000).step_by(1000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let regime = regime_value_at(wx, wy, seed);
+                // Only check points clearly in deep water or deep land
+                if regime < 0.05 || regime > 0.95 {
+                    total_deep += 1;
+                    let strength = warp_strength_at(wx, wy, seed);
+                    if strength < threshold {
+                        low_warp_count += 1;
+                    }
+                }
+            }
+        }
+        assert!(total_deep > 0, "Should find deep water/land points");
+        let pct = low_warp_count as f64 / total_deep as f64 * 100.0;
+        assert!(pct > 90.0,
+            "Deep water/land points should have low warp: {pct:.1}% below threshold \
+             ({low_warp_count}/{total_deep})");
+    }
+
+    #[test]
+    fn warp_strength_high_at_transition() {
+        // Sample points in the regime transition band — should have meaningful warp.
+        let seed = 42u64;
+        let mut high_warp_count = 0;
+        let mut total_transition = 0;
+        let threshold = WARP_STRENGTH_MAX * 0.3;
+        for x in (-50000..50000).step_by(500) {
+            for y in (-50000..50000).step_by(500) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let regime = regime_value_at(wx, wy, seed);
+                // Points near the transition center
+                if regime > 0.4 && regime < 0.6 {
+                    total_transition += 1;
+                    let strength = warp_strength_at(wx, wy, seed);
+                    if strength > threshold {
+                        high_warp_count += 1;
+                    }
+                }
+            }
+        }
+        assert!(total_transition > 0, "Should find transition-band points");
+        let pct = high_warp_count as f64 / total_transition as f64 * 100.0;
+        assert!(pct > 30.0,
+            "Transition-band points should often have high warp: {pct:.1}% above threshold \
+             ({high_warp_count}/{total_transition})");
+    }
+
+
+    #[test]
+    fn each_plate_center_in_exactly_one_chunk() {
+        let seed = 42u64;
+        let mut seen: HashMap<u64, (i32, i32)> = HashMap::new();
+
+        for cq in -5..=5 {
+            for cr in -5..=5 {
+                let chunk = populate_chunk(cq, cr, seed);
+                for center in &chunk.centers {
+                    if let Some(&prev) = seen.get(&center.id) {
+                        panic!("PlateCenter id={} in chunks ({}, {}) and ({}, {})",
+                            center.id, prev.0, prev.1, cq, cr);
+                    }
+                    seen.insert(center.id, (cq, cr));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_cache_is_deterministic() {
+        let seed = 42u64;
+        let mut cache_a = PlateCache::new(seed);
+        let mut cache_b = PlateCache::new(seed);
+
+        // Query in different orders
+        for x in (-5000..5000).step_by(1000) {
+            for y in (-5000..5000).step_by(1000) {
+                cache_a.warped_plate_at(x as f64, y as f64);
+            }
+        }
+        for y in (-5000..5000).step_by(1000) {
+            for x in (-5000..5000).step_by(1000) {
+                cache_b.warped_plate_at(x as f64, y as f64);
+            }
+        }
+
+        // Verify same results
+        for x in (-5000..5000).step_by(1000) {
+            for y in (-5000..5000).step_by(1000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let a = cache_a.warped_plate_at(wx, wy);
+                let b = cache_b.warped_plate_at(wx, wy);
+                assert_eq!(a.id, b.id, "Cache order matters at ({wx}, {wy})");
+            }
+        }
+    }
+
+    #[test]
+    fn no_high_warp_deep_inland() {
+        // No deep-land or deep-water point should have warp > 50% of max.
+        let seed = 42u64;
+        let high_threshold = WARP_STRENGTH_MAX * 0.5;
+        for x in (-50000..50000).step_by(500) {
+            for y in (-50000..50000).step_by(500) {
+                let wx = x as f64;
+                let wy = y as f64;
+                let regime = regime_value_at(wx, wy, seed);
+                if regime < 0.02 || regime > 0.98 {
+                    let strength = warp_strength_at(wx, wy, seed);
+                    assert!(strength < high_threshold,
+                        "Deep point at ({wx}, {wy}) regime={regime:.4} has high warp={strength:.1} \
+                         (threshold={high_threshold:.1})");
+                }
+            }
+        }
     }
 
 }

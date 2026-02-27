@@ -49,12 +49,17 @@ pub const WARP_STRENGTH_MAX: f64 = 600.0;
 /// World-unit step for gradient sampling of the regime field.
 pub const GRAD_STEP: f64 = 100.0;
 
-/// Gradient magnitude at which warp reaches 50% of max.
-pub const CONTRAST_MIDPOINT: f64 = 0.5;
+/// Sigmoid midpoint on the regime noise field.
+/// Values below this tend toward 0 (water), above toward 1 (land).
+pub const REGIME_SIGMOID_MIDPOINT: f64 = 0.5;
 
-/// Sigmoid sharpness — higher values give a sharper transition
-/// from calm interiors to active coastline boundaries.
-pub const CONTRAST_STEEPNESS: f64 = 6.0;
+/// Sigmoid steepness on the regime noise field.
+/// Controls how sharp the water/land transition is.
+/// Must be high enough to push the bell-shaped noise distribution
+/// into bimodal plateaus. The raw noise (sum of 3 simplex octaves)
+/// has std ≈ 0.19 around 0.5, so the transition half-width ln(9)/k
+/// must be smaller than ~0.1 to produce clear land/water separation.
+pub const REGIME_SIGMOID_STEEPNESS: f64 = 40.0;
 
 /// Maximum noise stretch ratio along coastlines.
 /// At peak gradient, warp noise features are MAX_ELONGATION× longer
@@ -117,13 +122,15 @@ impl Terrain {
         0
     }
 
-    /// Returns both the macro plate and micro cell at the given hex tile.
+    /// UNCACHED — creates throwaway caches per call.
+    /// For hot paths, use `MicroplateCache::plate_info_at` directly.
     pub fn plate_info_at(&self, q: i32, r: i32) -> (PlateCenter, MicroplateCenter) {
         let (wx, wy) = hex_to_world(q, r);
         plate_info_at(wx, wy, self.seed)
     }
 
-    /// Returns the geometrically nearest macro seed (pure Voronoi, no warp).
+    /// UNCACHED — creates throwaway cache per call.
+    /// For hot paths, use `PlateCache::plate_at` directly.
     pub fn macro_plate_at(&self, q: i32, r: i32) -> PlateCenter {
         let (wx, wy) = hex_to_world(q, r);
         macro_plate_at(wx, wy, self.seed)

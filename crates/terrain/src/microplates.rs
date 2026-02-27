@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
-use crate::plates::{PlateCenter, PlateCache, macro_plate_neighbors, warped_plate_at};
+use crate::plates::{PlateCenter, PlateCache};
 use crate::{MACRO_CELL_SIZE, MICRO_CELL_SIZE, MICRO_SUPPRESSION_RATE,
             MICRO_JITTER_WAVELENGTH, MICRO_JITTER_MIN, MICRO_JITTER_MAX,
             WARP_STRENGTH_MAX, MAX_ELONGATION};
@@ -123,23 +123,24 @@ pub fn micro_cell_at(wx: f64, wy: f64, seed: u64) -> MicroplateCenter {
     best.expect("no micro cell found in 2-ring neighborhood — micro suppression rate too high")
 }
 
-/// Which macro plate does this micro cell belong to?
-/// Uses warped distance from the micro cell's position to nearby macro seeds.
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `PlateCache::warped_plate_at(micro.wx, micro.wy)` with a shared cache.
 pub fn macro_plate_for(micro: &MicroplateCenter, seed: u64) -> PlateCenter {
-    warped_plate_at(micro.wx, micro.wy, seed)
+    PlateCache::new(seed).warped_plate_at(micro.wx, micro.wy)
 }
 
-/// Returns both the micro cell and its macro plate assignment at a world position.
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `MicroplateCache::plate_info_at` for repeated lookups.
 pub fn plate_info_at(wx: f64, wy: f64, seed: u64) -> (PlateCenter, MicroplateCenter) {
+    let mut cache = PlateCache::new(seed);
     let mut micro = micro_cell_at(wx, wy, seed);
-    let macro_plate = macro_plate_for(&micro, seed);
+    let macro_plate = cache.warped_plate_at(micro.wx, micro.wy);
     micro.parent_id = macro_plate.id;
     (macro_plate, micro)
 }
 
-/// Returns all micro cells assigned to the given macro seed.
-/// Scans a wide radius because anisotropic warped distance can pull micro cells
-/// from far along coastlines (up to MAX_ELONGATION× further than isotropic).
+/// UNCACHED — creates throwaway PlateCache per call.
+/// Use `generate_micro_cells_for_macro` with a shared `&mut PlateCache`.
 pub fn micro_cells_for_macro(macro_seed: &PlateCenter, seed: u64) -> Vec<MicroplateCenter> {
     let mut plate_cache = PlateCache::new(seed);
     generate_micro_cells_for_macro(macro_seed, seed, &mut plate_cache)
@@ -182,10 +183,16 @@ fn generate_micro_cells_for_macro(
     children
 }
 
-/// Returns microplate neighbors (both intra-plate and cross-boundary).
+/// UNCACHED — creates throwaway PlateCache per call.
+/// All macro lookups within this function share a single PlateCache.
 pub fn microplate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<MicroplateCenter> {
-    let (owner_macro, owner_micro) = plate_info_at(wx, wy, seed);
-    let children = micro_cells_for_macro(&owner_macro, seed);
+    let mut plate_cache = PlateCache::new(seed);
+
+    let mut owner_micro = micro_cell_at(wx, wy, seed);
+    let owner_macro = plate_cache.warped_plate_at(owner_micro.wx, owner_micro.wy);
+    owner_micro.parent_id = owner_macro.id;
+
+    let children = generate_micro_cells_for_macro(&owner_macro, seed, &mut plate_cache);
 
     let mut neighbors = Vec::new();
 
@@ -203,9 +210,9 @@ pub fn microplate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<MicroplateCenter
     }
 
     // Cross-boundary neighbors
-    let macro_neighbors = macro_plate_neighbors(owner_macro.wx, owner_macro.wy, seed);
+    let macro_neighbors = plate_cache.plate_neighbors(owner_macro.wx, owner_macro.wy);
     for neighbor_macro in &macro_neighbors {
-        let neighbor_children = micro_cells_for_macro(neighbor_macro, seed);
+        let neighbor_children = generate_micro_cells_for_macro(neighbor_macro, seed, &mut plate_cache);
         for neighbor_child in &neighbor_children {
             let mid_x = (owner_micro.wx + neighbor_child.wx) * 0.5;
             let mid_y = (owner_micro.wy + neighbor_child.wy) * 0.5;
@@ -308,7 +315,7 @@ impl MicroplateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plates::macro_plate_at;
+    use crate::plates::{macro_plate_at, macro_plate_neighbors};
     use std::collections::HashSet;
 
     #[test]
