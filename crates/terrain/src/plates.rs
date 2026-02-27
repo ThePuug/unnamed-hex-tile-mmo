@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
-use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX, CELL_SUPPRESSION_RATE,
+use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
+            SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, REGIME_LAND_THRESHOLD,
             WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
             GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION};
@@ -35,11 +36,6 @@ fn jitter_at(wx: f64, wy: f64, seed: u64) -> f64 {
     let n = simplex_2d(wx / JITTER_NOISE_WAVELENGTH, wy / JITTER_NOISE_WAVELENGTH, noise_seed);
     let t = (n + 1.0) * 0.5;
     JITTER_MIN + t * (JITTER_MAX - JITTER_MIN)
-}
-
-/// Whether a cell is suppressed (produces no plate center).
-fn cell_is_suppressed(cell_q: i32, cell_r: i32, seed: u64) -> bool {
-    hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED) < CELL_SUPPRESSION_RATE
 }
 
 // ──── Warped Voronoi distance ────
@@ -241,13 +237,19 @@ fn effective_distance(wx: f64, wy: f64, candidate: &PlateCenter, strength: f64, 
 /// Compute the plate center for a specific hex grid cell (odd-r offset).
 /// Returns None if the cell is suppressed.
 pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Option<PlateCenter> {
-    if cell_is_suppressed(cell_q, cell_r, seed) {
-        return None;
-    }
-
     let odd_shift = if cell_r & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
     let nominal_wx = cell_q as f64 * MACRO_CELL_SIZE + odd_shift;
     let nominal_wy = cell_r as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+
+    // Variable suppression: low at coastlines (many small plates),
+    // high in deep water/land (fewer, larger plates).
+    let hash = hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED);
+    let regime = regime_value_at(nominal_wx, nominal_wy, seed);
+    let depth = ((regime - REGIME_LAND_THRESHOLD).abs() * 2.0).clamp(0.0, 1.0);
+    let suppression = SUPPRESSION_RATE_MIN + depth * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
+    if hash < suppression {
+        return None;
+    }
 
     let jitter = jitter_at(nominal_wx, nominal_wy, seed);
 
@@ -509,8 +511,9 @@ mod tests {
             }
         }
         let rate = suppressed as f64 / total as f64;
-        assert!(rate > 0.05 && rate < 0.30,
-            "Suppression rate {rate:.3} ({suppressed}/{total}) should be near {CELL_SUPPRESSION_RATE}");
+        assert!(rate > 0.05 && rate < 0.50,
+            "Suppression rate {rate:.3} ({suppressed}/{total}) should be between \
+             {SUPPRESSION_RATE_MIN} and {SUPPRESSION_RATE_MAX}");
     }
 
     #[test]
@@ -711,9 +714,9 @@ mod tests {
             }
         }
         let avg = total_neighbors as f64 / samples as f64;
-        // With suppression, expanded plates can have more neighbors
-        assert!(avg >= 5.0 && avg <= 8.5,
-            "Average neighbor count {avg:.2} should be near 6-7 for hex lattice with suppression");
+        // Variable suppression creates larger plates in deep regions → fewer neighbors.
+        assert!(avg >= 4.0 && avg <= 8.5,
+            "Average neighbor count {avg:.2} should be near 5-7 for hex lattice with variable suppression");
     }
 
     #[test]
@@ -1081,6 +1084,81 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn suppression_varies_with_regime_depth() {
+        // Cells near the regime transition should have lower suppression
+        // than cells deep inland or deep in water.
+        let seed = 42u64;
+        let mut coastal_suppressed = 0u32;
+        let mut coastal_total = 0u32;
+        let mut deep_suppressed = 0u32;
+        let mut deep_total = 0u32;
+
+        for cq in -30..30 {
+            for cr in -30..30 {
+                let odd_shift = if cr & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
+                let wx = cq as f64 * MACRO_CELL_SIZE + odd_shift;
+                let wy = cr as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+                let regime = regime_value_at(wx, wy, seed);
+                let is_suppressed = plate_center_for_cell(cq, cr, seed).is_none();
+
+                if (regime - REGIME_LAND_THRESHOLD).abs() < 0.15 {
+                    coastal_total += 1;
+                    if is_suppressed { coastal_suppressed += 1; }
+                } else if regime < 0.1 || regime > 0.9 {
+                    deep_total += 1;
+                    if is_suppressed { deep_suppressed += 1; }
+                }
+            }
+        }
+
+        assert!(coastal_total > 0, "Should find coastal cells");
+        assert!(deep_total > 0, "Should find deep cells");
+        let coastal_rate = coastal_suppressed as f64 / coastal_total as f64;
+        let deep_rate = deep_suppressed as f64 / deep_total as f64;
+        assert!(deep_rate > coastal_rate,
+            "Deep suppression {deep_rate:.3} should exceed coastal {coastal_rate:.3}");
+    }
+
+    #[test]
+    fn deep_region_has_fewer_plate_centers() {
+        // Deep regions should have lower plate center survival rates
+        // than coastal regions, producing fewer, larger plates.
+        let seed = 42u64;
+        let mut deep_survived = 0u32;
+        let mut deep_total = 0u32;
+        let mut coastal_survived = 0u32;
+        let mut coastal_total = 0u32;
+
+        for cq in -50..50 {
+            for cr in -50..50 {
+                let odd_shift = if cr & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
+                let wx = cq as f64 * MACRO_CELL_SIZE + odd_shift;
+                let wy = cr as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
+                let regime = regime_value_at(wx, wy, seed);
+
+                let survived = plate_center_for_cell(cq, cr, seed).is_some();
+
+                if regime > 0.9 || regime < 0.1 {
+                    deep_total += 1;
+                    if survived { deep_survived += 1; }
+                } else if (regime - REGIME_LAND_THRESHOLD).abs() < 0.15 {
+                    coastal_total += 1;
+                    if survived { coastal_survived += 1; }
+                }
+            }
+        }
+
+        assert!(deep_total > 0, "Should find deep cells");
+        assert!(coastal_total > 0, "Should find coastal cells");
+
+        let deep_rate = deep_survived as f64 / deep_total as f64;
+        let coast_rate = coastal_survived as f64 / coastal_total as f64;
+
+        assert!(coast_rate > deep_rate,
+            "Coastal survival rate ({coast_rate:.3}) should exceed deep ({deep_rate:.3})");
     }
 
 }

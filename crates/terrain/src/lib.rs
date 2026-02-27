@@ -23,9 +23,16 @@ pub const JITTER_MIN: f64 = 0.1;
 /// Maximum jitter factor (chaotic regions → irregular plates).
 pub const JITTER_MAX: f64 = 0.45;
 
-/// Fraction of macro hex grid cells that produce no plate center.
-/// Neighbors expand to fill the gap, creating naturally larger plates.
-pub const CELL_SUPPRESSION_RATE: f64 = 0.15;
+/// Minimum macro cell suppression rate (at coastlines — many small plates).
+pub const SUPPRESSION_RATE_MIN: f64 = 0.05;
+
+/// Maximum macro cell suppression rate (deep inland/water — few large plates).
+pub const SUPPRESSION_RATE_MAX: f64 = 0.40;
+
+/// Regime classification threshold. Values below → water, above → land.
+/// Above the sigmoid midpoint (0.5) to shift balance toward more water.
+/// Also centers the variable suppression zone on the actual coastline.
+pub const REGIME_LAND_THRESHOLD: f64 = 0.6;
 
 // ──── Macro Plate Warp Constants ────
 

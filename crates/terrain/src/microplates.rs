@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::plates::{PlateCenter, PlateCache};
@@ -308,6 +308,231 @@ impl MicroplateCache {
         micro.parent_id = macro_plate.id;
         (macro_plate, micro)
     }
+
+    /// Look up the cached macro plate assignment for a micro cell by its ID.
+    pub fn macro_assignment(&self, micro_id: u64) -> Option<&PlateCenter> {
+        self.macro_assignments.get(&micro_id)
+    }
+
+    /// Extract all corrected micro→macro assignments as micro_id → macro_plate_id.
+    /// Call after `fix_orphans` to get the corrected mapping for read-only sharing.
+    pub fn all_macro_ids(&self) -> HashMap<u64, u64> {
+        self.macro_assignments.iter()
+            .map(|(&mid, plate)| (mid, plate.id))
+            .collect()
+    }
+
+    /// Fix orphaned macro plate assignments in the cache.
+    ///
+    /// Connected component analysis: for each macro plate, flood-fill its
+    /// micro cells. Keep only the largest component (the main body); reassign
+    /// all smaller fragments to the surrounding majority plate. Repeat until
+    /// stable — reassignment can cascade when a fragment joins a plate that
+    /// splits another plate's connectivity. Typically converges in 2-3 rounds.
+    ///
+    /// Final sweep: catches isolated cells of plates whose main body is
+    /// entirely outside the cache (single-component, no larger body to compare).
+    ///
+    /// Call after batch-populating a region (e.g. after all `plate_info_at`
+    /// calls for a viewport).
+    ///
+    /// Returns the number of cells corrected.
+    pub fn fix_orphans(&mut self) -> usize {
+        // Build reverse map: micro_id → (cq, cr, wx, wy)
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = self.micro_cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
+            })
+            .collect();
+
+        // Ensure all cached micro cells have macro assignments
+        let unassigned: Vec<(u64, f64, f64)> = id_to_pos.iter()
+            .filter(|(id, _)| !self.macro_assignments.contains_key(id))
+            .map(|(&id, &(_, _, wx, wy))| (id, wx, wy))
+            .collect();
+        for (id, wx, wy) in unassigned {
+            let plate = self.plate_cache.warped_plate_at(wx, wy);
+            self.macro_assignments.insert(id, plate);
+        }
+
+        // Build neighbor map once (topology doesn't change, only assignments)
+        let all_neighbors: HashMap<u64, Vec<u64>> = id_to_pos.iter()
+            .filter_map(|(&id, &(cq, cr, _, _))| {
+                if self.macro_assignments.contains_key(&id) {
+                    Some((id, micro_neighbor_ids(cq, cr, id, &self.micro_cells)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // ── CC loop: repeat until no fragments found ──
+
+        let mut total_corrected = 0;
+        const MAX_ROUNDS: usize = 10;
+
+        for _ in 0..MAX_ROUNDS {
+            let round_count = self.cc_round(&all_neighbors);
+            if round_count == 0 { break; }
+            total_corrected += round_count;
+        }
+
+        // ── Final sweep: single-cell orphans of plates with no visible body ──
+
+        let mut sweep_corrections: Vec<(u64, PlateCenter)> = Vec::new();
+        for (&id, nbrs) in &all_neighbors {
+            if nbrs.is_empty() { continue; }
+            let my_plate = match self.macro_assignments.get(&id) {
+                Some(p) => p,
+                None => continue,
+            };
+            let has_same = nbrs.iter().any(|nid| {
+                self.macro_assignments.get(nid)
+                    .map_or(false, |p| p.id == my_plate.id)
+            });
+            if has_same { continue; }
+
+            let mut counts: HashMap<u64, (usize, &PlateCenter)> = HashMap::new();
+            for nid in nbrs {
+                if let Some(plate) = self.macro_assignments.get(nid) {
+                    let entry = counts.entry(plate.id).or_insert((0, plate));
+                    entry.0 += 1;
+                }
+            }
+            if let Some((_, plate)) = counts.into_values()
+                .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.id.cmp(&a.1.id)))
+            {
+                sweep_corrections.push((id, plate.clone()));
+            }
+        }
+
+        let sweep_count = sweep_corrections.len();
+        for (id, plate) in sweep_corrections {
+            self.macro_assignments.insert(id, plate);
+        }
+
+        total_corrected + sweep_count
+    }
+
+    /// One round of connected component analysis + fragment reassignment.
+    /// Returns the number of cells corrected (0 = stable).
+    fn cc_round(&mut self, all_neighbors: &HashMap<u64, Vec<u64>>) -> usize {
+        // Build same-plate adjacency from current assignments
+        let mut same_plate_adj: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (&id, nbrs) in all_neighbors {
+            if let Some(my_plate) = self.macro_assignments.get(&id) {
+                let my_plate_id = my_plate.id;
+                let same: Vec<u64> = nbrs.iter()
+                    .filter(|nid| {
+                        self.macro_assignments.get(nid)
+                            .map_or(false, |p| p.id == my_plate_id)
+                    })
+                    .copied()
+                    .collect();
+                same_plate_adj.insert(id, same);
+            }
+        }
+
+        // BFS for connected components (deterministic via sorted IDs)
+        let mut visited: HashSet<u64> = HashSet::new();
+        let mut all_components: Vec<Vec<u64>> = Vec::new();
+        let mut sorted_ids: Vec<u64> = same_plate_adj.keys().copied().collect();
+        sorted_ids.sort_unstable();
+
+        for id in sorted_ids {
+            if visited.contains(&id) { continue; }
+            let mut component = Vec::new();
+            let mut queue = vec![id];
+            while let Some(current) = queue.pop() {
+                if !visited.insert(current) { continue; }
+                component.push(current);
+                if let Some(nbrs) = same_plate_adj.get(&current) {
+                    for &nid in nbrs {
+                        if !visited.contains(&nid) {
+                            queue.push(nid);
+                        }
+                    }
+                }
+            }
+            all_components.push(component);
+        }
+
+        // Group by plate, identify fragments
+        let mut plate_components: HashMap<u64, Vec<Vec<u64>>> = HashMap::new();
+        for component in all_components {
+            if let Some(plate) = self.macro_assignments.get(&component[0]) {
+                plate_components.entry(plate.id).or_default().push(component);
+            }
+        }
+
+        let mut fragments: Vec<Vec<u64>> = Vec::new();
+        for (_, mut components) in plate_components {
+            if components.len() <= 1 { continue; }
+            components.sort_by(|a, b| {
+                b.len().cmp(&a.len())
+                    .then_with(|| a.iter().min().cmp(&b.iter().min()))
+            });
+            fragments.extend(components.into_iter().skip(1));
+        }
+
+        if fragments.is_empty() { return 0; }
+
+        // Compute corrections from current state, then batch-apply
+        let mut corrections: Vec<(u64, PlateCenter)> = Vec::new();
+        for fragment in &fragments {
+            let frag_set: HashSet<u64> = fragment.iter().copied().collect();
+            let mut surrounding: HashMap<u64, (usize, PlateCenter)> = HashMap::new();
+            for &cid in fragment {
+                if let Some(nbrs) = all_neighbors.get(&cid) {
+                    for &nid in nbrs {
+                        if frag_set.contains(&nid) { continue; }
+                        if let Some(plate) = self.macro_assignments.get(&nid) {
+                            let entry = surrounding.entry(plate.id)
+                                .or_insert((0, plate.clone()));
+                            entry.0 += 1;
+                        }
+                    }
+                }
+            }
+            if let Some((_, new_plate)) = surrounding.into_values()
+                .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.id.cmp(&a.1.id)))
+            {
+                for &cid in fragment {
+                    corrections.push((cid, new_plate.clone()));
+                }
+            }
+        }
+
+        let count = corrections.len();
+        for (id, plate) in corrections {
+            self.macro_assignments.insert(id, plate);
+        }
+        count
+    }
+
+}
+
+/// Hex neighbor offsets for odd-r offset grid (even rows).
+const HEX_NEIGHBORS_EVEN: [(i32, i32); 6] = [(-1, 0), (1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1)];
+/// Hex neighbor offsets for odd-r offset grid (odd rows).
+const HEX_NEIGHBORS_ODD: [(i32, i32); 6] = [(-1, 0), (1, 0), (0, -1), (1, -1), (0, 1), (1, 1)];
+
+/// Find micro neighbor IDs via direct sub-grid hex coordinate offsets.
+/// 6 lookups per cell — no spatial scanning, no distance math.
+fn micro_neighbor_ids(
+    cq: i32, cr: i32, id: u64,
+    micro_cells: &HashMap<(i32, i32), Option<(f64, f64, u64)>>,
+) -> Vec<u64> {
+    let offsets = if cr & 1 == 0 { &HEX_NEIGHBORS_EVEN } else { &HEX_NEIGHBORS_ODD };
+    let mut neighbors = Vec::new();
+    for &(dq, dr) in offsets {
+        if let Some(Some((_, _, nid))) = micro_cells.get(&(cq + dq, cr + dr)) {
+            if *nid != id {
+                neighbors.push(*nid);
+            }
+        }
+    }
+    neighbors
 }
 
 // ──── Tests ────
@@ -485,6 +710,332 @@ mod tests {
             let neighbors = microplate_neighbors(near_x, near_y, seed);
             assert!(!neighbors.is_empty(), "Should have at least some neighbors near boundary");
         }
+    }
+
+    // ──── Orphan correction tests ────
+
+    /// Populate a cache region by calling plate_info_at on a grid of sample points.
+    fn populate_region(cache: &mut MicroplateCache, cx: f64, cy: f64, radius: f64, step: f64) {
+        let mut x = cx - radius;
+        while x <= cx + radius {
+            let mut y = cy - radius;
+            while y <= cy + radius {
+                cache.plate_info_at(x, y);
+                y += step;
+            }
+            x += step;
+        }
+    }
+
+    #[test]
+    fn fix_orphans_is_deterministic() {
+        let seed = 42u64;
+        let mut cache_a = MicroplateCache::new(seed);
+        let mut cache_b = MicroplateCache::new(seed);
+
+        populate_region(&mut cache_a, 0.0, 0.0, 5000.0, 100.0);
+        populate_region(&mut cache_b, 0.0, 0.0, 5000.0, 100.0);
+
+        let count_a = cache_a.fix_orphans();
+        let count_b = cache_b.fix_orphans();
+
+        assert_eq!(count_a, count_b, "fix_orphans correction count should be deterministic");
+
+        // Verify identical assignments after correction
+        for (&id, plate_a) in &cache_a.macro_assignments {
+            let plate_b = cache_b.macro_assignments.get(&id)
+                .expect("same micro IDs should exist in both caches");
+            assert_eq!(plate_a.id, plate_b.id,
+                "Macro assignment for micro {} differs after fix_orphans", id);
+        }
+    }
+
+    #[test]
+    fn fix_orphans_only_modifies_disconnected_cells() {
+        // Every changed cell must have been either:
+        // (a) in a non-largest component of its plate, OR
+        // (b) a single-cell orphan (zero same-plate neighbors)
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        populate_region(&mut cache, 0.0, 0.0, 5000.0, 100.0);
+
+        let before: HashMap<u64, u64> = cache.macro_assignments.iter()
+            .map(|(&mid, plate)| (mid, plate.id))
+            .collect();
+
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.micro_cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
+            })
+            .collect();
+
+        // Build same-plate adjacency from BEFORE snapshot
+        let mut same_plate_adj: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (&id, &(cq, cr, _, _)) in &id_to_pos {
+            if let Some(&my_pid) = before.get(&id) {
+                let nbrs = micro_neighbor_ids(cq, cr, id, &cache.micro_cells);
+                let same: Vec<u64> = nbrs.into_iter()
+                    .filter(|nid| before.get(nid).map_or(false, |&pid| pid == my_pid))
+                    .collect();
+                same_plate_adj.insert(id, same);
+            }
+        }
+
+        // BFS components, track largest per plate (matching code's tie-break)
+        let mut cell_is_fragment: HashSet<u64> = HashSet::new();
+        let mut plate_components: HashMap<u64, Vec<Vec<u64>>> = HashMap::new();
+        let mut visited: HashSet<u64> = HashSet::new();
+        let mut sorted: Vec<u64> = same_plate_adj.keys().copied().collect();
+        sorted.sort_unstable();
+        for id in sorted {
+            if visited.contains(&id) { continue; }
+            let mut comp = Vec::new();
+            let mut queue = vec![id];
+            while let Some(cur) = queue.pop() {
+                if !visited.insert(cur) { continue; }
+                comp.push(cur);
+                if let Some(nbrs) = same_plate_adj.get(&cur) {
+                    for &nid in nbrs {
+                        if !visited.contains(&nid) { queue.push(nid); }
+                    }
+                }
+            }
+            let pid = before[&comp[0]];
+            plate_components.entry(pid).or_default().push(comp);
+        }
+        for (_, mut components) in plate_components {
+            if components.len() <= 1 { continue; }
+            components.sort_by(|a, b| {
+                b.len().cmp(&a.len())
+                    .then_with(|| a.iter().min().cmp(&b.iter().min()))
+            });
+            for comp in components.into_iter().skip(1) {
+                for cid in comp { cell_is_fragment.insert(cid); }
+            }
+        }
+        // Also mark single-cell orphans
+        for (&id, same) in &same_plate_adj {
+            if same.is_empty() {
+                cell_is_fragment.insert(id);
+            }
+        }
+
+        cache.fix_orphans();
+
+        let mut changed = 0;
+        for (&mid, plate) in &cache.macro_assignments {
+            if let Some(&old_pid) = before.get(&mid) {
+                if plate.id != old_pid {
+                    changed += 1;
+                    assert!(cell_is_fragment.contains(&mid),
+                        "Cell {} was changed but was not a fragment or single-cell orphan", mid);
+                }
+            }
+        }
+        assert!(changed > 0, "Expected at least some corrections in a 10k×10k region");
+    }
+
+    #[test]
+    fn no_interior_fragments_remain_after_fix() {
+        // After fix_orphans, check for orphan components that are fully
+        // contained in the interior (not touching the boundary where they
+        // might connect to a main body outside the cache).
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        populate_region(&mut cache, 0.0, 0.0, 5000.0, 100.0);
+        cache.fix_orphans();
+
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.micro_cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
+            })
+            .collect();
+
+        let inner_radius = 4000.0;
+        let border_radius = 4500.0; // cells between inner and border may connect outside
+
+        let assigned_ids: HashSet<u64> = id_to_pos.keys()
+            .filter(|id| cache.macro_assignments.contains_key(id))
+            .copied()
+            .collect();
+
+        // Build same-plate adjacency over all assigned cells
+        let mut same_plate_adj: HashMap<u64, Vec<u64>> = HashMap::new();
+        for &id in &assigned_ids {
+            let &(cq, cr, _, _) = &id_to_pos[&id];
+            let my_pid = cache.macro_assignments[&id].id;
+            let nbrs = micro_neighbor_ids(cq, cr, id, &cache.micro_cells);
+            let same: Vec<u64> = nbrs.into_iter()
+                .filter(|nid| {
+                    cache.macro_assignments.get(nid)
+                        .map_or(false, |p| p.id == my_pid)
+                })
+                .collect();
+            same_plate_adj.insert(id, same);
+        }
+
+        // BFS to find components, check if any are fully interior
+        let mut visited: HashSet<u64> = HashSet::new();
+        let mut interior_orphans = 0;
+        let mut sorted: Vec<u64> = assigned_ids.iter().copied().collect();
+        sorted.sort_unstable();
+
+        for id in sorted {
+            if visited.contains(&id) { continue; }
+            let pid = cache.macro_assignments[&id].id;
+            let mut comp = Vec::new();
+            let mut queue = vec![id];
+            while let Some(cur) = queue.pop() {
+                if !visited.insert(cur) { continue; }
+                comp.push(cur);
+                if let Some(nbrs) = same_plate_adj.get(&cur) {
+                    for &nid in nbrs {
+                        if !visited.contains(&nid) { queue.push(nid); }
+                    }
+                }
+            }
+
+            // Skip the largest component per plate (only check fragments)
+            // A component touching the border might connect to the main body outside
+            let touches_border = comp.iter().any(|&cid| {
+                let &(_, _, wx, wy) = &id_to_pos[&cid];
+                wx.abs() > border_radius || wy.abs() > border_radius
+            });
+            let fully_interior = comp.iter().all(|&cid| {
+                let &(_, _, wx, wy) = &id_to_pos[&cid];
+                wx.abs() <= inner_radius && wy.abs() <= inner_radius
+            });
+
+            // Count how many same-plate components exist
+            let same_plate_count = assigned_ids.iter()
+                .filter(|&&aid| cache.macro_assignments[&aid].id == pid)
+                .count();
+
+            // A fully-interior component that isn't the whole plate is suspect
+            if fully_interior && !touches_border && comp.len() < same_plate_count {
+                interior_orphans += 1;
+            }
+        }
+
+        assert_eq!(interior_orphans, 0,
+            "Found {interior_orphans} fully-interior orphan components after fix_orphans");
+    }
+
+    #[test]
+    fn single_cell_orphan_reassigned_to_a_neighbor() {
+        // Phase 2 (single-cell orphan sweep): a cell with a bogus plate ID
+        // that no neighbor shares should be reassigned to some neighbor's plate.
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        populate_region(&mut cache, 0.0, 0.0, 2000.0, 100.0);
+
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.micro_cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
+            })
+            .collect();
+
+        // Find a cell with assigned neighbors
+        let mut target = None;
+        for (&id, &(cq, cr, wx, wy)) in &id_to_pos {
+            if wx.abs() > 1500.0 || wy.abs() > 1500.0 { continue; }
+            if cache.macro_assignments.get(&id).is_none() { continue; }
+            let nids = micro_neighbor_ids(cq, cr, id, &cache.micro_cells);
+            if nids.len() >= 3 && nids.iter().all(|n| cache.macro_assignments.contains_key(n)) {
+                target = Some((id, nids));
+                break;
+            }
+        }
+
+        let (target_id, neighbor_ids) = target.expect("Should find a suitable cell");
+
+        // Force to a bogus plate — creates a single-cell orphan (no main body)
+        let bogus = PlateCenter { wx: 0.0, wy: 0.0, cell_q: 0, cell_r: 0, id: 0xDEAD };
+        cache.macro_assignments.insert(target_id, bogus);
+
+        cache.fix_orphans();
+
+        let corrected = &cache.macro_assignments[&target_id];
+        assert_ne!(corrected.id, 0xDEAD,
+            "Single-cell orphan should have been reassigned away from bogus plate");
+        // The corrected plate should be one of the (possibly updated) neighbor plates
+        let neighbor_plates: HashSet<u64> = neighbor_ids.iter()
+            .filter_map(|nid| cache.macro_assignments.get(nid).map(|p| p.id))
+            .collect();
+        assert!(neighbor_plates.contains(&corrected.id),
+            "Corrected plate {} should be one of the neighbor plates {:?}",
+            corrected.id, neighbor_plates);
+    }
+
+    #[test]
+    fn multi_cell_fragment_reassigned_to_surrounding() {
+        // Phase 1 (CC analysis): force two adjacent cells to a plate that has
+        // a large main body elsewhere. The 2-cell splinter should be reassigned.
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        populate_region(&mut cache, 0.0, 0.0, 3000.0, 100.0);
+
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.micro_cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
+            })
+            .collect();
+
+        // Find two adjacent cells that share the same plate
+        let mut pair = None;
+        for (&id_a, &(cq_a, cr_a, wx_a, wy_a)) in &id_to_pos {
+            if wx_a.abs() > 2000.0 || wy_a.abs() > 2000.0 { continue; }
+            let plate_a = match cache.macro_assignments.get(&id_a) {
+                Some(p) => p.id,
+                None => continue,
+            };
+            let nbrs = micro_neighbor_ids(cq_a, cr_a, id_a, &cache.micro_cells);
+            for &nid in &nbrs {
+                if cache.macro_assignments.get(&nid).map_or(true, |p| p.id != plate_a) {
+                    continue;
+                }
+                pair = Some((id_a, nid, plate_a));
+                break;
+            }
+            if pair.is_some() { break; }
+        }
+
+        let (cell_a, cell_b, original_plate) = pair.expect("Should find adjacent same-plate pair");
+
+        // Find a different plate that has a large body in the cache
+        let donor_plate = cache.macro_assignments.values()
+            .find(|p| p.id != original_plate)
+            .cloned()
+            .expect("Should find a different plate");
+
+        // Force both cells to the donor plate → creates a 2-cell fragment
+        cache.macro_assignments.insert(cell_a, donor_plate.clone());
+        cache.macro_assignments.insert(cell_b, donor_plate.clone());
+
+        cache.fix_orphans();
+
+        // Both should have been reassigned away from the donor
+        let after_a = cache.macro_assignments[&cell_a].id;
+        let after_b = cache.macro_assignments[&cell_b].id;
+        assert_ne!(after_a, donor_plate.id,
+            "Cell A should have been reassigned from fragment of plate {}", donor_plate.id);
+        assert_ne!(after_b, donor_plate.id,
+            "Cell B should have been reassigned from fragment of plate {}", donor_plate.id);
+    }
+
+    #[test]
+    fn orphan_rate_is_small() {
+        // The total number of orphans should be a small fraction of total micro cells.
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        populate_region(&mut cache, 0.0, 0.0, 8000.0, 100.0);
+
+        let total_assigned = cache.macro_assignments.len();
+        let corrected = cache.fix_orphans();
+
+        let rate = corrected as f64 / total_assigned as f64;
+        assert!(rate < 0.05,
+            "Orphan rate {rate:.4} ({corrected}/{total_assigned}) should be < 5%");
     }
 
 }
