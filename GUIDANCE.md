@@ -70,7 +70,7 @@ Client-server MMO built with Bevy ECS:
 
 **Bottom-up API:** `micro_cell_at(wx, wy, seed)` → `macro_plate_for(micro, seed)` → or `plate_info_at(wx, wy, seed)` for both. `micro_cells_for_macro(macro_seed, seed)` scans sub-grid within `(MACRO_CELL_SIZE + WARP_STRENGTH_MAX) × MAX_ELONGATION` radius (expanded for anisotropy).
 
-**Key constants:** Macro: `MACRO_CELL_SIZE=1800`, `JITTER_NOISE_WAVELENGTH=30000`, `JITTER_MIN=0.1`, `JITTER_MAX=0.45`, `CELL_SUPPRESSION_RATE=0.15`. Micro: `MICRO_CELL_SIZE=450`, `MICRO_JITTER_WAVELENGTH=5000`, `MICRO_JITTER_MIN=0.10`, `MICRO_JITTER_MAX=0.40`, `MICRO_SUPPRESSION_RATE=0.20`. Warp: `WARP_NOISE_WAVELENGTH=800`, `WARP_STRENGTH_MIN=0.0`, `WARP_STRENGTH_MAX=600.0`. Regime: `WARP_PRIME_A=29989`, `WARP_PRIME_B=17393`, `WARP_PRIME_C=11003` (triple-prime noise). Gradient: `GRAD_STEP=100`, `CONTRAST_MIDPOINT=0.5`, `CONTRAST_STEEPNESS=6.0`. Anisotropy: `MAX_ELONGATION=4.0` (macro plate stretch ratio at coastlines).
+**Key constants:** Macro: `MACRO_CELL_SIZE=1800`, `JITTER_NOISE_WAVELENGTH=30000`, `JITTER_MIN=0.1`, `JITTER_MAX=0.45`, `SUPPRESSION_RATE_MIN=0.05`, `SUPPRESSION_RATE_MAX=0.40` (variable, regime-depth modulated). Micro: `MICRO_CELL_SIZE=450`, `MICRO_JITTER_WAVELENGTH=5000`, `MICRO_JITTER_MIN=0.10`, `MICRO_JITTER_MAX=0.40`, `MICRO_SUPPRESSION_RATE=0.20`. Warp: `WARP_NOISE_WAVELENGTH=800`, `WARP_STRENGTH_MIN=0.0`, `WARP_STRENGTH_MAX=600.0`. Regime: `WARP_PRIME_A=29989`, `WARP_PRIME_B=17393`, `WARP_PRIME_C=11003` (triple-prime noise). Gradient: `GRAD_STEP=100`, `CONTRAST_MIDPOINT=0.5`, `CONTRAST_STEEPNESS=6.0`. Anisotropy: `MAX_ELONGATION=4.0` (macro plate stretch ratio at coastlines).
 
 **Caches:** `PlateCache` (macro grid cell → PlateCenter, supports both `plate_at` and `warped_plate_at`). `MicroplateCache` (micro sub-grid cell cache + macro assignment cache per micro ID, nests PlateCache). Per rayon row in viewer.
 
@@ -160,7 +160,9 @@ Client-server MMO built with Bevy ECS:
 
 4. **❌ Manual threat construction** - NEVER manually construct `QueuedThreat` in abilities. ALWAYS use `queue_utils::create_threat()` to ensure consistent timers (INV-003). Bypassing this breaks reaction window predictability.
 
-4. **❌ Test trivial code** - Test invariants ("PROXIMITY_RANGE > eviction distance"), not getters/setters. Tests should document architecture and survive refactors.
+5. **❌ Test trivial code** - Test invariants ("PROXIMITY_RANGE > eviction distance"), not getters/setters. Tests should document architecture and survive refactors.
+
+6. **❌ Spatial search for hex neighbors** - Hex grid neighbors are **coordinate offsets, not spatial searches.** A cell at `(q, r)` has exactly 6 neighbors at fixed offsets: `(±1, 0), (0, ±1), (+1, -1), (-1, +1)`. Look them up by key — if the key exists, it's a neighbor; if not, it's suppressed or uncached. **Never** scan rings, compute distances, test midpoints, or iterate candidate sets to find neighbors. These patterns have caused 100×+ performance regressions and are banned at every scale (macro plates, micro cells, game chunks, any hex grid). If you think you need a spatial search to find neighbors, you are wrong — rethink the data structure.
 
 ### Position/Movement Pitfalls
 
