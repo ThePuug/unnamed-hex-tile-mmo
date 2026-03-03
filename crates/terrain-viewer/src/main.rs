@@ -51,7 +51,7 @@ struct Cli {
 /// Warp strength above this → coastal (regime transition zone).
 /// Lowered from 500 because the pre-gradient sigmoid eliminates false
 /// coastal signal — only real coastlines have nonzero warp now.
-const COASTAL_WARP_THRESHOLD: f64 = 150.0;
+const COASTAL_WARP_THRESHOLD: f64 = 300.0;
 
 /// Per-micro-cell saturation offset range (±).
 const MICRO_SAT_RANGE: f64 = 0.15;
