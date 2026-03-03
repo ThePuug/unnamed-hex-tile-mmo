@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
             SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, REGIME_LAND_THRESHOLD,
-            WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C,
+            WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C, WARP_PRIME_D,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
             GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION};
 
@@ -44,19 +44,29 @@ const WARP_NOISE_SEED: u64 = 0xCCCC_DDDD_0001;
 const WARP_STRENGTH_SEED_A: u64 = 0xCCCC_DDDD_0002;
 const WARP_STRENGTH_SEED_B: u64 = 0xCCCC_DDDD_0003;
 const WARP_STRENGTH_SEED_C: u64 = 0xCCCC_DDDD_0004;
+const WARP_STRENGTH_SEED_D: u64 = 0xCCCC_DDDD_0005;
 
-/// Raw triple-prime noise value at position, normalized to [0, 1].
-/// Three summed simplex octaves at prime wavelengths (29989, 17393, 11003)
-/// with weights 1.0 / 0.5 / 0.25. LCM ≈ 5.7 trillion tiles — never repeats.
+const OCTAVE_WEIGHT_A: f64 = 1.0;
+const OCTAVE_WEIGHT_B: f64 = 0.5;
+const OCTAVE_WEIGHT_C: f64 = 0.25;
+const OCTAVE_WEIGHT_D: f64 = 0.25;
+const OCTAVE_DIVISOR: f64 = OCTAVE_WEIGHT_A + OCTAVE_WEIGHT_B + OCTAVE_WEIGHT_C + OCTAVE_WEIGHT_D;
+
+/// Raw quad-prime noise value at position, normalized to [0, 1].
+/// Four summed simplex octaves at prime wavelengths (29989, 17393, 11003, 4999)
+/// with weights OCTAVE_WEIGHT_A/B/C/D. LCM ≈ 28.5 trillion tiles — never repeats.
+/// The fourth octave (4999) adds peninsula-scale features: tongues of land or
+/// bays cutting into land at 3–6 macro plate scales.
 fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
     let a = simplex_2d(wx / WARP_PRIME_A, wy / WARP_PRIME_A, seed ^ WARP_STRENGTH_SEED_A);
     let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
     let c = simplex_2d(wx / WARP_PRIME_C, wy / WARP_PRIME_C, seed ^ WARP_STRENGTH_SEED_C);
-    let combined = (a + b * 0.5 + c * 0.25) / 1.75;
+    let d = simplex_2d(wx / WARP_PRIME_D, wy / WARP_PRIME_D, seed ^ WARP_STRENGTH_SEED_D);
+    let combined = (a * OCTAVE_WEIGHT_A + b * OCTAVE_WEIGHT_B + c * OCTAVE_WEIGHT_C + d * OCTAVE_WEIGHT_D) / OCTAVE_DIVISOR;
     ((combined + 1.0) * 0.5).clamp(0.0, 1.0)
 }
 
-/// UNCACHED — evaluates 3 simplex noise calls per invocation.
+/// UNCACHED — evaluates 4 simplex noise calls per invocation.
 /// Use `PlateCache::regime_value_at` for the cached API surface.
 ///
 /// Sigmoidized regime field — flat plateaus with sharp transition at midpoint.
@@ -73,8 +83,9 @@ pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
 }
 
 /// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.
+/// Sums weight/wavelength for all four octaves, divided by the normalization factor.
 const RAW_GRAD_MAX: f64 =
-    (1.0 / WARP_PRIME_C + 0.5 / WARP_PRIME_B + 0.25 / WARP_PRIME_A) / 1.75;
+    (OCTAVE_WEIGHT_A / WARP_PRIME_A + OCTAVE_WEIGHT_B / WARP_PRIME_B + OCTAVE_WEIGHT_C / WARP_PRIME_C + OCTAVE_WEIGHT_D / WARP_PRIME_D) / OCTAVE_DIVISOR;
 
 /// Estimated max gradient of the sigmoidized regime field per world unit.
 /// The sigmoid's peak derivative is steepness/4 (at the midpoint), so

@@ -164,6 +164,8 @@ Client-server MMO built with Bevy ECS:
 
 6. **❌ Spatial search for hex neighbors** - Hex grid neighbors are **coordinate offsets, not spatial searches.** A cell at `(q, r)` has exactly 6 neighbors at fixed offsets: `(±1, 0), (0, ±1), (+1, -1), (-1, +1)`. Look them up by key — if the key exists, it's a neighbor; if not, it's suppressed or uncached. **Never** scan rings, compute distances, test midpoints, or iterate candidate sets to find neighbors. These patterns have caused 100×+ performance regressions and are banned at every scale (macro plates, micro cells, game chunks, any hex grid). If you think you need a spatial search to find neighbors, you are wrong — rethink the data structure.
 
+7. **❌ Raw world coordinates as spatial authority** — **The chunk system is the spatial authority. INVARIANT.** Never filter or classify cells by raw `wx/wy` coordinates as a substitute for correct chunk marking. If chunk boundaries don't match the logical boundary you need, fix the chunk marking — don't add a parallel coordinate check that bypasses the chunk system. Two spatial authority systems = bugs. Example of the violation: using `wx.abs() <= half_w` to decide if a cell is "core" when the chunk `corrected` flag already encodes exactly that. Fix: use `is_cell_in_corrected_chunk(cq, cr)` or equivalent chunk-membership query.
+
 ### Position/Movement Pitfalls
 
 5. **Confuse Position vs VisualPosition**: Position=server authority, VisualPosition=visual interpolation only

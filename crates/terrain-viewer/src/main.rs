@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 use terrain::{
-    MicroplateCache, PlateCache, PlateCenter, MACRO_CELL_SIZE, MICRO_CELL_SIZE,
+    MicroplateCache, PlateCache, PlateCenter, MACRO_CELL_SIZE,
     REGIME_LAND_THRESHOLD,
 };
 
@@ -208,45 +208,43 @@ fn main() {
     log_step("Classify", plate_colors.len(), "plates", lap.elapsed());
     lap = Instant::now();
 
-    // ── Orphan correction (before pixel pass) ──
-    // Sample the viewport to discover all micro cells, run fix_orphans,
-    // then share corrected macro assignments with the parallel ID pass.
+    // ── Serial pre-pass: globally correct macro assignments over the viewport ──
+    //
+    // populate_region populates all chunks covering the viewport plus the full
+    // ORPHAN_CORRECTION_MARGIN (15 000 wu), runs fix_orphans over the combined
+    // region, then marks only the core (viewport) chunks corrected. Margin chunks
+    // are left uncorrected so the chunk system remains the spatial authority.
+    //
+    // all_macro_ids() extracts the corrected micro→macro mapping. The parallel
+    // pixel pass shares this map via Arc so each thread can look up the globally-
+    // correct macro assignment without re-running fix_orphans per thread.
 
-    let mut orphan_cache = MicroplateCache::new(seed);
-    let margin = MICRO_CELL_SIZE;
-    let sample_step = MICRO_CELL_SIZE * 0.5;
-    let mut sy = origin_y - margin;
-    while sy <= origin_y + diameter + margin {
-        let mut sx = origin_x - margin;
-        while sx <= origin_x + diameter + margin {
-            orphan_cache.plate_info_at(sx, sy);
-            sx += sample_step;
-        }
-        sy += sample_step;
-    }
-    let corrected = orphan_cache.fix_orphans();
-    let corrected_macros: Arc<HashMap<u64, u64>> = Arc::new(orphan_cache.all_macro_ids());
+    let mut pre_cache = MicroplateCache::new(seed);
+    pre_cache.populate_region(cli.center_x, cli.center_y, cli.radius, cli.radius);
+    let corrected: Arc<HashMap<u64, u64>> = Arc::new(pre_cache.all_macro_ids());
 
-    log_step("Orphans", corrected, "fixed", lap.elapsed());
+    log_step("Pre-pass", corrected.len(), "micro cells", lap.elapsed());
     lap = Instant::now();
 
     // ── Pass 1: compute plate IDs per pixel (cached, parallel by row) ──
-    // Micro cell lookup uses per-row cache; macro assignment reads from
-    // the pre-corrected shared map (no warped_plate_at per pixel).
+    // Each thread has its own MicroplateCache for micro-cell lookup.
+    // Macro assignments are overridden from the globally-corrected map
+    // produced by the serial pre-pass, eliminating orphan fragments.
 
     let id_grid: Vec<(u64, u64)> = (0..h)
         .into_par_iter()
         .map_init(
-            || (MicroplateCache::new(seed), corrected_macros.clone()),
-            |(cache, corrected), py| {
+            || MicroplateCache::new(seed),
+            |cache, py| {
                 (0..w).map(|px| {
                     let wx = origin_x + (px as f64) * scale;
                     let wy = origin_y + (py as f64) * scale;
+                    // micro_cell_at: cached micro lookup, no correction work.
+                    // Macro assignment comes from the pre-corrected map; the
+                    // thread-local cache is only here for micro-cell caching.
                     let micro = cache.micro_cell_at(wx, wy);
                     let macro_id = corrected.get(&micro.id).copied()
-                        .unwrap_or_else(|| {
-                            cache.plate_cache.warped_plate_at(micro.wx, micro.wy).id
-                        });
+                        .unwrap_or_else(|| terrain::macro_plate_for(&micro, seed).id);
                     (macro_id, micro.id)
                 }).collect::<Vec<_>>()
             },
@@ -370,11 +368,14 @@ fn main() {
         }
     }
 
-    // Macro plate centers — red (drawn on top of micro dots)
+    // Macro plate centroids — red dots at post-correction plate centers.
+    // Centroid = mean of corrected micro cell positions, not the hex lattice seed.
     let dot_radius = (4.0 / scale).max(2.0) as i32;
-    for plate in &plates {
-        let cx = ((plate.wx - origin_x) / scale) as i32;
-        let cy = ((plate.wy - origin_y) / scale) as i32;
+    let mut centroid_count = 0;
+    for centroid in pre_cache.centroids() {
+        centroid_count += 1;
+        let cx = ((centroid.wx - origin_x) / scale) as i32;
+        let cy = ((centroid.wy - origin_y) / scale) as i32;
         for dy in -dot_radius..=dot_radius {
             for dx in -dot_radius..=dot_radius {
                 if dx * dx + dy * dy <= dot_radius * dot_radius {
@@ -384,7 +385,7 @@ fn main() {
         }
     }
 
-    let marker_count = micro_accum.len() + plates.len();
+    let marker_count = micro_accum.len() + centroid_count;
     log_step("Markers", marker_count, "dots", lap.elapsed());
     lap = Instant::now();
 

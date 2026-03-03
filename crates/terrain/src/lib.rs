@@ -5,7 +5,7 @@ mod microplates;
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  regime_value_at, warp_strength_at};
-pub use microplates::{MicroplateCenter, MicroplateCache,
+pub use microplates::{MicroplateCenter, MicroplateCache, PlateCentroid,
                       micro_cell_at, macro_plate_for, plate_info_at,
                       micro_cells_for_macro, microplate_neighbors};
 
@@ -27,7 +27,7 @@ pub const JITTER_MAX: f64 = 0.45;
 pub const SUPPRESSION_RATE_MIN: f64 = 0.05;
 
 /// Maximum macro cell suppression rate (deep inland/water — few large plates).
-pub const SUPPRESSION_RATE_MAX: f64 = 0.40;
+pub const SUPPRESSION_RATE_MAX: f64 = 0.60;
 
 /// Regime classification threshold. Values below → water, above → land.
 /// Above the sigmoid midpoint (0.5) to shift balance toward more water.
@@ -41,11 +41,12 @@ pub const REGIME_LAND_THRESHOLD: f64 = 0.6;
 /// long enough that adjacent micro cells don't flip randomly.
 pub const WARP_NOISE_WAVELENGTH: f64 = 800.0;
 
-/// Triple-prime warp strength wavelengths. Summed simplex octaves whose
-/// LCM ≈ 5.7 trillion tiles — effectively never repeats.
+/// Quad-prime regime noise wavelengths. Summed simplex octaves whose
+/// LCM ≈ 28.5 trillion tiles — effectively never repeats.
 pub const WARP_PRIME_A: f64 = 29989.0;  // Continental scale
 pub const WARP_PRIME_B: f64 = 17393.0;  // Province scale
-pub const WARP_PRIME_C: f64 = 11003.0;  // Local scale
+pub const WARP_PRIME_C: f64 = 11003.0;  // Regional scale
+pub const WARP_PRIME_D: f64 =  4999.0;  // Peninsula scale
 
 /// Minimum warp strength — pure Voronoi, convex plates.
 pub const WARP_STRENGTH_MIN: f64 = 0.0;
@@ -71,12 +72,22 @@ pub const REGIME_SIGMOID_STEEPNESS: f64 = 40.0;
 /// Maximum noise stretch ratio along coastlines.
 /// At peak gradient, warp noise features are MAX_ELONGATION× longer
 /// along the coast than across it.
-pub const MAX_ELONGATION: f64 = 4.0;
+pub const MAX_ELONGATION: f64 = 8.0;
 
 // ──── Microplate Sub-Grid Constants ────
 
 /// Microplate hex lattice spacing in tiles (1/4 of macro).
 pub const MICRO_CELL_SIZE: f64 = 450.0;
+
+/// Margin to populate beyond the region of interest before running fix_orphans.
+///
+/// A micro cell is assigned to the macro plate whose seed wins the warped
+/// Voronoi contest. The worst-case distance from a micro cell to its winning
+/// seed is `MACRO_CELL_SIZE × MAX_ELONGATION + WARP_STRENGTH_MAX`. Populating
+/// this margin guarantees every plate seed that owns a cell inside the region
+/// is visible, so fix_orphans can always see the full main body.
+pub const ORPHAN_CORRECTION_MARGIN: f64 = MACRO_CELL_SIZE * MAX_ELONGATION + WARP_STRENGTH_MAX;
+// = 1800 × 8.0 + 600 = 15 000 world units
 
 /// Fraction of micro hex grid cells that produce no microplate center.
 /// Independent from macro CELL_SUPPRESSION_RATE.
