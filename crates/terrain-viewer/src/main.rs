@@ -6,8 +6,8 @@ use clap::{Parser, ValueEnum};
 use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 use terrain::{
-    MicroplateCache, PlateCache, PlateCenter, MACRO_CELL_SIZE,
-    REGIME_LAND_THRESHOLD,
+    MicroCellGeometry, MicroplateCache, PlateCentroid, PlateCache, PlateCenter,
+    MACRO_CELL_SIZE, REGIME_LAND_THRESHOLD,
 };
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -222,27 +222,30 @@ fn main() {
     let mut pre_cache = MicroplateCache::new(seed);
     pre_cache.populate_region(cli.center_x, cli.center_y, cli.radius, cli.radius);
     let corrected: Arc<HashMap<u64, u64>> = Arc::new(pre_cache.all_macro_ids());
+    // Collect centroids before consuming pre_cache via take_geometry.
+    let plate_centroids: Vec<PlateCentroid> = pre_cache.centroids().cloned().collect();
+    // Share the pre-warmed geometry across rayon threads. Geometry is read-only
+    // after population — no per-thread rebuilding, no regime_value_at per pixel.
+    let shared_geometry: Arc<MicroCellGeometry> = Arc::new(pre_cache.take_geometry());
 
     log_step("Pre-pass", corrected.len(), "micro cells", lap.elapsed());
     lap = Instant::now();
 
-    // ── Pass 1: compute plate IDs per pixel (cached, parallel by row) ──
-    // Each thread has its own MicroplateCache for micro-cell lookup.
-    // Macro assignments are overridden from the globally-corrected map
-    // produced by the serial pre-pass, eliminating orphan fragments.
+    // ── Pass 1: compute plate IDs per pixel (parallel by row) ──
+    // All threads share the pre-warmed Arc<MicroCellGeometry>. Each pixel calls
+    // geom.lookup() — a read-only search over pre-populated chunks. No geometry
+    // rebuilding, no regime_value_at calls per pixel. Macro assignments come from
+    // the globally-corrected map produced by the serial pre-pass.
 
     let id_grid: Vec<(u64, u64)> = (0..h)
         .into_par_iter()
         .map_init(
-            || MicroplateCache::new(seed),
-            |cache, py| {
+            || Arc::clone(&shared_geometry),
+            |geom, py| {
                 (0..w).map(|px| {
                     let wx = origin_x + (px as f64) * scale;
                     let wy = origin_y + (py as f64) * scale;
-                    // micro_cell_at: cached micro lookup, no correction work.
-                    // Macro assignment comes from the pre-corrected map; the
-                    // thread-local cache is only here for micro-cell caching.
-                    let micro = cache.micro_cell_at(wx, wy);
+                    let micro = geom.lookup(wx, wy);
                     let macro_id = corrected.get(&micro.id).copied()
                         .unwrap_or_else(|| terrain::macro_plate_for(&micro, seed).id);
                     (macro_id, micro.id)
@@ -372,7 +375,7 @@ fn main() {
     // Centroid = mean of corrected micro cell positions, not the hex lattice seed.
     let dot_radius = (4.0 / scale).max(2.0) as i32;
     let mut centroid_count = 0;
-    for centroid in pre_cache.centroids() {
+    for centroid in &plate_centroids {
         centroid_count += 1;
         let cx = ((centroid.wx - origin_x) / scale) as i32;
         let cy = ((centroid.wy - origin_y) / scale) as i32;

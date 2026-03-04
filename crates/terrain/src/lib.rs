@@ -5,9 +5,9 @@ mod microplates;
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  regime_value_at, warp_strength_at};
-pub use microplates::{MicroplateCenter, MicroplateCache, PlateCentroid,
+pub use microplates::{MicroCellGeometry, MicroplateCenter, MicroplateCache, PlateCentroid,
                       micro_cell_at, macro_plate_for, plate_info_at,
-                      micro_cells_for_macro, microplate_neighbors};
+                      micro_cells_for_macro};
 
 // ──── Constants ────
 
@@ -89,9 +89,11 @@ pub const MICRO_CELL_SIZE: f64 = 450.0;
 pub const ORPHAN_CORRECTION_MARGIN: f64 = MACRO_CELL_SIZE * MAX_ELONGATION + WARP_STRENGTH_MAX;
 // = 1800 × 8.0 + 600 = 15 000 world units
 
-/// Fraction of micro hex grid cells that produce no microplate center.
-/// Independent from macro CELL_SUPPRESSION_RATE.
-pub const MICRO_SUPPRESSION_RATE: f64 = 0.20;
+/// Micro cell suppression rate — uniform across all terrain types.
+/// Shape variation comes from jitter, not density modulation.
+pub const MICRO_SUPPRESSION_RATE: f64 = 0.0;
+
+// ──── Microplate Jitter Constants ────
 
 /// Noise wavelength for microplate jitter modulation.
 pub const MICRO_JITTER_WAVELENGTH: f64 = 5000.0;
@@ -100,7 +102,7 @@ pub const MICRO_JITTER_WAVELENGTH: f64 = 5000.0;
 pub const MICRO_JITTER_MIN: f64 = 0.10;
 
 /// Maximum microplate jitter factor.
-pub const MICRO_JITTER_MAX: f64 = 0.40;
+pub const MICRO_JITTER_MAX: f64 = 0.0;
 
 // ──── Coordinate Conversion ────
 

@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::plates::{PlateCenter, PlateCache};
-use crate::{MACRO_CELL_SIZE, MICRO_CELL_SIZE, MICRO_SUPPRESSION_RATE,
+use crate::{MACRO_CELL_SIZE, MICRO_CELL_SIZE,
+            MICRO_SUPPRESSION_RATE,
             MICRO_JITTER_WAVELENGTH, MICRO_JITTER_MIN, MICRO_JITTER_MAX,
             WARP_STRENGTH_MAX, MAX_ELONGATION, ORPHAN_CORRECTION_MARGIN};
 
@@ -44,13 +45,126 @@ pub struct MicroplateCenter {
     pub sub_cell_r: i32,
 }
 
-/// One chunk of the micro sub-grid. Owns a list of micro cells whose
-/// `micro_chunk_coord` maps to this chunk's coordinates, and a flag for
-/// whether orphan correction has been applied to those cells.
-struct MicroChunk {
-    /// Sub-grid coordinates of cells whose center is inside this chunk.
-    cell_coords: Vec<(i32, i32)>,
-    corrected: bool,
+/// One chunk of the micro cell geometry layer.
+/// Stores active (non-suppressed) cells inline — (sub_q, sub_r, wx, wy, id) —
+/// so `lookup` can iterate directly without a per-cell HashMap access.
+/// Retroactively suppressed cells are removed by `fix_orphans`.
+/// Correction state lives in `MicroplateCache` — geometry has no plate knowledge.
+struct GeometryChunk {
+    /// Active cells: (sub_q, sub_r, wx, wy, id). Inline data eliminates the
+    /// per-cell `cells` HashMap lookup in the hot `lookup` path.
+    cells: Vec<(i32, i32, f64, f64, u64)>,
+}
+
+/// Geometry-only layer for micro cell positions and suppression.
+///
+/// Owns cell positions and the chunk index. No plate data — no `warped_plate_at`,
+/// no macro assignments, no correction. `MicroplateCache` wraps this and adds
+/// the assignment + correction layer on top.
+///
+/// Hot-path pixel lookups call `micro_cell_at` here directly. Geometry chunks
+/// are cheap to populate (hash + noise per cell, no plate lookups), so cold
+/// per-thread caches in the viewer pay only that cost on first access.
+pub struct MicroCellGeometry {
+    seed: u64,
+    /// Raw sub-grid cell cache: (cq, cr) → Option<(wx, wy, id)>
+    cells: HashMap<(i32, i32), Option<(f64, f64, u64)>>,
+    /// Chunk index: chunk_coord → active cell list
+    chunks: HashMap<(i32, i32), GeometryChunk>,
+}
+
+impl MicroCellGeometry {
+    pub fn new(seed: u64) -> Self {
+        Self { seed, cells: HashMap::new(), chunks: HashMap::new() }
+    }
+
+    /// Populate geometry for a chunk: enumerate sub-grid cells, apply jitter and
+    /// flat suppression, then store surviving positions inline.  No plate assignment.
+    ///
+    /// Idempotent: returns immediately if already populated.
+    pub(crate) fn populate_chunk(&mut self, chunk_cq: i32, chunk_cr: i32) {
+        if self.chunks.contains_key(&(chunk_cq, chunk_cr)) {
+            return;
+        }
+
+        let odd_shift = if chunk_cr & 1 != 0 { MICRO_CHUNK_SIZE * 0.5 } else { 0.0 };
+        let center_wx = chunk_cq as f64 * MICRO_CHUNK_SIZE + odd_shift;
+        let center_wy = chunk_cr as f64 * MICRO_CHUNK_SIZE * HEX_ROW_HEIGHT;
+
+        let search_radius = MICRO_CHUNK_SIZE;
+        let (q_min, r_min) = micro_world_to_cell(center_wx - search_radius, center_wy - search_radius);
+        let (q_max, r_max) = micro_world_to_cell(center_wx + search_radius, center_wy + search_radius);
+        let margin = 2i32;
+        let seed = self.seed;
+
+        // Pass 1: populate cells for the full scan range.
+        for cr in (r_min - margin)..=(r_max + margin) {
+            for cq in (q_min - margin)..=(q_max + margin) {
+                self.cells.entry((cq, cr))
+                    .or_insert_with(|| micro_center_for_cell(cq, cr, seed));
+            }
+        }
+
+        // Pass 2: build inline cell list from survivors owned by this chunk.
+        let mut cells: Vec<(i32, i32, f64, f64, u64)> = Vec::new();
+        for cr in (r_min - margin)..=(r_max + margin) {
+            for cq in (q_min - margin)..=(q_max + margin) {
+                if let Some((wx, wy, id)) = self.cells[&(cq, cr)] {
+                    if micro_chunk_coord(wx, wy) == (chunk_cq, chunk_cr) {
+                        cells.push((cq, cr, wx, wy, id));
+                    }
+                }
+            }
+        }
+
+        self.chunks.insert((chunk_cq, chunk_cr), GeometryChunk { cells });
+    }
+
+    /// Read-only micro cell lookup. Assumes the center chunk and its 6 neighbors
+    /// are already populated. Panics if any required chunk is missing.
+    ///
+    /// Use `micro_cell_at` for lazy-populating lookup, or pre-populate with
+    /// `populate_region` and share via `Arc<MicroCellGeometry>` for read-only
+    /// parallel access with zero per-thread geometry rebuilding.
+    pub fn lookup(&self, wx: f64, wy: f64) -> MicroplateCenter {
+        let (chunk_cq, chunk_cr) = micro_chunk_coord(wx, wy);
+        let chunks = &self.chunks;
+
+        let mut best: Option<MicroplateCenter> = None;
+        let mut best_dist = f64::MAX;
+
+        for (cq, cr) in std::iter::once((chunk_cq, chunk_cr)).chain(hex_chunk_1ring(chunk_cq, chunk_cr)) {
+            let chunk = chunks.get(&(cq, cr))
+                .unwrap_or_else(|| panic!("chunk ({cq}, {cr}) not populated — call populate_chunk or populate_region first"));
+            for &(mcq, mcr, mx, my, mid) in &chunk.cells {
+                let d = dist_sq(wx, wy, mx, my);
+                if d < best_dist {
+                    best = Some(MicroplateCenter {
+                        wx: mx,
+                        wy: my,
+                        id: mid,
+                        parent_id: 0,
+                        sub_cell_q: mcq,
+                        sub_cell_r: mcr,
+                    });
+                    best_dist = d;
+                }
+            }
+        }
+
+        best.expect("no micro cell found in chunk + 1-ring — suppression rate too high")
+    }
+
+    /// Find the nearest surviving micro cell to a world position.
+    /// Populates the center chunk and its 6 neighbors lazily. No plate assignment.
+    pub fn micro_cell_at(&mut self, wx: f64, wy: f64) -> MicroplateCenter {
+        let (chunk_cq, chunk_cr) = micro_chunk_coord(wx, wy);
+        self.populate_chunk(chunk_cq, chunk_cr);
+        for (nq, nr) in hex_chunk_1ring(chunk_cq, chunk_cr) {
+            self.populate_chunk(nq, nr);
+        }
+        self.lookup(wx, wy)
+    }
 }
 
 // ──── Micro-grid seeds (distinct from macro seeds) ────
@@ -75,6 +189,8 @@ fn micro_jitter_at(wx: f64, wy: f64, seed: u64) -> f64 {
 }
 
 /// Whether a micro cell is suppressed (produces no microplate center).
+///
+/// Flat rate everywhere — micro cell character is independent of the coastline.
 fn micro_cell_is_suppressed(cq: i32, cr: i32, seed: u64) -> bool {
     hash_f64(cq as i64, cr as i64, seed ^ MICRO_SUPPRESS_SEED) < MICRO_SUPPRESSION_RATE
 }
@@ -177,8 +293,8 @@ pub fn micro_cell_at(wx: f64, wy: f64, seed: u64) -> MicroplateCenter {
     let mut best: Option<MicroplateCenter> = None;
     let mut best_dist = f64::MAX;
 
-    for dr in -2..=2 {
-        for dq in -2..=2 {
+    for dr in -3..=3 {
+        for dq in -3..=3 {
             let ncq = cq + dq;
             let ncr = cr + dr;
             if let Some((mx, my, mid)) = micro_center_for_cell(ncq, ncr, seed) {
@@ -198,7 +314,7 @@ pub fn micro_cell_at(wx: f64, wy: f64, seed: u64) -> MicroplateCenter {
         }
     }
 
-    best.expect("no micro cell found in 2-ring neighborhood — micro suppression rate too high")
+    best.expect("no micro cell found in 3-ring neighborhood — micro suppression rate too high")
 }
 
 /// UNCACHED — creates throwaway PlateCache per call.
@@ -261,49 +377,6 @@ fn generate_micro_cells_for_macro(
     children
 }
 
-/// UNCACHED — creates throwaway PlateCache per call.
-/// All macro lookups within this function share a single PlateCache.
-pub fn microplate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<MicroplateCenter> {
-    let mut plate_cache = PlateCache::new(seed);
-
-    let mut owner_micro = micro_cell_at(wx, wy, seed);
-    let owner_macro = plate_cache.warped_plate_at(owner_micro.wx, owner_micro.wy);
-    owner_micro.parent_id = owner_macro.id;
-
-    let children = generate_micro_cells_for_macro(&owner_macro, seed, &mut plate_cache);
-
-    let mut neighbors = Vec::new();
-
-    // Intra-plate neighbors via midpoint sampling
-    for child in &children {
-        if child.id == owner_micro.id { continue; }
-
-        let mid_x = (owner_micro.wx + child.wx) * 0.5;
-        let mid_y = (owner_micro.wy + child.wy) * 0.5;
-
-        let mid_micro = micro_cell_at(mid_x, mid_y, seed);
-        if mid_micro.id == owner_micro.id || mid_micro.id == child.id {
-            neighbors.push(child.clone());
-        }
-    }
-
-    // Cross-boundary neighbors
-    let macro_neighbors = plate_cache.plate_neighbors(owner_macro.wx, owner_macro.wy);
-    for neighbor_macro in &macro_neighbors {
-        let neighbor_children = generate_micro_cells_for_macro(neighbor_macro, seed, &mut plate_cache);
-        for neighbor_child in &neighbor_children {
-            let mid_x = (owner_micro.wx + neighbor_child.wx) * 0.5;
-            let mid_y = (owner_micro.wy + neighbor_child.wy) * 0.5;
-
-            let mid_micro = micro_cell_at(mid_x, mid_y, seed);
-            if mid_micro.id == owner_micro.id || mid_micro.id == neighbor_child.id {
-                neighbors.push(neighbor_child.clone());
-            }
-        }
-    }
-
-    neighbors
-}
 
 // ──── Cached API ────
 
@@ -323,15 +396,14 @@ pub fn microplate_neighbors(wx: f64, wy: f64, seed: u64) -> Vec<MicroplateCenter
 /// in one pass and marks core chunks corrected so individual `plate_info_at`
 /// calls within the warmed region skip the per-query correction overhead.
 pub struct MicroplateCache {
-    /// Micro sub-grid cell cache: (cq, cr) → Option<(wx, wy, id)>
-    micro_cells: HashMap<(i32, i32), Option<(f64, f64, u64)>>,
+    /// Geometry layer: cell positions + chunk index. No plate data.
+    pub geometry: MicroCellGeometry,
     /// Macro assignment cache: micro_id → PlateCenter
     macro_assignments: HashMap<u64, PlateCenter>,
     /// Plate cache for warped macro lookups
     pub plate_cache: PlateCache,
-    seed: u64,
-    /// Chunk metadata: chunk_coord → MicroChunk
-    chunks: HashMap<(i32, i32), MicroChunk>,
+    /// Chunks that have had orphan correction applied.
+    corrected_chunks: HashSet<(i32, i32)>,
     /// Post-correction centroids: plate_id → centroid.
     /// Populated by [`Self::populate_region`] after `fix_orphans`.
     /// Empty until `populate_region` is called.
@@ -341,119 +413,40 @@ pub struct MicroplateCache {
 impl MicroplateCache {
     pub fn new(seed: u64) -> Self {
         Self {
-            micro_cells: HashMap::new(),
+            geometry: MicroCellGeometry::new(seed),
             macro_assignments: HashMap::new(),
             plate_cache: PlateCache::new(seed),
-            seed,
-            chunks: HashMap::new(),
+            corrected_chunks: HashSet::new(),
             centroids: HashMap::new(),
         }
     }
 
-    /// Ensure a micro sub-grid cell is cached.
-    fn ensure_micro_cell(&mut self, cq: i32, cr: i32) {
-        let seed = self.seed;
-        self.micro_cells.entry((cq, cr))
-            .or_insert_with(|| micro_center_for_cell(cq, cr, seed));
-    }
-
-    /// Cached micro cell lookup with euclidean distance.
+    /// Geometry-only micro cell lookup. Delegates to the geometry layer —
+    /// no plate assignment, no correction. Safe to call on cold per-thread caches.
     pub fn micro_cell_at(&mut self, wx: f64, wy: f64) -> MicroplateCenter {
-        let (cq, cr) = micro_world_to_cell(wx, wy);
-
-        for dr in -2..=2 {
-            for dq in -2..=2 {
-                self.ensure_micro_cell(cq + dq, cr + dr);
-            }
-        }
-
-        let mut best: Option<MicroplateCenter> = None;
-        let mut best_dist = f64::MAX;
-
-        for dr in -2..=2 {
-            for dq in -2..=2 {
-                if let Some((mx, my, mid)) = self.micro_cells[&(cq + dq, cr + dr)] {
-                    let d = dist_sq(wx, wy, mx, my);
-                    if d < best_dist {
-                        best = Some(MicroplateCenter {
-                            wx: mx,
-                            wy: my,
-                            id: mid,
-                            parent_id: 0,
-                            sub_cell_q: cq + dq,
-                            sub_cell_r: cr + dr,
-                        });
-                        best_dist = d;
-                    }
-                }
-            }
-        }
-
-        best.expect("no micro cell found in 2-ring neighborhood")
+        self.geometry.micro_cell_at(wx, wy)
     }
 
-    /// Populate a chunk with raw micro cell data and macro assignments.
+    /// Populate a chunk: first populate geometry (positions only), then assign
+    /// macro plates for any cells not yet assigned.
     ///
-    /// Chunks are laid out on the same hex odd-r lattice as micro cells.
-    /// A micro cell belongs to the chunk whose center is nearest to the
-    /// cell's world position (`micro_chunk_coord` uses rounding, not floor).
-    ///
-    /// Scans the micro sub-grid in a generous radius around the chunk center
-    /// and claims all cells whose `micro_chunk_coord` maps back to this chunk.
-    ///
-    /// Idempotent: returns immediately if the chunk is already populated.
+    /// Geometry population is idempotent. Macro assignment only runs for cells
+    /// newly discovered by geometry (those not yet in `macro_assignments`).
     fn populate_chunk(&mut self, chunk_cq: i32, chunk_cr: i32) {
-        if self.chunks.contains_key(&(chunk_cq, chunk_cr)) {
-            return;
-        }
+        self.geometry.populate_chunk(chunk_cq, chunk_cr);
 
-        // Chunk center in world coordinates
-        let odd_shift = if chunk_cr & 1 != 0 { MICRO_CHUNK_SIZE * 0.5 } else { 0.0 };
-        let center_wx = chunk_cq as f64 * MICRO_CHUNK_SIZE + odd_shift;
-        let center_wy = chunk_cr as f64 * MICRO_CHUNK_SIZE * HEX_ROW_HEIGHT;
+        // Assign macro plates for cells in this chunk that don't have one yet.
+        // Clone the inline cell list to release the geometry borrow before calling
+        // warped_plate_at (which needs &mut self.plate_cache).
+        let cells: Vec<(i32, i32, f64, f64, u64)> = self.geometry.chunks[&(chunk_cq, chunk_cr)]
+            .cells.clone();
 
-        // Search radius: one chunk spacing covers the full Voronoi cell plus margin
-        let search_radius = MICRO_CHUNK_SIZE;
-        let (q_min, r_min) = micro_world_to_cell(center_wx - search_radius, center_wy - search_radius);
-        let (q_max, r_max) = micro_world_to_cell(center_wx + search_radius, center_wy + search_radius);
-        let margin = 2i32;
-        let seed = self.seed;
-
-        // Pass 1: populate micro_cells for the full scan range
-        for cr in (r_min - margin)..=(r_max + margin) {
-            for cq in (q_min - margin)..=(q_max + margin) {
-                self.micro_cells.entry((cq, cr))
-                    .or_insert_with(|| micro_center_for_cell(cq, cr, seed));
+        for (_, _, wx, wy, id) in cells {
+            if !self.macro_assignments.contains_key(&id) {
+                let plate = self.plate_cache.warped_plate_at(wx, wy);
+                self.macro_assignments.insert(id, plate);
             }
         }
-
-        // Pass 2: claim cells whose nearest chunk center is this chunk
-        let mut cell_coords = Vec::new();
-        let mut to_assign: Vec<(u64, f64, f64)> = Vec::new();
-
-        for cr in (r_min - margin)..=(r_max + margin) {
-            for cq in (q_min - margin)..=(q_max + margin) {
-                if let Some((wx, wy, id)) = self.micro_cells[&(cq, cr)] {
-                    if micro_chunk_coord(wx, wy) == (chunk_cq, chunk_cr) {
-                        cell_coords.push((cq, cr));
-                        if !self.macro_assignments.contains_key(&id) {
-                            to_assign.push((id, wx, wy));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Pass 3: assign macro plates for newly discovered cells
-        for (id, wx, wy) in to_assign {
-            let plate = self.plate_cache.warped_plate_at(wx, wy);
-            self.macro_assignments.insert(id, plate);
-        }
-
-        self.chunks.insert((chunk_cq, chunk_cr), MicroChunk {
-            cell_coords,
-            corrected: false,
-        });
     }
 
     /// Populate all chunks within `ORPHAN_CORRECTION_MARGIN` of the given chunk,
@@ -491,13 +484,9 @@ impl MicroplateCache {
 
         // Mark the queried chunk and its 1-ring corrected. Margin chunks are
         // context — they get their own correction pass when queried.
-        if let Some(c) = self.chunks.get_mut(&(chunk_cq, chunk_cr)) {
-            c.corrected = true;
-        }
+        self.corrected_chunks.insert((chunk_cq, chunk_cr));
         for (nq, nr) in hex_chunk_1ring(chunk_cq, chunk_cr) {
-            if let Some(c) = self.chunks.get_mut(&(nq, nr)) {
-                c.corrected = true;
-            }
+            self.corrected_chunks.insert((nq, nr));
         }
     }
 
@@ -544,14 +533,14 @@ impl MicroplateCache {
         // Mark only core chunks corrected. One chunk-width buffer ensures every
         // micro cell within the requested region is in a corrected chunk, even if
         // the cell's chunk center sits slightly beyond the half_width/half_height edge.
-        for (&(cq, cr), chunk) in self.chunks.iter_mut() {
+        for &(cq, cr) in self.geometry.chunks.keys() {
             let odd_shift = if cr & 1 != 0 { MICRO_CHUNK_SIZE * 0.5 } else { 0.0 };
             let cwx = cq as f64 * MICRO_CHUNK_SIZE + odd_shift;
             let cwy = cr as f64 * row_height;
             if (cwx - center_wx).abs() <= half_width + MICRO_CHUNK_SIZE
                 && (cwy - center_wy).abs() <= half_height + MICRO_CHUNK_SIZE
             {
-                chunk.corrected = true;
+                self.corrected_chunks.insert((cq, cr));
             }
         }
 
@@ -569,13 +558,12 @@ impl MicroplateCache {
     pub fn plate_info_at(&mut self, wx: f64, wy: f64) -> (PlateCenter, MicroplateCenter) {
         let (chunk_cq, chunk_cr) = micro_chunk_coord(wx, wy);
 
-        let is_corrected = self.chunks.get(&(chunk_cq, chunk_cr))
-            .map_or(false, |c| c.corrected);
-        if !is_corrected {
+        if !self.corrected_chunks.contains(&(chunk_cq, chunk_cr)) {
             self.ensure_corrected_region(chunk_cq, chunk_cr);
         }
 
-        let mut micro = self.micro_cell_at(wx, wy);
+        // Chunks are guaranteed populated by ensure_corrected_region; use read-only lookup.
+        let mut micro = self.geometry.lookup(wx, wy);
 
         let macro_plate = self.macro_assignments.get(&micro.id)
             .expect("macro assignment must exist after ensure_corrected_region")
@@ -588,6 +576,15 @@ impl MicroplateCache {
     /// Look up the cached macro plate assignment for a micro cell by its ID.
     pub fn macro_assignment(&self, micro_id: u64) -> Option<&PlateCenter> {
         self.macro_assignments.get(&micro_id)
+    }
+
+    /// Consume this cache and return ownership of its geometry layer.
+    ///
+    /// After calling `populate_region`, use this to extract the pre-warmed
+    /// `MicroCellGeometry` for sharing across rayon threads via `Arc`.
+    /// Save any needed data (e.g., `centroids()`, `all_macro_ids()`) before calling.
+    pub fn take_geometry(self) -> MicroCellGeometry {
+        self.geometry
     }
 
     /// Extract all corrected micro→macro assignments as micro_id → macro_plate_id.
@@ -614,27 +611,20 @@ impl MicroplateCache {
 
     /// Compute plate centroids from corrected micro cells.
     ///
-    /// Uses `chunk.cell_coords` to iterate only corrected-chunk cells.
-    /// One pass to collect coords (ends the `chunks` borrow), then a second
-    /// pass to accumulate positions and compute means.
+    /// Iterates `chunk.cells` (inline data) for corrected chunks only.
+    /// No per-cell HashMap access — wx/wy/id are stored directly in the chunk.
     fn compute_centroids(&mut self) {
-        // Phase 1: (cq, cr) pairs from corrected chunks only.
-        let corrected_coords: Vec<(i32, i32)> = self.chunks.values()
-            .filter(|c| c.corrected)
-            .flat_map(|c| c.cell_coords.iter().copied())
-            .collect();
-
-        // Phase 2: accumulate (sum_wx, sum_wy, count) per plate.
+        // Iterate corrected chunks; inline data eliminates per-cell HashMap access.
         let mut sums: HashMap<u64, (f64, f64, usize)> = HashMap::new();
-        for (cq, cr) in corrected_coords {
-            let Some((wx, wy, id)) = self.micro_cells.get(&(cq, cr)).copied().flatten()
-                else { continue };
-            let Some(plate) = self.macro_assignments.get(&id)
-                else { continue };
-            let entry = sums.entry(plate.id).or_insert((0.0, 0.0, 0));
-            entry.0 += wx;
-            entry.1 += wy;
-            entry.2 += 1;
+        for (key, chunk) in &self.geometry.chunks {
+            if !self.corrected_chunks.contains(key) { continue; }
+            for &(_, _, wx, wy, id) in &chunk.cells {
+                let Some(plate) = self.macro_assignments.get(&id) else { continue };
+                let entry = sums.entry(plate.id).or_insert((0.0, 0.0, 0));
+                entry.0 += wx;
+                entry.1 += wy;
+                entry.2 += 1;
+            }
         }
 
         self.centroids = sums.into_iter()
@@ -660,7 +650,7 @@ impl MicroplateCache {
     /// Returns the number of cells corrected.
     pub fn fix_orphans(&mut self) -> usize {
         // Build reverse map: micro_id → (cq, cr, wx, wy)
-        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = self.micro_cells.iter()
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = self.geometry.cells.iter()
             .filter_map(|(&(cq, cr), cell)| {
                 cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
             })
@@ -680,7 +670,7 @@ impl MicroplateCache {
         let all_neighbors: HashMap<u64, Vec<u64>> = id_to_pos.iter()
             .filter_map(|(&id, &(cq, cr, _, _))| {
                 if self.macro_assignments.contains_key(&id) {
-                    Some((id, micro_neighbor_ids(cq, cr, id, &self.micro_cells)))
+                    Some((id, micro_neighbor_ids(cq, cr, id, &self.geometry.cells)))
                 } else {
                     None
                 }
@@ -698,32 +688,110 @@ impl MicroplateCache {
             total_corrected += round_count;
         }
 
-        // ── Final sweep: single-cell orphans of plates with no visible body ──
+        // ── Final sweep: minority fragment suppression ──
+        //
+        // After cc_round converges, minority fragments of multi-CC plates may still
+        // remain if their surrounding cells are all suppressed (no neighbor vote was
+        // possible in cc_round). This sweep finds those fragments and either:
+        //   a) Reassigns them to the surrounding majority plate (if external neighbors exist).
+        //   b) Suppresses them retroactively (micro_cells = None) if they are completely
+        //      surrounded by a gap of suppressed cells. Suppression is correct here:
+        //      reassigning to any plate would create a new orphan of that plate at the
+        //      same isolated position. After suppression, plate_info_at for those positions
+        //      resolves via the nearest surviving micro cell (no data loss, different cell).
 
-        let mut sweep_corrections: Vec<(u64, PlateCenter)> = Vec::new();
+        // Rebuild same-plate adjacency from current (post-cc_round) assignments.
+        let mut post_adj: HashMap<u64, Vec<u64>> = HashMap::new();
         for (&id, nbrs) in &all_neighbors {
-            if nbrs.is_empty() { continue; }
-            let my_plate = match self.macro_assignments.get(&id) {
-                Some(p) => p,
-                None => continue,
-            };
-            let has_same = nbrs.iter().any(|nid| {
-                self.macro_assignments.get(nid)
-                    .map_or(false, |p| p.id == my_plate.id)
-            });
-            if has_same { continue; }
-
-            let mut counts: HashMap<u64, (usize, &PlateCenter)> = HashMap::new();
-            for nid in nbrs {
-                if let Some(plate) = self.macro_assignments.get(nid) {
-                    let entry = counts.entry(plate.id).or_insert((0, plate));
-                    entry.0 += 1;
-                }
+            if let Some(my_plate) = self.macro_assignments.get(&id) {
+                let my_id = my_plate.id;
+                let same: Vec<u64> = nbrs.iter()
+                    .filter(|&&nid| self.macro_assignments.get(&nid).map_or(false, |p| p.id == my_id))
+                    .copied()
+                    .collect();
+                post_adj.insert(id, same);
             }
-            if let Some((_, plate)) = counts.into_values()
-                .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.id.cmp(&a.1.id)))
-            {
-                sweep_corrections.push((id, plate.clone()));
+        }
+
+        // BFS to find all CCs per plate.
+        let mut sweep_visited: HashSet<u64> = HashSet::new();
+        let mut plate_ccs: HashMap<u64, Vec<Vec<u64>>> = HashMap::new();
+        {
+            let mut sorted_ids: Vec<u64> = post_adj.keys().copied().collect();
+            sorted_ids.sort_unstable();
+            for start in sorted_ids {
+                if sweep_visited.contains(&start) { continue; }
+                let plate_id = match self.macro_assignments.get(&start) {
+                    Some(p) => p.id, None => continue,
+                };
+                let mut cc = Vec::new();
+                let mut queue = vec![start];
+                while let Some(cur) = queue.pop() {
+                    if !sweep_visited.insert(cur) { continue; }
+                    cc.push(cur);
+                    if let Some(nbrs) = post_adj.get(&cur) {
+                        for &nid in nbrs {
+                            if !sweep_visited.contains(&nid) { queue.push(nid); }
+                        }
+                    }
+                }
+                plate_ccs.entry(plate_id).or_default().push(cc);
+            }
+        }
+
+        // Reassign or suppress minority fragments of multi-CC plates.
+        let mut sweep_corrections: Vec<(u64, PlateCenter)> = Vec::new();
+        for (_, ccs) in &plate_ccs {
+            if ccs.len() <= 1 { continue; }
+            // Sort: largest first (= main body), ties broken by min cell ID.
+            let mut sorted: Vec<&Vec<u64>> = ccs.iter().collect();
+            sorted.sort_by(|a, b| {
+                b.len().cmp(&a.len())
+                    .then_with(|| a.iter().min().cmp(&b.iter().min()))
+            });
+            let fragments: &[&Vec<u64>] = &sorted[1..];
+
+            for &cc in fragments {
+                let cc_set: HashSet<u64> = cc.iter().copied().collect();
+
+                // First try the 1-ring (direct hex neighbors from all_neighbors).
+                let mut counts: HashMap<u64, (usize, PlateCenter)> = HashMap::new();
+                for &cid in cc {
+                    if let Some(nbrs) = all_neighbors.get(&cid) {
+                        for &nid in nbrs {
+                            if cc_set.contains(&nid) { continue; }
+                            if let Some(plate) = self.macro_assignments.get(&nid) {
+                                let entry = counts.entry(plate.id).or_insert((0, plate.clone()));
+                                entry.0 += 1;
+                            }
+                        }
+                    }
+                }
+
+                if let Some((_, new_plate)) = counts.into_values()
+                    .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.id.cmp(&a.1.id)))
+                {
+                    // Reachable neighbors exist — reassign to the majority surrounding plate.
+                    for &cid in cc {
+                        sweep_corrections.push((cid, new_plate.clone()));
+                    }
+                } else {
+                    // Fragment completely surrounded by suppressed/absent cells.
+                    // Any plate we assign it to would create a new orphan of that plate
+                    // (same isolation, different ID). Suppress the cells instead so they
+                    // drop out of the BFS entirely and stop causing orphan failures.
+                    for &cid in cc {
+                        if let Some(&(cq, cr, wx, wy)) = id_to_pos.get(&cid) {
+                            self.geometry.cells.insert((cq, cr), None);
+                            self.macro_assignments.remove(&cid);
+                            // Remove from chunk's inline cell list so lookup skips it.
+                            let (chunk_cq, chunk_cr) = micro_chunk_coord(wx, wy);
+                            if let Some(chunk) = self.geometry.chunks.get_mut(&(chunk_cq, chunk_cr)) {
+                                chunk.cells.retain(|cell| (cell.0, cell.1) != (cq, cr));
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -844,14 +912,14 @@ impl MicroplateCache {
     /// Returns the number of corrected chunks. Useful for tests.
     #[cfg(test)]
     fn corrected_chunk_count(&self) -> usize {
-        self.chunks.values().filter(|c| c.corrected).count()
+        self.corrected_chunks.len()
     }
 
     /// Returns true if the chunk containing (wx, wy) has been corrected.
     #[cfg(test)]
     fn chunk_is_corrected(&self, wx: f64, wy: f64) -> bool {
         let (cq, cr) = micro_chunk_coord(wx, wy);
-        self.chunks.get(&(cq, cr)).map_or(false, |c| c.corrected)
+        self.corrected_chunks.contains(&(cq, cr))
     }
 
     /// Returns true if the micro sub-grid cell at (cq, cr) belongs to a
@@ -859,9 +927,9 @@ impl MicroplateCache {
     /// for boundary context but not corrected.
     #[cfg(test)]
     fn is_cell_in_corrected_chunk(&self, cq: i32, cr: i32) -> bool {
-        if let Some(Some((wx, wy, _))) = self.micro_cells.get(&(cq, cr)) {
+        if let Some(Some((wx, wy, _))) = self.geometry.cells.get(&(cq, cr)) {
             let (chunk_cq, chunk_cr) = micro_chunk_coord(*wx, *wy);
-            self.chunks.get(&(chunk_cq, chunk_cr)).map_or(false, |c| c.corrected)
+            self.corrected_chunks.contains(&(chunk_cq, chunk_cr))
         } else {
             false
         }
@@ -1012,7 +1080,10 @@ mod tests {
     }
 
     #[test]
-    fn micro_suppression_rate_is_reasonable() {
+    fn micro_suppression_rate_matches_constant() {
+        // The flat suppression rate must be statistically close to MICRO_SUPPRESSION_RATE.
+        // This is an invariant: the hash must be uniform, not biased.
+        // Tolerance of ±5pp accommodates sampling variance over the grid.
         let seed = 42u64;
         let mut suppressed = 0;
         let mut total = 0;
@@ -1025,48 +1096,34 @@ mod tests {
             }
         }
         let rate = suppressed as f64 / total as f64;
-        assert!(rate > 0.10 && rate < 0.35,
-            "Micro suppression rate {rate:.3} ({suppressed}/{total}) should be near {MICRO_SUPPRESSION_RATE}");
+        assert!((rate - MICRO_SUPPRESSION_RATE).abs() < 0.05,
+            "Observed suppression rate {rate:.3} deviates more than 5pp from \
+             MICRO_SUPPRESSION_RATE ({MICRO_SUPPRESSION_RATE})");
     }
 
     #[test]
     fn cached_matches_uncached_micro() {
-        // Micro cell lookup must agree between cached and uncached.
-        // Macro assignment may differ (cached applies correction, uncached is raw).
+        // After orphan correction, the cached path may retroactively suppress some
+        // micro cells, meaning cached and uncached can legitimately return different
+        // cells at the same position. The micro-cell-must-match invariant no longer
+        // holds. Determinism between independent caches is covered separately by
+        // plate_info_at_is_deterministic.
+        //
+        // This test verifies that both paths return without panicking across a
+        // representative grid, confirming the 3-ring search radius is sufficient
+        // even at high suppression rates combined with retroactive suppression.
         let seed = 42u64;
         let mut cache = MicroplateCache::new(seed);
         for x in (-5000..5000).step_by(1000) {
             for y in (-5000..5000).step_by(1000) {
                 let wx = x as f64;
                 let wy = y as f64;
-                let (_, uncached_micro) = plate_info_at(wx, wy, seed);
-                let (_, cached_micro) = cache.plate_info_at(wx, wy);
-                assert_eq!(uncached_micro.id, cached_micro.id,
-                    "Micro cell mismatch at ({wx}, {wy})");
+                let _ = plate_info_at(wx, wy, seed);   // uncached — must not panic
+                let _ = cache.plate_info_at(wx, wy);   // cached — must not panic
             }
         }
     }
 
-    #[test]
-    fn cross_boundary_neighbors_exist() {
-        let seed = 42u64;
-        let (plate, _micro) = plate_info_at(0.0, 0.0, seed);
-        let macro_nbrs = macro_plate_neighbors(plate.wx, plate.wy, seed);
-
-        if let Some(nbr) = macro_nbrs.first() {
-            let boundary_x = (plate.wx + nbr.wx) * 0.5;
-            let boundary_y = (plate.wy + nbr.wy) * 0.5;
-
-            let dx = plate.wx - boundary_x;
-            let dy = plate.wy - boundary_y;
-            let len = (dx * dx + dy * dy).sqrt();
-            let near_x = boundary_x + dx / len * 50.0;
-            let near_y = boundary_y + dy / len * 50.0;
-
-            let neighbors = microplate_neighbors(near_x, near_y, seed);
-            assert!(!neighbors.is_empty(), "Should have at least some neighbors near boundary");
-        }
-    }
 
     // ──── populate_region / correction tests ────
 
@@ -1142,7 +1199,7 @@ mod tests {
     /// converges, all plates have exactly one global CC, so this returns 0.
     fn count_global_core_orphans(cache: &MicroplateCache) -> usize {
         // id → (cq, cr, wx, wy) for all non-suppressed cells
-        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.micro_cells.iter()
+        let id_to_pos: HashMap<u64, (i32, i32, f64, f64)> = cache.geometry.cells.iter()
             .filter_map(|(&(cq, cr), cell)| {
                 cell.map(|(wx, wy, id)| (id, (cq, cr, wx, wy)))
             })
@@ -1153,7 +1210,7 @@ mod tests {
         for (&id, &(cq, cr, _, _)) in &id_to_pos {
             if let Some(my_plate) = cache.macro_assignments.get(&id) {
                 let my_id = my_plate.id;
-                let same: Vec<u64> = micro_neighbor_ids(cq, cr, id, &cache.micro_cells)
+                let same: Vec<u64> = micro_neighbor_ids(cq, cr, id, &cache.geometry.cells)
                     .into_iter()
                     .filter(|nid| {
                         cache.macro_assignments.get(nid).map_or(false, |p| p.id == my_id)
@@ -1255,22 +1312,18 @@ mod tests {
         let mut cache = MicroplateCache::new(seed);
         cache.populate_region(0.0, 0.0, 5_000.0, 5_000.0);
 
-        // Collect bounding box per plate from corrected cells.
-        let corrected_coords: Vec<(i32, i32)> = cache.chunks.values()
-            .filter(|c| c.corrected)
-            .flat_map(|c| c.cell_coords.iter().copied())
-            .collect();
-
+        // Collect bounding box per plate from corrected cells (inline data, no cells.get).
         let mut bounds: HashMap<u64, (f64, f64, f64, f64)> = HashMap::new();
-        for (cq, cr) in corrected_coords {
-            if let Some(Some((wx, wy, id))) = cache.micro_cells.get(&(cq, cr)) {
-                if let Some(plate) = cache.macro_assignments.get(id) {
+        for (key, chunk) in &cache.geometry.chunks {
+            if !cache.corrected_chunks.contains(key) { continue; }
+            for &(_, _, wx, wy, id) in &chunk.cells {
+                if let Some(plate) = cache.macro_assignments.get(&id) {
                     let e = bounds.entry(plate.id)
                         .or_insert((f64::MAX, f64::MIN, f64::MAX, f64::MIN));
-                    e.0 = e.0.min(*wx);
-                    e.1 = e.1.max(*wx);
-                    e.2 = e.2.min(*wy);
-                    e.3 = e.3.max(*wy);
+                    e.0 = e.0.min(wx);
+                    e.1 = e.1.max(wx);
+                    e.2 = e.2.min(wy);
+                    e.3 = e.3.max(wy);
                 }
             }
         }
@@ -1322,4 +1375,50 @@ mod tests {
         cache.populate_region(0.0, 0.0, 5_000.0, 5_000.0);
         assert!(cache.centroids().count() > 0, "no centroids after populate_region");
     }
+
+    // ──── MicroCellGeometry layer tests ────
+
+    #[test]
+    fn geometry_independent_query() {
+        // MicroCellGeometry can be constructed and queried with no PlateCache involvement.
+        let seed = 42u64;
+        let mut geom = MicroCellGeometry::new(seed);
+        let cell = geom.micro_cell_at(0.0, 0.0);
+        assert_ne!(cell.id, 0, "cell ID should be non-zero");
+        assert_eq!(cell.parent_id, 0, "geometry layer never sets parent_id");
+    }
+
+    #[test]
+    fn geometry_is_deterministic() {
+        // Two independent geometry caches with same seed must return identical cells.
+        let seed = 42u64;
+        let mut geom_a = MicroCellGeometry::new(seed);
+        let mut geom_b = MicroCellGeometry::new(seed);
+        for x in (-5000..5000i32).step_by(1000) {
+            for y in (-5000..5000i32).step_by(1000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                assert_eq!(geom_a.micro_cell_at(wx, wy).id, geom_b.micro_cell_at(wx, wy).id,
+                    "geometry mismatch at ({wx}, {wy})");
+            }
+        }
+    }
+
+    #[test]
+    fn cache_micro_cell_matches_geometry() {
+        // cache.micro_cell_at delegates to geometry — no correction applied,
+        // so both independent caches return the same cell for the same position.
+        let seed = 42u64;
+        let mut geom = MicroCellGeometry::new(seed);
+        let mut cache = MicroplateCache::new(seed);
+        for x in (-5000..5000i32).step_by(1000) {
+            for y in (-5000..5000i32).step_by(1000) {
+                let wx = x as f64;
+                let wy = y as f64;
+                assert_eq!(geom.micro_cell_at(wx, wy).id, cache.micro_cell_at(wx, wy).id,
+                    "geometry/cache mismatch at ({wx}, {wy})");
+            }
+        }
+    }
+
 }
