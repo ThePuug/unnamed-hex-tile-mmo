@@ -31,9 +31,11 @@ pub const SUPPRESSION_RATE_MIN: f64 = 0.05;
 pub const SUPPRESSION_RATE_MAX: f64 = 0.60;
 
 /// Regime classification threshold. Values below → water, above → land.
-/// Above the sigmoid midpoint (0.5) to shift balance toward more water.
-/// Also centers the variable suppression zone on the actual coastline.
-pub const REGIME_LAND_THRESHOLD: f64 = 0.6;
+/// With multiplicative world-gate composition, output values are compressed
+/// toward 0 relative to the old additive formula. 0.3 restores a balanced
+/// land/water ratio: the gate pushes deep-ocean regions to near-zero, and
+/// the threshold sits in the transition zone of the product distribution.
+pub const REGIME_LAND_THRESHOLD: f64 = 0.3;
 
 // ──── Macro Plate Warp Constants ────
 
@@ -43,9 +45,10 @@ pub const REGIME_LAND_THRESHOLD: f64 = 0.6;
 pub const WARP_NOISE_WAVELENGTH: f64 = 800.0;
 
 /// Quad-prime regime noise wavelengths. Summed simplex octaves whose
-/// LCM ≈ 28.5 trillion tiles — effectively never repeats.
-pub const WARP_PRIME_A: f64 = 29989.0;  // Continental scale
-pub const WARP_PRIME_B: f64 = 17393.0;  // Province scale
+/// LCM ≈ 96 quadrillion tiles — effectively never repeats.
+/// Log-scale ratios: A/B ≈ 2.8×, B/C ≈ 2.3×, C/D ≈ 2.2× — even spectral separation.
+pub const WARP_PRIME_A: f64 = 69997.0;  // World scale
+pub const WARP_PRIME_B: f64 = 25013.0;  // Continental scale
 pub const WARP_PRIME_C: f64 = 11003.0;  // Regional scale
 pub const WARP_PRIME_D: f64 =  4999.0;  // Peninsula scale
 
@@ -65,7 +68,10 @@ pub const GRAD_STEP: f64 = 100.0;
 
 /// Sigmoid midpoint on the regime noise field.
 /// Values below this tend toward 0 (water), above toward 1 (land).
-pub const REGIME_SIGMOID_MIDPOINT: f64 = 0.5;
+/// With multiplicative gating (local × world_gate), the product distribution
+/// peaks around 0.25 at symmetric points. 0.30 centers the transition where
+/// the product distribution actually concentrates.
+pub const REGIME_SIGMOID_MIDPOINT: f64 = 0.30;
 
 /// Sigmoid steepness on the regime noise field.
 /// Controls how sharp the water/land transition is.

@@ -56,24 +56,28 @@ const WARP_STRENGTH_SEED_B: u64 = 0xCCCC_DDDD_0003;
 const WARP_STRENGTH_SEED_C: u64 = 0xCCCC_DDDD_0004;
 const WARP_STRENGTH_SEED_D: u64 = 0xCCCC_DDDD_0005;
 
-const OCTAVE_WEIGHT_A: f64 = 1.0;
-const OCTAVE_WEIGHT_B: f64 = 0.5;
-const OCTAVE_WEIGHT_C: f64 = 0.25;
-const OCTAVE_WEIGHT_D: f64 = 0.25;
-const OCTAVE_DIVISOR: f64 = OCTAVE_WEIGHT_A + OCTAVE_WEIGHT_B + OCTAVE_WEIGHT_C + OCTAVE_WEIGHT_D;
+// Local fBm weights (B is dominant now that A is extracted as world gate).
+const LOCAL_WEIGHT_B: f64 = 1.0;
+const LOCAL_WEIGHT_C: f64 = 0.5;
+const LOCAL_WEIGHT_D: f64 = 0.5;
+const LOCAL_DIVISOR: f64 = LOCAL_WEIGHT_B + LOCAL_WEIGHT_C + LOCAL_WEIGHT_D; // 2.0 — normalized
 
-/// Raw quad-prime noise value at position, normalized to [0, 1].
-/// Four summed simplex octaves at prime wavelengths (29989, 17393, 11003, 4999)
-/// with weights OCTAVE_WEIGHT_A/B/C/D. LCM ≈ 28.5 trillion tiles — never repeats.
-/// The fourth octave (4999) adds peninsula-scale features: tongues of land or
-/// bays cutting into land at 3–6 macro plate scales.
+/// Multiplicative world-scale gating regime noise, normalized to [0, 1].
+///
+/// World scale (A=69997) is sampled separately and remapped to [0, 1] as a gate.
+/// Where the gate is near 0 (deep oceanic basins), the region stays water regardless
+/// of local variation. Where it's near 1 (continental interiors), the local
+/// three-wavelength fBm (B, C, D) determines coastlines. Transition zones produce
+/// island archipelagos — only the strongest local peaks survive a low gate.
 fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
     let a = simplex_2d(wx / WARP_PRIME_A, wy / WARP_PRIME_A, seed ^ WARP_STRENGTH_SEED_A);
     let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
     let c = simplex_2d(wx / WARP_PRIME_C, wy / WARP_PRIME_C, seed ^ WARP_STRENGTH_SEED_C);
     let d = simplex_2d(wx / WARP_PRIME_D, wy / WARP_PRIME_D, seed ^ WARP_STRENGTH_SEED_D);
-    let combined = (a * OCTAVE_WEIGHT_A + b * OCTAVE_WEIGHT_B + c * OCTAVE_WEIGHT_C + d * OCTAVE_WEIGHT_D) / OCTAVE_DIVISOR;
-    ((combined + 1.0) * 0.5).clamp(0.0, 1.0)
+    let world_gate = (a + 1.0) / 2.0; // [0, 1]
+    let local_raw = (b * LOCAL_WEIGHT_B + c * LOCAL_WEIGHT_C + d * LOCAL_WEIGHT_D) / LOCAL_DIVISOR; // [-1, 1]
+    let local = (local_raw + 1.0) / 2.0; // [0, 1]
+    local * world_gate
 }
 
 /// UNCACHED — evaluates 4 simplex noise calls per invocation.
@@ -93,9 +97,11 @@ pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
 }
 
 /// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.
-/// Sums weight/wavelength for all four octaves, divided by the normalization factor.
+/// Product-rule bound: max|d(local)/dx| + max|d(gate)/dx|, both remapped to [0, 1]
+/// (hence the /2 factors). Numerically ≈ 5.35e-5 per world unit.
 const RAW_GRAD_MAX: f64 =
-    (OCTAVE_WEIGHT_A / WARP_PRIME_A + OCTAVE_WEIGHT_B / WARP_PRIME_B + OCTAVE_WEIGHT_C / WARP_PRIME_C + OCTAVE_WEIGHT_D / WARP_PRIME_D) / OCTAVE_DIVISOR;
+    (LOCAL_WEIGHT_B / WARP_PRIME_B + LOCAL_WEIGHT_C / WARP_PRIME_C + LOCAL_WEIGHT_D / WARP_PRIME_D) / LOCAL_DIVISOR / 2.0
+    + 1.0 / (2.0 * WARP_PRIME_A);
 
 /// Estimated max gradient of the sigmoidized regime field per world unit.
 /// The sigmoid's peak derivative is steepness/4 (at the midpoint), so
@@ -557,9 +563,12 @@ mod tests {
             }
         }
         let rate = suppressed as f64 / total as f64;
-        assert!(rate > 0.05 && rate < 0.50,
+        // Upper bound = SUPPRESSION_RATE_MAX + 0.05 tolerance — a purely oceanic
+        // test window (world gate ≈ 0) can approach MAX suppression legitimately.
+        let upper = SUPPRESSION_RATE_MAX + 0.05;
+        assert!(rate > SUPPRESSION_RATE_MIN && rate < upper,
             "Suppression rate {rate:.3} ({suppressed}/{total}) should be between \
-             {SUPPRESSION_RATE_MIN} and {SUPPRESSION_RATE_MAX}");
+             {SUPPRESSION_RATE_MIN:.2} and {upper:.2}");
     }
 
     #[test]
@@ -1274,5 +1283,6 @@ mod tests {
             );
         }
     }
+
 
 }
