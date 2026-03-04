@@ -1,3 +1,7 @@
+pub mod plate_tags;
+pub use plate_tags::{PlateTag, Tagged, MAX_PLATE_TAGS};
+pub use tinyvec::ArrayVec;
+
 /// Topographic color ramp: (elevation, R, G, B) with sea level at 0.
 /// Shared between game renderer and terrain-viewer so they never drift apart.
 pub const ELEVATION_RAMP: &[(f64, u8, u8, u8)] = &[

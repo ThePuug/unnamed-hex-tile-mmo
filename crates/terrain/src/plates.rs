@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
             SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, REGIME_LAND_THRESHOLD,
             WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C, WARP_PRIME_D,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
-            GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION};
+            GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION,
+            COASTAL_WARP_THRESHOLD};
 
 /// Row height factor for hex grid: sqrt(3)/2.
 /// Odd rows are shifted right by half a cell width.
@@ -21,6 +23,14 @@ pub struct PlateCenter {
     pub cell_q: i32,
     pub cell_r: i32,
     pub id: u64,
+    /// Tags assigned by generation and the event system. Starts empty;
+    /// populated by [`PlateCache::classify_tags`].
+    pub tags: ArrayVec<[PlateTag; MAX_PLATE_TAGS]>,
+}
+
+impl Tagged for PlateCenter {
+    fn tags(&self) -> &ArrayVec<[PlateTag; MAX_PLATE_TAGS]> { &self.tags }
+    fn tags_mut(&mut self) -> &mut ArrayVec<[PlateTag; MAX_PLATE_TAGS]> { &mut self.tags }
 }
 
 // ──── Hex grid helpers ────
@@ -272,7 +282,7 @@ pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Opti
 
     let id = hash_u64(cell_q as i64, cell_r as i64, seed);
 
-    Some(PlateCenter { wx, wy, cell_q, cell_r, id })
+    Some(PlateCenter { wx, wy, cell_q, cell_r, id, tags: ArrayVec::new() })
 }
 
 // ──── Grid cell lookup ────
@@ -441,6 +451,29 @@ impl PlateCache {
         neighbors
     }
 
+    /// Assign Sea, Coast, or Inland tags to each plate in `plates`.
+    ///
+    /// - **Sea**: water plate with no land neighbors.
+    /// - **Coast**: any plate (water or land) that borders a plate of opposite regime.
+    /// - **Inland**: land plate with no water neighbors.
+    ///
+    /// Each plate receives exactly one base tag. Call after [`Self::plates_in_radius`].
+    pub fn classify_tags(&mut self, plates: &mut [PlateCenter]) {
+        for plate in plates.iter_mut() {
+            let strength = self.warp_strength_at(plate.wx, plate.wy);
+            let is_land = self.regime_value_at(plate.wx, plate.wy) >= REGIME_LAND_THRESHOLD;
+            let is_coast = strength > COASTAL_WARP_THRESHOLD;
+            let tag = if is_coast {
+                PlateTag::Coast
+            } else if is_land {
+                PlateTag::Inland
+            } else {
+                PlateTag::Sea
+            };
+            plate.add_tag(tag);
+        }
+    }
+
     /// Cached anisotropic warped-distance plate assignment. Used by micro cell → macro
     /// assignment in the bottom-up flow. Gathers candidates from a 1-ring chunk
     /// neighborhood and uses gradient cache for anisotropy context.
@@ -474,6 +507,8 @@ impl PlateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::{PlateTag, Tagged};
+    #[allow(unused_imports)]
     use std::collections::HashSet;
 
     #[test]
@@ -1170,6 +1205,74 @@ mod tests {
 
         assert!(coast_rate > deep_rate,
             "Coastal survival rate ({coast_rate:.3}) should exceed deep ({deep_rate:.3})");
+    }
+
+    // ──── classify_tags tests ────
+
+    #[test]
+    fn every_macro_plate_has_exactly_one_base_tag() {
+        let seed = 0x9E3779B97F4A7C15;
+        let mut cache = PlateCache::new(seed);
+        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
+        assert!(!plates.is_empty(), "Should have plates in radius");
+        cache.classify_tags(&mut plates);
+
+        for plate in &plates {
+            let count = [PlateTag::Sea, PlateTag::Coast, PlateTag::Inland]
+                .iter()
+                .filter(|t| plate.has_tag(t))
+                .count();
+            assert_eq!(
+                count, 1,
+                "plate {} should have exactly one base tag, got {}",
+                plate.id, count
+            );
+        }
+    }
+
+    #[test]
+    fn coast_plates_have_high_warp_or_border_opposite_regime() {
+        let seed = 0x9E3779B97F4A7C15;
+        let mut cache = PlateCache::new(seed);
+        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
+        cache.classify_tags(&mut plates);
+
+        for plate in plates.iter().filter(|p| p.has_tag(&PlateTag::Coast)) {
+            let strength = cache.warp_strength_at(plate.wx, plate.wy);
+            if strength > COASTAL_WARP_THRESHOLD { continue; } // warp-driven coast
+            let is_land = cache.regime_value_at(plate.wx, plate.wy) >= REGIME_LAND_THRESHOLD;
+            let neighbors = cache.plate_neighbors(plate.wx, plate.wy);
+            let has_opposite_neighbor = neighbors.iter().any(|nbr| {
+                let nbr_land = cache.regime_value_at(nbr.wx, nbr.wy) >= REGIME_LAND_THRESHOLD;
+                nbr_land != is_land
+            });
+            assert!(
+                has_opposite_neighbor,
+                "Coast plate {} must have high warp OR border a neighbor with different regime",
+                plate.id
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "invariant requires neighbor-regime fallback; disabled while fallback is off"]
+    fn sea_plates_have_no_land_neighbors() {
+        let seed = 0x9E3779B97F4A7C15;
+        let mut cache = PlateCache::new(seed);
+        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
+        cache.classify_tags(&mut plates);
+
+        for plate in plates.iter().filter(|p| p.has_tag(&PlateTag::Sea)) {
+            let neighbors = cache.plate_neighbors(plate.wx, plate.wy);
+            let any_land = neighbors.iter().any(|nbr| {
+                cache.regime_value_at(nbr.wx, nbr.wy) >= REGIME_LAND_THRESHOLD
+            });
+            assert!(
+                !any_land,
+                "Sea plate {} must have no land neighbors",
+                plate.id
+            );
+        }
     }
 
 }

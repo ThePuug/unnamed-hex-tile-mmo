@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::plates::{PlateCenter, PlateCache};
 use crate::{MACRO_CELL_SIZE, MICRO_CELL_SIZE,
@@ -43,6 +44,14 @@ pub struct MicroplateCenter {
     pub parent_id: u64,
     pub sub_cell_q: i32,
     pub sub_cell_r: i32,
+    /// Tags assigned by generation and the event system. Starts empty;
+    /// populated after [`MicroplateCache::populate_region`].
+    pub tags: ArrayVec<[PlateTag; MAX_PLATE_TAGS]>,
+}
+
+impl Tagged for MicroplateCenter {
+    fn tags(&self) -> &ArrayVec<[PlateTag; MAX_PLATE_TAGS]> { &self.tags }
+    fn tags_mut(&mut self) -> &mut ArrayVec<[PlateTag; MAX_PLATE_TAGS]> { &mut self.tags }
 }
 
 /// One chunk of the micro cell geometry layer.
@@ -146,6 +155,7 @@ impl MicroCellGeometry {
                         parent_id: 0,
                         sub_cell_q: mcq,
                         sub_cell_r: mcr,
+                        tags: ArrayVec::new(),
                     });
                     best_dist = d;
                 }
@@ -307,6 +317,7 @@ pub fn micro_cell_at(wx: f64, wy: f64, seed: u64) -> MicroplateCenter {
                         parent_id: 0,
                         sub_cell_q: ncq,
                         sub_cell_r: ncr,
+                        tags: ArrayVec::new(),
                     });
                     best_dist = d;
                 }
@@ -368,6 +379,7 @@ fn generate_micro_cells_for_macro(
                         parent_id: macro_seed.id,
                         sub_cell_q: cq,
                         sub_cell_r: cr,
+                        tags: ArrayVec::new(),
                     });
                 }
             }
@@ -408,6 +420,10 @@ pub struct MicroplateCache {
     /// Populated by [`Self::populate_region`] after `fix_orphans`.
     /// Empty until `populate_region` is called.
     centroids: HashMap<u64, PlateCentroid>,
+    /// Tags per micro cell, keyed by cell ID.
+    /// Populated by [`Self::classify_micro_tags`] during `populate_region`.
+    /// Enriches the `tags` field of `MicroplateCenter` returned by `plate_info_at`.
+    micro_tags: HashMap<u64, ArrayVec<[PlateTag; MAX_PLATE_TAGS]>>,
 }
 
 impl MicroplateCache {
@@ -418,6 +434,7 @@ impl MicroplateCache {
             plate_cache: PlateCache::new(seed),
             corrected_chunks: HashSet::new(),
             centroids: HashMap::new(),
+            micro_tags: HashMap::new(),
         }
     }
 
@@ -544,8 +561,56 @@ impl MicroplateCache {
             }
         }
 
+        // Tags require all assignments and corrections to be final.
+        self.classify_micro_tags();
+
         // Centroids require corrected flags to be set first (they filter on them).
         self.compute_centroids();
+    }
+
+    /// Assign Sea, Coast, or Inland to every live micro cell.
+    ///
+    /// Uses regime values (no plate lookups) and the hex-neighbor cell grid
+    /// to determine if any of the 6 adjacent micro cells have a different
+    /// land/water status. Called at the end of [`Self::populate_region`].
+    fn classify_micro_tags(&mut self) {
+        use crate::{REGIME_LAND_THRESHOLD, COASTAL_WARP_THRESHOLD};
+
+        // Collect all live cells — releases the borrow on geometry.cells so we
+        // can re-borrow it immutably inside the loop.
+        let live_cells: Vec<(i32, i32, f64, f64, u64)> = self.geometry.cells.iter()
+            .filter_map(|(&(cq, cr), cell)| {
+                cell.map(|(wx, wy, id)| (cq, cr, wx, wy, id))
+            })
+            .collect();
+
+        // Precompute regime and warp strength for each live cell.
+        // Both require mutable plate_cache access, so done before the immutable loop.
+        let regimes: HashMap<u64, bool> = live_cells.iter()
+            .map(|&(_, _, wx, wy, id)| {
+                (id, self.plate_cache.regime_value_at(wx, wy) >= REGIME_LAND_THRESHOLD)
+            })
+            .collect();
+        let warp_strengths: HashMap<u64, f64> = live_cells.iter()
+            .map(|&(_, _, wx, wy, id)| {
+                (id, self.plate_cache.warp_strength_at(wx, wy))
+            })
+            .collect();
+
+        let mut new_tags: HashMap<u64, ArrayVec<[PlateTag; MAX_PLATE_TAGS]>> = HashMap::with_capacity(live_cells.len());
+        for &(cq, cr, _wx, _wy, id) in &live_cells {
+            let is_land = regimes[&id];
+            let is_coast = warp_strengths.get(&id).copied().unwrap_or(0.0) > COASTAL_WARP_THRESHOLD;
+            let tag = if is_coast {
+                PlateTag::Coast
+            } else if is_land {
+                PlateTag::Inland
+            } else {
+                PlateTag::Sea
+            };
+            new_tags.insert(id, { let mut av = ArrayVec::new(); av.push(tag); av });
+        }
+        self.micro_tags = new_tags;
     }
 
     /// Cached lookup: micro cell + corrected macro assignment.
@@ -570,6 +635,9 @@ impl MicroplateCache {
             .clone();
 
         micro.parent_id = macro_plate.id;
+        if let Some(tags) = self.micro_tags.get(&micro.id) {
+            micro.tags = tags.clone();
+        }
         (macro_plate, micro)
     }
 
@@ -965,6 +1033,7 @@ fn micro_neighbor_ids(
 mod tests {
     use super::*;
     use crate::plates::{macro_plate_at, macro_plate_neighbors};
+    use common::{PlateTag, Tagged};
     use std::collections::HashSet;
 
     #[test]
@@ -1417,6 +1486,66 @@ mod tests {
                 let wy = y as f64;
                 assert_eq!(geom.micro_cell_at(wx, wy).id, cache.micro_cell_at(wx, wy).id,
                     "geometry/cache mismatch at ({wx}, {wy})");
+            }
+        }
+    }
+
+    // ──── classify_micro_tags tests ────
+
+    #[test]
+    fn every_micro_plate_has_exactly_one_base_tag_after_populate_region() {
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        cache.populate_region(0.0, 0.0, 3_000.0, 3_000.0);
+
+        let base_tags = [PlateTag::Sea, PlateTag::Coast, PlateTag::Inland];
+        // Sample positions within the core region (avoids boundary effects).
+        for x in (-2000..=2000i32).step_by(500) {
+            for y in (-2000..=2000i32).step_by(500) {
+                let (_, micro) = cache.plate_info_at(x as f64, y as f64);
+                let count = base_tags.iter().filter(|t| micro.has_tag(t)).count();
+                assert_eq!(
+                    count, 1,
+                    "micro cell {} at ({x}, {y}) should have exactly one base tag, got {count}",
+                    micro.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn micro_coast_plates_have_high_warp_or_border_opposite_regime() {
+        use crate::{REGIME_LAND_THRESHOLD, COASTAL_WARP_THRESHOLD};
+
+        let seed = 42u64;
+        let mut cache = MicroplateCache::new(seed);
+        cache.populate_region(0.0, 0.0, 3_000.0, 3_000.0);
+
+        for x in (-2000..=2000i32).step_by(500) {
+            for y in (-2000..=2000i32).step_by(500) {
+                let (_, micro) = cache.plate_info_at(x as f64, y as f64);
+                if !micro.has_tag(&PlateTag::Coast) { continue; }
+
+                let strength = cache.plate_cache.warp_strength_at(micro.wx, micro.wy);
+                if strength > COASTAL_WARP_THRESHOLD { continue; } // warp-driven coast
+
+                let is_land = cache.plate_cache.regime_value_at(micro.wx, micro.wy) >= REGIME_LAND_THRESHOLD;
+                let offsets = if micro.sub_cell_r & 1 == 0 { &HEX_NEIGHBORS_EVEN } else { &HEX_NEIGHBORS_ODD };
+                let has_opposite_neighbor = offsets.iter().any(|&(dq, dr)| {
+                    let ncq = micro.sub_cell_q + dq;
+                    let ncr = micro.sub_cell_r + dr;
+                    if let Some(Some((nwx, nwy, _))) = cache.geometry.cells.get(&(ncq, ncr)) {
+                        let nbr_land = cache.plate_cache.regime_value_at(*nwx, *nwy) >= REGIME_LAND_THRESHOLD;
+                        nbr_land != is_land
+                    } else {
+                        false
+                    }
+                });
+                assert!(
+                    has_opposite_neighbor,
+                    "Coast micro cell {} at ({x}, {y}) must have high warp OR border a cell of opposite regime",
+                    micro.id
+                );
             }
         }
     }

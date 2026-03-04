@@ -7,7 +7,8 @@ use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 use terrain::{
     MicroCellGeometry, MicroplateCache, PlateCentroid, PlateCache, PlateCenter,
-    MACRO_CELL_SIZE, REGIME_LAND_THRESHOLD,
+    PlateTag, Tagged,
+    MACRO_CELL_SIZE,
 };
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -48,11 +49,6 @@ struct Cli {
 
 // ── Terrain coloring constants ──
 
-/// Warp strength above this → coastal (regime transition zone).
-/// Lowered from 500 because the pre-gradient sigmoid eliminates false
-/// coastal signal — only real coastlines have nonzero warp now.
-const COASTAL_WARP_THRESHOLD: f64 = 300.0;
-
 /// Per-micro-cell saturation offset range (±).
 const MICRO_SAT_RANGE: f64 = 0.15;
 
@@ -89,75 +85,16 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (f64, f64, f64) {
     (r + m, g + m, b + m)
 }
 
-// ── Classification types ──
-
-/// Base regime of a plate (from regime value, ignoring coastal promotion).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Regime { Water, Land }
-
-/// Display type after coastal promotion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DisplayType { Water, Land, Coastal }
-
-fn hsv_for_display(display: DisplayType, shade: f64) -> (f64, f64, f64) {
-    match display {
-        DisplayType::Coastal => (0.09 + shade * 0.03, 0.40 + shade * 0.10, 0.60 + shade * 0.15),
-        DisplayType::Water => (0.58 + shade * 0.05, 0.50 + shade * 0.20, 0.30 + shade * 0.25),
-        DisplayType::Land => (0.28 + shade * 0.06, 0.35 + shade * 0.15, 0.30 + shade * 0.30),
+/// HSV color for a plate tag (Sea=blue, Coast=sandy tan, Inland=green).
+/// `shade` adds per-plate variation within each type.
+fn hsv_for_tag(plate: &PlateCenter, shade: f64) -> (f64, f64, f64) {
+    if plate.has_tag(&PlateTag::Coast) {
+        (0.105 + shade * 0.02, 0.33 + shade * 0.10, 0.82 + shade * 0.08) // sandy tan ≈ (210,190,140)
+    } else if plate.has_tag(&PlateTag::Inland) {
+        (0.28 + shade * 0.06, 0.35 + shade * 0.15, 0.35 + shade * 0.25) // green
+    } else {
+        (0.60 + shade * 0.04, 0.55 + shade * 0.20, 0.30 + shade * 0.20) // blue (Sea or untagged)
     }
-}
-
-/// Two-pass classification: initial (gradient-based) + coastal suspender promotion.
-///
-/// Pass 1: classify each plate by warp strength (coastal if high gradient)
-///         and regime value (water/land).
-/// Pass 2: promote land plates bordering water to coastal
-///         (the "suspender" — catches sharp transitions the gradient misses).
-///         Only land→coastal; water plates are never promoted (beaches are land).
-fn classify_plates(
-    plates: &[PlateCenter],
-    plate_cache: &mut PlateCache,
-) -> HashMap<u64, (Regime, DisplayType)> {
-    // Pass 1: initial classification
-    let mut classification: HashMap<u64, (Regime, DisplayType)> = plates.iter().map(|p| {
-        let strength = plate_cache.warp_strength_at(p.wx, p.wy);
-        let regime = plate_cache.regime_value_at(p.wx, p.wy);
-        let base = if regime < REGIME_LAND_THRESHOLD { Regime::Water } else { Regime::Land };
-        let display = if strength > COASTAL_WARP_THRESHOLD {
-            DisplayType::Coastal
-        } else {
-            match base { Regime::Water => DisplayType::Water, Regime::Land => DisplayType::Land }
-        };
-        (p.id, (base, display))
-    }).collect();
-
-    // Pass 2: coastal suspender promotion — land plates touching water only.
-    // Beaches are land, not water. The sandy fringe sits on the land side.
-    let mut promotions = Vec::new();
-    for plate in plates {
-        let &(base, display) = match classification.get(&plate.id) {
-            Some(c) => c,
-            None => continue,
-        };
-        if display == DisplayType::Coastal { continue; }
-        if base != Regime::Land { continue; }
-        let neighbors = plate_cache.plate_neighbors(plate.wx, plate.wy);
-        let should_promote = neighbors.iter().any(|nbr| {
-            classification.get(&nbr.id)
-                .map_or(false, |&(nbr_base, _)| nbr_base == Regime::Water)
-        });
-        if should_promote {
-            promotions.push(plate.id);
-        }
-    }
-
-    for id in promotions {
-        if let Some(entry) = classification.get_mut(&id) {
-            entry.1 = DisplayType::Coastal;
-        }
-    }
-
-    classification
 }
 
 fn main() {
@@ -195,14 +132,13 @@ fn main() {
     // ── Classify macro plates (once per plate, not per pixel) ──
 
     let mut plate_cache = PlateCache::new(seed);
-    let plates = plate_cache.plates_in_radius(
+    let mut plates = plate_cache.plates_in_radius(
         cli.center_x, cli.center_y, cli.radius * std::f64::consts::SQRT_2 + MACRO_CELL_SIZE * 2.0,
     );
-    let classification = classify_plates(&plates, &mut plate_cache);
+    plate_cache.classify_tags(&mut plates);
     let plate_colors: HashMap<u64, (f64, f64, f64)> = plates.iter().map(|p| {
         let shade = id_to_shade(p.id);
-        let &(_, display) = classification.get(&p.id).unwrap();
-        (p.id, hsv_for_display(display, shade))
+        (p.id, hsv_for_tag(p, shade))
     }).collect();
 
     log_step("Classify", plate_colors.len(), "plates", lap.elapsed());
@@ -412,54 +348,3 @@ fn main() {
     eprintln!("Saved {output}");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn coastal_suspenders_catch_all_land_borders() {
-        // After promotion, no non-coastal LAND plate should border a water plate.
-        // Water plates are never promoted (beaches are land-side only).
-        let seed = 0x9E3779B97F4A7C15u64;
-        let mut plate_cache = PlateCache::new(seed);
-        let plates = plate_cache.plates_in_radius(0.0, 0.0, 20000.0);
-        let classification = classify_plates(&plates, &mut plate_cache);
-
-        for plate in &plates {
-            let &(base, display) = classification.get(&plate.id).unwrap();
-            if display == DisplayType::Coastal { continue; }
-            if base != Regime::Land { continue; }
-            let neighbors = plate_cache.plate_neighbors(plate.wx, plate.wy);
-            for nbr in &neighbors {
-                if let Some(&(nbr_base, _)) = classification.get(&nbr.id) {
-                    assert_ne!(nbr_base, Regime::Water,
-                        "Land plate {} borders water plate {} but wasn't promoted to coastal",
-                        plate.id, nbr.id);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn promotion_preserves_base_regime() {
-        // Base regime (water/land) must never change during promotion —
-        // only display_type may change to Coastal.
-        let seed = 0x9E3779B97F4A7C15u64;
-        let mut plate_cache = PlateCache::new(seed);
-        let plates = plate_cache.plates_in_radius(0.0, 0.0, 20000.0);
-
-        // Snapshot base regime before promotion
-        let initial: HashMap<u64, Regime> = plates.iter().map(|p| {
-            let regime = plate_cache.regime_value_at(p.wx, p.wy);
-            let base = if regime < REGIME_LAND_THRESHOLD { Regime::Water } else { Regime::Land };
-            (p.id, base)
-        }).collect();
-
-        let classification = classify_plates(&plates, &mut plate_cache);
-
-        for (id, (base, _)) in &classification {
-            assert_eq!(*base, initial[id],
-                "Plate {id} base regime changed during promotion");
-        }
-    }
-}

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 terrain = { path = "../terrain" }
+common = { path = "../common" }
 image = "0"
 rapid-qoi = "0"
 clap = { version = "4", features = ["derive"] }

@@ -2,6 +2,7 @@ mod noise;
 mod plates;
 mod microplates;
 
+pub use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  regime_value_at, warp_strength_at};
@@ -53,6 +54,11 @@ pub const WARP_STRENGTH_MIN: f64 = 0.0;
 
 /// Maximum warp strength — irregular, non-convex plates.
 pub const WARP_STRENGTH_MAX: f64 = 600.0;
+
+/// Warp strength above this threshold classifies a plate as coastal.
+/// High gradient magnitude signals a coastline transition zone regardless
+/// of whether the plate's own regime is land or water.
+pub const COASTAL_WARP_THRESHOLD: f64 = 200.0;
 
 /// World-unit step for gradient sampling of the regime field.
 pub const GRAD_STEP: f64 = 100.0;
