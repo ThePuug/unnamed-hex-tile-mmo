@@ -298,12 +298,23 @@ const HANGING_VALLEY_MAX_OFFSET: f64 = 400.0;
 /// Probability of a ridge crossing having a traversable path (disabled for conservative baseline).
 const PATH_PROBABILITY: f64 = 0.0;
 
-/// Minimum ridgeline sag to generate saddle streams. Below this the ridge is
-/// nearly flat and there's no meaningful saddle to drain from.
+/// Minimum ridgeline sag to generate ridge streams. Below this the ridge is
+/// nearly flat and there's no meaningful drainage.
 const MIN_SADDLE_SAG: f64 = 0.15;
 
-/// Minimum ridgeline length (world units) to generate saddle streams.
+/// Minimum ridgeline length (world units) to generate ridge streams.
 const MIN_RIDGE_LENGTH: f64 = 300.0;
+
+/// Base spacing of stream origins along a ridgeline, as a fraction of its length.
+/// At 0.25: origins at ~25%, ~50%, ~75% (jittered).
+const RIDGE_STREAM_SPACING: f64 = 0.25;
+
+/// Jitter magnitude for ridge stream placement, as a fraction of RIDGE_STREAM_SPACING.
+/// ±40% means origins can shift up to 0.1 of ridge length from their base position.
+const RIDGE_STREAM_JITTER: f64 = 0.4;
+
+/// Noise seed for ridge stream jitter.
+const SEED_RIDGE_STREAM_JITTER: u64 = 0xAAAA_BBBB_0035;
 
 
 
@@ -1838,32 +1849,40 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], spine_id: u64,
         }
     }
 
-    // Saddle streams
+    // Ridge streams — distributed along ridgelines with jitter
     for (ri, ridge) in ridgelines.iter().enumerate() {
         let rdx = ridge.bx - ridge.ax;
         let rdy = ridge.by - ridge.ay;
         let ridge_len = (rdx * rdx + rdy * rdy).sqrt();
         if ridge_len < MIN_RIDGE_LENGTH || ridge.sag < MIN_SADDLE_SAG { continue; }
 
-        let saddle_wx = (ridge.ax + ridge.bx) / 2.0;
-        let saddle_wy = (ridge.ay + ridge.by) / 2.0;
-
         let perp_x = -rdy / ridge_len;
         let perp_y = rdx / ridge_len;
 
-        let dirs: [(f64, f64); 2] = [
-            (perp_x, perp_y),
-            (-perp_x, -perp_y),
-        ];
-        for (side, &(dx, dy)) in dirs.iter().enumerate() {
-            let angle = dy.atan2(dx);
-            let start_wx = saddle_wx + dx * STREAM_ORIGIN_OFFSET;
-            let start_wy = saddle_wy + dy * STREAM_ORIGIN_OFFSET;
-            let start_elevation = evaluate_surface(peaks, ridgelines, start_wx, start_wy);
-            origins.push(StreamOrigin {
-                start_wx, start_wy, angle, branch_offset: 0.0,
-                hash_a: ri as u64 | 0x8000_0000, hash_b: side as u64, start_elevation,
-            });
+        let steps = (1.0 / RIDGE_STREAM_SPACING) as usize - 1;
+        for i in 1..=steps {
+            let base_t = i as f64 * RIDGE_STREAM_SPACING;
+            let jitter_raw = hash_f64(ri as i64, i as i64, seed ^ SEED_RIDGE_STREAM_JITTER ^ spine_id);
+            let jitter = (jitter_raw * 2.0 - 1.0) * RIDGE_STREAM_SPACING * RIDGE_STREAM_JITTER;
+            let t = (base_t + jitter).clamp(0.1, 0.9);
+
+            let ox = ridge.ax + rdx * t;
+            let oy = ridge.ay + rdy * t;
+
+            for side in 0..2u64 {
+                let sign = if side == 0 { 1.0 } else { -1.0 };
+                let dx = perp_x * sign;
+                let dy = perp_y * sign;
+                let angle = dy.atan2(dx);
+                let start_wx = ox + dx * STREAM_ORIGIN_OFFSET;
+                let start_wy = oy + dy * STREAM_ORIGIN_OFFSET;
+                let start_elevation = evaluate_surface(peaks, ridgelines, start_wx, start_wy);
+                origins.push(StreamOrigin {
+                    start_wx, start_wy, angle, branch_offset: 0.0,
+                    hash_a: ri as u64 | 0x8000_0000, hash_b: (i as u64) << 1 | side,
+                    start_elevation,
+                });
+            }
         }
     }
 
