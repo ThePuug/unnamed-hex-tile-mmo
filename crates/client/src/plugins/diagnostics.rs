@@ -3,6 +3,7 @@ mod config;
 pub mod grid;
 pub mod perf_ui;
 pub mod network_ui;
+pub mod terrain_detail;
 mod toggles;
 
 use bevy::{
@@ -52,9 +53,11 @@ impl Plugin for DiagnosticsPlugin {
             (
                 grid::setup_grid_overlay,
                 setup_diagnostics_root.before(perf_ui::setup_performance_ui)
-                                      .before(network_ui::setup_network_ui),
+                                      .before(network_ui::setup_network_ui)
+                                      .before(terrain_detail::setup_terrain_detail),
                 perf_ui::setup_performance_ui,
                 network_ui::setup_network_ui,
+                terrain_detail::setup_terrain_detail,
             ),
         );
 
@@ -70,6 +73,9 @@ impl Plugin for DiagnosticsPlugin {
                 network_ui::update_network_ui,
                 // Network metrics update (end of frame)
                 network_ui::update_network_metrics,
+                // Terrain detail panel
+                terrain_detail::update_terrain_detail,
+                terrain_detail::update_terrain_mesh_metrics,
             ),
         );
     }

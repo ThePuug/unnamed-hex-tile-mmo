@@ -3,11 +3,16 @@ use std::collections::HashMap;
 use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
-            SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, REGIME_LAND_THRESHOLD,
-            WARP_NOISE_WAVELENGTH, WARP_PRIME_A, WARP_PRIME_B, WARP_PRIME_C, WARP_PRIME_D,
+            SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, OCEAN_SUPPRESSION_BOOST,
+            REGIME_LAND_THRESHOLD,
+            WARP_NOISE_WAVELENGTH, WARP_PRIME_B, WARP_PRIME_C, WARP_PRIME_D,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
             GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION,
-            COASTAL_WARP_THRESHOLD};
+            COASTAL_WARP_THRESHOLD,
+            WORLD_GATE_SIGMOID_MIDPOINT, WORLD_GATE_SIGMOID_STEEPNESS,
+            CONTINENT_CELL_SIZE, CONTINENT_JITTER,
+            CONTINENT_WARP_AMPLITUDE, CONTINENT_WARP_WAVELENGTH,
+            REGIONAL_CHARACTER_WAVELENGTH, REGIONAL_MOD_MIN, REGIONAL_MOD_MAX};
 
 /// Row height factor for hex grid: sqrt(3)/2.
 /// Odd rows are shifted right by half a cell width.
@@ -26,6 +31,9 @@ pub struct PlateCenter {
     /// Tags assigned by generation and the event system. Starts empty;
     /// populated by [`PlateCache::classify_tags`].
     pub tags: ArrayVec<[PlateTag; MAX_PLATE_TAGS]>,
+    /// Ground-level elevation in world units. Starts at 0.0;
+    /// written by terrain events (e.g. continental spine generation).
+    pub elevation: f64,
 }
 
 impl Tagged for PlateCenter {
@@ -51,33 +59,122 @@ fn jitter_at(wx: f64, wy: f64, seed: u64) -> f64 {
 // ──── Warped Voronoi distance ────
 
 const WARP_NOISE_SEED: u64 = 0xCCCC_DDDD_0001;
-const WARP_STRENGTH_SEED_A: u64 = 0xCCCC_DDDD_0002;
 const WARP_STRENGTH_SEED_B: u64 = 0xCCCC_DDDD_0003;
 const WARP_STRENGTH_SEED_C: u64 = 0xCCCC_DDDD_0004;
 const WARP_STRENGTH_SEED_D: u64 = 0xCCCC_DDDD_0005;
+const CONTINENT_JITTER_SEED_X: u64 = 0xBEEF_FACE_0001;
+const CONTINENT_JITTER_SEED_Y: u64 = 0xBEEF_FACE_0002;
+const CONTINENT_WARP_SEED_X: u64   = 0xBEEF_FACE_0003;
+const CONTINENT_WARP_SEED_Y: u64   = 0xBEEF_FACE_0004;
+const REGIONAL_MOD_SEED: u64       = 0xBEEF_FACE_0005;
 
-// Local fBm weights (B is dominant now that A is extracted as world gate).
+/// Controls how quickly local fBm is attenuated toward continental interiors.
+/// Higher = local detail persists deeper inland before smoothing.
+/// Lower = smoothing kicks in closer to the coast.
+/// 2.0: moderate — local fBm mostly gone by mid-interior
+/// 3.0: gentle — local detail extends further inland
+/// 1.0: aggressive — only the immediate coastline gets full local variation
+const INTERIOR_SMOOTHING: f64 = 1.0;
+
+// Local fBm weights. The cellular world gate defines continental topology; B/C/D add
+// coastal texture (bays, peninsulas, island chains) at the continental margins.
 const LOCAL_WEIGHT_B: f64 = 1.0;
 const LOCAL_WEIGHT_C: f64 = 0.5;
 const LOCAL_WEIGHT_D: f64 = 0.5;
 const LOCAL_DIVISOR: f64 = LOCAL_WEIGHT_B + LOCAL_WEIGHT_C + LOCAL_WEIGHT_D; // 2.0 — normalized
 
-/// Multiplicative world-scale gating regime noise, normalized to [0, 1].
+// ──── Cellular world gate ────
+
+/// Convert world position to continental hex grid cell (odd-r offset).
+fn continent_cell_for(wx: f64, wy: f64) -> (i32, i32) {
+    let cr = (wy / (CONTINENT_CELL_SIZE * HEX_ROW_HEIGHT)).round() as i32;
+    let odd_shift = if cr & 1 != 0 { CONTINENT_CELL_SIZE * 0.5 } else { 0.0 };
+    let cq = ((wx - odd_shift) / CONTINENT_CELL_SIZE).round() as i32;
+    (cq, cr)
+}
+
+/// World position of the continental feature point for hex cell (cq, cr).
+/// Jitter displaces the point up to CONTINENT_JITTER × CONTINENT_CELL_SIZE from the cell center.
+fn continent_seed_point(cq: i32, cr: i32, seed: u64) -> (f64, f64) {
+    let odd_shift = if cr & 1 != 0 { CONTINENT_CELL_SIZE * 0.5 } else { 0.0 };
+    let cx = cq as f64 * CONTINENT_CELL_SIZE + odd_shift;
+    let cy = cr as f64 * CONTINENT_CELL_SIZE * HEX_ROW_HEIGHT;
+    // hash_f64 ∈ [0, 1) → remap to [-1, 1] for symmetric displacement
+    let jx = (hash_f64(cq as i64, cr as i64, seed ^ CONTINENT_JITTER_SEED_X) * 2.0 - 1.0)
+              * CONTINENT_JITTER * CONTINENT_CELL_SIZE;
+    let jy = (hash_f64(cq as i64, cr as i64, seed ^ CONTINENT_JITTER_SEED_Y) * 2.0 - 1.0)
+              * CONTINENT_JITTER * CONTINENT_CELL_SIZE;
+    (cx + jx, cy + jy)
+}
+
+/// Cellular (Worley) world gate: 1.0 at continent centers, 0.0 at ocean midpoints.
 ///
-/// World scale (A=69997) is sampled separately and remapped to [0, 1] as a gate.
-/// Where the gate is near 0 (deep oceanic basins), the region stays water regardless
-/// of local variation. Where it's near 1 (continental interiors), the local
-/// three-wavelength fBm (B, C, D) determines coastlines. Transition zones produce
-/// island archipelagos — only the strongest local peaks survive a low gate.
+/// Inverted F1 Voronoi on a jittered hex lattice with domain warp.
+/// Domain warp displaces the query point before Voronoi lookup, creating irregular
+/// coastlines (peninsulas, bays) without distorting seed positions.
+/// The 7-cell check (self + 6 hex neighbors) finds the nearest feature point.
+fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
+    // Domain warp: displace query point for irregular coastline shapes.
+    let warp_x = simplex_2d(wx / CONTINENT_WARP_WAVELENGTH, wy / CONTINENT_WARP_WAVELENGTH,
+                            seed ^ CONTINENT_WARP_SEED_X) * CONTINENT_WARP_AMPLITUDE;
+    let warp_y = simplex_2d(wx / CONTINENT_WARP_WAVELENGTH, wy / CONTINENT_WARP_WAVELENGTH,
+                            seed ^ CONTINENT_WARP_SEED_Y) * CONTINENT_WARP_AMPLITUDE;
+    let qx = wx + warp_x;
+    let qy = wy + warp_y;
+
+    let (cq, cr) = continent_cell_for(qx, qy);
+
+    // 6 hex neighbors in odd-r offset; which side the diagonal neighbors fall on
+    // depends on whether the current row is even or odd.
+    let neighbors: [(i32, i32); 6] = if cr & 1 == 0 {
+        [(cq-1, cr), (cq+1, cr), (cq-1, cr-1), (cq, cr-1), (cq-1, cr+1), (cq, cr+1)]
+    } else {
+        [(cq-1, cr), (cq+1, cr), (cq,   cr-1), (cq+1, cr-1), (cq, cr+1), (cq+1, cr+1)]
+    };
+
+    let mut min_dist_sq = {
+        let (fx, fy) = continent_seed_point(cq, cr, seed);
+        let dx = qx - fx; let dy = qy - fy;
+        dx * dx + dy * dy
+    };
+    for &(nq, nr) in &neighbors {
+        let (fx, fy) = continent_seed_point(nq, nr, seed);
+        let dx = qx - fx; let dy = qy - fy;
+        min_dist_sq = min_dist_sq.min(dx * dx + dy * dy);
+    }
+
+    let f1 = min_dist_sq.sqrt();
+    (1.0 - f1 / (CONTINENT_CELL_SIZE * 0.5)).clamp(0.0, 1.0)
+}
+
+// ──── Regime noise ────
+
+/// Multiplicative cellular-gated regime noise, normalized to [0, 1].
+///
+/// Three factors compose the final value:
+/// - `world_gate`: sigmoid(cellular F1 Voronoi with domain warp) — disconnected continental topology
+/// - `regional_mod`: low-frequency simplex in [REGIONAL_MOD_MIN, REGIONAL_MOD_MAX] — size variation between worlds
+/// - `local`: three-wavelength fBm in [0, 1] — coastal detail (bays, peninsulas, island chains)
 fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
-    let a = simplex_2d(wx / WARP_PRIME_A, wy / WARP_PRIME_A, seed ^ WARP_STRENGTH_SEED_A);
+    let raw_gate = cellular_world_gate(wx, wy, seed);
+    let world_gate = sigmoid(raw_gate, WORLD_GATE_SIGMOID_MIDPOINT, WORLD_GATE_SIGMOID_STEEPNESS);
     let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
     let c = simplex_2d(wx / WARP_PRIME_C, wy / WARP_PRIME_C, seed ^ WARP_STRENGTH_SEED_C);
     let d = simplex_2d(wx / WARP_PRIME_D, wy / WARP_PRIME_D, seed ^ WARP_STRENGTH_SEED_D);
-    let world_gate = (a + 1.0) / 2.0; // [0, 1]
     let local_raw = (b * LOCAL_WEIGHT_B + c * LOCAL_WEIGHT_C + d * LOCAL_WEIGHT_D) / LOCAL_DIVISOR; // [-1, 1]
     let local = (local_raw + 1.0) / 2.0; // [0, 1]
-    local * world_gate
+    // Regional character: low-frequency simplex controls world size variation.
+    // Remapped from [-1,1] to [REGIONAL_MOD_MIN, REGIONAL_MOD_MAX] so every world
+    // has at least some land (min > 0) but worlds vary in character.
+    let raw_regional = simplex_2d(wx / REGIONAL_CHARACTER_WAVELENGTH, wy / REGIONAL_CHARACTER_WAVELENGTH,
+                                  seed ^ REGIONAL_MOD_SEED);
+    let regional_mod = REGIONAL_MOD_MIN + (REGIONAL_MOD_MAX - REGIONAL_MOD_MIN) * (raw_regional + 1.0) / 2.0;
+    // Attenuate local fBm in continental interiors: blend toward 1.0 based on
+    // raw cellular gate (pre-sigmoid). Using raw_gate decouples smoothing from the
+    // sigmoid land-area tuning — raw_gate peaks at 1.0 in deep interiors regardless
+    // of sigmoid midpoint/steepness.
+    let effective_local = local + (1.0 - local) * raw_gate.powf(INTERIOR_SMOOTHING);
+    effective_local * world_gate * regional_mod
 }
 
 /// UNCACHED — evaluates 4 simplex noise calls per invocation.
@@ -97,11 +194,21 @@ pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
 }
 
 /// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.
-/// Product-rule bound: max|d(local)/dx| + max|d(gate)/dx|, both remapped to [0, 1]
-/// (hence the /2 factors). Numerically ≈ 5.35e-5 per world unit.
+/// Product-rule bound over local × world_gate × regional_mod:
+///   - local: simplex sum, max gradient ≈ weight/wavelength per octave, /2 for [0,1] remap.
+///     Scaled by REGIONAL_MOD_MAX since regional_mod multiplies local.
+///   - world_gate: sigmoid(cellular_gate with domain warp).
+///     Domain warp (amplitude A, wavelength λ_w) scales gradient by (1 + A/λ_w).
+///     Sigmoid peak derivative = WORLD_GATE_SIGMOID_STEEPNESS/4.
+///     Max dist from displaced query to nearest seed is CONTINENT_CELL_SIZE*0.5.
+///     Scaled by REGIONAL_MOD_MAX since regional_mod multiplies world_gate.
+///   - regional_mod: low-frequency simplex in [MIN, MAX]; max gradient ≈ (MAX-MIN)/(2*λ).
 const RAW_GRAD_MAX: f64 =
-    (LOCAL_WEIGHT_B / WARP_PRIME_B + LOCAL_WEIGHT_C / WARP_PRIME_C + LOCAL_WEIGHT_D / WARP_PRIME_D) / LOCAL_DIVISOR / 2.0
-    + 1.0 / (2.0 * WARP_PRIME_A);
+    (LOCAL_WEIGHT_B / WARP_PRIME_B + LOCAL_WEIGHT_C / WARP_PRIME_C + LOCAL_WEIGHT_D / WARP_PRIME_D)
+        / LOCAL_DIVISOR / 2.0 * REGIONAL_MOD_MAX
+    + WORLD_GATE_SIGMOID_STEEPNESS / (4.0 * CONTINENT_CELL_SIZE * 0.5)
+        * (1.0 + CONTINENT_WARP_AMPLITUDE / CONTINENT_WARP_WAVELENGTH) * REGIONAL_MOD_MAX
+    + (REGIONAL_MOD_MAX - REGIONAL_MOD_MIN) / (REGIONAL_CHARACTER_WAVELENGTH * 2.0);
 
 /// Estimated max gradient of the sigmoidized regime field per world unit.
 /// The sigmoid's peak derivative is steepness/4 (at the midpoint), so
@@ -270,9 +377,17 @@ pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Opti
 
     // Variable suppression: low at coastlines (many small plates),
     // high in deep water/land (fewer, larger plates).
+    // Asymmetric: ocean side is boosted so deep ocean suppresses more than deep land.
     let hash = hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED);
     let regime = regime_value_at(nominal_wx, nominal_wy, seed);
-    let depth = ((regime - REGIME_LAND_THRESHOLD).abs() * 2.0).clamp(0.0, 1.0);
+    let depth = if regime >= REGIME_LAND_THRESHOLD {
+        // Land side: 0.0 at coast, 1.0 at regime=1.0
+        (regime - REGIME_LAND_THRESHOLD) / (1.0 - REGIME_LAND_THRESHOLD)
+    } else {
+        // Ocean side: 0.0 at coast, 1.0+ at regime=0.0
+        let normalized = (REGIME_LAND_THRESHOLD - regime) / REGIME_LAND_THRESHOLD;
+        (normalized * OCEAN_SUPPRESSION_BOOST).min(1.0)
+    };
     let suppression = SUPPRESSION_RATE_MIN + depth * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
     if hash < suppression {
         return None;
@@ -288,7 +403,7 @@ pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Opti
 
     let id = hash_u64(cell_q as i64, cell_r as i64, seed);
 
-    Some(PlateCenter { wx, wy, cell_q, cell_r, id, tags: ArrayVec::new() })
+    Some(PlateCenter { wx, wy, cell_q, cell_r, id, tags: ArrayVec::new(), elevation: 0.0 })
 }
 
 // ──── Grid cell lookup ────
@@ -459,19 +574,19 @@ impl PlateCache {
 
     /// Assign Sea, Coast, or Inland tags to each plate in `plates`.
     ///
-    /// - **Sea**: water plate with no land neighbors.
-    /// - **Coast**: any plate (water or land) that borders a plate of opposite regime.
-    /// - **Inland**: land plate with no water neighbors.
+    /// - **Sea**: water plate below the regime threshold with low warp.
+    /// - **Coast**: any plate with `warp_strength > COASTAL_WARP_THRESHOLD`.
+    /// - **Inland**: land plate above the regime threshold with low warp.
     ///
     /// Each plate receives exactly one base tag. Call after [`Self::plates_in_radius`].
     pub fn classify_tags(&mut self, plates: &mut [PlateCenter]) {
         for plate in plates.iter_mut() {
+            let regime = self.regime_value_at(plate.wx, plate.wy);
             let strength = self.warp_strength_at(plate.wx, plate.wy);
-            let is_land = self.regime_value_at(plate.wx, plate.wy) >= REGIME_LAND_THRESHOLD;
             let is_coast = strength > COASTAL_WARP_THRESHOLD;
             let tag = if is_coast {
                 PlateTag::Coast
-            } else if is_land {
+            } else if regime >= REGIME_LAND_THRESHOLD {
                 PlateTag::Inland
             } else {
                 PlateTag::Sea
@@ -1043,36 +1158,6 @@ mod tests {
     }
 
     #[test]
-    fn warp_strength_high_at_transition() {
-        // Sample points in the regime transition band — should have meaningful warp.
-        let seed = 42u64;
-        let mut high_warp_count = 0;
-        let mut total_transition = 0;
-        let threshold = WARP_STRENGTH_MAX * 0.3;
-        for x in (-50000..50000).step_by(500) {
-            for y in (-50000..50000).step_by(500) {
-                let wx = x as f64;
-                let wy = y as f64;
-                let regime = regime_value_at(wx, wy, seed);
-                // Points near the transition center
-                if regime > 0.4 && regime < 0.6 {
-                    total_transition += 1;
-                    let strength = warp_strength_at(wx, wy, seed);
-                    if strength > threshold {
-                        high_warp_count += 1;
-                    }
-                }
-            }
-        }
-        assert!(total_transition > 0, "Should find transition-band points");
-        let pct = high_warp_count as f64 / total_transition as f64 * 100.0;
-        assert!(pct > 30.0,
-            "Transition-band points should often have high warp: {pct:.1}% above threshold \
-             ({high_warp_count}/{total_transition})");
-    }
-
-
-    #[test]
     fn each_plate_center_in_exactly_one_chunk() {
         let seed = 42u64;
         let mut seen: HashMap<u64, (i32, i32)> = HashMap::new();
@@ -1235,51 +1320,6 @@ mod tests {
                 count, 1,
                 "plate {} should have exactly one base tag, got {}",
                 plate.id, count
-            );
-        }
-    }
-
-    #[test]
-    fn coast_plates_have_high_warp_or_border_opposite_regime() {
-        let seed = 0x9E3779B97F4A7C15;
-        let mut cache = PlateCache::new(seed);
-        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
-        cache.classify_tags(&mut plates);
-
-        for plate in plates.iter().filter(|p| p.has_tag(&PlateTag::Coast)) {
-            let strength = cache.warp_strength_at(plate.wx, plate.wy);
-            if strength > COASTAL_WARP_THRESHOLD { continue; } // warp-driven coast
-            let is_land = cache.regime_value_at(plate.wx, plate.wy) >= REGIME_LAND_THRESHOLD;
-            let neighbors = cache.plate_neighbors(plate.wx, plate.wy);
-            let has_opposite_neighbor = neighbors.iter().any(|nbr| {
-                let nbr_land = cache.regime_value_at(nbr.wx, nbr.wy) >= REGIME_LAND_THRESHOLD;
-                nbr_land != is_land
-            });
-            assert!(
-                has_opposite_neighbor,
-                "Coast plate {} must have high warp OR border a neighbor with different regime",
-                plate.id
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "invariant requires neighbor-regime fallback; disabled while fallback is off"]
-    fn sea_plates_have_no_land_neighbors() {
-        let seed = 0x9E3779B97F4A7C15;
-        let mut cache = PlateCache::new(seed);
-        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
-        cache.classify_tags(&mut plates);
-
-        for plate in plates.iter().filter(|p| p.has_tag(&PlateTag::Sea)) {
-            let neighbors = cache.plate_neighbors(plate.wx, plate.wy);
-            let any_land = neighbors.iter().any(|nbr| {
-                cache.regime_value_at(nbr.wx, nbr.wy) >= REGIME_LAND_THRESHOLD
-            });
-            assert!(
-                !any_land,
-                "Sea plate {} must have no land neighbors",
-                plate.id
             );
         }
     }

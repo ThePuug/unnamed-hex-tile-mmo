@@ -22,11 +22,13 @@ pub(crate) fn hash_f64(a: i64, b: i64, seed: u64) -> f64 {
 
 /// Hash with a channel parameter for generating multiple independent
 /// values from the same coordinates.
+#[allow(dead_code)]
 pub(crate) fn hash_channel(a: i64, b: i64, seed: u64, channel: u64) -> u64 {
     hash_u64(a, b, seed ^ channel.wrapping_mul(0x9E3779B97F4A7C15))
 }
 
 /// Hash with channel to f64 in [0, 1).
+#[allow(dead_code)]
 pub(crate) fn hash_channel_f64(a: i64, b: i64, seed: u64, channel: u64) -> f64 {
     let h = hash_channel(a, b, seed, channel);
     (h >> 11) as f64 / (1u64 << 53) as f64

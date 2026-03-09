@@ -25,7 +25,7 @@ use common_bevy::{
 
 pub fn setup(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>>,
 ) {
     commands.insert_resource(
         GlobalAmbientLight {
@@ -49,11 +49,13 @@ pub fn setup(
         Transform::default(),
         Moon::default()));
 
-    // Initialize shared terrain material (white to let vertex colors show through)
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.,
-        ..default()
+    // Initialize shared terrain material (elevation color computed in shader)
+    let material = materials.add(bevy::pbr::ExtendedMaterial {
+        base: StandardMaterial {
+            perceptual_roughness: 1.,
+            ..default()
+        },
+        extension: crate::resources::TerrainExtension {},
     });
     commands.insert_resource(TerrainMaterial { handle: material });
 }
@@ -152,6 +154,10 @@ pub fn poll_chunk_mesh_tasks(
     mut meshes: ResMut<Assets<Mesh>>,
     terrain_material: Res<TerrainMaterial>,
     chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh), Without<SummaryChunk>>,
+    loaded_chunks: Res<LoadedChunks>,
+    skip_regen: Res<SkipNeighborRegen>,
+    #[cfg(feature = "admin")]
+    flyover: Option<Res<crate::systems::admin::FlyoverState>>,
 ) {
     use common_bevy::chunk::ChunkId;
 
@@ -182,6 +188,13 @@ pub fn poll_chunk_mesh_tasks(
                     *mesh_asset = chunk_mesh;
                 }
             } else {
+                // Skip orphaned tasks — chunk was evicted before mesh completed
+                let wanted = loaded_chunks.chunks.contains(&chunk_id)
+                    || skip_regen.chunks.contains(&chunk_id);
+                #[cfg(feature = "admin")]
+                let wanted = wanted || flyover.as_ref().map_or(false, |f| f.admin_chunks.contains(&chunk_id));
+                if !wanted { continue; }
+
                 // Spawn new mesh entity. If a summary mesh exists for
                 // this chunk, resolve_lod_overlap will remove it.
                 commands.spawn((
@@ -400,7 +413,7 @@ pub fn poll_summary_mesh_tasks(
 /// Elevation is bilinearly interpolated PER VERTEX (not per tile) from this chunk
 /// and its 8 neighbors. Since adjacent hex tiles share edge vertices at the same
 /// axial position, both tiles compute the same interpolated elevation for shared
-/// vertices — eliminating seams. Each vertex is colored by `height_color_tint`.
+/// vertices — eliminating seams. Color is computed in the terrain shader.
 fn generate_summary_mesh(
     chunk_id: common_bevy::chunk::ChunkId,
     summaries: &std::collections::HashMap<common_bevy::chunk::ChunkId, common_bevy::chunk::ChunkSummary>,
@@ -424,39 +437,24 @@ fn generate_summary_mesh(
             .unwrap_or(self_elev)
     };
 
-    // 4 corner elevations averaged from self + 3 adjacent neighbors
     let c00 = (self_elev + nelev(-1, 0) + nelev(0, -1) + nelev(-1, -1)) * 0.25;
     let c10 = (self_elev + nelev( 1, 0) + nelev(0, -1) + nelev( 1, -1)) * 0.25;
     let c01 = (self_elev + nelev(-1, 0) + nelev(0,  1) + nelev(-1,  1)) * 0.25;
     let c11 = (self_elev + nelev( 1, 0) + nelev(0,  1) + nelev( 1,  1)) * 0.25;
 
-    // World-space XZ offsets for each vertex relative to hex center.
-    // Order: Center, N, NE, SE, S, SW, NW  (center pushed first in mesh)
     let xz_offsets: [[f32; 2]; 7] = [
-        [0.0, 0.0],        // Center
-        [0.0, -radius],    // N
-        [w, -h],            // NE
-        [w, h],             // SE
-        [0.0, radius],     // S
-        [-w, h],            // SW
-        [-w, -h],           // NW
+        [0.0, 0.0], [0.0, -radius], [w, -h], [w, h],
+        [0.0, radius], [-w, h], [-w, -h],
     ];
 
-    // Axial-space offsets for bilinear interpolation.
-    // Adjacent tiles sharing an edge vertex compute the same (dq,dr) at the same
-    // axial position, so the interpolated elevation matches → no seam.
     let dq_axial: [f32; 7] = [0.0,  1.0/3.0, 2.0/3.0, 1.0/3.0, -1.0/3.0, -2.0/3.0, -1.0/3.0];
     let dr_axial: [f32; 7] = [0.0, -2.0/3.0, -1.0/3.0, 1.0/3.0,  2.0/3.0,  1.0/3.0, -1.0/3.0];
-
-    // Y offset: center vertex flush, outer vertices raised by `rise` (concave hex shape)
     let y_rise: [f32; 7] = [0.0, rise, rise, rise, rise, rise, rise];
 
-    let normal_arr: [f32; 3] = [0.0, 1.0, 0.0];
     let cs = CHUNK_SIZE as f32;
     let tile_count = (CHUNK_SIZE * CHUNK_SIZE) as usize;
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(tile_count * 7);
     let mut normals: Vec<[f32; 3]> = Vec::with_capacity(tile_count * 7);
-    let mut colors: Vec<[f32; 4]> = Vec::with_capacity(tile_count * 7);
     let mut indices: Vec<u32> = Vec::with_capacity(tile_count * 18);
 
     for oq in 0..CHUNK_SIZE {
@@ -466,26 +464,34 @@ fn generate_summary_mesh(
 
             let base = positions.len() as u32;
 
-            // 7 vertices: center first, then 6 outer
+            let mut hex_pos = [Vec3::ZERO; 7];
             for vi in 0..7 {
                 let fq = (oq as f32 + dq_axial[vi]) / cs;
                 let fr = (or as f32 + dr_axial[vi]) / cs;
 
-                // Bilinear interpolation (allow slight extrapolation at chunk edges)
                 let e_top = c00 + (c10 - c00) * fq;
                 let e_bot = c01 + (c11 - c01) * fq;
                 let elev = e_top + (e_bot - e_top) * fr;
 
-                positions.push([
+                hex_pos[vi] = Vec3::new(
                     center_flat.x + xz_offsets[vi][0],
                     elev * rise + y_rise[vi],
                     center_flat.z + xz_offsets[vi][1],
-                ]);
-                normals.push(normal_arr);
-                colors.push(CommonMap::height_color_tint(elev.round() as i32));
+                );
             }
 
-            // 6 triangles: center(base) → outer pairs
+            // hex_vertex_normal expects [0..5]=outer, [6]=center
+            let remapped = [
+                hex_pos[1], hex_pos[2], hex_pos[3],
+                hex_pos[4], hex_pos[5], hex_pos[6],
+                hex_pos[0],
+            ];
+            for vi in 0..7 {
+                positions.push(hex_pos[vi].into());
+                let remap_idx = if vi == 0 { 6 } else { vi - 1 };
+                normals.push(CommonMap::hex_vertex_normal(&remapped, remap_idx).into());
+            }
+
             for i in 0..6u32 {
                 let v1 = base + 1 + i;
                 let v2 = base + 1 + ((i + 1) % 6);
@@ -500,7 +506,6 @@ fn generate_summary_mesh(
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(bevy_mesh::Indices::U32(indices));
 
     mesh

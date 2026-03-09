@@ -24,6 +24,12 @@ pub enum PlateTag {
     Coast,
     /// Base classification — assigned during plate generation.
     Inland,
+    /// Spine crest — the highest line of the range.
+    Ridge,
+    /// Flanks of a spine — transitional elevated terrain.
+    Foothills,
+    /// Broadly elevated area around a spine.
+    Highland,
 }
 
 // tinyvec::ArrayVec requires T: Default to satisfy the Array trait bound.

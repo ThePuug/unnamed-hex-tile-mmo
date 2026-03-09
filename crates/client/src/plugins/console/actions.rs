@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay, perf_ui::PerfUiRootMarker, network_ui::NetworkUiRootMarker},
+    plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay, perf_ui::PerfUiRootMarker, network_ui::NetworkUiRootMarker, terrain_detail::TerrainDetailRootMarker},
     components::PlayerOriginDebug,
 };
 use common_bevy::components::behaviour::Behaviour;
@@ -14,6 +14,7 @@ pub enum DevConsoleAction {
     ToggleSlopeRendering,
     ToggleFixedLighting,
     RegenerateMesh,
+    ToggleTerrainDetail,
 
     // Performance actions
     TogglePerfUI,
@@ -22,6 +23,10 @@ pub enum DevConsoleAction {
     // Admin actions
     #[cfg(feature = "admin")]
     ToggleFlyover,
+    #[cfg(feature = "admin")]
+    GotoWorldUnits(f64, f64),
+    #[cfg(feature = "admin")]
+    GotoQR(i32, i32),
 }
 
 /// System that executes console actions
@@ -37,8 +42,9 @@ pub fn execute_console_actions(
     chunk_mesh_query: Query<(Entity, &Mesh3d, &crate::components::ChunkMesh)>,
     actor_query: Query<Entity, With<Behaviour>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
-    mut perf_ui_query: Query<&mut Node, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>)>,
-    mut network_ui_query: Query<&mut Node, (With<NetworkUiRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>)>,
+    mut perf_ui_query: Query<&mut Node, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>, Without<TerrainDetailRootMarker>)>,
+    mut network_ui_query: Query<&mut Node, (With<NetworkUiRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>, Without<TerrainDetailRootMarker>)>,
+    mut terrain_detail_query: Query<&mut Node, (With<TerrainDetailRootMarker>, Without<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>)>,
 ) {
     for action in reader.read() {
         match action {
@@ -150,9 +156,27 @@ pub fn execute_console_actions(
                 info!("Network UI: {}", if diagnostics_state.network_ui_visible { "ON" } else { "OFF" });
             }
 
+            DevConsoleAction::ToggleTerrainDetail => {
+                diagnostics_state.terrain_detail_visible = !diagnostics_state.terrain_detail_visible;
+
+                if let Ok(mut node) = terrain_detail_query.single_mut() {
+                    node.display = if diagnostics_state.terrain_detail_visible {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    };
+                }
+
+                info!("Terrain detail: {}", if diagnostics_state.terrain_detail_visible { "ON" } else { "OFF" });
+            }
+
             // Admin actions (handled by admin module's own system)
             #[cfg(feature = "admin")]
             DevConsoleAction::ToggleFlyover => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::GotoWorldUnits(_, _) => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::GotoQR(_, _) => {}
         }
     }
 }

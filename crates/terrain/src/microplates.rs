@@ -47,6 +47,9 @@ pub struct MicroplateCenter {
     /// Tags assigned by generation and the event system. Starts empty;
     /// populated after [`MicroplateCache::populate_region`].
     pub tags: ArrayVec<[PlateTag; MAX_PLATE_TAGS]>,
+    /// Local elevation in world units. Defaults to 0.0;
+    /// populated by terrain events after macro elevation is established.
+    pub elevation: f64,
 }
 
 impl Tagged for MicroplateCenter {
@@ -156,6 +159,7 @@ impl MicroCellGeometry {
                         sub_cell_q: mcq,
                         sub_cell_r: mcr,
                         tags: ArrayVec::new(),
+                        elevation: 0.0,
                     });
                     best_dist = d;
                 }
@@ -318,6 +322,7 @@ pub fn micro_cell_at(wx: f64, wy: f64, seed: u64) -> MicroplateCenter {
                         sub_cell_q: ncq,
                         sub_cell_r: ncr,
                         tags: ArrayVec::new(),
+                        elevation: 0.0,
                     });
                     best_dist = d;
                 }
@@ -380,6 +385,7 @@ fn generate_micro_cells_for_macro(
                         sub_cell_q: cq,
                         sub_cell_r: cr,
                         tags: ArrayVec::new(),
+                        elevation: 0.0,
                     });
                 }
             }
@@ -598,7 +604,7 @@ impl MicroplateCache {
             .collect();
 
         let mut new_tags: HashMap<u64, ArrayVec<[PlateTag; MAX_PLATE_TAGS]>> = HashMap::with_capacity(live_cells.len());
-        for &(cq, cr, _wx, _wy, id) in &live_cells {
+        for &(_cq, _cr, _wx, _wy, id) in &live_cells {
             let is_land = regimes[&id];
             let is_coast = warp_strengths.get(&id).copied().unwrap_or(0.0) > COASTAL_WARP_THRESHOLD;
             let tag = if is_coast {

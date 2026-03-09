@@ -16,6 +16,8 @@ pub struct DiagnosticsState {
     pub perf_ui_visible: bool,
     /// Network diagnostics UI visibility
     pub network_ui_visible: bool,
+    /// Terrain detail panel visibility
+    pub terrain_detail_visible: bool,
 }
 
 impl Default for DiagnosticsState {
@@ -26,6 +28,7 @@ impl Default for DiagnosticsState {
             fixed_lighting_enabled: true,  // Start in debug mode
             perf_ui_visible: false,
             network_ui_visible: false,
+            terrain_detail_visible: false,
         }
     }
 }

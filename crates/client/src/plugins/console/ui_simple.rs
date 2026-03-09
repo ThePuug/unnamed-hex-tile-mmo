@@ -180,6 +180,12 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new(format!("5. Toggle Terrain Detail     [{}]", on_off(diagnostics_state.terrain_detail_visible))),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(diagnostics_state.terrain_detail_visible)),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));
@@ -224,6 +230,12 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new("2. Goto Coordinates"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));
@@ -233,6 +245,69 @@ pub fn update_console_menu(
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
+                }
+                #[cfg(feature = "admin")]
+                MenuPath::GotoSelect => {
+                    parent.spawn((
+                        Text::new("1. World Units (X, Y)"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    parent.spawn((
+                        Text::new("2. QR Coordinates (Q, R)"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: 8.0, ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("0. Back"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                #[cfg(feature = "admin")]
+                MenuPath::GotoInput => {
+                    if let Some(ref input) = console.goto_input {
+                        let labels = input.field_labels();
+                        for (i, label) in labels.iter().enumerate() {
+                            let value = &input.buffers[i];
+                            let cursor = if i == input.active_field { "▌" } else { "" };
+                            let text = format!("{}: {}{}", label, value, cursor);
+                            let color = if i == input.active_field {
+                                Color::srgb(0.3, 0.9, 0.3)
+                            } else {
+                                Color::srgb(0.7, 0.7, 0.7)
+                            };
+                            parent.spawn((
+                                Text::new(text),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(color),
+                            ));
+                        }
+
+                        parent.spawn((
+                            Text::new(""),
+                            TextFont { font_size: 8.0, ..default() },
+                        ));
+
+                        parent.spawn((
+                            Text::new("Tab: switch field  Enter: submit"),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                        ));
+
+                        parent.spawn((
+                            Text::new("Esc. Back"),
+                            TextFont { font_size: 16.0, ..default() },
+                            TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                        ));
+                    }
                 }
             }
         });

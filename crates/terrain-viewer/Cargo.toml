@@ -10,3 +10,5 @@ image = "0"
 rapid-qoi = "0"
 clap = { version = "4", features = ["derive"] }
 rayon = "1"
+log = "0.4"
+env_logger = "0.11"

@@ -160,225 +160,142 @@ impl Map {
         self.0.rise()
     }
 
-    /// Topographic color from shared elevation ramp (sea level at 0).
-    /// Returns linear RGB [0..1] with alpha.
-    pub fn height_color_tint(elevation: i32) -> [f32; 4] {
-        let (r, g, b) = common::elevation_color_rgb(elevation);
-        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
-    }
-
-    /// Inner implementation of vertices_and_colors_with_slopes that operates on a map reference.
-    fn vertices_and_colors_with_slopes_inner(map: &qrz::Map<EntityType>, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
+    /// Compute slope-adjusted vertices for a hex tile.
+    /// Outer vertex Y is shifted ±0.5×rise toward higher/lower neighbors.
+    fn vertices_with_slopes_inner(map: &qrz::Map<EntityType>, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
         let mut verts = map.vertices(qrz);
+        if !apply_slopes {
+            return verts;
+        }
+
         let rise = map.rise();
-
-        // Use height-based color instead of fixed grass color
-        let grass_color = Self::height_color_tint(qrz.z);
-        // Stone cliff color (lighter gray-brown for contrast)
-        let cliff_color = [0.35, 0.32, 0.28, 1.0];
-        let mut colors = vec![grass_color; 6];
-
-        // Calculate ambient occlusion for each vertex
-        // Vertices surrounded by higher neighbors should be darkened
-        let mut ao_factors = [1.0f32; 6]; // 1.0 = no darkening, lower values = darker
-
-        // Track adjustments per vertex to apply only the maximum
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
 
-        // Map of direction index to the two vertices on that edge
         let direction_to_vertices = [
-            (4, 5), // Dir 0: West edge has vertices SW(4) and NW(5)
-            (3, 4), // Dir 1: SW edge has vertices South(3) and SW(4)
-            (2, 3), // Dir 2: SE edge has vertices SE(2) and South(3)
-            (1, 2), // Dir 3: East edge has vertices NE(1) and SE(2)
-            (0, 1), // Dir 4: NE edge has vertices North(0) and NE(1)
-            (5, 0), // Dir 5: NW edge has vertices NW(5) and North(0)
+            (4, 5), // Dir 0: West edge → SW(4), NW(5)
+            (3, 4), // Dir 1: SW edge → S(3), SW(4)
+            (2, 3), // Dir 2: SE edge → SE(2), S(3)
+            (1, 2), // Dir 3: East edge → NE(1), SE(2)
+            (0, 1), // Dir 4: NE edge → N(0), NE(1)
+            (5, 0), // Dir 5: NW edge → NW(5), N(0)
         ];
 
-        // Process each edge independently based on its neighbor
-        // Do neighbor search once and use for both slopes and cliff detection
         for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
             let neighbor_qrz = qrz + *direction;
-
-            // O(1) flat lookup for neighbor tile at this (q, r) column
-            let found_neighbor = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r);
-
-            if let Some((actual_neighbor_qrz, _)) = found_neighbor {
-                // Calculate elevation difference
+            if let Some((actual_neighbor_qrz, _)) = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r) {
                 let elevation_diff = actual_neighbor_qrz.z - qrz.z;
-
-                // Ambient occlusion: darken vertices next to higher neighbors
-                if elevation_diff > 0 {
-                    let (v1, v2) = direction_to_vertices[dir_idx];
-                    // Darken based on height difference (more height = more darkening)
-                    let ao_amount = (elevation_diff as f32 / 10.0).min(0.3); // Max 30% darkening per neighbor
-                    ao_factors[v1] *= 1.0 - ao_amount;
-                    ao_factors[v2] *= 1.0 - ao_amount;
-                }
-
-                // Check if this is a cliff edge (elevation difference > 1)
-                let is_cliff = elevation_diff.abs() > 1;
-
-                // Slope calculation:
-                // - Allow slopes on both sides of cliffs (top slopes down, bottom slopes up)
-                // - This creates more gradual cliff faces
-                let adjustment = if is_cliff && elevation_diff > 1 {
-                    rise * 0.5  // Upward cliff: slope up toward higher neighbor
-                } else if is_cliff && elevation_diff < -1 {
-                    rise * -0.5  // Downward cliff: slope down toward lower neighbor
-                } else if elevation_diff > 0 {
-                    rise * 0.5  // Gradual up: slope up
+                let adjustment = if elevation_diff > 0 {
+                    rise * 0.5
                 } else if elevation_diff < 0 {
-                    rise * -0.5  // Gradual down: slope down
+                    rise * -0.5
                 } else {
-                    0.0  // Same level, no slope
+                    0.0
                 };
-
-                // Record adjustment for vertices on this edge
                 if adjustment != 0.0 {
                     let (v1, v2) = direction_to_vertices[dir_idx];
                     vertex_adjustments[v1].push(adjustment);
                     vertex_adjustments[v2].push(adjustment);
                 }
-
-                // Darken vertices at the BOTTOM of cliffs (looking up at higher neighbor)
-                // Keep vertices at the TOP of cliffs (looking down) at normal color
-                if is_cliff && elevation_diff > 1 {
-                    // This is the bottom of a cliff - darken vertices
-                    let (v1, v2) = direction_to_vertices[dir_idx];
-                    colors[v1] = cliff_color;
-                    colors[v2] = cliff_color;
-                }
-                // Don't darken vertices at the top of cliffs (elevation_diff < -1)
             }
         }
 
-        // Apply the maximum absolute adjustment to each vertex
-        // Now we allow slopes on both sides of cliffs for more gradual transitions
-        if apply_slopes {
-            for (i, adjustments) in vertex_adjustments.iter().enumerate() {
-                if adjustments.is_empty() {
-                    continue;
-                }
-
-                // Apply the adjustment with the largest absolute value
-                let max_adj = adjustments.iter()
-                    .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-                    .copied().unwrap();
+        for (i, adjustments) in vertex_adjustments.iter().enumerate() {
+            if let Some(&max_adj) = adjustments.iter()
+                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+            {
                 verts[i].y += max_adj;
             }
         }
 
-        // Apply ambient occlusion to all vertex colors
-        for i in 0..6 {
-            colors[i][0] *= ao_factors[i];
-            colors[i][1] *= ao_factors[i];
-            colors[i][2] *= ao_factors[i];
-            // Alpha stays at 1.0
+        verts
+    }
+
+    /// Compute slope-adjusted vertices for a hex tile (public wrapper).
+    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
+        Self::vertices_with_slopes_inner(&self.0, qrz, apply_slopes)
+    }
+
+    /// Compute per-vertex normal for a hex tile from its actual geometry.
+    /// `verts` layout: [0..5] = outer (N, NE, SE, S, SW, NW), [6] = center.
+    /// Each outer vertex participates in 2 triangles; the center in all 6.
+    pub fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {
+        let center = verts[6];
+        if vertex_idx == 6 {
+            // Center: average all 6 face normals
+            let mut sum = Vec3::ZERO;
+            for i in 0..6 {
+                sum += (verts[(i + 1) % 6] - center).cross(verts[i] - center);
+            }
+            if sum.length_squared() > 1e-10 { sum.normalize() } else { Vec3::Y }
+        } else {
+            // Outer vertex j: average the 2 adjacent face normals
+            let j = vertex_idx;
+            let n1 = (verts[(j + 1) % 6] - center).cross(verts[j] - center);
+            let n2 = (verts[j] - center).cross(verts[(j + 5) % 6] - center);
+            let sum = n1 + n2;
+            if sum.length_squared() > 1e-10 { sum.normalize() } else { Vec3::Y }
         }
-
-        (verts, colors)
     }
 
-    /// Generate vertices for a hex tile with slopes toward neighbors
-    /// Returns (vertices, vertex_colors) - combined to avoid duplicate neighbor searches
-    /// If apply_slopes is false, vertices remain flat at their natural height
-    pub fn vertices_and_colors_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> (Vec<Vec3>, Vec<[f32; 4]>) {
-        Self::vertices_and_colors_with_slopes_inner(&self.0, qrz, apply_slopes)
-    }
-
-    /// Calculate smooth normal for a vertex by averaging face normals of adjacent triangles
-    /// This version considers neighboring hexes for truly smooth lighting
-    fn calculate_vertex_normal(&self, _qrz: Qrz, _vertex_idx: usize, _verts: &[Vec3], _apply_slopes: bool) -> Vec3 {
-        // For smooth terrain appearance, use flat upward normals
-        // This prevents each hex from showing as a distinct bump
-        Vec3::new(0., 1., 0.)
-    }
-
-    /// Generate a mesh for a single chunk using TriangleList topology
-    /// This enables independent chunk rendering and better GPU cache locality
+    /// Generate a mesh for a single chunk using TriangleList topology.
+    /// Color is computed in the terrain shader from world-space Y; no vertex colors emitted.
     pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
         let map = &*self.0;
 
         let mut verts: Vec<Vec3> = Vec::new();
         let mut norms: Vec<Vec3> = Vec::new();
-        let mut colors: Vec<[f32; 4]> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
-        // Filter tiles to only those in this chunk
         for (&tile_qrz, _) in map.iter() {
             if loc_to_chunk(tile_qrz) != chunk_id {
                 continue;
             }
 
-            // Get RAW vertices (without slope adjustments to avoid gaps at boundaries)
-            // Only apply slopes if explicitly enabled AND we're okay with gaps
             let raw_verts = map.vertices(tile_qrz);
-            let (slope_verts, tile_colors) = if apply_slopes {
-                Self::vertices_and_colors_with_slopes_inner(&map, tile_qrz, true)
-            } else {
-                let colors = vec![Self::height_color_tint(tile_qrz.z); 6];
-                (raw_verts.clone(), colors)
-            };
+            let slope_verts = Self::vertices_with_slopes_inner(&map, tile_qrz, apply_slopes);
 
-            // Use raw vertices for edge vertices to ensure adjacent hexes align perfectly
-            // Use slope-adjusted vertices only for height, not position
+            // Use raw XZ for edge alignment, slope-adjusted Y for height
             let tile_verts: Vec<Vec3> = raw_verts.iter().enumerate().map(|(i, &raw_pos)| {
                 if apply_slopes && i < 6 {
-                    // Keep X/Z from raw, but use Y from slope-adjusted
                     Vec3::new(raw_pos.x, slope_verts[i].y, raw_pos.z)
                 } else {
                     raw_pos
                 }
             }).collect();
 
-            // Base index for this tile's vertices
             let base_idx = verts.len() as u32;
 
             // Center vertex (index 6)
-            let center_pos = tile_verts[6];
-            let center_color = Self::height_color_tint(tile_qrz.z);
-            let center_normal = Vec3::new(0., 1., 0.);
+            verts.push(tile_verts[6]);
+            norms.push(Self::hex_vertex_normal(&tile_verts, 6));
 
-            verts.push(center_pos);
-            colors.push(center_color);
-            norms.push(center_normal);
-
-            // Outer vertices (indices 0-5: N, NE, SE, S, SW, NW)
+            // Outer vertices (0-5: N, NE, SE, S, SW, NW)
             for i in 0..6 {
                 verts.push(tile_verts[i]);
-                colors.push(tile_colors[i]);
-                norms.push(self.calculate_vertex_normal(tile_qrz, i, &tile_verts, apply_slopes));
+                norms.push(Self::hex_vertex_normal(&tile_verts, i));
             }
 
-            // Generate 6 triangles for the hex top surface (TriangleList)
-            // Hex vertices are ordered clockwise (N, NE, SE, S, SW, NW)
-            // Reverse winding to counter-clockwise for Bevy's backface culling
+            // 6 triangles for hex top surface (CCW winding)
             for i in 0..6 {
                 let v1 = base_idx + 1 + i;
                 let v2 = base_idx + 1 + ((i + 1) % 6);
-                indices.extend([base_idx, v2, v1]); // Reversed winding: [center, v2, v1]
+                indices.extend([base_idx, v2, v1]);
             }
 
-            // Generate vertical skirt geometry for cliff edges
+            // Vertical skirt geometry for cliff edges
             for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
                 let neighbor_qrz = tile_qrz + *direction;
-
-                // O(1) flat lookup for neighbor tile
                 let found_neighbor = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r);
 
                 if let Some((actual_neighbor_qrz, _)) = found_neighbor {
                     let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
-
-                    // Only generate skirt for elevation drops (neighbor is lower)
                     if elevation_diff >= 0 {
                         continue;
                     }
 
-                    // Get neighbor vertices (raw positions for alignment)
                     let neighbor_raw = map.vertices(actual_neighbor_qrz);
                     let neighbor_verts: Vec<Vec3> = if apply_slopes {
-                        let (neighbor_slope, _) = Self::vertices_and_colors_with_slopes_inner(&map, actual_neighbor_qrz, true);
+                        let neighbor_slope = Self::vertices_with_slopes_inner(&map, actual_neighbor_qrz, true);
                         neighbor_raw.iter().enumerate().map(|(i, &raw_pos)| {
                             if i < 6 {
                                 Vec3::new(raw_pos.x, neighbor_slope[i].y, raw_pos.z)
@@ -390,20 +307,13 @@ impl Map {
                         neighbor_raw
                     };
 
-                    let neighbor_colors = vec![Self::height_color_tint(actual_neighbor_qrz.z); 6];
-
-                    // Map direction to edge vertex indices
-                    // For each direction, we need the two vertices that form that edge
-                    // Hex vertices: 0=N, 1=NE, 2=SE, 3=S, 4=SW, 5=NW
-                    // Directions: 0=West, 1=SW, 2=SE, 3=East, 4=NE, 5=NW
-                    // Try swapping neighbor vertex order - pair matching vertices (SW<->SE, NW<->NE, etc)
                     let (curr_v1_idx, curr_v2_idx, neighbor_v1_idx, neighbor_v2_idx) = match dir_idx {
-                        0 => (4, 5, 2, 1), // West: SW-NW pairs with neighbor SE-NE (swapped)
-                        1 => (3, 4, 1, 0), // SW: S-SW pairs with neighbor NE-N (swapped)
-                        2 => (2, 3, 0, 5), // SE: SE-S pairs with neighbor N-NW (swapped)
-                        3 => (1, 2, 5, 4), // East: NE-SE pairs with neighbor NW-SW (swapped)
-                        4 => (0, 1, 4, 3), // NE: N-NE pairs with neighbor SW-S (swapped)
-                        5 => (5, 0, 3, 2), // NW: NW-N pairs with neighbor S-SE (swapped)
+                        0 => (4, 5, 2, 1),
+                        1 => (3, 4, 1, 0),
+                        2 => (2, 3, 0, 5),
+                        3 => (1, 2, 5, 4),
+                        4 => (0, 1, 4, 3),
+                        5 => (5, 0, 3, 2),
                         _ => continue,
                     };
 
@@ -412,38 +322,20 @@ impl Map {
                     let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
                     let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
 
-                    // Blocking cliffs (|diff| > 1) get stone grey, gentle slopes keep altitude color
-                    let is_blocking_cliff = elevation_diff.abs() > 1;
-                    let (curr_c1, curr_c2, neighbor_c1, neighbor_c2) = if is_blocking_cliff {
-                        let cliff_color = [0.35, 0.32, 0.28, 1.0];
-                        (cliff_color, cliff_color, cliff_color, cliff_color)
-                    } else {
-                        (tile_colors[curr_v1_idx], tile_colors[curr_v2_idx],
-                         neighbor_colors[neighbor_v1_idx], neighbor_colors[neighbor_v2_idx])
-                    };
-
-                    // Calculate outward-facing normal for this edge
-                    // Cross product of edge direction with vertical gives outward normal
+                    // Outward-facing normal for skirt (horizontal → shader detects as cliff)
                     let edge_dir = (curr_v2 - curr_v1).normalize();
-                    let vertical = Vec3::new(0., -1., 0.); // Pointing down
-                    let outward_normal = edge_dir.cross(vertical).normalize();
+                    let outward_normal = edge_dir.cross(Vec3::new(0., -1., 0.)).normalize();
 
-                    // Add 4 vertices for the quad: [upper_v1, upper_v2, lower_v2, lower_v1]
                     let skirt_base = verts.len() as u32;
                     verts.extend([curr_v1, curr_v2, neighbor_v2, neighbor_v1]);
-                    colors.extend([curr_c1, curr_c2, neighbor_c2, neighbor_c1]);
                     norms.extend([outward_normal; 4]);
 
-                    // Triangulate the quad - simple consistent winding for all directions
-                    // Vertices: 0=curr_v1, 1=curr_v2, 2=neighbor_v2, 3=neighbor_v1
-                    // Try diagonal 0-2: triangles [0,1,2] and [0,2,3]
                     indices.extend([skirt_base, skirt_base + 1, skirt_base + 2]);
                     indices.extend([skirt_base, skirt_base + 2, skirt_base + 3]);
                 }
             }
         }
 
-        // Compute AABB from chunk vertices only
         let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
         let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
         for vert in &verts {
@@ -461,7 +353,6 @@ impl Map {
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..vert_count).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
                 .with_inserted_indices(Indices::U32(indices)),
             Aabb::from_min_max(min, max),
         )
@@ -472,120 +363,86 @@ impl Map {
 
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
-        let mut colors:Vec<[f32; 4]> = Vec::new();
         let mut last_qrz:Option<Qrz> = None;
         let mut skip_sw = false;
         let mut west_skirt_verts: Vec<Vec3> = Vec::new();
         let mut west_skirt_norms: Vec<Vec3> = Vec::new();
-        let mut west_skirt_colors: Vec<[f32; 4]> = Vec::new();
 
         map.iter().for_each(|(&it_qrz, _)| {
-            let (it_vrt, it_col) = Self::vertices_and_colors_with_slopes_inner(&map, it_qrz, apply_slopes);
+            let it_vrt = Self::vertices_with_slopes_inner(&map, it_qrz, apply_slopes);
 
             if let Some(last_qrz) = last_qrz {
-                // if new column
                 if last_qrz.q*2+last_qrz.r != it_qrz.q*2+it_qrz.r {
-                    // add skirts
                     verts.append(&mut west_skirt_verts);
                     norms.append(&mut west_skirt_norms);
-                    colors.append(&mut west_skirt_colors);
                 }
             }
 
             let sw_neighbor = it_qrz + qrz::DIRECTIONS[1];
             let sw_result = map.get_by_qr(sw_neighbor.q, sw_neighbor.r);
-            let sw_data = sw_result.map(|(qrz, _)| Self::vertices_and_colors_with_slopes_inner(&map, qrz, apply_slopes));
+            let sw_data = sw_result.map(|(qrz, _)| Self::vertices_with_slopes_inner(&map, qrz, apply_slopes));
 
             if skip_sw {
-                let (last_vrt, last_col) = Self::vertices_and_colors_with_slopes_inner(&map, last_qrz.unwrap(), apply_slopes);
+                let last_vrt = Self::vertices_with_slopes_inner(&map, last_qrz.unwrap(), apply_slopes);
                 let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
                 verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
-                // For transition vertices, use simple up normal
                 norms.extend([ Vec3::new(0., 1., 0.); 4 ]);
-                colors.extend([ last_col[3], last_col[3], it_col[0], it_col[0] ]);
                 skip_sw = false;
             }
 
-            // Calculate smooth normals for the hex vertices
-            let norm_0 = self.calculate_vertex_normal(it_qrz, 0, &it_vrt, apply_slopes);
-            let norm_5 = self.calculate_vertex_normal(it_qrz, 5, &it_vrt, apply_slopes);
-            let norm_4 = self.calculate_vertex_normal(it_qrz, 4, &it_vrt, apply_slopes);
-            let norm_3 = self.calculate_vertex_normal(it_qrz, 3, &it_vrt, apply_slopes);
-            let center_normal = Vec3::new(0., 1., 0.); // Center can stay up
-
-            // Use height-based color for center vertex
-            let it_center_color = Self::height_color_tint(it_qrz.z);
+            let norm_0 = Self::hex_vertex_normal(&it_vrt, 0);
+            let norm_5 = Self::hex_vertex_normal(&it_vrt, 5);
+            let norm_4 = Self::hex_vertex_normal(&it_vrt, 4);
+            let norm_3 = Self::hex_vertex_normal(&it_vrt, 3);
+            let center_normal = Self::hex_vertex_normal(&it_vrt, 6);
 
             verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
             norms.extend([ norm_0, norm_5, center_normal, norm_4, norm_3 ]);
-            colors.extend([ it_col[0], it_col[5], it_center_color, it_col[4], it_col[3] ]);
 
-            if let Some((sw_vrt, sw_col)) = sw_data {
-                // Calculate normals for southwest neighbor
-                let sw_qrz = sw_result.unwrap().0;
-                let sw_norm_0 = self.calculate_vertex_normal(sw_qrz, 0, &sw_vrt, apply_slopes);
-                let sw_norm_1 = self.calculate_vertex_normal(sw_qrz, 1, &sw_vrt, apply_slopes);
-                let sw_norm_2 = self.calculate_vertex_normal(sw_qrz, 2, &sw_vrt, apply_slopes);
-                let sw_norm_3 = self.calculate_vertex_normal(sw_qrz, 3, &sw_vrt, apply_slopes);
-                let sw_center = Vec3::new(0., 1., 0.);
-                let sw_center_color = Self::height_color_tint(sw_qrz.z);
+            if let Some(sw_vrt) = sw_data {
+                let sw_norm_0 = Self::hex_vertex_normal(&sw_vrt, 0);
+                let sw_norm_1 = Self::hex_vertex_normal(&sw_vrt, 1);
+                let sw_norm_2 = Self::hex_vertex_normal(&sw_vrt, 2);
+                let sw_norm_3 = Self::hex_vertex_normal(&sw_vrt, 3);
+                let sw_center = Self::hex_vertex_normal(&sw_vrt, 6);
 
                 verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
                 norms.extend([ sw_norm_0, sw_norm_1, sw_center, sw_norm_2, sw_norm_3 ]);
-                colors.extend([ sw_col[0], sw_col[1], sw_center_color, sw_col[2], sw_col[3] ]);
             } else {
                 verts.extend([ it_vrt[3] ]);
                 norms.extend([ norm_3 ]);
-                colors.extend([ it_col[3] ]);
                 skip_sw = true;
             }
 
             let we_neighbor = it_qrz + qrz::DIRECTIONS[0];
             let we_result = map.get_by_qr(we_neighbor.q, we_neighbor.r);
             let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
-            // Only use sloped vertices if the tile actually exists in the map
-            let (mut we_vrt, we_col) = if we_result.is_some() {
-                Self::vertices_and_colors_with_slopes_inner(&map, we_qrz, apply_slopes)
+            let mut we_vrt = if we_result.is_some() {
+                Self::vertices_with_slopes_inner(&map, we_qrz, apply_slopes)
             } else {
-                // For fake west neighbor, use height-based color
-                let fake_we_color = Self::height_color_tint(we_qrz.z);
-                (map.vertices(we_qrz), vec![fake_we_color; 6])
+                map.vertices(we_qrz)
             };
 
-            // If west neighbor is fake, match its East edge vertices to current tile's West edge
             if we_result.is_none() {
-                we_vrt[1].y = it_vrt[5].y;  // NE of west neighbor = NW of current tile
-                we_vrt[2].y = it_vrt[4].y;  // SE of west neighbor = SW of current tile
+                we_vrt[1].y = it_vrt[5].y;
+                we_vrt[2].y = it_vrt[4].y;
             }
 
-            // Calculate normals for west neighbor (if it exists)
-            let we_norm_1 = if we_result.is_some() {
-                self.calculate_vertex_normal(we_qrz, 1, &we_vrt, apply_slopes)
-            } else {
-                Vec3::new(0., 1., 0.)
-            };
-            let we_norm_2 = if we_result.is_some() {
-                self.calculate_vertex_normal(we_qrz, 2, &we_vrt, apply_slopes)
-            } else {
-                Vec3::new(0., 1., 0.)
-            };
+            let we_norm_1 = Self::hex_vertex_normal(&we_vrt, 1);
+            let we_norm_2 = Self::hex_vertex_normal(&we_vrt, 2);
 
             if let Some(last_qrz) = last_qrz {
-                let (last_vrt, last_col) = Self::vertices_and_colors_with_slopes_inner(&map, last_qrz, apply_slopes);
+                let last_vrt = Self::vertices_with_slopes_inner(&map, last_qrz, apply_slopes);
                 let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
                 west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
                 west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
-                west_skirt_colors.extend([ last_col[4], last_col[4] ]);
             }
             west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
             west_skirt_norms.extend([ norm_5, we_norm_1, norm_4, we_norm_2, norm_4, norm_4 ]);
-            west_skirt_colors.extend([ it_col[5], we_col[1], it_col[4], we_col[2], it_col[4], it_col[4] ]);
 
             last_qrz = Some(it_qrz);
         });
 
-        // Compute proper AABB from ALL vertices (not just column boundaries)
-        // This ensures frustum culling works correctly with varied terrain heights
         let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
         let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
         for vert in &verts {
@@ -601,7 +458,6 @@ impl Map {
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..len).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
                 .with_inserted_indices(Indices::U32((0..len).collect())),
             Aabb::from_min_max(min, max),
         )
@@ -804,12 +660,12 @@ mod tests {
         let map = Map::new(qrz_map);
 
         // Get vertices for hex1 to understand its structure
-        let (hex1_verts, _) = map.vertices_and_colors_with_slopes(hex1, true);
+        let hex1_verts = map.vertices_with_slopes(hex1, true);
 
         // Calculate normal for the vertex that's shared between hex1 and hex2
         // Vertex 1 (NE) of hex1 points toward hex2 (which is to the East, direction index 3)
         // Actually, hex2 is at direction index 3 (East), so vertices 1 and 2 are shared
-        let shared_vertex_normal = map.calculate_vertex_normal(hex1, 1, &hex1_verts, true);
+        let shared_vertex_normal = Map::hex_vertex_normal(&hex1_verts, 1);
 
         // On a flat plane with neighbors, the normal should point straight up
         // If we only considered the current hex's triangles, it would be tilted
@@ -835,59 +691,6 @@ mod tests {
             "Expected Z component of normal to be small on flat terrain, but got {}",
             shared_vertex_normal.z
         );
-    }
-
-    #[test]
-    fn test_height_based_color_gradients() {
-        // Create a map with tiles at different elevations
-        let mut qrz_map = qrz::Map::new(1.0, 0.8);
-        let low_tile = Qrz { q: 0, r: 0, z: 0 };   // Sea level
-        let mid_tile = Qrz { q: 1, r: 0, z: 5 };   // Mid elevation
-        let high_tile = Qrz { q: 2, r: 0, z: 10 }; // High elevation
-
-        qrz_map.insert(low_tile, EntityType::Decorator(default()));
-        qrz_map.insert(mid_tile, EntityType::Decorator(default()));
-        qrz_map.insert(high_tile, EntityType::Decorator(default()));
-
-        let map = Map::new(qrz_map);
-        let (mesh, _aabb) = map.regenerate_mesh(true);
-
-        // Get colors from the mesh
-        let color_attr = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
-            .expect("Mesh should have colors");
-
-        let colors = match color_attr {
-            bevy_mesh::VertexAttributeValues::Float32x4(colors) => colors,
-            _ => panic!("Expected Float32x4 color attribute"),
-        };
-
-        // Find colors for each tile's center vertex (we know the mesh structure from regenerate_mesh)
-        // The colors should vary based on elevation
-
-        // At least some colors should differ based on elevation
-        // We expect lower tiles to be darker and higher tiles to be lighter (or have different hues)
-        let unique_colors: std::collections::HashSet<String> = colors.iter()
-            .filter(|c| {
-                // Filter out cliff colors (gray-brown) to focus on grass colors
-                !((c[0] - 0.35).abs() < 0.01 && (c[1] - 0.32).abs() < 0.01)
-            })
-            .map(|c| format!("{:.3},{:.3},{:.3}", c[0], c[1], c[2]))
-            .collect();
-
-        assert!(
-            unique_colors.len() > 1,
-            "Expected multiple different colors based on elevation, but found only {} unique grass colors. \
-             Colors should vary with height.",
-            unique_colors.len()
-        );
-
-        // All colors should be valid (components between 0 and 1)
-        for color in colors {
-            assert!(color[0] >= 0.0 && color[0] <= 1.0, "Red component out of range: {}", color[0]);
-            assert!(color[1] >= 0.0 && color[1] <= 1.0, "Green component out of range: {}", color[1]);
-            assert!(color[2] >= 0.0 && color[2] <= 1.0, "Blue component out of range: {}", color[2]);
-            assert!(color[3] >= 0.0 && color[3] <= 1.0, "Alpha component out of range: {}", color[3]);
-        }
     }
 
     #[test]
@@ -987,52 +790,4 @@ mod tests {
         assert_eq!(positions_11.len(), 9 * 7, "Chunk (1,1) should have 9 tiles * 7 vertices");
     }
 
-    #[test]
-    fn test_ambient_occlusion_darkens_enclosed_vertices() {
-        // Test: Compare a vertex with one higher neighbor vs two higher neighbors
-        // Both should get cliff colors, but the one with two neighbors should be darker (more AO)
-
-        // Setup 1: Tile with one higher neighbor
-        let mut map1 = qrz::Map::new(1.0, 0.8);
-        let tile1 = Qrz { q: 0, r: 0, z: 0 };
-        let neighbor1 = tile1 + qrz::DIRECTIONS[0] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the west
-
-        map1.insert(tile1, EntityType::Decorator(default()));
-        map1.insert(neighbor1, EntityType::Decorator(default()));
-        let map_one_neighbor = Map::new(map1);
-        let (_, colors_one) = map_one_neighbor.vertices_and_colors_with_slopes(tile1, true);
-
-        // Setup 2: Tile with two higher neighbors (same tile, but add another higher neighbor)
-        let mut map2 = qrz::Map::new(1.0, 0.8);
-        let tile2 = Qrz { q: 0, r: 0, z: 0 };
-        let neighbor2a = tile2 + qrz::DIRECTIONS[0] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the west
-        let neighbor2b = tile2 + qrz::DIRECTIONS[5] + Qrz { q: 0, r: 0, z: 3 }; // Higher to the northwest
-
-        map2.insert(tile2, EntityType::Decorator(default()));
-        map2.insert(neighbor2a, EntityType::Decorator(default()));
-        map2.insert(neighbor2b, EntityType::Decorator(default()));
-        let map_two_neighbors = Map::new(map2);
-        let (_, colors_two) = map_two_neighbors.vertices_and_colors_with_slopes(tile2, true);
-
-        // Vertex 5 is shared by both higher neighbors (at the corner)
-        // It should be darker in the two-neighbor case due to cumulative AO
-        let brightness_one = colors_one[5][0] + colors_one[5][1] + colors_one[5][2];
-        let brightness_two = colors_two[5][0] + colors_two[5][1] + colors_two[5][2];
-
-        assert!(
-            brightness_two < brightness_one,
-            "Expected vertex with two higher neighbors to be darker due to cumulative AO, \
-             but two-neighbor brightness ({}) >= one-neighbor brightness ({})",
-            brightness_two,
-            brightness_one
-        );
-
-        // The darkening should be moderate (not completely black)
-        assert!(
-            brightness_two > brightness_one * 0.3,
-            "AO darkening should be subtle, but two-neighbor vertex is too dark: {} vs one-neighbor {}",
-            brightness_two,
-            brightness_one
-        );
-    }
 }

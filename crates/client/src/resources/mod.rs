@@ -1,8 +1,23 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    pbr::{ExtendedMaterial, MaterialExtension},
+    render::render_resource::AsBindGroup,
+    shader::ShaderRef,
+};
 use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
 use common_bevy::chunk::{ChunkId, ChunkSummary};
+
+/// Custom terrain material extension that computes elevation color in the fragment shader.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct TerrainExtension {}
+
+impl MaterialExtension for TerrainExtension {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/terrain.wgsl".into()
+    }
+}
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
@@ -42,10 +57,10 @@ impl Server {
 use bevy::tasks::Task;
 use bevy_camera::primitives::Aabb;
 
-/// Shared material for all chunk meshes
+/// Shared material for all chunk meshes (elevation color computed in shader)
 #[derive(Resource)]
 pub struct TerrainMaterial {
-    pub handle: Handle<StandardMaterial>,
+    pub handle: Handle<ExtendedMaterial<StandardMaterial, TerrainExtension>>,
 }
 
 /// Tracks pending async mesh generation tasks per chunk

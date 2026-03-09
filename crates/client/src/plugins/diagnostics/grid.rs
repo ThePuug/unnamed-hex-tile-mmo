@@ -239,11 +239,11 @@ fn build_hex_grid_lines(map: &Map, apply_slopes: bool) -> HexGridBuilder {
     let mut builder = HexGridBuilder::new();
 
     for (qrz, _) in map.iter_tiles() {
-        let (vertex_vec, _) = map.vertices_and_colors_with_slopes(qrz, apply_slopes);
+        let vertex_vec = map.vertices_with_slopes(qrz, apply_slopes);
 
         // Convert Vec<Vec3> to fixed-size array for type safety
         let vertices: [Vec3; HEX_VERTEX_COUNT] = vertex_vec.try_into()
-            .expect("vertices_and_colors_with_slopes must return exactly 7 vertices");
+            .expect("vertices_with_slopes must return exactly 7 vertices");
 
         builder.add_hex_perimeter(&vertices);
         builder.add_center_spokes(&vertices);

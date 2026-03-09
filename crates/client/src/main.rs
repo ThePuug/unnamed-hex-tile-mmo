@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use bevy::{
     log::LogPlugin,
+    pbr::ExtendedMaterial,
     prelude::*,
     time::common_conditions::on_timer,
 };
@@ -76,6 +77,7 @@ fn main() {
         DiagnosticsPlugin,
         UiPlugin,
         VignettePlugin,
+        MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
     ));
 
     app.add_message::<Do>();

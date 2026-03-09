@@ -325,7 +325,7 @@ pub fn is_tile_blocked(
 
         if elevation_diff > 1 {
             if airtime.is_some() {
-                let current_y = px0.y + current_offset.y;
+                let current_y = current_offset.y;
                 let target_floor_y = terrain_y_at(next_floor_qrz, current_tile, map);
                 current_y + LEDGE_GRAB_THRESHOLD < target_floor_y
             } else {
@@ -443,7 +443,7 @@ pub fn calculate_movement(
                 let elevation_diff = next_floor_qrz.z - current_floor_qrz.z;
                 if elevation_diff > 1 {
                     if airtime.is_some() {
-                        let current_y = px0.y + offset.y;
+                        let current_y = offset.y;
                         let target_floor_y = terrain_y_at(next_floor_qrz, tile, map);
                         current_y + LEDGE_GRAB_THRESHOLD < target_floor_y
                     } else {

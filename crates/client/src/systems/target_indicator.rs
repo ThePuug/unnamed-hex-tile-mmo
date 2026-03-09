@@ -132,7 +132,7 @@ pub fn update(
                     // Find the actual terrain tile at target location (handles elevation)
                     if let Some((actual_tile, _)) = map.get_by_qr(target_loc.q, target_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();
@@ -210,7 +210,7 @@ pub fn update(
                     // Find the actual terrain tile at ally location (handles elevation)
                     if let Some((actual_tile, _)) = map.get_by_qr(ally_loc.q, ally_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();
