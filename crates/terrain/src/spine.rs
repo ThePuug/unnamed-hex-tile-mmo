@@ -89,7 +89,7 @@ const FLANK_HEIGHT_MAX: f64 = 0.70;
 
 /// Maximum connection distance between peaks, as a multiple of the average
 /// falloff radius of the two peaks. Beyond this, no ridgeline is created.
-const MAX_RIDGE_DIST_SCALE: f64 = 2.5;
+const MAX_RIDGE_DIST_SCALE: f64 = 3.125;
 
 /// Maximum number of ridgeline connections per peak (nearest neighbors).
 const MAX_RIDGE_NEIGHBORS: usize = 4;
@@ -105,6 +105,16 @@ const RIDGE_LATERAL_WOBBLE: f64 = 150.0;
 
 /// Frequency of wobble noise along the ridge (cycles per unit t).
 const RIDGE_WOBBLE_FREQ: f64 = 4.0;
+
+/// Per-ridgeline random sag variation amplitude. Each ridgeline gets up to
+/// this much additional sag from noise.
+const RIDGE_SAG_NOISE_AMPLITUDE: f64 = 0.2;
+
+/// Minimum sag (fraction of peak height lost at saddle midpoint).
+const RIDGE_SAG_MIN: f64 = 0.1;
+
+/// Maximum sag (fraction of peak height lost at saddle midpoint).
+const RIDGE_SAG_MAX: f64 = 0.6;
 
 /// Noise seed for ridgeline sag variation.
 const SEED_RIDGE_SAG: u64 = 0xAAAA_BBBB_0030;
@@ -222,26 +232,32 @@ fn fbm_2d(x: f64, y: f64, wavelength: f64, seed: u64) -> f64 {
 /// Step size for growing streams downhill (world units).
 const STREAM_STEP_SIZE: f64 = 150.0;
 
-/// Maximum steps before a stream terminates.
-const STREAM_MAX_STEPS: usize = 200;
-
 /// Starting width of a stream gully at the headwall (world units).
-const STREAM_START_WIDTH: f64 = 1.0;
-
-/// Starting carve depth below the cone surface (world units).
-const STREAM_START_DEPTH: f64 = 0.0;
+const STREAM_START_WIDTH: f64 = 2.0;
 
 /// Width jump per stream merge (world units). Dominates width growth.
-const STREAM_WIDTH_PER_MERGE: f64 = 5.0;
-
-/// Depth jump per stream merge (world units).
-const STREAM_DEPTH_PER_MERGE: f64 = 3.0;
+const STREAM_WIDTH_PER_MERGE: f64 = 10.0;
 
 /// Width gained per unit of arc-length distance from start.
-const STREAM_WIDTH_PER_DIST: f64 = 0.075;
+const STREAM_WIDTH_PER_DIST: f64 = 0.15;
 
-/// Depth gained per unit of arc-length distance from start.
-const STREAM_DEPTH_PER_DIST: f64 = 0.05;
+/// Base depth growth rate per unit distance. Modulated by slope factor.
+const DEPTH_PER_DISTANCE_BASE: f64 = 0.2;
+
+/// Gradient magnitude at which depth grows at full rate. Mid-slope reference.
+const TAPER_SLOPE_REFERENCE: f64 = 2.0;
+
+/// Number of recent steps to check for depth stall termination.
+const STALL_WINDOW: usize = 5;
+
+/// Minimum cumulative depth growth over STALL_WINDOW steps to continue.
+const MIN_DEPTH_GROWTH: f64 = 0.5;
+
+/// Fractional depth rate increase per merge. 0.3 = each merge adds 30%.
+const DEPTH_MERGE_BOOST: f64 = 0.3;
+
+/// Safety radius: streams cannot extend beyond this distance from epicenter.
+const SPINE_MAX_STREAM_RADIUS: f64 = SPINE_INFLUENCE;
 
 /// Wall exponent for young streams (tight concave V, steep narrow cut).
 const WALL_EXPONENT_YOUNG: f64 = 0.5;
@@ -276,7 +292,7 @@ const MIN_DOWNHILL_ALIGNMENT: f64 = 0.5;
 
 
 /// Number of stream heads per peak.
-const STREAMS_PER_PEAK: usize = 4;
+const STREAMS_PER_PEAK: usize = 8;
 
 /// Offset of stream head from peak center as fraction of falloff_radius.
 const STREAM_HEAD_OFFSET_FRAC: f64 = 0.1;
@@ -297,10 +313,6 @@ const HANGING_VALLEY_MAX_OFFSET: f64 = 400.0;
 
 /// Probability of a ridge crossing having a traversable path (disabled for conservative baseline).
 const PATH_PROBABILITY: f64 = 0.0;
-
-/// Minimum ridgeline sag to generate ridge streams. Below this the ridge is
-/// nearly flat and there's no meaningful drainage.
-const MIN_SADDLE_SAG: f64 = 0.15;
 
 /// Minimum ridgeline length (world units) to generate ridge streams.
 const MIN_RIDGE_LENGTH: f64 = 300.0;
@@ -347,6 +359,10 @@ struct StreamStep {
     width: f64,
     /// Cumulative arc-length distance from stream origin.
     cum_dist: f64,
+    /// Cumulative carve depth below surface (slope-integrated).
+    cum_depth: f64,
+    /// Gradient magnitude at this step (for merge re-accumulation).
+    grad_mag: f64,
     /// Number of merges absorbed upstream of this step.
     merge_count: u32,
     /// V-profile wall exponent. Young (~0.5) = tight concave V, mature (~1.5) = open convex V.
@@ -585,7 +601,7 @@ impl RavineNetwork {
             if best_dist >= half_width { continue; }
 
             let t = best_dist / half_width;
-            let wall_top = stream_surface.min(surface_elev);
+            let wall_top = surface_elev;
             let carved = floor + (wall_top - floor) * t.powf(wall_exponent);
             elevation = elevation.min(carved);
         }
@@ -652,10 +668,10 @@ fn evaluate_all_peaks(peaks: &[Peak], wx: f64, wy: f64) -> f64 {
 /// Blended gradient for stream direction. Computes each peak's and ridgeline's
 /// gradient independently, then blends weighted by elevation². Near cone
 /// boundaries the gradient averages smoothly instead of flipping.
-/// Returns a normalized downhill direction, or (0, 0) on flat terrain.
+/// Returns the unnormalized weighted-average gradient (downhill direction with magnitude).
 const BLEND_GRAD_EPSILON: f64 = 10.0;
 
-fn blended_gradient(
+fn blended_gradient_raw(
     peaks: &[Peak],
     ridgelines: &[Ridgeline],
     wx: f64,
@@ -690,15 +706,37 @@ fn blended_gradient(
     if total_weight > 1e-10 {
         let gx = grad_x / total_weight;
         let gy = grad_y / total_weight;
-        let len = (gx * gx + gy * gy).sqrt();
-        if len > 1e-10 {
-            (gx / len, gy / len)
-        } else {
-            (0.0, 0.0)
-        }
+        (gx, gy)
     } else {
         (0.0, 0.0)
     }
+}
+
+/// Normalized downhill direction, or (0, 0) on flat terrain.
+fn blended_gradient(
+    peaks: &[Peak],
+    ridgelines: &[Ridgeline],
+    wx: f64,
+    wy: f64,
+) -> (f64, f64) {
+    let (gx, gy) = blended_gradient_raw(peaks, ridgelines, wx, wy);
+    let len = (gx * gx + gy * gy).sqrt();
+    if len > 1e-10 {
+        (gx / len, gy / len)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// Gradient magnitude at a point (for slope-based depth tapering).
+fn blended_gradient_magnitude(
+    peaks: &[Peak],
+    ridgelines: &[Ridgeline],
+    wx: f64,
+    wy: f64,
+) -> f64 {
+    let (gx, gy) = blended_gradient_raw(peaks, ridgelines, wx, wy);
+    (gx * gx + gy * gy).sqrt()
 }
 
 // ── Ridgeline ───────────────────────────────────────────────────────────────
@@ -794,8 +832,8 @@ fn build_ridgelines(peaks: &[Peak], spine_id: u64, seed: u64) -> Vec<Ridgeline> 
             // Sag: longer ridges sag more.
             let base_sag = dist / (avg_falloff * MAX_RIDGE_DIST_SCALE);
             let (a_idx, b_idx) = if i < j { (i, j) } else { (j, i) };
-            let noise_sag = hash_f64(a_idx as i64, b_idx as i64, seed ^ SEED_RIDGE_SAG ^ spine_id) * 0.2;
-            let sag = (base_sag + noise_sag).clamp(0.1, 0.8);
+            let noise_sag = hash_f64(a_idx as i64, b_idx as i64, seed ^ SEED_RIDGE_SAG ^ spine_id) * RIDGE_SAG_NOISE_AMPLITUDE;
+            let sag = (base_sag + noise_sag).clamp(RIDGE_SAG_MIN, RIDGE_SAG_MAX);
 
             // Check no duplicate.
             if ridgelines.iter().any(|r: &Ridgeline| r.peak_a == a_idx && r.peak_b == b_idx) {
@@ -1270,10 +1308,11 @@ fn stream_width(merge_count: u32, cum_dist: f64) -> f64 {
         + cum_dist * STREAM_WIDTH_PER_DIST
 }
 
-fn stream_depth(merge_count: u32, cum_dist: f64) -> f64 {
-    STREAM_START_DEPTH
-        + merge_count as f64 * STREAM_DEPTH_PER_MERGE
-        + cum_dist * STREAM_DEPTH_PER_DIST
+/// Slope-modulated depth increment for a single step.
+fn depth_increment(grad_mag: f64, merge_count: u32) -> f64 {
+    let slope_factor = (grad_mag / TAPER_SLOPE_REFERENCE).clamp(0.0, 1.0);
+    let merge_boost = 1.0 + merge_count as f64 * DEPTH_MERGE_BOOST;
+    DEPTH_PER_DISTANCE_BASE * slope_factor * merge_boost * STREAM_STEP_SIZE
 }
 
 fn stream_wall_exponent(merge_count: u32) -> f64 {
@@ -1300,6 +1339,8 @@ fn grow_stream(
     peaks: &[Peak],
     ridgelines: &[Ridgeline],
     branch_depth_offset: f64,
+    epi_wx: f64,
+    epi_wy: f64,
     hash_a: u64,
     hash_b: u64,
     spine_id: u64,
@@ -1309,26 +1350,49 @@ fn grow_stream(
     let mut wx = start_wx;
     let mut wy = start_wy;
     let mut distance = 0.0f64;
+    let mut cum_depth = 0.0f64;
     let mut dir_x = initial_angle.cos();
     let mut dir_y = initial_angle.sin();
 
-    for _ in 0..STREAM_MAX_STEPS {
+    loop {
         let surface_elev = evaluate_surface(peaks, ridgelines, wx, wy);
+
+        // Termination: reached sea level
         if surface_elev <= 0.0 { break; }
 
-        // Stop if no longer descending — prevents valley-floor oscillation
-        // where the stream crosses a low point and climbs the opposite wall.
+        // Termination: no longer descending
         if steps.len() >= 2 {
             let prev_elev = steps[steps.len() - 1].surface_elev;
             if surface_elev >= prev_elev { break; }
         }
 
-        let width = stream_width(0, distance);
-        let carve_depth = stream_depth(0, distance);
-        let floor_elev = (surface_elev - carve_depth + branch_depth_offset).max(0.0);
+        // Termination: left spine territory
+        let dx_epi = wx - epi_wx;
+        let dy_epi = wy - epi_wy;
+        if dx_epi * dx_epi + dy_epi * dy_epi > SPINE_MAX_STREAM_RADIUS * SPINE_MAX_STREAM_RADIUS {
+            break;
+        }
 
+        // Slope-based depth accumulation
+        let grad_mag = blended_gradient_magnitude(peaks, ridgelines, wx, wy);
+        cum_depth += depth_increment(grad_mag, 0);
+
+        // Termination: depth stalled (terrain too flat to carve)
+        if steps.len() >= STALL_WINDOW {
+            let recent_growth = cum_depth - steps[steps.len() - STALL_WINDOW].cum_depth;
+            if recent_growth < MIN_DEPTH_GROWTH {
+                break;
+            }
+        }
+
+        let width = stream_width(0, distance);
+        let floor_elev = (surface_elev - cum_depth + branch_depth_offset).max(0.0);
         let wall_exponent = stream_wall_exponent(0);
-        steps.push(StreamStep { wx, wy, surface_elev, floor_elev, width, cum_dist: distance, merge_count: 0, wall_exponent });
+
+        steps.push(StreamStep {
+            wx, wy, surface_elev, floor_elev, width, cum_dist: distance,
+            cum_depth, grad_mag, merge_count: 0, wall_exponent,
+        });
 
         // Blended gradient: smooth across cone boundaries
         let (grad_dx, grad_dy) = blended_gradient(peaks, ridgelines, wx, wy);
@@ -1352,15 +1416,10 @@ fn grow_stream(
         let mut step_dx = angle.cos();
         let mut step_dy = angle.sin();
 
-        // Feed back pre-clamp direction as momentum for next iteration.
-        // The clamp is a safety rail — momentum should track the stream's
-        // natural heading, not the corrected heading.
         dir_x = step_dx;
         dir_y = step_dy;
 
         // Clamp FINAL step direction: enforce minimum downhill alignment
-        // to prevent cross-slope orbiting. Preserves cross-slope direction
-        // while guaranteeing exactly MIN_DOWNHILL_ALIGNMENT dot with grad.
         let dot = step_dx * grad_dx + step_dy * grad_dy;
         if dot < MIN_DOWNHILL_ALIGNMENT {
             let cross_x = step_dx - dot * grad_dx;
@@ -1438,12 +1497,11 @@ fn propagate_merge_counts(streams: &mut [Stream]) {
             streams[target_idx].merge_count += contribution;
 
             // Find the step on the target stream closest to this tributary's endpoint
-            // and apply width/depth floor from that point onward.
+            // and apply width floor + depth floor from that point onward.
             let trib_last = streams[i].steps.last().unwrap();
-            let trib_merge_count = trib_last.merge_count;
             let trib_cum_dist = trib_last.cum_dist;
-            let trib_w = stream_width(trib_merge_count, trib_cum_dist);
-            let trib_d = stream_depth(trib_merge_count, trib_cum_dist);
+            let trib_cum_depth = trib_last.cum_depth;
+            let trib_w = stream_width(trib_last.merge_count, trib_cum_dist);
             let trib_wx = trib_last.wx;
             let trib_wy = trib_last.wy;
 
@@ -1457,20 +1515,28 @@ fn propagate_merge_counts(streams: &mut [Stream]) {
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
 
+            // Width continuity: ensure main stream width ≥ tributary width at merge.
             let new_mc = streams[target_idx].steps[keep_at].merge_count + contribution;
             let min_dist_w = (trib_w - STREAM_START_WIDTH - new_mc as f64 * STREAM_WIDTH_PER_MERGE) / STREAM_WIDTH_PER_DIST;
-            let min_dist_d = (trib_d - STREAM_START_DEPTH - new_mc as f64 * STREAM_DEPTH_PER_MERGE) / STREAM_DEPTH_PER_DIST;
-            let min_dist = min_dist_w.max(min_dist_d).max(0.0);
-
+            let min_dist = min_dist_w.max(0.0);
             let base_cum_dist = streams[target_idx].steps[keep_at].cum_dist;
             let dist_boost = if min_dist > base_cum_dist { min_dist - base_cum_dist } else { 0.0 };
 
-            for step in &mut streams[target_idx].steps[keep_at..] {
+            // Depth continuity: main stream depth ≥ tributary depth at merge point.
+            let mut running_depth = streams[target_idx].steps[keep_at].cum_depth.max(trib_cum_depth);
+
+            for (j, step) in streams[target_idx].steps[keep_at..].iter_mut().enumerate() {
                 step.merge_count += contribution;
                 step.cum_dist += dist_boost;
                 step.width = stream_width(step.merge_count, step.cum_dist);
-                let new_depth = stream_depth(step.merge_count, step.cum_dist);
-                step.floor_elev = (step.surface_elev - new_depth).max(0.0);
+
+                if j == 0 {
+                    step.cum_depth = running_depth;
+                } else {
+                    running_depth += depth_increment(step.grad_mag, step.merge_count);
+                    step.cum_depth = running_depth;
+                }
+                step.floor_elev = (step.surface_elev - step.cum_depth).max(0.0);
                 step.wall_exponent = stream_wall_exponent(step.merge_count);
             }
         }
@@ -1569,6 +1635,8 @@ fn mirror_step(endpoint: &StreamStep, neighbor: &StreamStep) -> StreamStep {
         floor_elev: endpoint.floor_elev,
         width: endpoint.width,
         cum_dist: endpoint.cum_dist,
+        cum_depth: endpoint.cum_depth,
+        grad_mag: endpoint.grad_mag,
         merge_count: endpoint.merge_count,
         wall_exponent: endpoint.wall_exponent,
     }
@@ -1797,7 +1865,7 @@ fn interpolate_spline_step(steps: &[StreamStep], seg_idx: usize, seg_t: f64) -> 
     )
 }
 
-fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], spine_id: u64, seed: u64) -> RavineNetwork {
+fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, epi_wy: f64, spine_id: u64, seed: u64) -> RavineNetwork {
     if peaks.is_empty() {
         return RavineNetwork::empty();
     }
@@ -1854,7 +1922,7 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], spine_id: u64,
         let rdx = ridge.bx - ridge.ax;
         let rdy = ridge.by - ridge.ay;
         let ridge_len = (rdx * rdx + rdy * rdy).sqrt();
-        if ridge_len < MIN_RIDGE_LENGTH || ridge.sag < MIN_SADDLE_SAG { continue; }
+        if ridge_len < MIN_RIDGE_LENGTH { continue; }
 
         let perp_x = -rdy / ridge_len;
         let perp_y = rdx / ridge_len;
@@ -1899,6 +1967,7 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], spine_id: u64,
         let mut stream = grow_stream(
             origin.start_wx, origin.start_wy, origin.angle,
             peaks, ridgelines, origin.branch_offset,
+            epi_wx, epi_wy,
             origin.hash_a, origin.hash_b, spine_id, seed,
         );
         if stream.steps.len() < 2 { continue; }
@@ -1933,14 +2002,16 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], spine_id: u64,
             let surface = evaluate_surface(peaks, ridgelines, twx, twy);
             let width = last.width;
             let cum_dist = last.cum_dist + snap_dist;
+            let grad_mag = blended_gradient_magnitude(peaks, ridgelines, twx, twy);
+            let cum_depth = last.cum_depth + depth_increment(grad_mag, 0);
             let merge_count = last.merge_count;
             let wall_exponent = last.wall_exponent;
-            let floor = (surface - stream_depth(merge_count, cum_dist) + origin.branch_offset).max(0.0);
+            let floor = (surface - cum_depth + origin.branch_offset).max(0.0);
             stream.steps.push(StreamStep {
                 wx: twx, wy: twy,
                 surface_elev: surface,
                 floor_elev: floor,
-                width, cum_dist, merge_count, wall_exponent,
+                width, cum_dist, cum_depth, grad_mag, merge_count, wall_exponent,
             });
             stream.merged_into = Some(target_idx);
         }
@@ -2014,7 +2085,7 @@ fn grow_spine(
     let ridgelines = build_ridgelines(&peaks, spine_id, seed);
 
     // Build ravine network from peaks and ridgelines.
-    let ravine_network = build_ravine_network(&peaks, &ridgelines, spine_id, seed);
+    let ravine_network = build_ravine_network(&peaks, &ridgelines, epi_wx, epi_wy, spine_id, seed);
 
     // Write plate tags.
     for peak in &peaks {
@@ -2851,7 +2922,7 @@ mod tests {
     #[test]
     fn stream_steps_flow_downhill() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0, 0, 42, 12345);
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
         assert!(stream.steps.len() >= 2, "stream should have multiple steps");
         let first = stream.steps.first().unwrap().surface_elev;
         let last = stream.steps.last().unwrap().surface_elev;
@@ -2861,7 +2932,7 @@ mod tests {
     #[test]
     fn carved_elevation_leq_peak_elevation() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 42, 12345);
+        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
         for y in (-30..=30).map(|i| i as f64 * 100.0) {
             for x in (-30..=30).map(|i| i as f64 * 100.0) {
                 let surface = evaluate_all_peaks(&peaks, x, y);
@@ -2880,8 +2951,8 @@ mod tests {
         let w1 = stream_width(0, 150.0);
         let mut s = Stream {
             steps: vec![
-                StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 470.0, width: w0, cum_dist: 0.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
-                StreamStep { wx: 150.0, wy: 0.0, surface_elev: 450.0, floor_elev: 420.0, width: w1, cum_dist: 150.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+                StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 470.0, width: w0, cum_dist: 0.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+                StreamStep { wx: 150.0, wy: 0.0, surface_elev: 450.0, floor_elev: 420.0, width: w1, cum_dist: 150.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
             ],
             merge_count: 0,
             merged_into: None,
@@ -2898,8 +2969,8 @@ mod tests {
     #[test]
     fn hanging_valley_floor_above_parent() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let normal = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0, 0, 42, 12345);
-        let hanging = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 200.0, 0, 0, 42, 12345);
+        let normal = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let hanging = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 200.0, 0.0, 0.0, 0, 0, 42, 12345);
         assert!(!normal.steps.is_empty());
         assert!(!hanging.steps.is_empty());
         assert!(
@@ -2913,8 +2984,8 @@ mod tests {
     #[test]
     fn ravine_network_deterministic() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let a = build_ravine_network(&peaks, &[], 42, 12345);
-        let b = build_ravine_network(&peaks, &[], 42, 12345);
+        let a = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let b = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
         assert_eq!(a.streams.len(), b.streams.len());
         for (sa, sb) in a.streams.iter().zip(b.streams.iter()) {
             assert_eq!(sa.steps.len(), sb.steps.len());
@@ -2938,8 +3009,8 @@ mod tests {
     fn v_profile_centerline_equals_floor() {
         // A simple two-step stream along the x-axis.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -2952,13 +3023,13 @@ mod tests {
     fn v_profile_edge_equals_surface() {
         // Stream along x-axis, width=100 → half_width=50.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
-        // At half_width (wy=50), t=1.0 → carved = floor + (wall_top - floor) * 1.0 = wall_top.
-        // Since surface=500 and query surface=500, wall_top=500, so no carving.
+        // At half_width (wy=50), t=1.0 → carved = floor + (wall_top - floor) * 1.0 = wall_top = surface.
+        // Query surface=500, so wall_top=500, no carving.
         let carved = network.carve(0.0, 50.0, 500.0);
         assert!((carved - 500.0).abs() < 1.0, "edge should be at surface, got {carved:.1}");
     }
@@ -2966,8 +3037,8 @@ mod tests {
     #[test]
     fn v_profile_monotonically_increasing_from_center() {
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 0.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 300.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 300.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 0.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 300.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 300.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3012,8 +3083,8 @@ mod tests {
     fn v_profile_origin_step_barely_carves() {
         // At origin: width=1, depth=0 → carved ≈ surface everywhere.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 500.0, width: STREAM_START_WIDTH, cum_dist: 0.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
-            StreamStep { wx: 150.0, wy: 0.0, surface_elev: 498.0, floor_elev: 496.5, width: stream_width(0, 150.0), cum_dist: 150.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 500.0, width: STREAM_START_WIDTH, cum_dist: 0.0, cum_depth: 0.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+            StreamStep { wx: 150.0, wy: 0.0, surface_elev: 498.0, floor_elev: 496.5, width: stream_width(0, 150.0), cum_dist: 150.0, cum_depth: 1.5, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3245,6 +3316,8 @@ mod tests {
             floor_elev: 480.0,
             width: 20.0,
             cum_dist: 0.0,
+            cum_depth: 20.0,
+            grad_mag: 2.0,
             merge_count: 0,
             wall_exponent: stream_wall_exponent(0),
         };
@@ -3278,6 +3351,8 @@ mod tests {
             floor_elev: 480.0,
             width: 20.0,
             cum_dist: 0.0,
+            cum_depth: 20.0,
+            grad_mag: 2.0,
             merge_count: 0,
             wall_exponent: stream_wall_exponent(0),
         };
@@ -3313,7 +3388,7 @@ mod tests {
         // Build a real ravine network and verify the grid lookup returns the
         // same streams that a full linear scan would find for sample points.
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 42, 12345);
+        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
         assert!(network.stream_grid.cell_size() > 0.0, "grid should be built");
 
         let mut grid_misses = 0;
@@ -3490,11 +3565,75 @@ mod tests {
     }
 
     #[test]
+    fn slope_based_depth_grows_on_steep_terrain() {
+        // On steep slope (grad_mag >= TAPER_SLOPE_REFERENCE), depth should grow at full rate.
+        let peaks = vec![test_peak(1000.0, 3000.0)];
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        assert!(stream.steps.len() >= 3, "stream should have multiple steps");
+        // cum_depth should be monotonically non-decreasing
+        for pair in stream.steps.windows(2) {
+            assert!(pair[1].cum_depth >= pair[0].cum_depth,
+                "cum_depth must be monotonically non-decreasing: {:.4} < {:.4}",
+                pair[1].cum_depth, pair[0].cum_depth);
+        }
+        // First step should have non-zero depth (peak has steep gradient near center)
+        assert!(stream.steps[1].cum_depth > stream.steps[0].cum_depth,
+            "depth should grow on steep peak slope");
+    }
+
+    #[test]
+    fn slope_based_depth_stalls_on_flat_terrain() {
+        // A flat peak (very large falloff, low height) should produce near-zero gradient.
+        let flat_peak = Peak { wx: 0.0, wy: 0.0, height: 10.0, falloff_radius: 50000.0 };
+        let grad_mag = blended_gradient_magnitude(&[flat_peak], &[], 100.0, 0.0);
+        let inc = depth_increment(grad_mag, 0);
+        // Gradient should be tiny → depth increment should be near zero
+        assert!(inc < 0.01, "depth increment on flat terrain should be near zero, got {inc:.6}");
+    }
+
+    #[test]
+    fn merge_boost_increases_depth_rate() {
+        // Depth increment with merges should be > without
+        let grad_mag = 2.0; // full rate
+        let inc_no_merge = depth_increment(grad_mag, 0);
+        let inc_3_merges = depth_increment(grad_mag, 3);
+        let expected_ratio = 1.0 + 3.0 * DEPTH_MERGE_BOOST; // 1.9
+        let actual_ratio = inc_3_merges / inc_no_merge;
+        assert!((actual_ratio - expected_ratio).abs() < 1e-6,
+            "3-merge boost should be {expected_ratio:.1}×, got {actual_ratio:.4}×");
+    }
+
+    #[test]
+    fn stream_terminates_before_spine_max_radius() {
+        let peaks = vec![test_peak(1000.0, 3000.0)];
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        if let Some(last) = stream.steps.last() {
+            let dist = (last.wx * last.wx + last.wy * last.wy).sqrt();
+            assert!(dist < SPINE_MAX_STREAM_RADIUS,
+                "stream endpoint ({:.0}, {:.0}) at dist {dist:.0} exceeds SPINE_MAX_STREAM_RADIUS {:.0}",
+                last.wx, last.wy, SPINE_MAX_STREAM_RADIUS);
+        }
+    }
+
+    #[test]
+    fn cum_depth_monotonically_nondecreasing() {
+        let peaks = vec![test_peak(1000.0, 3000.0)];
+        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        for (si, stream) in network.streams.iter().enumerate() {
+            for pair in stream.steps.windows(2) {
+                assert!(pair[1].cum_depth >= pair[0].cum_depth - 1e-10,
+                    "stream {si}: cum_depth decreased {:.4} → {:.4}",
+                    pair[0].cum_depth, pair[1].cum_depth);
+            }
+        }
+    }
+
+    #[test]
     fn stream_grid_carve_matches_linear_scan() {
         // Verify the grid-accelerated carve produces identical results to
         // what the old linear scan would produce.
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 42, 12345);
+        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
 
         for y in (-30..=30).map(|i| i as f64 * 100.0) {
             for x in (-30..=30).map(|i| i as f64 * 100.0) {
@@ -3512,7 +3651,7 @@ mod tests {
                         let half_width = width / 2.0;
                         if dist >= half_width { continue; }
                         let t = dist / half_width;
-                        let wall_top = stream_surface.min(expected);
+                        let wall_top = expected;
                         let c = floor + (wall_top - floor) * t.powf(wall_exponent);
                         expected = expected.min(c);
                     }
