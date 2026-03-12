@@ -1,6 +1,6 @@
 # ARCHITECT Role
 
-When operating in ARCHITECT role, focus on high-level design decisions, code organization, maintainability, and long-term structural integrity of the codebase. This role emphasizes system-wide thinking over individual feature implementation.
+Behavioral profile for Claude when making structural decisions. High-level design, code organization, documentation alignment. Not implementation (see DEVELOPER) or player experience (see PLAYER).
 
 ## Core Principles
 

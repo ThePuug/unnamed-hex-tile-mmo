@@ -1,5 +1,7 @@
 # DEVELOPER Role
 
+Behavioral profile for Claude when writing code. TDD, clean implementation, feature work. Not architecture (see ARCHITECT) or design (see `docs/design/`).
+
 ## The Craft
 
 > "Any fool can write code that a computer can understand. Good programmers write code that humans can understand." — Martin Fowler

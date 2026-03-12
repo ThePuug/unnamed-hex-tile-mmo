@@ -2,229 +2,207 @@
 
 ## Design Philosophy
 
-The world should feel alive — heat boils up through dense primordial material, breaking through at margins and erupting in identifiable plumes. Terrain generation uses a **three-layer pipeline** where each layer is a pure function of tile coordinates, world seed, and world tick. No global precomputation, no simulation state — every value is procedurally evaluable per-tile, satisfying ADR-001's deterministic generation invariant.
+The world is built from **tectonic plates** — large-scale geological provinces that define continents, coastlines, and mountain ranges. Terrain generation uses a **two-level Voronoi skeleton** where micro cells tile the world and macro plates label them, followed by **continental spine events** that raise elevation along inland mountain chains. Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
 
-1. **Material distribution** — large-scale geological provinces (dense vs light)
-2. **Hotspot convection** — sub-lid cellular structure where dense material traps heat
-3. **Thermal diffusion** — additive Gaussian heat field radiating from active sources
-
-Temperature is the primary terrain signal. Dense regions trap heat from convection cells below; thin margins let it through. The result: identifiable hot plumes at province margins, cooler interiors, and quiescent light regions.
+The pipeline flows bottom-up:
+1. **Regime field** — multiplicative noise defines where land and water exist
+2. **Two-level Voronoi** — micro cells provide spatial tiling; macro plates provide geological identity
+3. **Classification** — plates tagged as Sea/Coast/Inland based on regime values
+4. **Continental spines** — mountain chains with peaks, ridgelines, and ravine networks carve elevation
 
 ## Player Experience Goals
 
-- **Readable geology**: Dense provinces are hot, light regions are cool — players learn to read the landscape
-- **Identifiable plumes**: Thermal breakthroughs at province margins create distinct warm zones
-- **Temporal variation**: Hotspot lifecycle creates slow pulses of activity (rise → peak → collapse)
-- **Smooth transitions**: Gaussian diffusion produces soft thermal gradients, no hard edges
-- **Province variety**: Material density varies at continental scale — no two regions feel identical
-- **Deterministic**: Same seed + tick always produces the same temperature at any tile
+- **Readable geology**: Coastlines, mountain ranges, and valleys are visually distinct
+- **Continental scale**: Large landmasses with irregular coastlines and interior mountain chains
+- **Smooth transitions**: No hard edges between geological provinces
+- **Deterministic**: Same seed always produces the same world
+- **Streamable**: Any region evaluable on demand without global precomputation
 
 ---
 
-## Layer 1: Material Distribution
+## Layer 1: Regime Field
 
-Material density defines the geological provinces of the world. Dense regions (above threshold) support sub-lid convection; light regions are quiescent.
+The regime field determines where land and water exist. It multiplies three independent noise factors:
 
-### Simplex Noise Field
+```
+regime = sigmoid(local_fBm × world_gate × regional_mod)
+```
 
-Material density is computed from three overlapping simplex noise waves at near-golden-ratio wavelength spacing (~1.618x). The incommensurate wavelengths ensure the sum never repeats, producing unique structure everywhere without any single wavelength being enormous.
+### World Gate (Cellular)
 
-**Implementation:** `crates/terrain/src/material.rs`
-
-### Constants
+Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs.
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Wave 1 wavelength | 12,547 tiles | ~2x hotspot cell size — regional variation |
-| Wave 1 amplitude | 1.0 | Reference amplitude |
-| Wave 2 wavelength | 20,297 tiles | ~3.4x cell size — provincial character |
-| Wave 2 amplitude | 0.7 | |
-| Wave 3 wavelength | 32,833 tiles | ~5.5x cell size — broad structure |
-| Wave 3 amplitude | 0.5 | |
-| MATERIAL_AMPLITUDE | 0.8 | How much density varies from midpoint (0.0–0.5) |
-| MATERIAL_CONTRAST | 0.7 | Power curve exponent for province separation |
+| CONTINENT_CELL_SIZE | 25,000 wu | Continental-scale cells |
+| CONTINENT_JITTER | 0.35 | Seed scatter within cells |
+| CONTINENT_WARP_AMPLITUDE | 4,000 wu | Domain warp for irregular shapes |
+| CONTINENT_WARP_WAVELENGTH | 8,000 wu | Domain warp frequency |
+| WORLD_GATE_SIGMOID_MIDPOINT | 0.35 | Gate activation point |
+| WORLD_GATE_SIGMOID_STEEPNESS | 12.0 | Gate sharpness |
+
+### Local fBm (Triple-Prime Octaves)
+
+Three simplex octaves at prime wavelengths (B=25013, C=11003, D=4999) with weights 1.0/0.5/0.5, normalized by 2.0. Creates coastline irregularity.
+
+### Regional Modulator
+
+Low-frequency simplex remapped to [0.1, 1.15]. Ensures every world gets land but continent sizes vary.
 
 ### Output
 
-`material_density(q, r)` returns a value in [0.0, 1.0]:
-- **< 0.55** (HOTSPOT_THRESHOLD): Light region — no convection cells, no thermal sources
-- **>= 0.55**: Dense region — supports hotspot activity, lid thickness = density - threshold
+`regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below `REGIME_LAND_THRESHOLD` (0.15) are water; above are land.
 
-The contrast curve (`|x|^0.7 * sign(x)`) sharpens the boundary between dense and light provinces while keeping transitions smooth at the tile level.
+**Implementation:** `crates/terrain/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
 
 ---
 
-## Layer 2: Hotspot Convection
+## Layer 2: Two-Level Voronoi Skeleton
 
-Dense material acts as a lid trapping heat from below. Convection cells on a fixed grid represent sub-lid activity — rising plumes of heat that cycle through birth, peak, and collapse.
+### Micro Cells (Primary Spatial Layer)
 
-### Grid Structure
-
-Hotspot cells sit on a fixed hexagonal grid at `HOTSPOT_GRID_SPACING` intervals. Not all grid cells are active — only those where the material density at their center exceeds `HOTSPOT_THRESHOLD`. This means:
-
-- Dense province interiors: nearly all grid cells active → continuous cellular texture
-- Province margins: sparse active cells → isolated hotspots at the boundary
-- Light regions: no active cells → quiescent
-
-### Lifecycle
-
-Each active cell cycles through an asymmetric lifecycle:
-- **Rise** (0–60% of cycle): Slow quadratic ramp (`t²`)
-- **Peak** (60–70%): Full intensity plateau
-- **Collapse** (70–100%): Fast quadratic decay (`(1-t)²`)
-
-Phase offsets are deterministic per-cell (hashed from cell coordinates and seed), so neighboring cells peak at different times. The asymmetry means heat builds slowly and dissipates quickly — a geological "breathe in slowly, exhale fast" rhythm.
-
-### Nearest-Cell Lookup
-
-For the sub-lid diagnostic view (`Terrain::hotspot_temperature`), each tile finds its nearest active grid cell via brute-force ±2 search, then combines radial falloff with lifecycle vigor. This produces the raw cellular structure visible in the "hotspot" terrain viewer mode.
-
-### Constants
+Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time.
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| HOTSPOT_THRESHOLD | 0.55 | Minimum material density for activity |
-| HOTSPOT_GRID_SPACING | 750 tiles | Fixed grid interval |
-| HOTSPOT_CYCLE_TICKS | 1,000 | One full lifecycle in world ticks |
+| MICRO_CELL_SIZE | 450 wu | Sub-grid hex lattice spacing |
+| MICRO_JITTER_WAVELENGTH | 5,000 wu | Simplex jitter frequency |
+| MICRO_SUPPRESSION_RATE | 0.0 | Flat everywhere (tunable) |
 
-**Implementation:** `crates/terrain/src/hotspots.rs`
+**Implementation:** `crates/terrain/src/microplates.rs` (`micro_cell_at`)
 
----
+### Macro Plates (Geological Identity)
 
-## Layer 3: Thermal Diffusion
-
-Active hotspot cells become point sources of heat. Each source radiates outward as an additive Gaussian, and the sum of all nearby sources produces the surface temperature field.
-
-### Source Intensity (Focal Point Drainage)
-
-Every active hotspot cell (density >= threshold) produces energy that drains to a focal point — a local minimum in lid thickness. Multiple cells converge on the same focal point, accumulating energy into a single source.
-
-**Phase 1 — Find focal point:** Walk the lid gradient from each active cell toward thinner lid (steepest descent on lid thickness). Stop at: local minimum, lid=0 (margin edge), or MAX_DRAIN_STEPS cap.
-
-**Phase 2 — Accumulate energy:** Each cell's energy = `penetration × lifecycle`, where `penetration = exp(-lid × LID_SUPPRESSION)` at the cell's own lid thickness. Energy decays during migration: `migration_loss = exp(-dist × MIGRATION_DECAY)` where dist = hex steps × grid spacing.
-
-**Phase 3 — Emit sources:** Each focal point with accumulated energy above noise floor becomes a single ThermalSource. `intensity = accumulated_energy × MAX_SOURCE_INTENSITY`.
-
-```
-lid         = density - HOTSPOT_THRESHOLD
-penetration = exp(-lid × LID_SUPPRESSION)      // at origin cell
-energy      = penetration × lifecycle
-focal       = find_focal_point(gq, gr, seed)    // gradient descent
-dist        = hex_steps(origin, focal) × GRID_SPACING
-migration_loss = exp(-dist × MIGRATION_DECAY)
-focal.accumulated += energy × migration_loss
-...
-intensity = focal.accumulated × MAX_SOURCE_INTENSITY
-```
-
-- **Convergence**: 30 margin cells → 3-5 focal point sources, not 30 individual sources
-- **Structural determination**: Focal points are lid minima — concavities, narrow isthmuses, density peaks along margins
-- **Natural gaps**: Between focal points, cells drain away. No sources exist between them.
-- **Interior secondaries**: Local density peaks deep inside create shallow lid minima. Surrounding cells drain to them — weak but structurally real.
-
-Sources below `NOISE_FLOOR` (0.001) are filtered for performance.
-
-### Gaussian Diffusion
-
-Each source radiates heat via:
-
-```
-contribution = intensity * exp(-dist² / 2σ²)
-```
-
-Sources overlap additively. The sum is clamped to [0, 1]. A 3σ cutoff skips negligible contributions.
-
-With σ=1,200 tiles, a single strong source (intensity ~0.12) creates a warm spot ~7,200 tiles in diameter. Clusters of margin sources produce brighter, more identifiable plumes.
-
-### Boundary Bleed
-
-Gaussian tails carry heat past the dense/light boundary. Tiles in light regions near a dense margin can have non-zero temperature from nearby sources. This is intentional — it creates a soft warm halo around dense provinces rather than a hard temperature cliff.
-
-### Constants
+Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional.
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| THERMAL_SIGMA | 600 tiles | Gaussian spread; 3σ = 1,800 tile radius |
-| MAX_SOURCE_INTENSITY | 0.12 | Cap per source; cluster of ~5 reaches 0.3–0.5 |
-| LID_SUPPRESSION | 8.0 | Exponential decay rate for lid thickness |
-| NOISE_FLOOR | 0.001 | Sources below this filtered out |
-| MIGRATION_DECAY | 0.0001 | Energy loss per world unit of drainage travel |
-| MAX_DRAIN_STEPS | 6 | Maximum grid steps for focal point walk |
+| MACRO_CELL_SIZE | 1,800 wu | Hex-lattice seed spacing |
+| SUPPRESSION_RATE_MIN | 0.05 | At coastlines (many small plates) |
+| SUPPRESSION_RATE_MAX | 0.70 | Deep inland/water (large calm plates) |
+| WARP_STRENGTH_MAX | 600 wu | Per-candidate noise amplitude |
+| MAX_ELONGATION | 8.0 | Max coastal plate stretch ratio |
 
-**Implementation:** `crates/terrain/src/thermal.rs`
+**Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates. Expanded search (2 + MAX_ELONGATION rings).
 
----
+**Implementation:** `crates/terrain/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
 
-## Chunk Caching
+### Orphan Correction
 
-Both hotspot and thermal layers use hex-Voronoi chunk caching to amortize noise evaluation costs across many tile lookups. See [ADR-033](../adr/033-hex-voronoi-chunk-addressing.md) for the addressing decision.
+Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates (≤ STRANDED_ISLAND_MAX_SIZE=8 cells) are also reassigned.
 
-### Hex Voronoi Addressing
+Correction uses a margin-based approach (ORPHAN_CORRECTION_MARGIN=15,000 wu) to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
 
-Chunks are assigned via cube-coordinate rounding — each tile maps to its nearest chunk center in hex distance. This produces hexagonal regions where 6 neighbors fully surround each chunk with no diagonal gaps.
-
-```
-tile_to_hex_chunk(q, r, spacing):
-    hex_round(q / spacing, r / spacing)
-```
-
-### Hotspot Chunk Cache
-
-Precomputes which grid cells are active (density >= threshold) for chunks in a 1-ring neighborhood (center + 6 neighbors). Used by `Terrain::hotspot_temperature_cached` for the sub-lid diagnostic view.
-
-| Parameter | Value |
-|-----------|-------|
-| CHUNK_RADIUS | 750 tiles |
-| CHUNK_SPACING | 1,500 tiles |
-
-### Thermal Chunk Cache
-
-Precomputes thermal sources (position + intensity) per chunk. Gathers sources from the center chunk + 6 hex neighbors for each query. The 1-ring of chunks at `THERMAL_CHUNK_SIZE >= 3σ` ensures ring-2 sources contribute < 1% (verified by test).
-
-| Parameter | Value |
-|-----------|-------|
-| THERMAL_CHUNK_SIZE | 4,500 tiles |
-| GRID_CELLS_PER_CHUNK | 6 |
-
-### Boundary Invariant
-
-The `missed_sources_beyond_neighborhood_are_negligible` test bounds worst-case contribution from ring-2+ sources. With focal point drainage (MAX_DRAIN_STEPS=6), sources can walk up to 4500 world units from their origin. The conservative upper bound is < 60% (ignoring penetration attenuation of deep-interior cells); realistic error is well under 5%. Cross-chunk focal point convergence happens naturally through Gaussian superposition — two sources at the same position from different chunks sum identically to one combined source.
+**Implementation:** `crates/terrain/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
 
 ---
 
-## Coordinate Space
+## Layer 3: Classification
 
-All terrain functions operate in hex tile coordinates (q, r). Cartesian conversion for noise evaluation:
+Plates are tagged with geological roles after Voronoi assignment:
+
+| Tag | Meaning | Assignment Rule |
+|-----|---------|-----------------|
+| Sea | Open water | Regime < REGIME_LAND_THRESHOLD, no land neighbors |
+| Coast | Shoreline | Warp > COASTAL_WARP_THRESHOLD OR has cross-regime neighbor |
+| Inland | Interior land | Land regime, all neighbors also land |
+
+Both macro `PlateCenter.tags` and micro `MicroplateCenter.tags` carry tags. Macro tags assigned by `PlateCache::classify_tags`; micro tags auto-populated by `populate_region` via `classify_micro_tags`.
+
+**Implementation:** `crates/common/src/plate_tags.rs` (PlateTag enum, Tagged trait), `crates/terrain/src/plates.rs` (classify_tags)
+
+---
+
+## Layer 4: Continental Spines
+
+Mountain chains form along inland plate interiors. The spine system generates peaks, connects them with ridgelines, and carves ravine networks.
+
+### Spine Placement
+
+Locally deterministic via fixed-size evaluation chunks (SPINE_CHUNK_SIZE = 2 × SPINE_EXCLUSION_DIST). Epicenter candidates: Inland plates with all-Inland neighbors. Priority-ordered greedy exclusion ensures same placement regardless of viewport.
+
+### Peaks
+
+`Peak { wx, wy, height, falloff_radius }` — isotropic circular cones with power-curve falloff. Two arms grow laterally from each epicenter with curvature, width noise, and coastal attenuation.
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| RIDGE_PEAK_ELEVATION | 4,000 wu | Maximum peak height |
+| ELEVATION_PER_Z | 1.0 | World units per z-level |
+
+### Ridgelines
+
+Explicit segments connecting nearby peaks with quadratic sag and lateral wobble. Each peak connects to ≤4 nearest neighbors within MAX_RIDGE_DIST_SCALE (2.5) × avg falloff radius.
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| RIDGE_HALF_WIDTH | 1,200 wu | Perpendicular influence |
+| RIDGE_FALLOFF_EXPONENT | 1.2 | Power-curve steepness |
+| RIDGE_SAG_MIN / MAX | 0.1 / 0.6 | Saddle depth fraction |
+| RIDGE_LATERAL_WOBBLE | 150 wu | Meander amplitude |
+
+### Cross-Section Tags
+
+Distance from spine centerline determines sub-tags:
+- **Ridge** (0–15%): Spine crest
+- **Highland** (15–60%): Elevated plateau
+- **Foothills** (60–100%): Transitional slopes
+
+### Ravine Network
+
+Sequential top-down stream generation. Origins distributed along ridgelines with jitter, sorted by elevation (highest first). Each stream grows step-by-step following terrain slope.
+
+**Growth termination:** Stall detection (STALL_WINDOW=5 steps, MIN_DEPTH_GROWTH=0.5), sea level, spine territory radius, or ascending surface.
+
+**Stream merging:** Streams check a hex-indexed spatial grid (HexSpatialGrid, 7-cell lookup) for nearby existing streams. On proximity hit (STREAM_PROXIMITY_RADIUS=150 wu), stream takes a final step onto the existing stream's centerline and stops. `propagate_merge_counts` walks the tree in reverse to compound merge counts.
+
+**Depth model:** Slope-integrated accumulation (`cum_depth += base × slope_factor × merge_boost × step_size`). Depth grows naturally on steep terrain and stalls on flats.
+
+**Carving:** Min-composited subtractive distance field with V-shaped cross-section. Wall exponent evolves from young (0.5) to mature (1.5) with merges. Order-independent (min compositing).
+
+**Ridge paths:** Traversable crossings at ravine rims. Currently disabled (PATH_PROBABILITY=0.0).
+
+**Implementation:** `crates/terrain/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
+
+### Spine Caching
+
+`SpineCache` provides lazy per-chunk generation with LRU eviction (SPINE_CACHE_MAX_CHUNKS=32). `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring (7 lookups). Evicted chunks regenerate deterministically on revisit.
+
+---
+
+## Elevation Pipeline
+
+Final elevation at any point:
 
 ```
-hex_to_world(q, r) → (x, y)   // q + r*0.5, r*√3/2
+raw_elevation = max(peak contributions, ridgeline contributions) + micro_noise - ravine_carving
+get_height(q, r) = discretize(raw_elevation)    // quantized to z-levels
 ```
 
-Temperature is a `f64` in [0.0, 1.0]. Material density is a `f64` in [0.0, 1.0].
+`SpineInstance::elevation_at(wx, wy)` computes the full chain: bounding check → max over peaks and ridgelines → ridge noise → ravine subtraction. `discretize_elevation` quantizes to integer z-levels.
 
-Height is currently a placeholder (`get_height` returns 0) — the elevation system will be rebuilt on top of material + thermal layers.
+Outside spine influence, elevation is 0 (sea level). The elevation system produces mountains and valleys; biomes and water rendering are not yet implemented.
 
 ---
 
 ## Public API
 
 ```rust
-// Core evaluation
-Terrain::new(seed) → Terrain
-Terrain::with_tick(seed, world_tick) → Terrain
-Terrain::material_density(q, r) → f64       // [0, 1]
-Terrain::temperature(q, r) → f64            // [0, 1] (uncached)
-Terrain::temperature_cached(q, r, cache) → f64  // [0, 1] (cached)
-Terrain::hotspot_temperature(q, r) → f64    // Sub-lid diagnostic
-Terrain::evaluate(q, r) → TerrainEval       // { height: 0, temperature }
+// Core terrain
+Terrain::new(seed) -> Terrain
+Terrain::get_height(q, r) -> i32              // Discretized elevation
+Terrain::get_raw_elevation(q, r) -> f64       // Pre-discretization
+Terrain::plate_info_at(q, r) -> (PlateCenter, MicroplateCenter)
 
-// Caching
-ThermalChunkCache::new(seed, world_tick)
-HotspotChunkCache::new(seed)
+// Batch generation (viewer/server)
+generate_region(seed, cx, cy, radius, with_spines) -> RegionResult
 
-// Chunk addressing
-tile_to_chunk(q, r) → (chunk_q, chunk_r)           // Hotspot chunks
-tile_to_thermal_chunk(q, r) → (chunk_q, chunk_r)   // Thermal chunks
+// Regime field
+regime_value_at(wx, wy, seed) -> f64          // [0, 1]
+warp_strength_at(wx, wy, seed) -> f64         // [0, 600]
+
+// Coordinate conversion
+hex_to_world(q, r) -> (f64, f64)
 ```
 
 ---
@@ -233,11 +211,20 @@ tile_to_thermal_chunk(q, r) → (chunk_q, chunk_r)   // Thermal chunks
 
 The `terrain-viewer` crate renders terrain layers to PNG for development diagnostics:
 
-| Mode | What It Shows |
-|------|---------------|
-| Material | Material density field — bright = dense, dark = light |
-| Hotspots | Sub-lid cellular structure — radial falloff × lifecycle |
-| Thermal | Surface temperature field — additive Gaussian plumes |
+```bash
+cargo run -p terrain-viewer -- --layers plates,elevation --radius 200 --output terrain.png
+```
+
+| Layer | What It Shows |
+|-------|---------------|
+| `plates` | Sea/Coast/Inland coloring with per-plate hue variation |
+| `regime` | Raw regime grayscale + red contour at land threshold |
+| `elevation` | Height tinting with slope-gradient cliff shading |
+| `spines` | Ridge (white) / Highland (orange) / Foothills (tan) |
+| `centroids` | Macro (red) and micro (yellow) center markers |
+| `ravines` | Floor (blue) / Wall (red) / Path (yellow) debug overlay |
+
+Layers are composited bottom-to-top. Macro borders drawn as light grey lines; micro borders as subtle brightening.
 
 ---
 
@@ -268,15 +255,15 @@ Where the current implementation intentionally differs from spec:
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
 | 1 | Chunk streaming | Two-ring LoD with server-side streaming | Client-side two-ring implemented; server-side Event::ChunkSummary not yet | See ADR-032 |
-| 2 | Height | Height derives from material + thermal | `get_height` returns 0 (placeholder) | Elevation system rebuild pending |
+| 2 | Elevation | Full biome-aware height | Spine-only elevation (peaks + ridgelines - ravines) | Biome system not yet built |
 
 ## Implementation Gaps
 
-**Current**: Height/elevation system — rebuild from material density + thermal field to produce terrain features
+**Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on plate tags + elevation + moisture
 
 **Medium (LoD server-side)**: Server-side two-ring streaming — Event::ChunkSummary, VisibleChunkCache, do_incremental ring transitions
 
-**Deferred**: Biome system, feature envelopes (mountains, swamps, plains), river systems, cave/underground generation, dynamic temporal events
+**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation, dynamic temporal events
 
 **Blocked by other systems**: Water rendering (ocean/coast), haven placement validation
 
@@ -290,4 +277,3 @@ Where the current implementation intentionally differs from spec:
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation
 - [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Two-ring LoD: inner full-detail, outer summary hexes
-- [ADR-033](../adr/033-hex-voronoi-chunk-addressing.md) — Hex Voronoi chunk addressing via cube-coordinate rounding
