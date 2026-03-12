@@ -187,7 +187,7 @@ fn main() {
         renet::send_try,
     ));
 
-    let map_state = common_bevy::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8));
+    let map_state = common_bevy::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop));
     let map = map_state.as_map(); // Create Map that shares the same Arc
     app.insert_resource(map_state);
     app.insert_resource(map);

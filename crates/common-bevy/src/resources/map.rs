@@ -495,6 +495,10 @@ impl Map {
         self.0.radius()
     }
 
+    pub fn orientation(&self) -> qrz::HexOrientation {
+        self.0.orientation()
+    }
+
     pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> {
         self.0.neighbors(qrz)
     }
@@ -552,7 +556,7 @@ mod tests {
     use qrz::Qrz;
 
     fn make_flat_map() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -5..=5 {
             for r in -5..=5 {
                 qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
@@ -575,7 +579,7 @@ mod tests {
 
     #[test]
     fn greedy_path_follows_slope() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Gradual uphill: z increases by 1 each tile
         for q in 0..=4 {
             qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
@@ -593,7 +597,7 @@ mod tests {
 
     #[test]
     fn greedy_path_stops_at_cliff() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
         qrz_map.insert(Qrz { q: 1, r: 0, z: 0 }, EntityType::Decorator(default()));
         // Cliff: q=2 is 5 levels higher (not walkable via neighbors)
@@ -632,7 +636,7 @@ mod tests {
     #[test]
     fn greedy_path_no_progress_stops() {
         // Island with no walkable path toward destination
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
         // No neighbors at all
         let map = Map::new(qrz_map);
@@ -650,7 +654,7 @@ mod tests {
         // Create two adjacent flat hexes at same elevation
         // If normals only consider the current hex, they'll be tilted toward/away from neighbors
         // If normals consider neighbors too, they should point straight up (smooth flat plane)
-        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         let hex1 = Qrz { q: 0, r: 0, z: 0 };
         let hex2 = Qrz { q: 1, r: 0, z: 0 }; // Adjacent hex at same elevation
 
@@ -698,7 +702,7 @@ mod tests {
         use crate::chunk::{ChunkId, chunk_to_tile};
 
         // Create a map with tiles in multiple chunks
-        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
         // Chunk (0,0) - add 16x16 tiles (flat terrain for exact vertex count checks)
         for offset_q in 0..16 {
@@ -751,7 +755,7 @@ mod tests {
         use crate::chunk::{ChunkId, chunk_to_tile};
 
         // Create a map with tiles in two different chunks
-        let mut qrz_map = qrz::Map::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
         // Chunk (0,0) - 4 tiles
         for offset_q in 0..2 {

@@ -12,14 +12,14 @@
 //! - A 120° facing cone extends ±60° from the heading angle (covers 3 forward hex faces)
 //! - Targets within the cone and nearest to the caster are selected
 //!
-//! # Heading Angles
+//! # Heading Angles (flat-top hex)
 //!
-//! - NE (Northeast): 30°
-//! - E (East): 90°
-//! - SE (Southeast): 150°
-//! - SW (Southwest): 210°
-//! - W (West): 270°
-//! - NW (Northwest): 330°
+//! - N (North): 0°
+//! - NE (Northeast): 60°
+//! - SE (Southeast): 120°
+//! - S (South): 180°
+//! - SW (Southwest): 240°
+//! - NW (Northwest): 300°
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -30,30 +30,32 @@ use crate::{
 };
 
 impl Heading {
-    /// Convert heading to angle in degrees
+    /// Convert heading to angle in degrees (flat-top hex)
     ///
     /// Returns the angle in degrees (0-360) for the heading direction.
-    /// Uses a standard coordinate system where:
+    /// Flat-top compass bearings:
     /// - 0° = North
-    /// - 90° = East
+    /// - 60° = Northeast
+    /// - 120° = Southeast
     /// - 180° = South
-    /// - 270° = West
+    /// - 240° = Southwest
+    /// - 300° = Northwest
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
-    /// assert_eq!(heading.to_angle(), 90.0);
+    /// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Southeast
+    /// assert_eq!(heading.to_angle(), 120.0);
     /// ```
     pub fn to_angle(&self) -> f32 {
         match (self.q, self.r) {
-            (1, -1) => 30.0,   // Northeast
-            (1, 0) => 90.0,    // East
-            (0, 1) => 150.0,   // Southeast
-            (-1, 1) => 210.0,  // Southwest
-            (-1, 0) => 270.0,  // West
-            (0, -1) => 330.0,  // Northwest
-            _ => 0.0,          // Default/invalid heading
+            (0, -1) => 0.0,     // North
+            (1, -1) => 60.0,    // Northeast
+            (1, 0) => 120.0,    // Southeast
+            (0, 1) => 180.0,    // South
+            (-1, 1) => 240.0,   // Southwest
+            (-1, 0) => 300.0,   // Northwest
+            _ => 0.0,           // Default/invalid heading
         }
     }
 }
@@ -112,13 +114,13 @@ pub fn is_in_facing_cone(
 /// Calculate the angle in degrees from one location to another
 ///
 /// Returns an angle in the range [0, 360) degrees.
-/// Uses the hex grid's natural 6-direction system where:
-/// - 30° = Northeast
-/// - 90° = East
-/// - 150° = Southeast
-/// - 210° = Southwest
-/// - 270° = West
-/// - 330° = Northwest
+/// Uses flat-top hex compass bearings:
+/// - 0° = North
+/// - 60° = Northeast
+/// - 120° = Southeast
+/// - 180° = South
+/// - 240° = Southwest
+/// - 300° = Northwest
 ///
 /// # Arguments
 ///
@@ -147,11 +149,9 @@ fn angle_between_locs(from: Loc, to: Loc) -> f32 {
     // Convert to degrees
     let mut angle_deg = angle_rad.to_degrees();
 
-    // The hex grid's orientation relative to Cartesian coordinates means:
-    // - East (q=1, r=0) in hex gives atan2 ≈ 30° in Cartesian
-    // - We want East to be 90° in our system
-    // So we need to add 60° to rotate the coordinate system
-    angle_deg += 60.0;
+    // Flat-top hex: (q=1, r=0) = SE direction gives atan2 ≈ 30° in Cartesian.
+    // We want SE to be 120° in our compass system, so add 90°.
+    angle_deg += 90.0;
 
     // Normalize to [0, 360) range
     if angle_deg < 0.0 {
@@ -530,13 +530,14 @@ mod tests {
 
     #[test]
     fn test_heading_to_angle_all_six_directions() {
+        // Flat-top hex compass bearings
         let test_cases = vec![
-            (Qrz { q: 1, r: -1, z: 0 }, 30.0, "Northeast"),
-            (Qrz { q: 1, r: 0, z: 0 }, 90.0, "East"),
-            (Qrz { q: 0, r: 1, z: 0 }, 150.0, "Southeast"),
-            (Qrz { q: -1, r: 1, z: 0 }, 210.0, "Southwest"),
-            (Qrz { q: -1, r: 0, z: 0 }, 270.0, "West"),
-            (Qrz { q: 0, r: -1, z: 0 }, 330.0, "Northwest"),
+            (Qrz { q: 0, r: -1, z: 0 }, 0.0, "North"),
+            (Qrz { q: 1, r: -1, z: 0 }, 60.0, "Northeast"),
+            (Qrz { q: 1, r: 0, z: 0 }, 120.0, "Southeast"),
+            (Qrz { q: 0, r: 1, z: 0 }, 180.0, "South"),
+            (Qrz { q: -1, r: 1, z: 0 }, 240.0, "Southwest"),
+            (Qrz { q: -1, r: 0, z: 0 }, 300.0, "Northwest"),
         ];
 
         for (qrz, expected_angle, direction_name) in test_cases {
@@ -581,8 +582,8 @@ mod tests {
 
     #[test]
     fn test_facing_cone_target_at_edge_of_cone() {
-        // Heading East (90°), target at ~60° should be within ±30° cone
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
+        // Heading SE (120°), target NE at 60° should be within ±60° cone
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target_ne = Loc::new(Qrz { q: 1, r: -1, z: 0 }); // Northeast neighbor
 
@@ -594,8 +595,8 @@ mod tests {
 
     #[test]
     fn test_facing_cone_target_outside_cone() {
-        // Heading East (90°), target to the west should be outside
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        // Heading SE (120°), target to the NW should be outside
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target = Loc::new(Qrz { q: -1, r: 0, z: 0 }); // West
 
@@ -647,21 +648,21 @@ mod tests {
 
     #[test]
     fn test_facing_cone_perpendicular_targets() {
-        // Heading East, targets to the north and south should be outside 120° cone
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
+        // Heading SE (120°), targets 120°+ away should be outside cone
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
-        // Northwest target (330°) is 120° away from East (90°) - outside ±60° cone
-        let target_nw = Loc::new(Qrz { q: 0, r: -1, z: 0 });
+        // North target (0°) is 120° away from SE (120°) - outside ±60° cone
+        let target_n = Loc::new(Qrz { q: 0, r: -1, z: 0 });
         assert!(
-            !is_in_facing_cone(heading, caster, target_nw),
+            !is_in_facing_cone(heading, caster, target_n),
             "Target at 120° delta should be outside 120° cone"
         );
 
-        // Southeast target (150°) is 60° away from East (90°) - at edge of ±60° cone
-        let target_se = Loc::new(Qrz { q: 0, r: 1, z: 0 });
+        // South target (180°) is 60° away from SE (120°) - at edge of ±60° cone
+        let target_s = Loc::new(Qrz { q: 0, r: 1, z: 0 });
         assert!(
-            is_in_facing_cone(heading, caster, target_se),
+            is_in_facing_cone(heading, caster, target_s),
             "Target at 60° delta should be at edge of 120° cone (included)"
         );
     }
@@ -669,25 +670,25 @@ mod tests {
     #[test]
     fn test_facing_cone_boundary_precision() {
         // Test the 120° cone (±60° from heading)
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
+        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
-        // Northeast at 30° is 60° from East heading (90°) - at edge of cone
-        let target_ne = Loc::new(Qrz { q: 1, r: -1, z: 0 }); // Northeast at 30°
+        // NE at 60° is 60° from SE heading (120°) - at edge of cone
+        let target_ne = Loc::new(Qrz { q: 1, r: -1, z: 0 }); // Northeast at 60°
         assert!(
             is_in_facing_cone(heading, caster, target_ne),
             "Northeast (60° delta) should be at edge of 120° cone"
         );
 
-        // Target at 120° is 30° from East (90°) - well within cone
-        let target_120 = Loc::new(Qrz { q: 1, r: 1, z: 0 }); // At 120°
+        // Target (1,1) at ~150° is ~30° from SE (120°) - well within cone
+        let target_150 = Loc::new(Qrz { q: 1, r: 1, z: 0 });
         assert!(
-            is_in_facing_cone(heading, caster, target_120),
-            "Target at 30° delta should be well within 120° cone"
+            is_in_facing_cone(heading, caster, target_150),
+            "Target at ~30° delta should be well within 120° cone"
         );
 
-        // Southwest at 210° is 120° from East (90°) - outside cone
-        let target_sw = Loc::new(Qrz { q: -1, r: 1, z: 0 }); // Southwest at 210°
+        // SW at 240° is 120° from SE (120°) - outside cone
+        let target_sw = Loc::new(Qrz { q: -1, r: 1, z: 0 }); // Southwest at 240°
         assert!(
             !is_in_facing_cone(heading, caster, target_sw),
             "Southwest (120° delta) should be outside 120° cone"
@@ -700,14 +701,14 @@ mod tests {
     fn test_angle_between_locs_cardinal_directions() {
         let origin = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
-        // Test each cardinal direction
+        // Flat-top hex compass bearings
         let test_cases = vec![
-            (Qrz { q: 1, r: -1, z: 0 }, 30.0, "Northeast"),
-            (Qrz { q: 1, r: 0, z: 0 }, 90.0, "East"),
-            (Qrz { q: 0, r: 1, z: 0 }, 150.0, "Southeast"),
-            (Qrz { q: -1, r: 1, z: 0 }, 210.0, "Southwest"),
-            (Qrz { q: -1, r: 0, z: 0 }, 270.0, "West"),
-            (Qrz { q: 0, r: -1, z: 0 }, 330.0, "Northwest"),
+            (Qrz { q: 0, r: -1, z: 0 }, 0.0, "North"),
+            (Qrz { q: 1, r: -1, z: 0 }, 60.0, "Northeast"),
+            (Qrz { q: 1, r: 0, z: 0 }, 120.0, "Southeast"),
+            (Qrz { q: 0, r: 1, z: 0 }, 180.0, "South"),
+            (Qrz { q: -1, r: 1, z: 0 }, 240.0, "Southwest"),
+            (Qrz { q: -1, r: 0, z: 0 }, 300.0, "Northwest"),
         ];
 
         for (target_qrz, expected_angle, direction_name) in test_cases {

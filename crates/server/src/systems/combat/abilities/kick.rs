@@ -283,7 +283,7 @@ mod tests {
     use common_bevy::components::entity_type::EntityType;
 
     fn make_test_map() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Flat terrain: 10x10 grid at z=0
         for q in -5..=5 {
             for r in -5..=5 {
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn knockback_stops_at_cliff() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Flat tiles z=0 from q=0..2, then cliff at q=3 (z=5)
         for q in 0..=2 {
             qrz_map.insert(Qrz { q, r: 0, z: 0 }, EntityType::Decorator(default()));
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn knockback_allows_gentle_slopes() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Gradual slope: z increases by 1 each tile (passable)
         for q in 0..=4 {
             qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));

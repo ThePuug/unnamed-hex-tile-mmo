@@ -126,7 +126,7 @@ const SEED_RIDGE_WOBBLE: u64 = 0xAAAA_BBBB_0031;
 
 /// Ridgeline noise strength: fraction of base elevation used as noise amplitude.
 /// Set to 0.0 to see pure structural shape (cones, ridgelines, V-carves).
-const RIDGE_NOISE_STRENGTH: f64 = 0.0;
+const RIDGE_NOISE_STRENGTH: f64 = 0.15;
 
 /// Noise wavelength for ridgeline variation applied at query time.
 const RIDGE_NOISE_WAVELENGTH: f64 = HALF_WIDTH_MAX;

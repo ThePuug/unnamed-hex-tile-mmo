@@ -700,7 +700,7 @@ impl ActorAttributes {
     /// Movement speed - currently flat until allocated to a meta-attribute
     /// TODO: Determine which meta-attribute should govern movement speed
     pub fn movement_speed(&self) -> f32 {
-        0.005  // Flat speed for all entities
+        crate::systems::movement::MOVEMENT_SPEED
     }
 
     /// Maximum health from Constitution meta-attribute

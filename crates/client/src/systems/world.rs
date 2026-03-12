@@ -442,10 +442,16 @@ fn generate_summary_mesh(
     let c01 = (self_elev + nelev(-1, 0) + nelev(0,  1) + nelev(-1,  1)) * 0.25;
     let c11 = (self_elev + nelev( 1, 0) + nelev(0,  1) + nelev( 1,  1)) * 0.25;
 
-    let xz_offsets: [[f32; 2]; 7] = [
-        [0.0, 0.0], [0.0, -radius], [w, -h], [w, h],
-        [0.0, radius], [-w, h], [-w, -h],
-    ];
+    let xz_offsets: [[f32; 2]; 7] = match inner.orientation() {
+        qrz::HexOrientation::PointyTop => [
+            [0.0, 0.0], [0.0, -radius], [w, -h], [w, h],
+            [0.0, radius], [-w, h], [-w, -h],
+        ],
+        qrz::HexOrientation::FlatTop => [
+            [0.0, 0.0], [h, -w], [radius, 0.0], [h, w],
+            [-h, w], [-radius, 0.0], [-h, -w],
+        ],
+    };
 
     let dq_axial: [f32; 7] = [0.0,  1.0/3.0, 2.0/3.0, 1.0/3.0, -1.0/3.0, -2.0/3.0, -1.0/3.0];
     let dr_axial: [f32; 7] = [0.0, -2.0/3.0, -1.0/3.0, 1.0/3.0,  2.0/3.0,  1.0/3.0, -1.0/3.0];

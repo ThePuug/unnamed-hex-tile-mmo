@@ -47,7 +47,7 @@ pub const JUMP_DURATION_MS: i16 = 125;
 pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 
 /// Base movement speed in world units per millisecond
-pub const MOVEMENT_SPEED: f32 = 0.005;
+pub const MOVEMENT_SPEED: f32 = 0.0075;
 
 /// Terrain slope following speed (0.0 = no following, 1.0 = instant)
 pub const SLOPE_FOLLOW_SPEED: f32 = 0.95;
@@ -511,7 +511,7 @@ mod tests {
     use crate::systems::physics;
 
     fn create_test_map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8))
+        Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
     }
 
     fn create_test_nntree() -> NNTree {

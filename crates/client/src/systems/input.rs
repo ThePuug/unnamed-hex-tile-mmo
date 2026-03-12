@@ -1,12 +1,10 @@
 use bevy::prelude::*;
 use qrz::Qrz;
-use std::f32::consts::PI;
 
-use crate::systems::camera::CameraOrbitAngle;
+use crate::systems::camera::CameraOrbit;
 use crate::*;
 use common_bevy::{
     components::{
-        heading::*,
         keybits::*,
         target::Target,
     },
@@ -24,37 +22,45 @@ pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 /// Milliseconds between periodic input sends
 pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 
-/// Hex direction indices (camera angle system: 0° = South)
-const HEX_DIRECTIONS: [Qrz; 6] = [
-    Qrz { q: 1, r: -1, z: 0 },   // 0: NE (30°)
-    Qrz { q: 1, r: 0, z: 0 },    // 1: East (90°)
-    Qrz { q: 0, r: 1, z: 0 },    // 2: SE (150°)
-    Qrz { q: -1, r: 1, z: 0 },   // 3: SW (210°)
-    Qrz { q: -1, r: 0, z: 0 },   // 4: West (270°)
-    Qrz { q: 0, r: -1, z: 0 },   // 5: NW (330°)
+/// Hex direction indices ordered by visual angle (0°, 60°, 120°, 180°, 240°, 300°).
+///
+/// For **flat-top** the visual angles align with the 6 directions:
+///   0°=N(0,-1), 60°=NE(1,-1), 120°=SE(1,0), 180°=S(0,1), 240°=SW(-1,1), 300°=NW(-1,0)
+///
+/// For **pointy-top** the visual angles are offset 30° but the 60° step spacing is the same:
+///   0→NE(1,-1), 1→E(1,0), 2→SE(0,1), 3→SW(-1,1), 4→W(-1,0), 5→NW(0,-1)
+///
+/// In both cases, stepping +1 index = +60° clockwise rotation.
+const HEX_DIRECTIONS_FLAT: [Qrz; 6] = [
+    Qrz { q: 0, r: -1, z: 0 },   // 0: N   (0°)
+    Qrz { q: 1, r: -1, z: 0 },   // 1: NE  (60°)
+    Qrz { q: 1, r: 0, z: 0 },    // 2: SE  (120°)
+    Qrz { q: 0, r: 1, z: 0 },    // 3: S   (180°)
+    Qrz { q: -1, r: 1, z: 0 },   // 4: SW  (240°)
+    Qrz { q: -1, r: 0, z: 0 },   // 5: NW  (300°)
 ];
 
-const HEX_ANGLES: [f32; 6] = [
-    0.0_f32.to_radians(),    // 0°
-    60.0_f32.to_radians(),   // 60°
-    120.0_f32.to_radians(),  // 120°
-    180.0_f32.to_radians(),  // 180°
-    240.0_f32.to_radians(),  // 240°
-    300.0_f32.to_radians(),  // 300°
+const HEX_DIRECTIONS_POINTY: [Qrz; 6] = [
+    Qrz { q: 1, r: -1, z: 0 },   // 0: NE  (30°)
+    Qrz { q: 1, r: 0, z: 0 },    // 1: E   (90°)
+    Qrz { q: 0, r: 1, z: 0 },    // 2: SE  (150°)
+    Qrz { q: -1, r: 1, z: 0 },   // 3: SW  (210°)
+    Qrz { q: -1, r: 0, z: 0 },   // 4: W   (270°)
+    Qrz { q: 0, r: -1, z: 0 },   // 5: NW  (330°)
 ];
 
-/// Find direction index from Qrz
-fn qrz_to_index(dir: &Qrz) -> Option<usize> {
-    HEX_DIRECTIONS.iter().position(|&d| d.q == dir.q && d.r == dir.r)
+/// Find direction index from Qrz in the given direction table.
+fn qrz_to_index(dir: &Qrz, table: &[Qrz; 6]) -> Option<usize> {
+    table.iter().position(|&d| d.q == dir.q && d.r == dir.r)
 }
 
-/// Rotate a Qrz direction by a number of hex steps
-fn rotate_qrz(dir: &Qrz, steps: i32) -> Qrz {
-    if let Some(idx) = qrz_to_index(dir) {
+/// Rotate a Qrz direction by a number of hex steps through the given table.
+fn rotate_qrz(dir: &Qrz, steps: i32, table: &[Qrz; 6]) -> Qrz {
+    if let Some(idx) = qrz_to_index(dir, table) {
         let new_idx = (idx as i32 + steps).rem_euclid(6) as usize;
-        HEX_DIRECTIONS[new_idx]
+        table[new_idx]
     } else {
-        *dir  // Return unchanged if not a standard hex direction
+        *dir
     }
 }
 
@@ -62,11 +68,11 @@ fn rotate_qrz(dir: &Qrz, steps: i32) -> Qrz {
 fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
     let mut keybits = KeyBits::default();
     match (dir.q, dir.r) {
-        (1, 0) => keybits.set_pressed([KB_HEADING_Q], true),                              // East
-        (-1, 0) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true),             // West
+        (1, 0) => keybits.set_pressed([KB_HEADING_Q], true),                              // East / SE(flat)
+        (-1, 0) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true),             // West / NW(flat)
         (1, -1) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true), // NE
-        (0, -1) => keybits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true),             // NW
-        (0, 1) => keybits.set_pressed([KB_HEADING_R], true),                              // SE
+        (0, -1) => keybits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true),             // NW / N(flat)
+        (0, 1) => keybits.set_pressed([KB_HEADING_R], true),                              // SE / S(flat)
         (-1, 1) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true),               // SW
         _ => {}
     }
@@ -75,12 +81,13 @@ fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
-    camera_angle: Res<CameraOrbitAngle>,
-    mut query: Query<(Entity, &Heading, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
+    mut camera_orbit: ResMut<CameraOrbit>,
+    map: Res<map::Map>,
+    mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     dt: Res<Time>,
 ) {
-    if let Ok((ent, &heading, mut keybits0, gcd_opt, target)) = query.single_mut() {
+    if let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() {
         // Note: We removed client-side death prediction
         // The server will reject inputs for dead players, preventing premature input blocking
         let delta_ns = dt.delta().as_nanos();
@@ -136,86 +143,65 @@ pub fn update_keybits(
         let mut keybits = KeyBits::default();
         keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
 
+        let orientation = map.orientation();
+        let dir_table = match orientation {
+            qrz::HexOrientation::FlatTop => &HEX_DIRECTIONS_FLAT,
+            qrz::HexOrientation::PointyTop => &HEX_DIRECTIONS_POINTY,
+        };
+
         // Skip movement input when Shift is pressed (camera panning mode)
         let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         if !shift_pressed && keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
-            // Snap camera to nearest hex rotation
-            let camera_normalized = camera_angle.0.rem_euclid(2.0 * PI);
-            let mut camera_rotation_idx = 0;
-            let mut min_diff = f32::MAX;
-            for (i, &angle) in HEX_ANGLES.iter().enumerate() {
-                let diff = (camera_normalized - angle).abs();
-                let diff = diff.min(2.0 * PI - diff);
-                if diff < min_diff {
-                    min_diff = diff;
-                    camera_rotation_idx = i;
-                }
-            }
+            // Use discrete target_index as the stable camera frame for direction resolution
+            let camera_rotation_idx = camera_orbit.target_index;
 
-            // Rotate heading to visual space (what player appears to be facing from camera view)
-            let visual_heading = rotate_qrz(&*heading, camera_rotation_idx as i32);
+            let up = keyboard.pressed(KEYCODE_UP);
+            let down = keyboard.pressed(KEYCODE_DOWN);
+            let left = keyboard.pressed(KEYCODE_LEFT);
+            let right = keyboard.pressed(KEYCODE_RIGHT);
 
-            // Apply existing movement logic with visual heading
-            if keyboard.pressed(KEYCODE_UP) {
-                if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(visual_heading == Qrz {q:-1, r: 0, z: 0}
-                    || visual_heading == Qrz {q: 0, r:-1, z: 0}
-                    || visual_heading == Qrz {q: 0, r: 1, z: 0}) {
-                        keybits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true);  // NW in visual space
-                    }
-                else {
-                    keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);  // NE in visual space
-                }
-            } else if keyboard.pressed(KEYCODE_DOWN) {
-                if keyboard.pressed(KEYCODE_LEFT) || !keyboard.pressed(KEYCODE_RIGHT)
-                    &&(visual_heading == Qrz {q:-1, r: 0, z: 0}
-                    || visual_heading == Qrz {q: 1, r:-1, z: 0}
-                    || visual_heading == Qrz {q:-1, r: 1, z: 0}) {
-                        keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true);  // SW in visual space
-                    }
-                else {
-                    keybits.set_pressed([KB_HEADING_R], true);  // SE in visual space
-                }
-            }
-            else if keyboard.pressed(KEYCODE_RIGHT) {
-                keybits.set_pressed([KB_HEADING_Q], true);  // East in visual space
-            } else if keyboard.pressed(KEYCODE_LEFT) {
-                keybits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true);  // West in visual space
-            }
-
-            // Now convert keybits (visual direction) back to world direction
-            // Extract direction from keybits
-            let visual_dir = if keybits.key_bits & KB_HEADING_Q != 0 {
-                if keybits.key_bits & KB_HEADING_R != 0 {
-                    if keybits.key_bits & KB_HEADING_NEG != 0 {
-                        Qrz { q: 1, r: -1, z: 0 }  // NE
-                    } else {
-                        Qrz { q: -1, r: 1, z: 0 }  // SW
-                    }
+            // Determine visual direction and camera rotation side-effect.
+            //
+            // Up/Up+Left/Up+Right: move forward (with optional diagonal).
+            //   Up+Left also steps camera CCW. Up+Right also steps camera CW.
+            // Down/Down+Left/Down+Right: move backward. No camera rotation.
+            // Left or Right alone: camera rotation only, no movement.
+            let visual_dir = if up && !down {
+                if left && !right {
+                    camera_orbit.step_ccw();
+                    Qrz { q: -1, r: 0, z: 0 }    // NW (forward-left)
+                } else if right && !left {
+                    camera_orbit.step_cw();
+                    Qrz { q: 1, r: -1, z: 0 }     // NE (forward-right)
                 } else {
-                    if keybits.key_bits & KB_HEADING_NEG != 0 {
-                        Qrz { q: -1, r: 0, z: 0 }  // West
-                    } else {
-                        Qrz { q: 1, r: 0, z: 0 }   // East
-                    }
+                    Qrz { q: 0, r: -1, z: 0 }     // N (forward)
                 }
-            } else if keybits.key_bits & KB_HEADING_R != 0 {
-                if keybits.key_bits & KB_HEADING_NEG != 0 {
-                    Qrz { q: 0, r: -1, z: 0 }  // NW
+            } else if down && !up {
+                if left && !right {
+                    Qrz { q: -1, r: 1, z: 0 }     // SW (backward-left)
+                } else if right && !left {
+                    Qrz { q: 1, r: 0, z: 0 }      // SE (backward-right)
                 } else {
-                    Qrz { q: 0, r: 1, z: 0 }   // SE
+                    Qrz { q: 0, r: 1, z: 0 }      // S (backward)
                 }
+            } else if left && !right {
+                camera_orbit.step_ccw();
+                Qrz { q: 0, r: 0, z: 0 }          // Rotate only, no movement
+            } else if right && !left {
+                camera_orbit.step_cw();
+                Qrz { q: 0, r: 0, z: 0 }          // Rotate only, no movement
             } else {
-                Qrz { q: 0, r: 0, z: 0 }  // No movement
+                Qrz { q: 0, r: 0, z: 0 }
             };
 
-            // Rotate back to world space
-            let world_dir = rotate_qrz(&visual_dir, -(camera_rotation_idx as i32));
+            if visual_dir.q != 0 || visual_dir.r != 0 {
+                // Rotate visual direction to world space using the pre-rotation camera frame
+                let world_dir = rotate_qrz(&visual_dir, -(camera_rotation_idx as i32), dir_table);
 
-            // Convert back to keybits (preserve jump flag)
-            let jump_flag = keybits.key_bits & KB_JUMP;
-            keybits = qrz_to_keybits(&world_dir);
-            keybits.key_bits |= jump_flag;
+                let jump_flag = keybits.key_bits & KB_JUMP;
+                keybits = qrz_to_keybits(&world_dir);
+                keybits.key_bits |= jump_flag;
+            }
         }
 
         // Send input if either keybits changed or periodic interval has elapsed
@@ -227,6 +213,7 @@ pub fn update_keybits(
         }
     }
 }
+
 
 pub fn do_input(
     mut reader: MessageReader<Do>,

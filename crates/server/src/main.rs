@@ -149,7 +149,7 @@ fn main() {
     app.insert_resource(transport);
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
-    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8)));
+    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop)));
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();

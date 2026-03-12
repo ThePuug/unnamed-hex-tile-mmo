@@ -24,7 +24,7 @@ use crate::{
     components::ChunkMesh,
     plugins::console::DevConsoleAction,
     resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes, SkipNeighborRegen},
-    systems::camera::{CameraOrbitAngle, CAMERA_DISTANCE, CAMERA_HEIGHT},
+    systems::camera::{CameraOrbit, CAMERA_DISTANCE, CAMERA_HEIGHT},
 };
 
 // ──── Resources ────
@@ -254,10 +254,31 @@ pub fn execute_admin_actions(
     }
 }
 
-/// Smooth camera movement using arrow keys with speed ramp.
+/// Flat-top hex direction table for flyover movement (same as input.rs).
+const HEX_DIRECTIONS_FLAT: [qrz::Qrz; 6] = [
+    qrz::Qrz { q: 0, r: -1, z: 0 },   // 0: N   (0°)
+    qrz::Qrz { q: 1, r: -1, z: 0 },   // 1: NE  (60°)
+    qrz::Qrz { q: 1, r: 0, z: 0 },    // 2: SE  (120°)
+    qrz::Qrz { q: 0, r: 1, z: 0 },    // 3: S   (180°)
+    qrz::Qrz { q: -1, r: 1, z: 0 },   // 4: SW  (240°)
+    qrz::Qrz { q: -1, r: 0, z: 0 },   // 5: NW  (300°)
+];
+
+/// Rotate a hex direction by stepping through the direction table.
+fn rotate_hex(dir: &qrz::Qrz, steps: i32) -> qrz::Qrz {
+    if let Some(idx) = HEX_DIRECTIONS_FLAT.iter().position(|d| d.q == dir.q && d.r == dir.r) {
+        let new_idx = (idx as i32 + steps).rem_euclid(6) as usize;
+        HEX_DIRECTIONS_FLAT[new_idx]
+    } else {
+        *dir
+    }
+}
+
+/// Smooth camera movement using hex-direction arrow keys with speed ramp.
+/// Camera rotation is integrated into movement input (same scheme as player input).
 pub fn flyover_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
-    orbit_angle: Res<CameraOrbitAngle>,
+    mut orbit: ResMut<CameraOrbit>,
     time: Res<Time>,
     map: Res<Map>,
     admin_terrain: Res<AdminTerrain>,
@@ -267,36 +288,73 @@ pub fn flyover_movement(
 
     // Skip movement when Shift is held (camera orbit mode)
     let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let moving = !shift_pressed && keyboard.any_pressed([
+    let has_arrows = !shift_pressed && keyboard.any_pressed([
         KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight,
     ]);
 
-    if moving {
-        // Speed ramp: quadratic ease-in over RAMP_SECONDS
-        flyover.hold_time += dt;
-        let t = (flyover.hold_time / RAMP_SECONDS).min(1.0);
-        flyover.speed_multiplier = 1.0 + (MAX_SPEED_MULTIPLIER - 1.0) * t * t;
+    if has_arrows {
+        let up = keyboard.pressed(KeyCode::ArrowUp);
+        let down = keyboard.pressed(KeyCode::ArrowDown);
+        let left = keyboard.pressed(KeyCode::ArrowLeft);
+        let right = keyboard.pressed(KeyCode::ArrowRight);
 
-        // Build direction vector from arrow keys
-        let mut dir = Vec3::ZERO;
-        if keyboard.pressed(KeyCode::ArrowUp)    { dir.z -= 1.0; }
-        if keyboard.pressed(KeyCode::ArrowDown)  { dir.z += 1.0; }
-        if keyboard.pressed(KeyCode::ArrowLeft)  { dir.x -= 1.0; }
-        if keyboard.pressed(KeyCode::ArrowRight) { dir.x += 1.0; }
+        // Use discrete target_index as the stable camera frame
+        let camera_idx = orbit.target_index;
 
-        if dir.length_squared() > 0.0 {
-            dir = dir.normalize();
+        // Same movement-driven rotation scheme as player input:
+        // Up+Left/Up+Right: move diagonally + rotate camera.
+        // Down variants: move backward, no rotation.
+        // Left/Right alone: rotate only.
+        let visual_dir = if up && !down {
+            if left && !right {
+                orbit.step_ccw();
+                qrz::Qrz { q: -1, r: 0, z: 0 }     // NW (forward-left)
+            } else if right && !left {
+                orbit.step_cw();
+                qrz::Qrz { q: 1, r: -1, z: 0 }      // NE (forward-right)
+            } else {
+                qrz::Qrz { q: 0, r: -1, z: 0 }      // N (forward)
+            }
+        } else if down && !up {
+            if left && !right {
+                qrz::Qrz { q: -1, r: 1, z: 0 }      // SW (backward-left)
+            } else if right && !left {
+                qrz::Qrz { q: 1, r: 0, z: 0 }       // SE (backward-right)
+            } else {
+                qrz::Qrz { q: 0, r: 1, z: 0 }       // S (backward)
+            }
+        } else if left && !right {
+            orbit.step_ccw();
+            qrz::Qrz { q: 0, r: 0, z: 0 }           // Rotate only
+        } else if right && !left {
+            orbit.step_cw();
+            qrz::Qrz { q: 0, r: 0, z: 0 }           // Rotate only
+        } else {
+            qrz::Qrz { q: 0, r: 0, z: 0 }
+        };
 
-            // Rotate direction by camera orbit angle (same visual mapping as player)
-            let angle = orbit_angle.0;
-            let rotated = Vec3::new(
-                dir.x * angle.cos() + dir.z * angle.sin(),
-                0.0,
-                -dir.x * angle.sin() + dir.z * angle.cos(),
-            );
+        if visual_dir.q != 0 || visual_dir.r != 0 {
+            // Speed ramp: quadratic ease-in over RAMP_SECONDS
+            flyover.hold_time += dt;
+            let t = (flyover.hold_time / RAMP_SECONDS).min(1.0);
+            flyover.speed_multiplier = 1.0 + (MAX_SPEED_MULTIPLIER - 1.0) * t * t;
+
+            // Rotate visual direction to world space using pre-rotation camera frame
+            let world_dir = rotate_hex(&visual_dir, -(camera_idx as i32));
+
+            // Convert hex direction to world-space Vec3 via Map
+            let origin = qrz::Qrz { q: 0, r: 0, z: 0 };
+            let origin_world: Vec3 = map.convert(origin);
+            let neighbor_world: Vec3 = map.convert(world_dir);
+            let mut direction = (neighbor_world - origin_world).normalize();
+            direction.y = 0.0; // Keep movement horizontal
 
             let speed = flyover.speed_multiplier;
-            flyover.world_position += rotated * BASE_SPEED * speed * dt;
+            flyover.world_position += direction * BASE_SPEED * speed * dt;
+        } else {
+            // Rotation-only input: reset speed ramp
+            flyover.hold_time = 0.0;
+            flyover.speed_multiplier = 1.0;
         }
     } else {
         flyover.hold_time = 0.0;
@@ -310,30 +368,43 @@ pub fn flyover_movement(
 }
 
 /// Replaces camera::update when flyover is active. Same orbital math with extended zoom.
+/// Camera rotation is driven by flyover_movement (movement-integrated rotation).
 pub fn flyover_camera_update(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut orbit_angle: ResMut<CameraOrbitAngle>,
+    mut orbit: ResMut<CameraOrbit>,
     mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
     map: Res<Map>,
     time: Res<Time>,
     flyover: Res<FlyoverState>,
 ) {
-    // Camera orbit controls (Shift + Left/Right)
-    let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if shift_pressed {
-        const ORBIT_SPEED: f32 = 2.0;
-        if keyboard.pressed(KeyCode::ArrowLeft) {
-            orbit_angle.0 += ORBIT_SPEED * time.delta_secs();
-        }
-        if keyboard.pressed(KeyCode::ArrowRight) {
-            orbit_angle.0 -= ORBIT_SPEED * time.delta_secs();
-        }
-        orbit_angle.0 = orbit_angle.0.rem_euclid(2.0 * PI);
+    // Smooth interpolation toward target (same logic as camera::update)
+    let target = orbit.target_angle();
+    let diff = {
+        let d = (target - orbit.current).rem_euclid(2.0 * PI);
+        if d > PI { d - 2.0 * PI } else { d }
+    };
+    const INTERPOLATION_SPEED: f32 = 12.0;
+    const SNAP_THRESHOLD: f32 = 0.005;
+    if diff.abs() > SNAP_THRESHOLD {
+        orbit.current += diff * (1.0 - (-INTERPOLATION_SPEED * time.delta_secs()).exp());
+        orbit.current = orbit.current.rem_euclid(2.0 * PI);
+    } else {
+        orbit.current = target;
     }
 
     if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
         // Zoom controls (extended range for flyover)
         match c_projection.into_inner() {
+            Projection::Perspective(c_perspective) => {
+                const MIN: f32 = 6_f32.to_radians();
+                const MAX: f32 = 90_f32.to_radians();
+                if keyboard.any_pressed([KeyCode::Minus]) {
+                    c_perspective.fov = (c_perspective.fov * 1.01).clamp(MIN, MAX);
+                }
+                if keyboard.any_pressed([KeyCode::Equal]) {
+                    c_perspective.fov = (c_perspective.fov / 1.01).clamp(MIN, MAX);
+                }
+            }
             Projection::Orthographic(c_orthographic) => {
                 if keyboard.any_pressed([KeyCode::Minus]) {
                     c_orthographic.scale = (c_orthographic.scale * 1.01).clamp(NORMAL_ZOOM_MIN, ADMIN_ZOOM_MAX);
@@ -347,9 +418,9 @@ pub fn flyover_camera_update(
 
         // Position camera using same orbital math as camera::update
         let offset = Vec3::new(
-            orbit_angle.0.sin() * CAMERA_DISTANCE,
+            orbit.current.sin() * CAMERA_DISTANCE,
             CAMERA_HEIGHT,
-            orbit_angle.0.cos() * CAMERA_DISTANCE,
+            orbit.current.cos() * CAMERA_DISTANCE,
         );
 
         c_transform.translation = flyover.world_position + offset;

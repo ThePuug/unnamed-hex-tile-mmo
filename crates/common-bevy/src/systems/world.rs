@@ -256,7 +256,7 @@ mod tests {
 
     /// Helper to create a test Map with default terrain (radius=1.0, rise=0.8)
     fn create_test_map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8))
+        Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
     }
 
     // ===== INVARIANT TESTS =====

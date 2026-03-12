@@ -139,7 +139,7 @@ mod tests {
         ));
 
         // Create empty map and mark as changed
-        let map = Map::new(qrz::Map::new(100.0, 0.8));
+        let map = Map::new(qrz::Map::new(100.0, 0.8, qrz::HexOrientation::FlatTop));
         app.insert_resource(map);
         app.world_mut().resource_mut::<Map>().set_changed();
 
@@ -188,7 +188,7 @@ mod tests {
         ));
 
         // Create map and mark as changed
-        let map = Map::new(qrz::Map::new(100.0, 0.8));
+        let map = Map::new(qrz::Map::new(100.0, 0.8, qrz::HexOrientation::FlatTop));
         app.insert_resource(map);
         app.world_mut().resource_mut::<Map>().set_changed();
 

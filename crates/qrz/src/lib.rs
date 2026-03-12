@@ -5,4 +5,4 @@ mod qrz;
 mod map;
 
 pub use qrz::{Qrz, DIRECTIONS};
-pub use map::{Map, Convert};
+pub use map::{Map, Convert, HexOrientation};

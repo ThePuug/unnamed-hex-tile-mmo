@@ -21,14 +21,14 @@
 //! 6. R → Southeast (0, 1, 0)
 //!
 //! ## Heading → Quat
-//! Heading is converted to a quaternion rotation for rendering. Each of the six
-//! cardinal directions maps to a specific Y-axis rotation:
-//! - West: PI*3/6 (90°)
-//! - Southwest: PI*5/6 (150°)
-//! - Southeast: PI*7/6 (210°)
-//! - East: PI*9/6 (270°)
-//! - Northeast: PI*11/6 (330°)
-//! - Northwest: PI*1/6 (30°)
+//! Heading is converted to a quaternion rotation for rendering (flat-top hex).
+//! Each of the six cardinal directions maps to a specific Y-axis rotation:
+//! - North: 0 / 2π (0°)
+//! - Northeast: PI*10/6 (300°, i.e. 2π - 60°)
+//! - Southeast: PI*8/6 (240°, i.e. 2π - 120°)
+//! - South: PI (180°)
+//! - Southwest: PI*4/6 (120°, i.e. 2π - 240°)
+//! - Northwest: PI*2/6 (60°, i.e. 2π - 300°)
 //!
 //! ## Heading → KeyBits
 //! Heading can be converted back to KeyBits for network transmission. This conversion
@@ -64,14 +64,16 @@ impl Heading {
 }
 
 impl From<Heading> for Quat {
+    /// Flat-top hex: compass bearings N=0°, NE=60°, SE=120°, S=180°, SW=240°, NW=300°.
+    /// quat_angle = 2π - compass (Y-rotation positive = CCW from above, compass = CW).
     fn from(value: Heading) -> Self {
         match (value.q, value.r) {
-            (-1, 0) => Quat::from_rotation_y(PI*3./6.),
-            (-1, 1) => Quat::from_rotation_y(PI*5./6.),
-            (0, 1)  => Quat::from_rotation_y(PI*7./6.),
-            (1, 0)  => Quat::from_rotation_y(PI*9./6.),
-            (1, -1) => Quat::from_rotation_y(PI*11./6.),
-            (0, -1) => Quat::from_rotation_y(PI*1./6.),
+            (0, -1) => Quat::from_rotation_y(0.0),          // N:  0°  → 2π-0   = 0
+            (1, -1) => Quat::from_rotation_y(PI*10./6.),    // NE: 60° → 2π-π/3 = 5π/3
+            (1, 0)  => Quat::from_rotation_y(PI*8./6.),     // SE: 120°→ 2π-2π/3= 4π/3
+            (0, 1)  => Quat::from_rotation_y(PI),           // S:  180°→ π
+            (-1, 1) => Quat::from_rotation_y(PI*4./6.),     // SW: 240°→ 2π-4π/3= 2π/3
+            (-1, 0) => Quat::from_rotation_y(PI*2./6.),     // NW: 300°→ 2π-5π/3= π/3
             _  => Quat::from_rotation_y(PI),
         }
     }
@@ -181,13 +183,14 @@ mod tests {
 
     #[test]
     fn test_heading_to_quat_six_directions() {
+        // Flat-top hex: quat_angle = 2π - compass_bearing
         let test_cases = vec![
-            (Qrz { q: -1, r: 0, z: 0 }, PI*3./6., "West"),
-            (Qrz { q: -1, r: 1, z: 0 }, PI*5./6., "Southwest"),
-            (Qrz { q: 0, r: 1, z: 0 }, PI*7./6., "Southeast"),
-            (Qrz { q: 1, r: 0, z: 0 }, PI*9./6., "East"),
-            (Qrz { q: 1, r: -1, z: 0 }, PI*11./6., "Northeast"),
-            (Qrz { q: 0, r: -1, z: 0 }, PI*1./6., "Northwest"),
+            (Qrz { q: 0, r: -1, z: 0 }, 0.0,        "North"),
+            (Qrz { q: 1, r: -1, z: 0 }, PI*10./6.,   "Northeast"),
+            (Qrz { q: 1, r: 0, z: 0 },  PI*8./6.,    "Southeast"),
+            (Qrz { q: 0, r: 1, z: 0 },  PI,          "South"),
+            (Qrz { q: -1, r: 1, z: 0 }, PI*4./6.,    "Southwest"),
+            (Qrz { q: -1, r: 0, z: 0 }, PI*2./6.,    "Northwest"),
         ];
 
         for (qrz, expected_angle, direction_name) in test_cases {

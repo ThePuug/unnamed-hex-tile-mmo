@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_camera::ScalingMode;
 use std::f32::consts::PI;
 
 use crate::plugins::vignette::VignetteSettings;
@@ -8,60 +7,105 @@ use common_bevy::{
     resources::map::Map,
 };
 
-/// Camera orbit angle around the player (radians, 0 = behind player facing north)
-#[derive(Resource)]
-pub struct CameraOrbitAngle(pub f32);
+/// Number of discrete orbit positions
+const ORBIT_STOPS: usize = 6;
+/// Angular separation between orbit stops (60°)
+const ORBIT_STEP: f32 = PI / 3.0;
+/// Exponential decay constant for orbit interpolation (~0.25s to settle)
+const INTERPOLATION_SPEED: f32 = 12.0;
+/// Threshold below which interpolation snaps to target
+const SNAP_THRESHOLD: f32 = 0.005;
 
-impl Default for CameraOrbitAngle {
+/// Camera distance from player (scaled up for narrow FOV perspective)
+pub const CAMERA_DISTANCE: f32 = 120.0;
+/// Camera height above player (preserves original pitch angle)
+pub const CAMERA_HEIGHT: f32 = 90.0;
+/// Default vertical field of view (narrow telephoto for isometric feel)
+const DEFAULT_FOV: f32 = 15_f32.to_radians();
+
+/// Camera orbit state with discrete 60° stops and smooth interpolation.
+#[derive(Resource)]
+pub struct CameraOrbit {
+    /// Current interpolated angle (radians, 0 = behind player facing north)
+    pub current: f32,
+    /// Target stop index (0..5, each 60° apart)
+    pub target_index: usize,
+}
+
+impl Default for CameraOrbit {
     fn default() -> Self {
-        Self(0.0)  // Start behind the player
+        Self { current: 0.0, target_index: 0 }
     }
 }
 
-/// Camera distance from player and height
-pub const CAMERA_DISTANCE: f32 = 40.0;
-pub const CAMERA_HEIGHT: f32 = 30.0;
+impl CameraOrbit {
+    pub fn target_angle(&self) -> f32 {
+        self.target_index as f32 * ORBIT_STEP
+    }
+
+    pub fn is_interpolating(&self) -> bool {
+        angle_diff(self.current, self.target_angle()).abs() > SNAP_THRESHOLD
+    }
+
+    /// Step clockwise (triggered by Up+Right movement input)
+    pub fn step_cw(&mut self) {
+        if !self.is_interpolating() {
+            self.target_index = (self.target_index + ORBIT_STOPS - 1) % ORBIT_STOPS;
+        }
+    }
+
+    /// Step counterclockwise (triggered by Up+Left movement input)
+    pub fn step_ccw(&mut self) {
+        if !self.is_interpolating() {
+            self.target_index = (self.target_index + 1) % ORBIT_STOPS;
+        }
+    }
+}
+
+/// Shortest signed angle from `from` to `to` on the unit circle.
+fn angle_diff(from: f32, to: f32) -> f32 {
+    let d = (to - from).rem_euclid(2.0 * PI);
+    if d > PI { d - 2.0 * PI } else { d }
+}
 
 pub fn setup(
     mut commands: Commands,
 ) {
-    // Initialize camera orbit angle resource
-    commands.insert_resource(CameraOrbitAngle::default());
+    commands.insert_resource(CameraOrbit::default());
 
     commands.spawn((
         Camera3d::default(),
-        Projection::from(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical { viewport_height: 40.0 },
-            near: -10000.0,  // Extend clipping planes to prevent terrain culling
+        Projection::from(PerspectiveProjection {
+            fov: DEFAULT_FOV,
+            near: 1.0,
             far: 10000.0,
-            ..OrthographicProjection::default_3d()
+            ..default()
         }),
         Transform::default(),
         Actor,
-        VignetteSettings::default(), // Add vignette post-processing
+        VignetteSettings::default(),
     ));
 }
 
 pub fn update(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut orbit_angle: ResMut<CameraOrbitAngle>,
+    mut orbit: ResMut<CameraOrbit>,
     mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
     actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
     time: Res<Time>,
 ) {
-    // Camera orbit controls (Shift + Left/Right)
-    let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if shift_pressed {
-        const ORBIT_SPEED: f32 = 2.0;  // radians per second
-        if keyboard.pressed(KeyCode::ArrowLeft) {
-            orbit_angle.0 += ORBIT_SPEED * time.delta_secs();
-        }
-        if keyboard.pressed(KeyCode::ArrowRight) {
-            orbit_angle.0 -= ORBIT_SPEED * time.delta_secs();
-        }
-        // Keep angle in 0..2π range
-        orbit_angle.0 = orbit_angle.0.rem_euclid(2.0 * PI);
+    // Camera rotation is driven by movement input (update_keybits in input.rs).
+    // No dedicated rotation keys.
+
+    // Smooth interpolation toward target
+    let target = orbit.target_angle();
+    let diff = angle_diff(orbit.current, target);
+    if diff.abs() > SNAP_THRESHOLD {
+        orbit.current += diff * (1.0 - (-INTERPOLATION_SPEED * time.delta_secs()).exp());
+        orbit.current = orbit.current.rem_euclid(2.0 * PI);
+    } else {
+        orbit.current = target;
     }
 
     if let Ok(a_transform) = actor.single() {
@@ -92,11 +136,10 @@ pub fn update(
             }
 
             // Calculate camera offset from orbit angle
-            // Angle 0 = behind player (south, +Z direction)
             let offset = Vec3::new(
-                orbit_angle.0.sin() * CAMERA_DISTANCE,  // X rotates around Y axis
-                CAMERA_HEIGHT,                           // Y stays constant (height above player)
-                orbit_angle.0.cos() * CAMERA_DISTANCE,  // Z rotates around Y axis
+                orbit.current.sin() * CAMERA_DISTANCE,
+                CAMERA_HEIGHT,
+                orbit.current.cos() * CAMERA_DISTANCE,
             );
 
             c_transform.translation = a_transform.translation + offset;
