@@ -1,9 +1,5 @@
 # ADR-012: AI TargetLock and Behavior Tree Integration
 
-## Status
-
-**Ready for Implementation** - 2025-10-30
-
 ## Context
 
 NPCs must attack players using directional targeting. Current behavior trees pathfind but never attack, and behavior failures cause target switching (breaks sustained pressure).
@@ -12,8 +8,8 @@ NPCs must attack players using directional targeting. Current behavior trees pat
 
 - NPCs use abilities when in range (BasicAttack)
 - NPCs maintain target commitment (no mid-chase abandonment)
-- Sustained pressure fills reaction queue (validates ADR-006/007/008)
-- Integration with ADR-009 directional targeting
+- Sustained pressure fills reaction queue
+- Integration with directional targeting
 
 ### Options Considered
 
@@ -62,9 +58,9 @@ pub struct TargetLock {
 - Prevents facing-cone failures
 
 **UseAbilityIfAdjacent Behavior Node:**
-- Checks: GCD ready (ADR-011), adjacent (distance=1), facing (60 degree cone)
+- Checks: GCD ready, adjacent (distance=1), facing (60 degree cone)
 - Emits `Try::UseAbility` if all conditions met
-- Integrates with ADR-009 directional targeting
+- Integrates with directional targeting
 
 **Wild Dog Behavior Tree:**
 ```rust
@@ -94,7 +90,6 @@ Behave::Forever => {
 **Impact:**
 - Enables sustained pressure (threats accumulate in queue)
 - Dogs commit to targets (no mid-chase abandonment)
-- Validates reaction queue mechanics (ADR-006/007/008)
 - **MANDATORY for functional combat**
 
 ### 2. Dual FaceTarget Pattern
@@ -158,9 +153,9 @@ Behave::Forever => {
 - `server/systems/behaviour/use_ability.rs` - UseAbilityIfAdjacent
 
 **Integration points:**
-- Uses `is_in_facing_cone` from ADR-009 (directional targeting)
-- Uses `Gcd` component from ADR-011 (cooldown tracking)
-- Emits `Try::UseAbility` → processed by ADR-009 `execute_ability`
+- Uses `is_in_facing_cone` (directional targeting)
+- Uses `Gcd` component (cooldown tracking)
+- Emits `Try::UseAbility` → processed by ability execution systems
 
 **Network:** TargetLock not synced (server-authoritative)
 
@@ -185,12 +180,6 @@ Behave::Forever => {
 - Behavior tree overhead: negligible
 
 ---
-
-## References
-
-- **ADR-009:** Directional Targeting (facing cone, select_target)
-- **ADR-011:** GCD Component (cooldown tracking)
-- **ADR-006/007/008:** Reaction Queue (validates sustained pressure)
 
 ## Date
 

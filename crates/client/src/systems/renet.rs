@@ -196,14 +196,13 @@ pub fn write_do(
                 // the full-detail mesh entity exists.
             }
             Do { event: Event::ChunkSummary { ent: _, chunk_id, elevation, biome } } => {
-                // Don't downgrade full-detail chunks to summaries
-                if !loaded_chunks.chunks.contains(&chunk_id) {
-                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
-                        chunk_id,
-                        elevation,
-                        biome,
-                    });
-                }
+                // Accept summaries even for loaded chunks — zone 2 boundary ring
+                // has both full-detail and summary data from the server.
+                chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
+                    chunk_id,
+                    elevation,
+                    biome,
+                });
             }
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

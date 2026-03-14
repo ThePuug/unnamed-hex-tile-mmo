@@ -1,6 +1,7 @@
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
+    mesh_view_bindings::view,
 }
 
 #ifdef PREPASS_PIPELINE
@@ -15,6 +16,17 @@
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 }
 #endif
+
+// Horizon haze color (light blue-grey, linear RGB).
+const HORIZON_COLOR: vec3<f32> = vec3<f32>(0.72, 0.78, 0.85);
+
+// Camera geometry constants (must match camera.rs).
+const CAMERA_HEIGHT: f32 = 90.0;
+
+// Fade tuning: loading radius ≈ camera_altitude / CAMERA_HEIGHT × BASE_RADIUS_WU.
+// Fade starts at 80% of loading radius. BASE_RADIUS_WU ≈ ground-level max-zoom radius.
+const BASE_RADIUS_WU: f32 = 627.0;  // ~22 chunks × 28.5 wu (MAX_FOV at sea level)
+const FADE_START_FRAC: f32 = 0.80;
 
 // Hex tile rise (vertical spacing per elevation unit).
 // Must match qrz::Map::new(radius, rise) in main.rs.
@@ -95,8 +107,12 @@ fn fragment(
     // Build PBR input from the base StandardMaterial
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
-    // Convert world Y to elevation (undo rise offset + rise-per-level scaling)
-    let elevation = (in.world_position.y - RISE) / RISE;
+    // Convert world Y to elevation (undo rise offset + rise-per-level scaling).
+    // Summary meshes encode natural (untucked) Y in uv.x. The vertex shader
+    // may have tucked world_position.y, so use uv.x for color ramp when
+    // uv.y > 0.25 (summary vertex flag: 0.5 = non-tuckable, 1.0 = tuckable).
+    let source_y = select(in.world_position.y, in.uv.x, in.uv.y > 0.25);
+    let elevation = (source_y - RISE) / RISE;
 
     // Determine base color: cliff faces get stone grey, top surfaces get elevation color
     var base: vec3<f32>;
@@ -109,6 +125,17 @@ fn fragment(
         let variation = 1.0 + noise * NOISE_STRENGTH;
         base = clamp(base * variation, vec3<f32>(0.0), vec3<f32>(1.0));
     }
+
+    // Atmospheric fade: derive loading radius from camera altitude, then
+    // blend toward horizon haze in the outer ~20% of that radius.
+    // Camera Y ≈ CAMERA_HEIGHT + player_elevation × RISE, so the ratio
+    // camera_alt / CAMERA_HEIGHT gives the elevation scaling factor.
+    let camera_alt = max(view.world_position.y, CAMERA_HEIGHT);
+    let fade_end = camera_alt / CAMERA_HEIGHT * BASE_RADIUS_WU;
+    let fade_start = fade_end * FADE_START_FRAC;
+    let dist = length(in.world_position.xz - view.world_position.xz);
+    let fade_t = smoothstep(fade_start, fade_end, dist);
+    base = mix(base, HORIZON_COLOR, fade_t);
 
     pbr_input.material.base_color = vec4<f32>(base, 1.0);
 

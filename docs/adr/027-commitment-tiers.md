@@ -1,18 +1,10 @@
 # ADR-027: Commitment Tiers (Discrete 20/40/60)
 
-## Status
-
-Proposed - 2026-02-10
-
 ## Context
 
-The commitment scaling mode (ADR-026) needs a concrete mechanism for determining build identity from attribute investment. Two approaches are possible: continuous scaling (linear benefit per percentage point) or discrete tiers (breakpoints that unlock identity features).
+The commitment scaling mode needs a concrete mechanism for determining build identity from attribute investment. Two approaches are possible: continuous scaling (linear benefit per percentage point) or discrete tiers (breakpoints that unlock identity features).
 
-The existing commitment-ratio queue capacity system (ADR-021) uses thresholds at 33/50/66% to determine queue slots. This ADR generalizes that pattern across all six attributes, with adjusted thresholds at 30/45/60%.
-
-**References:**
-- [ADR-026: Three Scaling Modes](026-three-scaling-modes.md) — Commitment as one of three modes
-- [ADR-021: Commitment-Ratio Queue Capacity](021-commitment-ratio-queue-capacity.md) — Predecessor (Focus-specific thresholds)
+The commitment scaling mode needs a concrete mechanism for determining build identity from attribute investment.
 
 ## Decision
 
@@ -71,7 +63,7 @@ The 20/40/60 thresholds create viable dual-T3 builds and smooth progression from
 | Focus | Concentration | Queue capacity | 1 slot | 2 slots | 3 slots | 4 slots |
 | Presence | Intensity | Cadence | 3000ms | 2500ms | 2000ms | 1500ms |
 
-Concentration slot counts follow ADR-021 pattern. Poise and Intensity values tuned for combat pacing.
+Poise and Intensity values tuned for combat pacing.
 
 **Open Commitment Stats (no concrete mechanic yet):**
 
@@ -111,21 +103,21 @@ Concentration slot counts follow ADR-021 pattern. Poise and Intensity values tun
 ## Consequences
 
 **Positive:**
-- Budget math is simple and memorable (30/45/60 are easy numbers)
+- Budget math is simple and memorable (20/40/60 are easy numbers)
 - Three viable build archetypes emerge naturally from constraints
 - Clear breakpoints for player decision-making
 - Unified tier system across all six attributes
 - Easy to balance (adjust three values per stat instead of continuous curves)
 
 **Negative:**
-- Cliff effects at tier boundaries (29.9% vs 30.0% is binary)
+- Cliff effects at tier boundaries (19.9% vs 20.0% is binary)
 - Three open commitment stats have no mechanical effect yet
 - Tier thresholds are fixed — if future content needs 4+ tiers, system must change
 
 **Mitigations:**
 - Cliff effects are intentional — clear breakpoints aid decision-making
 - Open stats are explicitly documented; fill when testing reveals needs
-- 30/45/60 thresholds are constants, easily adjustable
+- 20/40/60 thresholds are constants, easily adjustable
 - System can accommodate a T4 at higher threshold if needed (though budget math makes it very constraining)
 
 ## Implementation Notes
@@ -141,12 +133,6 @@ pub enum CommitmentTier { T0, T1, T2, T3 }
 - Cached as component data (not recomputed per frame)
 - Equipment modifiers may shift effective percentage (future)
 
-**Migration from ADR-021:**
-- `calculate_queue_capacity` → uses `commitment_tier_for(focus)` instead of `focus_reach / (total_level × 7)`
-- Threshold mapping: T0→1 slot, T1→2, T2→3, T3→4 (same output, different input formula)
-- Level-0 special case preserved (T0 → 1 slot)
-- Tier calculation now uses max_possible (total_level × 10) instead of total_budget to fairly compare axis vs spectrum builds
-
 **Shift Constraints:**
 - Shift direction locked by axis: positive axis → negative shift only, negative axis → positive shift only
 - Pure spectrum (axis=0) cannot shift - requires axis commitment for tactical redistribution
@@ -157,11 +143,6 @@ pub enum CommitmentTier { T0, T1, T2, T3 }
 - `src/common/systems/combat/queue.rs` — Queue capacity from Focus commitment tier
 - Cadence system — Auto-attack speed from Presence commitment tier
 - Evasion system — Dodge chance from Grace commitment tier
-
-## References
-
-- [ADR-026: Three Scaling Modes](026-three-scaling-modes.md)
-- [ADR-021: Commitment-Ratio Queue Capacity](021-commitment-ratio-queue-capacity.md)
 
 ## Date
 

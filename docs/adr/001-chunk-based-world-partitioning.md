@@ -1,9 +1,5 @@
 # ADR-001: Chunk-Based World Partitioning
 
-## Status
-
-Accepted - 2025-10-28
-
 ## Context
 
 We need to partition a 100 km² hex-tile world (~160 million tiles) for efficient discovery, caching, and network transmission in a multiplayer environment with hub clustering (50-200 players per area).
@@ -154,19 +150,9 @@ pub struct TerrainChunk {
 - Network remains chatty
 - Rejected: Doesn't scale
 
-## Implementation Notes
-
-**Actual implementation used 8×8 chunks** (vs 16×16 specified) for visual debugging during initial development. Still achieves 138× performance improvement, meeting all requirements.
-
-## References
-
-- **GUIDANCE.md:** Chunk system usage patterns
-
 ## Related ADRs
 
 - [ADR-032](032-two-ring-lod-chunk-loading.md) — Two-ring LoD chunk loading (inner full-detail, outer summary hexes)
-- (Future) ADR on persistent world state (chunk serialization to disk)
-- (Future) ADR on protocol versioning and migration
 
 ## Date
 

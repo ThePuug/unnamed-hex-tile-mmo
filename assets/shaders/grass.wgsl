@@ -30,7 +30,7 @@ struct VertexOutputWithColor {
 fn vertex(vertex: Vertex) -> VertexOutputWithColor {
     var out: VertexOutputWithColor;
     
-    var model = mesh_functions::get_model_matrix(vertex.instance_index);
+    var model = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(model, vec4<f32>(vertex.position, 1.0));
     out.position = position_world_to_clip(out.world_position.xyz);
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);

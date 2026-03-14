@@ -1,9 +1,5 @@
 # ADR-032: Two-Ring Level-of-Detail Chunk Loading
 
-## Status
-
-Accepted - 2026-02-21 (client-side implemented 2026-02-22; server-side LoD messages pending)
-
 ## Context
 
 The adaptive visibility system (per-chunk `visibility_radius`) already produces an asymmetric loading shape — extending toward valleys, retracting toward ridges. However, every discovered chunk transmits full 64-tile data regardless of distance. Continental elevations reach 200–600, giving high-elevation players visibility radii up to 12 chunks. At outer distances, tiles are sub-pixel: meshes are built for geometry nobody can distinguish, the Map grows by 64 entries per chunk, and network transmits ~2.6KB per chunk for terrain that reads as color blobs.

@@ -4,7 +4,8 @@ use bevy::picking::Pickable;
 use super::DiagnosticsRoot;
 use super::config::DiagnosticsState;
 use common_bevy::{
-    components::{Actor, behaviour::PlayerControlled},
+    chunk::{terrain_chunk_radius, elevation_chunk_radius_raw, CHUNK_TILES},
+    components::{Actor, Loc, behaviour::PlayerControlled},
     resources::map::Map,
 };
 use qrz::Convert;
@@ -39,6 +40,9 @@ pub(crate) struct TrackedCountText;
 
 #[derive(Component)]
 pub(crate) struct OrphanCountText;
+
+#[derive(Component)]
+pub(crate) struct VisRadiusText;
 
 // ============================================================================
 // Systems
@@ -94,6 +98,7 @@ pub fn setup_terrain_detail(
             parent.spawn((PendingCountText, metric_row("Pending")));
             parent.spawn((TrackedCountText, metric_row("Tracked")));
             parent.spawn((OrphanCountText, metric_row("Orphans")));
+            parent.spawn((VisRadiusText, metric_row("Vis radius")));
         })
         .id();
 
@@ -196,8 +201,13 @@ pub fn update_terrain_mesh_metrics(
     >,
     mut orphan_count_q: Query<
         (&mut Text, &mut TextColor),
-        (With<OrphanCountText>, Without<MeshCountText>, Without<PendingCountText>, Without<TrackedCountText>),
+        (With<OrphanCountText>, Without<MeshCountText>, Without<PendingCountText>, Without<TrackedCountText>, Without<VisRadiusText>),
     >,
+    mut vis_radius_q: Query<
+        &mut Text,
+        (With<VisRadiusText>, Without<MeshCountText>, Without<PendingCountText>, Without<TrackedCountText>, Without<OrphanCountText>),
+    >,
+    player_loc_q: Query<&Loc, With<PlayerControlled>>,
 ) {
     if !state.terrain_detail_visible {
         return;
@@ -264,6 +274,20 @@ pub fn update_terrain_mesh_metrics(
             *color = TextColor(Color::srgb(1.0, 0.3, 0.3));
         } else {
             *color = TextColor(LABEL_COLOR);
+        }
+    }
+
+    // Visibility radius based on player elevation
+    if let Ok(mut text) = vis_radius_q.single_mut() {
+        if let Ok(loc) = player_loc_q.single() {
+            let player_z = loc.z;
+            let base = terrain_chunk_radius(player_z);
+            let max = elevation_chunk_radius_raw(player_z);
+            let chunk_wu = (CHUNK_TILES as f32).sqrt() * 1.5;
+            **text = format!(
+                "Vis radius: base {} max {} ({:.0} wu)",
+                base, max, max as f32 * chunk_wu,
+            );
         }
     }
 }

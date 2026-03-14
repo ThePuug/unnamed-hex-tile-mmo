@@ -30,28 +30,19 @@ regime = sigmoid(local_fBm × world_gate × regional_mod)
 
 ### World Gate (Cellular)
 
-Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs.
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| CONTINENT_CELL_SIZE | 25,000 wu | Continental-scale cells |
-| CONTINENT_JITTER | 0.35 | Seed scatter within cells |
-| CONTINENT_WARP_AMPLITUDE | 4,000 wu | Domain warp for irregular shapes |
-| CONTINENT_WARP_WAVELENGTH | 8,000 wu | Domain warp frequency |
-| WORLD_GATE_SIGMOID_MIDPOINT | 0.35 | Gate activation point |
-| WORLD_GATE_SIGMOID_STEEPNESS | 12.0 | Gate sharpness |
+Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs. Constants control cell size, jitter, warp amplitude/wavelength, and sigmoid activation.
 
 ### Local fBm (Triple-Prime Octaves)
 
-Three simplex octaves at prime wavelengths (B=25013, C=11003, D=4999) with weights 1.0/0.5/0.5, normalized by 2.0. Creates coastline irregularity.
+Multi-octave simplex at prime wavelengths to avoid harmonic alignment. Creates coastline irregularity.
 
 ### Regional Modulator
 
-Low-frequency simplex remapped to [0.1, 1.15]. Ensures every world gets land but continent sizes vary.
+Low-frequency simplex remapped to a narrow band. Ensures every world gets land but continent sizes vary.
 
 ### Output
 
-`regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below `REGIME_LAND_THRESHOLD` (0.15) are water; above are land.
+`regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
 
 **Implementation:** `crates/terrain/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
 
@@ -61,37 +52,23 @@ Low-frequency simplex remapped to [0.1, 1.15]. Ensures every world gets land but
 
 ### Micro Cells (Primary Spatial Layer)
 
-Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time.
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| MICRO_CELL_SIZE | 450 wu | Sub-grid hex lattice spacing |
-| MICRO_JITTER_WAVELENGTH | 5,000 wu | Simplex jitter frequency |
-| MICRO_SUPPRESSION_RATE | 0.0 | Flat everywhere (tunable) |
+Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
 
 **Implementation:** `crates/terrain/src/microplates.rs` (`micro_cell_at`)
 
 ### Macro Plates (Geological Identity)
 
-Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional.
+Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| MACRO_CELL_SIZE | 1,800 wu | Hex-lattice seed spacing |
-| SUPPRESSION_RATE_MIN | 0.05 | At coastlines (many small plates) |
-| SUPPRESSION_RATE_MAX | 0.70 | Deep inland/water (large calm plates) |
-| WARP_STRENGTH_MAX | 600 wu | Per-candidate noise amplitude |
-| MAX_ELONGATION | 8.0 | Max coastal plate stretch ratio |
-
-**Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates. Expanded search (2 + MAX_ELONGATION rings).
+**Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates.
 
 **Implementation:** `crates/terrain/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
 
 ### Orphan Correction
 
-Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates (≤ STRANDED_ISLAND_MAX_SIZE=8 cells) are also reassigned.
+Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned.
 
-Correction uses a margin-based approach (ORPHAN_CORRECTION_MARGIN=15,000 wu) to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
+Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
 
 **Implementation:** `crates/terrain/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
 
@@ -119,27 +96,15 @@ Mountain chains form along inland plate interiors. The spine system generates pe
 
 ### Spine Placement
 
-Locally deterministic via fixed-size evaluation chunks (SPINE_CHUNK_SIZE = 2 × SPINE_EXCLUSION_DIST). Epicenter candidates: Inland plates with all-Inland neighbors. Priority-ordered greedy exclusion ensures same placement regardless of viewport.
+Locally deterministic via fixed-size evaluation chunks. Epicenter candidates: Inland plates with all-Inland neighbors. Priority-ordered greedy exclusion ensures same placement regardless of viewport.
 
 ### Peaks
 
 `Peak { wx, wy, height, falloff_radius }` — isotropic circular cones with power-curve falloff. Two arms grow laterally from each epicenter with curvature, width noise, and coastal attenuation.
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| RIDGE_PEAK_ELEVATION | 4,000 wu | Maximum peak height |
-| ELEVATION_PER_Z | 1.0 | World units per z-level |
-
 ### Ridgelines
 
-Explicit segments connecting nearby peaks with quadratic sag and lateral wobble. Each peak connects to ≤4 nearest neighbors within MAX_RIDGE_DIST_SCALE (2.5) × avg falloff radius.
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| RIDGE_HALF_WIDTH | 1,200 wu | Perpendicular influence |
-| RIDGE_FALLOFF_EXPONENT | 1.2 | Power-curve steepness |
-| RIDGE_SAG_MIN / MAX | 0.1 / 0.6 | Saddle depth fraction |
-| RIDGE_LATERAL_WOBBLE | 150 wu | Meander amplitude |
+Explicit segments connecting nearby peaks with quadratic sag and lateral wobble. Each peak connects to a limited number of nearest neighbors within a distance threshold scaled by average falloff radius. Constants control perpendicular influence width, falloff steepness, saddle depth range, and meander amplitude.
 
 ### Cross-Section Tags
 
@@ -152,21 +117,21 @@ Distance from spine centerline determines sub-tags:
 
 Sequential top-down stream generation. Origins distributed along ridgelines with jitter, sorted by elevation (highest first). Each stream grows step-by-step following terrain slope.
 
-**Growth termination:** Stall detection (STALL_WINDOW=5 steps, MIN_DEPTH_GROWTH=0.5), sea level, spine territory radius, or ascending surface.
+**Growth termination:** Stall detection (insufficient depth growth over a rolling window), sea level, spine territory radius, or ascending surface.
 
-**Stream merging:** Streams check a hex-indexed spatial grid (HexSpatialGrid, 7-cell lookup) for nearby existing streams. On proximity hit (STREAM_PROXIMITY_RADIUS=150 wu), stream takes a final step onto the existing stream's centerline and stops. `propagate_merge_counts` walks the tree in reverse to compound merge counts.
+**Stream merging:** Streams check a hex-indexed spatial grid (HexSpatialGrid, 7-cell lookup) for nearby existing streams. On proximity hit, stream takes a final step onto the existing stream's centerline and stops. `propagate_merge_counts` walks the tree in reverse to compound merge counts.
 
-**Depth model:** Slope-integrated accumulation (`cum_depth += base × slope_factor × merge_boost × step_size`). Depth grows naturally on steep terrain and stalls on flats.
+**Depth model:** Slope-integrated accumulation. Depth grows naturally on steep terrain and stalls on flats. Merge count boosts depth downstream.
 
-**Carving:** Min-composited subtractive distance field with V-shaped cross-section. Wall exponent evolves from young (0.5) to mature (1.5) with merges. Order-independent (min compositing).
+**Carving:** Min-composited subtractive distance field with V-shaped cross-section. Wall exponent evolves from young to mature with merges. Order-independent (min compositing).
 
-**Ridge paths:** Traversable crossings at ravine rims. Currently disabled (PATH_PROBABILITY=0.0).
+**Ridge paths:** Traversable crossings at ravine rims. Currently disabled.
 
 **Implementation:** `crates/terrain/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
 
 ### Spine Caching
 
-`SpineCache` provides lazy per-chunk generation with LRU eviction (SPINE_CACHE_MAX_CHUNKS=32). `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring (7 lookups). Evicted chunks regenerate deterministically on revisit.
+`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit.
 
 ---
 
@@ -199,7 +164,7 @@ generate_region(seed, cx, cy, radius, with_spines) -> RegionResult
 
 // Regime field
 regime_value_at(wx, wy, seed) -> f64          // [0, 1]
-warp_strength_at(wx, wy, seed) -> f64         // [0, 600]
+warp_strength_at(wx, wy, seed) -> f64
 
 // Coordinate conversion
 hex_to_world(q, r) -> (f64, f64)
@@ -234,9 +199,9 @@ Layers are composited bottom-to-top. Macro borders drawn as light grey lines; mi
 
 Chunk loading splits into two concentric rings separated by `FOV_CHUNK_RADIUS`:
 
-**Inner ring** (Chebyshev distance <= `FOV_CHUNK_RADIUS`): Full 64-tile chunks. Gameplay happens here — physics, pathfinding, combat use these tiles from the Map.
+**Inner ring** (Chebyshev distance <= `FOV_CHUNK_RADIUS`): Full-detail chunks. Gameplay happens here — physics, pathfinding, combat use these tiles from the Map.
 
-**Outer ring** (beyond, up to max_radius): Each chunk summarized as a single 7-vertex hex. One Map entry instead of 64. ~12 bytes network instead of ~2.6KB.
+**Outer ring** (beyond, up to max_radius): Each chunk summarized as a single 7-vertex hex. One Map entry instead of a full chunk. Dramatically reduced network cost.
 
 ### Invariants
 

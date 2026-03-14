@@ -76,17 +76,19 @@ This means a lower-level player who committed heavily to one attribute can still
 
 Relative stats operate in opposing pairs with **rotated oppositions** (different from absolute/commitment layers to prevent single counter-builds):
 
-| Pair | Attacker Stat | Defender Stat | Mechanical Layer | Contest Equation |
-|------|--------------|---------------|------------------|------------------|
-| **Might vs Focus** | **Impact**: Recovery pushback | **Composure**: Recovery reduction | Recovery timeline | Impact extends enemy recovery by 25% of max duration × contest_modifier. Composure reduces own recovery tick rate passively. |
-| **Grace vs Instinct** | **Finesse**: Synergy recovery reduction | **Cunning**: Reaction window | Lockout-vs-window | Finesse tightens synergy burst sequences via contest. Cunning extends reaction window duration (2ms per point, capped at 600ms). |
-| **Presence vs Vitality** | **Dominance**: Healing reduction (aura) | **Toughness**: Mitigation | Sustain ratio | Dominance reduces healing within 5 hex radius (worst-effect-wins). Toughness provides flat damage reduction per hit. |
+| Pair | Attacker Stat | Defender Stat | Mechanical Layer | Contest |
+|------|--------------|---------------|------------------|---------|
+| **Might vs Focus** | **Impact**: Recovery pushback | **Composure**: Recovery reduction | Recovery timeline | Impact extends enemy recovery duration via contest. Composure passively reduces own recovery tick rate. |
+| **Grace vs Instinct** | **Finesse**: Synergy recovery reduction | **Cunning**: Reaction window | Lockout-vs-window | Finesse tightens synergy burst sequences via contest. Cunning extends reaction window duration as a multiplier on base window. |
+| **Presence vs Vitality** | **Dominance**: Healing reduction (aura) | **Toughness**: Mitigation | Sustain ratio | Dominance reduces healing within range (worst-effect-wins aura). Toughness provides flat damage reduction per hit. |
 
 **Rotated opposition rationale:** Each scaling mode uses a different opposition map to prevent single counter-builds. A build that counters someone's relative stats doesn't automatically counter their absolute or commitment stats.
 
 **Critical hits removed:** The previous Precision (crit chance) mechanic has been removed entirely. Damage is now deterministic and contest-driven.
 
-**Contest resolution function:** `contest_modifier()` uses clamped linear scaling [0.5, 1.5] with K=200, reused for all pairs.
+**Contest resolution:** Two contest patterns implemented via `contest_factor()` and `reaction_contest_factor()`:
+- **Nullifying** (`contest_factor`): Effect scales from 0 (equal or losing) to full (large advantage). Used by mitigation, pushback, healing reduction, synergy reduction, recovery speed.
+- **Baseline+Bonus** (`reaction_contest_factor`): Baseline preserved at equal stats, bonus scales with advantage. Used by reaction window to ensure a playable floor.
 
 ### Commitment — Build Identity
 
@@ -118,21 +120,10 @@ Commitment scales in **discrete tiers**, not linearly:
 | Instinct | **Flow** | Threat stacking/compression | Surrendering conscious thought, letting instinct guide action. Similar incoming threats can appear as a single combined threat in the reaction queue. Flow commitment tiers gate how aggressively threats compress. Opposes Concentration (Instinct↔Focus commitment axis). Specific tier definitions TBD through playtesting. |
 | Presence | **Intensity** | AoE projection | Raw energy projection. All attack ranges extended at higher tiers. Enables cone targeting that hits multiple targets with damage split based on actual targets hit. |
 
-**Implemented commitment stat values:**
+**Commitment stat mechanics:**
 
-| Stat | T0 | T1 | T2 | T3 |
-|------|-----|-----|-----|-----|
-| Concentration (visible threats) | 1 | 2 | 3 | 4 |
-| Intensity (AoE projection) | Single target, base range | 2 targets, 60° cone, range +1 | 3 targets, 180° cone, range +2 | 4 targets, 300° cone, range +3 |
-
-**Intensity AoE projection details:**
-- T0: Single target, base range (no cone)
-- T1: 2 targets, 60° cone, range +1, 80% damage to each when hitting 2 targets
-- T2: 3 targets, 180° cone, range +2, 60% damage to each when hitting 3 targets
-- T3: 4 targets, 300° cone, range +3, 50% damage to each when hitting 4 targets
-- All targets in cone take equal damage including primary target
-- Damage reduction based on actual targets hit (hitting only 1 target = 100% damage regardless of tier)
-- Cone angles are hex-native: 60° = 1 hex direction, 180° = 3 hex directions (front half), 300° = 5 hex directions (everything except directly behind)
+- **Concentration:** Higher tiers reveal more threats in the visibility window. The queue is unbounded — Concentration controls how many the player can perceive.
+- **Intensity:** Higher tiers increase target count, cone width, and range. Damage per target decreases with more targets hit. Hitting fewer targets than the tier maximum deals proportionally more damage. Cone angles are hex-native (multiples of 60°).
 
 **Open commitment stats:** Ferocity, Poise, and Grit do not yet have concrete mechanical stats mapped. Specific stats will be assigned as gameplay testing reveals needs.
 
@@ -208,26 +199,16 @@ These are intentionally left as design space for future iteration:
 - Intuition (Instinct absolute) — no specific stat yet
 - Gravitas (Presence absolute) — no specific stat yet
 
-**Relative stats (not yet implemented):**
-- Impact (Might relative) — Recovery pushback on hit
-- Finesse (Grace relative) — Synergy recovery reduction via contest
-- Composure (Focus relative) — Recovery reduction (passive tick rate modifier)
-- Cunning (Instinct relative) — Reaction window extension
-- Dominance (Presence relative) — Healing reduction aura (5 hex radius, worst-effect-wins)
-- Toughness (Vitality relative) — Flat damage mitigation per hit (implemented)
-
 **Open commitment stats:**
 - Ferocity (Might commitment) — no specific stat yet
 - Poise (Grace commitment) — no longer evasion, currently open
 - Grit (Vitality commitment) — no specific stat yet
 
-**Homeless mechanics** (removed from their previous homes, no new assignment):
+**Homeless mechanics:**
 - **Crit** — removed from relative layer in ADR-031, no new home assigned
-- **Cadence** — removed from Intensity commitment, no new home assigned
-- **Evasion** — removed from Poise commitment, no new home assigned
 
-**Super-linear scaling exponents:**
-- HP and Damage exponents are tuning knobs. HP exponent must be > Damage exponent. See [combat-balance.md](combat-balance.md) for current values.
+**Super-linear scaling:**
+- HP exponent must be > Damage exponent (ensures more exchanges at higher levels). See [combat-balance.md](combat-balance.md) for current values.
 
 **Endurance depletion curve:**
 - Continuous penalty ramp shape TBD through playtesting
@@ -266,8 +247,8 @@ Where the current implementation intentionally differs from spec:
 | 5 | Critical hit system | Instinct drives crit chance/multiplier | Removed entirely (ADR-031) | Damage now deterministic and contest-driven |
 | 6 | NPC attribute generation | Suggested leanings per archetype | Data-driven from EnemyArchetype, no leanings | ADR-028; archetype defines stats directly |
 | 7 | Concentration | Queue capacity (hard limit with overflow) | Queue visibility window (unbounded queue, ADR-030) | Overflow punishment replaced by visibility mechanic |
-| 8 | Intensity | Cadence (auto-attack speed) | AoE projection (cone targeting) | Cadence unparented; Intensity now drives spatial offense |
-| 9 | Poise | Evasion (dodge chance) | Open — no stat mapped | Evasion unparented; Poise awaiting new mechanic |
+| 8 | Intensity | Cadence (auto-attack speed) | Cadence still implemented; AoE projection designed but not yet built | Intensity intended to drive spatial offense; legacy cadence remains active |
+| 9 | Poise | Evasion (dodge chance) | Evasion still implemented; Poise intended to be open | Legacy evasion remains active; Poise awaiting new mechanic |
 
 ## Implementation Gaps
 
@@ -275,21 +256,21 @@ Where the current implementation intentionally differs from spec:
 
 **Not yet implemented (absolute stats):** Endurance pool (Focus → Discipline) — depletion through ability use, continuous penalty curve
 
-**Not yet implemented (relative stats):** Impact/Composure (recovery timeline), Finesse/Cunning (lockout-vs-window), Dominance/Toughness (sustain ratio) — all designed in ADR-031, awaiting implementation
-
 **Not yet implemented (commitment stats):** Intensity AoE projection (cone targeting, range extension), Flow threat compression (tier-gated merging)
+
+**Legacy commitment stats still active:** Cadence (auto-attack speed from Intensity tier) and Evasion (dodge chance from Poise tier) remain implemented and actively used. These are intended to be replaced by AoE projection and a new Poise mechanic respectively, but the legacy implementations are the current live behavior.
 
 **Open design space:** Intuition, Gravitas (absolute); Ferocity, Poise, Grit (commitment) — intentionally unmapped, see "What Remains Open" above
 
-**Homeless mechanics:** Crit, Cadence, Evasion — removed from previous homes, no new assignment yet
+**Homeless mechanics:** Crit — removed from relative layer in ADR-031, no new home assigned
 
 **Post-MVP:** Equipment attribute modifiers, full healing system, Endurance depletion curve tuning, Flow compression tier definitions
 
-**Cross-reference note:** `docs/design/combat-balance.md` System 2 still references "Queue Capacity" and slot-based language. `docs/design/combat.md` references queue capacity and cadence from Intensity. These documents need separate updates to align with visibility window, AoE projection, and Endurance pool changes.
+**Cross-reference note:** `docs/design/combat-balance.md` System 2 still references "Queue Capacity" and slot-based language. `docs/design/combat.md` references queue capacity and cadence from Intensity. These documents need separate updates to align with visibility window, AoE projection, Endurance pool, and legacy cadence/evasion changes.
 
 ---
 
 **Related Design Documents:**
 - [Combat System](combat.md) — How attributes feed into combat mechanics
-- [Combat Balance](combat-balance.md) — Super-linear scaling formulas, queue capacity thresholds
+- [Combat Balance](combat-balance.md) — Super-linear scaling formulas, tuning constants
 - [Triumvirate](triumvirate.md) — Independent classification system (decoupled from attributes)

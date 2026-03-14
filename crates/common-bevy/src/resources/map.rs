@@ -699,25 +699,21 @@ mod tests {
 
     #[test]
     fn test_generate_chunk_mesh() {
-        use crate::chunk::{ChunkId, chunk_to_tile};
+        use crate::chunk::{ChunkId, chunk_tiles, CHUNK_TILES};
 
         // Create a map with tiles in multiple chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
-        // Chunk (0,0) - add 16x16 tiles (flat terrain for exact vertex count checks)
-        for offset_q in 0..16 {
-            for offset_r in 0..16 {
-                let tile = chunk_to_tile(ChunkId(0, 0), offset_q as u8, offset_r as u8);
-                qrz_map.insert(tile, EntityType::Decorator(default()));
-            }
+        // Chunk (0,0) - add all hex tiles (flat terrain for exact vertex count checks)
+        for (q, r) in chunk_tiles(ChunkId(0, 0)) {
+            let tile = Qrz { q, r, z: 0 };
+            qrz_map.insert(tile, EntityType::Decorator(default()));
         }
 
-        // Chunk (1,1) - add 16 tiles
-        for offset_q in 0..16 {
-            for offset_r in 0..16 {
-                let tile = chunk_to_tile(ChunkId(1, 1), offset_q as u8, offset_r as u8);
-                qrz_map.insert(tile, EntityType::Decorator(default()));
-            }
+        // Chunk (1,1) - add all hex tiles
+        for (q, r) in chunk_tiles(ChunkId(1, 1)) {
+            let tile = Qrz { q, r, z: 0 };
+            qrz_map.insert(tile, EntityType::Decorator(default()));
         }
 
         let map = Map::new(qrz_map);
@@ -732,8 +728,7 @@ mod tests {
             .expect("Positions should be Vec3");
 
         // Each hex has 7 vertices (1 center + 6 outer)
-        // 16x16 = 256 tiles per chunk
-        assert_eq!(positions.len(), 256 * 7, "Expected 256 tiles * 7 vertices per tile");
+        assert_eq!(positions.len(), CHUNK_TILES * 7, "Expected CHUNK_TILES * 7 vertices per tile");
 
         // Verify mesh has indices for TriangleList
         let indices = match mesh.indices() {
@@ -742,7 +737,7 @@ mod tests {
         };
 
         // Each hex has 6 triangles (18 indices)
-        assert_eq!(indices.len(), 256 * 6 * 3, "Expected 256 tiles * 6 triangles * 3 indices");
+        assert_eq!(indices.len(), CHUNK_TILES * 6 * 3, "Expected CHUNK_TILES * 6 triangles * 3 indices");
 
         // Verify AABB is reasonable (not empty in horizontal extents)
         assert!(aabb.min().x < aabb.max().x, "AABB should have width");
@@ -752,25 +747,24 @@ mod tests {
 
     #[test]
     fn test_generate_chunk_mesh_filters_to_chunk() {
-        use crate::chunk::{ChunkId, chunk_to_tile};
+        use crate::chunk::{ChunkId, chunk_tiles};
 
         // Create a map with tiles in two different chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
-        // Chunk (0,0) - 4 tiles
-        for offset_q in 0..2 {
-            for offset_r in 0..2 {
-                let tile = chunk_to_tile(ChunkId(0, 0), offset_q as u8, offset_r as u8);
-                qrz_map.insert(tile, EntityType::Decorator(default()));
-            }
+        // Chunk (0,0) - add 4 tiles near center
+        let center_00 = ChunkId(0, 0).center();
+        let tiles_00: Vec<_> = chunk_tiles(ChunkId(0, 0)).take(4).collect();
+        for &(q, r) in &tiles_00 {
+            let tile = Qrz { q, r, z: 0 };
+            qrz_map.insert(tile, EntityType::Decorator(default()));
         }
 
-        // Chunk (1,1) - 9 tiles
-        for offset_q in 0..3 {
-            for offset_r in 0..3 {
-                let tile = chunk_to_tile(ChunkId(1, 1), offset_q as u8, offset_r as u8);
-                qrz_map.insert(tile, EntityType::Decorator(default()));
-            }
+        // Chunk (1,1) - add 9 tiles near center
+        let tiles_11: Vec<_> = chunk_tiles(ChunkId(1, 1)).take(9).collect();
+        for &(q, r) in &tiles_11 {
+            let tile = Qrz { q, r, z: 0 };
+            qrz_map.insert(tile, EntityType::Decorator(default()));
         }
 
         let map = Map::new(qrz_map);

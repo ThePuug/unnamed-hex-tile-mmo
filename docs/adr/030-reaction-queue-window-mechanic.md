@@ -1,8 +1,5 @@
 # ADR-030: Reaction Queue Window Mechanic
 
-## Status
-Accepted
-
 ## Context
 With 3+ enemies attacking simultaneously, the reaction queue overflows because each enemy adds a separate threat and the player can only react to one at a time (Counter clears 1, Deflect clears all). The 1.5s recovery lockout between reactions means the queue fills faster than the player can process it. The problem isn't player weakness — it's throughput.
 

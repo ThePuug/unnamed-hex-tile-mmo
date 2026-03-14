@@ -21,9 +21,9 @@ const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Proximity range for abandonment check.
 /// Must exceed the minimum client eviction distance to prevent ghost NPCs.
-/// With FOV_CHUNK_RADIUS=5 and CHUNK_SIZE=16, eviction distance is ~104 tiles.
-/// Set to 120 to exceed AOI EXIT_RADIUS (112) with safety margin.
-const PROXIMITY_RANGE: i32 = 120;
+/// With FOV_CHUNK_RADIUS=5 and CHUNK_SPACING=19, eviction distance is ~123 tiles.
+/// Set to 150 to exceed AOI EXIT_RADIUS (142) with safety margin.
+const PROXIMITY_RANGE: i32 = 150;
 
 /// System that cleans up completed or abandoned engagements
 ///
@@ -119,7 +119,7 @@ pub fn update_engagement_proximity(
 mod tests {
     use super::*;
     use common_bevy::{
-        chunk::{CHUNK_SIZE, FOV_CHUNK_RADIUS, ChunkId, chunk_to_tile},
+        chunk::{CHUNK_SPACING, FOV_CHUNK_RADIUS, ChunkId, chunk_tiles},
         components::Loc,
     };
 
@@ -129,7 +129,7 @@ mod tests {
     /// chunks before engagement abandonment triggers.
     ///
     /// Architecture:
-    /// - Clients evict chunks outside FOV_CHUNK_RADIUS + 1 (square of radius 3)
+    /// - Clients evict chunks outside hex distance FOV_CHUNK_RADIUS + 1
     /// - Server abandons engagements when no players within PROXIMITY_RANGE for 30s
     /// - Engagements spawn at chunk centers
     ///
@@ -140,52 +140,42 @@ mod tests {
     /// provides a safety buffer.
     #[test]
     fn test_proximity_range_exceeds_minimum_client_eviction_distance() {
+        use common_bevy::chunk::chunk_hex_distance;
+
         // Engagement spawns at chunk center
         let engagement_chunk = ChunkId(0, 0);
         let engagement_loc = Loc::new(engagement_chunk.center());
 
-        // Find the minimum distance from engagement to a player whose client has just
-        // evicted the engagement's chunk.
-        //
-        // Client keeps chunks in square of radius (FOV_CHUNK_RADIUS + 1)
-        // Minimum eviction occurs when player moves to chunk just outside this square.
+        // Client keeps chunks within hex distance FOV_CHUNK_RADIUS + 1
+        // Minimum eviction occurs when player moves to chunk just outside this hex ring.
         let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i32;
 
-        // Test all edges of the eviction boundary (just outside the square)
+        // Test chunks at hex distance exactly eviction_radius + 1 (just evicted)
         let mut min_eviction_distance = i32::MAX;
+        let r = eviction_radius + 1;
 
-        // Test chunks just outside each edge of the square
-        for dq in -(eviction_radius + 1)..=(eviction_radius + 1) {
-            for dr in -(eviction_radius + 1)..=(eviction_radius + 1) {
-                // Skip chunks inside the square
-                if dq.abs() <= eviction_radius && dr.abs() <= eviction_radius {
+        for dq in -r..=r {
+            let dr_min = (-r).max(-dq - r);
+            let dr_max = r.min(-dq + r);
+            for dr in dr_min..=dr_max {
+                let chunk_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
+                // Only chunks at exactly eviction_radius + 1 (just evicted boundary)
+                if chunk_dist != eviction_radius + 1 {
                     continue;
                 }
 
-                // Skip chunks too far from the boundary (we want the minimum distance)
-                if dq.abs() > eviction_radius + 1 || dr.abs() > eviction_radius + 1 {
-                    continue;
-                }
-
-                // This is a chunk just outside the eviction boundary
                 let player_chunk = ChunkId(engagement_chunk.0 + dq, engagement_chunk.1 + dr);
 
-                // Player could be at any position within their chunk
-                // For minimum distance, they're at the corner nearest to the engagement
-                for player_offset_q in 0..CHUNK_SIZE as u8 {
-                    for player_offset_r in 0..CHUNK_SIZE as u8 {
-                        let player_tile = chunk_to_tile(player_chunk, player_offset_q, player_offset_r);
-                        let player_loc = Loc::new(player_tile);
-
-                        let distance = engagement_loc.flat_distance(&player_loc);
-                        min_eviction_distance = min_eviction_distance.min(distance);
-                    }
+                // Check all tiles in the player's hex chunk
+                for (q, r) in chunk_tiles(player_chunk) {
+                    let player_loc = Loc::new(qrz::Qrz { q, r, z: 0 });
+                    let distance = engagement_loc.flat_distance(&player_loc);
+                    min_eviction_distance = min_eviction_distance.min(distance);
                 }
             }
         }
 
         // PROXIMITY_RANGE must be larger than the minimum eviction distance
-        // to ensure clients have evicted before abandonment triggers
         assert!(
             PROXIMITY_RANGE > min_eviction_distance,
             "PROXIMITY_RANGE ({}) must exceed minimum client eviction distance ({}) to guarantee \
@@ -195,17 +185,16 @@ mod tests {
              If this test fails, either:\n\
              1. Increase PROXIMITY_RANGE, or\n\
              2. Decrease FOV_CHUNK_RADIUS + 1 (eviction buffer), or\n\
-             3. Decrease CHUNK_SIZE (not recommended - affects entire chunk system)",
+             3. Decrease CHUNK_SPACING (not recommended - affects entire chunk system)",
             PROXIMITY_RANGE,
             min_eviction_distance,
             PROXIMITY_RANGE - min_eviction_distance
         );
 
-        // Log the safety margin for visibility
-        println!("✓ Abandonment safety margin: {} tiles", PROXIMITY_RANGE - min_eviction_distance);
+        println!("Abandonment safety margin: {} tiles", PROXIMITY_RANGE - min_eviction_distance);
         println!("  PROXIMITY_RANGE: {}", PROXIMITY_RANGE);
         println!("  Min eviction distance: {}", min_eviction_distance);
-        println!("  CHUNK_SIZE: {}", CHUNK_SIZE);
+        println!("  CHUNK_SPACING: {}", CHUNK_SPACING);
         println!("  FOV_CHUNK_RADIUS + 1: {}", FOV_CHUNK_RADIUS + 1);
     }
 
@@ -219,23 +208,21 @@ mod tests {
         let eviction_radius = (FOV_CHUNK_RADIUS + 1) as i32;
 
         let mut min_eviction_distance = i32::MAX;
-        for dq in -(eviction_radius + 1)..=(eviction_radius + 1) {
-            for dr in -(eviction_radius + 1)..=(eviction_radius + 1) {
-                if dq.abs() <= eviction_radius && dr.abs() <= eviction_radius {
-                    continue;
-                }
-                if dq.abs() > eviction_radius + 1 || dr.abs() > eviction_radius + 1 {
+        let r = eviction_radius + 1;
+        for dq in -r..=r {
+            let dr_min = (-r).max(-dq - r);
+            let dr_max = r.min(-dq + r);
+            for dr in dr_min..=dr_max {
+                let chunk_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
+                if chunk_dist != eviction_radius + 1 {
                     continue;
                 }
 
                 let player_chunk = ChunkId(engagement_chunk.0 + dq, engagement_chunk.1 + dr);
-                for player_offset_q in 0..CHUNK_SIZE as u8 {
-                    for player_offset_r in 0..CHUNK_SIZE as u8 {
-                        let player_tile = chunk_to_tile(player_chunk, player_offset_q, player_offset_r);
-                        let player_loc = Loc::new(player_tile);
-                        let distance = engagement_loc.flat_distance(&player_loc);
-                        min_eviction_distance = min_eviction_distance.min(distance);
-                    }
+                for (q, r) in chunk_tiles(player_chunk) {
+                    let player_loc = Loc::new(qrz::Qrz { q, r, z: 0 });
+                    let distance = engagement_loc.flat_distance(&player_loc);
+                    min_eviction_distance = min_eviction_distance.min(distance);
                 }
             }
         }
@@ -243,10 +230,6 @@ mod tests {
         let safety_margin = PROXIMITY_RANGE - min_eviction_distance;
 
         // Require at least 2 tiles of safety margin
-        // This accounts for:
-        // - Timing uncertainties (client eviction runs every 5s)
-        // - Network lag between client movement and server updates
-        // - Edge cases in distance calculations
         assert!(
             safety_margin >= 2,
             "Safety margin ({} tiles) should be at least 2 tiles to handle edge cases and timing",

@@ -7,9 +7,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
 use common_bevy::{
     chunk::{
-        ChunkId, CHUNK_SIZE, FOV_CHUNK_RADIUS,
-        calculate_visible_chunks_adaptive,
-        chunk_to_tile, loc_to_chunk, visibility_radius,
+        ChunkId, CHUNK_TILES, DEFAULT_FOV, FOV_CHUNK_RADIUS,
+        calculate_visible_chunks_adaptive, chunk_hex_distance,
+        chunk_tiles, loc_to_chunk, visibility_radius,
     },
     components::{
         behaviour::PlayerControlled,
@@ -113,22 +113,24 @@ fn flyover_radius(
     center: ChunkId,
     terrain: &terrain::Terrain,
 ) -> u8 {
-    let half_viewport = 20.0 * camera_scale;
+    // Orthographic scale → virtual perspective FOV.
+    // Zooming out (scale > 1) narrows the virtual FOV → loads more chunks.
+    let fov = DEFAULT_FOV / camera_scale.max(0.1);
 
     // Sample terrain at 9 points around the FOV boundary to find the
     // lowest nearby ground elevation — this is the surface our camera
     // ray needs to reach.
-    let fov = FOV_CHUNK_RADIUS as i32;
+    let detail_r = common_bevy::chunk::detail_boundary_radius(player_z, fov) as i32;
     let mut min_z = player_z;
-    for &dq in &[-fov, 0, fov] {
-        for &dr in &[-fov, 0, fov] {
+    for &dq in &[-detail_r, 0, detail_r] {
+        for &dr in &[-detail_r, 0, detail_r] {
             let ct = ChunkId(center.0 + dq, center.1 + dr).center();
             let z = terrain.get_height(ct.q, ct.r);
             min_z = min_z.min(z);
         }
     }
 
-    visibility_radius(player_z, min_z, half_viewport).min(MAX_FLYOVER_RADIUS)
+    visibility_radius(player_z, min_z, fov).min(MAX_FLYOVER_RADIUS)
 }
 
 // ──── Systems ────
@@ -222,12 +224,9 @@ pub fn execute_admin_actions(
                 if loaded_chunks.chunks.contains(&chunk_id) {
                     continue;
                 }
-                for oq in 0..CHUNK_SIZE as u8 {
-                    for or_ in 0..CHUNK_SIZE as u8 {
-                        let tile = chunk_to_tile(chunk_id, oq, or_);
-                        if let Some((qrz, _)) = map.get_by_qr(tile.q, tile.r) {
-                            map_state.queue_event(TileEvent::Despawn(qrz));
-                        }
+                for (q, r) in chunk_tiles(chunk_id) {
+                    if let Some((qrz, _)) = map.get_by_qr(q, r) {
+                        map_state.queue_event(TileEvent::Despawn(qrz));
                     }
                 }
             }
@@ -448,18 +447,19 @@ pub fn flyover_generate_chunks(
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
     let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
     let center = loc_to_chunk(qrz);
-    let half_viewport = 20.0 * scale;
+    let fov = DEFAULT_FOV / scale.max(0.1);
 
-    // Always extend beyond FOV_CHUNK_RADIUS so there's an outer LoD ring
+    // Always extend beyond detail boundary so there's an outer LoD ring
     let vis_radius = flyover_radius(scale, player_z, center, &admin_terrain.0);
-    let max_radius = vis_radius.max(common_bevy::chunk::FOV_CHUNK_RADIUS + 3);
+    let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
+    let max_radius = vis_radius.max(detail_radius + 3);
     // Use FOV as unconditional base so per-chunk elevation checks in
     // calculate_visible_chunks_adaptive actually run for distant chunks.
     // Without this, base==max makes every chunk unconditionally included.
     let base_radius = FOV_CHUNK_RADIUS;
 
     let (inner, outer) = calculate_visible_chunks_adaptive(
-        center, player_z, base_radius, max_radius, half_viewport,
+        center, player_z, base_radius, max_radius, detail_radius, fov,
         |q, r| admin_terrain.0.get_height(q, r),
     );
 
@@ -480,15 +480,12 @@ pub fn flyover_generate_chunks(
 
         let terrain = admin_terrain.0.clone();
         let task = pool.spawn(async move {
-            let mut tiles = Vec::with_capacity((CHUNK_SIZE * CHUNK_SIZE) as usize);
-            for oq in 0..CHUNK_SIZE as u8 {
-                for or_ in 0..CHUNK_SIZE as u8 {
-                    let tile = chunk_to_tile(chunk_id, oq, or_);
-                    let z = terrain.get_height(tile.q, tile.r);
-                    let qrz = qrz::Qrz { q: tile.q, r: tile.r, z };
-                    let decorator = Decorator { index: 3, is_solid: true };
-                    tiles.push((qrz, EntityType::Decorator(decorator)));
-                }
+            let mut tiles = Vec::with_capacity(CHUNK_TILES);
+            for (q, r) in chunk_tiles(chunk_id) {
+                let z = terrain.get_height(q, r);
+                let qrz = qrz::Qrz { q, r, z };
+                let decorator = Decorator { index: 3, is_solid: true };
+                tiles.push((qrz, EntityType::Decorator(decorator)));
             }
             tiles
         });
@@ -586,31 +583,33 @@ pub fn flyover_evict_chunks(
     let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
     let center = loc_to_chunk(qrz);
     let radius = flyover_radius(scale, player_z, center, &admin_terrain.0);
-    let half_viewport = 20.0 * scale;
+    let fov = DEFAULT_FOV / scale.max(0.1);
 
-    // Full-detail keep: FOV_CHUNK_RADIUS + 1 (matches generation inner ring)
-    let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
+    // Full-detail keep: detail_boundary + 1 (matches generation inner ring)
+    let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
+    let detail_buffer = detail_radius as i32 + 1;
 
     // Summary keep: per-chunk adaptive visibility.
-    // FOV_CHUNK_RADIUS + 1 is the unconditional inner region; beyond that,
+    // detail_buffer is the unconditional inner region; beyond that,
     // each chunk must pass a per-chunk elevation-based visibility test.
-    // Previously base_plus_buffer == r, making the per-chunk check dead code.
     let summary_keep: HashSet<ChunkId> = {
         let r = (radius as i32) + 1;
-        let base = FOV_CHUNK_RADIUS as i32 + 1;
+        let base = detail_radius as i32 + 1;
         let mut kept = HashSet::new();
         for dq in -r..=r {
-            for dr in -r..=r {
-                let chebyshev = dq.abs().max(dr.abs());
+            let dr_min = (-r).max(-dq - r);
+            let dr_max = r.min(-dq + r);
+            for dr in dr_min..=dr_max {
+                let hex_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
                 let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
-                if chebyshev <= base {
+                if hex_dist <= base {
                     kept.insert(chunk_id);
                     continue;
                 }
                 let ct = chunk_id.center();
                 let cz = admin_terrain.0.get_height(ct.q, ct.r);
-                let vis = visibility_radius(player_z, cz, half_viewport) as i32 + 1;
-                if chebyshev <= vis {
+                let vis = visibility_radius(player_z, cz, fov) as i32 + 1;
+                if hex_dist <= vis {
                     kept.insert(chunk_id);
                 }
             }
@@ -618,14 +617,13 @@ pub fn flyover_evict_chunks(
         kept
     };
 
-    // Evict full-detail admin chunk data beyond FOV + 1.
+    // Evict full-detail admin chunk data beyond detail boundary + 1.
     // Mesh entities are cleaned up by resolve_lod_overlap once a summary
     // mesh exists for the same chunk.
     let evictable: Vec<ChunkId> = flyover.admin_chunks
         .iter()
         .filter(|id| {
-            let chebyshev = (id.0 - center.0).abs().max((id.1 - center.1).abs());
-            chebyshev > fov_buffer
+            chunk_hex_distance(**id, center) > detail_buffer
         })
         .copied()
         .collect();
@@ -639,7 +637,7 @@ pub fn flyover_evict_chunks(
         // Generate summaries from tile data before tiles are removed.
         for &chunk_id in &evictable {
             if !chunk_summaries.summaries.contains_key(&chunk_id) {
-                let center_tile = chunk_to_tile(chunk_id, 8, 8);
+                let center_tile = chunk_id.center();
                 if let Some((tile_qrz, biome)) = map.get_by_qr(center_tile.q, center_tile.r) {
                     chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
                         chunk_id,
@@ -663,12 +661,9 @@ pub fn flyover_evict_chunks(
                 continue;
             }
             // Use O(1) map lookup instead of terrain evaluation for despawn
-            for oq in 0..CHUNK_SIZE as u8 {
-                for or_ in 0..CHUNK_SIZE as u8 {
-                    let tile = chunk_to_tile(chunk_id, oq, or_);
-                    if let Some((qrz, _)) = map.get_by_qr(tile.q, tile.r) {
-                        map_state.queue_event(TileEvent::Despawn(qrz));
-                    }
+            for (q, r) in chunk_tiles(chunk_id) {
+                if let Some((qrz, _)) = map.get_by_qr(q, r) {
+                    map_state.queue_event(TileEvent::Despawn(qrz));
                 }
             }
         }

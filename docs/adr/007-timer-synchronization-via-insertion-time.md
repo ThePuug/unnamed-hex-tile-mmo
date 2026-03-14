@@ -1,9 +1,5 @@
 # ADR-007: Timer Synchronization via Insertion Time
 
-## Status
-
-Accepted - 2025-10-29
-
 ## Context
 
 Each queued threat has a timer (0.5-1.5s). Client needs smooth countdown animations, server needs to know when expired. **How do we synchronize timers without network spam?**
@@ -202,12 +198,6 @@ Client calculates: remaining = 1.0s - (0.1s - 0.0s) = 0.9s ✓ Correct
 - Server expiry authoritative (client timer cosmetic)
 
 ---
-
-## References
-
-- **ADR-006:** Server-Authoritative Reaction Queue
-- **ADR-004:** Deterministic Resource Regeneration (same pattern)
-- **Pattern:** Physics simulation (deterministic local calculations)
 
 ## Date
 

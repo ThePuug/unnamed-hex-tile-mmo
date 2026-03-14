@@ -3,7 +3,7 @@ use qrz::{Convert, Qrz};
 use std::sync::Arc;
 
 use common_bevy::{
-    chunk::*,
+    chunk::{self, *},
     components::{
         entity_type::{ decorator::*, *},
         heading::Heading,
@@ -22,9 +22,9 @@ use crate::resources::terrain::*;
 /// (summary LoD) rings separately for upgrade/downgrade detection.
 #[derive(bevy::prelude::Component)]
 pub struct VisibleChunkCache {
-    /// Chunks sent with full tile data (inner ring, ≤ FOV_CHUNK_RADIUS)
+    /// Chunks sent with full tile data (inner ring, ≤ detail_boundary_radius)
     pub full_detail: std::collections::HashSet<ChunkId>,
-    /// Chunks sent as summaries (outer ring, > FOV_CHUNK_RADIUS)
+    /// Chunks sent as summaries (outer ring, > detail_boundary_radius)
     pub summary: std::collections::HashSet<ChunkId>,
     /// Chunks the player might still have (visibility + 1 buffer)
     pub eviction: std::collections::HashSet<ChunkId>,
@@ -46,20 +46,22 @@ fn compute_eviction_set(
     let mut kept = std::collections::HashSet::new();
 
     for dq in -r..=r {
-        for dr in -r..=r {
-            let chebyshev = dq.abs().max(dr.abs());
+        let dr_min = (-r).max(-dq - r);
+        let dr_max = r.min(-dq + r);
+        for dr in dr_min..=dr_max {
+            let hex_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
             let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
 
-            if chebyshev <= base_plus_buffer {
+            if hex_dist <= base_plus_buffer {
                 kept.insert(chunk_id);
                 continue;
             }
 
             let center_tile = chunk_id.center();
             let chunk_z = terrain.get(center_tile.q, center_tile.r);
-            let vis = visibility_radius(player_z, chunk_z, 40.0) as i32 + 1;
+            let vis = visibility_radius(player_z, chunk_z, MAX_FOV) as i32 + 1;
 
-            if chebyshev <= vis {
+            if hex_dist <= vis {
                 kept.insert(chunk_id);
             }
         }
@@ -102,10 +104,13 @@ pub fn do_spawn_discover(
         let base_radius = terrain_chunk_radius(max_z);
         let max_radius = elevation_chunk_radius_raw(max_z);
 
+        // Detail boundary at MAX_FOV: server sends full data for everything
+        // within the worst-case (widest zoom) detail radius.
+        let detail_radius = chunk::detail_boundary_radius(max_z, MAX_FOV);
+
         // Discover initial visible chunks (adaptive per-chunk filtering)
-        // Returns (inner, outer) split at FOV_CHUNK_RADIUS
         let (inner, outer) = calculate_visible_chunks_adaptive(
-            current_chunk, max_z, base_radius, max_radius, 40.0,
+            current_chunk, max_z, base_radius, max_radius, detail_radius, MAX_FOV,
             |q, r| terrain.get(q, r),
         );
 
@@ -165,18 +170,19 @@ pub fn do_incremental(
         let base_radius = terrain_chunk_radius(max_z);
         let max_radius = elevation_chunk_radius_raw(max_z);
 
+        let detail_radius = chunk::detail_boundary_radius(max_z, MAX_FOV);
+
         let (new_inner, new_outer) = calculate_visible_chunks_adaptive(
-            new_chunk, max_z, base_radius, max_radius, 40.0,
+            new_chunk, max_z, base_radius, max_radius, detail_radius, MAX_FOV,
             |q, r| terrain.get(q, r),
         );
         let new_eviction = compute_eviction_set(new_chunk, max_z, base_radius, max_radius, &terrain);
 
-        // Mirror client eviction: full-detail uses FOV_CHUNK_RADIUS + 1 (matches loading),
-        // summaries use the wider adaptive eviction set
-        let fov_buffer = FOV_CHUNK_RADIUS as i32 + 1;
+        // Mirror client eviction: full-detail uses detail_radius + 2 (inner ring
+        // extends to detail+1, buffer adds 1 more for boundary crossing).
+        let detail_buffer = detail_radius as i32 + 2;
         cache.full_detail.retain(|id| {
-            let chebyshev = (id.0 - new_chunk.0).abs().max((id.1 - new_chunk.1).abs());
-            chebyshev <= fov_buffer
+            chunk_hex_distance(*id, new_chunk) <= detail_buffer
         });
         cache.summary.retain(|id| new_eviction.contains(id));
         player_state.seen_chunks.retain(|id| cache.full_detail.contains(id) || cache.summary.contains(id));
@@ -191,10 +197,10 @@ pub fn do_incremental(
             }
         }
 
-        // Outer ring: send summaries for truly new chunks only
-        // Don't downgrade inner→outer (keep full detail until evicted)
+        // Outer ring: send summaries for new chunks and boundary ring chunks
+        // that have full detail but no summary yet (zone 2 needs both).
         for &chunk_id in &new_outer {
-            if !cache.full_detail.contains(&chunk_id) && !cache.summary.contains(&chunk_id) {
+            if !cache.summary.contains(&chunk_id) {
                 writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only: true } });
                 player_state.seen_chunks.insert(chunk_id);
                 cache.summary.insert(chunk_id);
@@ -213,23 +219,19 @@ pub fn do_incremental(
 fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChunk {
     let mut tiles = tinyvec::ArrayVec::new();
 
-    for offset_q in 0..CHUNK_SIZE as u8 {
-        for offset_r in 0..CHUNK_SIZE as u8 {
-            let qrz_base = chunk_to_tile(chunk_id, offset_q, offset_r);
+    for (q, r) in chunk::chunk_tiles(chunk_id) {
+        // Check if tile already exists in map (player-modified or pre-placed)
+        let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(q, r) {
+            (qrz, typ)
+        } else {
+            // Generate new procedural tile with actual terrain height
+            let z = terrain.get(q, r);
+            let qrz = Qrz { q, r, z };
+            let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
+            (qrz, typ)
+        };
 
-            // Check if tile already exists in map (player-modified or pre-placed)
-            let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(qrz_base.q, qrz_base.r) {
-                (qrz, typ)
-            } else {
-                // Generate new procedural tile with actual terrain height
-                let z = terrain.get(qrz_base.q, qrz_base.r);
-                let qrz = Qrz { q: qrz_base.q, r: qrz_base.r, z };
-                let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
-                (qrz, typ)
-            };
-
-            tiles.push((qrz, typ));
-        }
+        tiles.push((qrz, typ));
     }
 
     TerrainChunk::new(tiles)

@@ -16,11 +16,11 @@ pub enum Event {
     /// Server-side only: request to discover a chunk
     /// When `summary_only` is true, sends ChunkSummary instead of ChunkData
     DiscoverChunk { ent: Entity, chunk_id: ChunkId, summary_only: bool },
-    /// Server → Client: chunk data containing up to 256 tiles (16x16)
+    /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles)
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
-        tiles: ArrayVec<[(Qrz, EntityType); 256]>,
+        tiles: ArrayVec<[(Qrz, EntityType); 272]>,
     },
     /// Server → Client: chunk summary for outer-ring LoD (elevation + biome only)
     /// ~12 bytes vs ~2.6KB for full ChunkData

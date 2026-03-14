@@ -176,10 +176,8 @@ fn main() {
         renet::handle_pong,
         renet::periodic_ping,
         world::do_spawn,
-        world::spawn_missing_chunk_meshes.run_if(on_timer(Duration::from_millis(100))), // Check for chunks needing meshes every 100ms
-        world::poll_chunk_mesh_tasks, // Poll async chunk mesh tasks
-        world::spawn_summary_meshes, // Dispatch async summary LoD mesh tasks (outer ring)
-        world::poll_summary_mesh_tasks, // Poll async summary mesh tasks
+        world::reconcile_meshes,
+        world::poll_mesh_tasks,
         world::update,
     ));
 
@@ -222,23 +220,14 @@ fn main() {
         ));
     }
 
-    // LoD mesh lifecycle: resolve overlaps (always) and evict distant summaries
-    // Pass 1 (overlap resolution) runs always — needed during flyover too.
-    // Pass 2 (summary eviction by player distance) skipped during flyover
-    // because flyover_evict_chunks handles that using camera position.
-    app.add_systems(Update, world::resolve_lod_overlap);
-
-    // Add chunk eviction system (runs periodically to cleanup distant chunks)
-    // Runs every 5 seconds with a +1 chunk buffer to prevent aggressive eviction
-    // Server mirrors client eviction logic in do_incremental to track which chunks
-    // the client has evicted, allowing them to be re-sent when player returns
+    // Data eviction: remove tiles/summaries beyond view range (timer, every 5s)
     // Disabled during flyover — admin module handles its own eviction
     #[cfg(feature = "admin")]
-    app.add_systems(Update, world::evict_distant_chunks
+    app.add_systems(Update, world::evict_data
         .run_if(on_timer(Duration::from_secs(5)))
         .run_if(admin::not_in_flyover));
     #[cfg(not(feature = "admin"))]
-    app.add_systems(Update, world::evict_distant_chunks.run_if(on_timer(Duration::from_secs(5))));
+    app.add_systems(Update, world::evict_data.run_if(on_timer(Duration::from_secs(5))));
 
     app.run();
 }

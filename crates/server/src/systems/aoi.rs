@@ -9,7 +9,7 @@ use bevy_renet::RenetServer;
 use ::renet::DefaultChannel;
 
 use common_bevy::{
-    chunk::{FOV_CHUNK_RADIUS, CHUNK_SIZE},
+    chunk::{FOV_CHUNK_RADIUS, CHUNK_SPACING, CHUNK_RADIUS},
     components::{
         behaviour::PlayerControlled,
         entity_type::EntityType,
@@ -26,12 +26,12 @@ use crate::{
 };
 
 /// AOI radius: entities within this distance are visible to players.
-/// Covers FOV_CHUNK_RADIUS + 1 buffer chunk in all directions.
-pub const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SIZE as i32;
+/// Covers FOV_CHUNK_RADIUS + 1 buffer chunk in all directions (hex chunks).
+pub const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SPACING as i32 + CHUNK_RADIUS as i32;
 const AOI_RADIUS_SQ: i32 = AOI_RADIUS * AOI_RADIUS;
 
 /// Exit radius: hysteresis buffer to prevent enter/exit flicker at the boundary.
-const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SIZE as i32;
+const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SPACING as i32;
 const EXIT_RADIUS_SQ: i32 = EXIT_RADIUS * EXIT_RADIUS;
 
 /// Updates LoadedBy membership when entities move.

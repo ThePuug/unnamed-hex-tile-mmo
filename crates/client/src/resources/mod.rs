@@ -10,10 +10,14 @@ use std::collections::{HashMap, HashSet};
 use common_bevy::chunk::{ChunkId, ChunkSummary};
 
 /// Custom terrain material extension that computes elevation color in the fragment shader.
+/// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct TerrainExtension {}
 
 impl MaterialExtension for TerrainExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/terrain_vertex.wgsl".into()
+    }
     fn fragment_shader() -> ShaderRef {
         "shaders/terrain.wgsl".into()
     }
@@ -100,15 +104,6 @@ impl LoadedChunks {
     /// Mark a chunk as loaded
     pub fn insert(&mut self, chunk_id: ChunkId) {
         self.chunks.insert(chunk_id);
-    }
-
-    /// Get chunks that should be evicted (not in the active set)
-    pub fn get_evictable(&self, active_chunks: &HashSet<ChunkId>) -> Vec<ChunkId> {
-        self.chunks
-            .iter()
-            .filter(|chunk_id| !active_chunks.contains(chunk_id))
-            .copied()
-            .collect()
     }
 
     /// Remove evicted chunks from tracking
