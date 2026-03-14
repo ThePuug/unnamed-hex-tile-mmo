@@ -452,9 +452,9 @@ fn dist_sq(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 // ──── Cached API ────
 
 /// Gradient cache grid spacing in world units. The regime gradient is smooth
-/// over GRAD_STEP (100), so adjacent queries within this cell share one
+/// over GRAD_STEP (50), so adjacent queries within this cell share one
 /// gradient computation. Must be < GRAD_STEP to avoid sampling artifacts.
-const GRAD_CACHE_CELL: f64 = 64.0;
+const GRAD_CACHE_CELL: f64 = 32.0;
 
 /// Lazy cache for plate lookups. Pre-enumerates macro cell centers per chunk;
 /// queries gather candidates from a 1-ring hex neighborhood (7 chunks)

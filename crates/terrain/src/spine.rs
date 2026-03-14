@@ -32,7 +32,7 @@ use crate::MACRO_CELL_SIZE;
 const SPINE_MAX_STEPS: usize = 12;
 
 /// Minimum distance between two spine epicenters in world units.
-const SPINE_EXCLUSION_DIST: f64 = 20_000.0;
+const SPINE_EXCLUSION_DIST: f64 = 10_000.0;
 
 /// Distance between growth steps along the spine axis (world units).
 const SPINE_STEP: f64 = MACRO_CELL_SIZE;
@@ -61,10 +61,10 @@ const SPINE_WAVELENGTH: f64 =
     MACRO_CELL_SIZE * (SPINE_MAX_STEPS as f64) * 2.0 / 2.5;
 
 /// Noise wavelength for lateral displacement.
-const LATERAL_WAVELENGTH: f64 = 8000.0;
+const LATERAL_WAVELENGTH: f64 = 4000.0;
 
 /// Noise wavelength for width variation.
-const WIDTH_WAVELENGTH: f64 = 10000.0;
+const WIDTH_WAVELENGTH: f64 = 5000.0;
 
 // ── Peak placement constants ─────────────────────────────────────────────────
 
@@ -95,13 +95,13 @@ const MAX_RIDGE_DIST_SCALE: f64 = 3.125;
 const MAX_RIDGE_NEIGHBORS: usize = 4;
 
 /// Perpendicular half-width of a ridgeline (world units).
-const RIDGE_HALF_WIDTH: f64 = 1200.0;
+const RIDGE_HALF_WIDTH: f64 = 600.0;
 
 /// Exponent for perpendicular ridge falloff. 1.2 = gentle slopes to valleys.
 const RIDGE_FALLOFF_EXPONENT: f64 = 1.2;
 
 /// Maximum lateral wobble of the ridge centerline (world units).
-const RIDGE_LATERAL_WOBBLE: f64 = 150.0;
+const RIDGE_LATERAL_WOBBLE: f64 = 75.0;
 
 /// Frequency of wobble noise along the ridge (cycles per unit t).
 const RIDGE_WOBBLE_FREQ: f64 = 4.0;
@@ -230,7 +230,7 @@ fn fbm_2d(x: f64, y: f64, wavelength: f64, seed: u64) -> f64 {
 // ── Ravine carving ──────────────────────────────────────────────────────────
 
 /// Step size for growing streams downhill (world units).
-const STREAM_STEP_SIZE: f64 = 150.0;
+const STREAM_STEP_SIZE: f64 = 75.0;
 
 /// Starting width of a stream gully at the headwall (world units).
 const STREAM_START_WIDTH: f64 = 2.0;
@@ -271,10 +271,10 @@ const WALL_EXPONENT_MATURITY_MERGES: f64 = 6.0;
 /// Proximity radius for sequential merge detection (world units).
 /// During growth, if a step lands within this distance of an existing stream's
 /// step, the growing stream takes a final step onto that stream and stops.
-const STREAM_PROXIMITY_RADIUS: f64 = 150.0;
+const STREAM_PROXIMITY_RADIUS: f64 = 75.0;
 
 /// Noise wavelength for stream lateral meander (world units).
-const STREAM_LATERAL_WAVELENGTH: f64 = 1000.0;
+const STREAM_LATERAL_WAVELENGTH: f64 = 500.0;
 
 /// Maximum angular deviation from steepest descent per step (radians).
 const STREAM_LATERAL_AMP: f64 = 0.4;
@@ -315,7 +315,7 @@ const HANGING_VALLEY_MAX_OFFSET: f64 = 400.0;
 const PATH_PROBABILITY: f64 = 0.0;
 
 /// Minimum ridgeline length (world units) to generate ridge streams.
-const MIN_RIDGE_LENGTH: f64 = 300.0;
+const MIN_RIDGE_LENGTH: f64 = 150.0;
 
 /// Base spacing of stream origins along a ridgeline, as a fraction of its length.
 /// At 0.25: origins at ~25%, ~50%, ~75% (jittered).
@@ -331,16 +331,16 @@ const SEED_RIDGE_STREAM_JITTER: u64 = 0xAAAA_BBBB_0035;
 
 
 /// Width of carved ridge paths (world units).
-const PATH_WIDTH: f64 = 30.0;
+const PATH_WIDTH: f64 = 15.0;
 
 /// Depth of path carve below the surface (world units).
 const PATH_CARVE_DEPTH: f64 = 15.0;
 
 /// Step size for ridge path generation (world units).
-const PATH_STEP_SIZE: f64 = 50.0;
+const PATH_STEP_SIZE: f64 = 25.0;
 
 /// Maximum distance between stream midpoints for ridge path consideration.
-const PATH_MAX_STREAM_DIST: f64 = 3000.0;
+const PATH_MAX_STREAM_DIST: f64 = 1500.0;
 
 /// Noise seeds for ravine generation.
 const SEED_STREAM_DIR: u64 = 0xAAAA_BBBB_0021;
@@ -669,7 +669,7 @@ fn evaluate_all_peaks(peaks: &[Peak], wx: f64, wy: f64) -> f64 {
 /// gradient independently, then blends weighted by elevation². Near cone
 /// boundaries the gradient averages smoothly instead of flipping.
 /// Returns the unnormalized weighted-average gradient (downhill direction with magnitude).
-const BLEND_GRAD_EPSILON: f64 = 10.0;
+const BLEND_GRAD_EPSILON: f64 = 5.0;
 
 fn blended_gradient_raw(
     peaks: &[Peak],

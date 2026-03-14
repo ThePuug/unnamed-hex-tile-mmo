@@ -18,10 +18,10 @@ pub use spine::{generate_spines, cross_section_profile, cross_section_tag,
 // ──── Constants ────
 
 /// Base macro plate spacing in tiles.
-pub const MACRO_CELL_SIZE: f64 = 1800.0;
+pub const MACRO_CELL_SIZE: f64 = 900.0;
 
 /// Very large scale noise wavelength for jitter modulation.
-pub const JITTER_NOISE_WAVELENGTH: f64 = 30000.0;
+pub const JITTER_NOISE_WAVELENGTH: f64 = 15000.0;
 
 /// Minimum jitter factor (stable regions → regular plates).
 pub const JITTER_MIN: f64 = 0.1;
@@ -53,20 +53,20 @@ pub const REGIME_LAND_THRESHOLD: f64 = 0.15;
 /// Noise wavelength for per-cell boundary wobble.
 /// Short enough for irregularity within a plate neighborhood,
 /// long enough that adjacent micro cells don't flip randomly.
-pub const WARP_NOISE_WAVELENGTH: f64 = 800.0;
+pub const WARP_NOISE_WAVELENGTH: f64 = 400.0;
 
 /// Triple-prime local fBm wavelengths for the regime noise (B/C/D octaves).
 /// Log-scale ratios: B/C ≈ 2.3×, C/D ≈ 2.2× — even spectral separation.
 /// LCM ≈ 1.4 billion tiles — effectively never repeats within any playable region.
-pub const WARP_PRIME_B: f64 = 25013.0;  // Continental scale — large coastal variation
-pub const WARP_PRIME_C: f64 = 11003.0;  // Regional scale
-pub const WARP_PRIME_D: f64 =  4999.0;  // Peninsula scale
+pub const WARP_PRIME_B: f64 = 12506.5;  // Continental scale — large coastal variation
+pub const WARP_PRIME_C: f64 =  5501.5;  // Regional scale
+pub const WARP_PRIME_D: f64 =  2499.5;  // Peninsula scale
 
 /// Minimum warp strength — pure Voronoi, convex plates.
 pub const WARP_STRENGTH_MIN: f64 = 0.0;
 
 /// Maximum warp strength — irregular, non-convex plates.
-pub const WARP_STRENGTH_MAX: f64 = 600.0;
+pub const WARP_STRENGTH_MAX: f64 = 300.0;
 
 /// Warp strength above this threshold classifies a plate as coastal.
 /// High gradient magnitude signals a coastline transition zone regardless
@@ -74,7 +74,7 @@ pub const WARP_STRENGTH_MAX: f64 = 600.0;
 pub const COASTAL_WARP_THRESHOLD: f64 = 40.0;
 
 /// World-unit step for gradient sampling of the regime field.
-pub const GRAD_STEP: f64 = 100.0;
+pub const GRAD_STEP: f64 = 50.0;
 
 /// Sigmoid midpoint on the regime noise field.
 /// Values below this tend toward 0 (water), above toward 1 (land).
@@ -110,9 +110,9 @@ pub const WORLD_GATE_SIGMOID_MIDPOINT: f64 = 0.35;
 pub const WORLD_GATE_SIGMOID_STEEPNESS: f64 = 12.0;
 
 /// Spacing between continental seed points (world units).
-/// One cell ≈ one world. 25k diameter gives recognizable features (peninsulas, bays)
+/// One cell ≈ one world. 12.5k diameter gives recognizable features (peninsulas, bays)
 /// within each world while maintaining clear ocean gaps between worlds.
-pub const CONTINENT_CELL_SIZE: f64 = 25000.0;
+pub const CONTINENT_CELL_SIZE: f64 = 12500.0;
 
 /// Maximum jitter of continental seed point from hex cell center, as fraction of cell size.
 /// 0.0 = regular grid; 0.45 = nearly random clustering. 0.35 gives organic variation.
@@ -121,16 +121,16 @@ pub const CONTINENT_JITTER: f64 = 0.35;
 /// Domain warp amplitude for cellular world gate (world units).
 /// Displaces the query point before Voronoi lookup, creating irregular coastlines.
 /// ~24% of cell size produces peninsula and bay features within a world.
-pub const CONTINENT_WARP_AMPLITUDE: f64 = 4000.0;
+pub const CONTINENT_WARP_AMPLITUDE: f64 = 2000.0;
 
 /// Domain warp noise wavelength for cellular world gate (world units).
-/// ~8-10k at world scale produces 2-3 major coastal lobes per world.
-pub const CONTINENT_WARP_WAVELENGTH: f64 = 8000.0;
+/// ~4-5k at world scale produces 2-3 major coastal lobes per world.
+pub const CONTINENT_WARP_WAVELENGTH: f64 = 4000.0;
 
 /// Regional character simplex wavelength (world units).
 /// Spans many worlds — where it peaks, worlds expand into large continents;
 /// where it troughs, worlds shrink to small islands.
-pub const REGIONAL_CHARACTER_WAVELENGTH: f64 = 175000.0;
+pub const REGIONAL_CHARACTER_WAVELENGTH: f64 = 87500.0;
 
 /// Minimum regional modulation factor.
 /// Min > 0 ensures every world has at least some land.
@@ -145,7 +145,7 @@ pub const REGIONAL_MOD_MAX: f64 = 1.15;
 // ──── Microplate Sub-Grid Constants ────
 
 /// Microplate hex lattice spacing in tiles (1/4 of macro).
-pub const MICRO_CELL_SIZE: f64 = 450.0;
+pub const MICRO_CELL_SIZE: f64 = 225.0;
 
 /// Margin to populate beyond the region of interest before running fix_orphans.
 ///
@@ -155,7 +155,7 @@ pub const MICRO_CELL_SIZE: f64 = 450.0;
 /// this margin guarantees every plate seed that owns a cell inside the region
 /// is visible, so fix_orphans can always see the full main body.
 pub const ORPHAN_CORRECTION_MARGIN: f64 = MACRO_CELL_SIZE * MAX_ELONGATION + WARP_STRENGTH_MAX;
-// = 1800 × 8.0 + 600 = 15 000 world units
+// = 900 × 8.0 + 300 = 7 500 world units
 
 /// Micro cell suppression rate — uniform across all terrain types.
 /// Shape variation comes from jitter, not density modulation.
@@ -164,7 +164,7 @@ pub const MICRO_SUPPRESSION_RATE: f64 = 0.0;
 // ──── Microplate Jitter Constants ────
 
 /// Noise wavelength for microplate jitter modulation.
-pub const MICRO_JITTER_WAVELENGTH: f64 = 5000.0;
+pub const MICRO_JITTER_WAVELENGTH: f64 = 2500.0;
 
 /// Minimum microplate jitter factor.
 pub const MICRO_JITTER_MIN: f64 = 0.10;
