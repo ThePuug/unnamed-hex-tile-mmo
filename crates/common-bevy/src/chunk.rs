@@ -175,16 +175,6 @@ impl ChunkId {
     }
 }
 
-/// Summary data for a chunk rendered at low detail (outer ring LoD).
-///
-/// Contains only the representative elevation and biome — no individual tiles.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-pub struct ChunkSummary {
-    pub chunk_id: ChunkId,
-    pub elevation: i32,
-    pub biome: EntityType,
-}
-
 /// A chunk of terrain containing up to CHUNK_TILES tiles (hex ball of radius CHUNK_RADIUS).
 #[derive(Clone, Debug)]
 pub struct TerrainChunk {

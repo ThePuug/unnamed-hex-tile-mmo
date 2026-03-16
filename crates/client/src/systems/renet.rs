@@ -195,14 +195,10 @@ pub fn write_do(
                 // Summary is kept — resolve_lod_overlap removes it once
                 // the full-detail mesh entity exists.
             }
-            Do { event: Event::ChunkSummary { ent: _, chunk_id, elevation, biome } } => {
+            Do { event: Event::ChunkSummary { ent: _, data } } => {
                 // Accept summaries even for loaded chunks — zone 2 boundary ring
                 // has both full-detail and summary data from the server.
-                chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
-                    chunk_id,
-                    elevation,
-                    biome,
-                });
+                chunk_summaries.summaries.insert(data.chunk_id, data);
             }
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

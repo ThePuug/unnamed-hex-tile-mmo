@@ -61,6 +61,7 @@ fn main() {
         crate::plugins::metrics::MetricsPlugin::default(),
     ));
 
+    app.init_resource::<actor::PendingQEMTasks>();
     app.add_message::<Do>();
     app.add_message::<Try>();
     app.add_message::<Tick>();
@@ -131,7 +132,8 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
-        actor::try_discover_chunk,  // New chunk-based discovery
+        actor::try_discover_chunk,  // Dispatches summary tasks async, generates full chunks
+        actor::poll_qem_tasks,      // Drain completed async QEM results
         engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
         engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
         actor::try_discover,        // Legacy tile discovery (for compatibility)
@@ -155,8 +157,12 @@ fn main() {
     app.init_resource::<InputQueues>();
     let terrain = Terrain::default();
     let spawn_z = terrain.get(0, 0) + 1;
+    let shared_terrain = crate::resources::terrain::SharedTerrain(
+        std::sync::Arc::new(::terrain::Terrain::new(terrain.seed()))
+    );
     app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
     app.insert_resource(terrain);
+    app.insert_resource(shared_terrain);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone

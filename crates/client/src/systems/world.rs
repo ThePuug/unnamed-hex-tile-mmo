@@ -99,16 +99,19 @@ pub fn evict_data(
         .collect();
 
     if !evictable.is_empty() {
-        // Create summary data before removing tiles — reconcile_meshes needs
-        // it to dispatch summary mesh tasks as visual replacements.
+        // Create fallback summary data before removing tiles — reconcile_meshes
+        // needs it to dispatch summary mesh tasks as visual replacements.
+        // Uses flat boundary approximation (center elevation only, 0 interior).
+        // Server's QEM summary replaces this when it arrives.
         for &chunk_id in &evictable {
             if !chunk_summaries.summaries.contains_key(&chunk_id) {
                 let center = chunk_id.center();
-                if let Some((qrz, biome)) = map.get_by_qr(center.q, center.r) {
-                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
+                if let Some((qrz, _)) = map.get_by_qr(center.q, center.r) {
+                    let y = qrz.z as f32 * 0.8 + 0.8;
+                    chunk_summaries.summaries.insert(chunk_id, common_bevy::qem::SummaryHexData {
                         chunk_id,
-                        elevation: qrz.z,
-                        biome,
+                        boundary_elevations: [y; 12],
+                        interior: Default::default(),
                     });
                 }
             }
@@ -361,21 +364,10 @@ pub fn reconcile_meshes(
 
     // ── Dispatch summary regen tasks ──
     for &chunk_id in &summary_regen {
-        if !chunk_summaries.summaries.contains_key(&chunk_id) { continue; }
+        let Some(summary_data) = chunk_summaries.summaries.get(&chunk_id) else { continue };
         pending_summaries.tasks.remove(&chunk_id);
 
-        // Capture self + 8 grid neighbors for corner vertex elevation averaging
-        let mut neighbor_summaries: std::collections::HashMap<ChunkId, common_bevy::chunk::ChunkSummary> = HashMap::with_capacity(9);
-        for dq in -1..=1_i32 {
-            for dr in -1..=1_i32 {
-                let nid = ChunkId(chunk_id.0 + dq, chunk_id.1 + dr);
-                if let Some(s) = chunk_summaries.summaries.get(&nid) {
-                    neighbor_summaries.insert(nid, *s);
-                }
-            }
-        }
-
-        let map_snap = map.clone();
+        let data_copy = *summary_data;
         let fd_neighbors: HashSet<ChunkId> = [
             (1,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1),
         ].iter()
@@ -384,7 +376,7 @@ pub fn reconcile_meshes(
             .collect();
 
         pending_summaries.tasks.insert(chunk_id, pool.spawn(async move {
-            generate_summary_mesh(chunk_id, &neighbor_summaries, &map_snap, &fd_neighbors)
+            generate_summary_mesh(&data_copy, &fd_neighbors)
         }));
     }
 
@@ -480,136 +472,90 @@ pub fn poll_mesh_tasks(
     }
 }
 
-/// Generate a single chunk-sized hex mesh for a summary chunk.
+/// Generate a mesh from QEM-decimated summary data.
 ///
-/// Each summary is 1 hex (7 vertices, 6 triangles) whose corners sit at the
-/// centroids of each triple of mutually adjacent chunk centers.  This aligns
-/// the hex to the rotated chunk lattice so adjacent summaries share vertices
-/// exactly.  Elevation at each corner is the average of the 3 chunk elevations.
-///
-/// All vertices are stored at their **natural (untucked)** elevation.
-/// The vertex shader computes tuck per-frame using the live camera position,
-/// producing perfectly smooth transitions as the player moves.
+/// Uses the 12 boundary vertices (seamless tiling) plus N QEM-selected
+/// interior vertices. Delaunay-triangulates all vertices in the XZ plane.
 ///
 /// Per-vertex tuck topology is encoded in `uv.y`:
-///   - `1.0` → tuckable (inner-facing corner adjacent to full-detail)
-///   - `0.5` → non-tuckable summary (outer-facing, meets LoD1 ring)
-/// The mesh only rebuilds when tuck topology changes (which corners are
-/// inner vs outer), not when the player moves.
+///   - `1.0` → tuckable (boundary vertex adjacent to full-detail)
+///   - `0.5` → non-tuckable summary (all others)
 fn generate_summary_mesh(
-    chunk_id: common_bevy::chunk::ChunkId,
-    summaries: &std::collections::HashMap<common_bevy::chunk::ChunkId, common_bevy::chunk::ChunkSummary>,
-    map: &common_bevy::resources::map::Map,
+    data: &common_bevy::qem::SummaryHexData,
     full_detail_neighbors: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
 ) -> Mesh {
-    use common_bevy::chunk::{ChunkId, LATTICE_V1, LATTICE_V2};
-    use common_bevy::resources::map::Map as CommonMap;
-    use qrz::{Convert, Qrz};
+    use common_bevy::chunk::ChunkId;
+    use common_bevy::qem;
 
-    let inner = map.inner_arc();
-    let rise = inner.rise();
-
-    let self_elev = summaries.get(&chunk_id).map(|s| s.elevation as f32).unwrap_or(0.0);
     let has_tuck = !full_detail_neighbors.is_empty();
 
-    // Chunk neighbor elevation in lattice coordinates (dn, dm)
-    let nelev = |dn: i32, dm: i32| -> f32 {
-        summaries.get(&ChunkId(chunk_id.0 + dn, chunk_id.1 + dm))
-            .map(|s| s.elevation as f32)
-            .unwrap_or(self_elev)
-    };
+    // Build world positions for all vertices (boundary + interior)
+    let world_pos = qem::summary_world_positions(data);
+    let triangles = qem::triangulate_summary(&world_pos);
 
-    // Convert a tile (q,r) to world XZ via the map
-    let to_world = |q: i32, r: i32| -> Vec3 {
-        inner.convert(Qrz { q, r, z: 0 })
-    };
+    let vert_count = world_pos.len();
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(vert_count);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(vert_count);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(vert_count);
 
-    // Chunk center in world space
-    let center_tile = chunk_id.center();
-    let center_world = to_world(center_tile.q, center_tile.r);
+    // Compute per-vertex normals by averaging incident triangle normals
+    let mut normal_accum: Vec<Vec3> = vec![Vec3::ZERO; vert_count];
+    for &[v0, v1, v2] in &triangles {
+        let p0 = Vec3::from_array(world_pos[v0]);
+        let p1 = Vec3::from_array(world_pos[v1]);
+        let p2 = Vec3::from_array(world_pos[v2]);
+        let n = (p1 - p0).cross(p2 - p0);
+        normal_accum[v0] += n;
+        normal_accum[v1] += n;
+        normal_accum[v2] += n;
+    }
 
-    // 6 lattice neighbors in order (CW when viewed top-down in world space):
-    //   v1, v2, v2-v1, -v1, -v2, v1-v2
+    // Tuck flags for boundary vertices (first 12)
+    // Corner i is tuckable if either adjacent lattice neighbor has full detail
     let lattice_neighbors: [(i32, i32); 6] = [
-        (1, 0),   // v1
-        (0, 1),   // v2
-        (-1, 1),  // v2 - v1
-        (-1, 0),  // -v1
-        (0, -1),  // -v2
-        (1, -1),  // v1 - v2
+        (1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1),
     ];
 
-    let center_y = self_elev * rise + rise;
-    // Center vertex is always tuckable if any neighbor has full detail
-    let center_tuck_flag: f32 = if has_tuck { 1.0 } else { 0.5 };
+    let corner_tuckable = |corner_idx: usize| -> bool {
+        if !has_tuck { return false; }
+        let i = corner_idx;
+        let n1_id = ChunkId(data.chunk_id.0 + lattice_neighbors[i].0,
+                             data.chunk_id.1 + lattice_neighbors[i].1);
+        let n2_id = ChunkId(data.chunk_id.0 + lattice_neighbors[(i + 1) % 6].0,
+                             data.chunk_id.1 + lattice_neighbors[(i + 1) % 6].1);
+        full_detail_neighbors.contains(&n1_id) || full_detail_neighbors.contains(&n2_id)
+    };
 
-    // Build 7 vertex positions at natural elevation: [0]=center, [1..6]=outer
-    let mut hex_pos = [Vec3::ZERO; 7];
-    let mut tuck_flags = [0.5_f32; 7]; // default: non-tuckable summary
-    tuck_flags[0] = center_tuck_flag;
-    hex_pos[0] = Vec3::new(center_world.x, center_y, center_world.z);
+    let midpoint_tuckable = |mid_idx: usize| -> bool {
+        if !has_tuck { return false; }
+        // Midpoint i is between corners i and (i+1)%6
+        corner_tuckable(mid_idx) || corner_tuckable((mid_idx + 1) % 6)
+    };
 
-    for i in 0..6 {
-        let (dn1, dm1) = lattice_neighbors[i];
-        let (dn2, dm2) = lattice_neighbors[(i + 1) % 6];
+    for vi in 0..vert_count {
+        positions.push(world_pos[vi]);
+        let n = normal_accum[vi];
+        let normal = if n.length_squared() > 1e-10 { n.normalize() } else { Vec3::Y };
+        normals.push(normal.into());
 
-        // Neighbor centers in tile coordinates
-        let n1q = dn1 * LATTICE_V1.0 + dm1 * LATTICE_V2.0;
-        let n1r = dn1 * LATTICE_V1.1 + dm1 * LATTICE_V2.1;
-        let n2q = dn2 * LATTICE_V1.0 + dm2 * LATTICE_V2.0;
-        let n2r = dn2 * LATTICE_V1.1 + dm2 * LATTICE_V2.1;
-
-        // Centroid of three chunk centers in world space
-        let w1 = to_world(center_tile.q + n1q, center_tile.r + n1r);
-        let w2 = to_world(center_tile.q + n2q, center_tile.r + n2r);
-        let cx = (center_world.x + w1.x + w2.x) / 3.0;
-        let cz = (center_world.z + w1.z + w2.z) / 3.0;
-
-        // Elevation: average of the 3 chunks sharing this vertex
-        let elev = (self_elev + nelev(dn1, dm1) + nelev(dn2, dm2)) / 3.0;
-        let y = elev * rise + rise;
-
-        // Tuck flag: tuckable (1.0) if EITHER adjacent neighbor has full detail.
-        // Non-tuckable (0.5) otherwise — stays at natural height to match LoD1.
-        let corner_tuckable = if has_tuck {
-            let n1_id = ChunkId(chunk_id.0 + dn1, chunk_id.1 + dm1);
-            let n2_id = ChunkId(chunk_id.0 + dn2, chunk_id.1 + dm2);
-            full_detail_neighbors.contains(&n1_id)
-                || full_detail_neighbors.contains(&n2_id)
+        let tuck = if vi < 6 {
+            // Corner vertex
+            if corner_tuckable(vi) { 1.0 } else { 0.5 }
+        } else if vi < 12 {
+            // Edge midpoint vertex
+            if midpoint_tuckable(vi - 6) { 1.0 } else { 0.5 }
         } else {
-            false
+            // Interior vertex — tuckable if near full-detail boundary
+            if has_tuck { 1.0 } else { 0.5 }
         };
-
-        tuck_flags[i + 1] = if corner_tuckable { 1.0 } else { 0.5 };
-        hex_pos[i + 1] = Vec3::new(cx, y, cz);
-    }
-
-    // hex_vertex_normal expects [0..5]=outer, [6]=center
-    let remapped = [
-        hex_pos[1], hex_pos[2], hex_pos[3],
-        hex_pos[4], hex_pos[5], hex_pos[6],
-        hex_pos[0],
-    ];
-
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(7);
-    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(7);
-    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(7);
-
-    for vi in 0..7 {
-        positions.push(hex_pos[vi].into());
-        let remap_idx = if vi == 0 { 6 } else { vi - 1 };
-        normals.push(CommonMap::hex_vertex_normal(&remapped, remap_idx).into());
         // uv.x = natural world Y (for fragment color ramp)
-        // uv.y = tuck flag (1.0 = tuckable, 0.5 = non-tuckable summary)
-        uvs.push([hex_pos[vi].y, tuck_flags[vi]]);
+        // uv.y = tuck flag
+        uvs.push([world_pos[vi][1], tuck]);
     }
 
-    // 6 triangles: [center, v_{i+1}, v_i] (CCW winding, matches full-detail)
-    let mut indices: Vec<u32> = Vec::with_capacity(18);
-    for i in 0..6u32 {
-        let v1 = 1 + i;
-        let v2 = 1 + ((i + 1) % 6);
-        indices.extend_from_slice(&[0, v2, v1]);
+    let mut indices: Vec<u32> = Vec::with_capacity(triangles.len() * 3);
+    for &[v0, v1, v2] in &triangles {
+        indices.extend_from_slice(&[v0 as u32, v1 as u32, v2 as u32]);
     }
 
     let mut mesh = Mesh::new(

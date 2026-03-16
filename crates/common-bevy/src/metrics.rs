@@ -1,36 +1,35 @@
-use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-pub const METRICS_VERSION: u16 = 7;
+pub const METRICS_VERSION: u16 = 9;
 
-/// Server metrics collection.
-///
-/// Adding a metric:
-/// 1. Add a field here (counter: u64, gauge: u32/f32)
-/// 2. Increment/set it in the relevant system
-/// 3. Bump METRICS_VERSION
-///
-/// Counters are cumulative from server start (collector computes rates).
-/// Gauges are point-in-time values refreshed at snapshot time.
-#[derive(Resource, Default, Clone, Serialize, Deserialize)]
-pub struct ServerMetrics {
-    // -- Timing --
-    pub tick_count: u64,
-    pub snapshot_time_secs: f64,
+/// How a snapshot field combines multiple `record()` calls between flushes.
+#[derive(Clone, Copy, Debug)]
+pub enum Aggregator {
+    /// Most recent value wins. Not reset after flush.
+    Last,
+    /// Maximum of all recorded values. Reset to 0 after flush.
+    Peak,
+    /// Sum of all recorded values. Reset to 0 after flush.
+    /// Console receives per-snapshot deltas, not cumulative totals.
+    Sum,
+}
 
-    // -- Critical gauges --
-    pub loaded_hexes: u32,
-    pub connected_players: u32,
-    pub npc_count: u32,
-    pub tick_duration_us: u64,
-    pub tick_duration_max_us: u64,
-    pub tick_overrun_count: u64,
-    pub memory_bytes: u64,
-    pub memory_map_bytes: u64,
+/// Packet cadence — tells the console how to handle the data.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Cadence {
+    /// Periodic snapshot (every 2s). Console updates gauge displays.
+    Snapshot = 0,
+    /// Per-event observation. Console accumulates into p95 windows.
+    Event = 1,
+}
 
-    // -- Frame budget (all schedules) --
-    pub frame_duration_us: u64,
-    pub frame_duration_max_us: u64,
-    pub frame_overrun_count: u64,
+/// Wire format shared between server and console.
+/// Both MetricSnapshot::flush and MetricEvent::record produce these.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MetricsPacket {
+    pub group: String,
+    pub cadence: Cadence,
+    pub timestamp_secs: f64,
+    pub fields: Vec<(String, f32)>,
 }

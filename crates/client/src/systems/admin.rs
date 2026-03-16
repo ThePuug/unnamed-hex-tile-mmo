@@ -76,7 +76,7 @@ impl Default for AdminTerrain {
 #[derive(Default, Resource)]
 pub struct PendingFlyoverTiles {
     pub inner: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
-    pub outer: HashMap<ChunkId, Task<common_bevy::chunk::ChunkSummary>>,
+    pub outer: HashMap<ChunkId, Task<common_bevy::qem::SummaryHexData>>,
 }
 
 // ──── Run Conditions ────
@@ -506,13 +506,21 @@ pub fn flyover_generate_chunks(
 
         let terrain = admin_terrain.0.clone();
         let task = pool.spawn(async move {
-            let ct = chunk_id.center();
-            let elevation = terrain.get_height(ct.q, ct.r);
-            common_bevy::chunk::ChunkSummary {
-                chunk_id,
-                elevation,
-                biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
+            use common_bevy::chunk::chunk_tiles;
+            let tile_elevations: Vec<i32> = chunk_tiles(chunk_id)
+                .map(|(q, r)| terrain.get_height(q, r))
+                .collect();
+            let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+            let mut neighbor_z = [0i32; 6];
+            for (i, &(dn, dm)) in lattice_neighbors.iter().enumerate() {
+                let nid = ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+                let nc = nid.center();
+                neighbor_z[i] = terrain.get_height(nc.q, nc.r);
             }
+            common_bevy::qem::decimate_chunk(
+                chunk_id, &tile_elevations, &neighbor_z,
+                common_bevy::qem::SUMMARY_ERROR_THRESHOLD,
+            )
         });
         pending_tiles.outer.insert(chunk_id, task);
     }
@@ -638,11 +646,12 @@ pub fn flyover_evict_chunks(
         for &chunk_id in &evictable {
             if !chunk_summaries.summaries.contains_key(&chunk_id) {
                 let center_tile = chunk_id.center();
-                if let Some((tile_qrz, biome)) = map.get_by_qr(center_tile.q, center_tile.r) {
-                    chunk_summaries.summaries.insert(chunk_id, common_bevy::chunk::ChunkSummary {
+                if let Some((tile_qrz, _)) = map.get_by_qr(center_tile.q, center_tile.r) {
+                    let y = tile_qrz.z as f32 * 0.8 + 0.8;
+                    chunk_summaries.summaries.insert(chunk_id, common_bevy::qem::SummaryHexData {
                         chunk_id,
-                        elevation: tile_qrz.z,
-                        biome,
+                        boundary_elevations: [y; 12],
+                        interior: Default::default(),
                     });
                     flyover.admin_summary_chunks.insert(chunk_id);
                     newly_promoted.insert(chunk_id);

@@ -7,7 +7,8 @@ use bevy::{
 use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
-use common_bevy::chunk::{ChunkId, ChunkSummary};
+use common_bevy::chunk::ChunkId;
+use common_bevy::qem::SummaryHexData;
 
 /// Custom terrain material extension that computes elevation color in the fragment shader.
 /// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
@@ -87,11 +88,11 @@ pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
 }
 
-/// Stores chunk summaries for outer-ring LoD rendering.
+/// Stores QEM-decimated chunk summaries for outer-ring LoD rendering.
 /// Separate from the tile Map to avoid collision with physics/pathfinding.
 #[derive(Debug, Default, Resource)]
 pub struct ChunkSummaries {
-    pub summaries: HashMap<ChunkId, ChunkSummary>,
+    pub summaries: HashMap<ChunkId, SummaryHexData>,
 }
 
 /// Tracks which chunks have been received on the client

@@ -15,6 +15,61 @@ use common_bevy::{
 };
 use crate::resources::terrain::*;
 
+/// Result of async QEM decimation: summary data + pre-computed metrics.
+pub struct QEMResult {
+    pub data: common_bevy::qem::SummaryHexData,
+    pub geometric_error: f32,
+    pub interior_verts: f32,
+    pub wire_bytes: f32,
+}
+
+/// Generic tracked async task pool. Captures dispatch time automatically so
+/// any async work feeds into queue depth + duration metrics without per-system
+/// boilerplate.
+#[derive(bevy::prelude::Resource)]
+pub struct TrackedTasks<T: Send + 'static> {
+    tasks: Vec<(Entity, std::time::Instant, bevy::tasks::Task<T>)>,
+}
+
+impl<T: Send + 'static> Default for TrackedTasks<T> {
+    fn default() -> Self {
+        Self { tasks: Vec::new() }
+    }
+}
+
+impl<T: Send + 'static> TrackedTasks<T> {
+    /// Dispatch a task. Captures Instant::now() — duration includes queue wait.
+    pub fn dispatch(&mut self, ent: Entity, task: bevy::tasks::Task<T>) {
+        self.tasks.push((ent, std::time::Instant::now(), task));
+    }
+
+    /// Poll all tasks. Returns completed results with their entity and
+    /// dispatch-to-completion duration.
+    pub fn poll_completed(&mut self) -> Vec<(Entity, T, std::time::Duration)> {
+        use bevy::tasks::{block_on, futures_lite::future};
+
+        let mut completed = Vec::new();
+        self.tasks.retain_mut(|(ent, dispatched_at, task)| {
+            match block_on(future::poll_once(task)) {
+                Some(result) => {
+                    completed.push((*ent, result, dispatched_at.elapsed()));
+                    false
+                }
+                None => true,
+            }
+        });
+        completed
+    }
+
+    /// Current number of in-flight tasks.
+    pub fn in_flight(&self) -> usize {
+        self.tasks.len()
+    }
+}
+
+/// Type alias for the QEM task pool.
+pub type PendingQEMTasks = TrackedTasks<QEMResult>;
+
 /// Cached per-chunk visibility sets, recomputed on chunk boundary crossings.
 ///
 /// Uses `chunk_max_z` as worst-case player height so the result is valid
@@ -250,21 +305,39 @@ pub fn try_discover_chunk(
     mut world_cache: ResMut<WorldDiscoveryCache>,
     terrain: Res<Terrain>,
     mut map: ResMut<Map>,
+    shared_terrain: Res<crate::resources::terrain::SharedTerrain>,
+    mut pending_qem: ResMut<PendingQEMTasks>,
 ) {
     for &message in reader.read() {
         if let Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only } } = message {
             if summary_only {
-                // Summary mode: compute representative elevation, send lightweight summary
-                let center = chunk_id.center();
-                let elevation = terrain.get(center.q, center.r);
-                writer.write(Do {
-                    event: Event::ChunkSummary {
-                        ent,
-                        chunk_id,
-                        elevation,
-                        biome: EntityType::Decorator(Decorator { index: 3, is_solid: true }),
+                // Dispatch full summary pipeline to async pool: elevation
+                // gathering + QEM decimation + geometric error. Tasks contend
+                // briefly on the Terrain Mutex per elevation_at() call but the
+                // main thread is never blocked.
+                let terrain_arc = shared_terrain.0.clone();
+                let pool = bevy::tasks::AsyncComputeTaskPool::get();
+                let task = pool.spawn(async move {
+                    let tile_elevations: Vec<i32> = chunk::chunk_tiles(chunk_id)
+                        .map(|(q, r)| terrain_arc.get_height(q, r))
+                        .collect();
+                    let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+                    let mut neighbor_z = [0i32; 6];
+                    for (i, &(dn, dm)) in lattice_neighbors.iter().enumerate() {
+                        let nid = ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+                        let nc = nid.center();
+                        neighbor_z[i] = terrain_arc.get_height(nc.q, nc.r);
                     }
+                    let data = common_bevy::qem::decimate_chunk(
+                        chunk_id, &tile_elevations, &neighbor_z,
+                        common_bevy::qem::SUMMARY_ERROR_THRESHOLD,
+                    );
+                    let geometric_error = common_bevy::qem::compute_geometric_error(&data, &tile_elevations);
+                    let interior_verts = data.interior.len() as f32 + 12.0;
+                    let wire_bytes = 58.0 + data.interior.len() as f32 * 8.0;
+                    QEMResult { data, geometric_error, interior_verts, wire_bytes }
                 });
+                pending_qem.dispatch(ent, task);
                 continue;
             }
 
@@ -307,6 +380,33 @@ pub fn try_discover_chunk(
             });
         }
     }
+
+}
+
+/// Poll completed async QEM tasks, send summaries, emit metrics.
+pub fn poll_qem_tasks(
+    mut pending: ResMut<PendingQEMTasks>,
+    mut writer: MessageWriter<Do>,
+    qem_metrics: Res<crate::plugins::metrics::MetricEvent>,
+    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
+) {
+    for (ent, result, duration) in pending.poll_completed() {
+        let duration_ms = duration.as_secs_f32() * 1000.0;
+        qem_metrics.record(&[
+            ("geometric_error", result.geometric_error),
+            ("render_compression", result.interior_verts / common_bevy::qem::FULL_DETAIL_VERTEX_BASELINE),
+            ("network_compression", result.wire_bytes / common_bevy::qem::FULL_CHUNK_WIRE_BASELINE),
+        ]);
+        // Generic task metrics — any TrackedTasks consumer gets these for free
+        snapshot.record(&[
+            ("async.task_duration_ms", duration_ms),
+            ("async.tasks_completed", 1.0),
+        ]);
+        writer.write(Do { event: Event::ChunkSummary { ent, data: result.data } });
+    }
+
+    // Snapshot gauge: peak queue depth across all tracked task pools
+    snapshot.record(&[("async.tasks_in_flight", pending.in_flight() as f32)]);
 }
 
 /// Legacy tile-based discovery system (kept for compatibility, may be removed later)

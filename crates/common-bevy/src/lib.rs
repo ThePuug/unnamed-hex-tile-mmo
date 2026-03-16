@@ -3,6 +3,7 @@ pub mod components;
 pub mod message;
 pub mod metrics;
 pub mod plugins;
+pub mod qem;
 pub mod resources;
 pub mod spatial_difficulty;
 pub mod systems;

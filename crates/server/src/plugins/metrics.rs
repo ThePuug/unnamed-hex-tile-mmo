@@ -1,14 +1,172 @@
+use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use common_bevy::metrics::{METRICS_MAGIC, METRICS_VERSION, ServerMetrics};
+use common_bevy::metrics::{Aggregator, Cadence, MetricsPacket, METRICS_MAGIC, METRICS_VERSION};
 use common_bevy::resources::map::Map;
 use crate::resources::Lobby;
 
 const DEFAULT_METRICS_PORT: u16 = 5100;
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
+
+// ── Transport (shared UDP socket) ──
+
+#[derive(Clone)]
+struct Transport {
+    socket: Arc<UdpSocket>,
+    target: SocketAddr,
+}
+
+impl Transport {
+    fn new(port: u16) -> Self {
+        let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind metrics UDP socket");
+        socket
+            .set_nonblocking(true)
+            .expect("failed to set metrics socket non-blocking");
+        Self {
+            socket: Arc::new(socket),
+            target: SocketAddr::from(([127, 0, 0, 1], port)),
+        }
+    }
+
+    fn send_packet(&self, packet: &MetricsPacket) {
+        let Ok(bytes) = bincode::serde::encode_to_vec(packet, bincode::config::legacy()) else {
+            return;
+        };
+        let mut buf = Vec::with_capacity(6 + bytes.len());
+        buf.extend_from_slice(&METRICS_MAGIC);
+        buf.extend_from_slice(&METRICS_VERSION.to_le_bytes());
+        buf.extend_from_slice(&bytes);
+        let _ = self.socket.send_to(&buf, self.target);
+    }
+}
+
+// ── MetricSnapshot ──
+
+struct SnapshotField {
+    name: &'static str,
+    aggregator: Aggregator,
+    value: f32,
+}
+
+/// Accumulates field values from multiple systems. Flushes as one UDP
+/// packet every 2 seconds. Interior mutability via Mutex so systems
+/// access it through `Res<MetricSnapshot>` (no exclusive borrow).
+#[derive(Resource)]
+pub struct MetricSnapshot {
+    group: &'static str,
+    field_indices: HashMap<&'static str, usize>,
+    state: Mutex<Vec<SnapshotField>>,
+    transport: Transport,
+    flush_interval: Duration,
+    last_flush: Mutex<Duration>,
+}
+
+impl MetricSnapshot {
+    fn new(group: &'static str, transport: Transport, interval: Duration) -> Self {
+        Self {
+            group,
+            field_indices: HashMap::new(),
+            state: Mutex::new(Vec::new()),
+            transport,
+            flush_interval: interval,
+            last_flush: Mutex::new(Duration::ZERO),
+        }
+    }
+
+    fn register(&mut self, name: &'static str, aggregator: Aggregator) {
+        let idx = self.field_indices.len();
+        self.field_indices.insert(name, idx);
+        self.state.get_mut().unwrap().push(SnapshotField {
+            name,
+            aggregator,
+            value: 0.0,
+        });
+    }
+
+    /// Record one or more field values. Thread-safe, takes &self.
+    pub fn record(&self, fields: &[(&str, f32)]) {
+        let mut state = self.state.lock().unwrap();
+        for &(name, val) in fields {
+            if let Some(&idx) = self.field_indices.get(name) {
+                let f = &mut state[idx];
+                match f.aggregator {
+                    Aggregator::Last => f.value = val,
+                    Aggregator::Peak => f.value = f.value.max(val),
+                    Aggregator::Sum => f.value += val,
+                }
+            }
+        }
+    }
+
+    fn flush(&self, timestamp_secs: f64) {
+        let mut state = self.state.lock().unwrap();
+
+        let fields: Vec<(String, f32)> = state
+            .iter()
+            .map(|f| (f.name.to_string(), f.value))
+            .collect();
+
+        let packet = MetricsPacket {
+            group: self.group.to_string(),
+            cadence: Cadence::Snapshot,
+            timestamp_secs,
+            fields,
+        };
+        self.transport.send_packet(&packet);
+
+        // Reset Peak and Sum fields after flush
+        for f in state.iter_mut() {
+            match f.aggregator {
+                Aggregator::Peak | Aggregator::Sum => f.value = 0.0,
+                Aggregator::Last => {}
+            }
+        }
+    }
+}
+
+// ── MetricEvent ──
+
+/// Fires one UDP packet immediately per record() call. No accumulation.
+/// All fields must be provided together — each record() is a complete observation.
+#[derive(Resource)]
+pub struct MetricEvent {
+    group: &'static str,
+    field_names: Vec<&'static str>,
+    transport: Transport,
+    start_time: Instant,
+}
+
+impl MetricEvent {
+    fn new(group: &'static str, transport: Transport) -> Self {
+        Self {
+            group,
+            field_names: Vec::new(),
+            transport,
+            start_time: Instant::now(),
+        }
+    }
+
+    fn register(&mut self, name: &'static str) {
+        self.field_names.push(name);
+    }
+
+    /// Fire a single observation immediately via UDP.
+    pub fn record(&self, fields: &[(&str, f32)]) {
+        let packet = MetricsPacket {
+            group: self.group.to_string(),
+            cadence: Cadence::Event,
+            timestamp_secs: self.start_time.elapsed().as_secs_f64(),
+            fields: fields.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
+        };
+        self.transport.send_packet(&packet);
+    }
+}
+
+// ── Plugin ──
 
 pub struct MetricsPlugin {
     pub port: u16,
@@ -26,97 +184,110 @@ impl Default for MetricsPlugin {
 
 impl Plugin for MetricsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ServerMetrics>()
-            .insert_resource(MetricsTransport::new(self.port))
+        let transport = Transport::new(self.port);
+
+        // ── Snapshot: server gauges ──
+        let mut snapshot = MetricSnapshot::new("server", transport.clone(), self.interval);
+        snapshot.register("tick_count", Aggregator::Sum);
+        snapshot.register("tick_duration_ms", Aggregator::Last);
+        snapshot.register("tick_peak_ms", Aggregator::Peak);
+        snapshot.register("tick_overruns", Aggregator::Sum);
+        snapshot.register("loaded_hexes", Aggregator::Last);
+        snapshot.register("connected_players", Aggregator::Last);
+        snapshot.register("npc_count", Aggregator::Last);
+        snapshot.register("memory_mb", Aggregator::Last);
+        snapshot.register("memory_map_mb", Aggregator::Last);
+        snapshot.register("frame_duration_ms", Aggregator::Last);
+        snapshot.register("frame_peak_ms", Aggregator::Peak);
+        snapshot.register("frame_overruns", Aggregator::Sum);
+        snapshot.register("async.tasks_in_flight", Aggregator::Peak);
+        snapshot.register("async.task_duration_ms", Aggregator::Peak);
+        snapshot.register("async.tasks_completed", Aggregator::Sum);
+
+        // ── Event: QEM observations ──
+        let mut qem_event = MetricEvent::new("qem", transport);
+        qem_event.register("geometric_error");
+        qem_event.register("render_compression");
+        qem_event.register("network_compression");
+
+        app.insert_resource(snapshot)
+            .insert_resource(qem_event)
             .insert_resource(TickTimer::default())
-            .insert_resource(MetricsInterval(self.interval))
             .add_systems(FixedFirst, tick_timer_start)
             .add_systems(FixedLast, tick_timer_end)
+            .add_systems(Update, (track_frame_time, maybe_flush_snapshot))
             .add_systems(
                 Update,
-                (refresh_metric_gauges, push_metrics_snapshot)
-                    .chain()
-                    .run_if(snapshot_due),
-            )
-            .add_systems(Update, track_frame_time);
+                refresh_metric_gauges.run_if(flush_due),
+            );
     }
 }
+
+// ── Systems ──
 
 #[derive(Resource, Default)]
 struct TickTimer(Option<Instant>);
-
-#[derive(Resource)]
-struct MetricsInterval(Duration);
-
-#[derive(Resource)]
-struct MetricsTransport {
-    socket: UdpSocket,
-    target: SocketAddr,
-    last_push: Duration,
-}
-
-impl MetricsTransport {
-    fn new(port: u16) -> Self {
-        let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind metrics UDP socket");
-        socket
-            .set_nonblocking(true)
-            .expect("failed to set metrics socket non-blocking");
-
-        Self {
-            socket,
-            target: SocketAddr::from(([127, 0, 0, 1], port)),
-            last_push: Duration::ZERO,
-        }
-    }
-}
 
 fn tick_timer_start(mut timer: ResMut<TickTimer>) {
     timer.0 = Some(Instant::now());
 }
 
-fn tick_timer_end(timer: Res<TickTimer>, mut metrics: ResMut<ServerMetrics>) {
+fn tick_timer_end(timer: Res<TickTimer>, snapshot: Res<MetricSnapshot>) {
     if let Some(start) = timer.0 {
-        let us = start.elapsed().as_micros() as u64;
-        metrics.tick_duration_us = us;
-        metrics.tick_duration_max_us = metrics.tick_duration_max_us.max(us);
-        if us > 125_000 {
-            metrics.tick_overrun_count += 1;
+        let ms = start.elapsed().as_secs_f64() as f32 * 1000.0;
+        snapshot.record(&[
+            ("tick_duration_ms", ms),
+            ("tick_peak_ms", ms),
+            ("tick_count", 1.0),
+        ]);
+        if ms > 125.0 {
+            snapshot.record(&[("tick_overruns", 1.0)]);
         }
-        metrics.tick_count += 1;
     }
 }
 
-/// Track total frame time (all schedules combined) as a server load metric.
-fn track_frame_time(time: Res<Time>, mut metrics: ResMut<ServerMetrics>) {
-    let us = time.delta().as_micros() as u64;
-    metrics.frame_duration_us = us;
-    metrics.frame_duration_max_us = metrics.frame_duration_max_us.max(us);
-
-    if us > 125_000 {
-        metrics.frame_overrun_count += 1;
-        warn!("frame took {:.1}ms (budget 125ms)", us as f64 / 1000.0);
+fn track_frame_time(time: Res<Time>, snapshot: Res<MetricSnapshot>) {
+    let ms = time.delta().as_secs_f64() as f32 * 1000.0;
+    snapshot.record(&[
+        ("frame_duration_ms", ms),
+        ("frame_peak_ms", ms),
+    ]);
+    if ms > 125.0 {
+        snapshot.record(&[("frame_overruns", 1.0)]);
+        warn!("frame took {:.1}ms (budget 125ms)", ms);
     }
 }
 
-fn snapshot_due(
-    transport: Res<MetricsTransport>,
-    interval: Res<MetricsInterval>,
-    time: Res<Time>,
-) -> bool {
-    time.elapsed() - transport.last_push >= interval.0
+fn flush_due(snapshot: Res<MetricSnapshot>, time: Res<Time>) -> bool {
+    let last = *snapshot.last_flush.lock().unwrap();
+    time.elapsed() - last >= snapshot.flush_interval
 }
 
 fn refresh_metric_gauges(
-    mut metrics: ResMut<ServerMetrics>,
+    snapshot: Res<MetricSnapshot>,
     map: Res<Map>,
     lobby: Res<Lobby>,
     npc_query: Query<(), (With<common_bevy::components::entity_type::EntityType>, Without<common_bevy::components::behaviour::PlayerControlled>)>,
 ) {
-    metrics.loaded_hexes = map.len() as u32;
-    metrics.connected_players = lobby.len() as u32;
-    metrics.npc_count = npc_query.iter().count() as u32;
-    metrics.memory_bytes = process_working_set_bytes();
-    metrics.memory_map_bytes = map.heap_size_estimate() as u64;
+    snapshot.record(&[
+        ("loaded_hexes", map.len() as f32),
+        ("connected_players", lobby.len() as f32),
+        ("npc_count", npc_query.iter().count() as f32),
+        ("memory_mb", process_working_set_bytes() as f32 / 1_048_576.0),
+        ("memory_map_mb", map.heap_size_estimate() as f32 / 1_048_576.0),
+    ]);
+}
+
+fn maybe_flush_snapshot(snapshot: Res<MetricSnapshot>, time: Res<Time>) {
+    let elapsed = time.elapsed();
+    let should_flush = {
+        let last = *snapshot.last_flush.lock().unwrap();
+        elapsed - last >= snapshot.flush_interval
+    };
+    if should_flush {
+        snapshot.flush(elapsed.as_secs_f64());
+        *snapshot.last_flush.lock().unwrap() = elapsed;
+    }
 }
 
 #[cfg(windows)]
@@ -159,31 +330,4 @@ fn process_working_set_bytes() -> u64 {
 #[cfg(not(windows))]
 fn process_working_set_bytes() -> u64 {
     0
-}
-
-fn push_metrics_snapshot(
-    mut metrics: ResMut<ServerMetrics>,
-    mut transport: ResMut<MetricsTransport>,
-    time: Res<Time>,
-) {
-    transport.last_push = time.elapsed();
-
-    let mut snapshot = metrics.clone();
-    snapshot.snapshot_time_secs = transport.last_push.as_secs_f64();
-
-    let Ok(bytes) =
-        bincode::serde::encode_to_vec(&snapshot, bincode::config::legacy())
-    else {
-        return;
-    };
-
-    let mut buf = Vec::with_capacity(6 + bytes.len());
-    buf.extend_from_slice(&METRICS_MAGIC);
-    buf.extend_from_slice(&METRICS_VERSION.to_le_bytes());
-    buf.extend_from_slice(&bytes);
-
-    let _ = transport.socket.send_to(&buf, transport.target);
-
-    metrics.tick_duration_max_us = 0;
-    metrics.frame_duration_max_us = 0;
 }

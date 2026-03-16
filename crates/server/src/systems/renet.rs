@@ -301,11 +301,11 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Do { event: Event::ChunkSummary { ent, chunk_id, elevation, biome } } => {
-                // Send chunk summary directly to the specific player
+            Do { event: Event::ChunkSummary { ent, data } } => {
+                // Send QEM summary directly to the specific player
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::ChunkSummary { ent, chunk_id, elevation, biome }},
+                        Do { event: Event::ChunkSummary { ent, data }},
                         bincode::config::legacy()).unwrap();
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }

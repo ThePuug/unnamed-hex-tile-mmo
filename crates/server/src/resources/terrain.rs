@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use std::ops::Deref;
+use std::sync::Arc;
 
 /// Bevy Resource wrapper around the terrain generation library.
 #[derive(Resource)]
@@ -21,6 +22,11 @@ impl Terrain {
         self.0.get_height(q, r)
     }
 }
+
+/// Cheaply cloneable terrain handle for async tasks.
+/// Follows the AdminTerrain(Arc<terrain::Terrain>) pattern from the client.
+#[derive(Resource, Clone)]
+pub struct SharedTerrain(pub Arc<terrain::Terrain>);
 
 impl Deref for Terrain {
     type Target = terrain::Terrain;

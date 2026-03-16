@@ -22,13 +22,12 @@ pub enum Event {
         chunk_id: ChunkId,
         tiles: ArrayVec<[(Qrz, EntityType); 272]>,
     },
-    /// Server → Client: chunk summary for outer-ring LoD (elevation + biome only)
-    /// ~12 bytes vs ~2.6KB for full ChunkData
+    /// Server → Client: QEM-decimated chunk summary for outer-ring LoD.
+    /// 12 boundary vertices + N QEM-selected interior vertices.
+    /// Wire size: 56 bytes (flat) to ~2.2KB (max detail), always < full ChunkData.
     ChunkSummary {
         ent: Entity,
-        chunk_id: ChunkId,
-        elevation: i32,
-        biome: EntityType,
+        data: crate::qem::SummaryHexData,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
