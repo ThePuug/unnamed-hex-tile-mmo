@@ -15,16 +15,17 @@ pub fn try_input(
     mut writer: MessageWriter<Do>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Try { event } = message;
         let Event::Input { ent, .. } = event else { continue };
+        let ent = *ent;
 
         // Ignore input from dead players (those with RespawnTimer)
         if respawn_query.get(ent).is_ok() {
             continue;
         }
 
-        writer.write(Do { event });
+        writer.write(Do { event: event.clone() });
     }
 }
 
@@ -78,9 +79,11 @@ pub fn try_set_tier_lock(
     mut writer: MessageWriter<Do>,
     mut tier_locks: Query<&mut TierLock>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Try { event } = message;
         let Event::SetTierLock { ent, tier } = event else { continue };
+        let ent = *ent;
+        let tier = *tier;
 
         if let Ok(mut tier_lock) = tier_locks.get_mut(ent) {
             tier_lock.set(tier);
@@ -194,7 +197,7 @@ pub fn try_respec_attributes(
     mut writer: MessageWriter<Do>,
     mut attrs_query: Query<&mut ActorAttributes>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Try { event } = message;
         let Event::RespecAttributes {
             ent,
@@ -211,6 +214,16 @@ pub fn try_respec_attributes(
         else {
             continue;
         };
+        let ent = *ent;
+        let might_grace_axis = *might_grace_axis;
+        let might_grace_spectrum = *might_grace_spectrum;
+        let might_grace_shift = *might_grace_shift;
+        let vitality_focus_axis = *vitality_focus_axis;
+        let vitality_focus_spectrum = *vitality_focus_spectrum;
+        let vitality_focus_shift = *vitality_focus_shift;
+        let instinct_presence_axis = *instinct_presence_axis;
+        let instinct_presence_spectrum = *instinct_presence_spectrum;
+        let instinct_presence_shift = *instinct_presence_shift;
 
         let Ok(mut attrs) = attrs_query.get_mut(ent) else {
             continue;
@@ -258,7 +271,7 @@ pub fn try_respec_attributes(
         );
 
         // Broadcast confirmation
-        writer.write(Do { event });
+        writer.write(Do { event: event.clone() });
     }
 }
 

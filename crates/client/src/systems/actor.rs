@@ -77,8 +77,12 @@ pub fn do_spawn(
     mut materials: ResMut<Assets<StandardMaterial>>,
     diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
+        let ent = *ent;
+        let typ = *typ;
+        let qrz = *qrz;
+        let attrs = *attrs;
 
         match typ {
             EntityType::Actor(desc) => {
@@ -150,9 +154,9 @@ pub fn try_gcd(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Try { event: Event::Gcd { ent, typ } } = message {
-            writer.write(Do { event: Event::Gcd { ent, typ }});
+            writer.write(Do { event: Event::Gcd { ent: *ent, typ: *typ }});
         }
     }
 }
@@ -188,9 +192,12 @@ pub fn apply_movement_intent(
     time: Res<Time>,
     buffers: Res<InputQueues>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::MovementIntent { ent, destination, duration_ms } } = message
             else { continue };
+        let ent = *ent;
+        let destination = *destination;
+        let duration_ms = *duration_ms;
 
         // Local player: normal movement is predicted via Input, not Intent.
         // But ability-driven displacement (lunge, etc.) sends MovementIntent from server.

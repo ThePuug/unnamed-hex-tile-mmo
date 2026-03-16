@@ -235,6 +235,14 @@ impl Terrain {
         spine_cache.elevation_at(wx, wy, plate_cache)
     }
 
+    /// Evaluate continuous elevation at arbitrary world coordinates.
+    /// Uses the terrain's internal coordinate system (from `hex_to_world`).
+    pub fn elevation_at_world(&self, wx: f64, wy: f64) -> f64 {
+        let mut caches = self.caches.lock().unwrap();
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+        spine_cache.elevation_at(wx, wy, plate_cache)
+    }
+
     /// UNCACHED — creates throwaway caches per call.
     /// For hot paths, use `MicroplateCache::plate_info_at` directly.
     pub fn plate_info_at(&self, q: i32, r: i32) -> (PlateCenter, MicroplateCenter) {

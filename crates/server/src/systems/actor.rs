@@ -15,14 +15,6 @@ use common_bevy::{
 };
 use crate::resources::terrain::*;
 
-/// Result of async QEM decimation: summary data + pre-computed metrics.
-pub struct QEMResult {
-    pub data: common_bevy::qem::SummaryHexData,
-    pub geometric_error: f32,
-    pub interior_verts: f32,
-    pub wire_bytes: f32,
-}
-
 /// Generic tracked async task pool. Captures dispatch time automatically so
 /// any async work feeds into queue depth + duration metrics without per-system
 /// boilerplate.
@@ -67,8 +59,6 @@ impl<T: Send + 'static> TrackedTasks<T> {
     }
 }
 
-/// Type alias for the QEM task pool.
-pub type PendingQEMTasks = TrackedTasks<QEMResult>;
 
 /// Cached per-chunk visibility sets, recomputed on chunk boundary crossings.
 ///
@@ -134,8 +124,9 @@ pub fn do_spawn_discover(
     query: Query<&Loc>,
     terrain: Res<Terrain>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Spawn { ent, .. } } = message else { continue };
+        let ent = *ent;
 
         // Only process entities with PlayerDiscoveryState (players)
         let Ok(mut player_state) = player_states.get_mut(ent) else { continue };
@@ -205,8 +196,10 @@ pub fn do_incremental(
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
     terrain: Res<Terrain>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
+        let ent = *ent;
+        let component = *component;
 
         // Only process Loc changes for chunk-based discovery
         let Component::Loc(loc) = component else { continue };
@@ -305,52 +298,20 @@ pub fn try_discover_chunk(
     mut world_cache: ResMut<WorldDiscoveryCache>,
     terrain: Res<Terrain>,
     mut map: ResMut<Map>,
-    shared_terrain: Res<crate::resources::terrain::SharedTerrain>,
-    mut pending_qem: ResMut<PendingQEMTasks>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only } } = message {
-            if summary_only {
-                // Dispatch full summary pipeline to async pool: elevation
-                // gathering + QEM decimation + geometric error. Tasks contend
-                // briefly on the Terrain Mutex per elevation_at() call but the
-                // main thread is never blocked.
-                let terrain_arc = shared_terrain.0.clone();
-                let pool = bevy::tasks::AsyncComputeTaskPool::get();
-                let task = pool.spawn(async move {
-                    let tile_elevations: Vec<i32> = chunk::chunk_tiles(chunk_id)
-                        .map(|(q, r)| terrain_arc.get_height(q, r))
-                        .collect();
-                    let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
-                    let mut neighbor_z = [0i32; 6];
-                    for (i, &(dn, dm)) in lattice_neighbors.iter().enumerate() {
-                        let nid = ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
-                        let nc = nid.center();
-                        neighbor_z[i] = terrain_arc.get_height(nc.q, nc.r);
-                    }
-                    let data = common_bevy::qem::decimate_chunk(
-                        chunk_id, &tile_elevations, &neighbor_z,
-                        common_bevy::qem::SUMMARY_ERROR_THRESHOLD,
-                    );
-                    let geometric_error = common_bevy::qem::compute_geometric_error(&data, &tile_elevations);
-                    let interior_verts = data.interior.len() as f32 + 12.0;
-                    let wire_bytes = 58.0 + data.interior.len() as f32 * 8.0;
-                    QEMResult { data, geometric_error, interior_verts, wire_bytes }
-                });
-                pending_qem.dispatch(ent, task);
-                continue;
-            }
+            let ent = *ent;
+            let chunk_id = *chunk_id;
+            let summary_only = *summary_only;
 
-            // Full detail mode: generate chunk, cache, insert into map, send data
+            // Generate/cache chunk
             let chunk = if world_cache.chunks.contains_key(&chunk_id) {
-                // Cache hit - update LRU and clone Arc
                 world_cache.access_order.get_or_insert(chunk_id, || ());
                 Arc::clone(world_cache.chunks.get(&chunk_id).unwrap())
             } else {
-                // Cache miss - generate chunk
                 let generated = Arc::new(generate_chunk(chunk_id, &terrain, &map));
 
-                // Insert into cache (may trigger LRU eviction)
                 if world_cache.chunks.len() >= world_cache.max_chunks {
                     if let Some((evicted_id, _)) = world_cache.access_order.pop_lru() {
                         world_cache.chunks.remove(&evicted_id);
@@ -363,14 +324,16 @@ pub fn try_discover_chunk(
                 generated
             };
 
-            // Insert tiles into server's map for physics collision detection
-            for &(qrz, typ) in &chunk.tiles {
-                if map.get(qrz).is_none() {
-                    map.insert(qrz, typ);
+            // Inner ring: insert tiles into server Map for physics/collision/AI
+            if !summary_only {
+                for &(qrz, typ) in &chunk.tiles {
+                    if map.get(qrz).is_none() {
+                        map.insert(qrz, typ);
+                    }
                 }
             }
 
-            // Send chunk terrain to player
+            // Send ChunkData to client for both inner and outer ring
             writer.write(Do {
                 event: Event::ChunkData {
                     ent,
@@ -380,33 +343,6 @@ pub fn try_discover_chunk(
             });
         }
     }
-
-}
-
-/// Poll completed async QEM tasks, send summaries, emit metrics.
-pub fn poll_qem_tasks(
-    mut pending: ResMut<PendingQEMTasks>,
-    mut writer: MessageWriter<Do>,
-    qem_metrics: Res<crate::plugins::metrics::MetricEvent>,
-    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
-) {
-    for (ent, result, duration) in pending.poll_completed() {
-        let duration_ms = duration.as_secs_f32() * 1000.0;
-        qem_metrics.record(&[
-            ("geometric_error", result.geometric_error),
-            ("render_compression", result.interior_verts / common_bevy::qem::FULL_DETAIL_VERTEX_BASELINE),
-            ("network_compression", result.wire_bytes / common_bevy::qem::FULL_CHUNK_WIRE_BASELINE),
-        ]);
-        // Generic task metrics — any TrackedTasks consumer gets these for free
-        snapshot.record(&[
-            ("async.task_duration_ms", duration_ms),
-            ("async.tasks_completed", 1.0),
-        ]);
-        writer.write(Do { event: Event::ChunkSummary { ent, data: result.data } });
-    }
-
-    // Snapshot gauge: peak queue depth across all tracked task pools
-    snapshot.record(&[("async.tasks_in_flight", pending.in_flight() as f32)]);
 }
 
 /// Legacy tile-based discovery system (kept for compatibility, may be removed later)
@@ -417,8 +353,10 @@ pub fn try_discover(
     terrain: Res<Terrain>,
     query: Query<(&Loc, &EntityType)>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Try { event: Event::Discover { ent, qrz } } = message {
+            let ent = *ent;
+            let qrz = *qrz;
             let (&loc, _) = query.get(ent).unwrap();
             if loc.flat_distance(&qrz) > 25 { continue; }
             if let Some((qrz, typ)) = map.get_by_qr(qrz.q, qrz.r) {

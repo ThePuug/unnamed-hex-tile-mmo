@@ -23,7 +23,7 @@ use qrz::Convert;
 use crate::{
     components::ChunkMesh,
     plugins::console::DevConsoleAction,
-    resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes, SkipNeighborRegen},
+    resources::{LoadedChunks, SkipNeighborRegen},
     systems::camera::{CameraOrbit, CAMERA_DISTANCE, CAMERA_HEIGHT},
 };
 
@@ -148,7 +148,6 @@ pub fn execute_admin_actions(
     map_state: Res<MapState>,
     admin_terrain: Res<AdminTerrain>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
 ) {
     for action in reader.read() {
@@ -229,11 +228,6 @@ pub fn execute_admin_actions(
                         map_state.queue_event(TileEvent::Despawn(qrz));
                     }
                 }
-            }
-
-            // Remove admin summary chunks from ChunkSummaries
-            for &chunk_id in &flyover.admin_summary_chunks {
-                chunk_summaries.summaries.remove(&chunk_id);
             }
 
             flyover.admin_chunks.clear();
@@ -507,18 +501,27 @@ pub fn flyover_generate_chunks(
         let terrain = admin_terrain.0.clone();
         let task = pool.spawn(async move {
             use common_bevy::chunk::chunk_tiles;
-            let tile_elevations: Vec<i32> = chunk_tiles(chunk_id)
-                .map(|(q, r)| terrain.get_height(q, r))
+            let chunk_tiles_vec: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
+                .map(|(q, r)| {
+                    let z = terrain.get_height(q, r);
+                    qrz::Qrz { q, r, z }
+                })
                 .collect();
-            let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
-            let mut neighbor_z = [0i32; 6];
-            for (i, &(dn, dm)) in lattice_neighbors.iter().enumerate() {
-                let nid = ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
-                let nc = nid.center();
-                neighbor_z[i] = terrain.get_height(nc.q, nc.r);
+            let mut elevations = std::collections::HashMap::new();
+            for &qrz in &chunk_tiles_vec {
+                elevations.insert((qrz.q, qrz.r), qrz.z);
+                for direction in qrz::DIRECTIONS.iter() {
+                    let n = qrz + *direction;
+                    elevations.entry((n.q, n.r))
+                        .or_insert_with(|| terrain.get_height(n.q, n.r));
+                }
             }
-            common_bevy::qem::decimate_chunk(
-                chunk_id, &tile_elevations, &neighbor_z,
+            let geometry = common_bevy::geometry::compute_tile_geometry(
+                &chunk_tiles_vec, &elevations, 1.0, 0.8,
+            );
+            let boundary = common_bevy::qem::compute_boundary(chunk_id, &geometry.surface_y);
+            common_bevy::qem::decimate_from_geometry(
+                chunk_id, &geometry, boundary,
                 common_bevy::qem::SUMMARY_ERROR_THRESHOLD,
             )
         });
@@ -530,7 +533,6 @@ pub fn flyover_generate_chunks(
 pub fn poll_flyover_tile_tasks(
     mut pending: ResMut<PendingFlyoverTiles>,
     map_state: Res<MapState>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
 ) {
     // Poll inner tile generation tasks
     pending.inner.retain(|_chunk_id, task| {
@@ -545,9 +547,8 @@ pub fn poll_flyover_tile_tasks(
     });
 
     // Poll outer summary generation tasks
-    pending.outer.retain(|&chunk_id, task| {
-        if let Some(summary) = block_on(future::poll_once(task)) {
-            chunk_summaries.summaries.insert(chunk_id, summary);
+    pending.outer.retain(|_chunk_id, task| {
+        if let Some(_summary) = block_on(future::poll_once(task)) {
             false
         } else {
             true
@@ -556,11 +557,10 @@ pub fn poll_flyover_tile_tasks(
 }
 
 /// Tags newly spawned chunk meshes that belong to admin-generated chunks.
-/// Excludes SummaryChunk entities — those are managed by spawn_summary_meshes.
 pub fn tag_admin_chunks(
     mut commands: Commands,
     flyover: Res<FlyoverState>,
-    new_chunks: Query<(Entity, &ChunkMesh), (Added<ChunkMesh>, Without<crate::components::SummaryChunk>)>,
+    new_chunks: Query<(Entity, &ChunkMesh), Added<ChunkMesh>>,
 ) {
     for (entity, chunk_mesh) in new_chunks.iter() {
         if flyover.admin_chunks.contains(&chunk_mesh.chunk_id) {
@@ -577,10 +577,7 @@ pub fn flyover_evict_chunks(
     admin_terrain: Res<AdminTerrain>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    mut pending_meshes: ResMut<PendingChunkMeshes>,
-    mut pending_summary_meshes: ResMut<PendingSummaryMeshes>,
     camera_query: Query<&Projection, With<Camera3d>>,
 ) {
     let scale = camera_query.single().ok().map_or(1.0, |p| {
@@ -626,8 +623,6 @@ pub fn flyover_evict_chunks(
     };
 
     // Evict full-detail admin chunk data beyond detail boundary + 1.
-    // Mesh entities are cleaned up by resolve_lod_overlap once a summary
-    // mesh exists for the same chunk.
     let evictable: Vec<ChunkId> = flyover.admin_chunks
         .iter()
         .filter(|id| {
@@ -636,35 +631,12 @@ pub fn flyover_evict_chunks(
         .copied()
         .collect();
 
-    // Track summaries promoted from full-detail eviction this frame.
-    // These must survive the summary eviction pass so resolve_lod_overlap
-    // has time to despawn the full-detail mesh entity.
-    let mut newly_promoted: HashSet<ChunkId> = HashSet::new();
-
     if !evictable.is_empty() {
-        // Generate summaries from tile data before tiles are removed.
-        for &chunk_id in &evictable {
-            if !chunk_summaries.summaries.contains_key(&chunk_id) {
-                let center_tile = chunk_id.center();
-                if let Some((tile_qrz, _)) = map.get_by_qr(center_tile.q, center_tile.r) {
-                    let y = tile_qrz.z as f32 * 0.8 + 0.8;
-                    chunk_summaries.summaries.insert(chunk_id, common_bevy::qem::SummaryHexData {
-                        chunk_id,
-                        boundary_elevations: [y; 12],
-                        interior: Default::default(),
-                    });
-                    flyover.admin_summary_chunks.insert(chunk_id);
-                    newly_promoted.insert(chunk_id);
-                }
-            }
-        }
-
         let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
 
         for &chunk_id in &evictable {
-            // Cancel pending tile and mesh generation tasks if still running
+            // Cancel pending tile generation tasks if still running
             pending_tiles.inner.remove(&chunk_id);
-            pending_meshes.tasks.remove(&chunk_id);
 
             if loaded_chunks.chunks.contains(&chunk_id) {
                 continue;
@@ -682,20 +654,14 @@ pub fn flyover_evict_chunks(
     }
 
     // Evict summary admin chunks (cancel pending tasks too).
-    // Protect newly_promoted summaries — they need one frame for
-    // spawn_summary_meshes → resolve_lod_overlap to clean up the
-    // corresponding full-detail mesh entity.
     let summary_evictable: Vec<ChunkId> = flyover.admin_summary_chunks
         .iter()
-        .filter(|id| !summary_keep.contains(id) && !newly_promoted.contains(id))
+        .filter(|id| !summary_keep.contains(id))
         .copied()
         .collect();
 
     for &chunk_id in &summary_evictable {
         pending_tiles.outer.remove(&chunk_id);
-        pending_summary_meshes.tasks.remove(&chunk_id);
-        chunk_summaries.summaries.remove(&chunk_id);
     }
     flyover.admin_summary_chunks.retain(|id| summary_keep.contains(id));
-    // Summary mesh entities cleaned up by spawn_summary_meshes (change detection)
 }

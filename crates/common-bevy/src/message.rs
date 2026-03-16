@@ -9,7 +9,7 @@ use crate::{
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
@@ -21,13 +21,6 @@ pub enum Event {
         ent: Entity,
         chunk_id: ChunkId,
         tiles: ArrayVec<[(Qrz, EntityType); 272]>,
-    },
-    /// Server → Client: QEM-decimated chunk summary for outer-ring LoD.
-    /// 12 boundary vertices + N QEM-selected interior vertices.
-    /// Wire size: 56 bytes (flat) to ~2.2KB (max detail), always < full ChunkData.
-    ChunkSummary {
-        ent: Entity,
-        data: crate::qem::SummaryHexData,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
@@ -151,12 +144,12 @@ pub enum Component {
     TierLock(crate::components::tier_lock::TierLock),
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
+#[derive(Clone, Debug, Deserialize, Event, Message, Serialize)]
 pub struct Do {
     pub event: Event
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
+#[derive(Clone, Debug, Deserialize, Event, Message, Serialize)]
 pub struct Try {
     pub event: Event
 }

@@ -10,9 +10,9 @@ use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
-    components::{ChunkMesh, SummaryChunk},
+    components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
-    resources::{ChunkSummaries, LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes, Server, SkipNeighborRegen, TerrainMaterial},
+    resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LoadedChunks, Server, TerrainMaterial},
 };
 use common_bevy::{
     chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, terrain_chunk_radius, CHUNK_EXTENT_WU},
@@ -68,13 +68,11 @@ pub fn setup(
 // Tiles: evicted beyond detail_radius + 1.
 // Summaries: evicted beyond terrain_chunk_radius + 1.
 
-/// Evict data beyond the player's view range. Summary data is created
-/// before tile removal so `reconcile_meshes` can dispatch replacement
-/// summary meshes without a visual gap.
+/// Evict data beyond the player's view range.
 pub fn evict_data(
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common_bevy::resources::map::Map>,
     map_state: Res<common_bevy::resources::map::MapState>,
@@ -92,31 +90,15 @@ pub fn evict_data(
     let detail_buffer = chunk::detail_boundary_radius(player_z, fov) as i32 + 2;
     let summary_buffer = terrain_chunk_radius(player_z) as i32 + 1;
 
-    // ── Evict tiles beyond detail boundary ──
+    // ── Evict tiles beyond summary boundary ──
+    // Use summary_buffer (not detail_buffer) — outer ring chunks need tiles
+    // in the Map for LoD2 mesh generation and slope blending.
     let evictable: Vec<common_bevy::chunk::ChunkId> = loaded_chunks.chunks.iter()
-        .filter(|&&cid| chunk_hex_distance(cid, player_chunk) > detail_buffer)
+        .filter(|&&cid| chunk_hex_distance(cid, player_chunk) > summary_buffer)
         .copied()
         .collect();
 
     if !evictable.is_empty() {
-        // Create fallback summary data before removing tiles — reconcile_meshes
-        // needs it to dispatch summary mesh tasks as visual replacements.
-        // Uses flat boundary approximation (center elevation only, 0 interior).
-        // Server's QEM summary replaces this when it arrives.
-        for &chunk_id in &evictable {
-            if !chunk_summaries.summaries.contains_key(&chunk_id) {
-                let center = chunk_id.center();
-                if let Some((qrz, _)) = map.get_by_qr(center.q, center.r) {
-                    let y = qrz.z as f32 * 0.8 + 0.8;
-                    chunk_summaries.summaries.insert(chunk_id, common_bevy::qem::SummaryHexData {
-                        chunk_id,
-                        boundary_elevations: [y; 12],
-                        interior: Default::default(),
-                    });
-                }
-            }
-        }
-
         // Despawn actors on evicted chunks
         for (entity, loc, entity_type) in actor_query.iter() {
             let actor_chunk = loc_to_chunk(**loc);
@@ -149,425 +131,19 @@ pub fn evict_data(
         }
     }
 
-    // ── Evict summaries beyond visibility boundary ──
-    let summary_evictable: Vec<common_bevy::chunk::ChunkId> = chunk_summaries.summaries.keys()
-        .filter(|&&cid| chunk_hex_distance(cid, player_chunk) > summary_buffer)
+    // Evict LoD mesh state when tiles are evicted — same radius as tile eviction
+    // to prevent stale entries blocking re-dispatch on chunk re-load.
+    let lod_evictable: Vec<common_bevy::chunk::ChunkId> = lod_meshes.states.keys()
+        .filter(|&&cid| !loaded_chunks.chunks.contains(&cid))
         .copied()
         .collect();
-
-    for cid in summary_evictable {
-        chunk_summaries.summaries.remove(&cid);
-    }
-}
-
-// ─────────────────────────────────────────────────────────
-// SYSTEM 2: Mesh reconciliation (every frame)
-// ─────────────────────────────────────────────────────────
-// Single source of truth for all mesh spawn/despawn decisions.
-// Ensures the right meshes exist for the data we have.
-
-/// Tracking state for `reconcile_meshes` (previous frame's data for change detection).
-#[derive(Default)]
-pub(crate) struct ReconcileState {
-    prev_loaded: std::collections::HashSet<common_bevy::chunk::ChunkId>,
-    prev_summary_keys: std::collections::HashSet<common_bevy::chunk::ChunkId>,
-}
-
-/// Zone 1 (hex_dist < detail_radius): full-detail only.
-/// Zone 2 (hex_dist == detail_radius): boundary ring — both meshes coexist,
-///   summary uses dynamic tuck to hide under full-detail terrain.
-/// Zone 3 (hex_dist > detail_radius, ≤ max_radius): summary only.
-///   Eviction gate: keep orphaned full-detail mesh alive until summary mesh
-///   is ready, preventing a visual gap.
-/// Beyond max_radius: nothing should exist.
-///
-/// Also handles neighbor mesh regen and summary corner regen.
-#[allow(clippy::too_many_arguments)]
-pub fn reconcile_meshes(
-    mut commands: Commands,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
-    map: Res<common_bevy::resources::map::Map>,
-    loaded_chunks: Res<LoadedChunks>,
-    mut pending_chunks: ResMut<PendingChunkMeshes>,
-    mut pending_summaries: ResMut<PendingSummaryMeshes>,
-    full_detail_query: Query<(Entity, &ChunkMesh), Without<SummaryChunk>>,
-    summary_query: Query<(Entity, &ChunkMesh), With<SummaryChunk>>,
-    player_query: Query<&Loc, With<PlayerControlled>>,
-    diagnostics_state: Res<DiagnosticsState>,
-    skip_neighbor_regen: Res<SkipNeighborRegen>,
-    mut state: Local<ReconcileState>,
-    #[cfg(feature = "admin")]
-    flyover: Option<Res<crate::systems::admin::FlyoverState>>,
-) {
-    use std::collections::{HashMap, HashSet};
-    use common_bevy::chunk::ChunkId;
-    use bevy::tasks::AsyncComputeTaskPool;
-
-    let Ok(player_loc) = player_query.single() else { return };
-    let player_chunk = loc_to_chunk(**player_loc);
-    let player_z = player_loc.z;
-
-    // Zone classification must use MAX_FOV to match the server's data split.
-    // The server decides inner vs outer at detail_boundary_radius(max_z, MAX_FOV).
-    // The vertex shader handles the visual tuck using actual camera parameters.
-    let detail_radius = chunk::detail_boundary_radius(player_z, chunk::MAX_FOV) as i32;
-    let max_radius = terrain_chunk_radius(player_z) as i32 + 1;
-
-    #[cfg(feature = "admin")]
-    let flyover_active = flyover.as_ref().map_or(false, |f| f.active);
-
-    // Collect existing mesh entities
-    let full_detail_entities: HashMap<ChunkId, Entity> = full_detail_query
-        .iter().map(|(e, cm)| (cm.chunk_id, e)).collect();
-    let summary_entities: HashMap<ChunkId, Entity> = summary_query
-        .iter().map(|(e, cm)| (cm.chunk_id, e)).collect();
-
-    // All known chunks (union of data + existing mesh entities)
-    let mut all_chunks: HashSet<ChunkId> = HashSet::new();
-    all_chunks.extend(&loaded_chunks.chunks);
-    all_chunks.extend(chunk_summaries.summaries.keys());
-    all_chunks.extend(full_detail_entities.keys());
-    all_chunks.extend(summary_entities.keys());
-
-    // ── Change detection for neighbor regen ──
-    let current_summary_keys: HashSet<ChunkId> = chunk_summaries.summaries.keys().copied().collect();
-    let new_loaded: HashSet<ChunkId> = loaded_chunks.chunks.difference(&state.prev_loaded).copied().collect();
-    let added_summaries: HashSet<ChunkId> = current_summary_keys.difference(&state.prev_summary_keys).copied().collect();
-    let removed_summaries: HashSet<ChunkId> = state.prev_summary_keys.difference(&current_summary_keys).copied().collect();
-
-    // ── Summary regen set (corner vertex sharing requires neighbor updates) ──
-    let mut summary_regen: HashSet<ChunkId> = HashSet::new();
-    for changed in added_summaries.iter().chain(removed_summaries.iter()) {
-        for dq in -1..=1_i32 {
-            for dr in -1..=1_i32 {
-                let nid = ChunkId(changed.0 + dq, changed.1 + dr);
-                if current_summary_keys.contains(&nid) {
-                    summary_regen.insert(nid);
-                }
+    for cid in &lod_evictable {
+        if let Some(state) = lod_meshes.states.remove(cid) {
+            if let Some(entity) = state.entity {
+                commands.entity(entity).despawn();
             }
         }
     }
-    summary_regen.extend(&added_summaries);
-
-    // ── Full-detail neighbor regen (edge vertex sharing) ──
-    let mut full_regen: HashSet<ChunkId> = HashSet::new();
-    for &new_chunk in &new_loaded {
-        if skip_neighbor_regen.chunks.contains(&new_chunk) { continue; }
-        for &(dn, dm) in &[(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)] {
-            let adj = ChunkId(new_chunk.0 + dn, new_chunk.1 + dm);
-            if full_detail_entities.contains_key(&adj) {
-                full_regen.insert(adj);
-            }
-        }
-    }
-
-    let pool = AsyncComputeTaskPool::get();
-    let full_detail_set: HashSet<ChunkId> = full_detail_entities.keys().copied().collect();
-
-    // ── Per-chunk zone reconciliation ──
-    for &chunk_id in &all_chunks {
-        let hex_dist = chunk_hex_distance(chunk_id, player_chunk);
-        // loaded_chunks tracks receipt, but tiles may not be in the map yet
-        // (queued via do_spawn, processed by refresh_map next frame).
-        // Spot-check center tile to confirm tiles are physically present.
-        let has_tiles = loaded_chunks.chunks.contains(&chunk_id)
-            && map.get_by_qr(chunk_id.center().q, chunk_id.center().r).is_some();
-        let has_summary = chunk_summaries.summaries.contains_key(&chunk_id);
-        let has_full_mesh = full_detail_entities.contains_key(&chunk_id);
-        let has_summary_mesh = summary_entities.contains_key(&chunk_id);
-
-        // During flyover, skip admin chunks (admin module manages its own meshes)
-        #[cfg(feature = "admin")]
-        {
-            if flyover_active && flyover.as_ref().map_or(false, |f| f.admin_chunks.contains(&chunk_id)) {
-                continue;
-            }
-        }
-
-        if hex_dist < detail_radius {
-            // Zone 1: full-detail only
-
-            if has_tiles && !has_full_mesh && !pending_chunks.tasks.contains_key(&chunk_id) {
-                let map_snap = map.clone();
-                let slopes = diagnostics_state.slope_rendering_enabled;
-                let cid = chunk_id;
-                pending_chunks.tasks.insert(chunk_id, pool.spawn(async move {
-                    map_snap.generate_chunk_mesh(cid, slopes)
-                }));
-            }
-
-            // Summary: despawn only once full-detail is ready (eviction gate).
-            // A chunk can skip zone 2 and jump straight from zone 3 to zone 1
-            // when the player crosses a chunk boundary. Without this gate the
-            // summary would vanish before the async full-detail task completes.
-            if has_summary_mesh && has_full_mesh {
-                commands.entity(summary_entities[&chunk_id]).despawn();
-            }
-
-        } else if hex_dist == detail_radius {
-            // Zone 2: boundary ring — both meshes coexist.
-            // The vertex shader tucks the summary mesh under full-detail,
-            // providing a smooth LoD transition. Both meshes are required.
-
-            if has_tiles && !has_full_mesh && !pending_chunks.tasks.contains_key(&chunk_id) {
-                let map_snap = map.clone();
-                let slopes = diagnostics_state.slope_rendering_enabled;
-                let cid = chunk_id;
-                pending_chunks.tasks.insert(chunk_id, pool.spawn(async move {
-                    map_snap.generate_chunk_mesh(cid, slopes)
-                }));
-            }
-
-            // Summary data comes from the server (zone 2 boundary ring
-            // receives both ChunkData and ChunkSummary). Dispatch mesh if missing.
-            if chunk_summaries.summaries.contains_key(&chunk_id)
-                && !has_summary_mesh && !pending_summaries.tasks.contains_key(&chunk_id)
-            {
-                summary_regen.insert(chunk_id);
-            }
-
-        } else if hex_dist <= max_radius {
-            // Zone 3: summary only
-
-            if has_full_mesh {
-                if has_summary_mesh {
-                    // Summary ready — safe to remove full-detail
-                    commands.entity(full_detail_entities[&chunk_id]).despawn();
-                }
-                // else: eviction gate — keep full-detail visible until summary ready
-            }
-
-            if has_summary && !has_summary_mesh && !pending_summaries.tasks.contains_key(&chunk_id) {
-                summary_regen.insert(chunk_id);
-            }
-
-        } else {
-            // Beyond max visibility: nothing should exist
-            if has_full_mesh {
-                commands.entity(full_detail_entities[&chunk_id]).despawn();
-            }
-            if has_summary_mesh {
-                commands.entity(summary_entities[&chunk_id]).despawn();
-            }
-        }
-    }
-
-    // ── Dispatch full-detail neighbor regen tasks ──
-    for chunk_id in full_regen {
-        pending_chunks.tasks.remove(&chunk_id);
-        let map_snap = map.clone();
-        let slopes = diagnostics_state.slope_rendering_enabled;
-        pending_chunks.tasks.insert(chunk_id, pool.spawn(async move {
-            map_snap.generate_chunk_mesh(chunk_id, slopes)
-        }));
-    }
-
-    // ── Dispatch summary regen tasks ──
-    for &chunk_id in &summary_regen {
-        let Some(summary_data) = chunk_summaries.summaries.get(&chunk_id) else { continue };
-        pending_summaries.tasks.remove(&chunk_id);
-
-        let data_copy = *summary_data;
-        let fd_neighbors: HashSet<ChunkId> = [
-            (1,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1),
-        ].iter()
-            .map(|&(dn, dm)| ChunkId(chunk_id.0 + dn, chunk_id.1 + dm))
-            .filter(|nid| full_detail_set.contains(nid))
-            .collect();
-
-        pending_summaries.tasks.insert(chunk_id, pool.spawn(async move {
-            generate_summary_mesh(&data_copy, &fd_neighbors)
-        }));
-    }
-
-    // Update tracking state
-    state.prev_loaded = loaded_chunks.chunks.clone();
-    state.prev_summary_keys = chunk_summaries.summaries.keys().copied().collect();
-}
-
-// ─────────────────────────────────────────────────────────
-// SYSTEM 3: Async task completion (every frame)
-// ─────────────────────────────────────────────────────────
-// Polls async mesh generation tasks, inserts completed mesh entities.
-// Validates data still exists before spawning (chunk may have been evicted
-// while the async task was running). Only spawns — reconcile_meshes
-// makes all despawn decisions.
-
-pub fn poll_mesh_tasks(
-    mut commands: Commands,
-    mut pending_chunks: ResMut<PendingChunkMeshes>,
-    mut pending_summaries: ResMut<PendingSummaryMeshes>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    terrain_material: Res<TerrainMaterial>,
-    full_detail_query: Query<(Entity, &Mesh3d, &ChunkMesh), Without<SummaryChunk>>,
-    summary_query: Query<(Entity, &Mesh3d, &ChunkMesh), With<SummaryChunk>>,
-    loaded_chunks: Res<LoadedChunks>,
-    chunk_summaries: Res<ChunkSummaries>,
-    skip_regen: Res<SkipNeighborRegen>,
-    #[cfg(feature = "admin")]
-    flyover: Option<Res<crate::systems::admin::FlyoverState>>,
-) {
-    use common_bevy::chunk::ChunkId;
-
-    // ── Poll full-detail tasks ──
-    let mut completed_full: Vec<(ChunkId, Mesh)> = Vec::new();
-    pending_chunks.tasks.retain(|&cid, task| {
-        match block_on(future::poll_once(task)) {
-            Some((mesh, _aabb)) => { completed_full.push((cid, mesh)); false }
-            None => true,
-        }
-    });
-
-    for (chunk_id, chunk_mesh) in completed_full {
-        let wanted = loaded_chunks.chunks.contains(&chunk_id)
-            || skip_regen.chunks.contains(&chunk_id);
-        #[cfg(feature = "admin")]
-        let wanted = wanted || flyover.as_ref().map_or(false, |f| f.admin_chunks.contains(&chunk_id));
-
-        let existing = full_detail_query.iter()
-            .find(|(_, _, c)| c.chunk_id == chunk_id)
-            .map(|(e, mh, _)| (e, mh.clone()));
-
-        if let Some((_entity, mesh_handle)) = existing {
-            if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
-                *mesh_asset = chunk_mesh;
-            }
-        } else if wanted {
-            commands.spawn((
-                Mesh3d(meshes.add(chunk_mesh)),
-                MeshMaterial3d(terrain_material.handle.clone()),
-                ChunkMesh { chunk_id },
-            ));
-        }
-    }
-
-    // ── Poll summary tasks ──
-    let mut completed_summary: Vec<(ChunkId, Mesh)> = Vec::new();
-    pending_summaries.tasks.retain(|&cid, task| {
-        match block_on(future::poll_once(task)) {
-            Some(mesh) => { completed_summary.push((cid, mesh)); false }
-            None => true,
-        }
-    });
-
-    for (chunk_id, summary_mesh) in completed_summary {
-        if !chunk_summaries.summaries.contains_key(&chunk_id) { continue; }
-
-        let existing = summary_query.iter()
-            .find(|(_, _, cm)| cm.chunk_id == chunk_id)
-            .map(|(e, mh, _)| (e, mh.clone()));
-
-        if let Some((_entity, mesh_handle)) = existing {
-            if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
-                *mesh_asset = summary_mesh;
-            }
-        } else {
-            commands.spawn((
-                Mesh3d(meshes.add(summary_mesh)),
-                MeshMaterial3d(terrain_material.handle.clone()),
-                ChunkMesh { chunk_id },
-                SummaryChunk,
-            ));
-        }
-    }
-}
-
-/// Generate a mesh from QEM-decimated summary data.
-///
-/// Uses the 12 boundary vertices (seamless tiling) plus N QEM-selected
-/// interior vertices. Delaunay-triangulates all vertices in the XZ plane.
-///
-/// Per-vertex tuck topology is encoded in `uv.y`:
-///   - `1.0` → tuckable (boundary vertex adjacent to full-detail)
-///   - `0.5` → non-tuckable summary (all others)
-fn generate_summary_mesh(
-    data: &common_bevy::qem::SummaryHexData,
-    full_detail_neighbors: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
-) -> Mesh {
-    use common_bevy::chunk::ChunkId;
-    use common_bevy::qem;
-
-    let has_tuck = !full_detail_neighbors.is_empty();
-
-    // Build world positions for all vertices (boundary + interior)
-    let world_pos = qem::summary_world_positions(data);
-    let triangles = qem::triangulate_summary(&world_pos);
-
-    let vert_count = world_pos.len();
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(vert_count);
-    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(vert_count);
-    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(vert_count);
-
-    // Compute per-vertex normals by averaging incident triangle normals
-    let mut normal_accum: Vec<Vec3> = vec![Vec3::ZERO; vert_count];
-    for &[v0, v1, v2] in &triangles {
-        let p0 = Vec3::from_array(world_pos[v0]);
-        let p1 = Vec3::from_array(world_pos[v1]);
-        let p2 = Vec3::from_array(world_pos[v2]);
-        let n = (p1 - p0).cross(p2 - p0);
-        normal_accum[v0] += n;
-        normal_accum[v1] += n;
-        normal_accum[v2] += n;
-    }
-
-    // Tuck flags for boundary vertices (first 12)
-    // Corner i is tuckable if either adjacent lattice neighbor has full detail
-    let lattice_neighbors: [(i32, i32); 6] = [
-        (1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1),
-    ];
-
-    let corner_tuckable = |corner_idx: usize| -> bool {
-        if !has_tuck { return false; }
-        let i = corner_idx;
-        let n1_id = ChunkId(data.chunk_id.0 + lattice_neighbors[i].0,
-                             data.chunk_id.1 + lattice_neighbors[i].1);
-        let n2_id = ChunkId(data.chunk_id.0 + lattice_neighbors[(i + 1) % 6].0,
-                             data.chunk_id.1 + lattice_neighbors[(i + 1) % 6].1);
-        full_detail_neighbors.contains(&n1_id) || full_detail_neighbors.contains(&n2_id)
-    };
-
-    let midpoint_tuckable = |mid_idx: usize| -> bool {
-        if !has_tuck { return false; }
-        // Midpoint i is between corners i and (i+1)%6
-        corner_tuckable(mid_idx) || corner_tuckable((mid_idx + 1) % 6)
-    };
-
-    for vi in 0..vert_count {
-        positions.push(world_pos[vi]);
-        let n = normal_accum[vi];
-        let normal = if n.length_squared() > 1e-10 { n.normalize() } else { Vec3::Y };
-        normals.push(normal.into());
-
-        let tuck = if vi < 6 {
-            // Corner vertex
-            if corner_tuckable(vi) { 1.0 } else { 0.5 }
-        } else if vi < 12 {
-            // Edge midpoint vertex
-            if midpoint_tuckable(vi - 6) { 1.0 } else { 0.5 }
-        } else {
-            // Interior vertex — tuckable if near full-detail boundary
-            if has_tuck { 1.0 } else { 0.5 }
-        };
-        // uv.x = natural world Y (for fragment color ramp)
-        // uv.y = tuck flag
-        uvs.push([world_pos[vi][1], tuck]);
-    }
-
-    let mut indices: Vec<u32> = Vec::with_capacity(triangles.len() * 3);
-    for &[v0, v1, v2] in &triangles {
-        indices.extend_from_slice(&[v0 as u32, v1 as u32, v2 as u32]);
-    }
-
-    let mut mesh = Mesh::new(
-        bevy_mesh::PrimitiveTopology::TriangleList,
-        bevy_asset::RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(bevy_mesh::Indices::U32(indices));
-
-    mesh
 }
 
 pub fn do_init(
@@ -576,8 +152,9 @@ pub fn do_init(
     mut server: ResMut<Server>,
     time: Res<Time>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Init { dt, .. } } = message else { continue };
+        let dt = *dt;
         let client_now = time.elapsed().as_millis();
 
         // CRITICAL: The server captured dt when it SENT Init, but we're receiving it now
@@ -600,8 +177,10 @@ pub fn do_spawn(
 
     // Queue tile spawn events (drain loop will process them)
     // refresh_map system will swap in new snapshot and trigger Bevy change detection
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
+        let decorator = *decorator;
+        let qrz = *qrz;
 
         map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
     }
@@ -682,4 +261,237 @@ pub fn update(
             }.into();
         }
     }
+}
+
+// ── Client-Side LoD ──
+
+/// QEM error threshold for LoD1 (lossless — removes only zero-error vertices).
+const LOD1_ERROR_THRESHOLD: f32 = 0.0;
+/// QEM error threshold for LoD2 (lossy — tune after viewing results).
+const LOD2_ERROR_THRESHOLD: f32 = 2.0;
+
+/// Dispatch dual-LoD QEM tasks for newly loaded chunks.
+/// Runs every frame — checks for chunks that have tiles but no LoD tasks yet.
+pub fn dispatch_lod_tasks(
+    loaded_chunks: Res<LoadedChunks>,
+    map: Res<common_bevy::resources::map::Map>,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
+    mut diag_state: Local<(bool, usize, f32)>, // (logged, last_count, last_change_time)
+    time: Res<Time>,
+) {
+    let pool = bevy::tasks::AsyncComputeTaskPool::get();
+
+    for &chunk_id in &loaded_chunks.chunks {
+        if lod_meshes.states.contains_key(&chunk_id) {
+            continue; // Already dispatched
+        }
+
+        // Build chunk tiles + elevation lookup from populated Map
+        let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
+            .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
+            .collect();
+
+        if chunk_tile_list.len() < 271 {
+            if chunk_tile_list.is_empty() {
+                continue; // Tiles not loaded yet
+            }
+            bevy::log::warn!("chunk ({},{}) has only {} of 271 tiles in map",
+                chunk_id.0, chunk_id.1, chunk_tile_list.len());
+            continue; // Partial load — wait for all tiles
+        }
+
+        // Wait until all 6 chunk neighbors have tiles in the Map
+        // (not just in loaded_chunks — tiles must be actually inserted by do_spawn)
+        let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+        let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
+            let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+            let nc = nid.center();
+            map.get_by_qr(nc.q, nc.r).is_some()
+        });
+        if !all_neighbors_in_map {
+            continue;
+        }
+
+        let mut elevations = std::collections::HashMap::new();
+        for &qrz in &chunk_tile_list {
+            elevations.insert((qrz.q, qrz.r), qrz.z);
+            for direction in qrz::DIRECTIONS.iter() {
+                let n = qrz + *direction;
+                if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
+                    elevations.insert((actual.q, actual.r), actual.z);
+                }
+            }
+        }
+
+        // Dispatch LoD1 task
+        let tiles1 = chunk_tile_list.clone();
+        let elevs1 = elevations.clone();
+        // Dispatch LoD1 task — raw geometry passthrough
+        let tiles1 = chunk_tile_list.clone();
+        let elevs1 = elevations.clone();
+        let lod1_task = pool.spawn(async move {
+            let geometry = common_bevy::geometry::compute_tile_geometry(
+                &tiles1, &elevs1, 1.0, 0.8,
+            );
+            common_bevy::qem::DecimatedMesh {
+                positions: geometry.positions,
+                normals: geometry.normals,
+                indices: geometry.indices,
+            }
+        });
+
+        // Dispatch LoD2 task — QEM decimation
+        let tiles2 = chunk_tile_list;
+        let elevs2 = elevations;
+        let lod2_task = pool.spawn(async move {
+            let geometry = common_bevy::geometry::compute_tile_geometry(
+                &tiles2, &elevs2, 1.0, 0.8,
+            );
+            common_bevy::qem::decimate_geometry(&geometry, LOD2_ERROR_THRESHOLD)
+        });
+
+        lod_meshes.states.insert(chunk_id, ChunkLodState {
+            lod1_task: Some(lod1_task),
+            lod2_task: Some(lod2_task),
+            lod1_mesh: None,
+            lod2_mesh: None,
+            active_lod: LodLevel::Lod1,
+            entity: None,
+        });
+    }
+
+    // One-time diagnostic: log when loaded count is stable for 5s
+    let (ref mut logged, ref mut last_count, ref mut last_change_time) = *diag_state;
+    let now = time.elapsed().as_secs_f32();
+    if loaded_chunks.chunks.len() != *last_count {
+        *last_count = loaded_chunks.chunks.len();
+        *last_change_time = now;
+    }
+    if !*logged && *last_count > 50 && (now - *last_change_time) > 5.0 {
+        *logged = true;
+        let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+        let mut waiting = 0;
+        let mut missing_neighbors: std::collections::HashMap<common_bevy::chunk::ChunkId, Vec<common_bevy::chunk::ChunkId>> = std::collections::HashMap::new();
+        for &chunk_id in &loaded_chunks.chunks {
+            if lod_meshes.states.contains_key(&chunk_id) { continue; }
+            let missing: Vec<common_bevy::chunk::ChunkId> = lattice_neighbors.iter()
+                .filter_map(|&(dn, dm)| {
+                    let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+                    if !loaded_chunks.chunks.contains(&nid) { Some(nid) } else { None }
+                })
+                .collect();
+            if !missing.is_empty() {
+                waiting += 1;
+                if waiting <= 5 {
+                    missing_neighbors.insert(chunk_id, missing);
+                }
+            }
+        }
+        // Count completed vs pending
+        let completed = lod_meshes.states.values()
+            .filter(|s| s.lod1_task.is_none() && s.lod2_task.is_none()).count();
+        let pending = lod_meshes.states.values()
+            .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
+        bevy::log::warn!("dispatch_lod DIAG: {} loaded, {} states ({} done, {} pending), {} waiting",
+            loaded_chunks.chunks.len(), lod_meshes.states.len(), completed, pending, waiting);
+        for (cid, missing) in &missing_neighbors {
+            bevy::log::warn!("  ({},{}) missing neighbors: {:?}", cid.0, cid.1,
+                missing.iter().map(|n| format!("({},{})", n.0, n.1)).collect::<Vec<_>>());
+        }
+    }
+}
+
+/// Poll completed LoD tasks, upload meshes, select active LoD per chunk.
+pub fn poll_and_swap_lod(
+    mut commands: Commands,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    terrain_material: Option<Res<TerrainMaterial>>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
+) {
+    let Some(terrain_material) = terrain_material else { return; };
+
+    let player_loc = player_query.iter().next();
+    let player_chunk = player_loc.map(|loc| loc_to_chunk(**loc));
+
+    for (&chunk_id, state) in lod_meshes.states.iter_mut() {
+        // Poll LoD1
+        if let Some(task) = &mut state.lod1_task {
+            if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod1_task = None;
+                state.lod1_mesh = Some(meshes.add(build_bevy_mesh(&result)));
+            }
+        }
+
+        // Poll LoD2
+        if let Some(task) = &mut state.lod2_task {
+            if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod2_task = None;
+                state.lod2_mesh = Some(meshes.add(build_bevy_mesh(&result)));
+            }
+        }
+
+        // Determine which mesh to show
+        let target_lod = target_lod_for_chunk(chunk_id, player_chunk);
+
+        // Pick the best available mesh: prefer target, fallback to any
+        let (mesh_handle, actual_lod) = match target_lod {
+            LodLevel::Lod1 => {
+                if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
+                else if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
+                else { continue; }
+            }
+            LodLevel::Lod2 => {
+                if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
+                else if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
+                else { continue; }
+            }
+        };
+
+        match state.entity {
+            Some(entity) => {
+                // Update mesh if what's displayed differs from what we want
+                if state.active_lod != actual_lod {
+                    commands.entity(entity).insert(Mesh3d(mesh_handle));
+                    state.active_lod = actual_lod;
+                }
+            }
+            None => {
+                let entity = commands.spawn((
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(terrain_material.handle.clone()),
+                    ChunkMesh { chunk_id },
+                )).id();
+                state.entity = Some(entity);
+                state.active_lod = actual_lod;
+            }
+        }
+    }
+}
+
+fn target_lod_for_chunk(chunk_id: common_bevy::chunk::ChunkId, player_chunk: Option<common_bevy::chunk::ChunkId>) -> LodLevel {
+    let Some(pc) = player_chunk else { return LodLevel::Lod1; };
+    let ring = chunk_hex_distance(chunk_id, pc);
+    let detail_radius = chunk::detail_boundary_radius(0, chunk::MAX_FOV) as i32;
+    if ring <= detail_radius {
+        LodLevel::Lod1
+    } else {
+        LodLevel::Lod2
+    }
+}
+
+fn build_bevy_mesh(decimated: &common_bevy::qem::DecimatedMesh) -> Mesh {
+    let vert_count = decimated.positions.len();
+    let verts: Vec<Vec3> = decimated.positions.iter().map(|p| Vec3::from_array(*p)).collect();
+    let norms: Vec<Vec3> = decimated.normals.iter().map(|n| Vec3::from_array(*n)).collect();
+
+    Mesh::new(
+        bevy_mesh::PrimitiveTopology::TriangleList,
+        bevy_asset::RenderAssetUsages::MAIN_WORLD | bevy_asset::RenderAssetUsages::RENDER_WORLD,
+    )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0,
+            (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
+        .with_inserted_indices(bevy_mesh::Indices::U32(decimated.indices.clone()))
 }

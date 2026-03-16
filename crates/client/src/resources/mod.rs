@@ -8,7 +8,7 @@ use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
 use common_bevy::chunk::ChunkId;
-use common_bevy::qem::SummaryHexData;
+use common_bevy::qem::DecimatedMesh;
 
 /// Custom terrain material extension that computes elevation color in the fragment shader.
 /// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
@@ -60,24 +60,11 @@ impl Server {
 }
 
 use bevy::tasks::Task;
-use bevy_camera::primitives::Aabb;
 
 /// Shared material for all chunk meshes (elevation color computed in shader)
 #[derive(Resource)]
 pub struct TerrainMaterial {
     pub handle: Handle<ExtendedMaterial<StandardMaterial, TerrainExtension>>,
-}
-
-/// Tracks pending async mesh generation tasks per chunk
-#[derive(Resource, Default)]
-pub struct PendingChunkMeshes {
-    pub tasks: HashMap<ChunkId, Task<(Mesh, Aabb)>>,
-}
-
-/// Tracks pending async summary mesh generation tasks per chunk
-#[derive(Resource, Default)]
-pub struct PendingSummaryMeshes {
-    pub tasks: HashMap<ChunkId, Task<Mesh>>,
 }
 
 /// Chunks whose appearance should NOT trigger neighbor mesh regeneration.
@@ -88,11 +75,24 @@ pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
 }
 
-/// Stores QEM-decimated chunk summaries for outer-ring LoD rendering.
-/// Separate from the tile Map to avoid collision with physics/pathfinding.
-#[derive(Debug, Default, Resource)]
-pub struct ChunkSummaries {
-    pub summaries: HashMap<ChunkId, SummaryHexData>,
+/// LoD level for a chunk mesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LodLevel { Lod1, Lod2 }
+
+/// Per-chunk dual-LoD mesh state.
+pub struct ChunkLodState {
+    pub lod1_task: Option<Task<DecimatedMesh>>,
+    pub lod2_task: Option<Task<DecimatedMesh>>,
+    pub lod1_mesh: Option<Handle<Mesh>>,
+    pub lod2_mesh: Option<Handle<Mesh>>,
+    pub active_lod: LodLevel,
+    pub entity: Option<Entity>,
+}
+
+/// Tracks dual-LoD mesh generation for all chunks.
+#[derive(Resource, Default)]
+pub struct ChunkLodMeshes {
+    pub states: HashMap<ChunkId, ChunkLodState>,
 }
 
 /// Tracks which chunks have been received on the client

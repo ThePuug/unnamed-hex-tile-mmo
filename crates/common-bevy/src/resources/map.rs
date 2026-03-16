@@ -242,108 +242,50 @@ impl Map {
     pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
         let map = &*self.0;
 
-        let mut verts: Vec<Vec3> = Vec::new();
-        let mut norms: Vec<Vec3> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
+        // Gather chunk tiles
+        let chunk_tiles: Vec<Qrz> = map.iter()
+            .filter(|(&qrz, _)| loc_to_chunk(qrz) == chunk_id)
+            .map(|(&qrz, _)| qrz)
+            .collect();
 
-        for (&tile_qrz, _) in map.iter() {
-            if loc_to_chunk(tile_qrz) != chunk_id {
-                continue;
-            }
-
-            let raw_verts = map.vertices(tile_qrz);
-            let slope_verts = Self::vertices_with_slopes_inner(&map, tile_qrz, apply_slopes);
-
-            // Use raw XZ for edge alignment, slope-adjusted Y for height
-            let tile_verts: Vec<Vec3> = raw_verts.iter().enumerate().map(|(i, &raw_pos)| {
-                if apply_slopes && i < 6 {
-                    Vec3::new(raw_pos.x, slope_verts[i].y, raw_pos.z)
-                } else {
-                    raw_pos
-                }
-            }).collect();
-
-            let base_idx = verts.len() as u32;
-
-            // Center vertex (index 6)
-            verts.push(tile_verts[6]);
-            norms.push(Self::hex_vertex_normal(&tile_verts, 6));
-
-            // Outer vertices (0-5: N, NE, SE, S, SW, NW)
-            for i in 0..6 {
-                verts.push(tile_verts[i]);
-                norms.push(Self::hex_vertex_normal(&tile_verts, i));
-            }
-
-            // 6 triangles for hex top surface (CCW winding)
-            for i in 0..6 {
-                let v1 = base_idx + 1 + i;
-                let v2 = base_idx + 1 + ((i + 1) % 6);
-                indices.extend([base_idx, v2, v1]);
-            }
-
-            // Vertical skirt geometry for cliff edges
-            for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
-                let neighbor_qrz = tile_qrz + *direction;
-                let found_neighbor = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r);
-
-                if let Some((actual_neighbor_qrz, _)) = found_neighbor {
-                    let elevation_diff = actual_neighbor_qrz.z - tile_qrz.z;
-                    if elevation_diff >= 0 {
-                        continue;
-                    }
-
-                    let neighbor_raw = map.vertices(actual_neighbor_qrz);
-                    let neighbor_verts: Vec<Vec3> = if apply_slopes {
-                        let neighbor_slope = Self::vertices_with_slopes_inner(&map, actual_neighbor_qrz, true);
-                        neighbor_raw.iter().enumerate().map(|(i, &raw_pos)| {
-                            if i < 6 {
-                                Vec3::new(raw_pos.x, neighbor_slope[i].y, raw_pos.z)
-                            } else {
-                                raw_pos
-                            }
-                        }).collect()
-                    } else {
-                        neighbor_raw
-                    };
-
-                    let (curr_v1_idx, curr_v2_idx, neighbor_v1_idx, neighbor_v2_idx) = match dir_idx {
-                        0 => (4, 5, 2, 1),
-                        1 => (3, 4, 1, 0),
-                        2 => (2, 3, 0, 5),
-                        3 => (1, 2, 5, 4),
-                        4 => (0, 1, 4, 3),
-                        5 => (5, 0, 3, 2),
-                        _ => continue,
-                    };
-
-                    let curr_v1 = tile_verts[curr_v1_idx];
-                    let curr_v2 = tile_verts[curr_v2_idx];
-                    let neighbor_v1 = neighbor_verts[neighbor_v1_idx];
-                    let neighbor_v2 = neighbor_verts[neighbor_v2_idx];
-
-                    // Outward-facing normal for skirt (horizontal → shader detects as cliff)
-                    let edge_dir = (curr_v2 - curr_v1).normalize();
-                    let outward_normal = edge_dir.cross(Vec3::new(0., -1., 0.)).normalize();
-
-                    let skirt_base = verts.len() as u32;
-                    verts.extend([curr_v1, curr_v2, neighbor_v2, neighbor_v1]);
-                    norms.extend([outward_normal; 4]);
-
-                    indices.extend([skirt_base, skirt_base + 1, skirt_base + 2]);
-                    indices.extend([skirt_base, skirt_base + 2, skirt_base + 3]);
+        // Build elevation lookup: chunk tiles + 1-ring neighbors
+        let mut elevations = std::collections::HashMap::new();
+        for &qrz in &chunk_tiles {
+            elevations.insert((qrz.q, qrz.r), qrz.z);
+            for direction in qrz::DIRECTIONS.iter() {
+                let n = qrz + *direction;
+                if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
+                    elevations.insert((actual.q, actual.r), actual.z);
                 }
             }
         }
+
+        let geometry = if apply_slopes {
+            crate::geometry::compute_tile_geometry(
+                &chunk_tiles, &elevations, map.radius(), map.rise(),
+            )
+        } else {
+            // No slopes: use flat elevations (no neighbor adjustment)
+            // Build geometry without slope blending by passing empty neighbor set
+            let chunk_only: std::collections::HashMap<(i32, i32), i32> = chunk_tiles.iter()
+                .map(|qrz| ((qrz.q, qrz.r), qrz.z))
+                .collect();
+            crate::geometry::compute_tile_geometry(
+                &chunk_tiles, &chunk_only, map.radius(), map.rise(),
+            )
+        };
 
         let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
         let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
-        for vert in &verts {
-            min = Vec3::min(min, *vert);
-            max = Vec3::max(max, *vert);
+        for pos in &geometry.positions {
+            let v = Vec3::from_array(*pos);
+            min = Vec3::min(min, v);
+            max = Vec3::max(max, v);
         }
 
-        let vert_count = verts.len();
+        let vert_count = geometry.positions.len();
+        let verts: Vec<Vec3> = geometry.positions.iter().map(|p| Vec3::from_array(*p)).collect();
+        let norms: Vec<Vec3> = geometry.normals.iter().map(|n| Vec3::from_array(*n)).collect();
 
         (
             Mesh::new(
@@ -353,7 +295,7 @@ impl Map {
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..vert_count).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-                .with_inserted_indices(Indices::U32(indices)),
+                .with_inserted_indices(Indices::U32(geometry.indices)),
             Aabb::from_min_max(min, max),
         )
     }

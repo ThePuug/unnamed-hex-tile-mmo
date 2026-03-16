@@ -17,8 +17,9 @@ pub fn tick(
 ) {
     let dt = time.delta().as_millis() as u16;
 
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }} = message else { continue };
+        let (ent, keybits) = (*ent, *keybits);
         let Some(buffer) = buffers.get_mut(&ent)
             // disconnect by client could remove buffer while message in transit
             else { continue };
@@ -71,8 +72,9 @@ pub fn apply(
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Do { event: Event::Input { ent, dt, key_bits, .. } } = message {
+            let (ent, dt, key_bits) = (*ent, *dt, *key_bits);
             let Ok((&loc, mut heading, mut position, mut airtime, attrs)) = query.get_mut(ent)
                 // disconnect by client could remove entity while message in transit
                 else { continue };

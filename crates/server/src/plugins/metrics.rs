@@ -200,18 +200,7 @@ impl Plugin for MetricsPlugin {
         snapshot.register("frame_duration_ms", Aggregator::Last);
         snapshot.register("frame_peak_ms", Aggregator::Peak);
         snapshot.register("frame_overruns", Aggregator::Sum);
-        snapshot.register("async.tasks_in_flight", Aggregator::Peak);
-        snapshot.register("async.task_duration_ms", Aggregator::Peak);
-        snapshot.register("async.tasks_completed", Aggregator::Sum);
-
-        // ── Event: QEM observations ──
-        let mut qem_event = MetricEvent::new("qem", transport);
-        qem_event.register("geometric_error");
-        qem_event.register("render_compression");
-        qem_event.register("network_compression");
-
         app.insert_resource(snapshot)
-            .insert_resource(qem_event)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
             .add_systems(FixedLast, tick_timer_end)

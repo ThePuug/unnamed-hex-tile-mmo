@@ -219,8 +219,12 @@ pub fn do_input(
     mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
+        let ent = *ent;
+        let key_bits = *key_bits;
+        let dt = *dt;
+        let seq = *seq;
         let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
 
         // Maintain invariant: all queues always have at least 1 input

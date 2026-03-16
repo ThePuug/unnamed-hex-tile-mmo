@@ -176,8 +176,8 @@ fn main() {
         renet::handle_pong,
         renet::periodic_ping,
         world::do_spawn,
-        world::reconcile_meshes,
-        world::poll_mesh_tasks,
+        world::dispatch_lod_tasks.after(world::do_spawn),
+        world::poll_and_swap_lod.after(world::dispatch_lod_tasks),
         world::update,
     ));
 
@@ -194,10 +194,8 @@ fn main() {
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
-    app.init_resource::<crate::resources::ChunkSummaries>();
-    app.init_resource::<crate::resources::PendingChunkMeshes>();
-    app.init_resource::<crate::resources::PendingSummaryMeshes>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
+    app.init_resource::<crate::resources::ChunkLodMeshes>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]

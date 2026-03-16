@@ -8,7 +8,7 @@ use ::renet::DefaultChannel;
 
 use crate::{
     plugins::diagnostics::network_ui::NetworkMetrics,
-    resources::{ChunkSummaries, EntityMap, LoadedChunks},
+    resources::{EntityMap, LoadedChunks},
 };
 use crate::*;
 use common_bevy::{
@@ -41,7 +41,6 @@ fn get_message_type_name(message: &Do) -> String {
         },
         Event::Gcd { .. } => "Gcd".to_string(),
         Event::ChunkData { .. } => "ChunkData".to_string(),
-        Event::ChunkSummary { .. } => "ChunkSummary".to_string(),
         Event::InsertThreat { .. } => "InsertThreat".to_string(),
         Event::ApplyDamage { .. } => "ApplyDamage".to_string(),
         Event::ClearQueue { .. } => "ClearQueue".to_string(),
@@ -68,7 +67,10 @@ pub fn setup(
     };
 
     let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-    let client = RenetClient::new(ConnectionConfig::default());
+    // Must match server: chunk burst goes on ReliableUnordered with larger buffer
+    let mut config = ConnectionConfig::default();
+    config.server_channels_config[1].max_memory_usage_bytes = 50 * 1024 * 1024;
+    let client = RenetClient::new(config);
 
     commands.insert_resource(client);
     commands.insert_resource(transport);
@@ -82,7 +84,6 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
-    mut chunk_summaries: ResMut<ChunkSummaries>,
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
@@ -182,24 +183,7 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::Gcd { ent, typ } });
             }
-            Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
-                // Unpack chunk into individual tile spawns
-                for (qrz, typ) in tiles {
-                    // Emit spawn events for world system to process
-                    do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
-                }
-
-                // Track that we received this chunk
-                loaded_chunks.insert(chunk_id);
-
-                // Summary is kept — resolve_lod_overlap removes it once
-                // the full-detail mesh entity exists.
-            }
-            Do { event: Event::ChunkSummary { ent: _, data } } => {
-                // Accept summaries even for loaded chunks — zone 2 boundary ring
-                // has both full-detail and summary data from the server.
-                chunk_summaries.summaries.insert(data.chunk_id, data);
-            }
+            // ChunkData now arrives on ReliableUnordered — handled below
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     warn!("Client: InsertThreat target {:?} not in l2r map, requesting spawn", ent);
@@ -263,6 +247,26 @@ pub fn write_do(
         }
     }
 
+    // Chunk data arrives on ReliableUnordered — no ordering needed between independent chunks
+    while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableUnordered) {
+        let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+
+        let message_type = get_message_type_name(&message);
+        network_metrics.record_received(message_type, serialized.len());
+
+        match message {
+            Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
+                for (qrz, typ) in tiles {
+                    do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
+                }
+                loaded_chunks.insert(chunk_id);
+            }
+            _ => {
+                warn!("Unexpected message type on ReliableUnordered channel");
+            }
+        }
+    }
+
     // ADR-011: Listen for MovementIntent on Unreliable channel for bandwidth efficiency
     // Unreliable channel is used for frequent, self-correcting messages (latest wins)
     while let Some(serialized) = conn.receive_message(DefaultChannel::Unreliable) {
@@ -294,62 +298,62 @@ pub fn send_try(
     mut reader: MessageReader<Try>,
     l2r: Res<EntityMap>,
 ) {
-    for &message in reader.read() {
-        match message {
-            Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) } } => {
+    for message in reader.read() {
+        match &message.event {
+            Event::Incremental { ent, component: Component::KeyBits(keybits) } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
-                    component: Component::KeyBits(keybits)
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    component: Component::KeyBits(*keybits)
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::Gcd { ent, typ, .. } } => {
+            Event::Gcd { ent, typ, .. } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
-                    typ,
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    typ: *typ,
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::Spawn { ent, typ, qrz, attrs } } => {
+            Event::Spawn { ent, typ, qrz, attrs } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
-                    ent, typ, qrz, attrs
+                    ent: *ent, typ: *typ, qrz: *qrz, attrs: *attrs
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::UseAbility { ent, ability, target } } => {
+            Event::UseAbility { ent, ability, target } => {
                 // Map target entity local→remote; if not in bimap, send None
                 let remote_target = target.and_then(|t| l2r.get_by_left(&t).copied());
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
-                    ability,
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    ability: *ability,
                     target: remote_target
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::Ping { client_time } } => {
+            Event::Ping { client_time } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
-                    client_time
+                    client_time: *client_time
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::SetTierLock { ent, tier } } => {
+            Event::SetTierLock { ent, tier } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
-                    tier
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    tier: *tier
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::Dismiss { ent } } => {
+            Event::Dismiss { ent } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
+                    ent: *l2r.get_by_left(ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
-            Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
+            Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
                 conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
-                    ent: *l2r.get_by_left(&ent).unwrap(),
-                    might_grace_axis,
-                    might_grace_spectrum,
-                    might_grace_shift,
-                    vitality_focus_axis,
-                    vitality_focus_spectrum,
-                    vitality_focus_shift,
-                    instinct_presence_axis,
-                    instinct_presence_spectrum,
-                    instinct_presence_shift,
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    might_grace_axis: *might_grace_axis,
+                    might_grace_spectrum: *might_grace_spectrum,
+                    might_grace_shift: *might_grace_shift,
+                    vitality_focus_axis: *vitality_focus_axis,
+                    vitality_focus_spectrum: *vitality_focus_spectrum,
+                    vitality_focus_shift: *vitality_focus_shift,
+                    instinct_presence_axis: *instinct_presence_axis,
+                    instinct_presence_spectrum: *instinct_presence_spectrum,
+                    instinct_presence_shift: *instinct_presence_shift,
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}
@@ -363,8 +367,9 @@ pub fn handle_pong(
     mut server: ResMut<crate::resources::Server>,
     time: Res<Time>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Pong { client_time } } = message else { continue };
+        let client_time = *client_time;
         let client_now = time.elapsed().as_millis();
 
         // Calculate round-trip time (RTT) and one-way latency

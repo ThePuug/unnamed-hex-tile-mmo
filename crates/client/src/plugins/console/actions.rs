@@ -34,12 +34,9 @@ pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut reader: MessageReader<DevConsoleAction>,
-    map: Res<common_bevy::resources::map::Map>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay), (Without<PerfUiRootMarker>, Without<NetworkUiRootMarker>)>,
-    mut pending_meshes: ResMut<crate::resources::PendingChunkMeshes>,
-    chunk_mesh_query: Query<(Entity, &Mesh3d, &crate::components::ChunkMesh)>,
     actor_query: Query<Entity, With<Behaviour>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut perf_ui_query: Query<&mut Node, (With<PerfUiRootMarker>, Without<HexGridOverlay>, Without<NetworkUiRootMarker>, Without<TerrainDetailRootMarker>)>,
@@ -83,49 +80,17 @@ pub fn execute_console_actions(
             }
             DevConsoleAction::ToggleSlopeRendering => {
                 diagnostics_state.slope_rendering_enabled = !diagnostics_state.slope_rendering_enabled;
-
-                // Clear all pending tasks and spawn new async tasks for all chunks
-                pending_meshes.tasks.clear();
-
-                let pool = bevy::tasks::AsyncComputeTaskPool::get();
-                for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_snapshot = map.clone();
-                    let apply_slopes = diagnostics_state.slope_rendering_enabled;
-                    let chunk_id = chunk_mesh.chunk_id;
-
-                    let task = pool.spawn(async move {
-                        map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
-                    });
-
-                    pending_meshes.tasks.insert(chunk_id, task);
-                }
-
-                info!("Slope rendering: {} (regenerating {} chunks async)",
-                    if diagnostics_state.slope_rendering_enabled { "ON" } else { "OFF" },
-                    pending_meshes.tasks.len());
+                // Mesh regeneration now handled by LoD pipeline
+                info!("Slope rendering: {}",
+                    if diagnostics_state.slope_rendering_enabled { "ON" } else { "OFF" });
             }
             DevConsoleAction::ToggleFixedLighting => {
                 diagnostics_state.fixed_lighting_enabled = !diagnostics_state.fixed_lighting_enabled;
                 info!("Fixed lighting: {}", if diagnostics_state.fixed_lighting_enabled { "ON" } else { "OFF" });
             }
             DevConsoleAction::RegenerateMesh => {
-                // Clear all pending tasks and spawn new async tasks for all chunks
-                pending_meshes.tasks.clear();
-
-                let pool = bevy::tasks::AsyncComputeTaskPool::get();
-                for (_entity, _mesh_3d, chunk_mesh) in chunk_mesh_query.iter() {
-                    let map_snapshot = map.clone();
-                    let apply_slopes = diagnostics_state.slope_rendering_enabled;
-                    let chunk_id = chunk_mesh.chunk_id;
-
-                    let task = pool.spawn(async move {
-                        map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
-                    });
-
-                    pending_meshes.tasks.insert(chunk_id, task);
-                }
-
-                info!("Mesh regeneration requested ({} chunks async)", pending_meshes.tasks.len());
+                // Mesh regeneration now handled by LoD pipeline
+                info!("Mesh regeneration: use LoD pipeline (no-op)");
             }
 
             // Performance actions

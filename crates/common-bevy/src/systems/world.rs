@@ -11,9 +11,9 @@ pub fn try_incremental(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Try { event: Event::Incremental { ent, component } } = message {
-            writer.write(Do { event: Event::Incremental { ent, component }});
+            writer.write(Do { event: Event::Incremental { ent: *ent, component: component.clone() }});
         }
     }
 }
@@ -42,8 +42,10 @@ pub fn do_incremental(
     map: Res<Map>,
     buffers: Res<crate::resources::InputQueues>,
 ) {
-    for &message in reader.read() {
-        let Do { event: Event::Incremental { ent, component } } = message else { continue; };
+    for message in reader.read() {
+        let Do { event: Event::Incremental { ent, component } } = message else { continue };
+        let ent = *ent;
+        let component = component.clone();
 
         let Ok((o_loc, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual, o_ability_displacement)) = query.get_mut(ent) else {
             // Entity might have been despawned

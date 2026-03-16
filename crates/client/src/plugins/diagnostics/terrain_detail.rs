@@ -10,8 +10,8 @@ use common_bevy::{
 };
 use qrz::Convert;
 
-use crate::components::{ChunkMesh, SummaryChunk};
-use crate::resources::{LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes};
+use crate::components::ChunkMesh;
+use crate::resources::LoadedChunks;
 
 // ============================================================================
 // Components
@@ -181,10 +181,7 @@ pub fn update_terrain_detail(
 pub fn update_terrain_mesh_metrics(
     state: Res<DiagnosticsState>,
     loaded_chunks: Res<LoadedChunks>,
-    pending_meshes: Res<PendingChunkMeshes>,
-    pending_summary: Res<PendingSummaryMeshes>,
-    full_detail_q: Query<&ChunkMesh, Without<SummaryChunk>>,
-    summary_q: Query<&ChunkMesh, With<SummaryChunk>>,
+    chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")]
     flyover: Res<crate::systems::admin::FlyoverState>,
     mut mesh_count_q: Query<
@@ -213,19 +210,14 @@ pub fn update_terrain_mesh_metrics(
         return;
     }
 
-    let full_count = full_detail_q.iter().count();
-    let summary_count = summary_q.iter().count();
+    let mesh_count = chunk_mesh_q.iter().count();
 
     if let Ok((mut text, _)) = mesh_count_q.single_mut() {
-        **text = format!("Meshes: {} + {} sum", full_count, summary_count);
+        **text = format!("Meshes: {}", mesh_count);
     }
 
     if let Ok(mut text) = pending_count_q.single_mut() {
-        **text = format!(
-            "Pending: {} + {} sum",
-            pending_meshes.tasks.len(),
-            pending_summary.tasks.len(),
-        );
+        **text = "Pending: --".to_string();
     }
 
     // Tracked chunk counts
@@ -247,7 +239,7 @@ pub fn update_terrain_mesh_metrics(
         );
     }
 
-    // Orphan count: full-detail mesh entities whose chunk_id is NOT tracked anywhere
+    // Orphan count: mesh entities whose chunk_id is NOT tracked anywhere
     #[cfg(feature = "admin")]
     let admin_chunks_ref = if flyover.active {
         Some(&flyover.admin_chunks)
@@ -255,7 +247,7 @@ pub fn update_terrain_mesh_metrics(
         None
     };
 
-    let orphan_count = full_detail_q.iter().filter(|cm| {
+    let orphan_count = chunk_mesh_q.iter().filter(|cm| {
         if loaded_chunks.chunks.contains(&cm.chunk_id) {
             return false;
         }
