@@ -1,8 +1,9 @@
 // This file now serves as a module root, with submodules containing the implementation
 mod config;
 pub mod grid;
-pub mod perf_ui;
+pub mod metrics_overlay;
 pub mod network_ui;
+pub mod perf_ui;
 pub mod terrain_detail;
 mod toggles;
 
@@ -12,6 +13,7 @@ use bevy::{
     prelude::*,
     render::diagnostic::*,
 };
+use bevy_egui::EguiPlugin;
 
 // Re-export public types for external use
 pub use config::DiagnosticsState;
@@ -34,11 +36,12 @@ pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
-        // Add performance monitoring plugins from Bevy
+        // Add performance monitoring plugins from Bevy + egui for metrics overlay
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
+            EguiPlugin::default(),
         ));
 
         // Initialize shared diagnostic resources
@@ -52,6 +55,9 @@ impl Plugin for DiagnosticsPlugin {
             Startup,
             (
                 grid::setup_grid_overlay,
+                metrics_overlay::setup_overlay_camera,
+                metrics_overlay::setup_overlay_font
+                    .after(metrics_overlay::setup_overlay_camera),
                 setup_diagnostics_root.before(perf_ui::setup_performance_ui)
                                       .before(network_ui::setup_network_ui)
                                       .before(terrain_detail::setup_terrain_detail),
@@ -76,6 +82,8 @@ impl Plugin for DiagnosticsPlugin {
                 // Terrain detail panel
                 terrain_detail::update_terrain_detail,
                 terrain_detail::update_terrain_mesh_metrics,
+                // Metrics overlay (egui)
+                metrics_overlay::update_metrics_overlay,
             ),
         );
     }

@@ -211,6 +211,12 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new(format!("3. Toggle Metrics Overlay    [{}]", on_off(diagnostics_state.metrics_overlay_visible))),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));

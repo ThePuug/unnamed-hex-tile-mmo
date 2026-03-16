@@ -18,6 +18,8 @@ pub struct DiagnosticsState {
     pub network_ui_visible: bool,
     /// Terrain detail panel visibility
     pub terrain_detail_visible: bool,
+    /// Metrics overlay panel visibility (consolidates perf/network/terrain)
+    pub metrics_overlay_visible: bool,
 }
 
 impl Default for DiagnosticsState {
@@ -29,6 +31,7 @@ impl Default for DiagnosticsState {
             perf_ui_visible: false,
             network_ui_visible: false,
             terrain_detail_visible: false,
+            metrics_overlay_visible: false,
         }
     }
 }
