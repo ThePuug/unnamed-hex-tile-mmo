@@ -25,7 +25,7 @@ struct MetricsPacket {
 // ── Font ──
 
 fn load_fonts(ctx: &egui::Context) {
-    let font_bytes = include_bytes!("../assets/Iosevka-Regular.ttc");
+    let font_bytes = include_bytes!("../../../assets/fonts/Iosevka-Regular.ttc");
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "Iosevka".to_owned(),

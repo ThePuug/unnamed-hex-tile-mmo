@@ -19,6 +19,7 @@ pub enum DevConsoleAction {
     // Performance actions
     TogglePerfUI,
     ToggleNetworkUI,
+    ToggleMetricsOverlay,
 
     // Admin actions
     #[cfg(feature = "admin")]
@@ -119,6 +120,11 @@ pub fn execute_console_actions(
                 }
 
                 info!("Network UI: {}", if diagnostics_state.network_ui_visible { "ON" } else { "OFF" });
+            }
+
+            DevConsoleAction::ToggleMetricsOverlay => {
+                diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;
+                info!("Metrics overlay: {}", if diagnostics_state.metrics_overlay_visible { "ON" } else { "OFF" });
             }
 
             DevConsoleAction::ToggleTerrainDetail => {
