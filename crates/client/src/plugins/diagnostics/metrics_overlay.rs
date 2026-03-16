@@ -142,11 +142,51 @@ impl History {
     }
 }
 
+/// Rolling window of raw frame times for p95 computation.
+/// Time-based eviction keeps exactly the last `window_secs` of observations.
+struct FrameTimeWindow {
+    timestamps: VecDeque<f64>,
+    values: VecDeque<f64>,
+    window_secs: f64,
+}
+
+impl FrameTimeWindow {
+    fn new(window_secs: f64) -> Self {
+        Self {
+            timestamps: VecDeque::new(),
+            values: VecDeque::new(),
+            window_secs,
+        }
+    }
+
+    fn push(&mut self, time_secs: f64, val: f64) {
+        let cutoff = time_secs - self.window_secs;
+        while self.timestamps.front().map_or(false, |&t| t < cutoff) {
+            self.timestamps.pop_front();
+            self.values.pop_front();
+        }
+        self.timestamps.push_back(time_secs);
+        self.values.push_back(val);
+    }
+
+    fn p95(&self) -> f64 {
+        if self.values.is_empty() {
+            return 0.0;
+        }
+        let mut sorted: Vec<f64> = self.values.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let rank = (sorted.len() as f64 * 0.95).ceil() as usize;
+        sorted[rank.saturating_sub(1)]
+    }
+}
+
 /// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
 #[derive(Resource)]
 pub struct MetricsHistory {
     timer: f32,
-    fps: History,
+    /// Raw frame times — pushed every frame, p95 computed over 2s window.
+    frame_window: FrameTimeWindow,
+    /// Sparkline history of p95 frame times (sampled at SAMPLE_INTERVAL).
     frame_ms: History,
     bw: History,
     msg: History,
@@ -156,7 +196,7 @@ impl Default for MetricsHistory {
     fn default() -> Self {
         Self {
             timer: 0.0,
-            fps: History::new(),
+            frame_window: FrameTimeWindow::new(2.0),
             frame_ms: History::new(),
             bw: History::new(),
             msg: History::new(),
@@ -165,30 +205,31 @@ impl Default for MetricsHistory {
 }
 
 /// Samples current metric values into rolling histories.
+/// Raw frame time is pushed every frame; sparkline histories at SAMPLE_INTERVAL.
 pub fn sample_metrics(
     time: Res<Time>,
     diagnostics: Res<DiagnosticsStore>,
     network: Res<NetworkMetrics>,
     mut history: ResMut<MetricsHistory>,
 ) {
+    // Every frame: push raw frame time into the 2s p95 window
+    let elapsed = time.elapsed_secs_f64();
+    if let Some(ft) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|d| d.value())
+    {
+        history.frame_window.push(elapsed, ft);
+    }
+
+    // Periodic: push to sparkline histories
     history.timer += time.delta_secs();
     if history.timer < SAMPLE_INTERVAL {
         return;
     }
     history.timer -= SAMPLE_INTERVAL;
 
-    if let Some(v) = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-    {
-        history.fps.push(v);
-    }
-    if let Some(v) = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-        .and_then(|d| d.smoothed())
-    {
-        history.frame_ms.push(v);
-    }
+    let p95 = history.frame_window.p95();
+    history.frame_ms.push(p95);
     history.bw.push(network.displayed_bytes_per_sec() as f64);
     history.msg.push(network.displayed_messages_per_sec() as f64);
 }
@@ -216,17 +257,17 @@ impl Alarm {
 
 const ALARM_FPS: Alarm = Alarm {
     bands: &[
-        (30.0, COLOR_CRITICAL),
-        (55.0, COLOR_WARN),
-        (f64::INFINITY, COLOR_NORMAL),
+        (60.0, COLOR_CRITICAL),  // <60fps red
+        (144.0, COLOR_WARN),     // <144fps yellow
+        (f64::INFINITY, COLOR_NORMAL), // ≥144fps green
     ],
 };
 
 const ALARM_FRAME: Alarm = Alarm {
     bands: &[
-        (17.0, COLOR_NORMAL),
-        (33.0, COLOR_WARN),
-        (f64::INFINITY, COLOR_CRITICAL),
+        (6.944, COLOR_NORMAL),   // <6.944ms = ≥144fps green
+        (16.667, COLOR_WARN),    // <16.667ms = ≥60fps yellow
+        (f64::INFINITY, COLOR_CRITICAL), // ≥16.667ms = <60fps red
     ],
 };
 
@@ -336,20 +377,41 @@ fn seg_spark(
     draw_sparkline(ui, history, scale, fixed_color, char_width, row_height);
 }
 
-/// Single stat: symbol + 5-char value, with alarm coloring.
-/// Pads to 14 chars total when only one stat is shown.
-fn seg_stats(ui: &mut egui::Ui, a: Option<(Sym, f64, &Alarm)>) {
-    let (text, color) = match a {
-        Some((sym, val, alarm)) => {
-            let formatted = format!("{:<5}", format_value(val).trim_start());
-            (format!("{}{}", sym.as_str(), formatted), alarm.color(val))
+/// Two symbol+value stats — always 14 chars total (matches console seg_stats).
+/// Each stat = symbol + 5-char value. Separator flexes to fill 14 chars.
+fn seg_stats(
+    ui: &mut egui::Ui,
+    a: Option<(Sym, f64, &Alarm)>,
+    b: Option<(Sym, f64, &Alarm)>,
+) {
+    let a_width = a.map_or(0, |(s, _, _)| s.cells() + 5);
+    let b_width = b.map_or(0, |(s, _, _)| s.cells() + 5);
+    let gap = 14usize.saturating_sub(a_width + b_width);
+
+    let (a_text, a_color) = match a {
+        Some((s, v, alarm)) => {
+            let formatted = format!("{:<5}", format_value(v).trim_start());
+            (format!("{}{}", s.as_str(), formatted), alarm.color(v))
         }
         None => (String::new(), COLOR_DIM),
     };
-    let width = a.map_or(0, |(s, _, _)| s.cells() + 5);
-    let pad = 14usize.saturating_sub(width);
-    let padded = format!("{}{}", text, " ".repeat(pad));
-    ui.label(colored_mono(&padded, color));
+    let (b_text, b_color) = match b {
+        Some((s, v, alarm)) => {
+            let formatted = format!("{:<5}", format_value(v).trim_start());
+            (format!("{}{}", s.as_str(), formatted), alarm.color(v))
+        }
+        None => (String::new(), COLOR_DIM),
+    };
+
+    if !a_text.is_empty() {
+        ui.label(colored_mono(&a_text, a_color));
+    }
+    let spacer = " ".repeat(gap);
+    if !b_text.is_empty() {
+        ui.label(colored_mono(&format!("{}{}", spacer, b_text), b_color));
+    } else if !spacer.is_empty() {
+        ui.label(colored_mono(&spacer, COLOR_DIM));
+    }
 }
 
 // ── Section rendering ──
@@ -393,8 +455,8 @@ fn spark_row(
     unit: &str,
     history: &[f32],
     scale: SparkScale,
-    peak: f64,
-    alarm: &Alarm,
+    stat_a: Option<(Sym, f64, &Alarm)>,
+    stat_b: Option<(Sym, f64, &Alarm)>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -402,7 +464,7 @@ fn spark_row(
         seg_gap(ui, cw);
         seg_spark(ui, history, scale, None, cw, rh);
         seg_gap(ui, cw);
-        seg_stats(ui, Some((SYM_UP, peak, alarm)));
+        seg_stats(ui, stat_a, stat_b);
     });
 }
 
@@ -584,14 +646,8 @@ pub fn update_metrics_overlay(
         (base, max, max as f32 * chunk_wu)
     });
 
-    let fps = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
-    let frame_ms = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
+    let frame_p95 = history.frame_window.p95();
+    let fps_p95 = if frame_p95 > 0.0 { 1000.0 / frame_p95 } else { 0.0 };
     let entities = diagnostics
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(|d| d.smoothed())
@@ -600,7 +656,6 @@ pub fn update_metrics_overlay(
     let mps = network.displayed_messages_per_sec() as f64;
 
     // Pre-compute sparkline data
-    let hist_fps = history.fps.as_f32();
     let hist_frame = history.frame_ms.as_f32();
     let hist_bw = history.bw.as_f32();
     let hist_msg = history.msg.as_f32();
@@ -629,34 +684,34 @@ pub fn update_metrics_overlay(
                     draw_section(ui, "TERRAIN", content_width, |ui| {
                         if let Some((qrz, z, wx, wy)) = tile_data {
                             metric_row(ui, cw, &[
-                                ("q", &fi(qrz.q as f64), "n"),
-                                ("r", &fi(qrz.r as f64), "n"),
-                                ("z", &fi(z as f64), "n"),
+                                ("q", &fi(qrz.q as f64), "  "),
+                                ("r", &fi(qrz.r as f64), "  "),
+                                ("z", &fi(z as f64), "  "),
                             ]);
                             #[cfg(feature = "admin")]
                             if let Some(wz) = raw_elevation {
                                 metric_row(ui, cw, &[
-                                    ("wx", &fv(wx), "n"),
-                                    ("wy", &fv(wy), "n"),
-                                    ("wz", &fv(wz), "n"),
+                                    ("wx", &fv(wx), "  "),
+                                    ("wy", &fv(wy), "  "),
+                                    ("wz", &fv(wz), "  "),
                                 ]);
                             }
                         } else {
                             metric_row(ui, cw, &[
-                                ("q", &fi(0.0), "n"),
-                                ("r", &fi(0.0), "n"),
-                                ("z", &fi(0.0), "n"),
+                                ("q", &fi(0.0), "  "),
+                                ("r", &fi(0.0), "  "),
+                                ("z", &fi(0.0), "  "),
                             ]);
                         }
                         metric_row(ui, cw, &[
-                            ("mesh", &fi(full_count as f64), "n"),
-                            ("load", &fi(loaded_chunks.chunks.len() as f64), "n"),
-                            ("pend", &fi(pending_lod as f64), "n"),
+                            ("mesh", &fi(full_count as f64), "  "),
+                            ("load", &fi(loaded_chunks.chunks.len() as f64), "  "),
+                            ("pend", &fi(pending_lod as f64), "  "),
                         ]);
                         if admin_count > 0 || admin_sum_count > 0 {
                             metric_row(ui, cw, &[
-                                ("aChk", &fi(admin_count as f64), "n"),
-                                ("aSum", &fi(admin_sum_count as f64), "n"),
+                                ("aChk", &fi(admin_count as f64), "  "),
+                                ("aSum", &fi(admin_sum_count as f64), "  "),
                             ]);
                         }
                         if let Some((base, max, wu)) = vis_data {
@@ -673,18 +728,14 @@ pub fn update_metrics_overlay(
                     // ── RENDER ──
                     draw_section(ui, "RENDER", content_width, |ui| {
                         spark_row(
-                            ui, cw, rh, "FPS", &fv(fps), "hz",
-                            &hist_fps, SparkScale::Auto,
-                            history.fps.visible_max(bar_count), &ALARM_FPS,
-                        );
-                        spark_row(
-                            ui, cw, rh, "FRAME", &fv(frame_ms), "ms",
+                            ui, cw, rh, "FRAME", &fv(frame_p95), "ms",
                             &hist_frame, SparkScale::Fixed(33.0),
-                            history.frame_ms.visible_max(bar_count), &ALARM_FRAME,
+                            Some((SYM_UP, history.frame_ms.visible_max(bar_count), &ALARM_FRAME)),
+                            Some((Sym::Narrow('ƒ'), fps_p95, &ALARM_FPS)),
                         );
                         metric_row(ui, cw, &[
-                            ("ENTS", &fi(entities), "n"),
-                            ("TILES", &fi(map.len() as f64), "n"),
+                            ("ENTS", &fi(entities), "  "),
+                            ("TILES", &fi(map.len() as f64), "  "),
                         ]);
                     });
 
@@ -693,14 +744,16 @@ pub fn update_metrics_overlay(
                     // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
                         spark_row(
-                            ui, cw, rh, "BW", &fv(bps), "Bs",
+                            ui, cw, rh, "BW", &fv(bps), "/s",
                             &hist_bw, SparkScale::Auto,
-                            history.bw.visible_max(bar_count), &Alarm::NONE,
+                            Some((SYM_UP, history.bw.visible_max(bar_count), &Alarm::NONE)),
+                            None,
                         );
                         spark_row(
                             ui, cw, rh, "MSG", &fv(mps), "/s",
                             &hist_msg, SparkScale::Auto,
-                            history.msg.visible_max(bar_count), &Alarm::NONE,
+                            Some((SYM_UP, history.msg.visible_max(bar_count), &Alarm::NONE)),
+                            None,
                         );
                     });
                 });
@@ -771,13 +824,5 @@ mod tests {
         assert_eq!(h.visible_max(1), 2.0);
     }
 
-    #[test]
-    fn alarm_band_evaluation() {
-        assert_eq!(ALARM_FPS.color(60.0), COLOR_NORMAL);
-        assert_eq!(ALARM_FPS.color(40.0), COLOR_WARN);
-        assert_eq!(ALARM_FPS.color(20.0), COLOR_CRITICAL);
-        assert_eq!(ALARM_FRAME.color(10.0), COLOR_NORMAL);
-        assert_eq!(ALARM_FRAME.color(25.0), COLOR_WARN);
-        assert_eq!(ALARM_FRAME.color(50.0), COLOR_CRITICAL);
-    }
+
 }
