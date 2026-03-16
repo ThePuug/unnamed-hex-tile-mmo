@@ -276,8 +276,6 @@ pub fn dispatch_lod_tasks(
     loaded_chunks: Res<LoadedChunks>,
     map: Res<common_bevy::resources::map::Map>,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
-    mut diag_state: Local<(bool, usize, f32)>, // (logged, last_count, last_change_time)
-    time: Res<Time>,
 ) {
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
@@ -323,9 +321,6 @@ pub fn dispatch_lod_tasks(
             }
         }
 
-        // Dispatch LoD1 task
-        let tiles1 = chunk_tile_list.clone();
-        let elevs1 = elevations.clone();
         // Dispatch LoD1 task — raw geometry passthrough
         let tiles1 = chunk_tile_list.clone();
         let elevs1 = elevations.clone();
@@ -360,45 +355,6 @@ pub fn dispatch_lod_tasks(
         });
     }
 
-    // One-time diagnostic: log when loaded count is stable for 5s
-    let (ref mut logged, ref mut last_count, ref mut last_change_time) = *diag_state;
-    let now = time.elapsed().as_secs_f32();
-    if loaded_chunks.chunks.len() != *last_count {
-        *last_count = loaded_chunks.chunks.len();
-        *last_change_time = now;
-    }
-    if !*logged && *last_count > 50 && (now - *last_change_time) > 5.0 {
-        *logged = true;
-        let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
-        let mut waiting = 0;
-        let mut missing_neighbors: std::collections::HashMap<common_bevy::chunk::ChunkId, Vec<common_bevy::chunk::ChunkId>> = std::collections::HashMap::new();
-        for &chunk_id in &loaded_chunks.chunks {
-            if lod_meshes.states.contains_key(&chunk_id) { continue; }
-            let missing: Vec<common_bevy::chunk::ChunkId> = lattice_neighbors.iter()
-                .filter_map(|&(dn, dm)| {
-                    let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
-                    if !loaded_chunks.chunks.contains(&nid) { Some(nid) } else { None }
-                })
-                .collect();
-            if !missing.is_empty() {
-                waiting += 1;
-                if waiting <= 5 {
-                    missing_neighbors.insert(chunk_id, missing);
-                }
-            }
-        }
-        // Count completed vs pending
-        let completed = lod_meshes.states.values()
-            .filter(|s| s.lod1_task.is_none() && s.lod2_task.is_none()).count();
-        let pending = lod_meshes.states.values()
-            .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
-        bevy::log::warn!("dispatch_lod DIAG: {} loaded, {} states ({} done, {} pending), {} waiting",
-            loaded_chunks.chunks.len(), lod_meshes.states.len(), completed, pending, waiting);
-        for (cid, missing) in &missing_neighbors {
-            bevy::log::warn!("  ({},{}) missing neighbors: {:?}", cid.0, cid.1,
-                missing.iter().map(|n| format!("({},{})", n.0, n.1)).collect::<Vec<_>>());
-        }
-    }
 }
 
 /// Poll completed LoD tasks, upload meshes, select active LoD per chunk.

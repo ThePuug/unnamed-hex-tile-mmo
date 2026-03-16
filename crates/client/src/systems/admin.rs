@@ -76,7 +76,7 @@ impl Default for AdminTerrain {
 #[derive(Default, Resource)]
 pub struct PendingFlyoverTiles {
     pub inner: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
-    pub outer: HashMap<ChunkId, Task<common_bevy::qem::SummaryHexData>>,
+    pub outer: HashMap<ChunkId, Task<common_bevy::qem::DecimatedMesh>>,
 }
 
 // ──── Run Conditions ────
@@ -519,11 +519,7 @@ pub fn flyover_generate_chunks(
             let geometry = common_bevy::geometry::compute_tile_geometry(
                 &chunk_tiles_vec, &elevations, 1.0, 0.8,
             );
-            let boundary = common_bevy::qem::compute_boundary(chunk_id, &geometry.surface_y);
-            common_bevy::qem::decimate_from_geometry(
-                chunk_id, &geometry, boundary,
-                common_bevy::qem::SUMMARY_ERROR_THRESHOLD,
-            )
+            common_bevy::qem::decimate_geometry(&geometry, 2.0)
         });
         pending_tiles.outer.insert(chunk_id, task);
     }
