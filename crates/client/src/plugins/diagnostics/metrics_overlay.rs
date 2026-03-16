@@ -14,8 +14,8 @@ use common_bevy::{
 };
 use qrz::Convert;
 
-use crate::components::{ChunkMesh, SummaryChunk};
-use crate::resources::{LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes};
+use crate::components::ChunkMesh;
+use crate::resources::{LoadedChunks, ChunkLodMeshes};
 
 // ── Layout constants (match server console) ──
 
@@ -467,9 +467,8 @@ pub fn update_metrics_overlay(
         (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
     >,
     loaded_chunks: Res<LoadedChunks>,
-    pending_meshes: Res<PendingChunkMeshes>,
-    pending_summary: Res<PendingSummaryMeshes>,
-    chunk_mesh_q: Query<(&ChunkMesh, Option<&SummaryChunk>)>,
+    lod_meshes: Res<ChunkLodMeshes>,
+    chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
     #[cfg(feature = "admin")] admin_terrain: Res<crate::systems::admin::AdminTerrain>,
 ) {
@@ -560,27 +559,11 @@ pub fn update_metrics_overlay(
     let raw_elevation =
         tile_data.map(|(qrz, _, _, _)| admin_terrain.0.get_raw_elevation(qrz.q, qrz.r));
 
-    let mut full_count = 0usize;
-    let mut summary_count = 0usize;
-    let mut orphan_count = 0usize;
-    for (cm, summary) in chunk_mesh_q.iter() {
-        if summary.is_some() {
-            summary_count += 1;
-        } else {
-            full_count += 1;
-            #[allow(unused_mut)]
-            let mut tracked = loaded_chunks.chunks.contains(&cm.chunk_id);
-            #[cfg(feature = "admin")]
-            {
-                if !tracked && flyover.active {
-                    tracked = flyover.admin_chunks.contains(&cm.chunk_id);
-                }
-            }
-            if !tracked {
-                orphan_count += 1;
-            }
-        }
-    }
+    let full_count = chunk_mesh_q.iter().count();
+    let summary_count = 0usize;
+    let pending_lod = lod_meshes.states.values()
+        .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
+    let orphan_count = 0usize;
 
     #[cfg(feature = "admin")]
     let (admin_count, admin_sum_count) = if flyover.active {
@@ -667,15 +650,8 @@ pub fn update_metrics_overlay(
                         }
                         metric_row(ui, cw, &[
                             ("mesh", &fi(full_count as f64), "n"),
-                            ("sum", &fi(summary_count as f64), "n"),
-                        ]);
-                        metric_row(ui, cw, &[
-                            ("pend", &fi(pending_meshes.tasks.len() as f64), "n"),
-                            ("psum", &fi(pending_summary.tasks.len() as f64), "n"),
-                        ]);
-                        metric_row(ui, cw, &[
-                            ("trck", &fi(loaded_chunks.chunks.len() as f64), "n"),
-                            ("orph", &fi(orphan_count as f64), "n"),
+                            ("load", &fi(loaded_chunks.chunks.len() as f64), "n"),
+                            ("pend", &fi(pending_lod as f64), "n"),
                         ]);
                         if admin_count > 0 || admin_sum_count > 0 {
                             metric_row(ui, cw, &[
