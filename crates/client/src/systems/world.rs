@@ -277,6 +277,12 @@ pub fn dispatch_lod_tasks(
     map: Res<common_bevy::resources::map::Map>,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
 ) {
+    // Only re-check when new tile data arrives. Once all reachable chunks are
+    // meshed or waiting on out-of-range neighbors, this skips entirely.
+    if !map.is_changed() {
+        return;
+    }
+
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
     for &chunk_id in &loaded_chunks.chunks {
@@ -284,22 +290,8 @@ pub fn dispatch_lod_tasks(
             continue; // Already dispatched
         }
 
-        // Build chunk tiles + elevation lookup from populated Map
-        let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
-            .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
-            .collect();
-
-        if chunk_tile_list.len() < 271 {
-            if chunk_tile_list.is_empty() {
-                continue; // Tiles not loaded yet
-            }
-            bevy::log::warn!("chunk ({},{}) has only {} of 271 tiles in map",
-                chunk_id.0, chunk_id.1, chunk_tile_list.len());
-            continue; // Partial load — wait for all tiles
-        }
-
-        // Wait until all 6 chunk neighbors have tiles in the Map
-        // (not just in loaded_chunks — tiles must be actually inserted by do_spawn)
+        // Neighbor gate (6 lookups). Skip the expensive 271-tile collection
+        // when neighbors haven't arrived yet.
         let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
         let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
             let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
@@ -307,6 +299,20 @@ pub fn dispatch_lod_tasks(
             map.get_by_qr(nc.q, nc.r).is_some()
         });
         if !all_neighbors_in_map {
+            continue;
+        }
+
+        // Build chunk tiles from populated Map
+        let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
+            .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
+            .collect();
+
+        if chunk_tile_list.len() < 271 {
+            if chunk_tile_list.is_empty() {
+                continue;
+            }
+            bevy::log::warn!("chunk ({},{}) has only {} of 271 tiles in map",
+                chunk_id.0, chunk_id.1, chunk_tile_list.len());
             continue;
         }
 
