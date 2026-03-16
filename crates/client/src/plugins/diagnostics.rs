@@ -48,6 +48,7 @@ impl Plugin for DiagnosticsPlugin {
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<network_ui::NetworkMetrics>();
         app.init_resource::<grid::PendingGridMesh>();
+        app.init_resource::<metrics_overlay::MetricsHistory>();
 
         // Setup systems run once at startup
         // The root container must exist before panels add themselves as children.
@@ -83,6 +84,7 @@ impl Plugin for DiagnosticsPlugin {
                 terrain_detail::update_terrain_detail,
                 terrain_detail::update_terrain_mesh_metrics,
                 // Metrics overlay (egui)
+                metrics_overlay::sample_metrics,
                 metrics_overlay::update_metrics_overlay,
             ),
         );

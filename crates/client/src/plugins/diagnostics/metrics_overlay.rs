@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_camera::Viewport;
@@ -17,25 +19,25 @@ use crate::resources::{LoadedChunks, PendingChunkMeshes, PendingSummaryMeshes};
 
 // ── Layout constants (match server console) ──
 
-/// Segment width in monospace characters.
 const SEG_WIDTH: usize = 14;
-/// Gap between segments in characters.
 const SEG_GAP: usize = 1;
-/// Total content width in characters: 3 segments + 2 gaps.
 const PANEL_CHARS: usize = 3 * SEG_WIDTH + 2 * SEG_GAP;
+const SPARKLINE_CHARS: usize = 14;
+const MIN_BAR_WIDTH_PX: f32 = 2.0;
 
 const FONT_SIZE: f32 = 12.0;
-/// Outer margin around all content (matches console CentralPanel inner_margin).
 const OUTER_MARGIN: f32 = 8.0;
-/// Inner margin inside each section frame (matches console draw_section).
 const SECTION_INNER_MARGIN: f32 = 4.0;
 
 // ── Colors (match server console) ──
 
 const COLOR_NORMAL: egui::Color32 = egui::Color32::from_rgb(180, 255, 180);
+const COLOR_CRITICAL: egui::Color32 = egui::Color32::from_rgb(255, 80, 80);
+const COLOR_WARN: egui::Color32 = egui::Color32::from_rgb(255, 200, 60);
 const COLOR_DIM: egui::Color32 = egui::Color32::from_rgb(120, 160, 120);
 const COLOR_BORDER: egui::Color32 = egui::Color32::from_rgb(80, 120, 80);
 const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(10, 15, 10);
+const COLOR_SPARK_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 35);
 
 fn mono_font() -> egui::FontId {
     egui::FontId::monospace(FONT_SIZE)
@@ -53,6 +55,15 @@ fn colored_mono(text: &str, color: egui::Color32) -> egui::text::LayoutJob {
         },
     );
     job
+}
+
+fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    egui::Color32::from_rgb(
+        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
+        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
+        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
+    )
 }
 
 // ── Pure formatting (duplicated from crates/console/src/main.rs) ──
@@ -104,9 +115,154 @@ fn format_int(v: f64) -> String {
     }
 }
 
+// ── History (rolling window — matches server console) ──
+
+const HISTORY_LEN: usize = 120;
+/// Seconds between samples pushed into history.
+const SAMPLE_INTERVAL: f32 = 0.5;
+
+struct History(VecDeque<f64>);
+
+impl History {
+    fn new() -> Self {
+        Self(VecDeque::with_capacity(HISTORY_LEN))
+    }
+    fn push(&mut self, val: f64) {
+        if self.0.len() >= HISTORY_LEN {
+            self.0.pop_front();
+        }
+        self.0.push_back(val);
+    }
+    fn as_f32(&self) -> Vec<f32> {
+        self.0.iter().map(|&v| v as f32).collect()
+    }
+    fn visible_max(&self, n: usize) -> f64 {
+        let start = self.0.len().saturating_sub(n);
+        self.0.range(start..).copied().fold(0.0_f64, f64::max)
+    }
+}
+
+/// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
+#[derive(Resource)]
+pub struct MetricsHistory {
+    timer: f32,
+    fps: History,
+    frame_ms: History,
+    bw: History,
+    msg: History,
+}
+
+impl Default for MetricsHistory {
+    fn default() -> Self {
+        Self {
+            timer: 0.0,
+            fps: History::new(),
+            frame_ms: History::new(),
+            bw: History::new(),
+            msg: History::new(),
+        }
+    }
+}
+
+/// Samples current metric values into rolling histories.
+pub fn sample_metrics(
+    time: Res<Time>,
+    diagnostics: Res<DiagnosticsStore>,
+    network: Res<NetworkMetrics>,
+    mut history: ResMut<MetricsHistory>,
+) {
+    history.timer += time.delta_secs();
+    if history.timer < SAMPLE_INTERVAL {
+        return;
+    }
+    history.timer -= SAMPLE_INTERVAL;
+
+    if let Some(v) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|d| d.smoothed())
+    {
+        history.fps.push(v);
+    }
+    if let Some(v) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|d| d.smoothed())
+    {
+        history.frame_ms.push(v);
+    }
+    history.bw.push(network.displayed_bytes_per_sec() as f64);
+    history.msg.push(network.displayed_messages_per_sec() as f64);
+}
+
+// ── Alarm bands (match server console pattern) ──
+
+struct Alarm {
+    bands: &'static [(f64, egui::Color32)],
+}
+
+impl Alarm {
+    const NONE: Self = Self {
+        bands: &[(f64::INFINITY, COLOR_NORMAL)],
+    };
+
+    fn color(&self, val: f64) -> egui::Color32 {
+        for &(threshold, color) in self.bands {
+            if val < threshold {
+                return color;
+            }
+        }
+        self.bands.last().map_or(COLOR_NORMAL, |&(_, c)| c)
+    }
+}
+
+const ALARM_FPS: Alarm = Alarm {
+    bands: &[
+        (30.0, COLOR_CRITICAL),
+        (55.0, COLOR_WARN),
+        (f64::INFINITY, COLOR_NORMAL),
+    ],
+};
+
+const ALARM_FRAME: Alarm = Alarm {
+    bands: &[
+        (17.0, COLOR_NORMAL),
+        (33.0, COLOR_WARN),
+        (f64::INFINITY, COLOR_CRITICAL),
+    ],
+};
+
+// ── Sparkline scale ──
+
+enum SparkScale {
+    Fixed(f32),
+    Auto,
+}
+
+// ── Sym (stat symbol width) ──
+
+#[derive(Clone, Copy)]
+enum Sym {
+    Narrow(char),
+    Wide(char),
+}
+
+impl Sym {
+    fn cells(self) -> usize {
+        match self {
+            Sym::Narrow(_) => 1,
+            Sym::Wide(_) => 2,
+        }
+    }
+    fn as_str(self) -> String {
+        match self {
+            Sym::Narrow(c) | Sym::Wide(c) => c.to_string(),
+        }
+    }
+}
+
+const SYM_UP: Sym = Sym::Wide('↑');
+
 // ── Composable segments (match server console) ──
 
-/// "LABEL nnn.d uu" — 14 chars: 5 label + 1 sp + 5 value + 1 sp + 2 unit
 fn seg_label(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
     ui.label(colored_mono(
         &format!("{:>5} {} {:<2}", label, value, unit),
@@ -114,17 +270,89 @@ fn seg_label(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
     ));
 }
 
-/// 1-char gap between segments.
 fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
     ui.add_space(char_width);
 }
 
-/// Empty segment placeholder — SEG_WIDTH chars of space.
-fn seg_empty(ui: &mut egui::Ui, char_width: f32) {
-    ui.add_space(SEG_WIDTH as f32 * char_width);
+fn draw_sparkline(
+    ui: &mut egui::Ui,
+    history: &[f32],
+    scale: SparkScale,
+    fixed_color: Option<egui::Color32>,
+    char_width: f32,
+    row_height: f32,
+) {
+    let width = SPARKLINE_CHARS as f32 * char_width;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, COLOR_SPARK_BG);
+
+    if history.is_empty() {
+        return;
+    }
+    let bar_count = (width / MIN_BAR_WIDTH_PX).floor() as usize;
+    if bar_count == 0 {
+        return;
+    }
+
+    let n = history.len();
+    let start = n.saturating_sub(bar_count);
+    let samples = &history[start..];
+
+    let max_val = match scale {
+        SparkScale::Fixed(v) => v,
+        SparkScale::Auto => samples.iter().cloned().fold(0.0_f32, f32::max),
+    };
+    if max_val <= 0.0 {
+        return;
+    }
+    let bar_width = width / bar_count as f32;
+    let offset = bar_count - samples.len();
+
+    for (i, &val) in samples.iter().enumerate() {
+        let t = (val / max_val).clamp(0.0, 1.0);
+        let bar_height = t * rect.height();
+        if bar_height < 0.5 {
+            continue;
+        }
+        let x = rect.left() + (offset + i) as f32 * bar_width;
+        let bar_rect = egui::Rect::from_min_size(
+            egui::pos2(x, rect.bottom() - bar_height),
+            egui::vec2(bar_width, bar_height),
+        );
+        let color = fixed_color.unwrap_or_else(|| lerp_color(COLOR_DIM, COLOR_CRITICAL, t));
+        painter.rect_filled(bar_rect, 0.0, color);
+    }
 }
 
-// ── Section rendering (matches console draw_section) ──
+fn seg_spark(
+    ui: &mut egui::Ui,
+    history: &[f32],
+    scale: SparkScale,
+    fixed_color: Option<egui::Color32>,
+    char_width: f32,
+    row_height: f32,
+) {
+    draw_sparkline(ui, history, scale, fixed_color, char_width, row_height);
+}
+
+/// Single stat: symbol + 5-char value, with alarm coloring.
+/// Pads to 14 chars total when only one stat is shown.
+fn seg_stats(ui: &mut egui::Ui, a: Option<(Sym, f64, &Alarm)>) {
+    let (text, color) = match a {
+        Some((sym, val, alarm)) => {
+            let formatted = format!("{:<5}", format_value(val).trim_start());
+            (format!("{}{}", sym.as_str(), formatted), alarm.color(val))
+        }
+        None => (String::new(), COLOR_DIM),
+    };
+    let width = a.map_or(0, |(s, _, _)| s.cells() + 5);
+    let pad = 14usize.saturating_sub(width);
+    let padded = format!("{}{}", text, " ".repeat(pad));
+    ui.label(colored_mono(&padded, color));
+}
+
+// ── Section rendering ──
 
 fn draw_section<F: FnOnce(&mut egui::Ui)>(
     ui: &mut egui::Ui,
@@ -142,7 +370,7 @@ fn draw_section<F: FnOnce(&mut egui::Ui)>(
         });
 }
 
-/// Render a row of 1–3 segments. Unused segment slots are left empty.
+/// Label-only row: 1–3 seg_labels with gaps.
 fn metric_row(ui: &mut egui::Ui, cw: f32, segments: &[(&str, &str, &str)]) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -155,17 +383,37 @@ fn metric_row(ui: &mut egui::Ui, cw: f32, segments: &[(&str, &str, &str)]) {
     });
 }
 
+/// Full sparkline row: seg_label + seg_gap + seg_spark + seg_gap + seg_stats.
+fn spark_row(
+    ui: &mut egui::Ui,
+    cw: f32,
+    rh: f32,
+    label: &str,
+    value: &str,
+    unit: &str,
+    history: &[f32],
+    scale: SparkScale,
+    peak: f64,
+    alarm: &Alarm,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        seg_label(ui, label, value, unit);
+        seg_gap(ui, cw);
+        seg_spark(ui, history, scale, None, cw, rh);
+        seg_gap(ui, cw);
+        seg_stats(ui, Some((SYM_UP, peak, alarm)));
+    });
+}
+
 // ── Overlay camera ──
 
-/// Marker component for the dedicated egui overlay camera.
 #[derive(Component)]
 pub struct OverlayCamera;
 
-/// Stores the entity id of the overlay camera.
 #[derive(Resource)]
 pub struct OverlayCameraEntity(pub Entity);
 
-/// Spawns a Camera2d dedicated to egui overlay rendering.
 pub fn setup_overlay_camera(mut commands: Commands) {
     let entity = commands
         .spawn((
@@ -201,7 +449,7 @@ pub fn setup_overlay_font(mut contexts: EguiContexts, overlay: Res<OverlayCamera
     ctx.set_fonts(fonts);
 }
 
-// ── Main system ──
+// ── Main render system ──
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_metrics_overlay(
@@ -213,6 +461,7 @@ pub fn update_metrics_overlay(
     diagnostics: Res<DiagnosticsStore>,
     map: Res<Map>,
     network: Res<NetworkMetrics>,
+    history: Res<MetricsHistory>,
     player_q: Query<
         (&Transform, Option<&Loc>),
         (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
@@ -224,7 +473,6 @@ pub fn update_metrics_overlay(
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
     #[cfg(feature = "admin")] admin_terrain: Res<crate::systems::admin::AdminTerrain>,
 ) {
-    // ── Toggle off: restore fullscreen viewport ──
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
             if camera.viewport.is_some() {
@@ -240,11 +488,11 @@ pub fn update_metrics_overlay(
     };
 
     // ── Measure font metrics ──
-    let cw = ctx.fonts_mut(|f| f.glyph_width(&mono_font(), '0'));
+    let font = mono_font();
+    let cw = ctx.fonts_mut(|f| f.glyph_width(&font, '0'));
+    let rh = ctx.fonts_mut(|f| f.row_height(&font));
 
     // ── Panel pixel width ──
-    // Content width + section frame overhead + outer margin on both sides
-    // Section frame: stroke(1px) + inner_margin(4px) on each side = 10px
     let content_width = PANEL_CHARS as f32 * cw;
     let section_frame_overhead = (1.0 + SECTION_INNER_MARGIN) * 2.0;
     let panel_pixel_width = content_width + section_frame_overhead + OUTER_MARGIN * 2.0;
@@ -271,6 +519,10 @@ pub fn update_metrics_overlay(
             ..default()
         });
     }
+
+    // ── Sparkline bar count (matches visible window for stats) ──
+    let spark_width = SPARKLINE_CHARS as f32 * cw;
+    let bar_count = (spark_width / MIN_BAR_WIDTH_PX).floor() as usize;
 
     // ── Collect data ──
 
@@ -364,28 +616,33 @@ pub fn update_metrics_overlay(
     let bps = network.displayed_bytes_per_sec() as f64;
     let mps = network.displayed_messages_per_sec() as f64;
 
+    // Pre-compute sparkline data
+    let hist_fps = history.fps.as_f32();
+    let hist_frame = history.frame_ms.as_f32();
+    let hist_bw = history.bw.as_f32();
+    let hist_msg = history.msg.as_f32();
+
     // ── Render egui panel ──
     let window_logical_width = window_width as f32 / scale_factor;
     let window_logical_height = window_height as f32 / scale_factor;
     let panel_x = window_logical_width - panel_pixel_width;
 
+    let fv = format_value;
+    let fi = format_int;
+
     egui::Area::new(egui::Id::new("metrics_overlay"))
         .fixed_pos(egui::pos2(panel_x, 0.0))
         .show(ctx, |ui| {
-            // Paint full-height background
             let bg_rect = egui::Rect::from_min_size(
                 egui::pos2(panel_x, 0.0),
                 egui::vec2(panel_pixel_width, window_logical_height),
             );
             ui.painter().rect_filled(bg_rect, 0.0, COLOR_BG);
 
-            // Outer margin matching console's CentralPanel inner_margin(8.0)
             egui::Frame::NONE
                 .inner_margin(OUTER_MARGIN)
                 .show(ui, |ui| {
-                    // ── TERRAIN section ──
-                    let fv = format_value; // alias for brevity
-                    let fi = format_int;
+                    // ── TERRAIN ──
                     draw_section(ui, "TERRAIN", content_width, |ui| {
                         if let Some((qrz, z, wx, wy)) = tile_data {
                             metric_row(ui, cw, &[
@@ -437,12 +694,18 @@ pub fn update_metrics_overlay(
 
                     ui.add_space(4.0);
 
-                    // ── RENDER section ──
+                    // ── RENDER ──
                     draw_section(ui, "RENDER", content_width, |ui| {
-                        metric_row(ui, cw, &[
-                            ("FPS", &fv(fps), "hz"),
-                            ("FRAME", &fv(frame_ms), "ms"),
-                        ]);
+                        spark_row(
+                            ui, cw, rh, "FPS", &fv(fps), "hz",
+                            &hist_fps, SparkScale::Auto,
+                            history.fps.visible_max(bar_count), &ALARM_FPS,
+                        );
+                        spark_row(
+                            ui, cw, rh, "FRAME", &fv(frame_ms), "ms",
+                            &hist_frame, SparkScale::Fixed(33.0),
+                            history.frame_ms.visible_max(bar_count), &ALARM_FRAME,
+                        );
                         metric_row(ui, cw, &[
                             ("ENTS", &fi(entities), "n"),
                             ("TILES", &fi(map.len() as f64), "n"),
@@ -451,12 +714,18 @@ pub fn update_metrics_overlay(
 
                     ui.add_space(4.0);
 
-                    // ── NETWORK section ──
+                    // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
-                        metric_row(ui, cw, &[
-                            ("BW", &fv(bps), "Bs"),
-                            ("MSG", &fv(mps), "/s"),
-                        ]);
+                        spark_row(
+                            ui, cw, rh, "BW", &fv(bps), "Bs",
+                            &hist_bw, SparkScale::Auto,
+                            history.bw.visible_max(bar_count), &Alarm::NONE,
+                        );
+                        spark_row(
+                            ui, cw, rh, "MSG", &fv(mps), "/s",
+                            &hist_msg, SparkScale::Auto,
+                            history.msg.visible_max(bar_count), &Alarm::NONE,
+                        );
                     });
                 });
         });
@@ -502,5 +771,37 @@ mod tests {
     fn panel_chars_matches_three_segments() {
         assert_eq!(PANEL_CHARS, 3 * 14 + 2 * 1);
         assert_eq!(PANEL_CHARS, 44);
+    }
+
+    #[test]
+    fn history_rolling_window() {
+        let mut h = History::new();
+        for i in 0..150 {
+            h.push(i as f64);
+        }
+        assert_eq!(h.0.len(), HISTORY_LEN);
+        assert_eq!(*h.0.back().unwrap(), 149.0);
+        assert_eq!(*h.0.front().unwrap(), 30.0);
+    }
+
+    #[test]
+    fn history_visible_max() {
+        let mut h = History::new();
+        for v in [1.0, 5.0, 3.0, 8.0, 2.0] {
+            h.push(v);
+        }
+        assert_eq!(h.visible_max(3), 8.0); // last 3: 3.0, 8.0, 2.0
+        assert_eq!(h.visible_max(5), 8.0);
+        assert_eq!(h.visible_max(1), 2.0);
+    }
+
+    #[test]
+    fn alarm_band_evaluation() {
+        assert_eq!(ALARM_FPS.color(60.0), COLOR_NORMAL);
+        assert_eq!(ALARM_FPS.color(40.0), COLOR_WARN);
+        assert_eq!(ALARM_FPS.color(20.0), COLOR_CRITICAL);
+        assert_eq!(ALARM_FRAME.color(10.0), COLOR_NORMAL);
+        assert_eq!(ALARM_FRAME.color(25.0), COLOR_WARN);
+        assert_eq!(ALARM_FRAME.color(50.0), COLOR_CRITICAL);
     }
 }
