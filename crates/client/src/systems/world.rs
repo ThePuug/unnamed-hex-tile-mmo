@@ -327,18 +327,14 @@ pub fn dispatch_lod_tasks(
             }
         }
 
-        // Dispatch LoD1 task — raw geometry passthrough
+        // Dispatch LoD1 task — QEM at threshold 0 (lossless zero-error collapses only)
         let tiles1 = chunk_tile_list.clone();
         let elevs1 = elevations.clone();
         let lod1_task = pool.spawn(async move {
             let geometry = common_bevy::geometry::compute_tile_geometry(
                 &tiles1, &elevs1, 1.0, 0.8,
             );
-            common_bevy::qem::DecimatedMesh {
-                positions: geometry.positions,
-                normals: geometry.normals,
-                indices: geometry.indices,
-            }
+            common_bevy::qem::decimate_geometry(&geometry, LOD1_ERROR_THRESHOLD)
         });
 
         // Dispatch LoD2 task — QEM decimation

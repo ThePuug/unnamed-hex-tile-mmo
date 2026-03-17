@@ -234,12 +234,13 @@ pub fn decimate_geometry(
     let mut vtx_remap: Vec<usize> = Vec::with_capacity(geometry.positions.len());
 
     for p in &geometry.positions {
-        // Quantize to 0.01 precision — wide enough to merge shared hex vertices
-        // whose f32 positions differ by float rounding (~1e-4 at world coords ~200)
+        // Quantize to 0.1 precision — merges shared hex vertices whose f32
+        // positions differ by float rounding. Safe up to ~100K world units
+        // (min vertex distance is 0.8 wu = 8 buckets apart).
         let key = (
-            (p[0] * 100.0).round() as i64,
-            (p[1] * 100.0).round() as i64,
-            (p[2] * 100.0).round() as i64,
+            (p[0] * 10.0).round() as i64,
+            (p[1] * 10.0).round() as i64,
+            (p[2] * 10.0).round() as i64,
         );
         let idx = *pos_map.entry(key).or_insert_with(|| {
             let i = positions.len();
