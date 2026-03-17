@@ -75,15 +75,15 @@ Where the current implementation intentionally differs from spec:
 
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
-| 1 | Ability set | Players choose Approach + Resilience, get 2 signature skills from each | MVP has 4 fixed abilities (Lunge, Overpower, Knockback, Deflect) not following Triumvirate | ADR-009; validate combat mechanics before build diversity |
-| 2 | Deflect scope | Clears first queued threat (Hardened signature) | Clears all queued threats (50 stamina) | Simplified MVP defensive option |
+| 1 | Ability set | Players choose Approach + Resilience, get 2 signature skills from each | MVP has 7 fixed abilities (Lunge, Overpower, Deflect, Counter, Kick, Volley, AutoAttack) not following Triumvirate | ADR-009; validate combat mechanics before build diversity |
+| 2 | Deflect scope | Clears first queued threat (Hardened signature) | Clears all queued threats | Simplified MVP defensive option |
 | 3 | Origin system | Origin provides thematic flavor for skill visuals | Players are "Evolved" by default, no mechanical impact | Visual flavor deferred until core system exists |
 
 ## Implementation Gaps
 
 **Critical for build diversity:** Full Approach set (7 approaches, 14 signatures — only 2/14 exist), full Resilience set (7 resiliences, 14 signatures — ~0.5/14 exist), Triumvirate selection at character creation
 
-**Medium:** Approach/Resilience opposites (Direct ↔ Distant, etc.), attribute integration with leanings
+**Medium:** Approach/Resilience opposites (Direct ↔ Distant, etc.)
 
 **Post-MVP:** Additional Origins (Synthetic, Essential, Corrupted, Mythic, Forgotten, Indiscernible), Origin skill flavoring (visual/audio variations)
 

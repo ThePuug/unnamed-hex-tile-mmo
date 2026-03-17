@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use std::time::Duration;
-use common::{
+use common_bevy::{
     components::{entity_type::*, resources::*, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     systems::combat::synergies::apply_synergies,
@@ -19,9 +19,9 @@ pub fn handle_counter(
     entity_query: Query<(&EntityType, &Loc)>,
     mut queue_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
-    attrs_query: Query<&common::components::ActorAttributes>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
-    synergy_query: Query<&common::components::recovery::SynergyUnlock>,
+    synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
@@ -143,7 +143,7 @@ pub fn handle_counter(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
-                component: common::message::Component::Stamina(*stamina),
+                component: common_bevy::message::Component::Stamina(*stamina),
             },
         });
 
@@ -152,7 +152,7 @@ pub fn handle_counter(
         let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
         // Counter each visible threat and reflect damage back
-        use common::systems::combat::queue::create_threat;
+        use common_bevy::systems::combat::queue::create_threat;
 
         for threat in &visible_threats {
             // Only reflect if target is alive and adjacent

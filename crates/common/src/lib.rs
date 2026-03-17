@@ -1,8 +1,5 @@
-pub mod chunk;
-pub mod components;
-pub mod message;
-pub mod metrics;
-pub mod plugins;
-pub mod resources;
-pub mod spatial_difficulty;
-pub mod systems;
+pub mod hex_spatial_grid;
+pub mod plate_tags;
+pub use hex_spatial_grid::HexSpatialGrid;
+pub use plate_tags::{PlateTag, Tagged, MAX_PLATE_TAGS};
+pub use tinyvec::ArrayVec;

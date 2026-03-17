@@ -3,8 +3,12 @@ name = "client"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["admin"]
+admin = ["dep:terrain"]
+
 [dependencies]
-common = { path = "../common" }
+common-bevy = { path = "../common-bevy" }
 bevy = { version = "0.18", features = ["dynamic_linking"] }
 bevy_asset = "0.18"
 bevy_camera = "0.18"
@@ -17,6 +21,11 @@ bincode = { version = "2", default-features = false, features = ["std", "serde"]
 chrono = "0"
 renet = "2"
 serde = { version = "1", features = ["derive"] }
+bevy_egui = "0.39"
 
 [dependencies.qrz]
 path = "../qrz"
+
+[dependencies.terrain]
+path = "../terrain"
+optional = true

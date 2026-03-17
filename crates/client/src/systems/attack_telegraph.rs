@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     message::{Do, Event as GameEvent},
 };
 
@@ -32,7 +32,7 @@ pub fn on_insert_threat(
         let Do { event: GameEvent::InsertThreat { ent: target, threat } } = message else { continue };
 
         // Only show ball for Volley ability
-        if threat.ability != Some(common::message::AbilityType::Volley) {
+        if threat.ability != Some(common_bevy::message::AbilityType::Volley) {
             continue; // Skip all non-Volley threats
         }
 

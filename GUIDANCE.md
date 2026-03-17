@@ -1,194 +1,92 @@
-# Codebase Architecture Guidance
+# Codebase Guidance
 
-**CRITICAL: Re-read this document every 5-10 exchanges or when switching codebase areas.**
-
-This prevents repeating documented mistakes and architectural violations.
-
-## Contents
-[Core Architecture](#core-architecture) • [Specs & Docs](#game-design-specifications) • [Chunks](#chunk-based-terrain-system) • [Position/Movement](#position--movement-system) • [Prediction](#client-side-prediction) • [Components](#key-components--resources) • [System Order](#system-execution-order) • [Pitfalls](#common-pitfalls)
+**Read before making code changes.** Patterns, invariants, and pitfalls that prevent repeating known mistakes.
 
 ---
 
-## Core Architecture
+## Architecture Overview
 
-Client-server MMO built with Bevy ECS:
-- **Authoritative Server**: Server has final say on all game state
-- **Client-Side Prediction**: Clients predict their own movement locally
-- **Hexagonal Grid**: World uses Qrz (hexagonal) coordinates
-- **Shared Systems**: Physics and behaviour run on both client and server
+Client-server MMO built with Bevy ECS. Authoritative server, client-side prediction, flat-top hexagonal grid.
 
 **Workspace crates (all under `crates/`):**
-- `crates/common/`: Shared library crate (components, physics, messages)
-- `crates/client/`: Client binary crate (rendering, input, networking)
-- `crates/server/`: Server binary crate (AI, terrain serving, connections)
-- `crates/terrain/`: Terrain generation library (pure functions, no Bevy dependency)
-- `crates/terrain-viewer/`: Headless CLI tool for rendering terrain heightmaps to PNG
-- `crates/qrz/`: Hexagonal grid library
-- `crates/console/`: Server monitoring console
+- `common/` — Non-Bevy shared library (plate tags, hex spatial grid, pure data)
+- `common-bevy/` — Bevy-specific shared code (components, chunk system, physics, messages, map)
+- `client/` — Rendering, input, networking
+- `server/` — Authority, AI, terrain serving, connections
+- `terrain/` — Pure terrain generation library (no Bevy). See `docs/design/terrain-generation.md`.
+- `terrain-viewer/` — CLI for rendering terrain layers to PNG
+- `qrz/` — Hexagonal grid library. See `crates/qrz/GUIDANCE.md`.
+- `console/` — Server monitoring console
 
 ---
 
-## Game Design Specifications
+## Invariants
 
-**Location:** `docs/design/` - Authoritative game design (what systems should do)
-**Location:** `GUIDANCE/` - Plugin implementation details
-**Location:** `crates/qrz/GUIDANCE.md` - Hex coordinate system
+**INV-001 — Ring separation (ADR-032):** Physics, movement, and pathfinding ONLY read the Map (inner ring chunks). Never read ChunkSummaries. Summaries are rendering-only.
 
----
+**INV-002 — InputQueue non-empty:** All input queues must always have ≥1 entry. Violations panic.
 
-## Chunk-Based Terrain System
+**INV-003 — Threat timer consistency:** ALL threats from source X to target Y MUST have identical timer durations. ALWAYS use `queue_utils::create_threat()`. Never manually construct `QueuedThreat`.
 
-**Constants:** `CHUNK_SIZE=8` (64 tiles), `FOV_CHUNK_RADIUS=2` (25 visible chunks)
+**INV-004 — Chunk spatial authority:** The chunk system is the spatial authority. Never filter or classify cells by raw `wx/wy` coordinates as a substitute for chunk marking. Two spatial authority systems = bugs.
 
-**Server:** Discovers chunks in FOV when player moves. Mirrors client eviction (`FOV_CHUNK_RADIUS + 1`) to know when to re-send chunks. No network messages for eviction - inferred from position.
-
-**Client:** Evicts chunks outside `FOV_CHUNK_RADIUS + 1` every 5 seconds (max 49 chunks = 3,136 tiles). Receives `Event::ChunkData` (64 tiles) unpacked to individual spawns.
-
-**Critical Invariant:** Server and client eviction logic MUST match exactly (both use `FOV_CHUNK_RADIUS + 1`).
+**INV-005 — Server/client eviction match:** Both use per-chunk `visibility_radius + 1`. Server uses `chunk_max_z` (superset guarantee).
 
 ---
 
-## Position & Movement System (ADR-019)
+## Patterns
 
-**Components:**
-- `Position { tile: Qrz, offset: Vec3 }` — Authoritative position (physics/server truth)
-- `VisualPosition { from, to, progress, duration }` — Visual interpolation (rendering only)
+**Position & Movement (ADR-019):**
+- `Position { tile: Qrz, offset: Vec3 }` = server authority. `VisualPosition` = rendering interpolation only.
+- `WORLD_POS = map.convert(Position.tile) + Position.offset`
+- Canonical physics: `movement::calculate_movement()` in `common-bevy/systems/movement.rs`. `physics::apply()` is a thin wrapper.
 
-**Formula:** `WORLD_POS = map.convert(Position.tile) + Position.offset`
+**Client-Side Prediction:**
+- InputQueue distinguishes local from remote players. `predict_local_player` replays queue from Position.offset → VisualPosition.
+- Flow: Keys → push front → `controlled::tick` accumulates dt → server pops back → client dequeues by `seq`.
 
-**Canonical physics:** `movement::calculate_movement()` in `common/systems/movement.rs`
-- `physics::apply()` is a thin delegation wrapper
-- Pure function: `(MovementInput, dt, map, nntree) -> MovementOutput`
-- Terrain following uses `blended_terrain_y` for smooth slopes, skips cliff neighbors (elevation_diff > 1)
+**Network Events:**
+- `Try` (client→server) → server validates → `Do` (server→client broadcast). Never write `Do` events directly.
 
-**Local:** Input → queue → `controlled::apply` calls `physics::apply` → server confirms → dequeue
-**Remote:** Server sends `Loc`/`Heading` → Position updated → VisualPosition interpolates toward new world pos
-
----
-
-## Client-Side Prediction
-
-**InputQueue:** Local players only (distinguishes from remote). Invariant: ≥1 input always (front accumulates time). Check local: `buffers.get(&entity).is_some()`
-
-**Flow:** Keys change/1-sec periodic → push front → `controlled::tick` accumulates dt on front → server pops back → client dequeues by `seq`
-
-**Prediction:** `predict_local_player` (client/systems/prediction.rs) replays InputQueue from Position.offset → VisualPosition
-
-**Network Events:** `Try` (client→server), `Do` (server→client broadcast)
-
----
-
-## Key Components & Resources
-
-**Components:** `Loc` (hex tile), `Position` (tile + sub-tile offset), `VisualPosition` (interpolation), `Behaviour::Controlled` (player), `KeyBits`, `Heading`, `AirTime`, `Physics`, `ActorAttributes`
-
-**Resources:** `InputQueues`, `EntityMap` (client), `Map` (hex↔world), `NNTree` (spatial queries)
-
----
-
-## Combat & Threat System
-
-**ReactionQueue:** Incoming threats that must be resolved. Window size from Focus commitment tier (1-4 slots visible).
-
-**Critical Invariant (INV-003): Threat Timer Consistency**
-- **Rule:** ALL threats from source X to target Y MUST have identical timer durations
-- **Why:** Ensures predictable reaction windows regardless of ability used
-- **How:** ALWAYS use `queue_utils::create_threat()` helper when creating threats
-- **Never:** Manually construct `QueuedThreat` or calculate custom timers per ability
-
-**Timer Formula (3 components):**
-1. Base timer: `target.instinct + target.level_multiplier`
-2. Gap multiplier: `(1.0 + level_gap × 0.15).min(3.0)` — up to 3× when defender outlevels attacker
-3. Cunning extension: `target.cunning × 2ms × contest(cunning, source.finesse)` — up to 600ms
-
-**Example:** Level 1 NPC → Level 50 player = ~23 second window (regardless of ability)
+**Async Mesh Pipeline:**
+- All mesh generation off main thread via `AsyncComputeTaskPool`. In-place mesh update pattern — old entity stays visible until task completes.
 
 ---
 
 ## System Execution Order
 
 **FixedUpdate (125ms):** `controlled::apply` → `tick` → `interpolate_remote`
+
 **Update (frame):** `renet` → `world::do_incremental` → `input::do_input` → `predict_local_player` → `advance_interpolation` → `actor::update` → `camera`
 
 ---
 
-## Common Pitfalls
+## Anti-Patterns
 
-### Critical Anti-Patterns (NEVER Do These)
+1. **Manual system ordering (`.after()`)** — 0 bugs ever fixed this way. Use `commands.get_entity()`, `Option<&Component>`, or review Try/Do flow.
 
-1. **❌ Manual system ordering (`.after()`)** - **0 bugs ever fixed this way**. Bevy flushes commands automatically. Fix: Use `commands.get_entity()`, `Option<&Component>`, or review Try/Do flow.
+2. **Forget renet updates** — When adding Events/Components, update BOTH `server/systems/renet.rs` AND `client/systems/renet.rs`.
 
-2. **❌ Forget renet updates** - When adding Events/Components, update BOTH `server/systems/renet.rs` AND `client/systems/renet.rs` (`on_event()` + `send_do()` handlers).
+3. **Spatial search for hex neighbors** — Neighbors are coordinate offsets, not spatial searches. 6 neighbors at fixed offsets: `(±1, 0), (0, ±1), (+1, -1), (-1, +1)`. Look up by key. Never scan rings or compute distances. Banned at every scale (macro plates, micro cells, game chunks).
 
-3. **❌ Bypass Try/Do pattern** - ALWAYS: Client→Try → Server validates → Server→Do broadcast. Never write `Do` events directly.
+4. **Test trivial code** — Test invariants and edge cases, not getters/setters. Tests should document architecture and survive refactors. For tunable systems, test shape not magnitude (ordering, monotonicity, determinism — not exact values).
 
-4. **❌ Manual threat construction** - NEVER manually construct `QueuedThreat` in abilities. ALWAYS use `queue_utils::create_threat()` to ensure consistent timers (INV-003). Bypassing this breaks reaction window predictability.
+5. **Confuse Position vs VisualPosition** — Position = server authority. VisualPosition = visual interpolation only.
 
-4. **❌ Test trivial code** - Test invariants ("PROXIMITY_RANGE > eviction distance"), not getters/setters. Tests should document architecture and survive refactors.
+6. **Forget world-space preservation during Loc updates** — Causes teleporting/falling.
 
-### Position/Movement Pitfalls
+7. **Use blended terrain near cliffs** — `blended_terrain_y` must skip neighbors with elevation_diff > 1.
 
-5. **Confuse Position vs VisualPosition**: Position=server authority, VisualPosition=visual interpolation only
-6. **Forget world-space preservation during Loc updates**: Causes teleporting/falling
-7. **Use blended terrain near cliffs**: `blended_terrain_y` must skip neighbors with elevation_diff > 1 to avoid bypassing cliff blocking
-8. **Apply heading positioning in rendering**: It's physics concern (`physics::apply`)
+8. **Mix schedules** — Rendering in Update, physics in FixedUpdate. `controlled::tick` must be Update.
 
-### Other Common Mistakes
+9. **Pop/push queue front** — Use `front_mut()` to avoid temporary empty queue (INV-002).
 
-9. **Mix schedules**: Rendering in Update, physics in FixedUpdate
-10. **Remove periodic KeyBits updates**: Prevents dt overflow
-11. **Pop/push queue front**: Use `front_mut()` to avoid temporary empty queue
-12. **Run `controlled::tick` in FixedUpdate**: Must be Update
-13. **Check offset magnitude for stationary**: Use `KeyBits`, not offset
-14. **Filter `With<Behaviour>`**: It's an enum - filter `Behaviour::Controlled` specifically
+---
 
-### Performance Patterns
-
-**Prefer `retain()` over collect-filter-remove**:
-```rust
-// Bad: 3 allocations (HashSet, Vec, loop removes)
-let kept: HashSet<_> = calculate_kept().collect();
-let to_remove: Vec<_> = set.iter().filter(|x| !kept.contains(x)).collect();
-for x in to_remove { set.remove(x); }
-
-// Good: 1 allocation (HashSet only)
-let kept: HashSet<_> = calculate_kept().collect();
-set.retain(|x| kept.contains(x));
-```
-
-### Renet Event Checklist
+## Renet Event Checklist
 
 When adding Events/Components that need network sync:
-1. Define `Event` in `common/message.rs`
+1. Define `Event` in `common-bevy/message.rs`
 2. Update `server/systems/renet.rs`: `on_event()` + `send_do()`
 3. Update `client/systems/renet.rs`: `on_event()`
 4. For component sync: Add to `Component` enum + both `Event::Incremental` handlers
-
-### Test Invariants, Not Trivia
-
-**Good tests:**
-- Architectural invariants: "PROXIMITY_RANGE > eviction distance" (prevents ghost NPCs)
-- Edge cases: Boundary conditions, empty collections, max values
-- Critical paths: Network sync, physics, core loops
-- Document WHY invariant matters in failure message
-
-**Bad tests:**
-- Getters/setters, trivial constructors
-- Implementation details that break on refactor
-- Testing that value assigned equals value retrieved
-
----
-
-## Physics Constants
-
-See `common/systems/movement.rs` for values (GRAVITY, JUMP_*, MOVEMENT_SPEED, SLOPE_FOLLOW_SPEED, etc.)
-
----
-
-## Testing
-
-```bash
-cargo test               # All tests
-cargo test physics       # Physics tests
-cargo test behaviour     # Behaviour tests
-```

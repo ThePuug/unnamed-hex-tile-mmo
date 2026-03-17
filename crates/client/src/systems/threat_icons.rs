@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 use crate::components::PoppingThreatIcon;
-use common::components::reaction_queue::*;
-use common::components::resources::Health;
-use common::components::ActorAttributes;
-use common::systems::combat::damage;
+use common_bevy::components::reaction_queue::*;
+use common_bevy::components::resources::Health;
+use common_bevy::components::ActorAttributes;
+use common_bevy::systems::combat::damage;
 
 /// Marker component for the threat icons container
 #[derive(Component)]
@@ -105,7 +105,7 @@ pub fn update(
     icon_with_children: Query<&Children, With<ThreatIcon>>,
     overflow_query: Query<Entity, With<OverflowCounter>>,
     mut text_query: Query<&mut Text>,
-    player_query: Query<(Entity, &ReactionQueue, &ActorAttributes, &Health), With<common::components::Actor>>,
+    player_query: Query<(Entity, &ReactionQueue, &ActorAttributes, &Health), With<common_bevy::components::Actor>>,
     container_children: Query<&Children, With<ThreatIconContainer>>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
@@ -443,12 +443,12 @@ pub fn front_icon_x_offset(capacity: usize) -> f32 {
 pub fn spawn_pop_animation(
     mut commands: Commands,
     container_query: Query<Entity, With<ThreatIconContainer>>,
-    player_query: Query<(&ReactionQueue, &Health), With<common::components::Actor>>,
-    input_queues: Res<common::resources::InputQueues>,
-    mut event_reader: MessageReader<common::message::Do>,
+    player_query: Query<(&ReactionQueue, &Health), With<common_bevy::components::Actor>>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
+    mut event_reader: MessageReader<common_bevy::message::Do>,
     time: Res<Time>,
 ) {
-    use common::message::Event as GameEvent;
+    use common_bevy::message::Event as GameEvent;
 
     let Ok(container) = container_query.single() else {
         return;

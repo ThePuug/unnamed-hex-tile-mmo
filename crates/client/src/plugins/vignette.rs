@@ -14,7 +14,7 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use common::components::{behaviour::PlayerControlled, resources::CombatState};
+use common_bevy::components::{behaviour::PlayerControlled, resources::CombatState};
 
 /// Plugin that adds vignette post-processing effect
 pub struct VignettePlugin;

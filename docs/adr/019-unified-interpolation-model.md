@@ -1,9 +1,5 @@
 # ADR-019: Unified Interpolation Model
 
-## Status
-
-Accepted
-
 ## Context
 
 The current movement system uses a triple-state model in the `Offset` component (`state`, `step`, `prev_step`) that causes jitter on direction changes. The root cause is that physics updates `step` directly, then rendering lerps from `prev_step` to `step`. When direction changes mid-interpolation, the lerp target jumps, causing oscillation.

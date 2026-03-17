@@ -23,8 +23,7 @@
 **Movement Controls:**
 * **Arrow keys** to move between adjacent hexes
 * **Left/Right:** East/West movement (absolute directions)
-* **Up/Down:** Context-sensitive diagonal movement for pointy-top hex grid
-  - Movement direction depends on your current axis
+* **Up/Down:** Context-sensitive diagonal movement for flat-top hex grid
   - Enables full 6-directional hex movement with 4 arrow keys
 * Movement automatically updates your heading (facing direction)
 * Your position on the hex shifts to face the direction you're moving
@@ -166,7 +165,7 @@ Scenario: Warrior fighting NPC dog (range 1), hostile player approaches (range 7
   - Single target: Telegraphs at indicated target's hex
   - Radius: Telegraphs radius around target hex
   - Line: Telegraphs line of hexes in your facing direction
-* Fixed delay before resolution (1-3 seconds)
+* Fixed delay before resolution
 * Entities can move off telegraphed hexes to avoid damage
 * Damage applies to any entity occupying hex when telegraph expires
 * Example: Eruption (radiates outward), Trap (Ambushing signature)
@@ -187,7 +186,7 @@ Attack telegraphs provide **combat clarity** without requiring twitch-based dodg
 * **Yellow ball** appears over attacker when ranged ability activates
 * **Line trajectory** draws from attacker to target on successful hit
 * Telegraphs appear **after damage is queued** (not a dodge warning)
-* Duration: Brief visual feedback (0.5-1.0 seconds), then fades
+* Duration: Brief visual feedback, then fades
 
 **Purpose:**
 * Combat clarity - Players understand who attacked and from where
@@ -202,7 +201,7 @@ Attack telegraphs provide **combat clarity** without requiring twitch-based dodg
   - Cannot be avoided by movement
 * **Ground effects** = Delayed AOE warnings (abilities like Eruption, Trap)
   - Telegraphs appear **before** damage resolves
-  - Fixed delay (1-3 seconds) before damage applies
+  - Fixed delay before damage applies
   - **Can be dodged** by moving off telegraphed hexes
   - Intentional skill expression through positioning
 
@@ -222,10 +221,11 @@ When damage would hit an entity, it enters their **reaction queue** before apply
 
 **Queue Properties:**
 * Each queued threat has an independent timer (circular progress indicator)
-* Queue capacity = f(Focus attribute)
-* Timer duration = f(Instinct attribute)
-* When queue is full, **oldest threat resolves immediately** with passive modifiers
-* Entity can use **reaction abilities** to clear threats before timers expire
+* Queue is unbounded — all threats enter regardless
+* **Visibility window** = f(Focus → Concentration commitment tier) determines how many threats the player can see and interact with
+* Threats outside the visibility window still resolve on their timers but cannot be reacted to
+* Timer duration = f(level gap × Cunning vs Finesse contest)
+* Entity can use **reaction abilities** to clear visible threats before timers expire
 
 ### Queue Display
 
@@ -243,20 +243,14 @@ When damage would hit an entity, it enters their **reaction queue** before apply
 
 ### Attribute Scaling
 
-**Instinct (Reaction Speed):**
-```
-reaction_window = base_window * (1.0 + instinct / 200.0)
+**Reaction Window (Cunning vs Finesse):**
+* Base window set by level gap between defender and attacker (higher-level defenders get longer windows)
+* Cunning (Instinct) vs Finesse (Grace) contest multiplier scales the window further (baseline+bonus pattern — never reduces below base)
+* See [attributes.md](attributes.md) for contest pattern details
 
-Examples:
-- Instinct = -100: 0.5s window
-- Instinct = 0: 1.0s window
-- Instinct = 100: 1.5s window
-```
-
-**Focus (Mental Clarity):**
-```
-queue_capacity = base_capacity + floor(focus / 33.0)
-```
+**Visibility Window (Concentration):**
+* Focus → Concentration commitment tier determines how many threats the player can see and interact with
+* Queue is unbounded — Concentration controls perception, not capacity
 
 ### Queue Resolution
 
@@ -265,10 +259,10 @@ queue_capacity = base_capacity + floor(focus / 33.0)
 * Threat removed from queue
 * Next threat begins resolving
 
-**When queue fills (new threat arrives):**
-* **Oldest threat (leftmost) resolves immediately** with passive modifiers
-* New threat takes rightmost position in queue
-* All other threats shift left visually
+**When threats exceed visibility window:**
+* Threats beyond the window still enter the queue and run their timers
+* Player cannot see or react to threats outside the window
+* Threats outside the window resolve with passive modifiers when their timers expire
 
 **When reaction ability used:**
 * Ability determines what clears (see Reaction Abilities below)
@@ -286,20 +280,20 @@ Abilities that interact with the reaction queue. Tied to Triumvirate signatures 
 Clear **entire queue** when activated.
 
 **Dodge (Evasive signature):**
-* Cost: 30 stamina
+* Cost: Stamina
 * Effect: Evade all queued threats
 * Visual: Character dash/blur effect
 * Audio: Whoosh sound
 
 **Ward (Shielded signature):**
-* Cost: 40 mana
+* Cost: Mana
 * Effect: Magic shield absorbs all queued magic damage
 * Visual: Glowing barrier appears
 * Audio: Crystalline chime
 
 **Fortify (Hardened signature):**
-* Cost: 40 stamina
-* Effect: Reduce all queued physical damage by 50%, then apply
+* Cost: Stamina
+* Effect: Reduce all queued physical damage, then apply
 * Visual: Character braces, metallic sheen
 * Audio: Metal clang
 
@@ -308,21 +302,22 @@ Clear **entire queue** when activated.
 Clear **first N threats** in queue (leftmost).
 
 **Counter (Patient signature):**
-* Cost: 35 stamina
-* Effect: Reflect first queued threat back to attacker
-* Clears: 1 threat (leftmost)
+* Cost: Stamina
+* Effect: Reflect all visible window threats back to their attackers
+* Clears: All visible threats
+* Reflected damage scales with Technique (Grace → absolute), with bonus from countered threat damage, capped
 * Visual: Parry animation, attack bounces back
 * Audio: Clashing metal
 
 **Deflect (Hardened signature):**
-* Cost: 50 stamina (MVP simplified version)
+* Cost: Stamina (MVP simplified version)
 * Effect: Clear all queued threats
 * Visual: Shield block animation
 * Audio: Impact thud
-* Note: Post-MVP will be selective (30 stamina, 1 threat, physical only)
+* Note: Post-MVP will be selective (lower cost, 1 threat, physical only)
 
 **Parry (Primal signature):**
-* Cost: 25 stamina
+* Cost: Stamina
 * Effect: Negate first queued attack, brief stagger on attacker
 * Clears: 1 threat (leftmost)
 * Visual: Weapon parry, enemy recoils
@@ -333,14 +328,14 @@ Clear **first N threats** in queue (leftmost).
 Do **not clear queue**, but modify outcome.
 
 **Endure (Vital signature):**
-* Cost: 20 stamina
-* Effect: +50% stagger resist, damage still applies but no interrupt
+* Cost: Stamina
+* Effect: Increased stagger resist, damage still applies but no interrupt
 * Clears: 0 threats
 * Visual: Character glows with determination
 * Audio: Deep breath
 
 **Dispel (Mental signature):**
-* Cost: 30 mana
+* Cost: Mana
 * Effect: Remove all debuffs from self, does not affect damage queue
 * Clears: 0 threats
 * Visual: Shimmering aura cleanses status effects
@@ -358,12 +353,9 @@ Do **not clear queue**, but modify outcome.
 * **Synergies allow specific abilities to unlock early** during lockout (see Tactical Synergies section)
 
 **Recovery Duration by Commitment:**
-* **Light Commitment** (0.5s lockout): Quick reactions
-  - Example: Knockback
-* **Medium Commitment** (1.0s lockout): Tactical positioning
-  - Example: Lunge, Deflect
-* **Heavy Commitment** (2.0s lockout): Powerful strikes
-  - Example: Overpower
+* **Light Commitment**: Quick reactions (e.g., Knockback)
+* **Medium Commitment**: Tactical positioning (e.g., Lunge, Deflect)
+* **Heavy Commitment**: Powerful strikes (e.g., Overpower)
 
 **Visual Feedback:**
 * Circular timer fills around ALL ability icons during lockout
@@ -397,21 +389,21 @@ When you use an ability that sets up a tactical opportunity, synergizing abiliti
 **Example Synergies:**
 
 **Gap Closer -> Strike:**
-* Use Lunge (creates 1s universal lockout)
+* Use Lunge (creates universal lockout)
 * Overpower **glows immediately** (gold border appears right away)
-* Overpower unlocks at 0.5s instead of 1s (available during lockout)
+* Overpower unlocks early (available during lockout)
 * Tactical logic: You closed the gap, now capitalize while enemies are grouped
 
 **Interrupt -> Exploit:**
-* Use Knockback (creates 0.5s universal lockout)
+* Use Knockback (creates universal lockout)
 * Lunge **glows immediately**
-* Lunge unlocks at 0.25s instead of 0.5s (available during lockout)
+* Lunge unlocks early (available during lockout)
 * Tactical logic: You created an opening, close back in before they recover
 
 **Heavy Strike -> Reposition:**
-* Use Overpower (creates 2s universal lockout)
+* Use Overpower (creates longer universal lockout)
 * Knockback **glows immediately**
-* Knockback unlocks at 1s instead of 2s (available during lockout)
+* Knockback unlocks early (available during lockout)
 * Tactical logic: After committing to heavy strike, can escape early if needed
 
 **Visual Feedback System:**
@@ -464,28 +456,17 @@ When you use an ability that sets up a tactical opportunity, synergizing abiliti
 
 **Purpose:** Physical actions (dodges, blocks, physical abilities)
 
-**Pool Formula:**
-```
-stamina_pool = 100 + (might * 0.5) + (vitality * 0.3)
-```
+**Pool:** Base pool, currently flat (attribute-driven scaling TBD)
 
-**Regeneration:** Base 10/sec in and out of combat
+**Regeneration:** Passive regen in and out of combat
 
 ### Mana
 
 **Purpose:** Magic actions (spells, wards, mental abilities)
 
-**Pool Formula:**
-```
-mana_pool = 100 + (focus * 0.5) + (presence * 0.3)
-```
+**Pool:** Base pool, currently flat (attribute-driven scaling TBD)
 
-**Regeneration:** Base 8/sec in and out of combat
-
-**Scaling Examples:**
-- Base (0 attributes): 100 pool
-- Primary=100: 150 pool
-- Primary=100, Secondary=100: 180 pool
+**Regeneration:** Passive regen in and out of combat
 
 ### Health
 
@@ -498,9 +479,9 @@ max_health = ActorAttributes::max_health()
 *(Calculated from vitality attribute - see [attributes.md](attributes.md))*
 
 **Regeneration:**
-- **Out of combat:** 5 HP/sec (flat rate, no attribute scaling)
+- **Out of combat:** Flat rate regen (no attribute scaling)
 - **In combat:** No regeneration
-- **NPC leashing:** 100 HP/sec while returning to leash origin (rapid reset)
+- **NPC leashing:** Rapid regen while returning to leash origin
 
 **Design Rationale:**
 - Out-of-combat regen creates retreat/recovery tactical gameplay
@@ -509,8 +490,7 @@ max_health = ActorAttributes::max_health()
 - Flat rate keeps regeneration time predictable (no scaling complexity)
 
 **Player Experience:**
-- Take damage -> retreat from combat -> wait 5s for combat to drop -> health regenerates at 5 HP/sec
-- 100 max HP player at 50 HP = 10 seconds to full heal after leaving combat
+- Take damage → retreat from combat → wait for combat to drop → health regenerates
 - Creates "push deeper vs pull back" exploration decision-making
 
 ---
@@ -519,61 +499,18 @@ max_health = ActorAttributes::max_health()
 
 ### Outgoing Damage
 
-**Offensive Abilities (scale with Force = Might -> absolute):**
-```
-base_damage = ability_multiplier x Force
-Force = (10 + might x 0.3) x damage_level_multiplier
+**Offensive Abilities:** Scale with Force (Might → absolute). Each ability has its own multiplier against Force.
 
-Ability multipliers:
-- AutoAttack: 0.5x Force
-- Lunge: 1.0x Force
-- Overpower: 1.5x Force
-- Volley: 1.0x Force
-```
+**Defensive/Reactive Abilities:** Scale with Technique (Grace → absolute). Counter reflects damage based on Technique with a bonus from the countered threat's damage, capped.
 
-**Defensive/Reactive Abilities (scale with Technique = Grace -> absolute):**
-```
-base_damage = ability_formula(Technique, threat)
-Technique = (10 + grace x 0.3) x damage_level_multiplier
-
-Counter reflected damage:
-- Base: 0.2x Technique
-- Bonus: 0.3x countered threat damage
-- Cap: 2.0x Technique
-```
-
-**Critical Hits:** Removed (critical hits removed -- damage is deterministic and contest-driven).
+**Critical Hits:** Removed — damage is deterministic and contest-driven.
 
 ### Passive Modifiers (No Reaction)
 
 When damage resolves without reaction ability, passive modifiers apply:
 
-**Armor (Physical Reduction):**
-```
-armor = base_armor + (vitality / 200.0)
-
-Examples:
-- Vitality=-100: 0% reduction
-- Vitality=0: 0% reduction
-- Vitality=100: 50% reduction (capped at 75% max)
-```
-
-**Resistance (Magic Reduction):**
-```
-resistance = base_resistance + (focus / 200.0)
-
-Examples:
-- Focus=-100: 0% reduction
-- Focus=0: 0% reduction
-- Focus=100: 50% reduction (capped at 75% max)
-```
-
-**Stagger Resist:**
-```
-stagger_resist = vitality / 100.0
-
-Determines likelihood of being interrupted during cast/channel.
-```
+**Toughness vs Dominance (Contest Pattern):**
+Passive mitigation uses the Toughness vs Dominance relative contest (nullifying pattern). Toughness provides flat damage reduction; Dominance suppresses healing. No separate physical/magic armor split — mitigation is unified through the contest system. See [attributes.md](attributes.md) for contest details.
 
 ---
 
@@ -595,21 +532,21 @@ While "in combat":
 * Combat music plays
 * Cannot interact with friendly NPCs/vendors
 * UI shows combat elements (reaction queue, resource bars)
-* **Visual indicator: Red vignette** - Screen edges darken with red tint (15-20% opacity)
+* **Visual indicator: Red vignette** - Screen edges darken with red tint
   - Purpose: Clear visual feedback that health regeneration is paused
-  - Fade-in transition (0.3s) when entering combat
+  - Fade-in transition when entering combat
   - Answers "Am I safe to heal?" at a glance
 
 ### Leaving Combat
 
 Combat state ends when:
-* No hostile entities within 20 hex radius
-* 5 seconds have passed since last damage dealt/taken
+* No hostile entities within aggro radius
+* Timeout since last damage dealt/taken
 * Entity dies
 
 **Post-Combat Effects:**
-* Red vignette fades out (0.3s transition)
-* Health regeneration begins at 5 HP/sec
+* Red vignette fades out
+* Health regeneration begins
 * Player can mount/interact with NPCs again
 * Combat music fades to exploration theme
 
@@ -628,12 +565,12 @@ Enemies use simplified directional targeting:
 ### Basic Attack Pattern
 
 **Simple Melee Enemy (Wild Dog):**
-1. Detect player within aggro radius (10 hexes)
+1. Detect player within aggro radius
 2. Face toward player, pathfind to adjacent hex
-3. When adjacent and facing player, attack every 1-2 seconds
+3. When adjacent and facing player, attack periodically (cadence from Intensity tier)
 4. Attack enters player's reaction queue
 5. If player moves away, turn to face and pursue
-6. Leash if player exceeds 30 hex distance
+6. Leash if player exceeds chase distance
 
 **AI Behavior:**
 * Continuously updates facing to track player
@@ -641,11 +578,11 @@ Enemies use simplified directional targeting:
 * Creates opportunity for player to use positioning (stay behind enemy)
 
 **Ranged Enemy (Forest Sprite):**
-1. Detect player within aggro radius (15 hexes)
+1. Detect player within aggro radius
 2. Face toward player
-3. Maintain distance of 5-8 hexes (kite if player approaches)
-4. Attack every 3-4 seconds (instant hit ranged attack with visual telegraph)
-5. If player closes within 3 hexes, disengage (move away while maintaining facing)
+3. Maintain preferred distance (kite if player approaches)
+4. Attack periodically (instant hit ranged attack with visual telegraph)
+5. If player closes too far inside preferred range, disengage (move away while maintaining facing)
 
 **AI Behavior:**
 * Kiting enemies back-pedal while maintaining facing (harder to flank)
@@ -660,7 +597,7 @@ Enemies broadcast intent before major attacks:
 **Visual Telegraph:**
 * Ground indicator on target hexes (red outline or fill)
 * Enemy wind-up animation (arm raise, charging effect)
-* Duration: 0.5-2.0 seconds depending on attack power
+* Duration: Varies by attack power
 
 **Purpose:**
 * Gives player time to reposition (move off targeted hex)
@@ -751,14 +688,14 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 
 ### Attributes = Power Scaling
 
-**Fluid spectrum/axis sliders** (not locked by gear):
+**Fluid spectrum/axis sliders** (not locked by gear). Each attribute feeds into three scaling modes — see [attributes.md](attributes.md) for details:
 
-* **Might** - Offensive damage scaling (Force), stamina pool size
-* **Grace** - Defensive damage scaling (Technique), dodge recovery, evasion
-* **Vitality** - Health pool, armor rating, stagger resistance
-* **Focus** - Magic damage scaling, mana pool size, reaction queue capacity
-* **Instinct** - Reaction window duration
-* **Presence** - Threat generation, AoE radius, CC duration
+* **Might** — Force (offensive potency), Impact (recovery pushback), Ferocity (commitment)
+* **Grace** — Technique (defensive potency), Finesse (synergy compression), Poise (commitment)
+* **Vitality** — Constitution (HP), Toughness (mitigation), Grit (commitment)
+* **Focus** — Discipline (endurance), Composure (recovery reduction), Concentration (queue visibility)
+* **Instinct** — Intuition (open), Cunning (reaction window), Flow (threat compression)
+* **Presence** — Gravitas (open), Dominance (healing reduction), Intensity (AoE projection)
 
 **Attributes scale your skills but don't gate access.** Same gear with different attributes creates different playstyles. Respec-friendly system encourages experimentation.
 
@@ -823,8 +760,8 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
   - Automatic, no cost, no cooldown
   - Range: Adjacent hex (1 hex away)
   - Targeting: Nearest hostile in facing direction (60 degree cone) within range
-  - Attack speed: Every 1.5 seconds while in combat
-  - Damage: 50% of Force (scales with Might + level)
+  - Attack speed: Driven by Intensity commitment tier (Presence)
+  - Damage: Fraction of Force (scales with Might + level)
   - Pauses when not adjacent to target
   - Visual: Character automatically swings weapon at adjacent target
   - Audio: Weapon swoosh + impact sound
@@ -833,12 +770,12 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 **Slotted Approach Skills:**
 * **Lunge (Q key)** - Direct approach skill (from Sword main hand)
   - Instant gap closer with damage
-  - Range: 4 hexes (mid tier)
-  - Cost: 20 stamina
-  - Cooldown: None
+  - Range: Mid tier
+  - Cost: Stamina
+  - Cooldown: None (universal lockout only)
   - Targeting: Nearest hostile in facing direction (60 degree cone) within range
-  - Effect: Instantly teleport adjacent to target, deal 100% Force physical damage
-  - Damage scales with Force (Might -> absolute, offensive damage scaling)
+  - Effect: Instantly teleport adjacent to target, deal Force-scaled physical damage
+  - Damage scales with Force (Might → absolute)
   - Visual: Quick dash to target, attack animation on arrival
   - Audio: Dash sound + impact
   - Player interaction: Face enemy, press Q to close distance and attack
@@ -846,12 +783,11 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * **Counter (W key)** - Patient approach skill (from Shield off-hand)
   - Defensive reaction skill
   - Range: Self-target
-  - Cost: 30 stamina
-  - Cooldown: 0.5s GCD (shared with other reactions)
+  - Cost: Stamina
+  - Cooldown: Universal lockout
   - Targeting: Self (clears all visible window threats)
   - Effect: Reflect all visible threats back to attackers
-  - Reflected damage scales with Technique (Grace -> absolute, defensive damage scaling)
-  - Per threat: 20% Technique base + 30% countered threat damage, capped at 200% Technique
+  - Reflected damage scales with Technique (Grace → absolute), with bonus from countered threat damage, capped
   - Visual: Parry animation, attack bounces back
   - Audio: Clashing metal
   - Player interaction: Press W when threats in queue to reflect damage back
@@ -860,9 +796,9 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * **Fortify (E key)** - Hardened armor skill
   - Full queue clear with damage mitigation
   - Range: Self-target
-  - Cost: 40 stamina
-  - Cooldown: 0.5s GCD (shared with other reactions)
-  - Effect: Reduce all queued physical damage by 50%, then apply
+  - Cost: Stamina
+  - Cooldown: Universal lockout
+  - Effect: Reduce all queued physical damage, then apply
   - Visual: Character braces, metallic sheen
   - Audio: Metal clang
   - Player interaction: Press E when multiple threats in queue to tank damage
@@ -870,21 +806,20 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * **Deflect (R key)** - Hardened armor skill
   - Full queue clear (MVP simplified version)
   - Range: Self-target
-  - Cost: 50 stamina
-  - Cooldown: 0.5s GCD
+  - Cost: Stamina
+  - Cooldown: Universal lockout
   - Effect: Clear all queued threats completely
   - Visual: Shield block animation
   - Audio: Impact thud
   - Player interaction: Press R when multiple threats queued to clear entire queue
-  - Note: Post-MVP will be selective (30 stamina, 1 threat, physical only)
+  - Note: Post-MVP will be selective (lower cost, 1 threat, physical only)
 
 ### Enemy Type
 
 **Wild Dog:**
-* HP: 100
-* Damage: 15 physical
-* Attack speed: 1 second
-* Behavior: Aggro at 10 hexes, melee pursuit, basic attack
+* Basic melee NPC with low HP
+* Physical damage, attack speed from Intensity tier
+* Behavior: Aggro within range, melee pursuit with TargetLock (ADR-012), basic attack
 
 ### Systems Required
 
@@ -908,11 +843,12 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
    - Queue resolution (timer expiry, overflow, reaction ability)
 
 5. **Attributes Integration:**
-   - Instinct -> reaction window duration
-   - Focus -> queue capacity
-   - Vitality -> stamina pool
-   - Might -> offensive damage (Force: Lunge, Overpower, AutoAttack)
-   - Grace -> defensive damage (Technique: Counter reflected damage)
+   - Cunning (Instinct) vs Finesse (Grace) → reaction window duration (contest)
+   - Focus → Concentration → queue visibility window (commitment tier)
+   - Vitality → Constitution → HP (absolute)
+   - Might → Force → offensive damage (Lunge, Overpower, AutoAttack)
+   - Grace → Technique → defensive damage (Counter reflected damage)
+   - Presence → Intensity → auto-attack cadence (commitment tier)
 
 6. **Resources:**
    - Stamina bar UI
@@ -928,7 +864,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
    - Aggro detection
    - Directional targeting (face player)
    - Basic melee pursuit with facing
-   - Attack cycle (every 2s)
+   - Attack cycle (cadence from Intensity tier)
 
 ### Success Criteria
 
@@ -942,7 +878,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 **Abilities Work:**
 * Lunge (Q) - Gap closer with damage (Direct skill from Sword)
 * Counter (W) - Reflect queued damage (Patient skill from Shield)
-* Fortify (E) - Reduce queued damage by 50% (Hardened armor skill)
+* Fortify (E) - Reduce queued damage (Hardened armor skill)
 * Deflect (R) - Clear all queued threats (Hardened armor skill)
 
 **Skill Expression:**
@@ -1033,17 +969,16 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 ### Movement (Right Hand)
 * **Arrow Keys**: Move between adjacent hexes, updates heading
 * **Left/Right**: East/West movement (absolute directions)
-* **Up/Down**: Context-sensitive diagonal movement (pointy-top hex grid)
+* **Up/Down**: Context-sensitive diagonal movement (flat-top hex grid)
   - Full 6-directional movement with 4 keys
-  - Direction depends on your current movement axis
 * Your character faces the direction you last moved
 
 ### Combat Abilities (Left Hand)
-* **Q**: Lunge - Gap closer + damage (Direct skill, range 4, 20 stamina)
-* **W**: Counter - Reflect first queued threat (Patient skill, self-target, 35 stamina)
-* **E**: Fortify - Reduce all queued damage by 50% (Hardened skill, self-target, 40 stamina)
-* **R**: Deflect - Clear all queued threats (Hardened skill, self-target, 50 stamina)
-* **Auto-Attack**: Passive - Automatically attacks adjacent hostile every 1.5s
+* **Q**: Lunge - Gap closer + damage (Direct skill)
+* **W**: Counter - Reflect visible window threats (Patient skill, self-target)
+* **E**: Fortify - Reduce all queued damage (Hardened skill, self-target)
+* **R**: Deflect - Clear all queued threats (Hardened skill, self-target)
+* **Auto-Attack**: Passive - Automatically attacks adjacent hostile (cadence from Intensity tier)
 * Abilities target current hostile/ally indicator or self (depending on ability type)
 
 ### Targeting (Left Hand)
@@ -1064,7 +999,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 **Note:**
 * Exact keybindings configurable, these are defaults
 * Design specifically avoids mouse for accessibility and controller support
-* Detailed movement mechanics for pointy-top hex grid can be documented separately if needed
+* Detailed movement mechanics for flat-top hex grid can be documented separately if needed
 
 ---
 
@@ -1119,7 +1054,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * Each threat shows: attack type icon (center), timer ring (clockwise depletion), optional countdown text
 * Glowing orange/red borders when active; pulsing animation in final 20% of timer
 * Empty slots shown as faint gray outlines
-* Queue overflow: oldest threat gets red pulsing border, screen shake on forced resolution
+* Threats beyond visibility window are hidden (player cannot react to them)
 
 **Action Bar (Bottom-Center, below resource bars):**
 * Rectangular ability slots for Q/W/E/R
@@ -1147,7 +1082,7 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 
 **Combat State Indicator:**
 * Crossed swords icon (top-left) when in combat
-* Red vignette around screen edges (15-20% opacity)
+* Red vignette around screen edges
 * "Enemy disengaged" text when leashing
 
 ### Implementation Priority
@@ -1185,16 +1120,9 @@ Your build is defined by **3 systems working together**: Weapons (offense), Armo
 * **Skill source clarity:** Should ability tooltips show "From: Sword (Direct)" to indicate source?
 
 **Balance:**
-* Are base resource pools (100 stamina/mana) correct?
-* Should armor cap at 75% reduction or lower/higher?
 * Are range tiers correct? (1-2 close, 3-6 mid, 7+ far)
 * Should enemies get facing bonus/penalty? (backstab damage, frontal armor)
-* **Auto-attack timing:** Is 1.5s attack speed correct? Too fast/slow?
-* **Ability costs:** Are MVP stamina costs balanced (Lunge 20, Counter 35, Fortify 40, Deflect 50)?
-* **Lunge range:** Is 4 hexes correct or should it be shorter/longer?
-* **Recovery timers:** Are base recovery durations correct (0.2-0.3s quick, 0.4-0.6s tactical, 0.8-1.2s high-impact)?
-* **Synergy strength:** Are recovery reductions balanced (0.5s -> 0.2s feels significant enough)?
-* **Synergy window clarity:** Is "on fire" visual obvious enough during combat chaos?
+* All numeric tuning (resource pools, ability costs, recovery timers, synergy strength) is playtesting-driven
 
 **Tactical Synergies:**
 * **Which abilities should synergize?** (need to define synergy pairs/chains per weapon combo)
@@ -1254,16 +1182,20 @@ Where the current implementation intentionally differs from spec:
 
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
-| 1 | Reaction queue position | Top-center, 50px from top | Center-screen, VERTICAL_OFFSET=-150px | Better visibility, closer to player focus |
-| 2 | Deflect scope | Clears first queued threat | Clears all queued threats (50 stamina) | Simplified MVP defensive option |
+| 1 | Reaction queue position | Top-center | Center-screen with vertical offset | Better visibility, closer to player focus |
+| 2 | Deflect scope | Clears first queued threat | Clears all queued threats | Simplified MVP defensive option |
 | 3 | World health bars | Per-entity spawn/despawn | 2 persistent bars repositioned to targets | More performant, less clutter |
 | 4 | Range feedback | Error on cast attempt | Proactive red border on action bar | Prevents failed ability attempts |
 | 5 | Knockback | Positioning tool (push only) | Reactive: targets threat source, removes threat, pushes | Deeper skill expression + queue interaction |
-| 6 | Overpower cooldown | 2s per-ability cooldown | 1s universal lockout (standard) | GCD prevents spam; separate cooldown adds complexity |
+| 6 | Overpower cooldown | Per-ability cooldown | Universal lockout (standard) | GCD prevents spam; separate cooldown adds complexity |
 | 7 | Tier badge UI | Visual badge on target indicator | Deferred (core tier lock works) | Bevy 3D text complexity, not MVP-blocking |
 | 8 | Visual ring indicator | Not in spec | Ring around player shows targeting area | Critical UX for spatial tier lock |
 | 9 | Empty tier visualization | Facing cone range highlighting | Deferred (filtering works) | Visual overlay not critical for functionality |
 | 10 | MVP ability set | Counter (W) + Fortify (E) | Overpower (W) + Knockback (E) | ADR-009 predates updated spec; functional but doesn't demonstrate gear-skill system |
+| 11 | Hex orientation | Pointy-top hex grid | FlatTop hex grid | Changed during development; flat edge north, vertices east/west |
+| 12 | Passive mitigation | Separate armor (physical) and resistance (magic) percentages | Unified Toughness vs Dominance contest pattern | ADR-031; contest-driven, no type split |
+| 13 | Auto-attack speed | Fixed interval | Cadence from Intensity commitment tier (Presence) | Legacy cadence still active; Intensity intended for AoE projection |
+| 14 | Counter scope | Reflect first queued threat (1) | Reflects all visible window threats | More impactful defensive option |
 
 ## Implementation Gaps
 

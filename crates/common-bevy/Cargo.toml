@@ -1,0 +1,18 @@
+[package]
+name = "common-bevy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy_camera = "0.18"
+bevy_mesh = "0.18"
+lru = "0"
+rand = "0.9"
+rstar = "0"
+serde = { version = "1", features = ["derive"] }
+tinyvec = { version = "1", features = ["serde"] }
+
+[dependencies.qrz]
+path = "../qrz"

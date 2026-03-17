@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use std::time::Duration;
-use common::{
+use common_bevy::{
     components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
@@ -20,7 +20,7 @@ fn calculate_knockback_destination(
     map: &Map,
 ) -> (Qrz, i32) {
     // Find floor tile under source (source_loc may be standing height = floor + Z)
-    let Some((floor, _)) = map.find(source_loc, -60) else {
+    let Some((floor, _)) = map.get_by_qr(source_loc.q, source_loc.r) else {
         return (source_loc, 0);
     };
 
@@ -51,9 +51,9 @@ pub fn handle_kick(
     entity_query: Query<(&EntityType, &Loc)>,
     mut queue_query: Query<(&Loc, &mut ReactionQueue)>,
     mut stamina_query: Query<&mut Stamina>,
-    attrs_query: Query<&common::components::ActorAttributes>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
-    synergy_query: Query<&common::components::recovery::SynergyUnlock>,
+    synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
@@ -160,14 +160,14 @@ pub fn handle_kick(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent: *ent,
-                component: common::message::Component::Stamina(*stamina),
+                component: common_bevy::message::Component::Stamina(*stamina),
             },
         });
 
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-        use common::systems::combat::queue::create_threat;
+        use common_bevy::systems::combat::queue::create_threat;
 
         // Process each visible threat: deal damage and knockback adjacent sources
         for threat in &visible_threats {
@@ -280,10 +280,10 @@ pub fn handle_kick(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::components::entity_type::EntityType;
+    use common_bevy::components::entity_type::EntityType;
 
     fn make_test_map() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Flat terrain: 10x10 grid at z=0
         for q in -5..=5 {
             for r in -5..=5 {
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn knockback_stops_at_cliff() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Flat tiles z=0 from q=0..2, then cliff at q=3 (z=5)
         for q in 0..=2 {
             qrz_map.insert(Qrz { q, r: 0, z: 0 }, EntityType::Decorator(default()));
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn knockback_allows_gentle_slopes() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8);
+        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         // Gradual slope: z increases by 1 each tile (passable)
         for q in 0..=4 {
             qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));

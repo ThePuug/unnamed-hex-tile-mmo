@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common::{
+use common_bevy::{
     components::{Actor, gcd::Gcd, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
@@ -213,7 +213,7 @@ pub fn update(
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>), With<Actor>>,
-    entity_query: Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
@@ -329,7 +329,7 @@ fn get_ability_state(
     player_heading: Heading,
     targeting_state: &TierLock,
     nntree: &NNTree,
-    entity_query: &Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
+    entity_query: &Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
     // Check recovery lockout (ADR-012: Universal lockout, can be synergy-unlocked)
     if recovery_active {

@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use common::{
+use common_bevy::{
     components::{
         ally_target::AllyTarget,
         heading::Heading,
@@ -32,7 +32,7 @@ use common::{
 pub fn update_targets(
     mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>)>,
     entity_types: Query<&EntityType>,
-    player_controlled: Query<&common::components::behaviour::PlayerControlled>,
+    player_controlled: Query<&common_bevy::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target, tier_lock) in &mut query {
@@ -68,7 +68,7 @@ pub fn update_targets(
 /// run on a timer (e.g., every 100ms).
 pub fn update_ally_targets(
     mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>)>,
-    player_controlled: Query<&common::components::behaviour::PlayerControlled>,
+    player_controlled: Query<&common_bevy::components::behaviour::PlayerControlled>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut ally_target, tier_lock) in &mut query {

@@ -1,5 +1,7 @@
 # Contributing
 
+How to build and run the project. Not architecture or design — see `GUIDANCE.md` and `docs/design/`.
+
 ## Prerequisites
 
 ### Windows (Native)

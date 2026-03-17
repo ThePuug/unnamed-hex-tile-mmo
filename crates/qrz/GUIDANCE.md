@@ -1,8 +1,6 @@
 # qrz Library
 
-**Location**: `lib/qrz/`
-
-**Purpose**: Custom hexagonal coordinate system library providing 3D hex grid math and world space conversion.
+Hexagonal coordinate system library — 3D hex grid math, world space conversion, and orientation-aware rendering. This is the coordinate reference, not game design or architecture.
 
 ## When to Read This
 
@@ -24,7 +22,16 @@ The library uses **axial coordinates** for hexagonal grids:
 
 **Invariant**: `q + r + s = 0` (automatically maintained)
 
-This system represents "pointy-top" hexagons (vertex pointing north).
+### Hex Orientation
+
+The library supports two orientations via `HexOrientation`:
+
+- **FlatTop** (default): Flat edge north/south, vertices east/west. `convert()` uses `x = 3/2*q, z = √3/2*q + √3*r`.
+- **PointyTop**: Vertex pointing north. Legacy orientation with context-sensitive diagonal input.
+
+FlatTop eliminates directional ambiguity — Up maps directly to N (flat edge), so arrow keys need no heading context.
+
+**Heading angles** (flat-top compass): N=0°, NE=60°, SE=120°, S=180°, SW=240°, NW=300°. `From<Heading> for Quat` converts to Y-rotation via `quat_angle = 2π - compass`. Targeting's `to_angle()` and `angle_between_locs()` use +90° offset for flat-top geometry.
 
 ### Distance Metrics
 
@@ -68,21 +75,26 @@ Generic container for storing data at hex coordinates with world space conversio
 
 ```rust
 pub struct Map<T> {
-    radius: f32,  // Hex size in world units
-    rise: f32,    // Vertical scale (z → y)
+    radius: f32,       // Hex size in world units
+    rise: f32,         // Vertical scale (z → y)
+    orientation: HexOrientation,
     // ... internal storage
 }
 ```
 
+**Construction**: `Map::new(radius, rise, orientation)`
+
 **Key Methods**:
-- `convert(Qrz) -> Vec3` - Hex to world space
+- `convert(Qrz) -> Vec3` - Hex to world space (orientation-aware)
 - `convert(Vec3) -> Qrz` - World to hex space (with rounding)
+- `orientation()` - Returns the map's hex orientation
 - `insert(qrz, value)` - Store tile data
 - `get(qrz)` - Retrieve tile data
 - `iter()` - Iterate tiles in sorted order
 - `nearest_below(pos, range)` - Find closest tile below position
 - `neighbors(qrz)` - Get data from adjacent hexes
 - `line_between(start, end)` - Get hexes along line
+- `vertices(center, radius)` - Generate 6 vertex positions (orientation-correct)
 
 ### `Convert<T, U>` Trait
 
@@ -97,10 +109,7 @@ Implemented by `Map` for `Qrz ↔ Vec3` conversions.
 
 ## Coordinate Conversion Details
 
-**Pointy-Top Orientation**: Hexagons have vertex pointing north
-
-**Affine Transformation**:
-- Uses rotation matrix with √3 scaling
+**Affine Transformation**: Orientation-specific matrices.
 - Forward: Qrz → Vec3 (hex to world)
 - Inverse: Vec3 → Qrz (world to hex, with cube rounding)
 
@@ -108,6 +117,8 @@ Implemented by `Map` for `Qrz ↔ Vec3` conversions.
 1. Convert to fractional cube coordinates
 2. Round to nearest integer satisfying q+r+s=0
 3. Handles edge cases where multiple coordinates need rounding
+
+**Vertex topology**: Vertex index ordering is identical for both orientations — direction_to_vertices, skirt mapping, and slope code all work unchanged.
 
 ## Common Patterns
 
@@ -120,7 +131,7 @@ let fov = origin.fov(&Qrz::Q, 5);   // Cone in Q direction, distance 5
 
 ### World ↔ Hex Conversion
 ```rust
-let map: Map<EntityType> = Map::new(1.0, 0.8);
+let map: Map<EntityType> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
 let hex = Qrz { q: 1, r: 2, z: 3 };
 let world_pos: Vec3 = map.convert(hex);
 let recovered: Qrz = map.convert(world_pos);  // Rounds to nearest hex
@@ -137,8 +148,8 @@ let dist_3d = a.distance(&b);    // Includes elevation
 ## Module Structure
 
 - `qrz.rs` - Core `Qrz` type and hex grid math
-- `map.rs` - `Map<T>` storage and world space conversion
-- `lib.rs` - Public exports
+- `map.rs` - `Map<T>` storage, world space conversion, orientation-aware vertex generation
+- `lib.rs` - Public exports (`Qrz`, `Map`, `HexOrientation`, `Convert`)
 
 ## Usage in Main Codebase
 
@@ -148,11 +159,12 @@ The qrz library is used throughout:
 - Physics and movement systems use hex distance
 - Pathfinding operates on hex coordinates
 - NNTree uses qrz for spatial queries
+- Input system branches on `map.orientation()` for arrow key mapping
 
 ## Testing
 
-The library includes comprehensive tests. Run with:
 ```bash
-cd lib/qrz
-cargo test
+cargo test -p qrz
 ```
+
+Tests are parameterized over both orientations for roundtrip conversion, vertex shape, and origin.

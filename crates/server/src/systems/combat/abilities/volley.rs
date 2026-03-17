@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{entity_type::*, Loc, reaction_queue::DamageType},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
@@ -13,10 +13,10 @@ use common::{
 pub fn handle_volley(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
-    entity_query: Query<(&EntityType, &Loc, Option<&common::components::behaviour::PlayerControlled>)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
     loc_query: Query<&Loc>,
-    attrs_query: Query<&common::components::ActorAttributes>,
-    respawn_query: Query<&common::components::resources::RespawnTimer>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
+    respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::seq::IteratorRandom;
 use qrz::{Convert, Qrz};
 
-use common::{
+use common_bevy::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
         behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
@@ -29,14 +29,14 @@ fn broadcast_intent(
     next_tile: Qrz,
     heading: &Heading,
     movement_speed: f32,
-    intent_state_opt: Option<&mut common::components::movement_intent_state::MovementIntentState>,
+    intent_state_opt: Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
 ) {
     // Get or initialize MovementIntentState
     let intent_state = if let Some(state) = intent_state_opt {
         state
     } else {
         // First time - add component and skip (will process next frame)
-        commands.entity(npc_entity).insert(common::components::movement_intent_state::MovementIntentState::default());
+        commands.entity(npc_entity).insert(common_bevy::components::movement_intent_state::MovementIntentState::default());
         return;
     };
 
@@ -55,7 +55,7 @@ fn broadcast_intent(
     // Y is dropped via .xz() so z-level of movement_direction doesn't matter
     let movement_direction = next_tile - **npc_loc;
     let dest_offset = if movement_direction != qrz::Qrz::default() {
-        use common::components::heading::HERE;
+        use common_bevy::components::heading::HERE;
         let heading_neighbor: Vec3 = map.convert(dest_standing + movement_direction);
         let direction = heading_neighbor - dest_tile_center;
         (direction * HERE).xz()
@@ -108,7 +108,7 @@ pub fn chase(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
-        Option<&mut common::components::movement_intent_state::MovementIntentState>,  // ADR-011
+        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &EngagementMember,
         Option<&AssignedHex>,  // SOW-018: Path to assigned hex
         Option<&Stagger>,
@@ -145,7 +145,7 @@ pub fn chase(
 
             // Path back to spawn using greedy movement
             let spawn_qrz = *spawner_loc;
-            let Some((start, _)) = map.find(**npc_loc, -60) else {
+            let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                 continue;
             };
 
@@ -241,7 +241,7 @@ pub fn chase(
                 if distance_from_spawn > chase_config.leash_distance {
                     // Too far from spawn - return to spawn instead of acquiring new target
                     let spawn_qrz = *spawner_loc;
-                    let Some((start, _)) = map.find(**npc_loc, -60) else {
+                    let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                         continue;
                     };
 
@@ -291,7 +291,7 @@ pub fn chase(
                 // Close enough to spawn - search for new target
                 let nearby = nntree.locate_within_distance(
                     *npc_loc,
-                    chase_config.acquisition_range as i32 * chase_config.acquisition_range as i32,
+                    chase_config.acquisition_range as i64 * chase_config.acquisition_range as i64,
                 );
 
                 let valid_targets: Vec<Entity> = nearby
@@ -359,7 +359,7 @@ pub fn chase(
         let target_qrz = move_target;
 
         // Find terrain under current location and target
-        let Some((start, _)) = map.find(**npc_loc, -60) else {
+        let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
             continue;
         };
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::components::*;
-use common::components::{ position::VisualPosition, * };
+use common_bevy::components::{ position::VisualPosition, * };
 
 pub fn update(
     query: Query<(Entity, &AirTime, &Animates, &VisualPosition)>,

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common::chunk::ChunkId;
+use common_bevy::chunk::ChunkId;
 
 
 #[derive(Clone, Component, Copy)]

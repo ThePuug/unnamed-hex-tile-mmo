@@ -1,9 +1,5 @@
 # ADR-031: Relative Meta-Attribute Opposition System
 
-## Status
-
-Accepted
-
 ## Context
 
 The attribute system decomposes each of the six attributes (Might, Grace, Vitality, Focus, Instinct, Presence) into three scaling modes:
@@ -156,12 +152,9 @@ This will be implemented in three phases:
 2. **Phase 2**: Finesse/Cunning (lockout vs window)
 3. **Phase 3**: Dominance/Toughness (sustain ratio) + minimal healing
 
-## References
+## Related ADRs
 
-- ADR-029: Relative Stat Contests (contest_modifier formula)
-- ADR-030: Reaction Queue Window Mechanic (Cunning foundation)
-- ADR-012: Universal Lockout (recovery system)
-- ADR-003: Reaction Queue (threat queueing)
+- [ADR-030](030-reaction-queue-window-mechanic.md) — Reaction Queue Window Mechanic (Cunning foundation)
 
 ## Date
 

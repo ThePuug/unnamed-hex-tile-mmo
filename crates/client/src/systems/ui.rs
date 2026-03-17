@@ -4,9 +4,9 @@ use bevy::ui::UiTransform;
 use crate::{
     components::*,
     resources::Server,
-    systems::camera::CameraOrbitAngle,
+    systems::camera::CameraOrbit,
 };
-use common::{
+use common_bevy::{
     components::{Actor, Loc},
     spatial_difficulty::*,
     systems::*,
@@ -117,12 +117,12 @@ pub fn setup(
 
 pub fn update_compass(
     mut compass_container: Query<&mut UiTransform, With<CompassContainer>>,
-    camera_angle: Res<CameraOrbitAngle>,
+    camera_angle: Res<CameraOrbit>,
 ) {
     if let Ok(mut ui_transform) = compass_container.single_mut() {
         // Rotate the entire compass based on camera angle
         // Negative because we want it to counter-rotate (stay oriented to world)
-        ui_transform.rotation = Rot2::radians(-camera_angle.0);
+        ui_transform.rotation = Rot2::radians(-camera_angle.current);
     }
 }
 
@@ -131,7 +131,7 @@ pub fn update(
     player_query: Query<&Loc, With<Actor>>,
     server: Res<Server>,
     time: Res<Time>,
-    _camera_angle: Res<CameraOrbitAngle>,
+    _camera_angle: Res<CameraOrbit>,
 ) {
     for (mut span, info) in &mut query {
         **span = match info {

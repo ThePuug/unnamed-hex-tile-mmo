@@ -21,8 +21,8 @@ use bevy::prelude::*;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use crate::{components::TargetIndicator, plugins::diagnostics::DiagnosticsState};
-use common::{
+use crate::components::TargetIndicator;
+use common_bevy::{
     components::{entity_type::*, *},
     resources::map::Map,
 };
@@ -96,10 +96,9 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget, &common::components::resources::Health), With<Actor>>,
+    local_player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget, &common_bevy::components::resources::Health), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
-    diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Get local player's targets and health
@@ -130,9 +129,9 @@ pub fn update(
                 // Get target's location
                 if let Ok((_, target_loc)) = entity_query.get(target_ent) {
                     // Find the actual terrain tile at target location (handles elevation)
-                    if let Some((actual_tile, _)) = map.find(**target_loc, -60) {
+                    if let Some((actual_tile, _)) = map.get_by_qr(target_loc.q, target_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();
@@ -208,9 +207,9 @@ pub fn update(
                 // Get ally's location
                 if let Ok((_, ally_loc)) = entity_query.get(ally_ent) {
                     // Find the actual terrain tile at ally location (handles elevation)
-                    if let Some((actual_tile, _)) = map.find(**ally_loc, -60) {
+                    if let Some((actual_tile, _)) = map.get_by_qr(ally_loc.q, ally_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();

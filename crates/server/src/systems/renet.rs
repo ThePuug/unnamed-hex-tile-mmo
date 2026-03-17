@@ -4,7 +4,7 @@ use bevy_renet::{RenetServer, RenetServerEvent, renet::ConnectionConfig, netcode
 use qrz::*;
 use ::renet::{DefaultChannel, ServerEvent};
 
-use common::{
+use common_bevy::{
     chunk::PlayerDiscoveryState,
     components::{ *,
         behaviour::*,
@@ -39,7 +39,10 @@ pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     };
 
     let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-    let server = RenetServer::new(ConnectionConfig::default());
+    // Chunk data goes on ReliableUnordered — increase its buffer for the initial burst
+    let mut config = ConnectionConfig::default();
+    config.server_channels_config[1].max_memory_usage_bytes = 50 * 1024 * 1024;
+    let server = RenetServer::new(config);
 
     (server, transport)
 }
@@ -51,10 +54,11 @@ pub fn do_manage_connections(
     mut conn: ResMut<RenetServer>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
-    mut loaded_by_query: Query<&mut common::components::loaded_by::LoadedBy>,
+    mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     runtime: Res<RunTime>,
+    spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
 ) {
     {
         let event = &trigger.event().0;
@@ -66,7 +70,7 @@ pub fn do_manage_connections(
                     Approach::Direct,
                     Resilience::Vital,
                     ActorIdentity::Player));
-                let qrz = Qrz { q: 0, r: 0, z: 4 };
+                let qrz = spawn_point.0;
                 let loc = Loc::new(qrz);
                 let attrs = ActorAttributes::new(
                     -3, 4, 0,
@@ -122,12 +126,12 @@ pub fn do_manage_connections(
                     LastAutoAttack::default(),
                     PlayerDiscoveryState::default(),
                     TierLock::new(),
-                    common::components::target::Target::default(),
+                    common_bevy::components::target::Target::default(),
                 )).id();
                 commands.entity(ent).insert((
                     NearestNeighbor::new(ent, loc),
-                    common::components::loaded_by::LoadedBy::default(),
-                    common::components::AttackRange::default(),
+                    common_bevy::components::loaded_by::LoadedBy::default(),
+                    common_bevy::components::AttackRange::default(),
                 ));
 
                 // init input buffer for client
@@ -247,14 +251,16 @@ pub fn write_try(
  pub fn send_do(
     mut conn: ResMut<RenetServer>,
     mut reader: MessageReader<Do>,
-    loaded_by_query: Query<&common::components::loaded_by::LoadedBy>,
+    loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
 ) {
-    for &message in reader.read() {
-        match message {
+    for message in reader.read() {
+        match &message.event {
             // Spawn events are handled by the AOI system — skip here
-            Do { event: Event::Spawn { .. } } => {}
-            Do { event: Event::Incremental { ent, component } } => {
+            Event::Spawn { .. } => {}
+            Event::Incremental { ent, component } => {
+                let ent = *ent;
+                let component = *component;
                 if matches!(component, Component::KeyBits(_)) { continue; }
 
                 // Send to owning client
@@ -276,7 +282,8 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Do { event: Event::Despawn { ent } } => {
+            Event::Despawn { ent } => {
+                let ent = *ent;
                 // Send despawn to all players who have this entity loaded
                 let Ok(loaded_by) = loaded_by_query.get(ent) else {
                     warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
@@ -291,16 +298,19 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::ChunkData { ent, chunk_id, tiles } } => {
-                // Send chunk data directly to the specific player
+            Event::ChunkData { ent, .. } => {
+                let ent = *ent;
+                // Chunks are independent — ReliableUnordered avoids head-of-line blocking
                 if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::ChunkData { ent, chunk_id, tiles }},
+                    let serialized = bincode::serde::encode_to_vec(
+                        message,
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_message(*client_id, DefaultChannel::ReliableUnordered, serialized);
                 }
             }
-            Do { event: Event::InsertThreat { ent, threat } } => {
+            Event::InsertThreat { ent, threat } => {
+                let ent = *ent;
+                let threat = *threat;
                 // Send to owning client (player receiving threat needs to see it)
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
@@ -319,7 +329,10 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::ApplyDamage { ent, damage, source } } => {
+            Event::ApplyDamage { ent, damage, source } => {
+                let ent = *ent;
+                let damage = *damage;
+                let source = *source;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::ApplyDamage { ent, damage, source }},
@@ -337,7 +350,9 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::ClearQueue { ent, clear_type } } => {
+            Event::ClearQueue { ent, clear_type } => {
+                let ent = *ent;
+                let clear_type = *clear_type;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::ClearQueue { ent, clear_type }},
@@ -355,7 +370,9 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::Gcd { ent, typ } } => {
+            Event::Gcd { ent, typ } => {
+                let ent = *ent;
+                let typ = *typ;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Gcd { ent, typ }},
@@ -373,7 +390,9 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::AbilityFailed { ent, reason } } => {
+            Event::AbilityFailed { ent, reason } => {
+                let ent = *ent;
+                let reason = *reason;
                 // Send ability failure only to the caster
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
@@ -382,7 +401,10 @@ pub fn write_try(
                     conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Do { event: Event::UseAbility { ent, ability, target } } => {
+            Event::UseAbility { ent, ability, target } => {
+                let ent = *ent;
+                let ability = *ability;
+                let target = *target;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::UseAbility { ent, ability, target }},
@@ -400,7 +422,10 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
+            Event::MovementIntent { ent, destination, duration_ms } => {
+                let ent = *ent;
+                let destination = *destination;
+                let duration_ms = *duration_ms;
                 // ADR-011: Movement intent via Unreliable channel for client-side prediction
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -412,7 +437,17 @@ pub fn write_try(
                     }
                 }
             }
-            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
+            Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
+                let ent = *ent;
+                let might_grace_axis = *might_grace_axis;
+                let might_grace_spectrum = *might_grace_spectrum;
+                let might_grace_shift = *might_grace_shift;
+                let vitality_focus_axis = *vitality_focus_axis;
+                let vitality_focus_spectrum = *vitality_focus_spectrum;
+                let vitality_focus_shift = *vitality_focus_shift;
+                let instinct_presence_axis = *instinct_presence_axis;
+                let instinct_presence_spectrum = *instinct_presence_spectrum;
+                let instinct_presence_shift = *instinct_presence_shift;
                 // Send respec confirmation only to the owning client
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
@@ -433,8 +468,9 @@ pub fn cleanup_despawned(
     mut reader: MessageReader<Do>,
     respawn_query: Query<&RespawnTimer>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Do { event: Event::Despawn { ent } } = message {
+            let ent = *ent;
             // Don't despawn entities with RespawnTimer (dead players waiting to respawn)
             if respawn_query.get(ent).is_ok() {
                 continue;

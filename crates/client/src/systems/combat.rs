@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, Loc, ActorAttributes},
     message::{AbilityType, Do, Event as GameEvent, Try},
     systems::combat::{damage as damage_calc, queue as queue_utils, gcd::GcdType},
@@ -11,7 +11,7 @@ use common::{
 /// No deduplication needed - we don't predict threat insertions
 pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common::components::recovery::GlobalRecovery>)>,
+    mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     attrs_query: Query<&ActorAttributes>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
@@ -53,7 +53,7 @@ pub fn handle_apply_damage(
     mut reader: MessageReader<Do>,
     _health_query: Query<&mut Health>,
     _queue_query: Query<&ReactionQueue>,
-    input_queues: Res<common::resources::InputQueues>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
     transform_query: Query<&Transform>,
     time: Res<Time>,
 ) {
@@ -163,9 +163,9 @@ pub fn apply_gcd(
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common::components::LastAutoAttack, Option<&Gcd>, &common::components::ActorAttributes, Option<&common::components::AttackRange>)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>)>,
     target_query: Query<&Loc>,
-    input_queues: Res<common::resources::InputQueues>,
+    input_queues: Res<common_bevy::resources::InputQueues>,
     time: Res<Time>,
 ) {
     let now = time.elapsed();

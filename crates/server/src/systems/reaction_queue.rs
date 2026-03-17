@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{reaction_queue::*, resources::*, ActorAttributes},
     message::{Try, Do, ClearType, Event as GameEvent},
     systems::combat::queue as queue_utils,
@@ -104,7 +104,7 @@ pub fn process_dismiss(
         writer.write(Do {
             event: GameEvent::Incremental {
                 ent,
-                component: common::message::Component::Health(*health),
+                component: common_bevy::message::Component::Health(*health),
             },
         });
     }

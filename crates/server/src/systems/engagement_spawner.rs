@@ -4,10 +4,10 @@
 //! Replaces static spawners with exploration-driven content discovery.
 
 use bevy::prelude::*;
-use qrz::{Convert, Qrz};
+use qrz::Qrz;
 use rand::Rng;
 
-use common::{
+use common_bevy::{
     chunk::ChunkId,
     components::{
         behaviour::Behaviour,
@@ -55,7 +55,7 @@ const MIN_DISTANCE_FROM_ENGAGEMENT: u32 = 50;
 /// If all pass, sends Try::SpawnEngagement event
 pub fn try_spawn_engagement(
     mut reader: MessageReader<Do>,
-    mut writer: MessageWriter<common::message::Try>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
     budget: Res<EngagementBudget>,
     player_query: Query<(&Loc, &Behaviour)>,
     engagement_query: Query<&Loc, With<Engagement>>,
@@ -72,7 +72,7 @@ pub fn try_spawn_engagement(
 
 /// System that processes Try::SpawnEngagement events and creates actual engagements
 pub fn do_spawn_engagement(
-    mut reader: MessageReader<common::message::Try>,
+    mut reader: MessageReader<common_bevy::message::Try>,
     mut writer: MessageWriter<Do>,
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
@@ -82,7 +82,7 @@ pub fn do_spawn_engagement(
 ) {
     for message in reader.read() {
         // Only process SpawnEngagement events
-        let common::message::Try { event: Event::SpawnEngagement { location } } = message else {
+        let common_bevy::message::Try { event: Event::SpawnEngagement { location } } = message else {
             continue;
         };
 
@@ -99,7 +99,7 @@ pub fn do_spawn_engagement(
 /// Helper function to attempt spawning engagement at a chunk
 fn try_spawn_engagement_at_chunk(
     chunk_id: ChunkId,
-    writer: &mut MessageWriter<common::message::Try>,
+    writer: &mut MessageWriter<common_bevy::message::Try>,
     budget: &EngagementBudget,
     player_query: &Query<(&Loc, &Behaviour)>,
     engagement_query: &Query<&Loc, With<Engagement>>,
@@ -138,7 +138,7 @@ fn try_spawn_engagement_at_chunk(
             return; // Too close to another engagement
         }
     }
-    writer.write(common::message::Try {
+    writer.write(common_bevy::message::Try {
         event: Event::SpawnEngagement {
             location: chunk_center,
         },
@@ -153,11 +153,10 @@ fn spawn_engagement_at(
     budget: &mut EngagementBudget,
     time: &Time,
     terrain: &crate::resources::terrain::Terrain,
-    map: &crate::Map,
+    _map: &crate::Map,
 ) {
     // Calculate terrain height at spawn location (spawn on top of terrain, not in it)
-    let px = map.convert(location).xz();
-    let terrain_z = terrain.get(px.x, px.y);
+    let terrain_z = terrain.get(location.q, location.r);
     let location = Qrz { q: location.q, r: location.r, z: terrain_z + 1 };
 
     // Calculate level from distance to haven
@@ -197,8 +196,7 @@ fn spawn_engagement_at(
         let npc_location_base = location + offset;
 
         // Calculate terrain height at NPC location (spawn on top of terrain, not in it)
-        let npc_px = map.convert(npc_location_base).xz();
-        let npc_z = terrain.get(npc_px.x, npc_px.y);
+        let npc_z = terrain.get(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
 
         // Create NPC ActorImpl with triumvirate based on archetype (ADR-014)
@@ -261,7 +259,7 @@ fn spawn_engagement_at(
                 Physics,
                 Behaviour::default(),         // Will be set by AI system based on archetype
                 EngagementMember(engagement_entity),
-                common::components::loaded_by::LoadedBy::default(),  // AOI: Track which players see this NPC
+                common_bevy::components::loaded_by::LoadedBy::default(),  // AOI: Track which players see this NPC
             ))
             .id();
 
@@ -278,11 +276,11 @@ fn spawn_engagement_at(
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
                     NpcRecovery::for_archetype(archetype),  // SOW-018: Per-archetype recovery timer
-                    common::components::target::Target::default(),  // Target tracking for AI
+                    common_bevy::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    common::components::movement_intent_state::MovementIntentState::default(),
+                    common_bevy::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
             EnemyArchetype::Kiter => {
@@ -291,14 +289,14 @@ fn spawn_engagement_at(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     kite,
-                    common::components::target::Target::default(),  // Target tracking for AI
+                    common_bevy::components::target::Target::default(),  // Target tracking for AI
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    common::components::AttackRange(6),  // Ranged auto-attack
+                    common_bevy::components::AttackRange(6),  // Ranged auto-attack
                     LastAutoAttack::default(),
                     NpcRecovery::for_archetype(archetype),
-                    common::components::movement_intent_state::MovementIntentState::default(),
+                    common_bevy::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
         }

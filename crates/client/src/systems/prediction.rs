@@ -21,7 +21,7 @@
 use bevy::prelude::*;
 use qrz::Convert;
 
-use common::{
+use common_bevy::{
     components::{
         heading::*,
         keybits::*,
@@ -107,13 +107,13 @@ pub fn advance_interpolation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::components::position::Position;
+    use common_bevy::components::position::Position;
     use qrz::Qrz;
 
     #[test]
     fn test_visual_position_interpolation_flow() {
         // Simulates the FixedUpdate → Update interpolation flow
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
 
         // Initial state: entity at tile (0,0,0) with zero offset
         let position = Position::at_tile(Qrz { q: 0, r: 0, z: 0 });
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn test_direction_change_no_jitter() {
         // Simulates direction change: moving east then switching to west
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
 
         let initial_pos = Position::at_tile(Qrz { q: 0, r: 0, z: 0 });
         let mut visual = VisualPosition::at(initial_pos.to_world(&map));
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn test_teleport_correction() {
         // When server sends a large correction, VisualPosition snaps
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
 
         let initial_pos = Position::at_tile(Qrz { q: 0, r: 0, z: 0 });
         let mut visual = VisualPosition::at(initial_pos.to_world(&map));
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_smooth_correction() {
         // When server sends a small correction, VisualPosition interpolates
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
 
         // Client predicts we're at (1, 0, 0)
         let predicted = Position::new(Qrz { q: 1, r: 0, z: 0 }, Vec3::ZERO);

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::systems::character_panel::*;
-use common::{
+use common_bevy::{
     components::{Actor, ActorAttributes},
     message::{Do, Event as GameEvent, Try},
 };
@@ -263,7 +263,7 @@ pub fn handle_respec_confirmed(
     mut reader: MessageReader<Do>,
     mut player_query: Query<&mut ActorAttributes, With<Actor>>,
 ) {
-    for &Do { event } in reader.read() {
+    for message in reader.read() {
         if let GameEvent::RespecAttributes {
             ent,
             might_grace_axis,
@@ -275,20 +275,20 @@ pub fn handle_respec_confirmed(
             instinct_presence_axis,
             instinct_presence_spectrum,
             instinct_presence_shift,
-        } = event
+        } = &message.event
         {
             // Apply to player's ActorAttributes
-            if let Ok(mut attrs) = player_query.get_mut(ent) {
+            if let Ok(mut attrs) = player_query.get_mut(*ent) {
                 attrs.apply_respec(
-                    might_grace_axis,
-                    might_grace_spectrum,
-                    might_grace_shift,
-                    vitality_focus_axis,
-                    vitality_focus_spectrum,
-                    vitality_focus_shift,
-                    instinct_presence_axis,
-                    instinct_presence_spectrum,
-                    instinct_presence_shift,
+                    *might_grace_axis,
+                    *might_grace_spectrum,
+                    *might_grace_shift,
+                    *vitality_focus_axis,
+                    *vitality_focus_spectrum,
+                    *vitality_focus_shift,
+                    *instinct_presence_axis,
+                    *instinct_presence_spectrum,
+                    *instinct_presence_shift,
                 );
 
                 // Clear pending state now that server confirmed

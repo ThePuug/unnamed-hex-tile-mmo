@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::seq::IteratorRandom;
 use qrz::{Convert, Qrz};
 
-use common::{
+use common_bevy::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
         behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
@@ -28,14 +28,14 @@ fn broadcast_intent(
     next_tile: Qrz,
     heading: &Heading,
     movement_speed: f32,
-    intent_state_opt: Option<&mut common::components::movement_intent_state::MovementIntentState>,
+    intent_state_opt: Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
 ) {
     // Get or initialize MovementIntentState
     let intent_state = if let Some(state) = intent_state_opt {
         state
     } else {
         // First time - add component and skip (will process next frame)
-        commands.entity(npc_entity).insert(common::components::movement_intent_state::MovementIntentState::default());
+        commands.entity(npc_entity).insert(common_bevy::components::movement_intent_state::MovementIntentState::default());
         return;
     };
 
@@ -54,7 +54,7 @@ fn broadcast_intent(
     // Y is dropped via .xz() so z-level of movement_direction doesn't matter
     let movement_direction = next_tile - **npc_loc;
     let dest_offset = if movement_direction != qrz::Qrz::default() {
-        use common::components::heading::HERE;
+        use common_bevy::components::heading::HERE;
         let heading_neighbor: Vec3 = map.convert(dest_standing + movement_direction);
         let direction = heading_neighbor - dest_tile_center;
         (direction * HERE).xz()
@@ -175,7 +175,7 @@ pub fn kite(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
-        Option<&mut common::components::movement_intent_state::MovementIntentState>,  // ADR-011
+        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,  // ADR-011
         &EngagementMember,
         Option<&Stagger>,
     )>,
@@ -184,7 +184,7 @@ pub fn kite(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
-    mut writer: MessageWriter<common::message::Do>,
+    mut writer: MessageWriter<common_bevy::message::Do>,
 ) {
     for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, stagger_opt) in &mut query {
 
@@ -212,7 +212,7 @@ pub fn kite(
 
             // Path back to spawn using greedy movement
             let spawn_qrz = *spawner_loc;
-            let Some((start, _)) = map.find(**npc_loc, -60) else {
+            let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                 continue;
             };
 
@@ -306,7 +306,7 @@ pub fn kite(
                 if distance_from_spawn > kite_config.leash_distance {
                     // Too far from spawn - return to spawn
                     let spawn_qrz = *spawner_loc;
-                    let Some((start, _)) = map.find(**npc_loc, -60) else {
+                    let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                         continue;
                     };
 
@@ -356,7 +356,7 @@ pub fn kite(
                 // Close enough to spawn - search for new target
                 let nearby = nntree.locate_within_distance(
                     *npc_loc,
-                    kite_config.acquisition_range as i32 * kite_config.acquisition_range as i32,
+                    kite_config.acquisition_range as i64 * kite_config.acquisition_range as i64,
                 );
 
                 let valid_targets: Vec<Entity> = nearby
@@ -414,7 +414,7 @@ pub fn kite(
             KiteAction::Flee | KiteAction::Reposition => {
                 // Score-based neighbor selection: balances optimal range + leash safety
                 let target_qrz = **target_loc;
-                let Some((start, _)) = map.find(**npc_loc, -60) else {
+                let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                     continue;
                 };
 
@@ -463,7 +463,7 @@ pub fn kite(
             KiteAction::Advance => {
                 // Score-based: when too far, score naturally prefers moving toward optimal range
                 let target_qrz = **target_loc;
-                let Some((start, _)) = map.find(**npc_loc, -60) else {
+                let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
                     continue;
                 };
 

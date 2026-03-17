@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use common::components::engagement::ZoneId;
+use common_bevy::components::engagement::ZoneId;
 
 /// Maximum engagements allowed per zone
 pub const MAX_ENGAGEMENTS_PER_ZONE: usize = 8;

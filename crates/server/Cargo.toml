@@ -4,14 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-common = { path = "../common" }
+common-bevy = { path = "../common-bevy" }
 bevy = { version = "0.18", features = ["dynamic_linking"] }
 bevy_easings = "0.18"
 bevy_renet = "4"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"
-noise = "0"
 pathfinding = "4"
 rand = "0.9"
 renet = "2"
@@ -20,3 +19,6 @@ tinyvec = { version = "1", features = ["serde"] }
 
 [dependencies.qrz]
 path = "../qrz"
+
+[dependencies.terrain]
+path = "../terrain"

@@ -2,11 +2,8 @@ use bevy::prelude::*;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use crate::{
-    components::TargetCursor,
-    plugins::diagnostics::DiagnosticsState,
-};
-use common::{
+use crate::components::TargetCursor;
+use common_bevy::{
     components::{
         heading::Heading,
         Loc, Actor,
@@ -45,7 +42,6 @@ pub fn update(
     mut cursor_query: Query<(&mut Mesh3d, &mut Transform, &mut Aabb), With<TargetCursor>>,
     player_query: Query<(&Loc, &Heading), With<Actor>>,
     map: Res<Map>,
-    diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
@@ -53,10 +49,10 @@ pub fn update(
             // Calculate the hex direction from the player's heading
             let target_direction = **loc + **heading;
             
-            // Find the actual terrain tile in that direction, searching vertically
-            if let Some((actual_tile, _)) = map.find(target_direction, -60) {
+            // Find the actual terrain tile in that direction
+            if let Some((actual_tile, _)) = map.get_by_qr(target_direction.q, target_direction.r) {
                 // Get the vertices for this tile (respecting slope toggle)
-                let (sloped_verts, _) = map.vertices_and_colors_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                let sloped_verts = map.vertices_with_slopes(actual_tile, true);
                 
                 // Create a filled hex mesh matching the sloped terrain
                 let mut positions = Vec::new();

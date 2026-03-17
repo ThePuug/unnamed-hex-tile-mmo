@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_hanabi::prelude::*;
 
 use crate::resources::*;
-use common::{
+use common_bevy::{
     components::{
         heading::*,
         qrz::*,
@@ -76,8 +76,10 @@ pub fn render_do_gcd(
     query: Query<(&Loc, &Heading)>,
     map: Res<EffectMap>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Do { event: Event::Gcd { ent, typ, .. } } = message {
+            let ent = *ent;
+            let typ = *typ;
             let (&loc, &heading) = query.get(ent).unwrap();
             let pos = Vec3::from(*loc + *heading);
             let effect = map.0.get(&typ).unwrap().clone();

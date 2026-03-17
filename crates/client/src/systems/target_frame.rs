@@ -11,7 +11,7 @@
 use bevy::prelude::*;
 
 use crate::resources::Server;
-use common::{
+use common_bevy::{
     components::{Actor, entity_type::*, resources::*, reaction_queue::*, Loc},
     spatial_difficulty::*,
 };
@@ -475,7 +475,7 @@ pub fn update(
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
     mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<TargetLevelHex>>,
     mut level_text_query: Query<&mut Text, (Without<TargetNameText>, Without<TargetHealthText>, Without<TargetTriumvirateText>)>,
-    player_query: Query<(&Health, &common::components::target::Target), With<Actor>>,
+    player_query: Query<(&Health, &common_bevy::components::target::Target), With<Actor>>,
     target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, &Loc)>,
 ) {
     // Get local player and target
@@ -596,7 +596,7 @@ pub fn update(
 /// Separate system to avoid hitting Bevy's system parameter limits
 pub fn update_queue(
     mut commands: Commands,
-    player_query: Query<&common::components::target::Target, With<Actor>>,
+    player_query: Query<&common_bevy::components::target::Target, With<Actor>>,
     mut queue_container_query: Query<&mut Visibility, With<TargetQueueContainer>>,
     queue_children_query: Query<&Children, With<TargetQueueContainer>>,
     dots_container_query: Query<Entity, With<DotsContainer>>,
@@ -896,7 +896,7 @@ pub fn update_ally_frame(
     mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
     mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<AllyLevelHex>>,
     mut level_text_query: Query<&mut Text, (Without<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
-    player_query: Query<(&common::components::ally_target::AllyTarget, &Health), With<Actor>>,
+    player_query: Query<(&common_bevy::components::ally_target::AllyTarget, &Health), With<Actor>>,
     ally_query: Query<(&EntityType, &Health, &Loc)>,
 ) {
     // Get local player's ally target and health
@@ -1031,7 +1031,7 @@ pub fn update_ally_frame(
 /// Mirrors update_queue but for ally frame
 pub fn update_ally_queue(
     mut commands: Commands,
-    player_query: Query<&common::components::ally_target::AllyTarget, With<Actor>>,
+    player_query: Query<&common_bevy::components::ally_target::AllyTarget, With<Actor>>,
     mut queue_container_query: Query<&mut Visibility, With<AllyQueueContainer>>,
     queue_children_query: Query<&Children, With<AllyQueueContainer>>,
     dots_container_query: Query<Entity, With<AllyDotsContainer>>,

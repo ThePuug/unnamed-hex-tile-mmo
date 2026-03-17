@@ -9,7 +9,7 @@ Five systems work together to solve this:
 | System | Addresses | Mechanism |
 |--------|-----------|-----------|
 | 1. Super-linear scaling | Stats too weak at high levels | Polynomial multiplier on derived stats |
-| 2. Commitment-ratio queue | Queue capacity loses meaning | Investment ratio thresholds |
+| 2. Visibility window | Queue perception loses meaning | Investment ratio thresholds |
 | 3. Reaction window gap | No level advantage in reactions | Wider windows against weaker enemies |
 | 4. Dismiss mechanic | No way to triage threats | Skip front threat at full damage |
 | 5. NPC engagement coordination | Unavoidable damage streams | Attack-recovery loops + coordinated positioning |
@@ -34,85 +34,50 @@ Where:
 
 ### Stat Category Parameters
 
-| Stat Category | k | p | Rationale |
-|---------------|------|------|-----------|
-| HP / Survivability | 0.10 | 1.5 | Moderate scaling preserves danger from equal-level foes |
-| Damage / Offense | 0.15 | 2.0 | Aggressive scaling rewards offensive investment |
-| Reaction stats | 0.10 | 1.2 | Gentle scaling — reaction windows are already bounded by human limits |
+Three stat categories scale independently, each with its own k/p constants:
 
-### Worked Examples: Level Multiplier
+| Stat Category | Scaling Intent | Rationale |
+|---------------|----------------|-----------|
+| HP / Survivability | Moderate | Preserves danger from equal-level foes |
+| Damage / Offense | Moderate | Balanced with HP growth to preserve level advantage without runaway |
+| Reaction stats | Gentle | Reaction windows are bounded by human limits |
 
-| Level | HP Multiplier (k=0.1, p=1.5) | Damage Multiplier (k=0.15, p=2.0) | Reaction Multiplier (k=0.1, p=1.2) |
-|-------|-------------------------------|-------------------------------------|--------------------------------------|
-| 0 | 1.00 | 1.00 | 1.00 |
-| 1 | 1.15 | 1.32 | 1.12 |
-| 2 | 1.31 | 1.69 | 1.24 |
-| 3 | 1.48 | 2.10 | 1.37 |
-| 5 | 1.84 | 3.06 | 1.64 |
-| 7 | 2.22 | 4.20 | 1.92 |
-| 10 | 2.83 | 6.25 | 2.30 |
+**Key constraint:** HP exponent must be ≥ Damage exponent to ensure higher-level fights have more exchanges, not fewer. See code constants in `ActorAttributes::hp_level_multiplier()` and `damage_level_multiplier()`.
 
-### Worked Example: Level-10 vs Three Level-0 NPCs (After Scaling)
+### Design Intent
 
-| Entity | Level | HP (after multiplier) | Damage (after multiplier) |
-|--------|-------|-----------------------|---------------------------|
-| NPC A | 0 | 100 × 1.00 = **100** | 20 × 1.00 = **20** |
-| NPC B | 0 | 100 × 1.00 = **100** | 20 × 1.00 = **20** |
-| NPC C | 0 | 100 × 1.00 = **100** | 20 × 1.00 = **20** |
-| Player | 10 | 200 × 2.83 = **566** | 40 × 6.25 = **250** |
-
-Combined NPC damage: 60/tick vs player's 566 HP. Player has ~9.4 ticks of survivability (up from 3.3). Player's 250 damage kills each NPC in 1 hit (100 HP each). Balance restored.
+A high-level player fighting multiple low-level NPCs should feel appropriately dominant — super-linear scaling ensures the player's stats outpace the multiplicative threat count. At equal levels, the multiplier is symmetric and combat plays as designed.
 
 ---
 
-## System 2: Queue Capacity by Commitment Tier
+## System 2: Queue Visibility Window by Commitment Tier
 
-Queue capacity is driven by Focus → Concentration commitment tier. The commitment tier system uses percentage-based thresholds: `derived_value / (total_level × 10) × 100`.
+The queue is unbounded — all threats enter regardless. **Visibility window** is driven by Focus → Concentration commitment tier, determining how many threats the player can see and interact with. Threats outside the window still resolve on their timers but cannot be reacted to.
 
-### Threshold Table
-
-| Commitment Tier | Threshold | Queue Slots | Interpretation |
-|-----------------|-----------|-------------|----------------|
-| Tier 0 | < 20% | 1 | No Focus commitment — one threat at a time |
-| Tier 1 | ≥ 20% | 2 | Moderate investment — can juggle two threats |
-| Tier 2 | ≥ 40% | 3 | Major investment — comfortable multi-threat management |
-| Tier 3 | ≥ 60% | 4 | Focus specialist — maximum queue capacity |
+The commitment tier system uses percentage-based thresholds: `derived_value / (total_level × 10) × 100`. Higher Concentration tier → larger visibility window → more threats the player can perceive and respond to.
 
 ### Why Ratio-Based
 
-Raw scaling gives the same slots regardless of level, making investment feel flat. Ratio scaling rewards proportional commitment — 2 Focus points at level 10 means less commitment than 2 Focus points at level 3.
+Raw scaling gives the same window regardless of level, making investment feel flat. Ratio scaling rewards proportional commitment — 2 Focus points at level 10 means less commitment than 2 Focus points at level 3.
 
 ---
 
-## System 3: Reaction Window Level Gap
+## System 3: Reaction Window Scaling
 
-### Formula
+### Two-Step Timer Calculation
 
-```
-reaction_window = instinct_base × gap_multiplier
+Reaction window duration is computed in two steps:
 
-gap_multiplier = clamp(1.0 + max(0, defender_level - attacker_level) × 0.15, 1.0, 3.0)
-```
+1. **Gap window** (level difference): `gap_window(defender_level, attacker_level)` uses Gaussian decay (`gap_factor`) to set the base window. Equal levels get the full base window; large level gaps compress it toward zero. This is a one-directional effect — the beneficiary's window is reduced when outleveled, never penalized further.
 
-Where:
-- `instinct_base` = base reaction window from Instinct attribute
-- `defender_level` = level of the entity with the reaction queue
-- `attacker_level` = level of the entity whose threat is being timed
-- Minimum multiplier: 1.0 (no penalty for fighting stronger enemies)
-- Maximum multiplier: 3.0 (cap prevents infinite windows)
+2. **Reaction contest** (Cunning vs Finesse): `reaction_contest_factor(cunning, finesse)` applies a baseline+bonus multiplier. At equal stats the window is unchanged; Cunning advantage extends it (up to a cap). This ensures a playable floor — the window never shrinks below the gap-derived base.
 
-### Worked Examples
+### Design Intent
 
-Assume `instinct_base = 1.5 seconds`:
-
-| Defender Level | Attacker Level | Gap | Multiplier | Window |
-|----------------|----------------|-----|------------|--------|
-| 10 | 0 | +10 | 2.50 | 3.75s |
-| 10 | 5 | +5 | 1.75 | 2.63s |
-| 10 | 10 | 0 | 1.00 | 1.50s |
-| 5 | 10 | -5 | 1.00 (floored) | 1.50s |
-
-**Interpretation:** A level-10 defender fighting level-0 threats gets 2.5× more reaction time. When `defender_level < attacker_level`, the multiplier floors at 1.0 — the attacker's super-linear damage scaling is punishment enough.
+- Higher-level defenders fighting lower-level threats get generous reaction windows (threats feel trivial to manage)
+- Equal-level combat uses the base window (primary balancing target)
+- When outleveled, the gap window compresses — combined with the attacker's super-linear damage, fighting up is punishing but playable
+- Cunning investment rewards build choices even across level gaps (build benefit, not level scaling)
 
 ---
 
@@ -125,7 +90,7 @@ Assume `instinct_base = 1.5 seconds`:
 | Property | Value |
 |----------|-------|
 | Target | Front of own reaction queue |
-| Damage taken | Full unmitigated (no armor, no resistance) |
+| Damage taken | Full unmitigated (bypasses passive modifiers) |
 | Lockout (GlobalRecovery) | None — does not trigger recovery |
 | GCD interaction | None — always available |
 | Stamina/Mana cost | None |
@@ -168,12 +133,12 @@ Every NPC follows a behavior loop: **attack → recovery → attack**. The recov
 
 **Recovery Duration by Archetype:**
 
-| Archetype | Recovery Range | Loop Character | Queue Pressure Profile |
-|-----------|---------------|----------------|----------------------|
-| **Berserker** | 1–2 seconds | Fast, aggressive | High per-NPC, brief gaps between bursts |
-| **Juggernaut** | 3–5 seconds | Slow, heavy | Low frequency, high damage per threat |
-| **Defender** | 4–6 seconds | Reactive, passive | Very low unprovoked cadence; pressure from Counter reflection |
-| **Kiter** | Implicit (flee phase) | Mobile, evasive | Gaps from repositioning; attack → flee → reposition → attack |
+| Archetype | Loop Character | Queue Pressure Profile |
+|-----------|----------------|----------------------|
+| **Berserker** | Fast, aggressive | High per-NPC, brief gaps between bursts |
+| **Juggernaut** | Slow, heavy | Low frequency, high damage per threat |
+| **Defender** | Reactive, passive | Very low unprovoked cadence; pressure from Counter reflection |
+| **Kiter** | Mobile, evasive | Gaps from repositioning; attack → flee → reposition → attack |
 
 Recovery duration is **randomized** within the archetype's range. This prevents re-synchronization: even if two Juggernauts attack simultaneously, their next attacks desync after one cycle.
 
@@ -233,67 +198,49 @@ In mixed-archetype engagements, strategies compose without conflict because they
 
 How the five systems combine in practice:
 
-### Scenario: Level-10 Player vs 3× Level-0 NPCs
+### Scenario: High-Level Player vs Multiple Low-Level NPCs
 
-1. **Super-linear scaling:** Player has 566 HP, 250 damage vs NPC's 100 HP, 20 damage each
-2. **Queue capacity:** If player invested in Focus, queue holds 2-4 threats; if not, 1 slot with overflow
-3. **Reaction window:** Each NPC threat gets 2.5× reaction window (level gap +10)
-4. **Dismiss:** Player can dismiss trivial 20-damage threats instantly to keep queue open
-5. **Coordination:** NPCs arrive staggered (different path lengths), attack-recovery gaps allow breathing room
+All five systems combine: super-linear scaling gives dominant stats, visibility window manages queue perception, generous reaction windows make threats trivial to manage, dismiss freely skips weak threats, and NPC coordination prevents overwhelming burst. The encounter should feel appropriately dominant.
 
-**Combined effect:** Player tanks 60 damage/tick (trivial vs 566 HP), has generous reaction windows, can dismiss freely, and kills each NPC in one hit. Level-10 vs level-0 feels appropriately dominant.
+### Scenario: Player vs Higher-Level NPC
 
-### Scenario: Level-5 Player vs 1× Level-10 NPC
+Fighting above your level is punishing but not impossible. Super-linear damage makes the NPC hit hard, gap window compresses reaction time, and dismissing is costly. Player must use reaction abilities carefully.
 
-1. **Super-linear scaling:** NPC has 2.83× HP multiplier and 6.25× damage multiplier
-2. **Queue capacity:** Based on player's Focus ratio (unchanged by enemy level)
-3. **Reaction window:** No bonus reaction time (multiplier = 1.0)
-4. **Dismiss:** Available but costly (NPC damage is high after multiplier)
-5. **Coordination:** Single NPC — no coordination benefit
+### Scenario: Equal-Level Combat
 
-**Combined effect:** Fighting above your level is punishing but not impossible. Player must use reaction abilities carefully — dismissing is expensive.
-
-### Scenario: Level-10 vs Level-10 (Equal Combat)
-
-All multipliers are symmetric. Queue capacity depends on Focus investment. No gap bonus. Dismiss is a tactical choice — full unmitigated damage from an equal-level foe is significant. Equal-level combat unchanged from core design intent.
+All multipliers are symmetric. Visibility window depends on Focus investment. No gap bonus. Dismiss is a meaningful tactical choice — full unmitigated damage from an equal-level foe is significant. Equal-level combat plays as designed.
 
 ---
 
 ## Tuning Knobs
 
-All constants are isolated for easy adjustment via playtesting.
+All constants are isolated in code for easy adjustment via playtesting. Key tuning areas:
 
-| Knob | Default | Valid Range | Affects |
-|------|---------|-------------|---------|
-| `HP_K` | 0.10 | 0.05 – 0.20 | HP growth rate per level |
-| `HP_P` | 1.5 | 1.0 – 2.5 | HP curve shape (1.0 = linear) |
-| `DAMAGE_K` | 0.15 | 0.05 – 0.25 | Damage growth rate per level |
-| `DAMAGE_P` | 2.0 | 1.0 – 3.0 | Damage curve shape |
-| `REACTION_K` | 0.10 | 0.05 – 0.15 | Reaction stat growth rate |
-| `REACTION_P` | 1.2 | 1.0 – 2.0 | Reaction stat curve shape |
-| `WINDOW_SCALING_FACTOR` | 0.15 | 0.05 – 0.25 | Bonus per level gap |
-| `WINDOW_MAX_MULTIPLIER` | 3.0 | 2.0 – 5.0 | Cap on window bonus |
-| Berserker recovery | 1.0–2.0s | 0.5–3.0s | Berserker queue pressure |
-| Juggernaut recovery | 3.0–5.0s | 2.0–8.0s | Juggernaut breathing room |
-| Defender recovery | 4.0–6.0s | 3.0–10.0s | Defender passive cadence |
-| Cluster max faces | 3 | 2–4 | Berserker spread cap |
+| Area | Constants | Location |
+|------|-----------|----------|
+| Level multiplier (HP, Damage, Reaction) | k/p per stat category | `ActorAttributes::*_level_multiplier()` |
+| Gap window base | Base duration | `gap_window()` in `queue.rs` |
+| Contest scaling | Delta normalization, sqrt curve | `contest_factor()`, `reaction_contest_factor()` in `damage.rs` |
+| NPC recovery | Per-archetype min/max ranges | `NpcRecovery` in archetype spawn data |
+| Commitment thresholds | 20/40/60% tier boundaries | `CommitmentTier::calculate()` |
 
 ---
 
-## Formula Quick Reference
+## Mechanism Quick Reference
 
 ```
 # System 1: Super-Linear Stat Scaling
 level_multiplier(level, k, p) = (1 + level × k)^p
 effective_stat = linear_stat × level_multiplier
 
-# System 2: Queue Capacity (Concentration commitment tier)
+# System 2: Queue Visibility Window (Concentration commitment tier)
 commitment_pct = focus_derived / (total_level × 10) × 100
-slots = T0(<20%) → 1, T1(≥20%) → 2, T2(≥40%) → 3, T3(≥60%) → 4
+window = Concentration tier → visibility count
 
-# System 3: Reaction Window Level Gap
-gap_multiplier = clamp(1.0 + max(0, defender_level - attacker_level) × 0.15, 1.0, 3.0)
-reaction_window = instinct_base × gap_multiplier
+# System 3: Reaction Window
+base_window = gap_window(defender_level, attacker_level)  // Gaussian decay
+multiplier = reaction_contest_factor(cunning, finesse)    // Baseline+bonus
+reaction_window = base_window × multiplier
 
 # System 4: Dismiss
 damage_taken = full_unmitigated_threat_damage

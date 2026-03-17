@@ -5,16 +5,17 @@ use bevy::{
     prelude::*,
     tasks::{block_on, futures_lite::future},
 };
+use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
     components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
-    resources::{LoadedChunks, PendingChunkMeshes, Server, TerrainMaterial},
+    resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
 };
-use common::{
-    chunk::{FOV_CHUNK_RADIUS, calculate_visible_chunks, loc_to_chunk},
+use common_bevy::{
+    chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, terrain_chunk_radius, CHUNK_EXTENT_WU},
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -25,7 +26,7 @@ use common::{
 
 pub fn setup(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>>,
 ) {
     commands.insert_resource(
         GlobalAmbientLight {
@@ -49,132 +50,92 @@ pub fn setup(
         Transform::default(),
         Moon::default()));
 
-    // Initialize shared terrain material (white to let vertex colors show through)
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.,
-        ..default()
+    // Initialize shared terrain material (elevation color computed in shader)
+    let material = materials.add(bevy::pbr::ExtendedMaterial {
+        base: StandardMaterial {
+            perceptual_roughness: 1.,
+            ..default()
+        },
+        extension: crate::resources::TerrainExtension {},
     });
     commands.insert_resource(TerrainMaterial { handle: material });
 }
 
-/// Scan the map and spawn mesh generation tasks for chunks that have tiles but no meshes
-/// This system runs periodically and automatically generates meshes after the drain loop
-/// processes tile events, avoiding the need for coordination between systems
-pub fn spawn_missing_chunk_meshes(
-    map: Res<common::resources::map::Map>,
-    chunk_mesh_query: Query<&ChunkMesh>,
-    mut pending_meshes: ResMut<PendingChunkMeshes>,
-    diagnostics_state: Res<DiagnosticsState>,
-) {
-    use std::collections::HashSet;
-    use common::chunk::{ChunkId, calculate_visible_chunks, loc_to_chunk};
-    use bevy::tasks::AsyncComputeTaskPool;
+// ─────────────────────────────────────────────────────────
+// SYSTEM 1: Data eviction (timer, every 5s)
+// ─────────────────────────────────────────────────────────
+// Manages what data the client holds. Never touches meshes.
+// Tiles: evicted beyond detail_radius + 1.
+// Summaries: evicted beyond terrain_chunk_radius + 1.
 
-    // Get chunks that already have mesh entities
-    let chunks_with_meshes: HashSet<ChunkId> = chunk_mesh_query
-        .iter()
-        .map(|mesh| mesh.chunk_id)
+/// Evict data beyond the player's view range.
+pub fn evict_data(
+    mut commands: Commands,
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
+    mut l2r: ResMut<crate::resources::EntityMap>,
+    map: Res<common_bevy::resources::map::Map>,
+    map_state: Res<common_bevy::resources::map::MapState>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
+    actor_query: Query<(Entity, &Loc, &EntityType)>,
+) {
+    let Ok(player_loc) = player_query.single() else { return };
+    let player_chunk = loc_to_chunk(**player_loc);
+    let player_z = player_loc.z;
+
+    let summary_buffer = terrain_chunk_radius(player_z) as i32 + 1;
+
+    // ── Evict tiles beyond summary boundary ──
+    // Use summary_buffer (not detail_buffer) — outer ring chunks need tiles
+    // in the Map for LoD2 mesh generation and slope blending.
+    let evictable: Vec<common_bevy::chunk::ChunkId> = loaded_chunks.chunks.iter()
+        .filter(|&&cid| chunk_hex_distance(cid, player_chunk) > summary_buffer)
+        .copied()
         .collect();
 
-    // Scan the map to find which chunks have tiles
-    let mut chunks_with_tiles: HashSet<ChunkId> = HashSet::new();
-    for (qrz, _) in map.iter_tiles() {
-        chunks_with_tiles.insert(loc_to_chunk(qrz));
-    }
-
-    // Spawn mesh tasks for chunks with tiles but no mesh (and no pending task)
-    let pool = AsyncComputeTaskPool::get();
-
-    for chunk_id in &chunks_with_tiles {
-        // Skip if mesh already exists or task is pending
-        if chunks_with_meshes.contains(chunk_id) || pending_meshes.tasks.contains_key(chunk_id) {
-            continue;
-        }
-
-        // Clone Map (O(1) Arc clone) for async task
-        let map_snapshot = map.clone();
-        let apply_slopes = diagnostics_state.slope_rendering_enabled;
-        let chunk_id = *chunk_id; // Copy ChunkId for async move
-
-        let task = pool.spawn(async move {
-            map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
-        });
-
-        pending_meshes.tasks.insert(chunk_id, task);
-    }
-
-    // Also regenerate adjacent chunks when a new chunk appears (fixes edge vertices)
-    let mut chunks_to_regenerate: HashSet<ChunkId> = HashSet::new();
-    for chunk_id in &chunks_with_tiles {
-        // If this chunk is new (no mesh yet), regenerate its neighbors too
-        if !chunks_with_meshes.contains(chunk_id) {
-            for adjacent_chunk in calculate_visible_chunks(*chunk_id, 1) {
-                if chunks_with_tiles.contains(&adjacent_chunk) && chunks_with_meshes.contains(&adjacent_chunk) {
-                    chunks_to_regenerate.insert(adjacent_chunk);
+    if !evictable.is_empty() {
+        // Despawn actors on evicted chunks
+        for (entity, loc, entity_type) in actor_query.iter() {
+            let actor_chunk = loc_to_chunk(**loc);
+            if evictable.contains(&actor_chunk) {
+                let is_player = matches!(
+                    entity_type,
+                    EntityType::Actor(actor_impl) if matches!(
+                        actor_impl.identity,
+                        common_bevy::components::entity_type::actor::ActorIdentity::Player
+                    )
+                );
+                if !is_player {
+                    l2r.remove_by_left(&entity);
+                    commands.entity(entity).despawn();
                 }
             }
         }
-    }
 
-    // Regenerate neighbor chunks (cancel pending tasks first)
-    for chunk_id in chunks_to_regenerate {
-        pending_meshes.tasks.remove(&chunk_id);
-
-        let map_snapshot = map.clone();
-        let apply_slopes = diagnostics_state.slope_rendering_enabled;
-
-        let task = pool.spawn(async move {
-            map_snapshot.generate_chunk_mesh(chunk_id, apply_slopes)
-        });
-
-        pending_meshes.tasks.insert(chunk_id, task);
-    }
-}
-
-/// Poll pending chunk mesh generation tasks and spawn/update mesh entities when ready
-pub fn poll_chunk_mesh_tasks(
-    mut commands: Commands,
-    mut pending_meshes: ResMut<PendingChunkMeshes>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    terrain_material: Res<TerrainMaterial>,
-    chunk_mesh_query: Query<(Entity, &Mesh3d, &ChunkMesh)>,
-) {
-    use common::chunk::ChunkId;
-
-    let mut completed_chunks: Vec<(ChunkId, Mesh)> = Vec::new();
-
-    // Poll all pending tasks (non-blocking)
-    pending_meshes.tasks.retain(|&chunk_id, task| {
-        let result = block_on(future::poll_once(task));
-        if let Some((chunk_mesh, _aabb)) = result {
-            completed_chunks.push((chunk_id, chunk_mesh));
-            false // Remove from pending
-        } else {
-            true // Keep pending
-        }
-    });
-
-    // Spawn or update mesh entities for completed tasks
-    if !completed_chunks.is_empty() {
-        for (chunk_id, chunk_mesh) in completed_chunks {
-            // Check if mesh entity for this chunk already exists
-            let existing_entity = chunk_mesh_query.iter()
-                .find(|(_, _, c)| c.chunk_id == chunk_id)
-                .map(|(entity, mesh_handle, _)| (entity, mesh_handle.clone()));
-
-            if let Some((_entity, mesh_handle)) = existing_entity {
-                // Update existing mesh
-                if let Some(mesh_asset) = meshes.get_mut(&mesh_handle.0) {
-                    *mesh_asset = chunk_mesh;
+        // Queue tile despawns
+        {
+            use common_bevy::resources::map::TileEvent;
+            for &chunk_id in &evictable {
+                for (q, r) in chunk_tiles(chunk_id) {
+                    if let Some((qrz, _)) = map.get_by_qr(q, r) {
+                        map_state.queue_event(TileEvent::Despawn(qrz));
+                    }
                 }
-            } else {
-                // Spawn new mesh entity
-                commands.spawn((
-                    Mesh3d(meshes.add(chunk_mesh)),
-                    MeshMaterial3d(terrain_material.handle.clone()),
-                    ChunkMesh { chunk_id },
-                ));
+            }
+            loaded_chunks.evict(&evictable);
+        }
+    }
+
+    // Evict LoD mesh state when tiles are evicted — same radius as tile eviction
+    // to prevent stale entries blocking re-dispatch on chunk re-load.
+    let lod_evictable: Vec<common_bevy::chunk::ChunkId> = lod_meshes.states.keys()
+        .filter(|&&cid| !loaded_chunks.chunks.contains(&cid))
+        .copied()
+        .collect();
+    for cid in &lod_evictable {
+        if let Some(state) = lod_meshes.states.remove(cid) {
+            if let Some(entity) = state.entity {
+                commands.entity(entity).despawn();
             }
         }
     }
@@ -186,8 +147,9 @@ pub fn do_init(
     mut server: ResMut<Server>,
     time: Res<Time>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Init { dt, .. } } = message else { continue };
+        let dt = *dt;
         let client_now = time.elapsed().as_millis();
 
         // CRITICAL: The server captured dt when it SENT Init, but we're receiving it now
@@ -204,14 +166,16 @@ pub fn do_init(
 
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
-    map_state: Res<common::resources::map::MapState>,
+    map_state: Res<common_bevy::resources::map::MapState>,
 ) {
-    use common::resources::map::TileEvent;
+    use common_bevy::resources::map::TileEvent;
 
     // Queue tile spawn events (drain loop will process them)
     // refresh_map system will swap in new snapshot and trigger Bevy change detection
-    for &message in reader.read() {
+    for message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
+        let decorator = *decorator;
+        let qrz = *qrz;
 
         map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
     }
@@ -221,11 +185,12 @@ pub fn do_spawn(
 #[allow(clippy::type_complexity)]
 pub fn update(
     time: Res<Time>,
-    mut q_sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>,Without<Moon>)>,
+    mut q_sun: Query<(&mut DirectionalLight, &mut Transform, &mut CascadeShadowConfig), (With<Sun>,Without<Moon>)>,
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
     mut a_light: ResMut<GlobalAmbientLight>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
 ) {
     let dt = server.current_time(time.elapsed().as_millis());
     // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
@@ -238,7 +203,7 @@ pub fn update(
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 
     // sun
-    let (mut s_light, mut s_transform) = q_sun.single_mut().expect("no result in q_sun");
+    let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
     let mut s_rad_d = dtd * 2. * PI;
     let s_rad_y = dty * 2. * PI;
 
@@ -271,87 +236,222 @@ pub fn update(
     m_transform.translation.x = 1_000.*cos(m_rad_d+3.*PI/2.);
     m_transform.translation.y = 1_000.*sin(m_rad_d+3.*PI/2.).powf(2.);
     m_transform.look_at(Vec3::ZERO, Vec3::Y);
+
+    // Anchor cascade shadow distance to the atmospheric fade start.
+    // The shader fades terrain to horizon haze at 80% of the loading radius,
+    // so shadows covering up to that point hide the shadow-to-no-shadow seam
+    // inside the fade band. Summary meshes are cheap (7 verts/chunk).
+    // maximum_distance is measured from the camera, not the player,
+    // so add the camera-to-player distance to the terrain radius.
+    if let Ok(player_loc) = player_query.single() {
+        use crate::systems::camera::{CAMERA_DISTANCE, CAMERA_HEIGHT};
+        let loading_r = chunk::terrain_chunk_radius(player_loc.z) as f32;
+        let camera_to_player = (CAMERA_DISTANCE * CAMERA_DISTANCE + CAMERA_HEIGHT * CAMERA_HEIGHT).sqrt();
+        let max_dist = camera_to_player + loading_r * 0.8 * CHUNK_EXTENT_WU;
+        let current_max = cascade_config.bounds.last().copied().unwrap_or(0.0);
+        if (max_dist - current_max).abs() > 1.0 {
+            *cascade_config = CascadeShadowConfigBuilder {
+                maximum_distance: max_dist,
+                ..default()
+            }.into();
+        }
+    }
 }
 
-/// Evict chunks that are outside the player's FOV radius
-/// This prevents unlimited memory growth as the player explores
-/// Also despawns any actors (NPCs/players) on evicted chunks
-pub fn evict_distant_chunks(
-    mut commands: Commands,
-    mut loaded_chunks: ResMut<LoadedChunks>,
-    mut l2r: ResMut<crate::resources::EntityMap>,
-    map: Res<common::resources::map::Map>,
-    map_state: Res<common::resources::map::MapState>,
-    player_query: Query<&Loc, With<PlayerControlled>>,
-    actor_query: Query<(Entity, &Loc, &EntityType)>,
-    chunk_mesh_query: Query<(Entity, &ChunkMesh)>,
+// ── Client-Side LoD ──
+
+/// QEM error threshold for LoD1 (lossless — removes only zero-error vertices).
+const LOD1_ERROR_THRESHOLD: f32 = 0.0;
+/// QEM error threshold for LoD2 (lossy — tune after viewing results).
+const LOD2_ERROR_THRESHOLD: f32 = 2.0;
+
+/// Dispatch dual-LoD QEM tasks for newly loaded chunks.
+/// Runs every frame — checks for chunks that have tiles but no LoD tasks yet.
+pub fn dispatch_lod_tasks(
+    loaded_chunks: Res<LoadedChunks>,
+    map: Res<common_bevy::resources::map::Map>,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
 ) {
-    // Only evict if we have a player
-    let Ok(player_loc) = player_query.single() else {
-        return;
-    };
-
-    // Calculate which chunks should be kept (FOV + 1 buffer to prevent flickering)
-    let player_chunk = loc_to_chunk(**player_loc);
-    let active_chunks: std::collections::HashSet<_> = calculate_visible_chunks(player_chunk, FOV_CHUNK_RADIUS + 1)
-        .into_iter()
-        .collect();
-
-    // Find chunks to evict
-    let evictable = loaded_chunks.get_evictable(&active_chunks);
-    if evictable.is_empty() {
+    // Only re-check when new tile data arrives. Once all reachable chunks are
+    // meshed or waiting on out-of-range neighbors, this skips entirely.
+    if !map.is_changed() {
         return;
     }
 
-    // Despawn all actors on evicted chunks (prevents "ghost NPCs")
-    for (entity, loc, entity_type) in actor_query.iter() {
-        let actor_chunk = loc_to_chunk(**loc);
-        if evictable.contains(&actor_chunk) {
-            // Only despawn non-player actors (players handle their own despawn)
-            let is_player = matches!(
-                entity_type,
-                EntityType::Actor(actor_impl) if matches!(
-                    actor_impl.identity,
-                    common::components::entity_type::actor::ActorIdentity::Player
-                )
-            );
+    let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
-            if !is_player {
-                l2r.remove_by_left(&entity);
-                commands.entity(entity).despawn();
-            }
+    for &chunk_id in &loaded_chunks.chunks {
+        if lod_meshes.states.contains_key(&chunk_id) {
+            continue; // Already dispatched
         }
-    }
 
-    // Despawn mesh entities for evicted chunks
-    for (entity, chunk_mesh) in chunk_mesh_query.iter() {
-        if evictable.contains(&chunk_mesh.chunk_id) {
-            commands.entity(entity).despawn();
+        // Neighbor gate (6 lookups). Skip the expensive 271-tile collection
+        // when neighbors haven't arrived yet.
+        let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+        let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
+            let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+            let nc = nid.center();
+            map.get_by_qr(nc.q, nc.r).is_some()
+        });
+        if !all_neighbors_in_map {
+            continue;
         }
-    }
 
-    // Queue despawn events for all tiles in evicted chunks
-    {
-        use common::resources::map::TileEvent;
-
-        let tiles_to_remove: Vec<_> = map.iter_tiles()
-            .filter_map(|(qrz, _typ)| {
-                let tile_chunk = loc_to_chunk(qrz);
-                if evictable.contains(&tile_chunk) {
-                    Some(qrz)
-                } else {
-                    None
-                }
-            })
+        // Build chunk tiles from populated Map
+        let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
+            .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
             .collect();
 
-        if !tiles_to_remove.is_empty() {
-            for qrz in &tiles_to_remove {
-                map_state.queue_event(TileEvent::Despawn(*qrz));
+        if chunk_tile_list.len() < 271 {
+            if chunk_tile_list.is_empty() {
+                continue;
             }
+            bevy::log::warn!("chunk ({},{}) has only {} of 271 tiles in map",
+                chunk_id.0, chunk_id.1, chunk_tile_list.len());
+            continue;
+        }
 
-            // Remove chunk from LoadedChunks
-            loaded_chunks.evict(&evictable);
+        let mut elevations = std::collections::HashMap::new();
+        for &qrz in &chunk_tile_list {
+            elevations.insert((qrz.q, qrz.r), qrz.z);
+            for direction in qrz::DIRECTIONS.iter() {
+                let n = qrz + *direction;
+                if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
+                    elevations.insert((actual.q, actual.r), actual.z);
+                }
+            }
+        }
+
+        // Dispatch LoD1 task — QEM at threshold 0 (lossless zero-error collapses only)
+        let tiles1 = chunk_tile_list.clone();
+        let elevs1 = elevations.clone();
+        let lod1_task = pool.spawn(async move {
+            let geometry = common_bevy::geometry::compute_tile_geometry(
+                &tiles1, &elevs1, 1.0, 0.8,
+            );
+            common_bevy::qem::decimate_geometry(&geometry, LOD1_ERROR_THRESHOLD)
+        });
+
+        // Dispatch LoD2 task — QEM decimation
+        let tiles2 = chunk_tile_list;
+        let elevs2 = elevations;
+        let lod2_task = pool.spawn(async move {
+            let geometry = common_bevy::geometry::compute_tile_geometry(
+                &tiles2, &elevs2, 1.0, 0.8,
+            );
+            common_bevy::qem::decimate_geometry(&geometry, LOD2_ERROR_THRESHOLD)
+        });
+
+        lod_meshes.states.insert(chunk_id, ChunkLodState {
+            lod1_task: Some(lod1_task),
+            lod2_task: Some(lod2_task),
+            lod1_mesh: None,
+            lod2_mesh: None,
+            lod1_tris: 0,
+            lod2_tris: 0,
+            active_lod: LodLevel::Lod1,
+            entity: None,
+        });
+    }
+
+}
+
+/// Poll completed LoD tasks, upload meshes, select active LoD per chunk.
+pub fn poll_and_swap_lod(
+    mut commands: Commands,
+    mut lod_meshes: ResMut<ChunkLodMeshes>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut tri_stats: ResMut<LodTriangleStats>,
+    terrain_material: Option<Res<TerrainMaterial>>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
+) {
+    let Some(terrain_material) = terrain_material else { return; };
+
+    let player_loc = player_query.iter().next();
+    let player_chunk = player_loc.map(|loc| loc_to_chunk(**loc));
+
+    for (&chunk_id, state) in lod_meshes.states.iter_mut() {
+        // Poll LoD1
+        if let Some(task) = &mut state.lod1_task {
+            if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod1_tris = (result.indices.len() / 3) as u32;
+                tri_stats.push_lod1(result.raw_tris, state.lod1_tris);
+                state.lod1_task = None;
+                state.lod1_mesh = Some(meshes.add(build_bevy_mesh(&result)));
+            }
+        }
+
+        // Poll LoD2
+        if let Some(task) = &mut state.lod2_task {
+            if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod2_tris = (result.indices.len() / 3) as u32;
+                tri_stats.push_lod2(result.raw_tris, state.lod2_tris);
+                state.lod2_task = None;
+                state.lod2_mesh = Some(meshes.add(build_bevy_mesh(&result)));
+            }
+        }
+
+        // Determine which mesh to show
+        let target_lod = target_lod_for_chunk(chunk_id, player_chunk);
+
+        // Pick the best available mesh: prefer target, fallback to any
+        let (mesh_handle, actual_lod) = match target_lod {
+            LodLevel::Lod1 => {
+                if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
+                else if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
+                else { continue; }
+            }
+            LodLevel::Lod2 => {
+                if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
+                else if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
+                else { continue; }
+            }
+        };
+
+        match state.entity {
+            Some(entity) => {
+                // Update mesh if what's displayed differs from what we want
+                if state.active_lod != actual_lod {
+                    commands.entity(entity).insert(Mesh3d(mesh_handle));
+                    state.active_lod = actual_lod;
+                }
+            }
+            None => {
+                let entity = commands.spawn((
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(terrain_material.handle.clone()),
+                    ChunkMesh { chunk_id },
+                )).id();
+                state.entity = Some(entity);
+                state.active_lod = actual_lod;
+            }
         }
     }
+}
+
+fn target_lod_for_chunk(chunk_id: common_bevy::chunk::ChunkId, player_chunk: Option<common_bevy::chunk::ChunkId>) -> LodLevel {
+    let Some(pc) = player_chunk else { return LodLevel::Lod1; };
+    let ring = chunk_hex_distance(chunk_id, pc);
+    let detail_radius = chunk::detail_boundary_radius(0, chunk::MAX_FOV) as i32;
+    if ring <= detail_radius {
+        LodLevel::Lod1
+    } else {
+        LodLevel::Lod2
+    }
+}
+
+fn build_bevy_mesh(decimated: &common_bevy::qem::DecimatedMesh) -> Mesh {
+    let vert_count = decimated.positions.len();
+    let verts: Vec<Vec3> = decimated.positions.iter().map(|p| Vec3::from_array(*p)).collect();
+    let norms: Vec<Vec3> = decimated.normals.iter().map(|n| Vec3::from_array(*n)).collect();
+
+    Mesh::new(
+        bevy_mesh::PrimitiveTopology::TriangleList,
+        bevy_asset::RenderAssetUsages::MAIN_WORLD | bevy_asset::RenderAssetUsages::RENDER_WORLD,
+    )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0,
+            (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
+        .with_inserted_indices(bevy_mesh::Indices::U32(decimated.indices.clone()))
 }

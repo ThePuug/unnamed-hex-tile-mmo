@@ -4,7 +4,7 @@ use chrono::{
 };
 use qrz::*;
 
-use common::{
+use common_bevy::{
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -88,7 +88,7 @@ pub fn setup(
 
     // ADR-014: Static spawners disabled in favor of dynamic engagement system
     // ADR-009: Amp up combat - spawn Wild Dog spawners for isolated encounters
-    // Player spawns at Qrz { q: 0, r: 0, z: 4 }
+    // Player spawns at origin (0,0) with terrain-aware height (see SpawnPoint resource)
     // Place spawners 30+ hexes away on hex plane (q,r), at actual terrain elevation
     // Spread in different hex directions for isolated 1v1 encounters
     // let spawner_hex_positions = vec![
@@ -139,8 +139,9 @@ pub fn try_spawn(
         Option<&CombatState>,
     ), Without<RespawnTimer>>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
+        let ent = *ent;
         // Skip dead players (those with RespawnTimer) - they shouldn't be discovered/spawned
         // until process_respawn sends an official Spawn event after the 5-second timer
         let Ok((loc, typ, attrs, player_controlled, heading, health, stamina, mana, combat_state)) = query.get(ent) else { continue; };
@@ -173,8 +174,11 @@ pub fn do_spawn(
     entities: &Entities,
     existing_actors: Query<(), With<Actor>>,
 ) {
-    for &message in reader.read() {
+    for message in reader.read() {
         if let Do { event: Event::Spawn { qrz, typ, ent, .. } } = message {
+            let qrz = *qrz;
+            let typ = *typ;
+            let ent = *ent;
             match typ {
                 EntityType::Decorator(_) => {
                     if map.get(qrz).is_none() { map.insert(qrz, typ) }

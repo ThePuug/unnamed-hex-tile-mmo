@@ -1,8 +1,28 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    pbr::{ExtendedMaterial, MaterialExtension},
+    render::render_resource::AsBindGroup,
+    shader::ShaderRef,
+};
 use bimap::BiMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use common::chunk::ChunkId;
+use common_bevy::chunk::ChunkId;
+use common_bevy::qem::DecimatedMesh;
+
+/// Custom terrain material extension that computes elevation color in the fragment shader.
+/// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct TerrainExtension {}
+
+impl MaterialExtension for TerrainExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/terrain_vertex.wgsl".into()
+    }
+    fn fragment_shader() -> ShaderRef {
+        "shaders/terrain.wgsl".into()
+    }
+}
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
@@ -40,19 +60,79 @@ impl Server {
 }
 
 use bevy::tasks::Task;
-use bevy_camera::primitives::Aabb;
-use std::collections::HashMap;
 
-/// Shared material for all chunk meshes
+/// Shared material for all chunk meshes (elevation color computed in shader)
 #[derive(Resource)]
 pub struct TerrainMaterial {
-    pub handle: Handle<StandardMaterial>,
+    pub handle: Handle<ExtendedMaterial<StandardMaterial, TerrainExtension>>,
 }
 
-/// Tracks pending async mesh generation tasks per chunk
+/// Chunks whose appearance should NOT trigger neighbor mesh regeneration.
+/// When the admin flyover generates all chunks (including a buffer zone) at once,
+/// the mesh pipeline already has correct neighbor data — no cascade needed.
+#[derive(Debug, Default, Resource)]
+pub struct SkipNeighborRegen {
+    pub chunks: HashSet<ChunkId>,
+}
+
+/// LoD level for a chunk mesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LodLevel { Lod1, Lod2 }
+
+/// Per-chunk dual-LoD mesh state.
+pub struct ChunkLodState {
+    pub lod1_task: Option<Task<DecimatedMesh>>,
+    pub lod2_task: Option<Task<DecimatedMesh>>,
+    pub lod1_mesh: Option<Handle<Mesh>>,
+    pub lod2_mesh: Option<Handle<Mesh>>,
+    pub lod1_tris: u32,
+    pub lod2_tris: u32,
+    pub active_lod: LodLevel,
+    pub entity: Option<Entity>,
+}
+
+/// Tracks dual-LoD mesh generation for all chunks.
 #[derive(Resource, Default)]
-pub struct PendingChunkMeshes {
-    pub tasks: HashMap<ChunkId, Task<(Mesh, Aabb)>>,
+pub struct ChunkLodMeshes {
+    pub states: HashMap<ChunkId, ChunkLodState>,
+}
+
+/// LRU observation window for triangle compression ratios.
+/// Observations survive chunk eviction — shows rolling QEM performance.
+#[derive(Resource)]
+pub struct LodTriangleStats {
+    pub lod1: std::collections::VecDeque<(u32, u32)>, // (raw_tris, decimated_tris)
+    pub lod2: std::collections::VecDeque<(u32, u32)>,
+}
+
+const TRI_STATS_WINDOW: usize = 200;
+
+impl Default for LodTriangleStats {
+    fn default() -> Self {
+        Self {
+            lod1: std::collections::VecDeque::with_capacity(TRI_STATS_WINDOW),
+            lod2: std::collections::VecDeque::with_capacity(TRI_STATS_WINDOW),
+        }
+    }
+}
+
+impl LodTriangleStats {
+    pub fn push_lod1(&mut self, raw: u32, decimated: u32) {
+        if self.lod1.len() >= TRI_STATS_WINDOW { self.lod1.pop_front(); }
+        self.lod1.push_back((raw, decimated));
+    }
+    pub fn push_lod2(&mut self, raw: u32, decimated: u32) {
+        if self.lod2.len() >= TRI_STATS_WINDOW { self.lod2.pop_front(); }
+        self.lod2.push_back((raw, decimated));
+    }
+    /// Returns (total_raw, total_decimated, ratio) for a given LoD window.
+    fn aggregate(window: &std::collections::VecDeque<(u32, u32)>) -> (u64, u64, f64) {
+        let (raw, dec) = window.iter().fold((0u64, 0u64), |(r, d), &(a, b)| (r + a as u64, d + b as u64));
+        let ratio = if raw > 0 { dec as f64 / raw as f64 } else { 0.0 };
+        (raw, dec, ratio)
+    }
+    pub fn lod1_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod1) }
+    pub fn lod2_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod2) }
 }
 
 /// Tracks which chunks have been received on the client
@@ -65,15 +145,6 @@ impl LoadedChunks {
     /// Mark a chunk as loaded
     pub fn insert(&mut self, chunk_id: ChunkId) {
         self.chunks.insert(chunk_id);
-    }
-
-    /// Get chunks that should be evicted (not in the active set)
-    pub fn get_evictable(&self, active_chunks: &HashSet<ChunkId>) -> Vec<ChunkId> {
-        self.chunks
-            .iter()
-            .filter(|chunk_id| !active_chunks.contains(chunk_id))
-            .copied()
-            .collect()
     }
 
     /// Remove evicted chunks from tracking

@@ -5,9 +5,9 @@
 //!
 //! ## Overview
 //!
-//! The Map uses "pointy-top" hex orientation where hexagons have a vertex pointing north.
-//! Conversion between hex and world coordinates uses an affine transformation based on
-//! the map's `radius` (hex size) and `rise` (vertical scale).
+//! The Map supports both "pointy-top" and "flat-top" hex orientations. Conversion
+//! between hex and world coordinates uses an affine transformation based on the
+//! map's `radius` (hex size), `rise` (vertical scale), and `orientation`.
 //!
 //! ## Features
 //!
@@ -20,10 +20,10 @@
 //! ## Example
 //!
 //! ```rust
-//! use qrz::{Map, Qrz, Convert};
+//! use qrz::{Map, Qrz, Convert, HexOrientation};
 //! use glam::Vec3;
 //!
-//! let mut map: Map<i32> = Map::new(1.0, 0.8);
+//! let mut map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
 //!
 //! // Store a tile
 //! let coord = Qrz { q: 1, r: 2, z: 3 };
@@ -47,12 +47,33 @@ use derive_more::*;
 
 use crate::qrz::{ self, Qrz };
 
-/// Affine transformation matrix for pointy-top hex orientation
-/// Format: (forward matrix, inverse matrix) for Vec3 ↔ Qrz conversions
-const ORIENTATION: ([f64; 4], [f64; 4]) = (
-    [SQRT_3, SQRT_3/2., 0., 3./2.],
-    [SQRT_3/3., -1./3., 0., 2./3.],
-);
+/// Hex grid orientation: whether a vertex or a flat edge points north.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HexOrientation {
+    /// Vertex points north — flat edges on east/west sides.
+    PointyTop,
+    /// Flat edge faces north — vertices point east/west.
+    #[default]
+    FlatTop,
+}
+
+impl HexOrientation {
+    /// Forward (Qrz→XZ) and inverse (XZ→Qrz) affine matrices.
+    const fn matrices(&self) -> ([f64; 4], [f64; 4]) {
+        match self {
+            // Pointy-top: x = √3*q + √3/2*r, z = 3/2*r
+            HexOrientation::PointyTop => (
+                [SQRT_3, SQRT_3/2., 0., 3./2.],
+                [SQRT_3/3., -1./3., 0., 2./3.],
+            ),
+            // Flat-top: x = 3/2*q, z = √3/2*q + √3*r
+            HexOrientation::FlatTop => (
+                [3./2., 0., SQRT_3/2., SQRT_3],
+                [2./3., 0., -1./3., SQRT_3/3.],
+            ),
+        }
+    }
+}
 
 /// Trait for bidirectional coordinate conversion
 pub trait Convert<T,U> {
@@ -73,84 +94,117 @@ pub trait Convert<T,U> {
 ///
 /// - `radius`: Size of each hexagon in world units
 /// - `rise`: Vertical scale factor (Z coordinate → Y world space)
+/// - `orientation`: Hex grid orientation (pointy-top or flat-top)
 /// - `tree`: BTreeMap for ordered iteration
 /// - `hash`: HashMap for fast O(1) lookup
 #[derive(Clone, Debug, Default, IntoIterator)]
 pub struct Map<T> {
     radius: f32,
     rise: f32,
+    orientation: HexOrientation,
     #[into_iterator(owned)]
     tree: BTreeMap<Qrz, T>,
     hash: HashMap<Qrz, T>,
+    /// Flat index: (q, r) → z for O(1) lookup by column.
+    flat: HashMap<(i32, i32), i32>,
 }
 
-impl<T> Map<T> 
+impl<T> Map<T>
 where T : Copy {
-    pub fn new(radius: f32, rise: f32) -> Self {
-        Self { radius, rise, tree: BTreeMap::new(), hash: HashMap::new() }
+    pub fn new(radius: f32, rise: f32, orientation: HexOrientation) -> Self {
+        Self { radius, rise, orientation, tree: BTreeMap::new(), hash: HashMap::new(), flat: HashMap::new() }
     }
 
     pub fn radius(&self) -> f32 { self.radius }
     pub fn rise(&self) -> f32 { self.rise }
+    pub fn orientation(&self) -> HexOrientation { self.orientation }
 
-    pub fn line(&self, a: &Qrz, b: &Qrz) -> Vec<Qrz> { 
-        let dist = a.flat_distance(b); 
+    pub fn line(&self, a: &Qrz, b: &Qrz) -> Vec<Qrz> {
+        let dist = a.flat_distance(b);
         let step = 1. / (dist+1) as f32;
         (1..=dist+1).map(|i| {
             self.convert(self.convert(*a).lerp(self.convert(*b), i as f32 * step))
         }).collect()
     }
 
-    pub fn find(&self, qrz: Qrz, dist: i8) -> Option<(Qrz, T)> {
-        for i in 0..=dist.abs() {
-            let z = if dist < 0 { -i as i32 } else { i as i32 };
-            let qrz = qrz + Qrz { q: 0, r: 0, z };
-            if let Some(obj) = self.get(qrz) { return Some((qrz, *obj)); }
-        }
-        None
-    }
-
-    pub fn get(&self, qrz: Qrz) -> Option<&T> {
+pub fn get(&self, qrz: Qrz) -> Option<&T> {
         self.hash.get(&qrz)
     }
 
     pub fn insert(&mut self, qrz: Qrz, obj: T) {
         self.tree.insert(qrz, obj);
         self.hash.insert(qrz, obj);
+        self.flat.insert((qrz.q, qrz.r), qrz.z);
     }
 
     pub fn remove(&mut self, qrz: Qrz) -> Option<T> {
         self.tree.remove(&qrz);
-        self.hash.remove(&qrz)
+        let removed = self.hash.remove(&qrz);
+        if removed.is_some() {
+            // Only remove flat entry if the z matches (avoid clobbering a newer insert)
+            if self.flat.get(&(qrz.q, qrz.r)) == Some(&qrz.z) {
+                self.flat.remove(&(qrz.q, qrz.r));
+            }
+        }
+        removed
+    }
+
+    /// O(1) lookup by (q, r) column — returns the Qrz and value for the tile at this column.
+    pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, T)> {
+        let &z = self.flat.get(&(q, r))?;
+        let qrz = Qrz { q, r, z };
+        Some((qrz, *self.hash.get(&qrz)?))
     }
 
     pub fn len(&self) -> usize {
         self.hash.len()
     }
 
+    /// Generate the 7 vertices of a hex tile: 6 outer (clockwise) + 1 center.
+    ///
+    /// Vertex ordering is clockwise from the "top-right" vertex:
+    /// - Pointy-top: [N, NE, SE, S, SW, NW, Center]
+    /// - Flat-top:   [NE, E, SE, SW, W, NW, Center]
+    ///
+    /// The edge-to-direction mapping is identical for both orientations:
+    /// edge (i, i+1) faces DIRECTIONS[(i+4)%6].
     pub fn vertices(&self, qrz: Qrz) -> Vec<Vec3> {
         let center = self.convert(qrz);
         let w = (self.radius as f64 * SQRT_3 / 2.) as f32;
         let h = self.radius / 2.;
-        vec![
-            center + Vec3 { x: 0., y: self.rise, z: -self.radius },
-            center + Vec3 { x: w,  y: self.rise, z: -h },
-            center + Vec3 { x: w,  y: self.rise, z: h },
-            center + Vec3 { x: 0., y: self.rise, z: self.radius },
-            center + Vec3 { x: -w, y: self.rise, z: h },
-            center + Vec3 { x: -w, y: self.rise, z: -h },
-            center + Vec3 { x: 0., y: self.rise, z: 0. },
-        ]
+        match self.orientation {
+            HexOrientation::PointyTop => vec![
+                center + Vec3 { x: 0., y: self.rise, z: -self.radius },  // N
+                center + Vec3 { x: w,  y: self.rise, z: -h },           // NE
+                center + Vec3 { x: w,  y: self.rise, z: h },            // SE
+                center + Vec3 { x: 0., y: self.rise, z: self.radius },  // S
+                center + Vec3 { x: -w, y: self.rise, z: h },            // SW
+                center + Vec3 { x: -w, y: self.rise, z: -h },           // NW
+                center + Vec3 { x: 0., y: self.rise, z: 0. },           // Center
+            ],
+            HexOrientation::FlatTop => vec![
+                center + Vec3 { x: h,  y: self.rise, z: -w },            // NE
+                center + Vec3 { x: self.radius, y: self.rise, z: 0. },   // E
+                center + Vec3 { x: h,  y: self.rise, z: w },             // SE
+                center + Vec3 { x: -h, y: self.rise, z: w },             // SW
+                center + Vec3 { x: -self.radius, y: self.rise, z: 0. },  // W
+                center + Vec3 { x: -h, y: self.rise, z: -w },            // NW
+                center + Vec3 { x: 0., y: self.rise, z: 0. },            // Center
+            ],
+        }
     }
 
-    /// Estimate heap bytes used by the internal BTreeMap + HashMap.
+    /// Estimate heap bytes used by the internal BTreeMap + HashMap + flat index.
     pub fn heap_size_estimate(&self) -> usize {
         let entry = std::mem::size_of::<Qrz>() + std::mem::size_of::<T>();
         // hashbrown: 1 control byte per slot + entry storage
         let hash_bytes = self.hash.capacity() * (entry + 1);
         // BTreeMap: ~40 bytes node overhead per entry (pointers, metadata, padding)
         let btree_bytes = self.tree.len() * (entry + 40);
-        hash_bytes + btree_bytes
+        // flat index: (i32,i32) key + i32 value + 1 control byte per slot
+        let flat_entry = std::mem::size_of::<(i32, i32)>() + std::mem::size_of::<i32>();
+        let flat_bytes = self.flat.capacity() * (flat_entry + 1);
+        hash_bytes + btree_bytes + flat_bytes
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&Qrz, &T)> {
@@ -160,8 +214,12 @@ where T : Copy {
     pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz,T)> {
         let mut neighbors = Vec::new();
         for check in qrz.neighbors() {
-            let Some(neighbor) = self.find(check + Qrz::Z, -2) else { continue };
-            neighbors.extend_one(neighbor);
+            // Use flat index for O(1) lookup, then filter by walkable z range (±1)
+            if let Some((neighbor_qrz, val)) = self.get_by_qr(check.q, check.r) {
+                if (neighbor_qrz.z - qrz.z).abs() <= 1 {
+                    neighbors.push((neighbor_qrz, val));
+                }
+            }
         }
         neighbors
     }
@@ -169,8 +227,9 @@ where T : Copy {
 
 impl<T> Convert<Vec3,Qrz> for Map<T> {
     fn convert(&self, other: Vec3) -> Qrz {
-        let q = (ORIENTATION.1[0] * other.x as f64 + ORIENTATION.1[1] * other.z as f64) / self.radius as f64;
-        let r = (ORIENTATION.1[2] * other.x as f64 + ORIENTATION.1[3] * other.z as f64) / self.radius as f64;
+        let m = self.orientation.matrices();
+        let q = (m.1[0] * other.x as f64 + m.1[1] * other.z as f64) / self.radius as f64;
+        let r = (m.1[2] * other.x as f64 + m.1[3] * other.z as f64) / self.radius as f64;
         let z = other.y as f64 / self.rise as f64;
         qrz::round(q, r, z)
     }
@@ -178,8 +237,9 @@ impl<T> Convert<Vec3,Qrz> for Map<T> {
 
 impl<T> Convert<Qrz,Vec3> for Map<T> {
     fn convert(&self, other: Qrz) -> Vec3 {
-        let x = (ORIENTATION.0[0] * other.q as f64 + ORIENTATION.0[1] * other.r as f64) * self.radius as f64;
-        let z = (ORIENTATION.0[2] * other.q as f64 + ORIENTATION.0[3] * other.r as f64) * self.radius as f64;
+        let m = self.orientation.matrices();
+        let x = (m.0[0] * other.q as f64 + m.0[1] * other.r as f64) * self.radius as f64;
+        let z = (m.0[2] * other.q as f64 + m.0[3] * other.r as f64) * self.radius as f64;
         let y = other.z as f64 * self.rise as f64;
         Vec3 { x: x as f32, y: y as f32, z: z as f32 }
     }
@@ -193,14 +253,15 @@ mod tests {
 
     #[test]
     fn test_map_creation() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         assert_eq!(map.radius(), 1.0);
         assert_eq!(map.rise(), 0.8);
+        assert_eq!(map.orientation(), HexOrientation::FlatTop);
     }
 
     #[test]
     fn test_map_insert_and_get() {
-        let mut map = Map::new(1.0, 0.8);
+        let mut map = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 1, r: 2, z: 3 };
 
         map.insert(coord, 42);
@@ -209,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_map_get_nonexistent() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 1, r: 2, z: 3 };
 
         assert_eq!(map.get(coord), None);
@@ -217,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_map_remove() {
-        let mut map = Map::new(1.0, 0.8);
+        let mut map = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 1, r: 2, z: 3 };
 
         map.insert(coord, 42);
@@ -227,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_map_overwrite() {
-        let mut map = Map::new(1.0, 0.8);
+        let mut map = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 1, r: 2, z: 3 };
 
         map.insert(coord, 42);
@@ -238,31 +299,20 @@ mod tests {
     // ===== COORDINATE CONVERSION TESTS =====
 
     #[test]
-    fn test_origin_converts_to_zero() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let origin = Qrz { q: 0, r: 0, z: 0 };
-        let world_pos = map.convert(origin);
+    fn test_origin_converts_to_zero_both_orientations() {
+        for orientation in [HexOrientation::PointyTop, HexOrientation::FlatTop] {
+            let map: Map<i32> = Map::new(1.0, 0.8, orientation);
+            let origin = Qrz { q: 0, r: 0, z: 0 };
+            let world_pos = map.convert(origin);
 
-        assert!(world_pos.x.abs() < 0.001, "Origin X should be ~0, got {}", world_pos.x);
-        assert!(world_pos.y.abs() < 0.001, "Origin Y should be ~0, got {}", world_pos.y);
-        assert!(world_pos.z.abs() < 0.001, "Origin Z should be ~0, got {}", world_pos.z);
+            assert!(world_pos.x.abs() < 0.001, "{:?}: Origin X should be ~0, got {}", orientation, world_pos.x);
+            assert!(world_pos.y.abs() < 0.001, "{:?}: Origin Y should be ~0, got {}", orientation, world_pos.y);
+            assert!(world_pos.z.abs() < 0.001, "{:?}: Origin Z should be ~0, got {}", orientation, world_pos.z);
+        }
     }
 
     #[test]
-    fn test_conversion_roundtrip() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let original = Qrz { q: 5, r: -3, z: 2 };
-
-        // Convert to world space and back
-        let world_pos = map.convert(original);
-        let recovered: Qrz = map.convert(world_pos);
-
-        assert_eq!(original, recovered, "Roundtrip conversion failed");
-    }
-
-    #[test]
-    fn test_conversion_roundtrip_multiple_coords() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+    fn test_conversion_roundtrip_both_orientations() {
         let coords = vec![
             Qrz { q: 0, r: 0, z: 0 },
             Qrz { q: 1, r: 0, z: 0 },
@@ -272,16 +322,19 @@ mod tests {
             Qrz { q: -10, r: 7, z: -5 },
         ];
 
-        for original in coords {
-            let world_pos = map.convert(original);
-            let recovered: Qrz = map.convert(world_pos);
-            assert_eq!(original, recovered, "Roundtrip failed for {:?}", original);
+        for orientation in [HexOrientation::PointyTop, HexOrientation::FlatTop] {
+            let map: Map<i32> = Map::new(1.0, 0.8, orientation);
+            for &original in &coords {
+                let world_pos = map.convert(original);
+                let recovered: Qrz = map.convert(world_pos);
+                assert_eq!(original, recovered, "{:?}: Roundtrip failed for {:?}", orientation, original);
+            }
         }
     }
 
     #[test]
     fn test_z_coordinate_affects_y() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let flat = Qrz { q: 0, r: 0, z: 0 };
         let elevated = Qrz { q: 0, r: 0, z: 5 };
 
@@ -295,8 +348,8 @@ mod tests {
 
     #[test]
     fn test_different_radius_scales_output() {
-        let map_small: Map<i32> = Map::new(0.5, 0.8);
-        let map_large: Map<i32> = Map::new(2.0, 0.8);
+        let map_small: Map<i32> = Map::new(0.5, 0.8, HexOrientation::FlatTop);
+        let map_large: Map<i32> = Map::new(2.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 1, r: 0, z: 0 };
 
         let pos_small = map_small.convert(coord);
@@ -307,8 +360,8 @@ mod tests {
 
     #[test]
     fn test_different_rise_scales_y() {
-        let map_short: Map<i32> = Map::new(1.0, 0.5);
-        let map_tall: Map<i32> = Map::new(1.0, 1.5);
+        let map_short: Map<i32> = Map::new(1.0, 0.5, HexOrientation::FlatTop);
+        let map_tall: Map<i32> = Map::new(1.0, 1.5, HexOrientation::FlatTop);
         let coord = Qrz { q: 0, r: 0, z: 1 };
 
         let pos_short = map_short.convert(coord);
@@ -320,70 +373,39 @@ mod tests {
     // ===== MAP OPERATION TESTS =====
 
     #[test]
-    fn test_find_exact_match() {
-        let mut map = Map::new(1.0, 0.8);
-        let coord = Qrz { q: 1, r: 2, z: 3 };
-        map.insert(coord, 42);
-
-        let result = map.find(coord, 0);
-        assert_eq!(result, Some((coord, 42)), "Should find exact coordinate");
+    fn test_vertices_returns_seven_both_orientations() {
+        for orientation in [HexOrientation::PointyTop, HexOrientation::FlatTop] {
+            let map: Map<i32> = Map::new(1.0, 0.8, orientation);
+            let coord = Qrz { q: 0, r: 0, z: 0 };
+            let verts = map.vertices(coord);
+            assert_eq!(verts.len(), 7, "{:?}: Hexagon should have 7 vertices (6 + center)", orientation);
+        }
     }
 
     #[test]
-    fn test_find_searches_vertically() {
-        let mut map = Map::new(1.0, 0.8);
-        let base = Qrz { q: 1, r: 2, z: 5 };
-        map.insert(base, 42);
+    fn test_vertices_form_hexagon_both_orientations() {
+        for orientation in [HexOrientation::PointyTop, HexOrientation::FlatTop] {
+            let map: Map<i32> = Map::new(1.0, 0.8, orientation);
+            let coord = Qrz { q: 0, r: 0, z: 0 };
+            let verts = map.vertices(coord);
 
-        // Search from Z=10 downward by 10 levels
-        let search_start = Qrz { q: 1, r: 2, z: 10 };
-        let result = map.find(search_start, -10);
+            let center = verts[6];
+            let radius = map.radius();
 
-        assert_eq!(result, Some((base, 42)), "Should find tile 5 levels below search start");
-    }
-
-    #[test]
-    fn test_find_returns_none_when_not_found() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let search_start = Qrz { q: 1, r: 2, z: 10 };
-        let result = map.find(search_start, -5);
-
-        assert_eq!(result, None, "Should return None when no tile found");
-    }
-
-    #[test]
-    fn test_vertices_returns_seven() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let coord = Qrz { q: 0, r: 0, z: 0 };
-        let verts = map.vertices(coord);
-
-        // Hexagon has 6 outer vertices + 1 center
-        assert_eq!(verts.len(), 7, "Hexagon should have 7 vertices (6 + center)");
-    }
-
-    #[test]
-    fn test_vertices_form_hexagon() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
-        let coord = Qrz { q: 0, r: 0, z: 0 };
-        let verts = map.vertices(coord);
-
-        // All outer vertices should be roughly equidistant from center
-        let center = verts[6];
-        let radius = map.radius();
-
-        for i in 0..6 {
-            let dist = (verts[i] - center).length();
-            assert!(
-                (dist - radius).abs() < 0.01,
-                "Vertex {} should be at radius distance from center, got {}",
-                i, dist
-            );
+            for i in 0..6 {
+                let dist = (verts[i] - center).length();
+                assert!(
+                    (dist - radius).abs() < 0.01,
+                    "{:?}: Vertex {} should be at radius distance from center, got {}",
+                    orientation, i, dist
+                );
+            }
         }
     }
 
     #[test]
     fn test_line_between_adjacent() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let a = Qrz { q: 0, r: 0, z: 0 };
         let b = Qrz { q: 1, r: 0, z: 0 }; // Adjacent hex
 
@@ -396,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_line_length_matches_distance() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let a = Qrz { q: 0, r: 0, z: 0 };
         let b = Qrz { q: 5, r: 0, z: 0 };
 
@@ -415,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_conversion_is_deterministic() {
-        let map: Map<i32> = Map::new(1.0, 0.8);
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let coord = Qrz { q: 3, r: -1, z: 2 };
 
         let pos1 = map.convert(coord);
@@ -426,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_neighbors_respects_elevation() {
-        let mut map = Map::new(1.0, 0.8);
+        let mut map = Map::new(1.0, 0.8, HexOrientation::FlatTop);
         let center = Qrz { q: 0, r: 0, z: 5 };
         map.insert(center, 1);
 
@@ -439,5 +461,19 @@ mod tests {
 
         // Should find neighbors within vertical search range
         assert!(!neighbors.is_empty(), "Should find some neighbors");
+    }
+
+    #[test]
+    fn test_flat_top_q1r0_goes_right() {
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
+        let pos = map.convert(Qrz { q: 1, r: 0, z: 0 });
+        assert!(pos.x > 0.0, "Flat-top q=1 should have positive X");
+    }
+
+    #[test]
+    fn test_pointy_top_q1r0_goes_right() {
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::PointyTop);
+        let pos = map.convert(Qrz { q: 1, r: 0, z: 0 });
+        assert!(pos.x > 0.0, "Pointy-top q=1 should have positive X");
     }
 }

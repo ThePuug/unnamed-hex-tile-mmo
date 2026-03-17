@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::{
+use common_bevy::{
     components::{
         entity_type::*, Loc, reaction_queue::DamageType,
     },
@@ -16,10 +16,10 @@ pub fn handle_auto_attack(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     loc_query: Query<&Loc>,
-    entity_type_query: Query<(&EntityType, Option<&common::components::behaviour::PlayerControlled>)>,
-    attrs_query: Query<&common::components::ActorAttributes>,
-    range_query: Query<&common::components::AttackRange>,
-    respawn_query: Query<&common::components::resources::RespawnTimer>,
+    entity_type_query: Query<(&EntityType, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
+    range_query: Query<&common_bevy::components::AttackRange>,
+    respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {

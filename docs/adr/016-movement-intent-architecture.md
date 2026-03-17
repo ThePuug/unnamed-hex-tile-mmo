@@ -1,9 +1,5 @@
 # ADR-016: Movement Intent Architecture - "Intent then Confirmation" Pattern
 
-## Status
-
-**Accepted** - 2025-11-05
-
 ## Context
 
 Remote entities (NPCs, other players) lag 175-300ms behind server reality. Current system only broadcasts `Event::Loc` after movement completes. Client has no way to predict remote entity movement, causing teleporting visuals and broken projectile targeting.
@@ -273,7 +269,7 @@ ACCEPTABLE for MMO
 - Dodging by changing direction works (skill-based)
 
 **3. Reuses Existing Architecture**
-- Offset component (state/step pattern from ADR-002)
+- Position/VisualPosition components (ADR-019)
 - Interpolation system (interp_duration, interp_elapsed)
 - Validation pattern (Loc confirmations)
 - Sequence numbers (like Input.seq)
@@ -379,12 +375,6 @@ src/common/systems/world.rs       - Intent application, validation
 - Dodging works (change direction to evade)
 
 ---
-
-## References
-
-- **ADR-002:** Combat Foundation (Offset component, state/step pattern)
-- **ADR-015:** Projectile System (targeting integration)
-- **Existing:** Client prediction (Input queue), Loc confirmations
 
 ## Date
 

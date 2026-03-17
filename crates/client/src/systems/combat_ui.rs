@@ -306,9 +306,9 @@ pub fn update_health_bars(
         (With<crate::components::AllyHealthBar>, Without<crate::components::HostileHealthBar>)
     >,
     mut child_node_query: Query<&mut Node, (Without<crate::components::WorldHealthBar>, Without<crate::components::HostileHealthBar>, Without<crate::components::AllyHealthBar>)>,
-    entity_query: Query<(&common::components::resources::Health, &Transform)>,
+    entity_query: Query<(&common_bevy::components::resources::Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget), With<common::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -433,9 +433,9 @@ pub fn update_threat_queue_dots(
         (&crate::components::ThreatCapacityDot, &mut Visibility, &mut BackgroundColor, &mut BorderColor),
         (Without<crate::components::HostileQueueDots>, Without<crate::components::AllyQueueDots>)
     >,
-    queue_query: Query<(Option<&common::components::reaction_queue::ReactionQueue>, &Transform)>,
+    queue_query: Query<(Option<&common_bevy::components::reaction_queue::ReactionQueue>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget), With<common::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
@@ -656,9 +656,9 @@ pub fn update_recovery_bars(
         Without<crate::components::AllyRecoveryBar>,
         Without<crate::components::WorldHealthBar>,
     )>,
-    entity_query: Query<(Option<&common::components::recovery::GlobalRecovery>, &Transform)>,
+    entity_query: Query<(Option<&common_bevy::components::recovery::GlobalRecovery>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    player_query: Query<(&common::components::target::Target, &common::components::ally_target::AllyTarget), With<common::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -690,7 +690,7 @@ pub fn update_recovery_bars(
             Without<crate::components::AllyRecoveryBar>,
             Without<crate::components::WorldHealthBar>,
         )>,
-        entity_query: &Query<(Option<&common::components::recovery::GlobalRecovery>, &Transform)>,
+        entity_query: &Query<(Option<&common_bevy::components::recovery::GlobalRecovery>, &Transform)>,
         camera: &Camera,
         camera_transform: &GlobalTransform,
         delta: f32,
