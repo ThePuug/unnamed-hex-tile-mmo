@@ -12,7 +12,7 @@ pub const TILE_SIZE: f32 = 1.;
 use crate::{
     components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
-    resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LoadedChunks, Server, TerrainMaterial},
+    resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
 };
 use common_bevy::{
     chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, terrain_chunk_radius, CHUNK_EXTENT_WU},
@@ -352,6 +352,8 @@ pub fn dispatch_lod_tasks(
             lod2_task: Some(lod2_task),
             lod1_mesh: None,
             lod2_mesh: None,
+            lod1_tris: 0,
+            lod2_tris: 0,
             active_lod: LodLevel::Lod1,
             entity: None,
         });
@@ -364,6 +366,7 @@ pub fn poll_and_swap_lod(
     mut commands: Commands,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut tri_stats: ResMut<LodTriangleStats>,
     terrain_material: Option<Res<TerrainMaterial>>,
     player_query: Query<&Loc, With<PlayerControlled>>,
 ) {
@@ -376,6 +379,8 @@ pub fn poll_and_swap_lod(
         // Poll LoD1
         if let Some(task) = &mut state.lod1_task {
             if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod1_tris = (result.indices.len() / 3) as u32;
+                tri_stats.push_lod1(result.raw_tris, state.lod1_tris);
                 state.lod1_task = None;
                 state.lod1_mesh = Some(meshes.add(build_bevy_mesh(&result)));
             }
@@ -384,6 +389,8 @@ pub fn poll_and_swap_lod(
         // Poll LoD2
         if let Some(task) = &mut state.lod2_task {
             if let Some(result) = block_on(future::poll_once(task)) {
+                state.lod2_tris = (result.indices.len() / 3) as u32;
+                tri_stats.push_lod2(result.raw_tris, state.lod2_tris);
                 state.lod2_task = None;
                 state.lod2_mesh = Some(meshes.add(build_bevy_mesh(&result)));
             }

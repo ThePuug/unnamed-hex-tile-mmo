@@ -13,6 +13,8 @@ pub struct DecimatedMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// Triangle count of the raw geometry before decimation.
+    pub raw_tris: u32,
 }
 
 // ── QEM Algorithm ──
@@ -256,8 +258,10 @@ pub fn decimate_geometry(
         .filter(|[a, b, c]| a != b && b != c && a != c)
         .collect();
 
+    let raw_tris = (geometry.indices.len() / 3) as u32;
+
     if triangles.is_empty() {
-        return DecimatedMesh { positions: Vec::new(), normals: Vec::new(), indices: Vec::new() };
+        return DecimatedMesh { positions: Vec::new(), normals: Vec::new(), indices: Vec::new(), raw_tris };
     }
 
     // Lock edges between perimeter vertices
@@ -329,5 +333,5 @@ pub fn decimate_geometry(
         }
     }).collect();
 
-    DecimatedMesh { positions: new_positions, normals: new_normals, indices: new_indices }
+    DecimatedMesh { positions: new_positions, normals: new_normals, indices: new_indices, raw_tris }
 }

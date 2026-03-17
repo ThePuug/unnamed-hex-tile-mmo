@@ -85,6 +85,8 @@ pub struct ChunkLodState {
     pub lod2_task: Option<Task<DecimatedMesh>>,
     pub lod1_mesh: Option<Handle<Mesh>>,
     pub lod2_mesh: Option<Handle<Mesh>>,
+    pub lod1_tris: u32,
+    pub lod2_tris: u32,
     pub active_lod: LodLevel,
     pub entity: Option<Entity>,
 }
@@ -93,6 +95,44 @@ pub struct ChunkLodState {
 #[derive(Resource, Default)]
 pub struct ChunkLodMeshes {
     pub states: HashMap<ChunkId, ChunkLodState>,
+}
+
+/// LRU observation window for triangle compression ratios.
+/// Observations survive chunk eviction — shows rolling QEM performance.
+#[derive(Resource)]
+pub struct LodTriangleStats {
+    pub lod1: std::collections::VecDeque<(u32, u32)>, // (raw_tris, decimated_tris)
+    pub lod2: std::collections::VecDeque<(u32, u32)>,
+}
+
+const TRI_STATS_WINDOW: usize = 200;
+
+impl Default for LodTriangleStats {
+    fn default() -> Self {
+        Self {
+            lod1: std::collections::VecDeque::with_capacity(TRI_STATS_WINDOW),
+            lod2: std::collections::VecDeque::with_capacity(TRI_STATS_WINDOW),
+        }
+    }
+}
+
+impl LodTriangleStats {
+    pub fn push_lod1(&mut self, raw: u32, decimated: u32) {
+        if self.lod1.len() >= TRI_STATS_WINDOW { self.lod1.pop_front(); }
+        self.lod1.push_back((raw, decimated));
+    }
+    pub fn push_lod2(&mut self, raw: u32, decimated: u32) {
+        if self.lod2.len() >= TRI_STATS_WINDOW { self.lod2.pop_front(); }
+        self.lod2.push_back((raw, decimated));
+    }
+    /// Returns (total_raw, total_decimated, ratio) for a given LoD window.
+    fn aggregate(window: &std::collections::VecDeque<(u32, u32)>) -> (u64, u64, f64) {
+        let (raw, dec) = window.iter().fold((0u64, 0u64), |(r, d), &(a, b)| (r + a as u64, d + b as u64));
+        let ratio = if raw > 0 { dec as f64 / raw as f64 } else { 0.0 };
+        (raw, dec, ratio)
+    }
+    pub fn lod1_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod1) }
+    pub fn lod2_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod2) }
 }
 
 /// Tracks which chunks have been received on the client

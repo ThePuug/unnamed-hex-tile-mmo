@@ -530,6 +530,7 @@ pub fn update_metrics_overlay(
     >,
     loaded_chunks: Res<LoadedChunks>,
     lod_meshes: Res<ChunkLodMeshes>,
+    tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
     #[cfg(feature = "admin")] admin_terrain: Res<crate::systems::admin::AdminTerrain>,
@@ -622,10 +623,12 @@ pub fn update_metrics_overlay(
         tile_data.map(|(qrz, _, _, _)| admin_terrain.0.get_raw_elevation(qrz.q, qrz.r));
 
     let full_count = chunk_mesh_q.iter().count();
-    let summary_count = 0usize;
     let pending_lod = lod_meshes.states.values()
         .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
-    let orphan_count = 0usize;
+
+    // Triangle compression ratios from LRU observation window
+    let (_, _, lod1_ratio) = tri_stats.lod1_stats();
+    let (_, _, lod2_ratio) = tri_stats.lod2_stats();
 
     #[cfg(feature = "admin")]
     let (admin_count, admin_sum_count) = if flyover.active {
@@ -707,6 +710,10 @@ pub fn update_metrics_overlay(
                             ("mesh", &fi(full_count as f64), "  "),
                             ("load", &fi(loaded_chunks.chunks.len() as f64), "  "),
                             ("pend", &fi(pending_lod as f64), "  "),
+                        ]);
+                        metric_row(ui, cw, &[
+                            ("△ L1", &fv(lod1_ratio * 100.0), "% "),
+                            ("△ L2", &fv(lod2_ratio * 100.0), "% "),
                         ]);
                         if admin_count > 0 || admin_sum_count > 0 {
                             metric_row(ui, cw, &[

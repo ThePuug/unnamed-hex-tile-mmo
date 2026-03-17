@@ -196,6 +196,7 @@ fn main() {
     app.init_resource::<LoadedChunks>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
     app.init_resource::<crate::resources::ChunkLodMeshes>();
+    app.init_resource::<crate::resources::LodTriangleStats>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
