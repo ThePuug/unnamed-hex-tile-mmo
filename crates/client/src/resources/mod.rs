@@ -97,12 +97,18 @@ pub struct ChunkLodMeshes {
     pub states: HashMap<ChunkId, ChunkLodState>,
 }
 
-/// LRU observation window for triangle compression ratios.
+/// LRU observation window for QEM stats per chunk.
 /// Observations survive chunk eviction — shows rolling QEM performance.
 #[derive(Resource)]
 pub struct LodTriangleStats {
-    pub lod1: std::collections::VecDeque<(u32, u32)>, // (raw_tris, decimated_tris)
-    pub lod2: std::collections::VecDeque<(u32, u32)>,
+    pub lod1: std::collections::VecDeque<QemObservation>,
+    pub lod2: std::collections::VecDeque<QemObservation>,
+}
+
+pub struct QemObservation {
+    pub raw_tris: u32,
+    pub decimated_tris: u32,
+    pub max_error: f32,
 }
 
 const TRI_STATS_WINDOW: usize = 200;
@@ -117,22 +123,29 @@ impl Default for LodTriangleStats {
 }
 
 impl LodTriangleStats {
-    pub fn push_lod1(&mut self, raw: u32, decimated: u32) {
+    pub fn push_lod1(&mut self, raw: u32, decimated: u32, max_error: f32) {
         if self.lod1.len() >= TRI_STATS_WINDOW { self.lod1.pop_front(); }
-        self.lod1.push_back((raw, decimated));
+        self.lod1.push_back(QemObservation { raw_tris: raw, decimated_tris: decimated, max_error });
     }
-    pub fn push_lod2(&mut self, raw: u32, decimated: u32) {
+    pub fn push_lod2(&mut self, raw: u32, decimated: u32, max_error: f32) {
         if self.lod2.len() >= TRI_STATS_WINDOW { self.lod2.pop_front(); }
-        self.lod2.push_back((raw, decimated));
+        self.lod2.push_back(QemObservation { raw_tris: raw, decimated_tris: decimated, max_error });
     }
-    /// Returns (total_raw, total_decimated, ratio) for a given LoD window.
-    fn aggregate(window: &std::collections::VecDeque<(u32, u32)>) -> (u64, u64, f64) {
-        let (raw, dec) = window.iter().fold((0u64, 0u64), |(r, d), &(a, b)| (r + a as u64, d + b as u64));
+    fn aggregate(window: &std::collections::VecDeque<QemObservation>) -> (f64, f64) {
+        let (raw, dec) = window.iter().fold((0u64, 0u64), |(r, d), o| (r + o.raw_tris as u64, d + o.decimated_tris as u64));
         let ratio = if raw > 0 { dec as f64 / raw as f64 } else { 0.0 };
-        (raw, dec, ratio)
+        let err_p95 = if window.is_empty() {
+            0.0
+        } else {
+            let mut errs: Vec<f32> = window.iter().map(|o| o.max_error).collect();
+            errs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let rank = (errs.len() as f64 * 0.95).ceil() as usize;
+            errs[rank.saturating_sub(1)] as f64
+        };
+        (ratio, err_p95)
     }
-    pub fn lod1_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod1) }
-    pub fn lod2_stats(&self) -> (u64, u64, f64) { Self::aggregate(&self.lod2) }
+    pub fn lod1_stats(&self) -> (f64, f64) { Self::aggregate(&self.lod1) }
+    pub fn lod2_stats(&self) -> (f64, f64) { Self::aggregate(&self.lod2) }
 }
 
 /// Tracks which chunks have been received on the client
