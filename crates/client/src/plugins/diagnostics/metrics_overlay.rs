@@ -8,7 +8,7 @@ use bevy_egui::{egui, EguiContext, EguiContexts};
 use super::config::DiagnosticsState;
 use super::network_ui::NetworkMetrics;
 use common_bevy::{
-    chunk::{elevation_chunk_radius_raw, terrain_chunk_radius, CHUNK_TILES},
+    chunk::terrain_chunk_radius,
     components::{behaviour::PlayerControlled, Actor, Loc},
     resources::map::Map,
 };
@@ -19,10 +19,10 @@ use crate::resources::{LoadedChunks, ChunkLodMeshes};
 
 // ── Layout constants (match server console) ──
 
-const SEG_WIDTH: usize = 14;
+const SEG_WIDTH: usize = 15;
 const SEG_GAP: usize = 1;
 const PANEL_CHARS: usize = 3 * SEG_WIDTH + 2 * SEG_GAP;
-const SPARKLINE_CHARS: usize = 14;
+const SPARKLINE_CHARS: usize = 15;
 const MIN_BAR_WIDTH_PX: f32 = 2.0;
 
 const FONT_SIZE: f32 = 12.0;
@@ -57,63 +57,9 @@ fn colored_mono(text: &str, color: egui::Color32) -> egui::text::LayoutJob {
     job
 }
 
-fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
-    let t = t.clamp(0.0, 1.0);
-    egui::Color32::from_rgb(
-        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
-        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
-        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
-    )
-}
 
-// ── Pure formatting (duplicated from crates/console/src/main.rs) ──
 
-/// Always returns exactly 5 characters (fractional with scale suffix).
-fn format_value(v: f64) -> String {
-    if v == 0.0 {
-        "    0".into()
-    } else if v.abs() < 0.001 {
-        format!("{:>5.0}", v)
-    } else if v < 10.0 {
-        format!("{:>5.2}", v)
-    } else if v < 100.0 {
-        format!("{:>5.1}", v)
-    } else if v < 1000.0 {
-        format!("{:>5.0}", v)
-    } else if v < 10_000.0 {
-        format!("{:>4.1}K", v / 1_000.0)
-    } else if v < 1_000_000.0 {
-        format!("{:>4.0}K", v / 1_000.0)
-    } else if v < 10_000_000.0 {
-        format!("{:>4.1}M", v / 1_000_000.0)
-    } else if v < 1_000_000_000.0 {
-        format!("{:>4.0}M", v / 1_000_000.0)
-    } else if v < 10_000_000_000.0 {
-        format!("{:>4.1}B", v / 1_000_000_000.0)
-    } else if v < 1_000_000_000_000.0 {
-        format!("{:>4.0}B", v / 1_000_000_000.0)
-    } else {
-        format!("{:>4.1}T", v / 1_000_000_000_000.0)
-    }
-}
-
-/// Always returns exactly 5 characters (integer, no decimals).
-fn format_int(v: f64) -> String {
-    let v = v.round();
-    if v == 0.0 {
-        "    0".into()
-    } else if v.abs() < 100_000.0 {
-        format!("{:>5.0}", v)
-    } else if v.abs() < 10_000_000.0 {
-        format!("{:>4.0}K", v / 1_000.0)
-    } else if v.abs() < 10_000_000_000.0 {
-        format!("{:>4.0}M", v / 1_000_000.0)
-    } else if v.abs() < 10_000_000_000_000.0 {
-        format!("{:>4.0}B", v / 1_000_000_000.0)
-    } else {
-        format!("{:>4.0}T", v / 1_000_000_000_000.0)
-    }
-}
+use common::numfmt;
 
 // ── History (rolling window — matches server console) ──
 
@@ -241,10 +187,6 @@ struct Alarm {
 }
 
 impl Alarm {
-    const NONE: Self = Self {
-        bands: &[(f64::INFINITY, COLOR_NORMAL)],
-    };
-
     fn color(&self, val: f64) -> egui::Color32 {
         for &(threshold, color) in self.bands {
             if val < threshold {
@@ -271,46 +213,74 @@ const ALARM_FRAME: Alarm = Alarm {
     ],
 };
 
+const ALARM_BW: Alarm = Alarm {
+    bands: &[
+        (15360.0, COLOR_NORMAL),        // <15KB/s green
+        (20480.0, COLOR_WARN),          // <20KB/s yellow
+        (f64::INFINITY, COLOR_CRITICAL), // ≥20KB/s red
+    ],
+};
+
+const ALARM_MSG: Alarm = Alarm {
+    bands: &[
+        (15.0, COLOR_NORMAL),           // <15/s green
+        (20.0, COLOR_WARN),             // <20/s yellow
+        (f64::INFINITY, COLOR_CRITICAL), // ≥20/s red
+    ],
+};
+
 // ── Sparkline scale ──
 
 enum SparkScale {
     Fixed(f32),
-    Auto,
 }
 
-// ── Sym (stat symbol width) ──
+// ── Display width ──
 
-#[derive(Clone, Copy)]
-enum Sym {
-    Narrow(char),
-    Wide(char),
+/// Display cell count for a string, accounting for known wide chars in Iosevka.
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| if matches!(c, '△' | '●' | '○' | '↑' | '↓' | '↔') { 2 } else { 1 })
+        .sum()
 }
 
-impl Sym {
-    fn cells(self) -> usize {
-        match self {
-            Sym::Narrow(_) => 1,
-            Sym::Wide(_) => 2,
-        }
-    }
-    fn as_str(self) -> String {
-        match self {
-            Sym::Narrow(c) | Sym::Wide(c) => c.to_string(),
-        }
-    }
+// ── Tile-width segment primitives ──
+//
+// Each function takes a pre-built string and asserts its display width matches the slot.
+// Callers use standard format!() for layout; wide chars (↑, ↔, △ etc.) are 2 display
+// cells but 1 Rust char — account for them at the call site, not here.
+
+/// Full segment: 15 display cells.
+fn seg_full(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
+    debug_assert_eq!(display_width(s), SEG_WIDTH,
+        "seg_full: {SEG_WIDTH} cells expected, got {} for {:?}", display_width(s), s);
+    ui.label(colored_mono(s, color));
 }
 
-const SYM_UP: Sym = Sym::Wide('↑');
-
-// ── Composable segments (match server console) ──
-
-fn seg_label(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
-    ui.label(colored_mono(
-        &format!("{:>5} {} {:<2}", label, value, unit),
-        COLOR_DIM,
-    ));
+/// Half-segment: 7 display cells.
+fn seg_half(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
+    debug_assert_eq!(display_width(s), 7,
+        "seg_half: 7 cells expected, got {} for {:?}", display_width(s), s);
+    ui.label(colored_mono(s, color));
 }
 
+/// Quarter-segment: 3 display cells.
+#[allow(dead_code)]
+fn seg_quarter(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
+    debug_assert_eq!(display_width(s), 3,
+        "seg_quarter: 3 cells expected, got {} for {:?}", display_width(s), s);
+    ui.label(colored_mono(s, color));
+}
+
+/// Eighth-segment: 1 display cell.
+#[allow(dead_code)]
+fn seg_eighth(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
+    debug_assert_eq!(display_width(s), 1,
+        "seg_eighth: 1 cell expected, got {} for {:?}", display_width(s), s);
+    ui.label(colored_mono(s, color));
+}
+
+/// 1-char gap between segments.
 fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
     ui.add_space(char_width);
 }
@@ -319,7 +289,7 @@ fn draw_sparkline(
     ui: &mut egui::Ui,
     history: &[f32],
     scale: SparkScale,
-    fixed_color: Option<egui::Color32>,
+    alarm: &Alarm,
     char_width: f32,
     row_height: f32,
 ) {
@@ -342,7 +312,6 @@ fn draw_sparkline(
 
     let max_val = match scale {
         SparkScale::Fixed(v) => v,
-        SparkScale::Auto => samples.iter().cloned().fold(0.0_f32, f32::max),
     };
     if max_val <= 0.0 {
         return;
@@ -361,7 +330,7 @@ fn draw_sparkline(
             egui::pos2(x, rect.bottom() - bar_height),
             egui::vec2(bar_width, bar_height),
         );
-        let color = fixed_color.unwrap_or_else(|| lerp_color(COLOR_DIM, COLOR_CRITICAL, t));
+        let color = alarm.color(val as f64);
         painter.rect_filled(bar_rect, 0.0, color);
     }
 }
@@ -370,49 +339,13 @@ fn seg_spark(
     ui: &mut egui::Ui,
     history: &[f32],
     scale: SparkScale,
-    fixed_color: Option<egui::Color32>,
+    alarm: &Alarm,
     char_width: f32,
     row_height: f32,
 ) {
-    draw_sparkline(ui, history, scale, fixed_color, char_width, row_height);
+    draw_sparkline(ui, history, scale, alarm, char_width, row_height);
 }
 
-/// Two symbol+value stats — always 14 chars total (matches console seg_stats).
-/// Each stat = symbol + 5-char value. Separator flexes to fill 14 chars.
-fn seg_stats(
-    ui: &mut egui::Ui,
-    a: Option<(Sym, f64, &Alarm)>,
-    b: Option<(Sym, f64, &Alarm)>,
-) {
-    let a_width = a.map_or(0, |(s, _, _)| s.cells() + 5);
-    let b_width = b.map_or(0, |(s, _, _)| s.cells() + 5);
-    let gap = 14usize.saturating_sub(a_width + b_width);
-
-    let (a_text, a_color) = match a {
-        Some((s, v, alarm)) => {
-            let formatted = format!("{:<5}", format_value(v).trim_start());
-            (format!("{}{}", s.as_str(), formatted), alarm.color(v))
-        }
-        None => (String::new(), COLOR_DIM),
-    };
-    let (b_text, b_color) = match b {
-        Some((s, v, alarm)) => {
-            let formatted = format!("{:<5}", format_value(v).trim_start());
-            (format!("{}{}", s.as_str(), formatted), alarm.color(v))
-        }
-        None => (String::new(), COLOR_DIM),
-    };
-
-    if !a_text.is_empty() {
-        ui.label(colored_mono(&a_text, a_color));
-    }
-    let spacer = " ".repeat(gap);
-    if !b_text.is_empty() {
-        ui.label(colored_mono(&format!("{}{}", spacer, b_text), b_color));
-    } else if !spacer.is_empty() {
-        ui.label(colored_mono(&spacer, COLOR_DIM));
-    }
-}
 
 // ── Section rendering ──
 
@@ -432,41 +365,6 @@ fn draw_section<F: FnOnce(&mut egui::Ui)>(
         });
 }
 
-/// Label-only row: 1–3 seg_labels with gaps.
-fn metric_row(ui: &mut egui::Ui, cw: f32, segments: &[(&str, &str, &str)]) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for (i, &(label, value, unit)) in segments.iter().enumerate() {
-            if i > 0 {
-                seg_gap(ui, cw);
-            }
-            seg_label(ui, label, value, unit);
-        }
-    });
-}
-
-/// Full sparkline row: seg_label + seg_gap + seg_spark + seg_gap + seg_stats.
-fn spark_row(
-    ui: &mut egui::Ui,
-    cw: f32,
-    rh: f32,
-    label: &str,
-    value: &str,
-    unit: &str,
-    history: &[f32],
-    scale: SparkScale,
-    stat_a: Option<(Sym, f64, &Alarm)>,
-    stat_b: Option<(Sym, f64, &Alarm)>,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        seg_label(ui, label, value, unit);
-        seg_gap(ui, cw);
-        seg_spark(ui, history, scale, None, cw, rh);
-        seg_gap(ui, cw);
-        seg_stats(ui, stat_a, stat_b);
-    });
-}
 
 // ── Overlay camera ──
 
@@ -533,7 +431,6 @@ pub fn update_metrics_overlay(
     tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
-    #[cfg(feature = "admin")] admin_terrain: Res<crate::systems::admin::AdminTerrain>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -618,17 +515,22 @@ pub fn update_metrics_overlay(
         (qrz, z, wx, wy)
     });
 
-    #[cfg(feature = "admin")]
-    let raw_elevation =
-        tile_data.map(|(qrz, _, _, _)| admin_terrain.0.get_raw_elevation(qrz.q, qrz.r));
 
     let full_count = chunk_mesh_q.iter().count();
     let pending_lod = lod_meshes.states.values()
         .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
 
-    // Triangle compression ratios from LRU observation window
-    let (_, _, lod1_ratio) = tri_stats.lod1_stats();
-    let (_, _, lod2_ratio) = tri_stats.lod2_stats();
+    // Triangle stats (ratio, max_error) + per-level totals
+    let (lod1_ratio, lod1_err) = tri_stats.lod1_stats();
+    let (lod2_ratio, lod2_err) = tri_stats.lod2_stats();
+    let inner_r = common_bevy::chunk::detail_boundary_radius(0, common_bevy::chunk::MAX_FOV);
+    let outer_r = terrain_chunk_radius(player_loc.map(|l| l.z).unwrap_or(0));
+    let (lod1_tris, lod2_tris) = lod_meshes.states.values()
+        .filter(|s| s.entity.is_some())
+        .fold((0u64, 0u64), |(l1, l2), s| match s.active_lod {
+            crate::resources::LodLevel::Lod1 => (l1 + s.lod1_tris as u64, l2),
+            crate::resources::LodLevel::Lod2 => (l1, l2 + s.lod2_tris as u64),
+        });
 
     #[cfg(feature = "admin")]
     let (admin_count, admin_sum_count) = if flyover.active {
@@ -642,12 +544,6 @@ pub fn update_metrics_overlay(
     #[cfg(not(feature = "admin"))]
     let (admin_count, admin_sum_count) = (0usize, 0usize);
 
-    let vis_data = player_loc.map(|loc| {
-        let base = terrain_chunk_radius(loc.z);
-        let max = elevation_chunk_radius_raw(loc.z);
-        let chunk_wu = (CHUNK_TILES as f32).sqrt() * 1.5;
-        (base, max, max as f32 * chunk_wu)
-    });
 
     let frame_p95 = history.frame_window.p95();
     let fps_p95 = if frame_p95 > 0.0 { 1000.0 / frame_p95 } else { 0.0 };
@@ -668,8 +564,6 @@ pub fn update_metrics_overlay(
     let window_logical_height = window_height as f32 / scale_factor;
     let panel_x = window_logical_width - panel_pixel_width;
 
-    let fv = format_value;
-    let fi = format_int;
 
     egui::Area::new(egui::Id::new("metrics_overlay"))
         .fixed_pos(egui::pos2(panel_x, 0.0))
@@ -685,48 +579,65 @@ pub fn update_metrics_overlay(
                 .show(ui, |ui| {
                     // ── TERRAIN ──
                     draw_section(ui, "TERRAIN", content_width, |ui| {
-                        if let Some((qrz, z, wx, wy)) = tile_data {
-                            metric_row(ui, cw, &[
-                                ("q", &fi(qrz.q as f64), "  "),
-                                ("r", &fi(qrz.r as f64), "  "),
-                                ("z", &fi(z as f64), "  "),
-                            ]);
-                            #[cfg(feature = "admin")]
-                            if let Some(wz) = raw_elevation {
-                                metric_row(ui, cw, &[
-                                    ("wx", &fv(wx), "  "),
-                                    ("wy", &fv(wy), "  "),
-                                    ("wz", &fv(wz), "  "),
-                                ]);
-                            }
-                        } else {
-                            metric_row(ui, cw, &[
-                                ("q", &fi(0.0), "  "),
-                                ("r", &fi(0.0), "  "),
-                                ("z", &fi(0.0), "  "),
-                            ]);
-                        }
-                        metric_row(ui, cw, &[
-                            ("mesh", &fi(full_count as f64), "  "),
-                            ("load", &fi(loaded_chunks.chunks.len() as f64), "  "),
-                            ("pend", &fi(pending_lod as f64), "  "),
-                        ]);
-                        metric_row(ui, cw, &[
-                            ("△ L1", &fv(lod1_ratio * 100.0), "% "),
-                            ("△ L2", &fv(lod2_ratio * 100.0), "% "),
-                        ]);
+                        let (q, r, z, wx, wy) = tile_data
+                            .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
+                            .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+                        // qrz/xy — two 23ch super-segments (23 + 1 gap + 23 = 47)
+                        let fc = |v: f64| numfmt::CLAMP5.fmt(v);
+                        let qrz = format!("qrz:{},{},{}", fc(q), fc(r), fc(z));
+                        let xy = format!("xy:{},{}", fc(wx), fc(wy));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.label(colored_mono(&format!("{:^23}", qrz), COLOR_DIM));
+                            seg_gap(ui, cw);
+                            ui.label(colored_mono(&format!("{:^23}", xy), COLOR_DIM));
+                        });
+                        // mesh/load/pending — "{:>5}  {:>5} {:<2}" = 15 display each
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "mesh", numfmt::INT5.fmt(full_count as f64), ""), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "load", numfmt::INT5.fmt(loaded_chunks.chunks.len() as f64), ""), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "pend", numfmt::INT5.fmt(pending_lod as f64), ""), COLOR_DIM);
+                        });
+                        // LoD lines: 5 half-segments each
+                        // label(7) △tris(7) ↔radius(7) ×ratio(7) εerror(7)
+                        // △/↔ are wide (2D,1R); ×/ε are narrow (1D,1R)
+                        const F2C6: numfmt::NumFmt = numfmt::NumFmt {
+                            width: 6, precision: numfmt::Precision::Fixed(2), overflow: numfmt::Overflow::Clamp,
+                        };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_half(ui, &format!("{:>7}", "LoD1"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("△{:<5}", numfmt::INT5.fmt(lod1_tris as f64)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("↔{:<5}", numfmt::INT5.fmt(inner_r as f64)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("×{:<6}", F2C6.fmt(lod1_ratio)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("ε{:<6}", F2C6.fmt(lod1_err)), COLOR_DIM);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_half(ui, &format!("{:>7}", "LoD2"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("△{:<5}", numfmt::INT5.fmt(lod2_tris as f64)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("↔{:<5}", numfmt::INT5.fmt(outer_r as f64)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("×{:<6}", F2C6.fmt(lod2_ratio)), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("ε{:<6}", F2C6.fmt(lod2_err)), COLOR_DIM);
+                        });
                         if admin_count > 0 || admin_sum_count > 0 {
-                            metric_row(ui, cw, &[
-                                ("aChk", &fi(admin_count as f64), "  "),
-                                ("aSum", &fi(admin_sum_count as f64), "  "),
-                            ]);
-                        }
-                        if let Some((base, max, wu)) = vis_data {
-                            metric_row(ui, cw, &[
-                                ("vBas", &fi(base as f64), "ch"),
-                                ("vMax", &fi(max as f64), "ch"),
-                                ("vWu", &fv(wu as f64), "wu"),
-                            ]);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "aChk", numfmt::INT5.fmt(admin_count as f64), ""), COLOR_DIM);
+                                seg_gap(ui, cw);
+                                seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "aSum", numfmt::INT5.fmt(admin_sum_count as f64), ""), COLOR_DIM);
+                            });
                         }
                     });
 
@@ -734,34 +645,58 @@ pub fn update_metrics_overlay(
 
                     // ── RENDER ──
                     draw_section(ui, "RENDER", content_width, |ui| {
-                        spark_row(
-                            ui, cw, rh, "FRAME", &fv(frame_p95), "ms",
-                            &hist_frame, SparkScale::Fixed(33.0),
-                            Some((SYM_UP, history.frame_ms.visible_max(bar_count), &ALARM_FRAME)),
-                            Some((Sym::Narrow('ƒ'), fps_p95, &ALARM_FPS)),
-                        );
-                        metric_row(ui, cw, &[
-                            ("ENTS", &fi(entities), "  "),
-                            ("TILES", &fi(map.len() as f64), "  "),
-                        ]);
+                        let frame_peak = history.frame_ms.visible_max(bar_count);
+                        let peak_color = ALARM_FRAME.color(frame_peak);
+                        let fps_color = ALARM_FPS.color(fps_p95);
+                        let peak_v = numfmt::DEC5.fmt(frame_peak);
+                        let fps_v = numfmt::DEC5.fmt(fps_p95);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "FRAME", numfmt::DEC5.fmt(frame_p95), "ms"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, cw, rh);
+                            seg_gap(ui, cw);
+                            // ↑peak (7 display) + 2sp + ƒfps (6 display) = 15
+                            // ↑ is wide (2 display, 1 Rust): pad + ↑ + value = 7 display
+                            ui.label(colored_mono(
+                                &format!("{}↑{peak_v}", " ".repeat(5usize.saturating_sub(peak_v.len()))),
+                                peak_color,
+                            ));
+                            ui.label(colored_mono("  ", COLOR_DIM));
+                            ui.label(colored_mono(&format!("ƒ{fps_v:<5}"), fps_color));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "ENTS", numfmt::INT5.fmt(entities), ""), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "TILES", numfmt::INT5.fmt(map.len() as f64), ""), COLOR_DIM);
+                        });
                     });
 
                     ui.add_space(4.0);
 
                     // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
-                        spark_row(
-                            ui, cw, rh, "BW", &fv(bps), "/s",
-                            &hist_bw, SparkScale::Auto,
-                            Some((SYM_UP, history.bw.visible_max(bar_count), &Alarm::NONE)),
-                            None,
-                        );
-                        spark_row(
-                            ui, cw, rh, "MSG", &fv(mps), "/s",
-                            &hist_msg, SparkScale::Auto,
-                            Some((SYM_UP, history.msg.visible_max(bar_count), &Alarm::NONE)),
-                            None,
-                        );
+                        // ↓ is wide: "↓NET" = 4 Rust chars = 5 display cells
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("↓NET  {:>5} {:<2}", numfmt::DEC5.fmt(bps), "Bs"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, cw, rh);
+                            seg_gap(ui, cw);
+                            // ↑ stat right-aligned in 7 display + 8 trailing spaces = 15
+                            let pv = numfmt::DEC5.fmt(history.bw.visible_max(bar_count));
+                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("↓MSG  {:>5} {:<2}", numfmt::DEC5.fmt(mps), "/s"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, cw, rh);
+                            seg_gap(ui, cw);
+                            let pv = numfmt::DEC5.fmt(history.msg.visible_max(bar_count));
+                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                        });
                     });
                 });
         });
@@ -774,39 +709,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_value_five_chars() {
+    fn format_value_max_width() {
         let cases: &[f64] = &[
             0.0, 0.043, 0.5, 1.23, 9.99, 10.0, 92.6, 99.9, 100.0, 714.0, 999.0, 1234.0,
             9999.0, 25148.0, 999999.0, 1_234_567.0,
+            -0.5, -1.23, -9.99, -92.6, -714.0, -5678.0, -99999.0,
         ];
         for &v in cases {
-            let s = format_value(v);
-            assert_eq!(s.len(), 5, "format_value({}) = {:?} (len {})", v, s, s.len());
+            let s = numfmt::DEC5.fmt(v);
+            assert!(s.len() <= 5, "numfmt::DEC5.fmt({}) = {:?} (len {})", v, s, s.len());
         }
     }
 
     #[test]
-    fn format_int_five_chars() {
+    fn format_int_max_width() {
         let cases: &[f64] = &[
             0.0, 1.0, 42.0, 999.0, 12345.0, 99999.0, 100_000.0, 999_999.0, 1_000_000.0,
+            -1.0, -42.0, -999.0, -5678.0, -99999.0,
         ];
         for &v in cases {
-            let s = format_int(v);
-            assert_eq!(s.len(), 5, "format_int({}) = {:?} (len {})", v, s, s.len());
+            let s = numfmt::INT5.fmt(v);
+            assert!(s.len() <= 5, "numfmt::INT5.fmt({}) = {:?} (len {})", v, s, s.len());
         }
     }
 
     #[test]
     fn format_value_known_outputs() {
-        assert_eq!(format_value(0.0), "    0");
-        assert_eq!(format_value(92.6), " 92.6");
-        assert_eq!(format_value(714.0), "  714");
+        // Unit decimal: compact output, no leading spaces
+        assert_eq!(numfmt::DEC5.fmt(0.0), "0.00");
+        assert_eq!(numfmt::DEC5.fmt(0.5), "0.50");
+        assert_eq!(numfmt::DEC5.fmt(92.6), "92.60");
+        assert_eq!(numfmt::DEC5.fmt(714.0), "714.0");
+        assert_eq!(numfmt::DEC5.fmt(1234.0), "1234");
+        assert_eq!(numfmt::DEC5.fmt(9999.0), "9999");
+        assert_eq!(numfmt::DEC5.fmt(10_000.0), "10.0K");
+        assert_eq!(numfmt::DEC5.fmt(25148.0), "25.1K");
+        assert_eq!(numfmt::DEC5.fmt(100_000.0), "100K");
+        assert_eq!(numfmt::DEC5.fmt(1_234_567.0), "1.23M");
+        assert_eq!(numfmt::DEC5.fmt(-50.3), "-50.3");
+        assert_eq!(numfmt::DEC5.fmt(-714.0), "-714");
+        assert_eq!(numfmt::DEC5.fmt(-5678.0), "-5678");
+        assert_eq!(numfmt::DEC5.fmt(-56789.0), "-57K");
+    }
+
+    #[test]
+    fn format_int_known_outputs() {
+        // Unit integer: compact output, no leading spaces
+        assert_eq!(numfmt::INT5.fmt(0.0), "0");
+        assert_eq!(numfmt::INT5.fmt(42.0), "42");
+        assert_eq!(numfmt::INT5.fmt(999.0), "999");
+        assert_eq!(numfmt::INT5.fmt(1000.0), "1000");
+        assert_eq!(numfmt::INT5.fmt(1500.0), "1500");
+        assert_eq!(numfmt::INT5.fmt(9999.0), "9999");
+        assert_eq!(numfmt::INT5.fmt(10_000.0), "10.0K");
+        assert_eq!(numfmt::INT5.fmt(25000.0), "25.0K");
+        assert_eq!(numfmt::INT5.fmt(100_000.0), "100K");
+        assert_eq!(numfmt::INT5.fmt(-999.0), "-999");
+        assert_eq!(numfmt::INT5.fmt(-5678.0), "-5678");
+        assert_eq!(numfmt::INT5.fmt(-10_000.0), "-10K");
     }
 
     #[test]
     fn panel_chars_matches_three_segments() {
-        assert_eq!(PANEL_CHARS, 3 * 14 + 2 * 1);
-        assert_eq!(PANEL_CHARS, 44);
+        assert_eq!(PANEL_CHARS, 3 * 15 + 2 * 1);
+        assert_eq!(PANEL_CHARS, 47);
     }
 
     #[test]

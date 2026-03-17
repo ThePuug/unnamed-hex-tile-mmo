@@ -375,7 +375,7 @@ pub fn poll_and_swap_lod(
         if let Some(task) = &mut state.lod1_task {
             if let Some(result) = block_on(future::poll_once(task)) {
                 state.lod1_tris = (result.indices.len() / 3) as u32;
-                tri_stats.push_lod1(result.raw_tris, state.lod1_tris);
+                tri_stats.push_lod1(result.raw_tris, state.lod1_tris, result.max_error);
                 state.lod1_task = None;
                 state.lod1_mesh = Some(meshes.add(build_bevy_mesh(&result)));
             }
@@ -385,7 +385,7 @@ pub fn poll_and_swap_lod(
         if let Some(task) = &mut state.lod2_task {
             if let Some(result) = block_on(future::poll_once(task)) {
                 state.lod2_tris = (result.indices.len() / 3) as u32;
-                tri_stats.push_lod2(result.raw_tris, state.lod2_tris);
+                tri_stats.push_lod2(result.raw_tris, state.lod2_tris, result.max_error);
                 state.lod2_task = None;
                 state.lod2_mesh = Some(meshes.add(build_bevy_mesh(&result)));
             }

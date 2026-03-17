@@ -59,11 +59,11 @@ The 20/40/60 thresholds create viable dual-T3 builds and smooth progression from
 
 | Attribute | Commitment | Stat | T0 | T1 | T2 | T3 |
 |-----------|-----------|------|----|----|----|----|
-| Grace | Poise | Evasion | 0% | 10% | 20% | 30% |
-| Focus | Concentration | Queue capacity | 1 slot | 2 slots | 3 slots | 4 slots |
-| Presence | Intensity | Cadence | 3000ms | 2500ms | 2000ms | 1500ms |
+| Grace | Poise | Evasion (legacy — Poise mechanic open) | 0% | 10% | 20% | 30% |
+| Focus | Concentration | Queue visibility window (unbounded queue, ADR-030) | 1 | 2 | 3 | 4 |
+| Presence | Intensity | Cadence (legacy — Intensity intended for AoE projection) | 3000ms | 2500ms | 2000ms | 1500ms |
 
-Poise and Intensity values tuned for combat pacing.
+Cadence and evasion remain the live behavior; see attributes.md deviations #8 and #9.
 
 **Open Commitment Stats (no concrete mechanic yet):**
 
@@ -76,8 +76,8 @@ Poise and Intensity values tuned for combat pacing.
 ## Rationale
 
 **Why discrete tiers, not continuous:**
-- Queue capacity is inherently discrete (can't have 2.7 slots) — Concentration already needs tiers
-- Clear player-facing goals ("I need 45% Focus for 3 queue slots")
+- Queue visibility window is inherently discrete (can't have 2.7 visible threats) — Concentration already needs tiers
+- Clear player-facing goals ("I need 45% Focus for 3 visible threats")
 - Simpler to balance (three tier values per stat vs infinite continuous curve)
 - Creates meaningful identity boundaries (you either "are" a Might fighter or you're not)
 - UI representation is cleaner (tier badges vs percentage bars)

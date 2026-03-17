@@ -266,8 +266,6 @@ Where the current implementation intentionally differs from spec:
 
 **Post-MVP:** Equipment attribute modifiers, full healing system, Endurance depletion curve tuning, Flow compression tier definitions
 
-**Cross-reference note:** `docs/design/combat-balance.md` System 2 still references "Queue Capacity" and slot-based language. `docs/design/combat.md` references queue capacity and cadence from Intensity. These documents need separate updates to align with visibility window, AoE projection, Endurance pool, and legacy cadence/evasion changes.
-
 ---
 
 **Related Design Documents:**

@@ -4,6 +4,7 @@ edition = "2021"
 version = "0.1.0"
 
 [dependencies]
+common = { path = "../common" }
 eframe = "0.31"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }

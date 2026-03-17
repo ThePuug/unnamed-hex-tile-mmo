@@ -15,6 +15,8 @@ pub struct DecimatedMesh {
     pub indices: Vec<u32>,
     /// Triangle count of the raw geometry before decimation.
     pub raw_tris: u32,
+    /// Maximum quadric error of any accepted edge collapse (0 if no collapses).
+    pub max_error: f32,
 }
 
 // ── QEM Algorithm ──
@@ -179,7 +181,7 @@ impl QEMState {
         self.adj[remove].clear();
     }
 
-    fn run(&mut self, threshold: f64) {
+    fn run(&mut self, threshold: f64) -> f64 {
         // Build priority queue: all valid edges ranked by cost (min-heap)
         let mut heap: BinaryHeap<Reverse<(OrdF64, usize, usize)>> = BinaryHeap::new();
         let mut targets: HashMap<(usize, usize), [f64; 3]> = HashMap::new();
@@ -195,10 +197,10 @@ impl QEMState {
             }
         }
 
-        // Process collapses in cost order
+        // Process collapses in cost order, track max accepted error
+        let mut max_error = 0.0f64;
         while let Some(Reverse((cost, v0, v1))) = heap.pop() {
             if cost.0 > threshold { break; }
-            // Skip stale entries: vertex dead or locked since this entry was queued
             if !self.alive[v0] || !self.alive[v1] { continue; }
             if self.locked_verts[v0] || self.locked_verts[v1] { continue; }
 
@@ -206,6 +208,7 @@ impl QEMState {
             let Some(&target) = targets.get(&key) else { continue; };
 
             self.collapse(v0, v1, target);
+            if cost.0 > max_error { max_error = cost.0; }
         }
 
         // Kill duplicate triangles that may have formed from vertex merging
@@ -219,6 +222,8 @@ impl QEMState {
                 self.tri_alive[ti] = false;
             }
         }
+
+        max_error
     }
 }
 
@@ -261,7 +266,7 @@ pub fn decimate_geometry(
     let raw_tris = (geometry.indices.len() / 3) as u32;
 
     if triangles.is_empty() {
-        return DecimatedMesh { positions: Vec::new(), normals: Vec::new(), indices: Vec::new(), raw_tris };
+        return DecimatedMesh { positions: Vec::new(), normals: Vec::new(), indices: Vec::new(), raw_tris, max_error: 0.0 };
     }
 
     // Lock edges between perimeter vertices
@@ -278,7 +283,7 @@ pub fn decimate_geometry(
     }
 
     let mut qem = QEMState::new(&positions, &triangles, locked_edges);
-    qem.run(threshold as f64);
+    let max_error = qem.run(threshold as f64);
 
     // Remap surviving vertices
     let mut remap: Vec<Option<u32>> = vec![None; qem.pos.len()];
@@ -333,5 +338,5 @@ pub fn decimate_geometry(
         }
     }).collect();
 
-    DecimatedMesh { positions: new_positions, normals: new_normals, indices: new_indices, raw_tris }
+    DecimatedMesh { positions: new_positions, normals: new_normals, indices: new_indices, raw_tris, max_error: max_error as f32 }
 }

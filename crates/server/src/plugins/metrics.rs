@@ -162,6 +162,9 @@ impl Plugin for MetricsPlugin {
         snapshot.register("frame_duration_ms", Aggregator::Last);
         snapshot.register("frame_peak_ms", Aggregator::Peak);
         snapshot.register("frame_overruns", Aggregator::Sum);
+        snapshot.register("net_sent_bps", Aggregator::Last);
+        snapshot.register("net_recv_bps", Aggregator::Last);
+        snapshot.register("net_clients", Aggregator::Last);
         app.insert_resource(snapshot)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
@@ -218,6 +221,7 @@ fn refresh_metric_gauges(
     snapshot: Res<MetricSnapshot>,
     map: Res<Map>,
     lobby: Res<Lobby>,
+    conn: Res<bevy_renet::RenetServer>,
     npc_query: Query<(), (With<common_bevy::components::entity_type::EntityType>, Without<common_bevy::components::behaviour::PlayerControlled>)>,
 ) {
     snapshot.record(&[
@@ -226,6 +230,23 @@ fn refresh_metric_gauges(
         ("npc_count", npc_query.iter().count() as f32),
         ("memory_mb", process_working_set_bytes() as f32 / 1_048_576.0),
         ("memory_map_mb", map.heap_size_estimate() as f32 / 1_048_576.0),
+    ]);
+
+    // Aggregate network stats across all connected clients
+    let mut total_sent = 0.0f64;
+    let mut total_recv = 0.0f64;
+    let mut client_count = 0u32;
+    for client_id in conn.clients_id() {
+        if let Ok(info) = conn.network_info(client_id) {
+            total_sent += info.bytes_sent_per_second;
+            total_recv += info.bytes_received_per_second;
+            client_count += 1;
+        }
+    }
+    snapshot.record(&[
+        ("net_sent_bps", total_sent as f32),
+        ("net_recv_bps", total_recv as f32),
+        ("net_clients", client_count as f32),
     ]);
 }
 
