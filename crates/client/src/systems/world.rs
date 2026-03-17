@@ -77,17 +77,12 @@ pub fn evict_data(
     map: Res<common_bevy::resources::map::Map>,
     map_state: Res<common_bevy::resources::map::MapState>,
     player_query: Query<&Loc, With<PlayerControlled>>,
-    camera_query: Query<&Projection, With<Camera3d>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
 ) {
     let Ok(player_loc) = player_query.single() else { return };
     let player_chunk = loc_to_chunk(**player_loc);
     let player_z = player_loc.z;
 
-    let fov = camera_query.single().ok()
-        .and_then(|p| match p { Projection::Perspective(pp) => Some(pp.fov), _ => None })
-        .unwrap_or(chunk::DEFAULT_FOV);
-    let detail_buffer = chunk::detail_boundary_radius(player_z, fov) as i32 + 2;
     let summary_buffer = terrain_chunk_radius(player_z) as i32 + 1;
 
     // ── Evict tiles beyond summary boundary ──

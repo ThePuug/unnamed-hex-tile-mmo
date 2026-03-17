@@ -128,44 +128,6 @@ impl MetricSnapshot {
     }
 }
 
-// ── MetricEvent ──
-
-/// Fires one UDP packet immediately per record() call. No accumulation.
-/// All fields must be provided together — each record() is a complete observation.
-#[derive(Resource)]
-pub struct MetricEvent {
-    group: &'static str,
-    field_names: Vec<&'static str>,
-    transport: Transport,
-    start_time: Instant,
-}
-
-impl MetricEvent {
-    fn new(group: &'static str, transport: Transport) -> Self {
-        Self {
-            group,
-            field_names: Vec::new(),
-            transport,
-            start_time: Instant::now(),
-        }
-    }
-
-    fn register(&mut self, name: &'static str) {
-        self.field_names.push(name);
-    }
-
-    /// Fire a single observation immediately via UDP.
-    pub fn record(&self, fields: &[(&str, f32)]) {
-        let packet = MetricsPacket {
-            group: self.group.to_string(),
-            cadence: Cadence::Event,
-            timestamp_secs: self.start_time.elapsed().as_secs_f64(),
-            fields: fields.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
-        };
-        self.transport.send_packet(&packet);
-    }
-}
-
 // ── Plugin ──
 
 pub struct MetricsPlugin {

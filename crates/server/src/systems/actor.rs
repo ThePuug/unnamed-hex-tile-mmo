@@ -15,49 +15,7 @@ use common_bevy::{
 };
 use crate::resources::terrain::*;
 
-/// Generic tracked async task pool. Captures dispatch time automatically so
-/// any async work feeds into queue depth + duration metrics without per-system
-/// boilerplate.
-#[derive(bevy::prelude::Resource)]
-pub struct TrackedTasks<T: Send + 'static> {
-    tasks: Vec<(Entity, std::time::Instant, bevy::tasks::Task<T>)>,
-}
 
-impl<T: Send + 'static> Default for TrackedTasks<T> {
-    fn default() -> Self {
-        Self { tasks: Vec::new() }
-    }
-}
-
-impl<T: Send + 'static> TrackedTasks<T> {
-    /// Dispatch a task. Captures Instant::now() — duration includes queue wait.
-    pub fn dispatch(&mut self, ent: Entity, task: bevy::tasks::Task<T>) {
-        self.tasks.push((ent, std::time::Instant::now(), task));
-    }
-
-    /// Poll all tasks. Returns completed results with their entity and
-    /// dispatch-to-completion duration.
-    pub fn poll_completed(&mut self) -> Vec<(Entity, T, std::time::Duration)> {
-        use bevy::tasks::{block_on, futures_lite::future};
-
-        let mut completed = Vec::new();
-        self.tasks.retain_mut(|(ent, dispatched_at, task)| {
-            match block_on(future::poll_once(task)) {
-                Some(result) => {
-                    completed.push((*ent, result, dispatched_at.elapsed()));
-                    false
-                }
-                None => true,
-            }
-        });
-        completed
-    }
-
-    /// Current number of in-flight tasks.
-    pub fn in_flight(&self) -> usize {
-        self.tasks.len()
-    }
-}
 
 
 /// Cached per-chunk visibility sets, recomputed on chunk boundary crossings.

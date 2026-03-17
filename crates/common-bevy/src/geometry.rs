@@ -6,8 +6,6 @@
 use std::collections::HashMap;
 use bevy::math::Vec3;
 
-const SQRT_3_F64: f64 = 1.7320508075688772;
-
 /// Raw geometry for a set of hex tiles. No Bevy types.
 pub struct TileGeometry {
     pub positions: Vec<[f32; 3]>,
@@ -49,7 +47,7 @@ pub fn compute_tile_geometry(
         .map(|t| (t.q, t.r))
         .collect();
 
-    let direction_to_vertices = [
+    let _direction_to_vertices = [
         (4, 5), // Dir 0: West edge → SW(4), NW(5)
         (3, 4), // Dir 1: SW edge → S(3), SW(4)
         (2, 3), // Dir 2: SE edge → SE(2), S(3)
@@ -193,76 +191,6 @@ pub fn compute_tile_geometry(
     perimeter_vertices.dedup();
 
     TileGeometry { positions, normals, indices, surface_y, boundary_indices: perimeter_vertices }
-}
-
-/// Find edges with exactly one incident triangle, then traverse them in order
-/// to produce an ordered boundary vertex loop.
-fn extract_ordered_boundary(indices: &[u32]) -> Vec<u32> {
-    use std::collections::HashMap;
-
-    // Count how many triangles share each edge
-    let mut edge_count: HashMap<(u32, u32), u32> = HashMap::new();
-    for tri in indices.chunks(3) {
-        if tri.len() < 3 { continue; }
-        for i in 0..3 {
-            let v0 = tri[i];
-            let v1 = tri[(i + 1) % 3];
-            let key = (v0.min(v1), v0.max(v1));
-            *edge_count.entry(key).or_insert(0) += 1;
-        }
-    }
-
-    // Boundary edges: count == 1
-    let mut bnd_adj: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (&(v0, v1), &count) in &edge_count {
-        if count == 1 {
-            bnd_adj.entry(v0).or_default().push(v1);
-            bnd_adj.entry(v1).or_default().push(v0);
-        }
-    }
-
-    if bnd_adj.is_empty() {
-        return Vec::new();
-    }
-
-    // Find ALL boundary loops, return the largest (chunk perimeter, not skirt edges)
-    let mut global_visited = std::collections::HashSet::new();
-    let mut largest_loop: Vec<u32> = Vec::new();
-
-    let mut all_verts: Vec<u32> = bnd_adj.keys().copied().collect();
-    all_verts.sort();
-
-    for &start in &all_verts {
-        if global_visited.contains(&start) { continue; }
-
-        let mut loop_verts = vec![start];
-        global_visited.insert(start);
-        let mut curr = start;
-
-        loop {
-            let neighbors = match bnd_adj.get(&curr) {
-                Some(n) => n,
-                None => break,
-            };
-            let next = neighbors.iter()
-                .filter(|&&n| !global_visited.contains(&n))
-                .min();
-            match next {
-                Some(&n) => {
-                    loop_verts.push(n);
-                    global_visited.insert(n);
-                    curr = n;
-                }
-                None => break,
-            }
-        }
-
-        if loop_verts.len() > largest_loop.len() {
-            largest_loop = loop_verts;
-        }
-    }
-
-    largest_loop
 }
 
 /// Compute slope-adjusted vertices for a hex tile.

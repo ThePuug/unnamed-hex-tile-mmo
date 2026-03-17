@@ -595,7 +595,7 @@ impl RavineNetwork {
             let (best_dist, best_seg_idx, best_seg_t) =
                 nearest_point_on_spline_range(&stream.steps, wx, wy, seg_start, seg_end);
 
-            let (floor, width, stream_surface, wall_exponent) =
+            let (floor, width, _stream_surface, wall_exponent) =
                 interpolate_spline_step(&stream.steps, best_seg_idx, best_seg_t);
             let half_width = width / 2.0;
             if best_dist >= half_width { continue; }
