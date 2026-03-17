@@ -356,7 +356,7 @@ pub fn kite(
                 // Close enough to spawn - search for new target
                 let nearby = nntree.locate_within_distance(
                     *npc_loc,
-                    kite_config.acquisition_range as i32 * kite_config.acquisition_range as i32,
+                    kite_config.acquisition_range as i64 * kite_config.acquisition_range as i64,
                 );
 
                 let valid_targets: Vec<Entity> = nearby

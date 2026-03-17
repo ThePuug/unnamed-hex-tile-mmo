@@ -84,40 +84,43 @@ impl PointDistance for NearestNeighbor {
         &self,
         point: &<Self::Envelope as rstar::Envelope>::Point,
     ) -> <<Self::Envelope as rstar::Envelope>::Point as rstar::Point>::Scalar {
-        let self_s = -self.loc.q-self.loc.r;
-        let point_s = -point.q-point.r;
+        let sq = self.loc.q as i64;
+        let sr = self.loc.r as i64;
+        let sz = self.loc.z as i64;
+        let pq = point.q as i64;
+        let pr = point.r as i64;
+        let pz = point.z as i64;
+        let self_s = -sq - sr;
+        let point_s = -pq - pr;
         let dist = [
-            (self.loc.q - point.q).abs(),
-            (self.loc.r - point.r).abs(),
+            (sq - pq).abs(),
+            (sr - pr).abs(),
             (self_s - point_s).abs()
-        ].iter().max().unwrap() + (self.loc.z - point.z).abs();
+        ].into_iter().max().unwrap() + (sz - pz).abs();
         dist * dist
     }
 }
 
 impl Point for Loc {
-    // Use i32 instead of i16 to prevent overflow in rstar's internal AABB calculations
-    // when entities are far from origin
-    type Scalar = i32;
+    // i64 prevents overflow in rstar's internal AABB area/distance calculations
+    // (multiplies dimension spans together — overflows i32 when entities span large maps)
+    type Scalar = i64;
     const DIMENSIONS: usize = 3;
 
     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-        Loc::from_qrz(generator(0), generator(1), generator(2))
+        Loc::from_qrz(generator(0) as i32, generator(1) as i32, generator(2) as i32)
     }
 
     fn nth(&self, index: usize) -> Self::Scalar {
         match index {
-            0 => self.q,
-            1 => self.r,
-            2 => self.z,
+            0 => self.q as i64,
+            1 => self.r as i64,
+            2 => self.z as i64,
             _ => unreachable!(),
         }
     }
 
     fn nth_mut(&mut self, _index: usize) -> &mut Self::Scalar {
-        // Since we can't return a mutable reference to a temporary i32,
-        // we need to work with a static mutable. This is a limitation of the API.
-        // However, this method is rarely used by rstar for spatial queries.
         unimplemented!("nth_mut not supported for Loc - rstar doesn't need it for queries")
     }
 }

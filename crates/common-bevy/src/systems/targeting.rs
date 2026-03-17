@@ -249,7 +249,7 @@ where
 
     // Query entities within max range (20 hexes)
     // Using locate_within_distance with squared distance
-    let max_range_sq = 20 * 20;
+    let max_range_sq: i64 = 20 * 20;
     let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
 
     // Build list of valid targets with their distances and angles
@@ -382,7 +382,7 @@ where
     F: Fn(Entity) -> bool,
 {
     // Query entities within max range (20 hexes)
-    let max_range_sq = 20 * 20;
+    let max_range_sq: i64 = 20 * 20;
     let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
 
     // Build list of valid ally targets with their distances and angles
