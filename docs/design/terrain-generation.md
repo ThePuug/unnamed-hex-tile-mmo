@@ -201,13 +201,15 @@ Chunk loading splits into two concentric rings separated by `FOV_CHUNK_RADIUS`:
 
 **Inner ring** (Chebyshev distance <= `FOV_CHUNK_RADIUS`): Full-detail chunks. Gameplay happens here — physics, pathfinding, combat use these tiles from the Map.
 
-**Outer ring** (beyond, up to max_radius): Each chunk summarized as a single 7-vertex hex. One Map entry instead of a full chunk. Dramatically reduced network cost.
+**Outer ring** (beyond, up to max_radius): Each chunk decimated via QEM (Quadric Error Metrics) into variable boundary vertices (6–54) + N interior vertices selected by terrain variance. Mesh reconstructed client-side via Delaunay triangulation.
+
+**Boundary vertices**: 6 corner vertices (3-tile average, always retained) + up to 8 edge vertices per edge, RDP-decimated against `BORDER_ERROR_THRESHOLD`. Flat edges produce 0 extra vertices; complex edges retain tiles proportional to terrain variance. Adjacent chunks share boundary vertices deterministically. Interior vertices carry relative (q, r) + elevation.
 
 ### Invariants
 
 **Ring separation**: Physics, movement, and pathfinding only read from the Map (inner ring), never from ChunkSummaries.
 
-**Continuous surface**: Adjacent summary hexes share corner vertices. No gaps.
+**Continuous surface**: Adjacent summary meshes share deterministic boundary vertices (corners + RDP-decimated edges). No gaps.
 
 **No terrain vanishing**: Ring downgrade sends summary before client evicts full tiles.
 
@@ -219,14 +221,11 @@ Where the current implementation intentionally differs from spec:
 
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
-| 1 | Chunk streaming | Two-ring LoD with server-side streaming | Client-side two-ring implemented; server-side Event::ChunkSummary not yet | See ADR-032 |
-| 2 | Elevation | Full biome-aware height | Spine-only elevation (peaks + ridgelines - ravines) | Biome system not yet built |
+| 1 | Elevation | Full biome-aware height | Spine-only elevation (peaks + ridgelines - ravines) | Biome system not yet built |
 
 ## Implementation Gaps
 
 **Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on plate tags + elevation + moisture
-
-**Medium (LoD server-side)**: Server-side two-ring streaming — Event::ChunkSummary, VisibleChunkCache, do_incremental ring transitions
 
 **Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation, dynamic temporal events
 
