@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use crate::{components::TargetIndicator, plugins::diagnostics::DiagnosticsState};
+use crate::components::TargetIndicator;
 use common_bevy::{
     components::{entity_type::*, *},
     resources::map::Map,
@@ -99,7 +99,6 @@ pub fn update(
     local_player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget, &common_bevy::components::resources::Health), With<Actor>>,
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
-    diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Get local player's targets and health
@@ -132,7 +131,7 @@ pub fn update(
                     // Find the actual terrain tile at target location (handles elevation)
                     if let Some((actual_tile, _)) = map.get_by_qr(target_loc.q, target_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();
@@ -210,7 +209,7 @@ pub fn update(
                     // Find the actual terrain tile at ally location (handles elevation)
                     if let Some((actual_tile, _)) = map.get_by_qr(ally_loc.q, ally_loc.r) {
                         // Get the vertices for this tile (respecting slope toggle)
-                        let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
 
                         // Create a filled hex mesh matching the sloped terrain
                         let mut positions = Vec::new();

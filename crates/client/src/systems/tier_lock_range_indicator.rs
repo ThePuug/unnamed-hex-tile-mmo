@@ -22,7 +22,6 @@ use bevy::prelude::*;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use crate::plugins::diagnostics::DiagnosticsState;
 use common_bevy::{
     components::{tier_lock::*, *},
     resources::map::Map,
@@ -70,7 +69,6 @@ pub fn update(
     mut indicator_query: Query<(Entity, &mut TierLockRangeIndicator, &mut Visibility, Option<&MeshMaterial3d<StandardMaterial>>)>,
     input_queues: Res<common_bevy::resources::InputQueues>,
     map: Res<Map>,
-    diagnostics_state: Res<DiagnosticsState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -154,7 +152,7 @@ pub fn update(
         // Find the actual terrain tile at this location (handles elevation)
         if let Some((actual_tile, _)) = map.get_by_qr(tile_qrz.q, tile_qrz.r) {
             // Get the vertices for this tile (respecting slope toggle)
-            let sloped_verts = map.vertices_with_slopes(actual_tile, diagnostics_state.slope_rendering_enabled);
+            let sloped_verts = map.vertices_with_slopes(actual_tile, true);
 
             let base_index = positions.len() as u32;
 

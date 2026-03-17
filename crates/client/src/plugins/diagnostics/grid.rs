@@ -126,7 +126,7 @@ pub fn spawn_grid_mesh_task(
 
     // Clone the Map (O(1) Arc clone) for the async task
     let map_snapshot = map.clone();
-    let apply_slopes = state.slope_rendering_enabled;
+    let apply_slopes = true;
     let pool = AsyncComputeTaskPool::get();
 
     let task = pool.spawn(async move {

@@ -62,9 +62,8 @@ impl Default for DevConsole {
 pub enum MenuPath {
     Root,
     Terrain,
-    Performance,
     #[cfg(feature = "admin")]
-    Admin,
+    Flyover,
     #[cfg(feature = "admin")]
     GotoSelect,
     #[cfg(feature = "admin")]
@@ -72,14 +71,12 @@ pub enum MenuPath {
 }
 
 impl MenuPath {
-    /// Get human-readable name for breadcrumb display
     pub fn display_name(&self) -> &str {
         match self {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
-            MenuPath::Performance => "Performance Monitoring",
             #[cfg(feature = "admin")]
-            MenuPath::Admin => "Admin Tools",
+            MenuPath::Flyover => "Flyover Camera",
             #[cfg(feature = "admin")]
             MenuPath::GotoSelect => "Goto — Select Coordinates",
             #[cfg(feature = "admin")]
