@@ -1,9 +1,10 @@
 //! QEM (Quadric Error Metrics) mesh decimation.
 //!
 //! Deduplicates vertices, then runs Garland-Heckbert edge collapse with
-//! optional boundary locking and winding correction.
+//! priority queue, per-collapse vertex locking, and winding correction.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, BinaryHeap, HashSet, HashMap};
+use std::cmp::Reverse;
 
 // ── Public Types ──
 
@@ -50,12 +51,29 @@ fn triangle_plane(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3]) -> (f64, f64, f64, f
     (a, b, c, -(a*p0[0] + b*p0[1] + c*p0[2]))
 }
 
+/// Newtype for f64 that implements Ord (for BinaryHeap).
+/// NaN is treated as greater than everything (pushed to back).
+#[derive(Clone, Copy, PartialEq)]
+struct OrdF64(f64);
+
+impl Eq for OrdF64 {}
+
+impl PartialOrd for OrdF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+}
+
+impl Ord for OrdF64 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Greater)
+    }
+}
+
 struct QEMState {
     pos: Vec<[f64; 3]>,
     quadrics: Vec<Quadric>,
     alive: Vec<bool>,
-    locked_verts: std::collections::HashSet<usize>,
-    locked_edges: std::collections::HashSet<(usize, usize)>,
+    locked_verts: Vec<bool>,
+    locked_edges: HashSet<(usize, usize)>,
     triangles: Vec<[usize; 3]>,
     tri_alive: Vec<bool>,
     adj: Vec<BTreeSet<usize>>,
@@ -65,7 +83,7 @@ impl QEMState {
     fn new(
         positions: &[[f64; 3]],
         triangles: &[[usize; 3]],
-        locked_edges: std::collections::HashSet<(usize, usize)>,
+        locked_edges: HashSet<(usize, usize)>,
     ) -> Self {
         let n = positions.len();
         let mut quadrics = vec![Quadric::default(); n];
@@ -83,10 +101,10 @@ impl QEMState {
             adj[v2].insert(v0); adj[v2].insert(v1);
         }
 
-        let mut locked_verts = std::collections::HashSet::new();
+        let mut locked_verts = vec![false; n];
         for &(v0, v1) in &locked_edges {
-            locked_verts.insert(v0);
-            locked_verts.insert(v1);
+            locked_verts[v0] = true;
+            locked_verts[v1] = true;
         }
 
         QEMState {
@@ -97,47 +115,39 @@ impl QEMState {
     }
 
     fn is_edge_locked(&self, v0: usize, v1: usize) -> bool {
-        let key = (v0.min(v1), v0.max(v1));
-        self.locked_edges.contains(&key)
+        self.locked_edges.contains(&(v0.min(v1), v0.max(v1)))
     }
 
-    fn cheapest_collapse(&self, threshold: f64) -> Option<(usize, usize, [f64; 3], f64)> {
-        let mut best: Option<(usize, usize, [f64; 3], f64)> = None;
-        for vi in 0..self.pos.len() {
-            if !self.alive[vi] { continue; }
-            for &vj in &self.adj[vi] {
-                if vj <= vi || !self.alive[vj] { continue; }
-                if self.is_edge_locked(vi, vj) { continue; }
-                let q_sum = self.quadrics[vi].add(&self.quadrics[vj]);
-                let vi_locked = self.locked_verts.contains(&vi);
-                let vj_locked = self.locked_verts.contains(&vj);
-                let target = if vi_locked && vj_locked {
-                    continue;
-                } else if vi_locked {
-                    self.pos[vi]
-                } else if vj_locked {
-                    self.pos[vj]
-                } else {
-                    let e0 = q_sum.evaluate(self.pos[vi][0], self.pos[vi][1], self.pos[vi][2]);
-                    let e1 = q_sum.evaluate(self.pos[vj][0], self.pos[vj][1], self.pos[vj][2]);
-                    let mid = [(self.pos[vi][0]+self.pos[vj][0])/2.0,
-                               (self.pos[vi][1]+self.pos[vj][1])/2.0,
-                               (self.pos[vi][2]+self.pos[vj][2])/2.0];
-                    let em = q_sum.evaluate(mid[0], mid[1], mid[2]);
-                    if em <= e0.min(e1) { mid } else if e0 <= e1 { self.pos[vi] } else { self.pos[vj] }
-                };
-                let cost = q_sum.evaluate(target[0], target[1], target[2]);
-                if cost > threshold { continue; }
-                if best.is_none() || cost < best.unwrap().3 {
-                    best = Some((vi, vj, target, cost));
-                }
-            }
-        }
-        best
+    /// Evaluate collapse cost and target position for edge (vi, vj).
+    /// Returns None if the edge can't be collapsed (locked, both locked, etc).
+    fn evaluate_edge(&self, vi: usize, vj: usize, threshold: f64) -> Option<(f64, [f64; 3])> {
+        if !self.alive[vi] || !self.alive[vj] { return None; }
+        if self.locked_verts[vi] && self.locked_verts[vj] { return None; }
+        if self.is_edge_locked(vi, vj) { return None; }
+
+        let q_sum = self.quadrics[vi].add(&self.quadrics[vj]);
+        let target = if self.locked_verts[vi] {
+            self.pos[vi]
+        } else if self.locked_verts[vj] {
+            self.pos[vj]
+        } else {
+            let e0 = q_sum.evaluate(self.pos[vi][0], self.pos[vi][1], self.pos[vi][2]);
+            let e1 = q_sum.evaluate(self.pos[vj][0], self.pos[vj][1], self.pos[vj][2]);
+            let mid = [(self.pos[vi][0]+self.pos[vj][0])/2.0,
+                       (self.pos[vi][1]+self.pos[vj][1])/2.0,
+                       (self.pos[vi][2]+self.pos[vj][2])/2.0];
+            let em = q_sum.evaluate(mid[0], mid[1], mid[2]);
+            if em <= e0.min(e1) { mid } else if e0 <= e1 { self.pos[vi] } else { self.pos[vj] }
+        };
+
+        let cost = q_sum.evaluate(target[0], target[1], target[2]);
+        if cost > threshold { return None; }
+
+        Some((cost, target))
     }
 
     fn collapse(&mut self, v0: usize, v1: usize, target: [f64; 3]) {
-        let (keep, remove) = if self.locked_verts.contains(&v1) && !self.locked_verts.contains(&v0) {
+        let (keep, remove) = if self.locked_verts[v1] && !self.locked_verts[v0] {
             (v1, v0)
         } else {
             (v0, v1)
@@ -145,6 +155,9 @@ impl QEMState {
         self.pos[keep] = target;
         self.quadrics[keep] = self.quadrics[keep].add(&self.quadrics[remove]);
         self.alive[remove] = false;
+        // Lock keep vertex — prevents cascading collapses that create non-manifold edges
+        self.locked_verts[keep] = true;
+
         for ti in 0..self.triangles.len() {
             if !self.tri_alive[ti] { continue; }
             let tri = &mut self.triangles[ti];
@@ -152,6 +165,7 @@ impl QEMState {
             for v in tri.iter_mut() { if *v == remove { *v = keep; } }
             if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] { self.tri_alive[ti] = false; }
         }
+
         let remove_adj: Vec<usize> = self.adj[remove].iter().copied().collect();
         for &neighbor in &remove_adj {
             if neighbor == keep { continue; }
@@ -164,8 +178,44 @@ impl QEMState {
     }
 
     fn run(&mut self, threshold: f64) {
-        while let Some((v0, v1, target, _)) = self.cheapest_collapse(threshold) {
+        // Build priority queue: all valid edges ranked by cost (min-heap)
+        let mut heap: BinaryHeap<Reverse<(OrdF64, usize, usize)>> = BinaryHeap::new();
+        let mut targets: HashMap<(usize, usize), [f64; 3]> = HashMap::new();
+
+        for vi in 0..self.pos.len() {
+            for &vj in &self.adj[vi] {
+                if vj <= vi { continue; }
+                if let Some((cost, target)) = self.evaluate_edge(vi, vj, threshold) {
+                    let key = (vi.min(vj), vi.max(vj));
+                    heap.push(Reverse((OrdF64(cost), key.0, key.1)));
+                    targets.insert(key, target);
+                }
+            }
+        }
+
+        // Process collapses in cost order
+        while let Some(Reverse((cost, v0, v1))) = heap.pop() {
+            if cost.0 > threshold { break; }
+            // Skip stale entries: vertex dead or locked since this entry was queued
+            if !self.alive[v0] || !self.alive[v1] { continue; }
+            if self.locked_verts[v0] || self.locked_verts[v1] { continue; }
+
+            let key = (v0.min(v1), v0.max(v1));
+            let Some(&target) = targets.get(&key) else { continue; };
+
             self.collapse(v0, v1, target);
+        }
+
+        // Kill duplicate triangles that may have formed from vertex merging
+        let mut seen = HashSet::new();
+        for ti in 0..self.triangles.len() {
+            if !self.tri_alive[ti] { continue; }
+            let tri = self.triangles[ti];
+            let mut key = [tri[0], tri[1], tri[2]];
+            key.sort();
+            if !seen.insert(key) {
+                self.tri_alive[ti] = false;
+            }
         }
     }
 }
@@ -179,15 +229,17 @@ pub fn decimate_geometry(
     threshold: f32,
 ) -> DecimatedMesh {
     // Deduplicate vertices: merge vertices at the same 3D position
-    let mut pos_map: std::collections::HashMap<(i64, i64, i64), usize> = std::collections::HashMap::new();
+    let mut pos_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
     let mut positions: Vec<[f64; 3]> = Vec::new();
     let mut vtx_remap: Vec<usize> = Vec::with_capacity(geometry.positions.len());
 
     for p in &geometry.positions {
+        // Quantize to 0.01 precision — wide enough to merge shared hex vertices
+        // whose f32 positions differ by float rounding (~1e-4 at world coords ~200)
         let key = (
-            (p[0] * 1000.0).round() as i64,
-            (p[1] * 1000.0).round() as i64,
-            (p[2] * 1000.0).round() as i64,
+            (p[0] * 100.0).round() as i64,
+            (p[1] * 100.0).round() as i64,
+            (p[2] * 100.0).round() as i64,
         );
         let idx = *pos_map.entry(key).or_insert_with(|| {
             let i = positions.len();
@@ -208,10 +260,10 @@ pub fn decimate_geometry(
     }
 
     // Lock edges between perimeter vertices
-    let perimeter_set: std::collections::HashSet<usize> = geometry.boundary_indices.iter()
+    let perimeter_set: HashSet<usize> = geometry.boundary_indices.iter()
         .map(|&i| vtx_remap[i as usize])
         .collect();
-    let mut locked_edges = std::collections::HashSet::new();
+    let mut locked_edges = HashSet::new();
     for &[v0, v1, v2] in &triangles {
         for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
             if perimeter_set.contains(&a) && perimeter_set.contains(&b) {
@@ -243,15 +295,7 @@ pub fn decimate_geometry(
         let (i0, i1, i2) = (r0.unwrap(), r1.unwrap(), r2.unwrap());
         if i0 == i1 || i1 == i2 || i0 == i2 { continue; }
 
-        let p0 = new_positions[i0 as usize];
-        let p1 = new_positions[i1 as usize];
-        let p2 = new_positions[i2 as usize];
-        let cross_y = (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]);
-        if cross_y < 0.0 {
-            new_indices.extend([i0, i2, i1]);
-        } else {
-            new_indices.extend([i0, i1, i2]);
-        }
+        new_indices.extend([i0, i1, i2]);
     }
 
     // Compute per-vertex normals

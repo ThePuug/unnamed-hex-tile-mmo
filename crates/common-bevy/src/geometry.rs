@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use bevy::math::Vec3;
 
+const SQRT_3_F64: f64 = 1.7320508075688772;
+
 /// Raw geometry for a set of hex tiles. No Bevy types.
 pub struct TileGeometry {
     pub positions: Vec<[f32; 3]>,
