@@ -314,6 +314,8 @@ struct ConsoleApp {
 
     hist_net_sent: History,
     hist_net_recv: History,
+    hist_ord_queue: History,
+    hist_unord_queue: History,
 }
 
 impl ConsoleApp {
@@ -330,6 +332,8 @@ impl ConsoleApp {
             hist_async_queue: History::new(),
             hist_net_sent: History::new(),
             hist_net_recv: History::new(),
+            hist_ord_queue: History::new(),
+            hist_unord_queue: History::new(),
         }
     }
 
@@ -369,6 +373,8 @@ impl ConsoleApp {
         self.hist_async_queue.push(self.field("async.tasks_in_flight"));
         self.hist_net_sent.push(self.field("net_sent_bps"));
         self.hist_net_recv.push(self.field("net_recv_bps"));
+        self.hist_ord_queue.push(self.field("net_ord_queue"));
+        self.hist_unord_queue.push(self.field("net_unord_queue"));
     }
 
     fn is_connected(&self) -> bool {
@@ -492,6 +498,23 @@ impl eframe::App for ConsoleApp {
                             seg_gap(ui, cw);
                             let pv = numfmt::DEC5.fmt(self.hist_net_recv.visible_max(bar_count));
                             seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                        });
+                        // Per-channel: label+queue | sparkline | buf% stat
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "ORD", numfmt::INT5.fmt(self.field("net_ord_queue")), "B"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &self.hist_ord_queue.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
+                            seg_gap(ui, cw);
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "buf%", numfmt::DEC5.fmt(self.field("net_ord_buf_pct")), ""), COLOR_DIM);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "UNORD", numfmt::INT5.fmt(self.field("net_unord_queue")), "B"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &self.hist_unord_queue.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
+                            seg_gap(ui, cw);
+                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "buf%", numfmt::DEC5.fmt(self.field("net_unord_buf_pct")), ""), COLOR_DIM);
                         });
                     });
 

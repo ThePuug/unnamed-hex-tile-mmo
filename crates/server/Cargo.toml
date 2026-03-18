@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
 bevy = { version = "0.18", features = ["dynamic_linking"] }
 bevy_easings = "0.18"
-bevy_renet = "4"
+renet_netcode = "2"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"

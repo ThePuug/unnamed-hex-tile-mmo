@@ -1,8 +1,6 @@
-use std::net::UdpSocket;
 use bevy::prelude::*;
-use bevy_renet::{RenetServer, RenetServerEvent, renet::ConnectionConfig, netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig}};
+use ::renet::DefaultChannel;
 use qrz::*;
-use ::renet::{DefaultChannel, ServerEvent};
 
 use common_bevy::{
     chunk::PlayerDiscoveryState,
@@ -26,32 +24,13 @@ use common_bevy::{
 use crate::*;
 
 
-pub fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let public_addr = "0.0.0.0:5000".parse().unwrap();
-    let socket = UdpSocket::bind(public_addr).unwrap();
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let server_config = ServerConfig {
-        current_time,
-        max_clients: 64,
-        protocol_id: PROTOCOL_ID,
-        public_addresses: vec![public_addr],
-        authentication: ServerAuthentication::Unsecure,
-    };
-
-    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-    // Chunk data goes on ReliableUnordered — increase its buffer for the initial burst
-    let mut config = ConnectionConfig::default();
-    config.server_channels_config[1].max_memory_usage_bytes = 50 * 1024 * 1024;
-    let server = RenetServer::new(config);
-
-    (server, transport)
-}
+use crate::network::{ServerNet, NetServerEvent};
 
 #[allow(clippy::too_many_arguments)]
 pub fn do_manage_connections(
-    trigger: On<RenetServerEvent>,
+    trigger: On<NetServerEvent>,
     mut commands: Commands,
-    mut conn: ResMut<RenetServer>,
+    mut conn: ResMut<ServerNet>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
@@ -60,10 +39,9 @@ pub fn do_manage_connections(
     runtime: Res<RunTime>,
     spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
 ) {
-    {
-        let event = &trigger.event().0;
-        match event {
-            ServerEvent::ClientConnected { client_id } => {
+    match trigger.event() {
+        NetServerEvent::ClientConnected { client_id } => {
+            let client_id = *client_id;
                 info!("Player {} connected", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
                     Origin::Evolved,
@@ -143,7 +121,7 @@ pub fn do_manage_connections(
                 let message = bincode::serde::encode_to_vec(
                     Do { event: Event::Init { ent, dt }},
                     bincode::config::legacy()).unwrap();
-                conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -163,17 +141,18 @@ pub fn do_manage_connections(
 
                 for event in spawn_events {
                     let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
                 // Write Spawn to message bus so do_spawn_discover triggers initial chunk discovery
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
 
-                lobby.insert(*client_id, ent);
+                lobby.insert(client_id, ent);
             }
-            ServerEvent::ClientDisconnected { client_id, reason } => {
-                info!("Player {} disconnected: {}", client_id, reason);
-                let ent = lobby.remove_by_left(client_id).unwrap().1;
+            NetServerEvent::ClientDisconnected { client_id, reason } => {
+                let client_id = *client_id;
+                info!("Player {} disconnected: {:?}", client_id, reason);
+                let ent = lobby.remove_by_left(&client_id).unwrap().1;
                 buffers.remove(&ent);
 
                 // Send Despawn to all players who had this entity loaded
@@ -183,7 +162,7 @@ pub fn do_manage_connections(
                             let message = bincode::serde::encode_to_vec(
                                 Do { event: Event::Despawn { ent }},
                                 bincode::config::legacy()).unwrap();
-                            conn.send_message(*player_client_id, DefaultChannel::ReliableOrdered, message);
+                            conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, message);
                         }
                     }
                 }
@@ -196,12 +175,11 @@ pub fn do_manage_connections(
                 commands.entity(ent).despawn();
             }
         }
-    }
 }
 
 pub fn write_try(
     mut writer: MessageWriter<Try>,
-    mut conn: ResMut<RenetServer>,
+    mut conn: ResMut<ServerNet>,
     lobby: Res<Lobby>,
 ) {
     for client_id in conn.clients_id() {
@@ -228,7 +206,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Pong { client_time }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 Try { event: Event::Dismiss { ent: _ } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
@@ -249,7 +227,7 @@ pub fn write_try(
  }
 
  pub fn send_do(
-    mut conn: ResMut<RenetServer>,
+    mut conn: ResMut<ServerNet>,
     mut reader: MessageReader<Do>,
     loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
@@ -268,7 +246,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Incremental { ent, component }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
                 // Send to all players who have this entity loaded (skip owner to avoid duplicate)
@@ -279,7 +257,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Incremental { ent, component }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             Event::Despawn { ent } => {
@@ -294,7 +272,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Despawn { ent }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -305,7 +283,7 @@ pub fn write_try(
                     let serialized = bincode::serde::encode_to_vec(
                         message,
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableUnordered, serialized);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
                 }
             }
             Event::InsertThreat { ent, threat } => {
@@ -316,7 +294,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::InsertThreat { ent, threat }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -325,7 +303,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::InsertThreat { ent, threat }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -337,7 +315,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::ApplyDamage { ent, damage, source }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -346,7 +324,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::ApplyDamage { ent, damage, source }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -357,7 +335,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::ClearQueue { ent, clear_type }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -366,7 +344,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::ClearQueue { ent, clear_type }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -377,7 +355,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Gcd { ent, typ }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -386,7 +364,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::Gcd { ent, typ }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -398,7 +376,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::AbilityFailed { ent, reason }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             Event::UseAbility { ent, ability, target } => {
@@ -409,7 +387,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::UseAbility { ent, ability, target }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 for &player_ent in &loaded_by.players {
@@ -418,7 +396,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::UseAbility { ent, ability, target }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                     }
                 }
             }
@@ -433,7 +411,7 @@ pub fn write_try(
                         let message = bincode::serde::encode_to_vec(
                             Do { event: Event::MovementIntent { ent, destination, duration_ms }},
                             bincode::config::legacy()).unwrap();
-                        conn.send_message(*client_id, DefaultChannel::Unreliable, message);
+                        conn.send_unreliable(*client_id, message);
                     }
                 }
             }
@@ -453,7 +431,7 @@ pub fn write_try(
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }},
                         bincode::config::legacy()).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             _ => {}

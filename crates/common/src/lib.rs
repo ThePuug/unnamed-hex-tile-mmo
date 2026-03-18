@@ -1,4 +1,5 @@
 pub mod hex_spatial_grid;
+pub mod network;
 pub mod numfmt;
 pub mod plate_tags;
 pub use hex_spatial_grid::HexSpatialGrid;

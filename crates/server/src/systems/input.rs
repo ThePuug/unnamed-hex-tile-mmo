@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use bevy_renet::RenetServer;
 use ::renet::DefaultChannel;
+use crate::network::ServerNet;
 use qrz::Convert;
 
 use common_bevy::{
@@ -31,7 +31,7 @@ pub fn try_input(
 
 pub fn send_input(
     lobby: Res<Lobby>,
-    mut conn: ResMut<RenetServer>,
+    mut conn: ResMut<ServerNet>,
     mut buffers: ResMut<InputQueues>,
 ) {
     let entities_to_send: Vec<Entity> = buffers.entities().copied().collect();
@@ -47,7 +47,7 @@ pub fn send_input(
             let message = bincode::serde::encode_to_vec(
                 Do { event },
                 bincode::config::legacy()).unwrap();
-            conn.send_message(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
+            conn.send_reliable(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
         }
 
         // Queue invariant maintained: exactly 1 input remaining (the accumulating one)
