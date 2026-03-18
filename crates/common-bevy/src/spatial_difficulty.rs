@@ -98,12 +98,13 @@ pub enum PositioningStrategy {
 }
 
 /// Enemy archetypes with distinct combat profiles
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
-    Berserker,   // North (45°-135°) - Aggressive melee burst (pure Might)
-    Juggernaut,  // East (315°-45°) - Tanky melee pressure (pure Vitality)
-    Kiter,       // South (225°-315°) - Ranged harassment (pure Grace)
-    Defender,    // West (135°-225°) - Reactive counter-attacks (pure Focus)
+    #[default]
+    Berserker,   // Highland - Aggressive melee burst (pure Might)
+    Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Grace)
+    Defender,    // Coast - Reactive counter-attacks (pure Focus)
 }
 
 impl EnemyArchetype {
