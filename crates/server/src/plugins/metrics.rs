@@ -165,6 +165,10 @@ impl Plugin for MetricsPlugin {
         snapshot.register("net_sent_bps", Aggregator::Last);
         snapshot.register("net_recv_bps", Aggregator::Last);
         snapshot.register("net_clients", Aggregator::Last);
+        snapshot.register("net_ord_buf_pct", Aggregator::Last);
+        snapshot.register("net_ord_queue", Aggregator::Last);
+        snapshot.register("net_unord_buf_pct", Aggregator::Last);
+        snapshot.register("net_unord_queue", Aggregator::Last);
         app.insert_resource(snapshot)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
@@ -221,7 +225,7 @@ fn refresh_metric_gauges(
     snapshot: Res<MetricSnapshot>,
     map: Res<Map>,
     lobby: Res<Lobby>,
-    conn: Res<bevy_renet::RenetServer>,
+    conn: Res<crate::network::ServerNet>,
     npc_query: Query<(), (With<common_bevy::components::entity_type::EntityType>, Without<common_bevy::components::behaviour::PlayerControlled>)>,
 ) {
     snapshot.record(&[
@@ -247,6 +251,10 @@ fn refresh_metric_gauges(
         ("net_sent_bps", total_sent as f32),
         ("net_recv_bps", total_recv as f32),
         ("net_clients", client_count as f32),
+        ("net_ord_buf_pct", conn.peak_buffer_occupancy(common::network::CH_RELIABLE_ORDERED) * 100.0),
+        ("net_ord_queue", conn.p95_queue_depth(|s| &s.ordered.queue) as f32),
+        ("net_unord_buf_pct", conn.peak_buffer_occupancy(common::network::CH_RELIABLE_UNORDERED) * 100.0),
+        ("net_unord_queue", conn.p95_queue_depth(|s| &s.unordered.queue) as f32),
     ]);
 }
 

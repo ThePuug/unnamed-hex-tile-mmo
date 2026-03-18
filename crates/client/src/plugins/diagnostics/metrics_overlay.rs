@@ -134,6 +134,10 @@ pub struct MetricsHistory {
     frame_window: FrameTimeWindow,
     /// Sparkline history of p95 frame times (sampled at SAMPLE_INTERVAL).
     frame_ms: History,
+    /// Cached p95 frame time (ms), updated at SAMPLE_INTERVAL to avoid flicker.
+    frame_p95: f64,
+    /// Cached FPS (inverse of frame_p95), updated at SAMPLE_INTERVAL.
+    fps_p95: f64,
     bw: History,
     msg: History,
 }
@@ -144,6 +148,8 @@ impl Default for MetricsHistory {
             timer: 0.0,
             frame_window: FrameTimeWindow::new(2.0),
             frame_ms: History::new(),
+            frame_p95: 0.0,
+            fps_p95: 0.0,
             bw: History::new(),
             msg: History::new(),
         }
@@ -175,6 +181,8 @@ pub fn sample_metrics(
     history.timer -= SAMPLE_INTERVAL;
 
     let p95 = history.frame_window.p95();
+    history.frame_p95 = p95;
+    history.fps_p95 = if p95 > 0.0 { 1000.0 / p95 } else { 0.0 };
     history.frame_ms.push(p95);
     history.bw.push(network.displayed_bytes_per_sec() as f64);
     history.msg.push(network.displayed_messages_per_sec() as f64);
@@ -250,39 +258,41 @@ fn display_width(s: &str) -> usize {
 // Callers use standard format!() for layout; wide chars (↑, ↔, △ etc.) are 2 display
 // cells but 1 Rust char — account for them at the call site, not here.
 
-/// Full segment: 15 display cells.
-fn seg_full(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
-    debug_assert_eq!(display_width(s), SEG_WIDTH,
-        "seg_full: {SEG_WIDTH} cells expected, got {} for {:?}", display_width(s), s);
-    ui.label(colored_mono(s, color));
+/// Segment row builder — wraps `ui.horizontal`, auto-inserts 1-char gaps between segments.
+struct Seg<'a> {
+    ui: &'a mut egui::Ui,
+    cw: f32,
+    count: u32,
 }
 
-/// Half-segment: 7 display cells.
-fn seg_half(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
-    debug_assert_eq!(display_width(s), 7,
-        "seg_half: 7 cells expected, got {} for {:?}", display_width(s), s);
-    ui.label(colored_mono(s, color));
+impl<'a> Seg<'a> {
+    fn emit(&mut self, s: &str, expected_width: usize, color: egui::Color32) {
+        debug_assert_eq!(display_width(s), expected_width,
+            "segment: {expected_width} cells expected, got {} for {:?}", display_width(s), s);
+        if self.count > 0 { self.ui.add_space(self.cw); }
+        self.ui.label(colored_mono(s, color));
+        self.count += 1;
+    }
+
+    #[allow(dead_code)]
+    fn full(&mut self, s: &str, color: egui::Color32) { self.emit(s, SEG_WIDTH, color); }
+    fn half(&mut self, s: &str, color: egui::Color32) { self.emit(s, 7, color); }
+    #[allow(dead_code)]
+    fn quarter(&mut self, s: &str, color: egui::Color32) { self.emit(s, 3, color); }
+
+    fn spark(&mut self, history: &[f32], scale: SparkScale, alarm: &Alarm, rh: f32) {
+        if self.count > 0 { self.ui.add_space(self.cw); }
+        seg_spark(self.ui, history, scale, alarm, self.cw, rh);
+        self.count += 1;
+    }
 }
 
-/// Quarter-segment: 3 display cells.
-#[allow(dead_code)]
-fn seg_quarter(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
-    debug_assert_eq!(display_width(s), 3,
-        "seg_quarter: 3 cells expected, got {} for {:?}", display_width(s), s);
-    ui.label(colored_mono(s, color));
-}
-
-/// Eighth-segment: 1 display cell.
-#[allow(dead_code)]
-fn seg_eighth(ui: &mut egui::Ui, s: &str, color: egui::Color32) {
-    debug_assert_eq!(display_width(s), 1,
-        "seg_eighth: 1 cell expected, got {} for {:?}", display_width(s), s);
-    ui.label(colored_mono(s, color));
-}
-
-/// 1-char gap between segments.
-fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
-    ui.add_space(char_width);
+fn seg_row(ui: &mut egui::Ui, cw: f32, f: impl FnOnce(&mut Seg)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let mut seg = Seg { ui, cw, count: 0 };
+        f(&mut seg);
+    });
 }
 
 fn draw_sparkline(
@@ -545,8 +555,8 @@ pub fn update_metrics_overlay(
     let (admin_count, admin_sum_count) = (0usize, 0usize);
 
 
-    let frame_p95 = history.frame_window.p95();
-    let fps_p95 = if frame_p95 > 0.0 { 1000.0 / frame_p95 } else { 0.0 };
+    let frame_p95 = history.frame_p95;
+    let fps_p95 = history.fps_p95;
     let entities = diagnostics
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(|d| d.smoothed())
@@ -558,6 +568,8 @@ pub fn update_metrics_overlay(
     let hist_frame = history.frame_ms.as_f32();
     let hist_bw = history.bw.as_f32();
     let hist_msg = history.msg.as_f32();
+
+    use numfmt::{NumFmt, Precision, Overflow};
 
     // ── Render egui panel ──
     let window_logical_width = window_width as f32 / scale_factor;
@@ -583,60 +595,51 @@ pub fn update_metrics_overlay(
                             .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
                             .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
                         // qrz/xy — two 23ch super-segments (23 + 1 gap + 23 = 47)
-                        let fc = |v: f64| numfmt::CLAMP5.fmt(v);
+                        const COORD: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
+                        let fc = |v: f64| COORD.fmt(v);
                         let qrz = format!("qrz:{},{},{}", fc(q), fc(r), fc(z));
                         let xy = format!("xy:{},{}", fc(wx), fc(wy));
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             ui.label(colored_mono(&format!("{:^23}", qrz), COLOR_DIM));
-                            seg_gap(ui, cw);
+                            ui.add_space(cw);
                             ui.label(colored_mono(&format!("{:^23}", xy), COLOR_DIM));
                         });
-                        // mesh/load/pending — "{:>5}  {:>5} {:<2}" = 15 display each
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "mesh", numfmt::INT5.fmt(full_count as f64), ""), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "load", numfmt::INT5.fmt(loaded_chunks.chunks.len() as f64), ""), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "pend", numfmt::INT5.fmt(pending_lod as f64), ""), COLOR_DIM);
+                        // mesh/load/pending
+                        const CHUNK_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "mesh"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(full_count as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "load"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(loaded_chunks.chunks.len() as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "pend"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(pending_lod as f64)), COLOR_DIM);
                         });
                         // LoD lines: 5 half-segments each
-                        // label(7) △tris(7) ↔radius(7) ×ratio(7) εerror(7)
-                        // △/↔ are wide (2D,1R); ×/ε are narrow (1D,1R)
-                        const F2C6: numfmt::NumFmt = numfmt::NumFmt {
-                            width: 6, precision: numfmt::Precision::Fixed(2), overflow: numfmt::Overflow::Clamp,
-                        };
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("{:>7}", "LoD1"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("△{:<5}", numfmt::INT5.fmt(lod1_tris as f64)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("↔{:<5}", numfmt::INT5.fmt(inner_r as f64)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("×{:<6}", F2C6.fmt(lod1_ratio)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("ε{:<6}", F2C6.fmt(lod1_err)), COLOR_DIM);
+                        const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Fixed(2), overflow: Overflow::Suffix };
+                        const LOD_RADIUS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const LOD_RATIO: NumFmt = NumFmt { width: 6, precision: Precision::Fixed(2), overflow: Overflow::Clamp };
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "LoD1"), COLOR_DIM);
+                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod1_tris as f64)), COLOR_DIM);
+                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(inner_r as f64)), COLOR_DIM);
+                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod1_ratio)), COLOR_DIM);
+                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod1_err)), COLOR_DIM);
                         });
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("{:>7}", "LoD2"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("△{:<5}", numfmt::INT5.fmt(lod2_tris as f64)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("↔{:<5}", numfmt::INT5.fmt(outer_r as f64)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("×{:<6}", F2C6.fmt(lod2_ratio)), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("ε{:<6}", F2C6.fmt(lod2_err)), COLOR_DIM);
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "LoD2"), COLOR_DIM);
+                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod2_tris as f64)), COLOR_DIM);
+                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(outer_r as f64)), COLOR_DIM);
+                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod2_ratio)), COLOR_DIM);
+                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod2_err)), COLOR_DIM);
                         });
                         if admin_count > 0 || admin_sum_count > 0 {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "aChk", numfmt::INT5.fmt(admin_count as f64), ""), COLOR_DIM);
-                                seg_gap(ui, cw);
-                                seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "aSum", numfmt::INT5.fmt(admin_sum_count as f64), ""), COLOR_DIM);
+                            const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{:>7}", "aChk"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
+                                s.half(&format!("{:>7}", "aSum"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_sum_count as f64)), COLOR_DIM);
                             });
                         }
                     });
@@ -645,31 +648,26 @@ pub fn update_metrics_overlay(
 
                     // ── RENDER ──
                     draw_section(ui, "RENDER", content_width, |ui| {
+                        const FRAME_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                        const FPS: NumFmt = NumFmt { width: 3, precision: Precision::Integer, overflow: Overflow::Clamp };
                         let frame_peak = history.frame_ms.visible_max(bar_count);
-                        let peak_color = ALARM_FRAME.color(frame_peak);
+                        let peak_v = FRAME_MS.fmt(frame_peak);
+                        let fps_v = FPS.fmt(fps_p95);
                         let fps_color = ALARM_FPS.color(fps_p95);
-                        let peak_v = numfmt::DEC5.fmt(frame_peak);
-                        let fps_v = numfmt::DEC5.fmt(fps_p95);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "FRAME", numfmt::DEC5.fmt(frame_p95), "ms"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, cw, rh);
-                            seg_gap(ui, cw);
-                            // ↑peak (7 display) + 2sp + ƒfps (6 display) = 15
-                            // ↑ is wide (2 display, 1 Rust): pad + ↑ + value = 7 display
-                            ui.label(colored_mono(
-                                &format!("{}↑{peak_v}", " ".repeat(5usize.saturating_sub(peak_v.len()))),
-                                peak_color,
-                            ));
-                            ui.label(colored_mono("  ", COLOR_DIM));
-                            ui.label(colored_mono(&format!("ƒ{fps_v:<5}"), fps_color));
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
+                            s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
+                            s.half(&format!("↑{:<5}", peak_v), COLOR_DIM);
+                            s.half(&format!("ƒ{:<6}", fps_v), fps_color);
                         });
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "ENTS", numfmt::INT5.fmt(entities), ""), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "TILES", numfmt::INT5.fmt(map.len() as f64), ""), COLOR_DIM);
+                        const ENTS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const TILES: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "ENTS"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", ENTS.fmt(entities)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "TILES"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", TILES.fmt(map.len() as f64)), COLOR_DIM);
                         });
                     });
 
@@ -677,25 +675,21 @@ pub fn update_metrics_overlay(
 
                     // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
-                        // ↓ is wide: "↓NET" = 4 Rust chars = 5 display cells
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("↓NET  {:>5} {:<2}", numfmt::DEC5.fmt(bps), "Bs"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, cw, rh);
-                            seg_gap(ui, cw);
-                            // ↑ stat right-aligned in 7 display + 8 trailing spaces = 15
-                            let pv = numfmt::DEC5.fmt(history.bw.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                        const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("↓NET  "), COLOR_DIM);
+                            s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
+                            s.spark(&hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, rh);
+                            let pv = NET_BPS.fmt(history.bw.visible_max(bar_count));
+                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
                         });
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("↓MSG  {:>5} {:<2}", numfmt::DEC5.fmt(mps), "/s"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, cw, rh);
-                            seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(history.msg.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                        const NET_MPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("↓MSG  "), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
+                            s.spark(&hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, rh);
+                            let pv = NET_MPS.fmt(history.msg.visible_max(bar_count));
+                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
                         });
                     });
                 });
@@ -707,6 +701,10 @@ pub fn update_metrics_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use numfmt::{NumFmt, Precision, Overflow};
+
+    const DEC5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+    const INT5: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
 
     #[test]
     fn format_value_max_width() {
@@ -716,8 +714,8 @@ mod tests {
             -0.5, -1.23, -9.99, -92.6, -714.0, -5678.0, -99999.0,
         ];
         for &v in cases {
-            let s = numfmt::DEC5.fmt(v);
-            assert!(s.len() <= 5, "numfmt::DEC5.fmt({}) = {:?} (len {})", v, s, s.len());
+            let s = DEC5.fmt(v);
+            assert!(s.len() <= 5, "DEC5.fmt({}) = {:?} (len {})", v, s, s.len());
         }
     }
 
@@ -728,45 +726,43 @@ mod tests {
             -1.0, -42.0, -999.0, -5678.0, -99999.0,
         ];
         for &v in cases {
-            let s = numfmt::INT5.fmt(v);
-            assert!(s.len() <= 5, "numfmt::INT5.fmt({}) = {:?} (len {})", v, s, s.len());
+            let s = INT5.fmt(v);
+            assert!(s.len() <= 5, "INT5.fmt({}) = {:?} (len {})", v, s, s.len());
         }
     }
 
     #[test]
     fn format_value_known_outputs() {
-        // Unit decimal: compact output, no leading spaces
-        assert_eq!(numfmt::DEC5.fmt(0.0), "0.00");
-        assert_eq!(numfmt::DEC5.fmt(0.5), "0.50");
-        assert_eq!(numfmt::DEC5.fmt(92.6), "92.60");
-        assert_eq!(numfmt::DEC5.fmt(714.0), "714.0");
-        assert_eq!(numfmt::DEC5.fmt(1234.0), "1234");
-        assert_eq!(numfmt::DEC5.fmt(9999.0), "9999");
-        assert_eq!(numfmt::DEC5.fmt(10_000.0), "10.0K");
-        assert_eq!(numfmt::DEC5.fmt(25148.0), "25.1K");
-        assert_eq!(numfmt::DEC5.fmt(100_000.0), "100K");
-        assert_eq!(numfmt::DEC5.fmt(1_234_567.0), "1.23M");
-        assert_eq!(numfmt::DEC5.fmt(-50.3), "-50.3");
-        assert_eq!(numfmt::DEC5.fmt(-714.0), "-714");
-        assert_eq!(numfmt::DEC5.fmt(-5678.0), "-5678");
-        assert_eq!(numfmt::DEC5.fmt(-56789.0), "-57K");
+        assert_eq!(DEC5.fmt(0.0), "0.00");
+        assert_eq!(DEC5.fmt(0.5), "0.50");
+        assert_eq!(DEC5.fmt(92.6), "92.60");
+        assert_eq!(DEC5.fmt(714.0), "714.0");
+        assert_eq!(DEC5.fmt(1234.0), "1234");
+        assert_eq!(DEC5.fmt(9999.0), "9999");
+        assert_eq!(DEC5.fmt(10_000.0), "10.0K");
+        assert_eq!(DEC5.fmt(25148.0), "25.1K");
+        assert_eq!(DEC5.fmt(100_000.0), "100K");
+        assert_eq!(DEC5.fmt(1_234_567.0), "1.23M");
+        assert_eq!(DEC5.fmt(-50.3), "-50.3");
+        assert_eq!(DEC5.fmt(-714.0), "-714");
+        assert_eq!(DEC5.fmt(-5678.0), "-5678");
+        assert_eq!(DEC5.fmt(-56789.0), "-57K");
     }
 
     #[test]
     fn format_int_known_outputs() {
-        // Unit integer: compact output, no leading spaces
-        assert_eq!(numfmt::INT5.fmt(0.0), "0");
-        assert_eq!(numfmt::INT5.fmt(42.0), "42");
-        assert_eq!(numfmt::INT5.fmt(999.0), "999");
-        assert_eq!(numfmt::INT5.fmt(1000.0), "1000");
-        assert_eq!(numfmt::INT5.fmt(1500.0), "1500");
-        assert_eq!(numfmt::INT5.fmt(9999.0), "9999");
-        assert_eq!(numfmt::INT5.fmt(10_000.0), "10.0K");
-        assert_eq!(numfmt::INT5.fmt(25000.0), "25.0K");
-        assert_eq!(numfmt::INT5.fmt(100_000.0), "100K");
-        assert_eq!(numfmt::INT5.fmt(-999.0), "-999");
-        assert_eq!(numfmt::INT5.fmt(-5678.0), "-5678");
-        assert_eq!(numfmt::INT5.fmt(-10_000.0), "-10K");
+        assert_eq!(INT5.fmt(0.0), "0");
+        assert_eq!(INT5.fmt(42.0), "42");
+        assert_eq!(INT5.fmt(999.0), "999");
+        assert_eq!(INT5.fmt(1000.0), "1000");
+        assert_eq!(INT5.fmt(1500.0), "1500");
+        assert_eq!(INT5.fmt(9999.0), "9999");
+        assert_eq!(INT5.fmt(10_000.0), "10.0K");
+        assert_eq!(INT5.fmt(25000.0), "25.0K");
+        assert_eq!(INT5.fmt(100_000.0), "100K");
+        assert_eq!(INT5.fmt(-999.0), "-999");
+        assert_eq!(INT5.fmt(-5678.0), "-5678");
+        assert_eq!(INT5.fmt(-10_000.0), "-10K");
     }
 
     #[test]

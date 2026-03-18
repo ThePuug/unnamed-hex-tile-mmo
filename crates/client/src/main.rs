@@ -2,6 +2,7 @@
 #![feature(extend_one)]
 
 mod components;
+pub mod network;
 mod plugins;
 mod resources;
 mod systems;
@@ -15,11 +16,6 @@ use bevy::{
     time::common_conditions::on_timer,
 };
 use bevy_easings::*;
-use bevy_renet::{
-    netcode::{NetcodeClientPlugin, NetcodeErrorEvent},
-    RenetClientPlugin,
-};
-
 use common_bevy::{
     components::{entity_type::*, *},
     message::*,
@@ -38,12 +34,6 @@ use crate::{
 };
 #[cfg(feature = "admin")]
 use crate::systems::admin;
-
-const PROTOCOL_ID: u64 = 7;
-
-fn panic_on_error_system(trigger: On<NetcodeErrorEvent>) {
-    panic!("{:?}", trigger.event());
-}
 
 fn setup(
     mut config_store: ResMut<GizmoConfigStore>,
@@ -68,8 +58,7 @@ fn main() {
             custom_layer: |_| None,
             ..default()
         }),
-        RenetClientPlugin,
-        NetcodeClientPlugin,
+        crate::network::NetworkPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         common_bevy::plugins::controlled::ControlledPlugin,
@@ -83,13 +72,10 @@ fn main() {
     app.add_message::<Do>();
     app.add_message::<Try>();
 
-    app.add_observer(panic_on_error_system);
-
     app.add_systems(Startup, (
         setup,
         actor::setup,
         camera::setup,
-        renet::setup,
         world::setup,
     ));
 
@@ -220,13 +206,11 @@ fn main() {
     }
 
     // Data eviction: remove tiles/summaries beyond view range (timer, every 5s)
-    // Disabled during flyover — admin module handles its own eviction
+    // Server-authoritative eviction — runs every frame, only processes EvictChunks messages
     #[cfg(feature = "admin")]
-    app.add_systems(Update, world::evict_data
-        .run_if(on_timer(Duration::from_secs(5)))
-        .run_if(admin::not_in_flyover));
+    app.add_systems(Update, world::evict_data.run_if(admin::not_in_flyover));
     #[cfg(not(feature = "admin"))]
-    app.add_systems(Update, world::evict_data.run_if(on_timer(Duration::from_secs(5))));
+    app.add_systems(Update, world::evict_data);
 
     app.run();
 }

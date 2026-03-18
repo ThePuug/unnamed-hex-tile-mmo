@@ -5,8 +5,8 @@
 //! updates membership and sends Spawn/Despawn events directly.
 
 use bevy::prelude::*;
-use bevy_renet::RenetServer;
-use ::renet::DefaultChannel;
+use renet::DefaultChannel;
+use crate::network::ServerNet;
 
 use common_bevy::{
     chunk::{FOV_CHUNK_RADIUS, CHUNK_SPACING, CHUNK_RADIUS},
@@ -63,7 +63,7 @@ pub fn update_area_of_interest(
     ), Without<RespawnTimer>>,
     nntree: Res<NNTree>,
     lobby: Res<Lobby>,
-    mut conn: ResMut<RenetServer>,
+    mut conn: ResMut<ServerNet>,
 ) {
     for (ent, loc, _nn, player_controlled) in &changed_query {
         let is_player = player_controlled.is_some();
@@ -90,7 +90,7 @@ pub fn update_area_of_interest(
                             );
                             for event in spawn_events {
                                 let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                                conn.send_message(*other_client_id, DefaultChannel::ReliableOrdered, message);
+                                conn.send_reliable(*other_client_id, DefaultChannel::ReliableOrdered, message);
                             }
                         }
                     }
@@ -111,7 +111,7 @@ pub fn update_area_of_interest(
                                 );
                                 for event in spawn_events {
                                     let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                                 }
                             }
                         }
@@ -139,7 +139,7 @@ pub fn update_area_of_interest(
                         common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent } },
                         bincode::config::legacy(),
                     ).unwrap();
-                    conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
         }
@@ -171,7 +171,7 @@ pub fn update_area_of_interest(
                                 common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent: other_ent } },
                                 bincode::config::legacy(),
                             ).unwrap();
-                            conn.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                            conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                         }
                     }
                 }

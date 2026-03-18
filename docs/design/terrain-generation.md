@@ -195,23 +195,21 @@ Layers are composited bottom-to-top. Macro borders drawn as light grey lines; mi
 
 ## Chunk Streaming & Level of Detail
 
-### Two-Ring Architecture (ADR-032)
+### Chunk Loading (ADR-032)
 
-Chunk loading splits into two concentric rings separated by `FOV_CHUNK_RADIUS`:
+Server sends full-detail chunks within `terrain_chunk_radius(max_z) + 1` — a simple hex radius based on the player's chunk elevation. All chunks are inserted into the server's Map and sent as full 271-tile `ChunkData` events. No server-side LoD distinction.
 
-**Inner ring** (Chebyshev distance <= `FOV_CHUNK_RADIUS`): Full-detail chunks. Gameplay happens here — physics, pathfinding, combat use these tiles from the Map.
+### Client-Side LoD Rendering
 
-**Outer ring** (beyond, up to max_radius): Each chunk decimated via QEM (Quadric Error Metrics) into variable boundary vertices (6–54) + N interior vertices selected by terrain variance. Mesh reconstructed client-side via Delaunay triangulation.
+The client renders distant chunks at reduced detail using QEM (Quadric Error Metrics) decimation:
 
-**Boundary vertices**: 6 corner vertices (3-tile average, always retained) + up to 8 edge vertices per edge, RDP-decimated against `BORDER_ERROR_THRESHOLD`. Flat edges produce 0 extra vertices; complex edges retain tiles proportional to terrain variance. Adjacent chunks share boundary vertices deterministically. Interior vertices carry relative (q, r) + elevation.
+**Boundary vertices**: 6 corner vertices (3-tile average, always retained) + up to 8 edge vertices per edge, RDP-decimated against `BORDER_ERROR_THRESHOLD`. Adjacent chunks share boundary vertices deterministically.
+
+**Interior vertices**: QEM-selected based on terrain variance against `SUMMARY_ERROR_THRESHOLD`. Mesh reconstructed via Delaunay triangulation.
 
 ### Invariants
 
-**Ring separation**: Physics, movement, and pathfinding only read from the Map (inner ring), never from ChunkSummaries.
-
 **Continuous surface**: Adjacent summary meshes share deterministic boundary vertices (corners + RDP-decimated edges). No gaps.
-
-**No terrain vanishing**: Ring downgrade sends summary before client evicts full tiles.
 
 ---
 
@@ -240,4 +238,4 @@ Where the current implementation intentionally differs from spec:
 
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation
-- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Two-ring LoD: inner full-detail, outer summary hexes
+- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Chunk loading with client-side LoD rendering

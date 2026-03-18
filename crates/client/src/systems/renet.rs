@@ -1,10 +1,8 @@
-use std::net::UdpSocket;
-use std::time::SystemTime;
-
 use bevy::prelude::*;
-use bevy_renet::{RenetClient, renet::ConnectionConfig, netcode::{ClientAuthentication, NetcodeClientTransport}};
-use qrz::Qrz;
 use ::renet::DefaultChannel;
+use qrz::Qrz;
+
+use crate::network::ClientNet;
 
 use crate::{
     plugins::diagnostics::network_ui::NetworkMetrics,
@@ -48,39 +46,16 @@ fn get_message_type_name(message: &Do) -> String {
         Event::UseAbility { .. } => "UseAbility".to_string(),
         Event::Pong { .. } => "Pong".to_string(),
         Event::MovementIntent { .. } => "MovementIntent".to_string(),
+        Event::EvictChunks { .. } => "EvictChunks".to_string(),
         _ => "Other".to_string(),
     }
-}
-
-pub fn setup(
-    mut commands: Commands,
-) {
-    let server_addr = "127.0.0.1:5000".parse().unwrap();
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let client_id = current_time.as_millis() as u64;
-    let authentication = ClientAuthentication::Unsecure {
-        client_id,
-        protocol_id: PROTOCOL_ID,
-        server_addr,
-        user_data: None,
-    };
-
-    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-    // Must match server: chunk burst goes on ReliableUnordered with larger buffer
-    let mut config = ConnectionConfig::default();
-    config.server_channels_config[1].max_memory_usage_bytes = 50 * 1024 * 1024;
-    let client = RenetClient::new(config);
-
-    commands.insert_resource(client);
-    commands.insert_resource(transport);
 }
 
 pub fn write_do(
     mut commands: Commands,
     mut do_writer: MessageWriter<Do>,
     mut try_writer: MessageWriter<Try>,
-    mut conn: ResMut<RenetClient>,
+    mut conn: ResMut<ClientNet>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
@@ -247,7 +222,7 @@ pub fn write_do(
         }
     }
 
-    // Chunk data arrives on ReliableUnordered — no ordering needed between independent chunks
+    // Chunk data and eviction arrive on ReliableUnordered — no ordering needed between independent chunks
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableUnordered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
 
@@ -260,6 +235,9 @@ pub fn write_do(
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);
+            }
+            Do { event: Event::EvictChunks { ent: _, chunks } } => {
+                do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
             }
             _ => {
                 warn!("Unexpected message type on ReliableUnordered channel");
@@ -286,64 +264,63 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::MovementIntent { ent: local_ent, destination, duration_ms } });
             }
             _ => {
-                // Only MovementIntent should be sent on Unreliable channel
-                warn!("Unexpected message type on Unreliable channel: {:?}", message);
+                panic!("Unexpected message on Unreliable channel: {:?}", message);
             }
         }
     }
 }
 
 pub fn send_try(
-    mut conn: ResMut<RenetClient>,
+    mut conn: ResMut<ClientNet>,
     mut reader: MessageReader<Try>,
     l2r: Res<EntityMap>,
 ) {
     for message in reader.read() {
         match &message.event {
             Event::Incremental { ent, component: Component::KeyBits(keybits) } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     component: Component::KeyBits(*keybits)
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Gcd { ent, typ, .. } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     typ: *typ,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Spawn { ent, typ, qrz, attrs } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
                     ent: *ent, typ: *typ, qrz: *qrz, attrs: *attrs
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::UseAbility { ent, ability, target } => {
                 // Map target entity local→remote; if not in bimap, send None
                 let remote_target = target.and_then(|t| l2r.get_by_left(&t).copied());
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     ability: *ability,
                     target: remote_target
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Ping { client_time } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
                     client_time: *client_time
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::SetTierLock { ent, tier } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     tier: *tier
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Dismiss { ent } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
                     ent: *l2r.get_by_left(ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
-                conn.send_message(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     might_grace_axis: *might_grace_axis,
                     might_grace_spectrum: *might_grace_spectrum,

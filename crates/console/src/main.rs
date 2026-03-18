@@ -195,15 +195,7 @@ fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
     ui.add_space(char_width);
 }
 
-/// Full segment: 15 display cells.
-fn seg_full(ui: &mut egui::Ui, s: &str, color: Color32) {
-    debug_assert_eq!(display_width(s), SPARKLINE_CHARS,
-        "seg_full: {} cells expected, got {} for {:?}", SPARKLINE_CHARS, display_width(s), s);
-    ui.label(colored_mono(s, color));
-}
-
 /// Half-segment: 7 display cells.
-#[allow(dead_code)]
 fn seg_half(ui: &mut egui::Ui, s: &str, color: Color32) {
     debug_assert_eq!(display_width(s), 7,
         "seg_half: 7 cells expected, got {} for {:?}", display_width(s), s);
@@ -314,6 +306,8 @@ struct ConsoleApp {
 
     hist_net_sent: History,
     hist_net_recv: History,
+    hist_ord_queue: History,
+    hist_unord_queue: History,
 }
 
 impl ConsoleApp {
@@ -330,6 +324,8 @@ impl ConsoleApp {
             hist_async_queue: History::new(),
             hist_net_sent: History::new(),
             hist_net_recv: History::new(),
+            hist_ord_queue: History::new(),
+            hist_unord_queue: History::new(),
         }
     }
 
@@ -369,6 +365,8 @@ impl ConsoleApp {
         self.hist_async_queue.push(self.field("async.tasks_in_flight"));
         self.hist_net_sent.push(self.field("net_sent_bps"));
         self.hist_net_recv.push(self.field("net_recv_bps"));
+        self.hist_ord_queue.push(self.field("net_ord_queue"));
+        self.hist_unord_queue.push(self.field("net_unord_queue"));
     }
 
     fn is_connected(&self) -> bool {
@@ -438,6 +436,14 @@ impl eframe::App for ConsoleApp {
 
                 // ── Row 1: SYSTEM | ASYNC | WORLD ──
                 ui.columns(SECTION_COLS, |cols| {
+                    use numfmt::{NumFmt, Precision, Overflow};
+                    // Timing values (ms): collapsing decimal, suffixed
+                    const TIME5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                    // Counts (entities, overruns): integer, suffixed
+                    const COUNT5: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                    // Byte rates: collapsing decimal, suffixed
+                    const RATE5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+
                     let mem_ceiling = next_power_of_two_ceil(
                         self.hist_mem.0.iter().copied().fold(0.0_f64, f64::max)
                     ) as f32;
@@ -445,53 +451,101 @@ impl eframe::App for ConsoleApp {
                     const ALARM_MEM: Alarm = Alarm { bands: &[(f64::INFINITY, COLOR_DIM)] };
                     const ALARM_NET: Alarm = Alarm { bands: &[(f64::INFINITY, COLOR_DIM)] };
 
+                    const OVERRUN: NumFmt = NumFmt { width: 2, precision: Precision::Integer, overflow: Overflow::Clamp };
+                    const ALARM_OVERRUN: Alarm = Alarm { bands: &[
+                        (0.5, COLOR_DIM),        // 0 = dim
+                        (f64::INFINITY, COLOR_CRITICAL), // >0 = red
+                    ]};
+
                     draw_section(&mut cols[0], "SYSTEM", |ui| {
-                        // FRAME: label | spark | ↑peak + !overruns
-                        // ↑ wide (2D,1R): pad+↑+peak fills 7D; !+overruns:<5 fills 6D; gap=2
+                        // FRAME: label | value | spark | ↑peak | !overruns | MEM label | MEM value | spark
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "FRAME", numfmt::DEC5.fmt(self.field("frame_peak_ms")), "ms"), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "FRAME"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(self.field("frame_peak_ms")), "ms"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_frame.as_f32(), SparkScale::Fixed(125.0), &ALARM_TIMING, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(self.hist_frame.visible_max(bar_count));
-                            let ov = numfmt::INT5.fmt(self.hist_frame_overruns.visible_sum(bar_count));
-                            seg_full(ui, &format!("{}↑{}  !{ov:<5}", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_NORMAL);
+                            let pv = TIME5.fmt(self.hist_frame.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
                             seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "MEM", numfmt::DEC5.fmt(self.field("memory_mb")), "MB"), COLOR_DIM);
+                            let ov_val = self.hist_frame_overruns.visible_sum(bar_count);
+                            let ov = OVERRUN.fmt(ov_val);
+                            seg_quarter(ui, &format!("{:>2}!", ov), ALARM_OVERRUN.color(ov_val));
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>7}", "MEM"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("memory_mb")), "MB"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_mem.as_f32(), SparkScale::Fixed(mem_ceiling), &ALARM_MEM, cw, rh);
                         });
-                        // TICK: label | spark | ↑peak + !overruns
+                        // TICK: label | value | spark | ↑peak | !overruns
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "TICK", numfmt::DEC5.fmt(self.field("tick_peak_ms")), "ms"), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "TICK"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(self.field("tick_peak_ms")), "ms"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_tick.as_f32(), SparkScale::Fixed(125.0), &ALARM_TIMING, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(self.hist_tick.visible_max(bar_count));
-                            let ov = numfmt::INT5.fmt(self.hist_tick_overruns.visible_sum(bar_count));
-                            seg_full(ui, &format!("{}↑{}  !{ov:<5}", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_NORMAL);
+                            let pv = TIME5.fmt(self.hist_tick.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            let ov_val = self.hist_tick_overruns.visible_sum(bar_count);
+                            let ov = OVERRUN.fmt(ov_val);
+                            seg_quarter(ui, &format!("{:>2}!", ov), ALARM_OVERRUN.color(ov_val));
                         });
-                        // ↑NET: "↑NET" = 4R,5D (↑ wide) | spark | ↑peak (single stat, 7D + 8 trailing)
+                        // ↑NET: label | value | spark | ↑peak
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("↑NET  {:>5} {:<2}", numfmt::DEC5.fmt(self.field("net_sent_bps")), "Bs"), COLOR_DIM);
+                            seg_half(ui, &format!("↑NET  "), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("net_sent_bps")), "Bs"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_net_sent.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(self.hist_net_sent.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                            let pv = RATE5.fmt(self.hist_net_sent.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
                         });
                         // ↓NET: same pattern
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("↓NET  {:>5} {:<2}", numfmt::DEC5.fmt(self.field("net_recv_bps")), "Bs"), COLOR_DIM);
+                            seg_half(ui, &format!("↓NET  "), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("net_recv_bps")), "Bs"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_net_recv.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(self.hist_net_recv.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                            let pv = RATE5.fmt(self.hist_net_recv.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                        });
+                        // Per-channel: label | queue | sparkline | buf% label | buf% value
+                        const CHAN_QUEUE: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const CHAN_BUF: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Clamp };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_half(ui, &format!("{:>7}", "ORD"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", CHAN_QUEUE.fmt(self.field("net_ord_queue")), "B"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &self.hist_ord_queue.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>7}", "buf%"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}  ", CHAN_BUF.fmt(self.field("net_ord_buf_pct"))), COLOR_DIM);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            seg_half(ui, &format!("{:>7}", "UNORD"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", CHAN_QUEUE.fmt(self.field("net_unord_queue")), "B"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_spark(ui, &self.hist_unord_queue.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>7}", "buf%"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}  ", CHAN_BUF.fmt(self.field("net_unord_buf_pct"))), COLOR_DIM);
                         });
                     });
 
@@ -500,32 +554,42 @@ impl eframe::App for ConsoleApp {
                     draw_section(&mut cols[1], "ASYNC", |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "DUR", numfmt::DEC5.fmt(self.field("async.task_duration_ms")), "ms"), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "DUR"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(self.field("async.task_duration_ms")), "ms"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_async_dur.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::DEC5.fmt(self.hist_async_dur.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                            let pv = TIME5.fmt(self.hist_async_dur.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
                         });
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "QUEUE", numfmt::INT5.fmt(self.field("async.tasks_in_flight")), ""), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "QUEUE"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("async.tasks_in_flight"))), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_async_queue.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
                             seg_gap(ui, cw);
-                            let pv = numfmt::INT5.fmt(self.hist_async_queue.visible_max(bar_count));
-                            seg_full(ui, &format!("{}↑{}        ", " ".repeat(5usize.saturating_sub(pv.len())), pv), COLOR_DIM);
+                            let pv = COUNT5.fmt(self.hist_async_queue.visible_max(bar_count));
+                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
                         });
                     });
 
                     draw_section(&mut cols[2], "WORLD", |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "#PLR", numfmt::INT5.fmt(self.field("connected_players")), ""), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "#PLR"), COLOR_DIM);
                             seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "#NPC", numfmt::INT5.fmt(self.field("npc_count")), ""), COLOR_DIM);
+                            seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("connected_players"))), COLOR_DIM);
                             seg_gap(ui, cw);
-                            seg_full(ui, &format!("{:>5}  {:>5} {:<2}", "#HEX", numfmt::INT5.fmt(self.field("loaded_hexes")), ""), COLOR_DIM);
+                            seg_half(ui, &format!("{:>7}", "#NPC"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("npc_count"))), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>7}", "#HEX"), COLOR_DIM);
+                            seg_gap(ui, cw);
+                            seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("loaded_hexes"))), COLOR_DIM);
                         });
                     });
                 });

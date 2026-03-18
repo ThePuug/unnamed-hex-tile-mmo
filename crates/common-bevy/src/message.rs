@@ -13,9 +13,8 @@ use crate::{
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
-    /// Server-side only: request to discover a chunk
-    /// When `summary_only` is true, sends ChunkSummary instead of ChunkData
-    DiscoverChunk { ent: Entity, chunk_id: ChunkId, summary_only: bool },
+    /// Server-side only: request to discover a chunk and send ChunkData to client
+    DiscoverChunk { ent: Entity, chunk_id: ChunkId },
     /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles)
     ChunkData {
         ent: Entity,
@@ -74,6 +73,9 @@ pub enum Event {
     },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
+    /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
+    /// to prevent client/server sync drift on which chunks are loaded.
+    EvictChunks { ent: Entity, chunks: ArrayVec<[ChunkId; 64]> },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,
