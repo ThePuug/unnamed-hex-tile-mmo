@@ -16,7 +16,7 @@ bevy_camera = "0.18"
 bevy_easings = "0.18"
 bevy_light = "0.18"
 bevy_mesh = "0.18"
-bevy_renet = "4"
+renet_netcode = "2"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"

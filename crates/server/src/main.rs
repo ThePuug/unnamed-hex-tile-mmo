@@ -2,6 +2,7 @@
 #![feature(extend_one)]
 
 mod components;
+pub mod network;
 mod plugins;
 mod resources;
 mod systems;
@@ -9,10 +10,6 @@ mod systems;
 use std::time::*;
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
 use bevy_easings::*;
-use bevy_renet::{
-    netcode::{NetcodeErrorEvent, NetcodeServerPlugin},
-    RenetServerPlugin,
-};
 use serde::{Deserialize, Serialize};
 
 use common_bevy::{
@@ -33,11 +30,6 @@ pub struct Tick {
     pub behaviour: Behaviour,
 }
 
-const PROTOCOL_ID: u64 = 7;
-
-fn panic_on_error_system(trigger: On<NetcodeErrorEvent>) {
-    panic!("{:?}", trigger.event());
-}
 
 fn main() {
     let mut app = App::new();
@@ -52,8 +44,7 @@ fn main() {
             ..default()
         },
         TransformPlugin,
-        RenetServerPlugin,
-        NetcodeServerPlugin,
+        crate::network::NetworkPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         common_bevy::plugins::controlled::ControlledPlugin,
@@ -66,7 +57,6 @@ fn main() {
     app.add_message::<Tick>();
 
     // Add observers for triggered events
-    app.add_observer(panic_on_error_system);
     app.add_observer(renet::do_manage_connections);
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
@@ -144,9 +134,6 @@ fn main() {
         renet::cleanup_despawned.after(renet::send_do),
     ));
 
-    let (server, transport) = renet::new_renet_server();
-    app.insert_resource(server);
-    app.insert_resource(transport);
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
     app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop)));
