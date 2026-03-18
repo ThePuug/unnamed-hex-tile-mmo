@@ -41,6 +41,10 @@ const SPAWN_PROBABILITY: f64 = 0.5;
 /// Minimum distance from any player to spawn engagement (tiles)
 const MIN_DISTANCE_FROM_PLAYER: u32 = 30;
 
+/// Maximum distance from nearest player to spawn engagement (tiles).
+/// Must be within AOI_RADIUS so the player can actually see the NPCs.
+const MAX_DISTANCE_FROM_PLAYER: u32 = 100;
+
 /// Minimum distance from other engagements (tiles)
 const MIN_DISTANCE_FROM_ENGAGEMENT: u32 = 50;
 
@@ -118,17 +122,18 @@ fn try_spawn_engagement_at_chunk(
         return; // Zone full
     }
 
-    // Stage 3: Player proximity check (min 30 tiles from ANY ACTUAL player, not NPCs)
-    for (player_loc, behaviour) in player_query.iter() {
-        // Only check actual players (Behaviour::Controlled), not NPCs
-        if !matches!(behaviour, Behaviour::Controlled) {
-            continue;
-        }
+    // Stage 3: Player proximity check (within gameplay range of at least one player)
+    let nearest_player_dist = player_query.iter()
+        .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
+        .map(|(player_loc, _)| chunk_center.flat_distance(&**player_loc))
+        .min()
+        .unwrap_or(i32::MAX);
 
-        let distance = chunk_center.flat_distance(&**player_loc);
-        if distance < MIN_DISTANCE_FROM_PLAYER as i32 {
-            return; // Too close to a player
-        }
+    if nearest_player_dist < MIN_DISTANCE_FROM_PLAYER as i32 {
+        return; // Too close to a player
+    }
+    if nearest_player_dist > MAX_DISTANCE_FROM_PLAYER as i32 {
+        return; // Too far — outside gameplay range
     }
 
     // Stage 4: Engagement proximity check (min 50 tiles from other engagements)
