@@ -118,12 +118,23 @@ Commitment scales in **discrete tiers**, not linearly:
 | Vitality | **Grit** | — | Mental stubbornness behind physical toughness. Refusing to go down. |
 | Focus | **Concentration** | Queue visibility window | Sustained mental effort. Determines how many threats the player can see and interact with in the reaction queue. The queue is unbounded — all threats enter regardless. Threats outside the visibility window still resolve on their timers but the player cannot see or respond to them. |
 | Instinct | **Flow** | Threat stacking/compression | Surrendering conscious thought, letting instinct guide action. Similar incoming threats can appear as a single combined threat in the reaction queue. Flow commitment tiers gate how aggressively threats compress. Opposes Concentration (Instinct↔Focus commitment axis). Specific tier definitions TBD through playtesting. |
-| Presence | **Intensity** | AoE projection | Raw energy projection. All attack ranges extended at higher tiers. Enables cone targeting that hits multiple targets with damage split based on actual targets hit. |
+| Presence | **Intensity** | AoE projection | Raw energy projection. Extends attack ranges and enables hex-native cone targeting at higher tiers. |
 
 **Commitment stat mechanics:**
 
 - **Concentration:** Higher tiers reveal more threats in the visibility window. The queue is unbounded — Concentration controls how many the player can perceive.
-- **Intensity:** Higher tiers increase target count, cone width, and range. Damage per target decreases with more targets hit. Hitting fewer targets than the tier maximum deals proportionally more damage. Cone angles are hex-native (multiples of 60°).
+- **Intensity tiers:**
+
+| Tier | Targets | Cone | Range Bonus | Damage per Target |
+|------|---------|------|-------------|-------------------|
+| T0 | 1 (single target) | None | +0 | 100% |
+| T1 | 2 | 60° (1 hex direction) | +1 | 80% each when hitting 2 |
+| T2 | 3 | 180° (3 hex directions, front half) | +2 | 60% each when hitting 3 |
+| T3 | 4 | 300° (5 hex directions, everything except behind) | +3 | 50% each when hitting 4 |
+
+  - All targets in cone take equal damage including the primary target
+  - Damage reduction is based on **actual targets hit** — hitting only 1 target at any tier deals 100% damage
+  - Cone angles are hex-native: 60° = 1 hex direction, 180° = 3 hex directions, 300° = 5 hex directions
 
 **Open commitment stats:** Ferocity, Poise, and Grit do not yet have concrete mechanical stats mapped. Specific stats will be assigned as gameplay testing reveals needs.
 
@@ -180,12 +191,12 @@ The following systems interact with this attribute system:
 - **Endurance pool**: Discipline (Focus → absolute) provides the Endurance resource pool. Depletes through offensive ability use (cost proportional to damage dealt) and defensive ability use (cost proportional to damage mitigated). Dismiss and threat timer expiry cost zero. Penalties ramp on a continuous curve as Endurance depletes.
 - **Reaction queue**: Queue visibility window is driven by Focus → Concentration commitment tier. The queue is unbounded — all threats enter. Concentration determines how many the player can see and interact with. Threats outside the window still resolve on their timers. Reaction window duration is driven by Instinct → Cunning relative stat (extends threat timer duration).
 - **Threat compression**: Flow (Instinct → commitment tier) gates how aggressively similar threats merge in the reaction queue.
-- **AoE projection**: Intensity (Presence → commitment tier) extends attack ranges and enables cone targeting that hits multiple targets with damage split.
+- **AoE projection**: Intensity (Presence → commitment tier) extends attack ranges (+1/+2/+3 hex at T1/T2/T3) and enables hex-native cone targeting (60°/180°/300°) that hits multiple targets with damage split based on actual targets hit.
 - **Universal lockout**: Recovery reduction (Focus → Composure) and recovery pushback (Might → Impact) affect the lockout/recovery timeline. Synergy recovery reduction (Grace → Finesse) vs reaction window (Instinct → Cunning) creates the lockout-vs-window equation: `chain_gap + reaction_window > lockout`.
 - **Dismiss mechanic**: Dismissed threats resolve at full damage minus passive defenses. Zero Endurance cost. Vitality → Toughness provides mitigation.
 - **Healing system**: Healing reduction aura (Presence → Dominance) opposes mitigation (Vitality → Toughness) on the sustain ratio layer.
 - **Spatial difficulty**: Distance from haven determines NPC level, which determines absolute stat scaling.
-- **Auto-attack timeline**: One action timeline per entity. Recovery pushback/reduction affects the timeline between actions.
+- **Auto-attack timeline**: One action timeline per entity. Recovery pushback/reduction affects the timeline between actions. Cadence (auto-attack speed) is currently a legacy implementation with no attribute home — see homeless mechanics.
 - **Super-linear scaling**: Polynomial level multiplier applied to absolute stats. Level 0 multiplier = 1.0 (backward compatible).
 - **Character panel**: Displays bipolar pairs with Axis/Spectrum/Shift visualization. Shift drag redistributes within pairs. Three scaling modes are derived from these values.
 
@@ -206,6 +217,8 @@ These are intentionally left as design space for future iteration:
 
 **Homeless mechanics:**
 - **Crit** — removed from relative layer in ADR-031, no new home assigned
+- **Cadence** — removed from Intensity commitment, no new home assigned
+- **Evasion** — removed from Poise commitment, no new home assigned
 
 **Super-linear scaling:**
 - HP exponent must be > Damage exponent (ensures more exchanges at higher levels). See [combat-balance.md](combat-balance.md) for current values.
@@ -247,8 +260,8 @@ Where the current implementation intentionally differs from spec:
 | 5 | Critical hit system | Instinct drives crit chance/multiplier | Removed entirely (ADR-031) | Damage now deterministic and contest-driven |
 | 6 | NPC attribute generation | Suggested leanings per archetype | Data-driven from EnemyArchetype, no leanings | ADR-028; archetype defines stats directly |
 | 7 | Concentration | Queue capacity (hard limit with overflow) | Queue visibility window (unbounded queue, ADR-030) | Overflow punishment replaced by visibility mechanic |
-| 8 | Intensity | Cadence (auto-attack speed) | Cadence still implemented; AoE projection designed but not yet built | Intensity intended to drive spatial offense; legacy cadence remains active |
-| 9 | Poise | Evasion (dodge chance) | Evasion still implemented; Poise intended to be open | Legacy evasion remains active; Poise awaiting new mechanic |
+| 8 | Intensity | AoE projection (cone targeting, range extension) | Cadence (auto-attack speed) still implemented as legacy behavior | AoE projection designed but not yet built; cadence is a homeless mechanic |
+| 9 | Poise | Open (no mechanic assigned) | Evasion (dodge chance) still implemented as legacy behavior | Evasion is a homeless mechanic; Poise awaiting new assignment |
 
 ## Implementation Gaps
 
@@ -262,11 +275,14 @@ Where the current implementation intentionally differs from spec:
 
 **Open design space:** Intuition, Gravitas (absolute); Ferocity, Poise, Grit (commitment) — intentionally unmapped, see "What Remains Open" above
 
-**Homeless mechanics:** Crit — removed from relative layer in ADR-031, no new home assigned
+**Homeless mechanics:** Crit (removed from relative layer, ADR-031), Cadence (removed from Intensity commitment), Evasion (removed from Poise commitment) — no new homes assigned
 
 **Post-MVP:** Equipment attribute modifiers, full healing system, Endurance depletion curve tuning, Flow compression tier definitions
 
 ---
+
+**Cross-reference updates needed:**
+- [combat.md](combat.md) lines 570, 851, 867, 981, 1197 reference "cadence from Intensity tier" — need separate update to reflect cadence as homeless mechanic
 
 **Related Design Documents:**
 - [Combat System](combat.md) — How attributes feed into combat mechanics
