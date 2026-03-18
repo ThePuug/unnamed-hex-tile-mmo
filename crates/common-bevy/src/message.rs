@@ -15,11 +15,13 @@ pub enum Event {
     Discover { ent: Entity, qrz: Qrz },
     /// Server-side only: request to discover a chunk and send ChunkData to client
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
-    /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles)
+    /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles).
+    /// Tiles are ordered by `chunk_tiles(chunk_id)` iteration order — receiver
+    /// reconstructs (q, r) by zipping with the same iterator. Only z + type sent.
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
-        tiles: ArrayVec<[(Qrz, EntityType); 272]>,
+        tiles: ArrayVec<[(i32, EntityType); 272]>,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },

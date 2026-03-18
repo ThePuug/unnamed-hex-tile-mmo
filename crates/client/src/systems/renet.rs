@@ -231,7 +231,9 @@ pub fn write_do(
 
         match message {
             Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
-                for (qrz, typ) in tiles {
+                // Reconstruct (q,r) from chunk_tiles iteration order
+                for ((q, r), (z, typ)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
+                    let qrz = Qrz { q, r, z };
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);

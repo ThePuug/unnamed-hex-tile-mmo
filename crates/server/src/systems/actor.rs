@@ -208,12 +208,15 @@ pub fn try_discover_chunk(
                 }
             }
 
-            // Send ChunkData to client
+            // Send ChunkData to client — strip q,r (reconstructed from chunk_tiles order)
+            let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
+                .map(|&(qrz, typ)| (qrz.z, typ))
+                .collect();
             writer.write(Do {
                 event: Event::ChunkData {
                     ent,
                     chunk_id,
-                    tiles: chunk.tiles.clone(),
+                    tiles: wire_tiles,
                 }
             });
         }
