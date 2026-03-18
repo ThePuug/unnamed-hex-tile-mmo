@@ -217,6 +217,31 @@ impl Terrain {
         self.seed
     }
 
+    /// Return terrain tags at a hex tile position.
+    /// Includes the base plate tag (Sea/Coast/Inland) and, if within a spine's
+    /// influence, the spine cross-section tag (Ridge/Highland/Foothills).
+    /// Lazily generates and caches data as needed.
+    pub fn tags_at(&self, q: i32, r: i32) -> ArrayVec<[PlateTag; 2]> {
+        let (wx, wy) = hex_to_world(q, r);
+        let mut caches = self.caches.lock().unwrap();
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+
+        // Base tag from plate classification
+        let mut plate = plate_cache.plate_at(wx, wy);
+        plate_cache.classify_tags(std::slice::from_mut(&mut plate));
+        let mut tags = ArrayVec::new();
+        if let Some(base) = plate.tags.first() {
+            tags.push(*base);
+        }
+
+        // Spine tag (Ridge/Highland/Foothills) if within influence
+        if let Some(spine_tag) = spine_cache.tag_at(wx, wy, plate_cache) {
+            tags.push(spine_tag);
+        }
+
+        tags
+    }
+
     /// Evaluate terrain height at a hex tile position.
     /// Lazily generates and caches spine data as needed.
     pub fn get_height(&self, q: i32, r: i32) -> i32 {
@@ -387,5 +412,51 @@ pub fn generate_region(
         centroids,
         geometry,
         metrics,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tags_at_returns_base_tag() {
+        let terrain = Terrain::default();
+        let tags = terrain.tags_at(0, 0);
+        assert!(!tags.is_empty(), "should have at least a base tag");
+        let base = tags[0];
+        assert!(
+            matches!(base, PlateTag::Sea | PlateTag::Coast | PlateTag::Inland),
+            "base tag should be Sea, Coast, or Inland, got {:?}", base
+        );
+    }
+
+    #[test]
+    fn tags_at_deterministic() {
+        let terrain = Terrain::default();
+        let a = terrain.tags_at(100, 50);
+        let b = terrain.tags_at(100, 50);
+        assert_eq!(a.as_slice(), b.as_slice());
+    }
+
+    #[test]
+    fn tags_at_spine_region_has_spine_tag() {
+        // Probe a grid of points — at least some should be within spine influence
+        let terrain = Terrain::default();
+        let mut found_spine = false;
+        for q in (-200..=200).step_by(20) {
+            for r in (-200..=200).step_by(20) {
+                let tags = terrain.tags_at(q, r);
+                if tags.len() > 1 {
+                    let spine_tag = tags[1];
+                    assert!(
+                        matches!(spine_tag, PlateTag::Ridge | PlateTag::Highland | PlateTag::Foothills),
+                        "second tag should be a spine tag, got {:?}", spine_tag
+                    );
+                    found_spine = true;
+                }
+            }
+        }
+        assert!(found_spine, "should find at least one spine-influenced tile in a 400×400 grid");
     }
 }

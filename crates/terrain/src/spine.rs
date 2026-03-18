@@ -913,6 +913,27 @@ impl SpineInstance {
 
     /// Returns the elevation contributed by this spine at (wx, wy).
     /// Uses max across all peak cones, ridge noise, and ravine carving.
+    /// Return the spine cross-section tag at (wx, wy), if this instance
+    /// has any peak influence there. Uses the closest peak's distance fraction.
+    pub fn tag_at(&self, wx: f64, wy: f64) -> Option<PlateTag> {
+        let bx = wx - self.bounding_center.0;
+        let by = wy - self.bounding_center.1;
+        if bx * bx + by * by > self.bounding_radius * self.bounding_radius {
+            return None;
+        }
+        let mut best_frac = f64::MAX;
+        for peak in &self.peaks {
+            let dx = wx - peak.wx;
+            let dy = wy - peak.wy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist < peak.falloff_radius {
+                let frac = dist / peak.falloff_radius;
+                if frac < best_frac { best_frac = frac; }
+            }
+        }
+        if best_frac < f64::MAX { Some(cross_section_tag(best_frac)) } else { None }
+    }
+
     pub fn elevation_at(&self, wx: f64, wy: f64) -> f64 {
         let bx = wx - self.bounding_center.0;
         let by = wy - self.bounding_center.1;
@@ -2220,6 +2241,32 @@ impl SpineCache {
             instance_cache: HashMap::new(),
             access_counter: 0,
         }
+    }
+
+    /// Return the highest-priority spine tag at a world position, if any.
+    /// Lazily generates and caches spine chunks as needed.
+    pub fn tag_at(&mut self, wx: f64, wy: f64, plate_cache: &mut PlateCache) -> Option<PlateTag> {
+        let (cq, cr) = spine_chunk_coord(wx, wy);
+        self.access_counter += 1;
+        let stamp = self.access_counter;
+
+        for (dq, dr) in spine_chunk_1ring(cr) {
+            self.ensure_instances(cq + dq, cr + dr, plate_cache);
+        }
+
+        let mut best: Option<PlateTag> = None;
+        for (dq, dr) in spine_chunk_1ring(cr) {
+            if let Some(entry) = self.instance_cache.get_mut(&(cq + dq, cr + dr)) {
+                entry.last_accessed = stamp;
+                for inst in &entry.instances {
+                    if let Some(tag) = inst.tag_at(wx, wy) {
+                        let dominated = best.as_ref().map_or(true, |b| spine_tag_priority(&tag) > spine_tag_priority(b));
+                        if dominated { best = Some(tag); }
+                    }
+                }
+            }
+        }
+        best
     }
 
     /// Return the combined spine elevation at a world position.
