@@ -121,9 +121,8 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
-        actor::try_discover_chunk,  // Generates chunks, sends ChunkData for all rings
-        engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
-        engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
+        actor::try_discover_chunk,  // Generates chunks, sends ChunkData
+        engagement_spawner::activate_spawners, // Activate spawner tiles near players
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
@@ -146,7 +145,8 @@ fn main() {
     app.insert_resource(terrain);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
-    app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone
+    app.init_resource::<EngagementBudget>();
+    app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();
 }

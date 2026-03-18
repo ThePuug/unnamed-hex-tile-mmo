@@ -37,6 +37,7 @@ const PROXIMITY_RANGE: i32 = 150;
 pub fn cleanup_engagements(
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
+    mut active_spawners: ResMut<crate::systems::engagement_spawner::ActiveSpawners>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
@@ -75,6 +76,9 @@ pub fn cleanup_engagements(
         }
 
         if should_cleanup {
+            // Deactivate spawner tile so it can re-activate later
+            active_spawners.0.remove(&(engagement_loc.q, engagement_loc.r));
+
             // Unregister from budget
             budget.unregister_engagement(engagement.zone_id);
 
