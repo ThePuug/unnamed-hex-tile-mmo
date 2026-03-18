@@ -81,7 +81,6 @@ pub fn do_spawn_discover(
 pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
-    mut do_writer: MessageWriter<Do>,
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
     terrain: Res<Terrain>,
 ) {
@@ -124,7 +123,7 @@ pub fn do_incremental(
             for batch in evicted.chunks(64) {
                 let mut chunks = ArrayVec::new();
                 for &cid in batch { chunks.push(cid); }
-                do_writer.write(Do { event: Event::EvictChunks { ent, chunks } });
+                writer.write(Try { event: Event::EvictChunks { ent, chunks } });
             }
         }
 
@@ -174,6 +173,11 @@ pub fn try_discover_chunk(
     mut map: ResMut<Map>,
 ) {
     for message in reader.read() {
+        // Passthrough: EvictChunks Try → Do (server-authoritative eviction)
+        if let Try { event: Event::EvictChunks { ent, chunks } } = message {
+            writer.write(Do { event: Event::EvictChunks { ent: *ent, chunks: chunks.clone() } });
+            continue;
+        }
         if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = message {
             let ent = *ent;
             let chunk_id = *chunk_id;
