@@ -81,6 +81,7 @@ pub fn do_spawn_discover(
 pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
+    mut do_writer: MessageWriter<Do>,
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
     terrain: Res<Terrain>,
 ) {
@@ -108,9 +109,24 @@ pub fn do_incremental(
         let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
         let new_set: std::collections::HashSet<ChunkId> = new_chunks.iter().copied().collect();
 
-        // Evict chunks no longer in range
+        // Capture evicted chunks before retaining
+        let evicted: Vec<ChunkId> = cache.sent.iter()
+            .filter(|id| !new_set.contains(id))
+            .copied()
+            .collect();
+
         cache.sent.retain(|id| new_set.contains(id));
         player_state.seen_chunks.retain(|id| new_set.contains(id));
+
+        // Send eviction message to client
+        if !evicted.is_empty() {
+            use tinyvec::ArrayVec;
+            for batch in evicted.chunks(64) {
+                let mut chunks = ArrayVec::new();
+                for &cid in batch { chunks.push(cid); }
+                do_writer.write(Do { event: Event::EvictChunks { ent, chunks } });
+            }
+        }
 
         // Send newly visible chunks
         for &chunk_id in &new_chunks {

@@ -163,7 +163,7 @@ pub fn terrain_chunk_radius(player_z: i32) -> u8 {
 ///
 /// `ChunkId(n, m)` maps to a center tile at `n * v1 + m * v2` where
 /// v1 and v2 are the hex-ball tiling lattice basis vectors.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ChunkId(pub i32, pub i32);
 
 impl ChunkId {

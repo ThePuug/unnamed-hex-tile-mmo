@@ -73,6 +73,9 @@ pub enum Event {
     },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
+    /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
+    /// to prevent client/server sync drift on which chunks are loaded.
+    EvictChunks { ent: Entity, chunks: ArrayVec<[ChunkId; 64]> },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,

@@ -286,6 +286,17 @@ pub fn write_try(
                     conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
                 }
             }
+            Event::EvictChunks { ent, .. } => {
+                let ent = *ent;
+                // Same channel as ChunkData — ReliableUnordered guarantees delivery
+                // but not order. Reordering handled by sequence numbers (see below).
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let serialized = bincode::serde::encode_to_vec(
+                        message,
+                        bincode::config::legacy()).unwrap();
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
+                }
+            }
             Event::InsertThreat { ent, threat } => {
                 let ent = *ent;
                 let threat = *threat;

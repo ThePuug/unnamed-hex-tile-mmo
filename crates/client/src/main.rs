@@ -206,13 +206,11 @@ fn main() {
     }
 
     // Data eviction: remove tiles/summaries beyond view range (timer, every 5s)
-    // Disabled during flyover — admin module handles its own eviction
+    // Server-authoritative eviction — runs every frame, only processes EvictChunks messages
     #[cfg(feature = "admin")]
-    app.add_systems(Update, world::evict_data
-        .run_if(on_timer(Duration::from_secs(5)))
-        .run_if(admin::not_in_flyover));
+    app.add_systems(Update, world::evict_data.run_if(admin::not_in_flyover));
     #[cfg(not(feature = "admin"))]
-    app.add_systems(Update, world::evict_data.run_if(on_timer(Duration::from_secs(5))));
+    app.add_systems(Update, world::evict_data);
 
     app.run();
 }

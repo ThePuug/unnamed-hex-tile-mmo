@@ -15,7 +15,7 @@ use crate::{
     resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
 };
 use common_bevy::{
-    chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, terrain_chunk_radius, CHUNK_EXTENT_WU},
+    chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, CHUNK_EXTENT_WU},
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -62,78 +62,64 @@ pub fn setup(
 }
 
 // ─────────────────────────────────────────────────────────
-// SYSTEM 1: Data eviction (timer, every 5s)
+// SYSTEM 1: Server-authoritative chunk eviction
 // ─────────────────────────────────────────────────────────
-// Manages what data the client holds. Never touches meshes.
-// Tiles: evicted beyond detail_radius + 1.
-// Summaries: evicted beyond terrain_chunk_radius + 1.
+// Server sends EvictChunks when chunks leave the player's visibility.
+// Client removes tiles, meshes, and actors on those chunks.
 
-/// Evict data beyond the player's view range.
+/// Process EvictChunks messages from the server.
 pub fn evict_data(
     mut commands: Commands,
+    mut reader: MessageReader<Do>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common_bevy::resources::map::Map>,
     map_state: Res<common_bevy::resources::map::MapState>,
-    player_query: Query<&Loc, With<PlayerControlled>>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
 ) {
-    let Ok(player_loc) = player_query.single() else { return };
-    let player_chunk = loc_to_chunk(**player_loc);
-    let player_z = player_loc.z;
+    use common_bevy::resources::map::TileEvent;
 
-    let summary_buffer = terrain_chunk_radius(player_z) as i32 + 1;
+    let mut all_evicted = Vec::new();
 
-    // ── Evict tiles beyond summary boundary ──
-    // Use summary_buffer (not detail_buffer) — outer ring chunks need tiles
-    // in the Map for LoD2 mesh generation and slope blending.
-    let evictable: Vec<common_bevy::chunk::ChunkId> = loaded_chunks.chunks.iter()
-        .filter(|&&cid| chunk_hex_distance(cid, player_chunk) > summary_buffer)
-        .copied()
-        .collect();
+    for message in reader.read() {
+        let Do { event: Event::EvictChunks { chunks, .. } } = message else { continue };
+        all_evicted.extend_from_slice(chunks);
+    }
 
-    if !evictable.is_empty() {
-        // Despawn actors on evicted chunks
-        for (entity, loc, entity_type) in actor_query.iter() {
-            let actor_chunk = loc_to_chunk(**loc);
-            if evictable.contains(&actor_chunk) {
-                let is_player = matches!(
-                    entity_type,
-                    EntityType::Actor(actor_impl) if matches!(
-                        actor_impl.identity,
-                        common_bevy::components::entity_type::actor::ActorIdentity::Player
-                    )
-                );
-                if !is_player {
-                    l2r.remove_by_left(&entity);
-                    commands.entity(entity).despawn();
-                }
+    if all_evicted.is_empty() { return; }
+
+    // Despawn actors on evicted chunks
+    for (entity, loc, entity_type) in actor_query.iter() {
+        let actor_chunk = loc_to_chunk(**loc);
+        if all_evicted.contains(&actor_chunk) {
+            let is_player = matches!(
+                entity_type,
+                EntityType::Actor(actor_impl) if matches!(
+                    actor_impl.identity,
+                    common_bevy::components::entity_type::actor::ActorIdentity::Player
+                )
+            );
+            if !is_player {
+                l2r.remove_by_left(&entity);
+                commands.entity(entity).despawn();
             }
-        }
-
-        // Queue tile despawns
-        {
-            use common_bevy::resources::map::TileEvent;
-            for &chunk_id in &evictable {
-                for (q, r) in chunk_tiles(chunk_id) {
-                    if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                        map_state.queue_event(TileEvent::Despawn(qrz));
-                    }
-                }
-            }
-            loaded_chunks.evict(&evictable);
         }
     }
 
-    // Evict LoD mesh state when tiles are evicted — same radius as tile eviction
-    // to prevent stale entries blocking re-dispatch on chunk re-load.
-    let lod_evictable: Vec<common_bevy::chunk::ChunkId> = lod_meshes.states.keys()
-        .filter(|&&cid| !loaded_chunks.chunks.contains(&cid))
-        .copied()
-        .collect();
-    for cid in &lod_evictable {
-        if let Some(state) = lod_meshes.states.remove(cid) {
+    // Queue tile despawns
+    for &chunk_id in &all_evicted {
+        for (q, r) in chunk_tiles(chunk_id) {
+            if let Some((qrz, _)) = map.get_by_qr(q, r) {
+                map_state.queue_event(TileEvent::Despawn(qrz));
+            }
+        }
+    }
+    loaded_chunks.evict(&all_evicted);
+
+    // Evict LoD mesh state for evicted chunks
+    for &cid in &all_evicted {
+        if let Some(state) = lod_meshes.states.remove(&cid) {
             if let Some(entity) = state.entity {
                 commands.entity(entity).despawn();
             }

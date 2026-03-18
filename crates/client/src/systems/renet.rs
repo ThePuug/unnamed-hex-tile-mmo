@@ -46,6 +46,7 @@ fn get_message_type_name(message: &Do) -> String {
         Event::UseAbility { .. } => "UseAbility".to_string(),
         Event::Pong { .. } => "Pong".to_string(),
         Event::MovementIntent { .. } => "MovementIntent".to_string(),
+        Event::EvictChunks { .. } => "EvictChunks".to_string(),
         _ => "Other".to_string(),
     }
 }
@@ -221,7 +222,7 @@ pub fn write_do(
         }
     }
 
-    // Chunk data arrives on ReliableUnordered — no ordering needed between independent chunks
+    // Chunk data and eviction arrive on ReliableUnordered — no ordering needed between independent chunks
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableUnordered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
 
@@ -234,6 +235,9 @@ pub fn write_do(
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);
+            }
+            Do { event: Event::EvictChunks { ent: _, chunks } } => {
+                do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
             }
             _ => {
                 warn!("Unexpected message type on ReliableUnordered channel");
