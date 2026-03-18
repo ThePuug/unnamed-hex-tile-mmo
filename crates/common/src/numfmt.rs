@@ -46,17 +46,6 @@ pub struct NumFmt {
     pub overflow: Overflow,
 }
 
-// ── Presets ──
-
-/// 5ch integer with suffix. Counts, peaks — integer metrics in a half-segment.
-pub const INT5: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
-
-/// 5ch collapsing decimal with suffix. Timings, ratios — decimal metrics in a half-segment.
-pub const DEC5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
-
-/// 5ch integer with clamp. Coordinates, raw counts — values that shouldn't suffix.
-pub const CLAMP5: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
-
 // ── Implementation ──
 
 impl NumFmt {

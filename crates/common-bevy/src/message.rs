@@ -13,9 +13,8 @@ use crate::{
 pub enum Event {
     Despawn { ent: Entity },
     Discover { ent: Entity, qrz: Qrz },
-    /// Server-side only: request to discover a chunk
-    /// When `summary_only` is true, sends ChunkSummary instead of ChunkData
-    DiscoverChunk { ent: Entity, chunk_id: ChunkId, summary_only: bool },
+    /// Server-side only: request to discover a chunk and send ChunkData to client
+    DiscoverChunk { ent: Entity, chunk_id: ChunkId },
     /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles)
     ChunkData {
         ent: Entity,

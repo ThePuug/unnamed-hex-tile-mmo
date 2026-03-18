@@ -22,7 +22,7 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 
 ## Invariants
 
-**INV-001 — Ring separation (ADR-032):** Physics, movement, and pathfinding ONLY read the Map (inner ring chunks). Never read ChunkSummaries. Summaries are rendering-only.
+**INV-001 — Summary separation (ADR-032):** ChunkSummaries are rendering-only. Physics, movement, and pathfinding read the Map, never ChunkSummaries.
 
 **INV-002 — InputQueue non-empty:** All input queues must always have ≥1 entry. Violations panic.
 
@@ -30,7 +30,7 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 
 **INV-004 — Chunk spatial authority:** The chunk system is the spatial authority. Never filter or classify cells by raw `wx/wy` coordinates as a substitute for chunk marking. Two spatial authority systems = bugs.
 
-**INV-005 — Server/client eviction match:** Both use per-chunk `visibility_radius + 1`. Server uses `chunk_max_z` (superset guarantee).
+**INV-005 — Server/client eviction match:** Both use `terrain_chunk_radius(max_z) + 1`. Server uses `chunk_max_z` (superset guarantee).
 
 ---
 

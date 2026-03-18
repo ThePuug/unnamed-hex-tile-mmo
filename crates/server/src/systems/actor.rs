@@ -18,59 +18,14 @@ use crate::resources::terrain::*;
 
 
 
-/// Cached per-chunk visibility sets, recomputed on chunk boundary crossings.
-///
-/// Uses `chunk_max_z` as worst-case player height so the result is valid
-/// for any position within the chunk. Tracks inner (full detail) and outer
-/// (summary LoD) rings separately for upgrade/downgrade detection.
+/// Cached chunk set, recomputed on chunk boundary crossings.
+/// Tracks which chunks have been sent to this player so we only send new ones.
 #[derive(bevy::prelude::Component)]
 pub struct VisibleChunkCache {
-    /// Chunks sent with full tile data (inner ring, ≤ detail_boundary_radius)
-    pub full_detail: std::collections::HashSet<ChunkId>,
-    /// Chunks sent as summaries (outer ring, > detail_boundary_radius)
-    pub summary: std::collections::HashSet<ChunkId>,
-    /// Chunks the player might still have (visibility + 1 buffer)
-    pub eviction: std::collections::HashSet<ChunkId>,
+    /// All chunks currently sent to this player
+    pub sent: std::collections::HashSet<ChunkId>,
     /// Chunk this was computed for (detect boundary crossings)
     pub chunk_id: ChunkId,
-}
-
-/// Compute the set of chunks the client would keep (visibility + 1 buffer per chunk).
-/// Mirrors the client's per-chunk eviction logic so the server knows when to re-send.
-fn compute_eviction_set(
-    center: ChunkId,
-    player_z: i32,
-    base_radius: u8,
-    max_radius: u8,
-    terrain: &Terrain,
-) -> std::collections::HashSet<ChunkId> {
-    let r = (max_radius + 1) as i32;
-    let base_plus_buffer = base_radius as i32 + 1;
-    let mut kept = std::collections::HashSet::new();
-
-    for dq in -r..=r {
-        let dr_min = (-r).max(-dq - r);
-        let dr_max = r.min(-dq + r);
-        for dr in dr_min..=dr_max {
-            let hex_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
-            let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
-
-            if hex_dist <= base_plus_buffer {
-                kept.insert(chunk_id);
-                continue;
-            }
-
-            let center_tile = chunk_id.center();
-            let chunk_z = terrain.get(center_tile.q, center_tile.r);
-            let vis = visibility_radius(player_z, chunk_z, MAX_FOV) as i32 + 1;
-
-            if hex_dist <= vis {
-                kept.insert(chunk_id);
-            }
-        }
-    }
-
-    kept
 }
 
 /// Discover initial chunks when a player first spawns
@@ -101,53 +56,28 @@ pub fn do_spawn_discover(
 
         let current_chunk = loc_to_chunk(**loc);
 
-        // Use max elevation in player's chunk as worst-case height (superset of
-        // what any position in this chunk could see)
+        // Send radius matches client eviction: terrain_chunk_radius + 1
         let max_z = chunk_max_z(current_chunk, |q, r| terrain.get(q, r));
-        // Base radius: old symmetric loading (floor). Max: uncapped for valley extension.
-        let base_radius = terrain_chunk_radius(max_z);
-        let max_radius = elevation_chunk_radius_raw(max_z);
+        let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
-        // Detail boundary at MAX_FOV: server sends full data for everything
-        // within the worst-case (widest zoom) detail radius.
-        let detail_radius = chunk::detail_boundary_radius(max_z, MAX_FOV);
+        let chunks = calculate_visible_chunks(current_chunk, send_radius as u8);
 
-        // Discover initial visible chunks (adaptive per-chunk filtering)
-        let (inner, outer) = calculate_visible_chunks_adaptive(
-            current_chunk, max_z, base_radius, max_radius, detail_radius, MAX_FOV,
-            |q, r| terrain.get(q, r),
-        );
-
-        // Eviction set: per-chunk visibility + 1 buffer (mirrors client eviction)
-        let eviction = compute_eviction_set(current_chunk, max_z, base_radius, max_radius, &terrain);
-
-        // Inner ring: send full chunk data
-        for &chunk_id in &inner {
-            writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only: false } });
-            player_state.seen_chunks.insert(chunk_id);
-        }
-
-        // Outer ring: send summaries (lightweight)
-        for &chunk_id in &outer {
-            writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only: true } });
+        for &chunk_id in &chunks {
+            writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id } });
             player_state.seen_chunks.insert(chunk_id);
         }
 
         player_state.last_chunk = Some(current_chunk);
 
-        // Cache visibility sets for boundary-crossing detection
         commands.entity(ent).insert(VisibleChunkCache {
-            full_detail: inner.into_iter().collect(),
-            summary: outer.into_iter().collect(),
-            eviction,
+            sent: chunks.into_iter().collect(),
             chunk_id: current_chunk,
         });
     }
 }
 
-/// Server-side system: Generates Try::DiscoverChunk events when the server authoritatively changes an entity's Loc
+/// Server-side system: Generates Try::DiscoverChunk events when the server authoritatively changes an entity's Loc.
 /// Uses chunk-based boundary detection to reduce discovery events dramatically.
-/// Adaptive per-chunk visibility extends loading toward valleys and tightens toward ridges.
 pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
@@ -171,52 +101,27 @@ pub fn do_incremental(
             continue;
         }
 
-        // Boundary crossing — recompute adaptive visibility
+        // Boundary crossing — recompute send radius (matches client eviction)
         let max_z = chunk_max_z(new_chunk, |q, r| terrain.get(q, r));
-        let base_radius = terrain_chunk_radius(max_z);
-        let max_radius = elevation_chunk_radius_raw(max_z);
+        let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
-        let detail_radius = chunk::detail_boundary_radius(max_z, MAX_FOV);
+        let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
+        let new_set: std::collections::HashSet<ChunkId> = new_chunks.iter().copied().collect();
 
-        let (new_inner, new_outer) = calculate_visible_chunks_adaptive(
-            new_chunk, max_z, base_radius, max_radius, detail_radius, MAX_FOV,
-            |q, r| terrain.get(q, r),
-        );
-        let new_eviction = compute_eviction_set(new_chunk, max_z, base_radius, max_radius, &terrain);
+        // Evict chunks no longer in range
+        cache.sent.retain(|id| new_set.contains(id));
+        player_state.seen_chunks.retain(|id| new_set.contains(id));
 
-        // Mirror client eviction: full-detail uses detail_radius + 2 (inner ring
-        // extends to detail+1, buffer adds 1 more for boundary crossing).
-        let detail_buffer = detail_radius as i32 + 2;
-        cache.full_detail.retain(|id| {
-            chunk_hex_distance(*id, new_chunk) <= detail_buffer
-        });
-        cache.summary.retain(|id| new_eviction.contains(id));
-        player_state.seen_chunks.retain(|id| cache.full_detail.contains(id) || cache.summary.contains(id));
-
-        // Inner ring: send full data for new chunks or upgrades (was summary → now inner)
-        for &chunk_id in &new_inner {
-            if !cache.full_detail.contains(&chunk_id) {
-                writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only: false } });
+        // Send newly visible chunks
+        for &chunk_id in &new_chunks {
+            if !cache.sent.contains(&chunk_id) {
+                writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id } });
                 player_state.seen_chunks.insert(chunk_id);
-                cache.full_detail.insert(chunk_id);
-                cache.summary.remove(&chunk_id);
-            }
-        }
-
-        // Outer ring: send summaries for new chunks and boundary ring chunks
-        // that have full detail but no summary yet (zone 2 needs both).
-        for &chunk_id in &new_outer {
-            if !cache.summary.contains(&chunk_id) {
-                writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only: true } });
-                player_state.seen_chunks.insert(chunk_id);
-                cache.summary.insert(chunk_id);
+                cache.sent.insert(chunk_id);
             }
         }
 
         player_state.last_chunk = Some(new_chunk);
-
-        // Update cache
-        cache.eviction = new_eviction;
         cache.chunk_id = new_chunk;
     }
 }
@@ -243,12 +148,7 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
     TerrainChunk::new(tiles)
 }
 
-/// New chunk-based discovery system
-///
-/// Generates terrain for discovered chunks and sends to clients.
-/// When `summary_only` is true, sends a lightweight ChunkSummary (~12 bytes)
-/// instead of full ChunkData (~2.6KB). Summary-only chunks skip server-side
-/// terrain generation entirely — no map insertion, no cache usage.
+/// Generates terrain for discovered chunks, inserts into Map, and sends to clients.
 /// Actor discovery is handled by the AOI system (aoi.rs) via LoadedBy tracking.
 pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
@@ -258,10 +158,9 @@ pub fn try_discover_chunk(
     mut map: ResMut<Map>,
 ) {
     for message in reader.read() {
-        if let Try { event: Event::DiscoverChunk { ent, chunk_id, summary_only } } = message {
+        if let Try { event: Event::DiscoverChunk { ent, chunk_id } } = message {
             let ent = *ent;
             let chunk_id = *chunk_id;
-            let summary_only = *summary_only;
 
             // Generate/cache chunk
             let chunk = if world_cache.chunks.contains_key(&chunk_id) {
@@ -282,16 +181,14 @@ pub fn try_discover_chunk(
                 generated
             };
 
-            // Inner ring: insert tiles into server Map for physics/collision/AI
-            if !summary_only {
-                for &(qrz, typ) in &chunk.tiles {
-                    if map.get(qrz).is_none() {
-                        map.insert(qrz, typ);
-                    }
+            // Insert tiles into server Map for physics/collision/AI
+            for &(qrz, typ) in &chunk.tiles {
+                if map.get(qrz).is_none() {
+                    map.insert(qrz, typ);
                 }
             }
 
-            // Send ChunkData to client for both inner and outer ring
+            // Send ChunkData to client
             writer.write(Do {
                 event: Event::ChunkData {
                     ent,
