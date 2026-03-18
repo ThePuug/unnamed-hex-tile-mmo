@@ -274,6 +274,7 @@ impl<'a> Seg<'a> {
         self.count += 1;
     }
 
+    #[allow(dead_code)]
     fn full(&mut self, s: &str, color: egui::Color32) { self.emit(s, SEG_WIDTH, color); }
     fn half(&mut self, s: &str, color: egui::Color32) { self.emit(s, 7, color); }
     #[allow(dead_code)]
@@ -607,9 +608,12 @@ pub fn update_metrics_overlay(
                         // mesh/load/pending
                         const CHUNK_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "mesh", CHUNK_CT.fmt(full_count as f64), ""), COLOR_DIM);
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "load", CHUNK_CT.fmt(loaded_chunks.chunks.len() as f64), ""), COLOR_DIM);
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "pend", CHUNK_CT.fmt(pending_lod as f64), ""), COLOR_DIM);
+                            s.half(&format!("{:>7}", "mesh"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(full_count as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "load"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(loaded_chunks.chunks.len() as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "pend"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(pending_lod as f64)), COLOR_DIM);
                         });
                         // LoD lines: 5 half-segments each
                         const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Fixed(2), overflow: Overflow::Suffix };
@@ -632,8 +636,10 @@ pub fn update_metrics_overlay(
                         if admin_count > 0 || admin_sum_count > 0 {
                             const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                             seg_row(ui, cw, |s| {
-                                s.full(&format!("{:>5}  {:>5} {:<2}", "aChk", ADMIN_CT.fmt(admin_count as f64), ""), COLOR_DIM);
-                                s.full(&format!("{:>5}  {:>5} {:<2}", "aSum", ADMIN_CT.fmt(admin_sum_count as f64), ""), COLOR_DIM);
+                                s.half(&format!("{:>7}", "aChk"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
+                                s.half(&format!("{:>7}", "aSum"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_sum_count as f64)), COLOR_DIM);
                             });
                         }
                     });
@@ -649,7 +655,8 @@ pub fn update_metrics_overlay(
                         let fps_v = FPS.fmt(fps_p95);
                         let fps_color = ALARM_FPS.color(fps_p95);
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "FRAME", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
+                            s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
                             s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
                             s.half(&format!("↑{:<5}", peak_v), COLOR_DIM);
                             s.half(&format!("ƒ{:<6}", fps_v), fps_color);
@@ -657,8 +664,10 @@ pub fn update_metrics_overlay(
                         const ENTS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         const TILES: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "ENTS", ENTS.fmt(entities), ""), COLOR_DIM);
-                            s.full(&format!("{:>5}  {:>5} {:<2}", "TILES", TILES.fmt(map.len() as f64), ""), COLOR_DIM);
+                            s.half(&format!("{:>7}", "ENTS"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", ENTS.fmt(entities)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "TILES"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", TILES.fmt(map.len() as f64)), COLOR_DIM);
                         });
                     });
 
@@ -666,19 +675,21 @@ pub fn update_metrics_overlay(
 
                     // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
-                        const NET_BPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("↓NET  {:>5}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
+                            s.half(&format!("↓NET  "), COLOR_DIM);
+                            s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
                             s.spark(&hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, rh);
                             let pv = NET_BPS.fmt(history.bw.visible_max(bar_count));
-                            s.full(&format!("↑{:<13}", pv), COLOR_DIM);
+                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
                         });
                         const NET_MPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("↓MSG  {:>5} {:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
+                            s.half(&format!("↓MSG  "), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
                             s.spark(&hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, rh);
                             let pv = NET_MPS.fmt(history.msg.visible_max(bar_count));
-                            s.full(&format!("↑{:<13}", pv), COLOR_DIM);
+                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
                         });
                     });
                 });
