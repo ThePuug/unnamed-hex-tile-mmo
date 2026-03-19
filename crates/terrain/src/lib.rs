@@ -1,6 +1,7 @@
 mod noise;
 mod plates;
 mod microplates;
+pub mod events;
 pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
