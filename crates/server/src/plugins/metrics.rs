@@ -169,6 +169,18 @@ impl Plugin for MetricsPlugin {
         snapshot.register("net_ord_queue", Aggregator::Last);
         snapshot.register("net_unord_buf_pct", Aggregator::Last);
         snapshot.register("net_unord_queue", Aggregator::Last);
+        // Event metrics (spawner pipeline)
+        snapshot.register("evt.spawner.eval", Aggregator::Sum);
+        snapshot.register("evt.spawner.eval_output", Aggregator::Sum);
+        snapshot.register("evt.spawner.cache_hits", Aggregator::Sum);
+        snapshot.register("evt.spawner.cache_misses", Aggregator::Sum);
+        snapshot.register("evt.spawner.cache_size", Aggregator::Last);
+        snapshot.register("evt.spawner.queries", Aggregator::Sum);
+        snapshot.register("evt.spawner.found", Aggregator::Sum);
+        snapshot.register("evt.spawner.candidates", Aggregator::Sum);
+        snapshot.register("evt.spawner.accepted", Aggregator::Sum);
+        snapshot.register("evt.spawner.rejected", Aggregator::Sum);
+        snapshot.register("evt.spawner.materialized", Aggregator::Sum);
         app.insert_resource(snapshot)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
@@ -183,8 +195,25 @@ impl Plugin for MetricsPlugin {
 
 fn drain_event_metrics(
     mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
+    snapshot: Res<MetricSnapshot>,
 ) {
     let drained = registry.drain_metrics();
+    let c = &drained.spawner_cache;
+    let g = &drained.spawner_gates;
+    let total_rejected: u64 = g.rejections.values().sum();
+    snapshot.record(&[
+        ("evt.spawner.eval", c.chunks_evaluated as f32),
+        ("evt.spawner.eval_output", c.chunks_with_output as f32),
+        ("evt.spawner.cache_hits", c.cache_hits as f32),
+        ("evt.spawner.cache_misses", c.cache_misses as f32),
+        ("evt.spawner.cache_size", c.cache_size as f32),
+        ("evt.spawner.queries", c.queries as f32),
+        ("evt.spawner.found", c.results_returned as f32),
+        ("evt.spawner.candidates", g.candidates as f32),
+        ("evt.spawner.accepted", g.accepted as f32),
+        ("evt.spawner.rejected", total_rejected as f32),
+        ("evt.spawner.materialized", g.materializations as f32),
+    ]);
     info!("[events:spawner] {}", drained.spawner_summary());
 }
 
