@@ -25,7 +25,7 @@ struct MetricsPacket {
 // ── Font ──
 
 fn load_fonts(ctx: &egui::Context) {
-    let font_bytes = include_bytes!("../../../assets/fonts/Iosevka-Regular.ttc");
+    let font_bytes = include_bytes!("../../../assets/fonts/IosevkaNerdFont-Regular.ttf");
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "Iosevka".to_owned(),
@@ -51,6 +51,8 @@ const COLOR_DIM: Color32 = Color32::from_rgb(120, 160, 120);
 const COLOR_BORDER: Color32 = Color32::from_rgb(80, 120, 80);
 const COLOR_BG: Color32 = Color32::from_rgb(10, 15, 10);
 const COLOR_SPARK_BG: Color32 = Color32::from_rgb(30, 30, 35);
+
+use common::glyphs::*;
 
 fn mono_font() -> egui::FontId { egui::FontId::monospace(FONT_SIZE) }
 
@@ -180,41 +182,33 @@ const COLOR_WARN: Color32 = Color32::from_rgb(255, 200, 60);
 // ── Tile-width segment primitives ──
 //
 // Each function takes a pre-built string and asserts its display width matches the slot.
-// Callers use standard format!() for layout; wide chars (↑, ↔, △ etc.) are 2 display
-// cells but 1 Rust char — account for them at the call site, not here.
-
-/// Display cell count for a string, accounting for known wide chars in Iosevka.
-fn display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| if matches!(c, '△' | '●' | '○' | '↑' | '↓' | '↔') { 2 } else { 1 })
-        .sum()
-}
+// Callers use standard format!() for layout. Nerd Font glyphs use {:<2} for 2-cell width.
 
 /// 1-char gap between segments.
 fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
     ui.add_space(char_width);
 }
 
-/// Half-segment: 7 display cells.
+/// Half-segment: 7 characters.
 fn seg_half(ui: &mut egui::Ui, s: &str, color: Color32) {
-    debug_assert_eq!(display_width(s), 7,
-        "seg_half: 7 cells expected, got {} for {:?}", display_width(s), s);
+    debug_assert_eq!(s.chars().count(), 7,
+        "seg_half: 7 chars expected, got {} for {:?}", s.chars().count(), s);
     ui.label(colored_mono(s, color));
 }
 
-/// Quarter-segment: 3 display cells.
+/// Quarter-segment: 3 characters.
 #[allow(dead_code)]
 fn seg_quarter(ui: &mut egui::Ui, s: &str, color: Color32) {
-    debug_assert_eq!(display_width(s), 3,
-        "seg_quarter: 3 cells expected, got {} for {:?}", display_width(s), s);
+    debug_assert_eq!(s.chars().count(), 3,
+        "seg_quarter: 3 chars expected, got {} for {:?}", s.chars().count(), s);
     ui.label(colored_mono(s, color));
 }
 
-/// Eighth-segment: 1 display cell.
+/// Eighth-segment: 1 character.
 #[allow(dead_code)]
 fn seg_eighth(ui: &mut egui::Ui, s: &str, color: Color32) {
-    debug_assert_eq!(display_width(s), 1,
-        "seg_eighth: 1 cell expected, got {} for {:?}", display_width(s), s);
+    debug_assert_eq!(s.chars().count(), 1,
+        "seg_eighth: 1 char expected, got {} for {:?}", s.chars().count(), s);
     ui.label(colored_mono(s, color));
 }
 
@@ -247,52 +241,53 @@ fn draw_section<F: FnOnce(&mut egui::Ui)>(
 
 /// Draw a narrowing funnel of horizontal bars. Each bar's width is proportional
 /// to its count relative to the first stage's count.
+/// suffix_half: optional 7-display-cell half-segment string (e.g., cache hit rate).
 fn draw_funnel(
     ui: &mut egui::Ui,
-    stages: &[(&str, f64)],
+    stages: &[(&str, f64, &str)], // (label, count, suffix_half)
     cw: f32,
     rh: f32,
 ) {
     if stages.is_empty() { return; }
     let max_val = stages[0].1.max(1.0);
-    let avail_width = ui.available_width() - 14.0 * cw; // label(5ch) + gap + value(5ch) + padding
+    let bar_width_max = 31.0 * cw;
 
     use numfmt::{NumFmt, Precision, Overflow};
-    const FUNNEL_FMT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+    const FUNNEL_VAL: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
 
-    for &(label, count) in stages {
+    for &(label, count, suffix) in stages {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            // Label (5ch right-aligned + gap)
-            ui.label(colored_mono(&format!("{:>5} ", label), COLOR_DIM));
 
-            // Bar
+            // Label half (7 display cells)
+            seg_half(ui, &format!("{:>7}", label), COLOR_DIM);
+            seg_gap(ui, cw);
+
+            // Bar (31ch fixed width)
             let bar_frac = (count / max_val).clamp(0.0, 1.0) as f32;
-            let bar_width = (bar_frac * avail_width).max(0.0);
-            let bar_size = egui::vec2(avail_width, rh - 2.0);
+            let filled_width = (bar_frac * bar_width_max).max(0.0);
+            let bar_size = egui::vec2(bar_width_max, rh - 2.0);
             let (rect, _) = ui.allocate_exact_size(bar_size, egui::Sense::hover());
             let painter = ui.painter_at(rect);
-
-            // Background (unfilled portion)
             painter.rect_filled(rect, 0.0, COLOR_SPARK_BG);
-
-            // Filled portion
-            if bar_width > 0.5 {
-                let filled = egui::Rect::from_min_size(
-                    rect.min,
-                    egui::vec2(bar_width, rect.height()),
-                );
-                let color = if count > 0.0 { COLOR_DIM } else { COLOR_SPARK_BG };
-                painter.rect_filled(filled, 0.0, color);
+            if filled_width > 0.5 {
+                let filled = egui::Rect::from_min_size(rect.min, egui::vec2(filled_width, rect.height()));
+                painter.rect_filled(filled, 0.0, COLOR_DIM);
             }
-
-            // Zero-count: draw outline so the cliff is visible
             if count == 0.0 {
                 painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, COLOR_BORDER), egui::StrokeKind::Outside);
             }
 
-            // Value (right of bar)
-            ui.label(colored_mono(&format!(" {:<5}", FUNNEL_FMT.fmt(count)), COLOR_DIM));
+            seg_gap(ui, cw);
+
+            // Value half (7 display cells)
+            seg_half(ui, &format!("{:>5}  ", FUNNEL_VAL.fmt(count)), COLOR_DIM);
+
+            // Optional suffix half (7 display cells, e.g., cache hit rate)
+            if !suffix.is_empty() {
+                seg_gap(ui, cw);
+                seg_half(ui, suffix, COLOR_DIM);
+            }
         });
     }
 }
@@ -452,9 +447,9 @@ impl eframe::App for ConsoleApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     if self.is_connected() {
-                        ui.label(colored_mono("● CONNECTED", COLOR_NORMAL));
+                        ui.label(colored_mono("CONNECTED", COLOR_NORMAL));
                     } else {
-                        ui.label(colored_mono("● NO SIGNAL", COLOR_CRITICAL));
+                        ui.label(colored_mono("NO SIGNAL", COLOR_CRITICAL));
                     }
                     let secs = self.snapshot_timestamp;
                     ui.label(colored_mono(
@@ -505,14 +500,14 @@ impl eframe::App for ConsoleApp {
                     const ALARM_MEM: Alarm = Alarm { bands: &[(f64::INFINITY, COLOR_DIM)] };
                     const ALARM_NET: Alarm = Alarm { bands: &[(f64::INFINITY, COLOR_DIM)] };
 
-                    const OVERRUN: NumFmt = NumFmt { width: 2, precision: Precision::Integer, overflow: Overflow::Clamp };
+                    const OVERRUN: NumFmt = NumFmt { width: 1, precision: Precision::Integer, overflow: Overflow::Clamp };
                     const ALARM_OVERRUN: Alarm = Alarm { bands: &[
                         (0.5, COLOR_DIM),        // 0 = dim
                         (f64::INFINITY, COLOR_CRITICAL), // >0 = red
                     ]};
 
                     draw_section(&mut cols[0], "SYSTEM", |ui| {
-                        // FRAME: label | value | spark | ↑peak | !overruns | MEM label | MEM value | spark
+                        // FRAME: label | value | spark | peak | !overruns | MEM label | MEM value | spark
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             seg_half(ui, &format!("{:>7}", "FRAME"), COLOR_DIM);
@@ -522,11 +517,11 @@ impl eframe::App for ConsoleApp {
                             seg_spark(ui, &self.hist_frame.as_f32(), SparkScale::Fixed(125.0), &ALARM_TIMING, cw, rh);
                             seg_gap(ui, cw);
                             let pv = TIME5.fmt(self.hist_frame.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                             seg_gap(ui, cw);
                             let ov_val = self.hist_frame_overruns.visible_sum(bar_count);
                             let ov = OVERRUN.fmt(ov_val);
-                            seg_quarter(ui, &format!("{:>2}!", ov), ALARM_OVERRUN.color(ov_val));
+                            seg_quarter(ui, &format!("{}{:<2}", ov, GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>7}", "MEM"), COLOR_DIM);
                             seg_gap(ui, cw);
@@ -534,7 +529,7 @@ impl eframe::App for ConsoleApp {
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_mem.as_f32(), SparkScale::Fixed(mem_ceiling), &ALARM_MEM, cw, rh);
                         });
-                        // TICK: label | value | spark | ↑peak | !overruns
+                        // TICK: label | value | spark | peak | !overruns
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             seg_half(ui, &format!("{:>7}", "TICK"), COLOR_DIM);
@@ -544,35 +539,35 @@ impl eframe::App for ConsoleApp {
                             seg_spark(ui, &self.hist_tick.as_f32(), SparkScale::Fixed(125.0), &ALARM_TIMING, cw, rh);
                             seg_gap(ui, cw);
                             let pv = TIME5.fmt(self.hist_tick.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                             seg_gap(ui, cw);
                             let ov_val = self.hist_tick_overruns.visible_sum(bar_count);
                             let ov = OVERRUN.fmt(ov_val);
-                            seg_quarter(ui, &format!("{:>2}!", ov), ALARM_OVERRUN.color(ov_val));
+                            seg_quarter(ui, &format!("{}{:<2}", ov, GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
                         });
-                        // ↑NET: label | value | spark | ↑peak
+                        // NET UP: label | value | spark | peak
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("↑NET  "), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}NET  ", GLYPH_NET_UP), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("net_sent_bps")), "Bs"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_net_sent.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
                             seg_gap(ui, cw);
                             let pv = RATE5.fmt(self.hist_net_sent.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
-                        // ↓NET: same pattern
+                        // NET DOWN: same pattern
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("↓NET  "), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}NET  ", GLYPH_NET_DOWN), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("net_recv_bps")), "Bs"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_spark(ui, &self.hist_net_recv.as_f32(), SparkScale::Auto, &ALARM_NET, cw, rh);
                             seg_gap(ui, cw);
                             let pv = RATE5.fmt(self.hist_net_recv.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                         // Per-channel: label | queue | sparkline | buf% label | buf% value
                         const CHAN_QUEUE: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -615,7 +610,7 @@ impl eframe::App for ConsoleApp {
                             seg_spark(ui, &self.hist_async_dur.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
                             seg_gap(ui, cw);
                             let pv = TIME5.fmt(self.hist_async_dur.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
@@ -626,7 +621,7 @@ impl eframe::App for ConsoleApp {
                             seg_spark(ui, &self.hist_async_queue.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
                             seg_gap(ui, cw);
                             let pv = COUNT5.fmt(self.hist_async_queue.visible_max(bar_count));
-                            seg_half(ui, &format!("↑{:<5}", pv), COLOR_DIM);
+                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                     });
 
@@ -648,41 +643,24 @@ impl eframe::App for ConsoleApp {
                     });
 
                     draw_section(&mut cols[2], "EVENTS", |ui| {
-                        let eval = self.field("evt.spawner.eval");
-                        let output = self.field("evt.spawner.eval_output");
-                        let found = self.field("evt.spawner.found");
-                        let candidates = self.field("evt.spawner.candidates");
-                        let accepted = self.field("evt.spawner.accepted");
-                        let materialized = self.field("evt.spawner.materialized");
+                        let survey = self.field("evt.survey");
+                        let placed = self.field("evt.placed");
+                        let active = self.field("evt.active");
+                        let hits = self.field("evt.cache_hits");
+                        let misses = self.field("evt.cache_misses");
+                        let total = hits + misses;
+                        const HIT_FMT: NumFmt = NumFmt { width: 4, precision: Precision::Fixed(1), overflow: Overflow::Clamp };
+                        let hit_pct = if total > 0.0 {
+                            format!("{:<2}{}%", GLYPH_CACHE, HIT_FMT.fmt(hits / total * 100.0))
+                        } else {
+                            format!("{:<2}--.-%", GLYPH_CACHE)
+                        };
 
                         draw_funnel(ui, &[
-                            ("eval", eval),
-                            ("outpt", output),
-                            ("found", found),
-                            ("gate", candidates),
-                            ("pass", accepted),
-                            ("spawn", materialized),
+                            ("survey", survey, &hit_pct),
+                            ("placed", placed, ""),
+                            ("active", active, ""),
                         ], cw, rh);
-
-                        // Gate rejection breakdown
-                        let rejected = self.field("evt.spawner.rejected");
-                        if rejected > 0.0 {
-                            ui.label(colored_mono(
-                                &format!("  reject: {:.0}", rejected),
-                                COLOR_DIM,
-                            ));
-                        }
-
-                        // Cache health
-                        let sz = self.field("evt.spawner.cache_size");
-                        let hits = self.field("evt.spawner.cache_hits");
-                        let misses = self.field("evt.spawner.cache_misses");
-                        let total = hits + misses;
-                        let hit_pct = if total > 0.0 { hits / total * 100.0 } else { 0.0 };
-                        ui.label(colored_mono(
-                            &format!("  cache: {:.0} sz  {:.1}% hit  {:.0} miss", sz, hit_pct, misses),
-                            COLOR_DIM,
-                        ));
                     });
                 });
 

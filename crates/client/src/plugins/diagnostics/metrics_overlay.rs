@@ -29,6 +29,8 @@ const FONT_SIZE: f32 = 12.0;
 const OUTER_MARGIN: f32 = 8.0;
 const SECTION_INNER_MARGIN: f32 = 4.0;
 
+use common::glyphs::*;
+
 // ── Colors (match server console) ──
 
 const COLOR_NORMAL: egui::Color32 = egui::Color32::from_rgb(180, 255, 180);
@@ -245,18 +247,10 @@ enum SparkScale {
 
 // ── Display width ──
 
-/// Display cell count for a string, accounting for known wide chars in Iosevka.
-fn display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| if matches!(c, '△' | '●' | '○' | '↑' | '↓' | '↔') { 2 } else { 1 })
-        .sum()
-}
-
 // ── Tile-width segment primitives ──
 //
-// Each function takes a pre-built string and asserts its display width matches the slot.
-// Callers use standard format!() for layout; wide chars (↑, ↔, △ etc.) are 2 display
-// cells but 1 Rust char — account for them at the call site, not here.
+// Each function takes a pre-built string and asserts its char count matches the slot.
+// Nerd Font glyphs use {:<2} for 2-cell width.
 
 /// Segment row builder — wraps `ui.horizontal`, auto-inserts 1-char gaps between segments.
 struct Seg<'a> {
@@ -266,9 +260,9 @@ struct Seg<'a> {
 }
 
 impl<'a> Seg<'a> {
-    fn emit(&mut self, s: &str, expected_width: usize, color: egui::Color32) {
-        debug_assert_eq!(display_width(s), expected_width,
-            "segment: {expected_width} cells expected, got {} for {:?}", display_width(s), s);
+    fn emit(&mut self, s: &str, expected_chars: usize, color: egui::Color32) {
+        debug_assert_eq!(s.chars().count(), expected_chars,
+            "segment: {expected_chars} chars expected, got {} for {:?}", s.chars().count(), s);
         if self.count > 0 { self.ui.add_space(self.cw); }
         self.ui.label(colored_mono(s, color));
         self.count += 1;
@@ -402,7 +396,7 @@ pub fn setup_overlay_camera(mut commands: Commands) {
 // ── Font setup ──
 
 pub fn setup_overlay_font(mut contexts: EguiContexts, overlay: Res<OverlayCameraEntity>) {
-    let font_bytes = include_bytes!("../../../../../assets/fonts/Iosevka-Regular.ttc");
+    let font_bytes = include_bytes!("../../../../../assets/fonts/IosevkaNerdFont-Regular.ttf");
     let Ok(ctx) = contexts.ctx_for_entity_mut(overlay.0) else {
         return;
     };
@@ -594,16 +588,15 @@ pub fn update_metrics_overlay(
                         let (q, r, z, wx, wy) = tile_data
                             .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
                             .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
-                        // qrz/xy — two 23ch super-segments (23 + 1 gap + 23 = 47)
-                        const COORD: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
-                        let fc = |v: f64| COORD.fmt(v);
-                        let qrz = format!("qrz:{},{},{}", fc(q), fc(r), fc(z));
-                        let xy = format!("xy:{},{}", fc(wx), fc(wy));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            ui.label(colored_mono(&format!("{:^23}", qrz), COLOR_DIM));
-                            ui.add_space(cw);
-                            ui.label(colored_mono(&format!("{:^23}", xy), COLOR_DIM));
+                        const COORD: NumFmt = NumFmt { width: 7, precision: Precision::Integer, overflow: Overflow::Clamp };
+                        seg_row(ui, cw, |s| {
+                            s.quarter(&format!(" {:<2}", GLYPH_HEX), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(q)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(r)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(z)), COLOR_DIM);
+                            s.quarter(&format!(" {:<2}", GLYPH_GRID), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(wx)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(wy)), COLOR_DIM);
                         });
                         // mesh/load/pending
                         const CHUNK_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -621,17 +614,17 @@ pub fn update_metrics_overlay(
                         const LOD_RATIO: NumFmt = NumFmt { width: 6, precision: Precision::Fixed(2), overflow: Overflow::Clamp };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "LoD1"), COLOR_DIM);
-                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod1_tris as f64)), COLOR_DIM);
-                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(inner_r as f64)), COLOR_DIM);
-                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod1_ratio)), COLOR_DIM);
-                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod1_err)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(lod1_tris as f64)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_RADIUS, LOD_RADIUS.fmt(inner_r as f64)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_COMPRESS, LOD_RATIO.fmt(lod1_ratio)), COLOR_DIM);
+                            s.half(&format!("{:>2}{:<5}", GLYPH_ERROR, LOD_RATIO.fmt(lod1_err)), COLOR_DIM);
                         });
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "LoD2"), COLOR_DIM);
-                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod2_tris as f64)), COLOR_DIM);
-                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(outer_r as f64)), COLOR_DIM);
-                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod2_ratio)), COLOR_DIM);
-                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod2_err)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(lod2_tris as f64)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_RADIUS, LOD_RADIUS.fmt(outer_r as f64)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_COMPRESS, LOD_RATIO.fmt(lod2_ratio)), COLOR_DIM);
+                            s.half(&format!("{:>2}{:<5}", GLYPH_ERROR, LOD_RATIO.fmt(lod2_err)), COLOR_DIM);
                         });
                         if admin_count > 0 || admin_sum_count > 0 {
                             const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -658,7 +651,7 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
                             s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
-                            s.half(&format!("↑{:<5}", peak_v), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, peak_v), COLOR_DIM);
                             s.half(&format!("ƒ{:<6}", fps_v), fps_color);
                         });
                         const ENTS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -677,19 +670,19 @@ pub fn update_metrics_overlay(
                     draw_section(ui, "NETWORK", content_width, |ui| {
                         const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("↓NET  "), COLOR_DIM);
+                            s.half(&format!("{:<2}NET  ", GLYPH_NET_DOWN), COLOR_DIM);
                             s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
                             s.spark(&hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, rh);
                             let pv = NET_BPS.fmt(history.bw.visible_max(bar_count));
-                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                         const NET_MPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("↓MSG  "), COLOR_DIM);
+                            s.half(&format!("{:<2}MSG  ", GLYPH_NET_DOWN), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
                             s.spark(&hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, rh);
                             let pv = NET_MPS.fmt(history.msg.visible_max(bar_count));
-                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                     });
                 });

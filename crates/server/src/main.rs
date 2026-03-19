@@ -20,7 +20,7 @@ use common_bevy::{
     resources::{map::*, *},
 };
 use crate::{
-    resources::{engagement_budget::EngagementBudget, terrain::*, *},
+    resources::{terrain::*, *},
     systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
 };
 
@@ -147,7 +147,6 @@ fn main() {
     app.insert_resource(crate::resources::event_registry::EventRegistry::new(seed));
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
-    app.init_resource::<EngagementBudget>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();

@@ -11,14 +11,20 @@ use common::PlateTag;
 use crate::Terrain;
 use crate::events::EventCache;
 
-/// Probability that an eligible chunk center gets a spawner.
-const SPAWNER_PROBABILITY: f64 = 0.3;
+/// Noise wavelength for spawner density field (world units).
+/// Controls cluster size — larger = bigger spawner-dense/sparse regions.
+const SPAWNER_NOISE_WAVELENGTH: f64 = 800.0;
+
+/// Noise threshold for spawner eligibility. Higher = fewer spawners.
+/// At 0.3, roughly 30% of the noise field is above threshold.
+const SPAWNER_NOISE_THRESHOLD: f64 = 0.1;
+
+/// Seed offset to avoid correlation with other noise fields.
+const SPAWNER_NOISE_SEED_OFFSET: u64 = 0x5370_6177_6E65_72; // "Spawner"
 
 /// Spawner chunk scale in world units. Each spawner chunk evaluates one
 /// potential spawner at its center. Uses the same hex chunk layout as
 /// tile chunks but at a coarser spacing to control density.
-///
-/// At CHUNK_SPACING=19 tiles, this means one potential spawner per tile chunk.
 const SPAWNER_CHUNK_SCALE: f64 = 19.0;
 
 /// Maximum cached spawner chunks before LRU eviction.
@@ -72,25 +78,13 @@ impl SpawnerCache {
     ) -> Vec<SpawnerPlacement> {
         let (cq, cr) = crate::events::chunk_coord(wx, wy, SPAWNER_CHUNK_SCALE);
         let seed = self.seed;
-        let eval_before = self.cache.metrics.chunks_evaluated;
 
         for (dq, dr) in crate::events::chunk_1ring(cr) {
             self.cache.ensure(cq + dq, cr + dr, &mut |eq, er| {
                 evaluate_spawner_chunk(eq, er, seed, terrain)
-            });
+            }, |data| data.is_some());
         }
 
-        // Count newly evaluated chunks that produced output
-        let newly_evaluated = self.cache.metrics.chunks_evaluated - eval_before;
-        if newly_evaluated > 0 {
-            for (dq, dr) in crate::events::chunk_1ring(cr) {
-                if let Some(Some(_)) = self.cache.get(cq + dq, cr + dr) {
-                    self.cache.metrics.chunks_with_output += 1;
-                }
-            }
-        }
-
-        self.cache.metrics.queries += 1;
         let mut result = Vec::new();
         for (dq, dr) in crate::events::chunk_1ring(cr) {
             self.cache.touch(cq + dq, cr + dr);
@@ -98,7 +92,6 @@ impl SpawnerCache {
                 result.push(placement.clone());
             }
         }
-        self.cache.metrics.results_returned += result.len() as u64;
         result
     }
 
@@ -114,44 +107,89 @@ fn evaluate_spawner_chunk(
     seed: u64,
     terrain: &Terrain,
 ) -> SpawnerChunkData {
-    if !spawner_roll(cq, cr, seed) {
+    let (wx, wy) = crate::events::chunk_center(cq, cr, SPAWNER_CHUNK_SCALE);
+
+    if !spawner_eligible(wx, wy, seed) {
         return None;
     }
 
-    let (wx, wy) = crate::events::chunk_center(cq, cr, SPAWNER_CHUNK_SCALE);
     let (q, r) = crate::world_to_hex(wx, wy);
     let tags = terrain.tags_at(q, r);
 
-    archetype_for_tags(tags.as_slice()).map(|archetype| {
-        SpawnerPlacement { wx, wy, archetype }
-    })
+    archetype_for_tags(tags.as_slice()).map(|a| SpawnerPlacement { wx, wy, archetype: a })
 }
 
-/// Deterministic spawner eligibility check for a chunk.
-fn spawner_roll(cq: i32, cr: i32, seed: u64) -> bool {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    seed.hash(&mut hasher);
-    cq.hash(&mut hasher);
-    cr.hash(&mut hasher);
-    0x5370_6177_6E65_72u64.hash(&mut hasher); // "Spawner" salt
-    let h = hasher.finish();
-    (h % 1000) < (SPAWNER_PROBABILITY * 1000.0) as u64
+/// Noise-based spawner eligibility. Spatially coherent — nearby chunks
+/// have similar density, creating spawner-dense and sparse regions.
+fn spawner_eligible(wx: f64, wy: f64, seed: u64) -> bool {
+    let noise = crate::noise::simplex_2d(
+        wx / SPAWNER_NOISE_WAVELENGTH,
+        wy / SPAWNER_NOISE_WAVELENGTH,
+        seed.wrapping_add(SPAWNER_NOISE_SEED_OFFSET),
+    );
+    noise > SPAWNER_NOISE_THRESHOLD
 }
 
-/// Map terrain tags to spawner archetype. Returns None if terrain is ineligible.
+// ── Tag predicate matching ──
+
+/// Combinators for matching against a tile's tag set.
+#[derive(Clone)]
+pub enum TagPredicate {
+    /// Tag set must contain this tag.
+    With(PlateTag),
+    /// Tag set must NOT contain this tag.
+    Without(PlateTag),
+    /// Tag set must contain at least one of these.
+    AnyOf(Vec<PlateTag>),
+    /// All sub-predicates must match.
+    AllOf(Vec<TagPredicate>),
+}
+
+impl TagPredicate {
+    fn has(tags: &[PlateTag], target: &PlateTag) -> bool {
+        tags.iter().any(|t| std::mem::discriminant(t) == std::mem::discriminant(target))
+    }
+
+    pub fn matches(&self, tags: &[PlateTag]) -> bool {
+        match self {
+            TagPredicate::With(t) => Self::has(tags, t),
+            TagPredicate::Without(t) => !Self::has(tags, t),
+            TagPredicate::AnyOf(ts) => ts.iter().any(|t| Self::has(tags, t)),
+            TagPredicate::AllOf(preds) => preds.iter().all(|p| p.matches(tags)),
+        }
+    }
+}
+
+/// Archetype rule: predicate + archetype. First matching rule wins.
+type ArchetypeRule = (TagPredicate, SpawnerArchetype);
+
+fn archetype_rules() -> Vec<ArchetypeRule> {
+    use PlateTag::*;
+    use SpawnerArchetype::*;
+    use TagPredicate::*;
+
+    vec![
+        // Highland terrain → Berserker
+        (AllOf(vec![With(Highland)]), Berserker),
+        // Foothills terrain → Juggernaut
+        (AllOf(vec![With(Foothills)]), Juggernaut),
+        // Ridge terrain → Defender
+        (AllOf(vec![With(Ridge)]), Defender),
+        // Flat inland (no spine tags) → Kiter
+        (AllOf(vec![
+            With(Inland),
+            Without(Highland),
+            Without(Foothills),
+            Without(Ridge),
+        ]), Kiter),
+    ]
+}
+
+/// Map terrain tags to spawner archetype via predicate rules. First match wins.
 fn archetype_for_tags(tags: &[PlateTag]) -> Option<SpawnerArchetype> {
-    let has = |t: PlateTag| tags.iter().any(|tag| std::mem::discriminant(tag) == std::mem::discriminant(&t));
-
-    if has(PlateTag::Sea) { return None; }
-    if has(PlateTag::Ridge) { return None; }
-
-    if has(PlateTag::Highland) { return Some(SpawnerArchetype::Berserker); }
-    if has(PlateTag::Foothills) { return Some(SpawnerArchetype::Juggernaut); }
-    if has(PlateTag::Coast) { return Some(SpawnerArchetype::Defender); }
-    if has(PlateTag::Inland) { return Some(SpawnerArchetype::Kiter); }
-
-    None
+    archetype_rules().iter()
+        .find(|(pred, _)| pred.matches(tags))
+        .map(|(_, arch)| *arch)
 }
 
 #[cfg(test)]
@@ -159,20 +197,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spawner_roll_deterministic() {
-        let a = spawner_roll(5, 3, 42);
-        let b = spawner_roll(5, 3, 42);
+    fn spawner_eligible_deterministic() {
+        let a = spawner_eligible(500.0, 300.0, 42);
+        let b = spawner_eligible(500.0, 300.0, 42);
         assert_eq!(a, b);
     }
 
     #[test]
-    fn spawner_roll_varies_by_position() {
-        // Different chunks should get different rolls (not all same)
+    fn spawner_eligible_varies_spatially() {
         let mut trues = 0;
-        for cq in 0..100 {
-            if spawner_roll(cq, 0, 42) { trues += 1; }
+        for x in 0..100 {
+            if spawner_eligible(x as f64 * SPAWNER_CHUNK_SCALE, 0.0, 42) { trues += 1; }
         }
-        assert!(trues > 10 && trues < 90, "expected ~30% spawners, got {trues}/100");
+        assert!(trues > 5 && trues < 95, "expected spatial variation, got {trues}/100 eligible");
     }
 
     #[test]
@@ -181,8 +218,8 @@ mod tests {
     }
 
     #[test]
-    fn archetype_ridge_excluded() {
-        assert_eq!(archetype_for_tags(&[PlateTag::Inland, PlateTag::Ridge]), None);
+    fn archetype_ridge_is_defender() {
+        assert_eq!(archetype_for_tags(&[PlateTag::Inland, PlateTag::Ridge]), Some(SpawnerArchetype::Defender));
     }
 
     #[test]
@@ -191,8 +228,8 @@ mod tests {
     }
 
     #[test]
-    fn archetype_coast_is_defender() {
-        assert_eq!(archetype_for_tags(&[PlateTag::Coast]), Some(SpawnerArchetype::Defender));
+    fn archetype_coast_no_match() {
+        assert_eq!(archetype_for_tags(&[PlateTag::Coast]), None);
     }
 
     #[test]

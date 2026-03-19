@@ -32,7 +32,6 @@ use common_bevy::{
     },
     systems::combat::resources as resource_calcs,
 };
-use crate::resources::engagement_budget::EngagementBudget;
 
 /// Minimum distance from player to activate a spawner (tiles)
 const MIN_ACTIVATION_DISTANCE: i32 = 30;
@@ -44,16 +43,14 @@ const MAX_ACTIVATION_DISTANCE: i32 = 100;
 /// Minimum distance between active engagements (tiles)
 const MIN_ENGAGEMENT_DISTANCE: i32 = 50;
 
-/// Tracks which spawner tiles have active engagements (prevents double-activation).
-/// Keyed by (q, r) of the spawner tile. Cleared when engagement is cleaned up.
+/// Tracks which spawner tiles have active engagements.
+/// Cleared when engagement is cleaned up (allows re-activation).
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// Activate spawners near players. Queries EventRegistry for spawner
-/// placements within activation range, creates engagements at eligible ones.
+/// Activate spawners near players. Two gates: already active, too close.
 pub fn activate_spawners(
     mut commands: Commands,
-    mut budget: ResMut<EngagementBudget>,
     mut active: ResMut<ActiveSpawners>,
     mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
@@ -61,8 +58,6 @@ pub fn activate_spawners(
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
     engagement_query: Query<&Loc, With<Engagement>>,
 ) {
-    use crate::resources::event_registry::EventTypeId;
-
     for player_loc in &player_query {
         let spawners = registry.spawners_near(&terrain, player_loc.q, player_loc.r);
 
@@ -71,28 +66,13 @@ pub fn activate_spawners(
             let dist = player_loc.flat_distance(&Loc::from_qrz(q, r, 0));
 
             if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
-
-            registry.gate_metrics(EventTypeId::Spawner).candidate();
-
-            if active.0.contains(&(q, r)) {
-                registry.gate_metrics(EventTypeId::Spawner).reject("already_active");
-                continue;
-            }
+            if active.0.contains(&(q, r)) { continue; }
 
             let location = Qrz { q, r, z: 0 };
-            let zone_id = ZoneId::from_position(location);
-            if !budget.can_spawn_in_zone(zone_id) {
-                registry.gate_metrics(EventTypeId::Spawner).reject("budget_exhausted");
-                continue;
-            }
-
             let too_close = engagement_query.iter().any(|eloc| {
                 location.flat_distance(&**eloc) < MIN_ENGAGEMENT_DISTANCE
             });
-            if too_close {
-                registry.gate_metrics(EventTypeId::Spawner).reject("too_close");
-                continue;
-            }
+            if too_close { continue; }
 
             let archetype = match placement.archetype {
                 terrain::spawners::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
@@ -101,15 +81,13 @@ pub fn activate_spawners(
                 terrain::spawners::SpawnerArchetype::Defender => EnemyArchetype::Defender,
             };
 
-            registry.gate_metrics(EventTypeId::Spawner).accept();
             active.0.insert((q, r));
             let spawn_z = terrain.get(q, r);
             spawn_engagement(
                 Qrz { q, r, z: spawn_z + 1 },
                 archetype,
-                &mut commands, &mut budget, &time, &terrain,
+                &mut commands, &time, &terrain,
             );
-            registry.gate_metrics(EventTypeId::Spawner).materialized();
         }
     }
 }
@@ -119,7 +97,6 @@ fn spawn_engagement(
     location: Qrz,
     archetype: EnemyArchetype,
     commands: &mut Commands,
-    budget: &mut EngagementBudget,
     time: &Time,
     terrain: &crate::resources::terrain::Terrain,
 ) {
@@ -127,7 +104,6 @@ fn spawn_engagement(
     let npc_count = rand::rng().random_range(1..=3u8);
 
     let mut engagement = Engagement::new(location, level, archetype, npc_count);
-    let zone_id = engagement.zone_id;
 
     let engagement_entity = commands
         .spawn((
@@ -137,8 +113,6 @@ fn spawn_engagement(
             HexAssignment::default(),
         ))
         .id();
-
-    budget.register_engagement(zone_id);
 
     let attributes = calculate_enemy_attributes(level, archetype);
 
@@ -227,7 +201,6 @@ fn spawn_engagement(
     commands.entity(engagement_entity).insert(engagement);
 }
 
-/// Get a random hex offset for NPC placement within an engagement
 fn get_random_hex_offset(index: usize) -> Qrz {
     let directions = [
         Qrz { q: 1, r: 0, z: 0 },

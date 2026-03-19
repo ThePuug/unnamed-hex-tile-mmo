@@ -1,3 +1,4 @@
+pub mod glyphs;
 pub mod hex_spatial_grid;
 pub mod network;
 pub mod numfmt;

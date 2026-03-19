@@ -47,36 +47,14 @@ pub fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
 
 // ── Event Cache Metrics ──
 
-/// Auto-instrumented metrics for an EventCache. Counters are cumulative
-/// lifetime totals (monotonically increasing). `cache_size` is a gauge.
-#[derive(Default)]
+/// Auto-instrumented metrics for an EventCache. All counters are cumulative
+/// lifetime totals (monotonically increasing).
+#[derive(Default, Clone)]
 pub struct EventCacheMetrics {
     pub chunks_evaluated: u64,
     pub chunks_with_output: u64,
-    pub evaluation_time_us: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
-    pub cache_evictions: u64,
-    pub cache_size: u32,
-    pub queries: u64,
-    pub results_returned: u64,
-}
-
-impl EventCacheMetrics {
-    /// Snapshot current cumulative values. Does NOT reset — counters are lifetime totals.
-    pub fn snapshot(&self) -> EventCacheMetrics {
-        EventCacheMetrics {
-            chunks_evaluated: self.chunks_evaluated,
-            chunks_with_output: self.chunks_with_output,
-            evaluation_time_us: self.evaluation_time_us,
-            cache_hits: self.cache_hits,
-            cache_misses: self.cache_misses,
-            cache_evictions: self.cache_evictions,
-            cache_size: self.cache_size,
-            queries: self.queries,
-            results_returned: self.results_returned,
-        }
-    }
 }
 
 // ── Event Cache ──
@@ -117,12 +95,9 @@ impl<T> EventCache<T> {
 
         if !self.chunks.contains_key(&(cq, cr)) {
             self.metrics.cache_misses += 1;
-            let start = std::time::Instant::now();
             let data = evaluate_fn(cq, cr);
-            self.metrics.evaluation_time_us += start.elapsed().as_micros() as u64;
             self.metrics.chunks_evaluated += 1;
             self.chunks.insert((cq, cr), CacheEntry { data, last_accessed: stamp });
-            self.metrics.cache_size = self.chunks.len() as u32;
             self.evict_if_over_budget();
         } else {
             self.metrics.cache_hits += 1;
@@ -134,26 +109,35 @@ impl<T> EventCache<T> {
     }
 
     /// Ensure a chunk is populated, calling evaluate_fn on cache miss.
-    pub fn ensure(&mut self, cq: i32, cr: i32, evaluate_fn: &mut impl FnMut(i32, i32) -> T) {
+    /// `has_output` tests whether the result counts as non-empty output.
+    pub fn ensure(
+        &mut self, cq: i32, cr: i32,
+        evaluate_fn: &mut impl FnMut(i32, i32) -> T,
+        has_output: impl FnOnce(&T) -> bool,
+    ) {
         if self.chunks.contains_key(&(cq, cr)) {
             self.metrics.cache_hits += 1;
             return;
         }
         self.metrics.cache_misses += 1;
         self.access_counter += 1;
-        let start = std::time::Instant::now();
         let data = evaluate_fn(cq, cr);
-        self.metrics.evaluation_time_us += start.elapsed().as_micros() as u64;
         self.metrics.chunks_evaluated += 1;
+        if has_output(&data) {
+            self.metrics.chunks_with_output += 1;
+        }
         self.chunks.insert((cq, cr), CacheEntry { data, last_accessed: self.access_counter });
-        self.metrics.cache_size = self.chunks.len() as u32;
         self.evict_if_over_budget();
     }
 
     /// Ensure the 1-ring neighborhood is populated.
-    pub fn ensure_1ring(&mut self, cq: i32, cr: i32, evaluate_fn: &mut impl FnMut(i32, i32) -> T) {
+    pub fn ensure_1ring(
+        &mut self, cq: i32, cr: i32,
+        evaluate_fn: &mut impl FnMut(i32, i32) -> T,
+        has_output: impl Fn(&T) -> bool,
+    ) {
         for (dq, dr) in chunk_1ring(cr) {
-            self.ensure(cq + dq, cr + dr, evaluate_fn);
+            self.ensure(cq + dq, cr + dr, evaluate_fn, &has_output);
         }
     }
 
@@ -177,8 +161,6 @@ impl<T> EventCache<T> {
             .map(|(&key, _)| key);
         if let Some(key) = lru_key {
             self.chunks.remove(&key);
-            self.metrics.cache_evictions += 1;
-            self.metrics.cache_size = self.chunks.len() as u32;
         }
     }
 }

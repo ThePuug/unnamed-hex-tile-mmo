@@ -2244,7 +2244,8 @@ impl SpineCache {
     }
 
     /// Return the highest-priority spine tag at a world position, if any.
-    /// Lazily generates and caches spine chunks as needed.
+    /// Only returns a tag if the spine actually raised terrain above sea level
+    /// at this position — prevents tagging submerged slopes.
     pub fn tag_at(&mut self, wx: f64, wy: f64, plate_cache: &mut PlateCache) -> Option<PlateTag> {
         let (cq, cr) = spine_chunk_coord(wx, wy);
         self.access_counter += 1;
@@ -2254,11 +2255,15 @@ impl SpineCache {
             self.ensure_instances(cq + dq, cr + dr, plate_cache);
         }
 
+        // Check elevation first — no spine tag for submerged tiles
+        let mut elev = 0.0f64;
         let mut best: Option<PlateTag> = None;
         for (dq, dr) in spine_chunk_1ring(cr) {
             if let Some(entry) = self.instance_cache.get_mut(&(cq + dq, cr + dr)) {
                 entry.last_accessed = stamp;
                 for inst in &entry.instances {
+                    let e = inst.elevation_at(wx, wy);
+                    if e > elev { elev = e; }
                     if let Some(tag) = inst.tag_at(wx, wy) {
                         let dominated = best.as_ref().map_or(true, |b| spine_tag_priority(&tag) > spine_tag_priority(b));
                         if dominated { best = Some(tag); }
@@ -2266,7 +2271,8 @@ impl SpineCache {
                 }
             }
         }
-        best
+
+        if elev > 0.0 { best } else { None }
     }
 
     /// Return the combined spine elevation at a world position.
