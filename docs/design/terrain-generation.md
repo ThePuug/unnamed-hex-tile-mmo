@@ -85,9 +85,7 @@ The substrate is the communication bus between events. It carries:
 
 - **Tags** — per-plate classification data (PlateTag enum: Sea, Coast, Inland, Ridge, Highland, Foothills, and future variants). Events read tags from earlier tiers and write new tags for downstream events.
 - **Elevation** — height values that events can read and deform.
-- **Tiles** — EntityType at each position. Events can place, remove, or transform entities.
-
-An event's output is **tag mutations** (new tags on the substrate for downstream events to read) and **tile mutations** (entity changes at positions). Elevation changes are one flavor of tile mutation. Placing a spawner entity is another.
+An event's output is **tag mutations** (new tags on the substrate for downstream events to read) and **elevation mutations** (height changes at positions). Some events produce **cache-only data** (e.g., spawner placement) that downstream systems query directly rather than materializing into tiles.
 
 ### Neighborhood Principle
 
@@ -174,6 +172,7 @@ Terrain::get_height(q, r) -> i32              // Discretized elevation
 Terrain::get_raw_elevation(q, r) -> f64       // Pre-discretization
 Terrain::plate_info_at(q, r) -> (PlateCenter, MicroplateCenter)
 Terrain::tags_at(q, r) -> ArrayVec<[PlateTag; 2]>  // Base tag + optional spine tag
+Terrain::spawners_near(q, r, radius) -> ...        // Query spawner cache for nearby spawner positions
 
 // Batch generation (viewer/server)
 generate_region(seed, cx, cy, radius, with_spines) -> RegionResult

@@ -7,10 +7,9 @@
 //! Spawners do NOT exist as Map tiles. They live only in this cache, queried
 //! directly by the engagement activation system.
 
-use common::{PlateTag, ArrayVec};
+use common::PlateTag;
+use crate::Terrain;
 use crate::events::EventCache;
-use crate::plates::PlateCache;
-use crate::spine::SpineCache;
 
 /// Probability that an eligible chunk center gets a spawner.
 const SPAWNER_PROBABILITY: f64 = 0.3;
@@ -69,22 +68,17 @@ impl SpawnerCache {
     pub fn spawners_near(
         &mut self,
         wx: f64, wy: f64,
-        plate_cache: &mut PlateCache,
-        spine_cache: &mut SpineCache,
+        terrain: &Terrain,
     ) -> Vec<SpawnerPlacement> {
         let (cq, cr) = crate::events::chunk_coord(wx, wy, SPAWNER_CHUNK_SCALE);
         let seed = self.seed;
 
-        // Ensure 1-ring is populated
         for (dq, dr) in crate::events::chunk_1ring(cr) {
-            let nq = cq + dq;
-            let nr = cr + dr;
-            self.cache.ensure(nq, nr, &mut |eq, er| {
-                evaluate_spawner_chunk(eq, er, seed, plate_cache, spine_cache)
+            self.cache.ensure(cq + dq, cr + dr, &mut |eq, er| {
+                evaluate_spawner_chunk(eq, er, seed, terrain)
             });
         }
 
-        // Collect placements from 1-ring
         let mut result = Vec::new();
         for (dq, dr) in crate::events::chunk_1ring(cr) {
             self.cache.touch(cq + dq, cr + dr);
@@ -100,8 +94,7 @@ impl SpawnerCache {
 fn evaluate_spawner_chunk(
     cq: i32, cr: i32,
     seed: u64,
-    plate_cache: &mut PlateCache,
-    spine_cache: &mut SpineCache,
+    terrain: &Terrain,
 ) -> SpawnerChunkData {
     if !spawner_roll(cq, cr, seed) {
         return None;
@@ -109,17 +102,7 @@ fn evaluate_spawner_chunk(
 
     let (wx, wy) = crate::events::chunk_center(cq, cr, SPAWNER_CHUNK_SCALE);
     let (q, r) = crate::world_to_hex(wx, wy);
-
-    // Build tags from prior layers: base plate tag + spine tag
-    let mut plate = plate_cache.plate_at(wx, wy);
-    plate_cache.classify_tags(std::slice::from_mut(&mut plate));
-    let mut tags: ArrayVec<[PlateTag; 2]> = ArrayVec::new();
-    if let Some(base) = plate.tags.first() {
-        tags.push(*base);
-    }
-    if let Some(spine_tag) = spine_cache.tag_at(wx, wy, plate_cache) {
-        tags.push(spine_tag);
-    }
+    let tags = terrain.tags_at(q, r);
 
     archetype_for_tags(tags.as_slice()).map(|archetype| {
         SpawnerPlacement { wx, wy, archetype }

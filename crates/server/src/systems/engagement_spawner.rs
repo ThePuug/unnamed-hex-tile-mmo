@@ -49,20 +49,20 @@ const MIN_ENGAGEMENT_DISTANCE: i32 = 50;
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// Activate spawners near players. Queries the terrain SpawnerCache for
+/// Activate spawners near players. Queries EventRegistry for spawner
 /// placements within activation range, creates engagements at eligible ones.
 pub fn activate_spawners(
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
     mut active: ResMut<ActiveSpawners>,
+    mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
     terrain: Res<crate::resources::terrain::Terrain>,
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
     engagement_query: Query<&Loc, With<Engagement>>,
 ) {
     for player_loc in &player_query {
-        // Query spawner cache for placements near the player
-        let spawners = terrain.spawners_near(player_loc.q, player_loc.r);
+        let spawners = registry.spawners_near(&terrain, player_loc.q, player_loc.r);
 
         for placement in &spawners {
             let (q, r) = terrain::world_to_hex(placement.wx, placement.wy);

@@ -1,4 +1,5 @@
 pub mod engagement_budget;
+pub mod event_registry;
 pub mod terrain;
 
 use bevy::prelude::*;
