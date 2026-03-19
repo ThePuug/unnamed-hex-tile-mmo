@@ -61,6 +61,8 @@ pub fn activate_spawners(
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
     engagement_query: Query<&Loc, With<Engagement>>,
 ) {
+    use crate::resources::event_registry::EventTypeId;
+
     for player_loc in &player_query {
         let spawners = registry.spawners_near(&terrain, player_loc.q, player_loc.r);
 
@@ -70,21 +72,28 @@ pub fn activate_spawners(
 
             if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
 
-            // Already active?
-            if active.0.contains(&(q, r)) { continue; }
+            registry.gate_metrics(EventTypeId::Spawner).candidate();
 
-            // Budget check
+            if active.0.contains(&(q, r)) {
+                registry.gate_metrics(EventTypeId::Spawner).reject("already_active");
+                continue;
+            }
+
             let location = Qrz { q, r, z: 0 };
             let zone_id = ZoneId::from_position(location);
-            if !budget.can_spawn_in_zone(zone_id) { continue; }
+            if !budget.can_spawn_in_zone(zone_id) {
+                registry.gate_metrics(EventTypeId::Spawner).reject("budget_exhausted");
+                continue;
+            }
 
-            // Engagement proximity check
             let too_close = engagement_query.iter().any(|eloc| {
                 location.flat_distance(&**eloc) < MIN_ENGAGEMENT_DISTANCE
             });
-            if too_close { continue; }
+            if too_close {
+                registry.gate_metrics(EventTypeId::Spawner).reject("too_close");
+                continue;
+            }
 
-            // Convert SpawnerArchetype → EnemyArchetype
             let archetype = match placement.archetype {
                 terrain::spawners::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
                 terrain::spawners::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
@@ -92,7 +101,7 @@ pub fn activate_spawners(
                 terrain::spawners::SpawnerArchetype::Defender => EnemyArchetype::Defender,
             };
 
-            // Activate spawner
+            registry.gate_metrics(EventTypeId::Spawner).accept();
             active.0.insert((q, r));
             let spawn_z = terrain.get(q, r);
             spawn_engagement(
@@ -100,6 +109,7 @@ pub fn activate_spawners(
                 archetype,
                 &mut commands, &mut budget, &time, &terrain,
             );
+            registry.gate_metrics(EventTypeId::Spawner).materialized();
         }
     }
 }

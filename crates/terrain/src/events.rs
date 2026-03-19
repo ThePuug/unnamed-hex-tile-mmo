@@ -45,14 +45,50 @@ pub fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
     }
 }
 
+// ── Event Cache Metrics ──
+
+/// Auto-instrumented metrics for an EventCache. Counters are cumulative;
+/// `cache_size` is a gauge. The drain system reads and resets periodically.
+#[derive(Default)]
+pub struct EventCacheMetrics {
+    pub chunks_evaluated: u64,
+    pub chunks_with_output: u64,
+    pub evaluation_time_us: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_evictions: u64,
+    pub cache_size: u32,
+    pub queries: u64,
+    pub results_returned: u64,
+}
+
+impl EventCacheMetrics {
+    /// Snapshot and reset all counters. Cache_size is not reset (it's a gauge).
+    pub fn drain(&mut self) -> EventCacheMetrics {
+        EventCacheMetrics {
+            chunks_evaluated: std::mem::take(&mut self.chunks_evaluated),
+            chunks_with_output: std::mem::take(&mut self.chunks_with_output),
+            evaluation_time_us: std::mem::take(&mut self.evaluation_time_us),
+            cache_hits: std::mem::take(&mut self.cache_hits),
+            cache_misses: std::mem::take(&mut self.cache_misses),
+            cache_evictions: std::mem::take(&mut self.cache_evictions),
+            cache_size: self.cache_size, // gauge — don't reset
+            queries: std::mem::take(&mut self.queries),
+            results_returned: std::mem::take(&mut self.results_returned),
+        }
+    }
+}
+
 // ── Event Cache ──
 
 /// Generic LRU cache for event chunk data.
 /// Each event type wraps this with its own `ChunkData` type.
+/// Auto-instrumented via `EventCacheMetrics`.
 pub struct EventCache<T> {
     chunks: HashMap<(i32, i32), CacheEntry<T>>,
     access_counter: u64,
     max_chunks: usize,
+    pub metrics: EventCacheMetrics,
 }
 
 struct CacheEntry<T> {
@@ -66,11 +102,11 @@ impl<T> EventCache<T> {
             chunks: HashMap::new(),
             access_counter: 0,
             max_chunks,
+            metrics: EventCacheMetrics::default(),
         }
     }
 
     /// Get or evaluate a chunk. Calls `evaluate_fn` on cache miss.
-    /// Populates the 1-ring neighborhood before evaluating.
     pub fn get_or_evaluate(
         &mut self,
         cq: i32, cr: i32,
@@ -80,9 +116,16 @@ impl<T> EventCache<T> {
         let stamp = self.access_counter;
 
         if !self.chunks.contains_key(&(cq, cr)) {
+            self.metrics.cache_misses += 1;
+            let start = std::time::Instant::now();
             let data = evaluate_fn(cq, cr);
+            self.metrics.evaluation_time_us += start.elapsed().as_micros() as u64;
+            self.metrics.chunks_evaluated += 1;
             self.chunks.insert((cq, cr), CacheEntry { data, last_accessed: stamp });
+            self.metrics.cache_size = self.chunks.len() as u32;
             self.evict_if_over_budget();
+        } else {
+            self.metrics.cache_hits += 1;
         }
 
         let entry = self.chunks.get_mut(&(cq, cr)).unwrap();
@@ -92,10 +135,18 @@ impl<T> EventCache<T> {
 
     /// Ensure a chunk is populated, calling evaluate_fn on cache miss.
     pub fn ensure(&mut self, cq: i32, cr: i32, evaluate_fn: &mut impl FnMut(i32, i32) -> T) {
-        if self.chunks.contains_key(&(cq, cr)) { return; }
+        if self.chunks.contains_key(&(cq, cr)) {
+            self.metrics.cache_hits += 1;
+            return;
+        }
+        self.metrics.cache_misses += 1;
         self.access_counter += 1;
+        let start = std::time::Instant::now();
         let data = evaluate_fn(cq, cr);
+        self.metrics.evaluation_time_us += start.elapsed().as_micros() as u64;
+        self.metrics.chunks_evaluated += 1;
         self.chunks.insert((cq, cr), CacheEntry { data, last_accessed: self.access_counter });
+        self.metrics.cache_size = self.chunks.len() as u32;
         self.evict_if_over_budget();
     }
 
@@ -126,6 +177,8 @@ impl<T> EventCache<T> {
             .map(|(&key, _)| key);
         if let Some(key) = lru_key {
             self.chunks.remove(&key);
+            self.metrics.cache_evictions += 1;
+            self.metrics.cache_size = self.chunks.len() as u32;
         }
     }
 }

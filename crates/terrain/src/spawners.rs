@@ -72,6 +72,7 @@ impl SpawnerCache {
     ) -> Vec<SpawnerPlacement> {
         let (cq, cr) = crate::events::chunk_coord(wx, wy, SPAWNER_CHUNK_SCALE);
         let seed = self.seed;
+        let eval_before = self.cache.metrics.chunks_evaluated;
 
         for (dq, dr) in crate::events::chunk_1ring(cr) {
             self.cache.ensure(cq + dq, cr + dr, &mut |eq, er| {
@@ -79,6 +80,17 @@ impl SpawnerCache {
             });
         }
 
+        // Count newly evaluated chunks that produced output
+        let newly_evaluated = self.cache.metrics.chunks_evaluated - eval_before;
+        if newly_evaluated > 0 {
+            for (dq, dr) in crate::events::chunk_1ring(cr) {
+                if let Some(Some(_)) = self.cache.get(cq + dq, cr + dr) {
+                    self.cache.metrics.chunks_with_output += 1;
+                }
+            }
+        }
+
+        self.cache.metrics.queries += 1;
         let mut result = Vec::new();
         for (dq, dr) in crate::events::chunk_1ring(cr) {
             self.cache.touch(cq + dq, cr + dr);
@@ -86,7 +98,13 @@ impl SpawnerCache {
                 result.push(placement.clone());
             }
         }
+        self.cache.metrics.results_returned += result.len() as u64;
         result
+    }
+
+    /// Access cache metrics for drain.
+    pub fn cache_metrics(&mut self) -> &mut crate::events::EventCacheMetrics {
+        &mut self.cache.metrics
     }
 }
 

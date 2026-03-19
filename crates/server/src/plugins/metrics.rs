@@ -176,9 +176,16 @@ impl Plugin for MetricsPlugin {
             .add_systems(Update, (track_frame_time, maybe_flush_snapshot))
             .add_systems(
                 Update,
-                refresh_metric_gauges.run_if(flush_due),
+                (refresh_metric_gauges, drain_event_metrics).run_if(flush_due),
             );
     }
+}
+
+fn drain_event_metrics(
+    mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
+) {
+    let drained = registry.drain_metrics();
+    info!("[events:spawner] {}", drained.spawner_summary());
 }
 
 // ── Systems ──
