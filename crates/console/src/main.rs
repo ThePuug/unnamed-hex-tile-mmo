@@ -243,6 +243,60 @@ fn draw_section<F: FnOnce(&mut egui::Ui)>(
         });
 }
 
+// ── Funnel visualization ──
+
+/// Draw a narrowing funnel of horizontal bars. Each bar's width is proportional
+/// to its count relative to the first stage's count.
+fn draw_funnel(
+    ui: &mut egui::Ui,
+    stages: &[(&str, f64)],
+    cw: f32,
+    rh: f32,
+) {
+    if stages.is_empty() { return; }
+    let max_val = stages[0].1.max(1.0);
+    let avail_width = ui.available_width() - 14.0 * cw; // label(5ch) + gap + value(5ch) + padding
+
+    use numfmt::{NumFmt, Precision, Overflow};
+    const FUNNEL_FMT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+
+    for &(label, count) in stages {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            // Label (5ch right-aligned + gap)
+            ui.label(colored_mono(&format!("{:>5} ", label), COLOR_DIM));
+
+            // Bar
+            let bar_frac = (count / max_val).clamp(0.0, 1.0) as f32;
+            let bar_width = (bar_frac * avail_width).max(0.0);
+            let bar_size = egui::vec2(avail_width, rh - 2.0);
+            let (rect, _) = ui.allocate_exact_size(bar_size, egui::Sense::hover());
+            let painter = ui.painter_at(rect);
+
+            // Background (unfilled portion)
+            painter.rect_filled(rect, 0.0, COLOR_SPARK_BG);
+
+            // Filled portion
+            if bar_width > 0.5 {
+                let filled = egui::Rect::from_min_size(
+                    rect.min,
+                    egui::vec2(bar_width, rect.height()),
+                );
+                let color = if count > 0.0 { COLOR_DIM } else { COLOR_SPARK_BG };
+                painter.rect_filled(filled, 0.0, color);
+            }
+
+            // Zero-count: draw outline so the cliff is visible
+            if count == 0.0 {
+                painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, COLOR_BORDER), egui::StrokeKind::Outside);
+            }
+
+            // Value (right of bar)
+            ui.label(colored_mono(&format!(" {:<5}", FUNNEL_FMT.fmt(count)), COLOR_DIM));
+        });
+    }
+}
+
 // ── App ──
 
 fn main() -> eframe::Result {
@@ -591,6 +645,44 @@ impl eframe::App for ConsoleApp {
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("loaded_hexes"))), COLOR_DIM);
                         });
+                    });
+
+                    draw_section(&mut cols[2], "EVENTS", |ui| {
+                        let eval = self.field("evt.spawner.eval");
+                        let output = self.field("evt.spawner.eval_output");
+                        let found = self.field("evt.spawner.found");
+                        let candidates = self.field("evt.spawner.candidates");
+                        let accepted = self.field("evt.spawner.accepted");
+                        let materialized = self.field("evt.spawner.materialized");
+
+                        draw_funnel(ui, &[
+                            ("eval", eval),
+                            ("outpt", output),
+                            ("found", found),
+                            ("gate", candidates),
+                            ("pass", accepted),
+                            ("spawn", materialized),
+                        ], cw, rh);
+
+                        // Gate rejection breakdown
+                        let rejected = self.field("evt.spawner.rejected");
+                        if rejected > 0.0 {
+                            ui.label(colored_mono(
+                                &format!("  reject: {:.0}", rejected),
+                                COLOR_DIM,
+                            ));
+                        }
+
+                        // Cache health
+                        let sz = self.field("evt.spawner.cache_size");
+                        let hits = self.field("evt.spawner.cache_hits");
+                        let misses = self.field("evt.spawner.cache_misses");
+                        let total = hits + misses;
+                        let hit_pct = if total > 0.0 { hits / total * 100.0 } else { 0.0 };
+                        ui.label(colored_mono(
+                            &format!("  cache: {:.0} sz  {:.1}% hit  {:.0} miss", sz, hit_pct, misses),
+                            COLOR_DIM,
+                        ));
                     });
                 });
 
