@@ -2,13 +2,9 @@
 
 ## Design Philosophy
 
-The world is built from **tectonic plates** — large-scale geological provinces that define continents, coastlines, and mountain ranges. Terrain generation uses a **two-level Voronoi skeleton** where micro cells tile the world and macro plates label them, followed by **continental spine events** that raise elevation along inland mountain chains. Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
+The world is built in two phases: a **plate substrate** provides the geological foundation (continents, coastlines, plate topology), then an **event pipeline** transforms the substrate through a dependency-ordered sequence of world events. Each event reads the substrate produced by earlier events and writes mutations back — elevation changes, tag additions, entity placement.
 
-The pipeline flows bottom-up:
-1. **Regime field** — multiplicative noise defines where land and water exist
-2. **Two-level Voronoi** — micro cells provide spatial tiling; macro plates provide geological identity
-3. **Classification** — plates tagged as Sea/Coast/Inland based on regime values
-4. **Continental spines** — mountain chains with peaks, ridgelines, and ravine networks carve elevation
+Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
 
 ## Player Experience Goals
 
@@ -20,7 +16,11 @@ The pipeline flows bottom-up:
 
 ---
 
-## Layer 1: Regime Field
+## Plate Substrate
+
+The substrate is the foundation that events build on. It produces tagged plates at two scales (macro and micro) with geological classification. The substrate is not an event — it is the base layer that all events read from.
+
+### Regime Field
 
 The regime field determines where land and water exist. It multiplies three independent noise factors:
 
@@ -28,53 +28,33 @@ The regime field determines where land and water exist. It multiplies three inde
 regime = sigmoid(local_fBm × world_gate × regional_mod)
 ```
 
-### World Gate (Cellular)
+**World Gate (Cellular):** Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs. Constants control cell size, jitter, warp amplitude/wavelength, and sigmoid activation.
 
-Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs. Constants control cell size, jitter, warp amplitude/wavelength, and sigmoid activation.
+**Local fBm (Triple-Prime Octaves):** Multi-octave simplex at prime wavelengths to avoid harmonic alignment. Creates coastline irregularity.
 
-### Local fBm (Triple-Prime Octaves)
+**Regional Modulator:** Low-frequency simplex remapped to a narrow band. Ensures every world gets land but continent sizes vary.
 
-Multi-octave simplex at prime wavelengths to avoid harmonic alignment. Creates coastline irregularity.
-
-### Regional Modulator
-
-Low-frequency simplex remapped to a narrow band. Ensures every world gets land but continent sizes vary.
-
-### Output
-
-`regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
+**Output:** `regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
 
 **Implementation:** `crates/terrain/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
 
----
+### Two-Level Voronoi Skeleton
 
-## Layer 2: Two-Level Voronoi Skeleton
-
-### Micro Cells (Primary Spatial Layer)
-
-Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
+**Micro Cells (Primary Spatial Layer):** Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
 
 **Implementation:** `crates/terrain/src/microplates.rs` (`micro_cell_at`)
 
-### Macro Plates (Geological Identity)
-
-Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
+**Macro Plates (Geological Identity):** Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
 
 **Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates.
 
 **Implementation:** `crates/terrain/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
 
-### Orphan Correction
-
-Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned.
-
-Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
+**Orphan Correction:** Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned. Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
 
 **Implementation:** `crates/terrain/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
 
----
-
-## Layer 3: Classification
+### Classification
 
 Plates are tagged with geological roles after Voronoi assignment:
 
@@ -90,9 +70,44 @@ Both macro `PlateCenter.tags` and micro `MicroplateCenter.tags` carry tags. Macr
 
 ---
 
-## Layer 4: Continental Spines
+## Event Pipeline
 
-Mountain chains form along inland plate interiors. The spine system generates peaks, connects them with ridgelines, and carves ravine networks.
+Events are transformations that read the substrate and write mutations back to it. Each event follows the same structural pattern:
+
+1. **Epicenter selection** — where can this event place instances? Evaluated per-chunk from substrate data in the neighborhood.
+2. **Scale** — defines the chunk grid for this event type. Determines the spatial resolution of evaluation.
+3. **Transformation** — reads the neighborhood substrate (tags + tiles + elevation), writes tag mutations + tile mutations back.
+4. **Dependencies** — which other event types must have run first. Forms a DAG.
+
+### The Substrate
+
+The substrate is the communication bus between events. It carries:
+
+- **Tags** — per-plate classification data (PlateTag enum: Sea, Coast, Inland, Ridge, Highland, Foothills, and future variants). Events read tags from earlier tiers and write new tags for downstream events.
+- **Elevation** — height values that events can read and deform.
+- **Tiles** — EntityType at each position. Events can place, remove, or transform entities.
+
+An event's output is **tag mutations** (new tags on the substrate for downstream events to read) and **tile mutations** (entity changes at positions). Elevation changes are one flavor of tile mutation. Placing a spawner entity is another.
+
+### Neighborhood Principle
+
+Each event defines a chunk scale. The transformation function's input is always the center chunk + its 6 contiguous neighbors at that scale. This is the complete input — no global queries, no unbounded lookups. Each event's cache pads by its own margin, implicitly including margins of all events below it in the DAG.
+
+### Dependency DAG
+
+Events declare dependencies. Evaluation iterates the DAG in topological order. Each event's outputs are materialized into the substrate before the next runs. No event reads its own tier's mutations from other chunks. No circular dependencies.
+
+Events are organized into conceptual epochs — geological → erosion → ecological → social — but the DAG is the authority on ordering, not the epoch labels.
+
+### Caching
+
+Each event type maintains its own chunk cache. Deterministic from seed — evicted chunks regenerate identically on revisit.
+
+---
+
+## Continental Spines (Geological Event)
+
+The first event in the pipeline. Reads Inland plate tags from the substrate, writes elevation + Ridge/Highland/Foothills tags.
 
 ### Spine Placement
 
@@ -158,6 +173,7 @@ Terrain::new(seed) -> Terrain
 Terrain::get_height(q, r) -> i32              // Discretized elevation
 Terrain::get_raw_elevation(q, r) -> f64       // Pre-discretization
 Terrain::plate_info_at(q, r) -> (PlateCenter, MicroplateCenter)
+Terrain::tags_at(q, r) -> ArrayVec<[PlateTag; 2]>  // Base tag + optional spine tag
 
 // Batch generation (viewer/server)
 generate_region(seed, cx, cy, radius, with_spines) -> RegionResult
@@ -220,12 +236,17 @@ Where the current implementation intentionally differs from spec:
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
 | 1 | Elevation | Full biome-aware height | Spine-only elevation (peaks + ridgelines - ravines) | Biome system not yet built |
+| 2 | Event pipeline | Trait-based WorldEvent with DAG evaluation | Spines and spawners are direct pipeline stages, not WorldEvent implementations | Event system abstraction deferred until third event type exists to generalize from |
 
 ## Implementation Gaps
 
+**Current**: Event system abstraction — `WorldEvent` trait, DAG evaluation, substrate communication bus (two concrete events exist: spines and spawners; abstraction deferred until a third)
+
 **Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on plate tags + elevation + moisture
 
-**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation, dynamic temporal events
+**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation
+
+**Enabled by event pipeline**: Dynamic temporal events, fauna/flora distribution — future events in the DAG
 
 **Blocked by other systems**: Water rendering (ocean/coast), haven placement validation
 

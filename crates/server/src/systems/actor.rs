@@ -141,51 +141,14 @@ pub fn do_incremental(
     }
 }
 
-/// Probability that an eligible chunk center gets a spawner (seeded per-chunk).
-const SPAWNER_PROBABILITY: f64 = 0.3;
-
-/// Map terrain tags to archetype. Returns None if terrain is ineligible for spawning.
-fn archetype_for_tags(tags: &[common::PlateTag]) -> Option<common_bevy::spatial_difficulty::EnemyArchetype> {
-    use common::PlateTag;
-    use common_bevy::spatial_difficulty::EnemyArchetype;
-
-    let has = |t: PlateTag| tags.iter().any(|tag| std::mem::discriminant(tag) == std::mem::discriminant(&t));
-
-    // Sea tiles never get spawners
-    if has(PlateTag::Sea) { return None; }
-    // Ridge is too steep/exposed
-    if has(PlateTag::Ridge) { return None; }
-
-    // Spine tags take priority over base tags
-    if has(PlateTag::Highland) { return Some(EnemyArchetype::Berserker); }
-    if has(PlateTag::Foothills) { return Some(EnemyArchetype::Juggernaut); }
-    if has(PlateTag::Coast) { return Some(EnemyArchetype::Defender); }
-    if has(PlateTag::Inland) { return Some(EnemyArchetype::Kiter); }
-
-    None
-}
-
-/// Deterministic spawner eligibility check for a chunk.
-fn spawner_roll(chunk_id: ChunkId, seed: u64) -> bool {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    seed.hash(&mut hasher);
-    chunk_id.0.hash(&mut hasher);
-    chunk_id.1.hash(&mut hasher);
-    let h = hasher.finish();
-    (h % 1000) < (SPAWNER_PROBABILITY * 1000.0) as u64
-}
-
-/// Generate a chunk of terrain tiles, including spawner placement.
+/// Generate a chunk of terrain tiles.
 fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChunk {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]> = tinyvec::ArrayVec::new();
 
     for (q, r) in chunk::chunk_tiles(chunk_id) {
-        // Check if tile already exists in map (player-modified or pre-placed)
         let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(q, r) {
             (qrz, typ)
         } else {
-            // Generate new procedural tile with actual terrain height
             let z = terrain.get(q, r);
             let qrz = Qrz { q, r, z };
             let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
@@ -193,21 +156,6 @@ fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChu
         };
 
         tiles.push((qrz, typ));
-    }
-
-    // Spawner placement: one per chunk at the center tile, deterministic from seed
-    if spawner_roll(chunk_id, terrain.seed()) {
-        let center = chunk_id.center();
-        let tags = terrain.tags_at(center.q, center.r);
-        if let Some(archetype) = archetype_for_tags(tags.as_slice()) {
-            // Find the center tile in the chunk and place spawner on it
-            for i in 0..tiles.len() {
-                if tiles[i].0.q == center.q && tiles[i].0.r == center.r {
-                    tiles[i].1 = EntityType::Spawner { archetype };
-                    break;
-                }
-            }
-        }
     }
 
     TerrainChunk::new(tiles)
@@ -259,15 +207,8 @@ pub fn try_discover_chunk(
             }
 
             // Send ChunkData to client — strip q,r (reconstructed from chunk_tiles order)
-            // Replace Spawner tiles with Decorator on wire (spawners are server-only)
             let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
-                .map(|&(qrz, typ)| {
-                    let client_typ = match typ {
-                        EntityType::Spawner { .. } => EntityType::Decorator(Decorator { index: 3, is_solid: false }),
-                        other => other,
-                    };
-                    (qrz.z, client_typ)
-                })
+                .map(|&(qrz, typ)| (qrz.z, typ))
                 .collect();
             writer.write(Do {
                 event: Event::ChunkData {

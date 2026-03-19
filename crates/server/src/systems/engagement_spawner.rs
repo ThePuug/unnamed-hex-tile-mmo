@@ -1,8 +1,8 @@
 //! # Engagement Activation System
 //!
-//! Activates terrain-derived spawner tiles when players approach.
-//! Spawner tiles are placed deterministically during chunk generation
-//! based on terrain tags — this system only handles activation/deactivation.
+//! Activates terrain-derived spawners when players approach.
+//! Spawners live in the terrain SpawnerCache (lazily evaluated),
+//! not as tiles in the Map.
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -49,58 +49,57 @@ const MIN_ENGAGEMENT_DISTANCE: i32 = 50;
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// Activate spawner tiles near players. Queries Map for Spawner tiles
-/// within activation range and creates engagements at eligible ones.
+/// Activate spawners near players. Queries the terrain SpawnerCache for
+/// placements within activation range, creates engagements at eligible ones.
 pub fn activate_spawners(
     mut commands: Commands,
     mut budget: ResMut<EngagementBudget>,
     mut active: ResMut<ActiveSpawners>,
     time: Res<Time>,
     terrain: Res<crate::resources::terrain::Terrain>,
-    map: Res<crate::Map>,
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
     engagement_query: Query<&Loc, With<Engagement>>,
 ) {
     for player_loc in &player_query {
-        let pq = player_loc.q;
-        let pr = player_loc.r;
-        let r = MAX_ACTIVATION_DISTANCE;
+        // Query spawner cache for placements near the player
+        let spawners = terrain.spawners_near(player_loc.q, player_loc.r);
 
-        for dq in -r..=r {
-            let dr_min = (-r).max(-dq - r);
-            let dr_max = r.min(-dq + r);
-            for dr in dr_min..=dr_max {
-                let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
-                if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
+        for placement in &spawners {
+            let (q, r) = terrain::world_to_hex(placement.wx, placement.wy);
+            let dist = player_loc.flat_distance(&Loc::from_qrz(q, r, 0));
 
-                let q = pq + dq;
-                let rc = pr + dr;
+            if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
 
-                let Some(EntityType::Spawner { archetype }) = map.get_by_qr(q, rc).map(|(_, typ)| typ) else { continue };
+            // Already active?
+            if active.0.contains(&(q, r)) { continue; }
 
-                // Already active?
-                if active.0.contains(&(q, rc)) { continue; }
+            // Budget check
+            let location = Qrz { q, r, z: 0 };
+            let zone_id = ZoneId::from_position(location);
+            if !budget.can_spawn_in_zone(zone_id) { continue; }
 
-                // Budget check
-                let location = Qrz { q, r: rc, z: 0 };
-                let zone_id = ZoneId::from_position(location);
-                if !budget.can_spawn_in_zone(zone_id) { continue; }
+            // Engagement proximity check
+            let too_close = engagement_query.iter().any(|eloc| {
+                location.flat_distance(&**eloc) < MIN_ENGAGEMENT_DISTANCE
+            });
+            if too_close { continue; }
 
-                // Engagement proximity check
-                let too_close = engagement_query.iter().any(|eloc| {
-                    location.flat_distance(&**eloc) < MIN_ENGAGEMENT_DISTANCE
-                });
-                if too_close { continue; }
+            // Convert SpawnerArchetype → EnemyArchetype
+            let archetype = match placement.archetype {
+                terrain::spawners::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
+                terrain::spawners::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
+                terrain::spawners::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
+                terrain::spawners::SpawnerArchetype::Defender => EnemyArchetype::Defender,
+            };
 
-                // Activate spawner
-                active.0.insert((q, rc));
-                let spawn_z = terrain.get(q, rc);
-                spawn_engagement(
-                    Qrz { q, r: rc, z: spawn_z + 1 },
-                    archetype,
-                    &mut commands, &mut budget, &time, &terrain,
-                );
-            }
+            // Activate spawner
+            active.0.insert((q, r));
+            let spawn_z = terrain.get(q, r);
+            spawn_engagement(
+                Qrz { q, r, z: spawn_z + 1 },
+                archetype,
+                &mut commands, &mut budget, &time, &terrain,
+            );
         }
     }
 }

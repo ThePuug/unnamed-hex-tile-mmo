@@ -2,6 +2,7 @@ mod noise;
 mod plates;
 mod microplates;
 pub mod events;
+pub mod spawners;
 pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
@@ -185,6 +186,13 @@ pub fn hex_to_world(q: i32, r: i32) -> (f64, f64) {
     (qf + rf * 0.5, rf * SQRT_3 / 2.0)
 }
 
+/// Inverse of hex_to_world: convert world coordinates to nearest hex (q, r).
+pub fn world_to_hex(wx: f64, wy: f64) -> (i32, i32) {
+    let r = (wy * 2.0 / SQRT_3).round() as i32;
+    let q = (wx - r as f64 * 0.5).round() as i32;
+    (q, r)
+}
+
 // ──── Terrain ────
 
 pub struct Terrain {
@@ -195,6 +203,7 @@ pub struct Terrain {
 struct TerrainCaches {
     plate_cache: PlateCache,
     spine_cache: SpineCache,
+    spawner_cache: spawners::SpawnerCache,
 }
 
 impl Default for Terrain {
@@ -210,6 +219,7 @@ impl Terrain {
             caches: std::sync::Mutex::new(TerrainCaches {
                 plate_cache: PlateCache::new(seed),
                 spine_cache: SpineCache::new(seed),
+                spawner_cache: spawners::SpawnerCache::new(seed),
             }),
         }
     }
@@ -225,7 +235,7 @@ impl Terrain {
     pub fn tags_at(&self, q: i32, r: i32) -> ArrayVec<[PlateTag; 2]> {
         let (wx, wy) = hex_to_world(q, r);
         let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
 
         // Base tag from plate classification
         let mut plate = plate_cache.plate_at(wx, wy);
@@ -248,7 +258,7 @@ impl Terrain {
     pub fn get_height(&self, q: i32, r: i32) -> i32 {
         let (wx, wy) = hex_to_world(q, r);
         let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
         let spine_elev = spine_cache.elevation_at(wx, wy, plate_cache);
         discretize_elevation(spine_elev)
     }
@@ -257,7 +267,7 @@ impl Terrain {
     pub fn get_raw_elevation(&self, q: i32, r: i32) -> f64 {
         let (wx, wy) = hex_to_world(q, r);
         let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
         spine_cache.elevation_at(wx, wy, plate_cache)
     }
 
@@ -265,8 +275,18 @@ impl Terrain {
     /// Uses the terrain's internal coordinate system (from `hex_to_world`).
     pub fn elevation_at_world(&self, wx: f64, wy: f64) -> f64 {
         let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache } = *caches;
+        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
         spine_cache.elevation_at(wx, wy, plate_cache)
+    }
+
+    /// Query spawner placements near a hex tile position.
+    /// Returns spawner placements from the chunk containing (q,r) and its 6 neighbors.
+    /// Lazily evaluates and caches spawner chunks as needed.
+    pub fn spawners_near(&self, q: i32, r: i32) -> Vec<spawners::SpawnerPlacement> {
+        let (wx, wy) = hex_to_world(q, r);
+        let mut caches = self.caches.lock().unwrap();
+        let TerrainCaches { ref mut plate_cache, ref mut spine_cache, ref mut spawner_cache } = *caches;
+        spawner_cache.spawners_near(wx, wy, plate_cache, spine_cache)
     }
 
     /// UNCACHED — creates throwaway caches per call.

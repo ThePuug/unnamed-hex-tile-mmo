@@ -51,6 +51,11 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 **Async Mesh Pipeline:**
 - All mesh generation off main thread via `AsyncComputeTaskPool`. In-place mesh update pattern — old entity stays visible until task completes.
 
+**Event Pipeline (terrain generation):**
+- Events read substrate (tags + tiles + elevation) from the center chunk + 6 neighbors at the event's scale. This is the complete input — no global queries, no unbounded lookups.
+- Events write tag mutations + tile mutations back to the substrate for downstream events.
+- DAG ordering: each event declares dependencies. Evaluation iterates in topological order.
+
 ---
 
 ## System Execution Order
