@@ -47,8 +47,8 @@ pub fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
 
 // ── Event Cache Metrics ──
 
-/// Auto-instrumented metrics for an EventCache. Counters are cumulative;
-/// `cache_size` is a gauge. The drain system reads and resets periodically.
+/// Auto-instrumented metrics for an EventCache. Counters are cumulative
+/// lifetime totals (monotonically increasing). `cache_size` is a gauge.
 #[derive(Default)]
 pub struct EventCacheMetrics {
     pub chunks_evaluated: u64,
@@ -63,18 +63,18 @@ pub struct EventCacheMetrics {
 }
 
 impl EventCacheMetrics {
-    /// Snapshot and reset all counters. Cache_size is not reset (it's a gauge).
-    pub fn drain(&mut self) -> EventCacheMetrics {
+    /// Snapshot current cumulative values. Does NOT reset — counters are lifetime totals.
+    pub fn snapshot(&self) -> EventCacheMetrics {
         EventCacheMetrics {
-            chunks_evaluated: std::mem::take(&mut self.chunks_evaluated),
-            chunks_with_output: std::mem::take(&mut self.chunks_with_output),
-            evaluation_time_us: std::mem::take(&mut self.evaluation_time_us),
-            cache_hits: std::mem::take(&mut self.cache_hits),
-            cache_misses: std::mem::take(&mut self.cache_misses),
-            cache_evictions: std::mem::take(&mut self.cache_evictions),
-            cache_size: self.cache_size, // gauge — don't reset
-            queries: std::mem::take(&mut self.queries),
-            results_returned: std::mem::take(&mut self.results_returned),
+            chunks_evaluated: self.chunks_evaluated,
+            chunks_with_output: self.chunks_with_output,
+            evaluation_time_us: self.evaluation_time_us,
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
+            cache_evictions: self.cache_evictions,
+            cache_size: self.cache_size,
+            queries: self.queries,
+            results_returned: self.results_returned,
         }
     }
 }

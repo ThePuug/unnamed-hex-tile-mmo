@@ -26,13 +26,13 @@ impl EventGateMetrics {
     }
     pub fn materialized(&mut self) { self.materializations += 1; }
 
-    /// Snapshot and reset all counters.
-    pub fn drain(&mut self) -> EventGateMetrics {
+    /// Snapshot current cumulative values. Does NOT reset.
+    pub fn snapshot(&self) -> EventGateMetrics {
         EventGateMetrics {
-            candidates: std::mem::take(&mut self.candidates),
-            accepted: std::mem::take(&mut self.accepted),
-            rejections: std::mem::take(&mut self.rejections),
-            materializations: std::mem::take(&mut self.materializations),
+            candidates: self.candidates,
+            accepted: self.accepted,
+            rejections: self.rejections.clone(),
+            materializations: self.materializations,
         }
     }
 }
@@ -71,11 +71,13 @@ impl EventRegistry {
         self.gate_metrics.entry(id).or_default()
     }
 
-    /// Drain all metrics for the drain system.
-    pub fn drain_metrics(&mut self) -> DrainedMetrics {
+    /// Snapshot all metrics for the drain system. Does NOT reset — values are cumulative.
+    pub fn snapshot_metrics(&self) -> DrainedMetrics {
         DrainedMetrics {
-            spawner_cache: self.spawner_cache.cache_metrics().drain(),
-            spawner_gates: self.gate_metrics.entry(EventTypeId::Spawner).or_default().drain(),
+            spawner_cache: self.spawner_cache.cache_metrics().snapshot(),
+            spawner_gates: self.gate_metrics.get(&EventTypeId::Spawner)
+                .map(|g| g.snapshot())
+                .unwrap_or_default(),
         }
     }
 }

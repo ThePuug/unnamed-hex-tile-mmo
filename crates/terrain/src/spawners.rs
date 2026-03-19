@@ -102,9 +102,9 @@ impl SpawnerCache {
         result
     }
 
-    /// Access cache metrics for drain.
-    pub fn cache_metrics(&mut self) -> &mut crate::events::EventCacheMetrics {
-        &mut self.cache.metrics
+    /// Access cache metrics for snapshot.
+    pub fn cache_metrics(&self) -> &crate::events::EventCacheMetrics {
+        &self.cache.metrics
     }
 }
 

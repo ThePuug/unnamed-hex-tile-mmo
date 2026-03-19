@@ -169,18 +169,18 @@ impl Plugin for MetricsPlugin {
         snapshot.register("net_ord_queue", Aggregator::Last);
         snapshot.register("net_unord_buf_pct", Aggregator::Last);
         snapshot.register("net_unord_queue", Aggregator::Last);
-        // Event metrics (spawner pipeline)
-        snapshot.register("evt.spawner.eval", Aggregator::Sum);
-        snapshot.register("evt.spawner.eval_output", Aggregator::Sum);
-        snapshot.register("evt.spawner.cache_hits", Aggregator::Sum);
-        snapshot.register("evt.spawner.cache_misses", Aggregator::Sum);
+        // Event metrics (spawner pipeline) — cumulative lifetime totals
+        snapshot.register("evt.spawner.eval", Aggregator::Last);
+        snapshot.register("evt.spawner.eval_output", Aggregator::Last);
+        snapshot.register("evt.spawner.cache_hits", Aggregator::Last);
+        snapshot.register("evt.spawner.cache_misses", Aggregator::Last);
         snapshot.register("evt.spawner.cache_size", Aggregator::Last);
-        snapshot.register("evt.spawner.queries", Aggregator::Sum);
-        snapshot.register("evt.spawner.found", Aggregator::Sum);
-        snapshot.register("evt.spawner.candidates", Aggregator::Sum);
-        snapshot.register("evt.spawner.accepted", Aggregator::Sum);
-        snapshot.register("evt.spawner.rejected", Aggregator::Sum);
-        snapshot.register("evt.spawner.materialized", Aggregator::Sum);
+        snapshot.register("evt.spawner.queries", Aggregator::Last);
+        snapshot.register("evt.spawner.found", Aggregator::Last);
+        snapshot.register("evt.spawner.candidates", Aggregator::Last);
+        snapshot.register("evt.spawner.accepted", Aggregator::Last);
+        snapshot.register("evt.spawner.rejected", Aggregator::Last);
+        snapshot.register("evt.spawner.materialized", Aggregator::Last);
         app.insert_resource(snapshot)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
@@ -194,10 +194,10 @@ impl Plugin for MetricsPlugin {
 }
 
 fn drain_event_metrics(
-    mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
+    registry: Res<crate::resources::event_registry::EventRegistry>,
     snapshot: Res<MetricSnapshot>,
 ) {
-    let drained = registry.drain_metrics();
+    let drained = registry.snapshot_metrics();
     let c = &drained.spawner_cache;
     let g = &drained.spawner_gates;
     let total_rejected: u64 = g.rejections.values().sum();
