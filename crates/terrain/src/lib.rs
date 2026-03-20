@@ -1,11 +1,11 @@
-mod noise;
+pub(crate) mod noise;
 mod plates;
 mod microplates;
 pub mod events;
 pub mod spawners;
 pub mod spine;
 
-pub use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
+pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  regime_value_at, warp_strength_at};
@@ -467,5 +467,117 @@ mod tests {
             }
         }
         assert!(found_spine, "should find at least one spine-influenced tile in a 400×400 grid");
+    }
+
+    // ── Composite determinism tests ─────────────────────────────────────────
+
+    fn make_composite() -> events::Composite {
+        let seed = 0x9E3779B97F4A7C15; // same as Terrain::default()
+        let mut composite = events::Composite::new(seed);
+        composite.add_event(Box::new(events::plates::PlateEvent::new(seed)));
+        composite.add_event(Box::new(events::spines::SpineEvent::new(seed)));
+        composite
+    }
+
+    #[test]
+    fn composite_elevation_matches_terrain() {
+        let terrain = Terrain::default();
+        let composite = make_composite();
+
+        let coords: Vec<(i32, i32)> = vec![
+            (0, 0), (10, 10), (-50, 30), (100, -50),
+            (-100, 100), (200, 200), (-200, -200),
+        ];
+
+        for (q, r) in coords {
+            let old = terrain.get_height(q, r);
+            let new = composite.elevation_at(q, r);
+            assert_eq!(
+                old, new,
+                "elevation mismatch at ({q}, {r}): terrain={old}, composite={new}"
+            );
+        }
+    }
+
+    #[test]
+    fn composite_tags_match_terrain() {
+        let terrain = Terrain::default();
+        let composite = make_composite();
+
+        let coords: Vec<(i32, i32)> = vec![
+            (0, 0), (10, 10), (-50, 30), (100, -50),
+            (-100, 100), (200, 200), (-200, -200),
+        ];
+
+        for (q, r) in coords {
+            let old_tags = terrain.tags_at(q, r);
+            let new_tags = composite.tags_at(q, r);
+
+            // Check base tag matches
+            let old_base = old_tags.first().copied();
+            let new_has_base = old_base.map_or(true, |t| new_tags.has(t));
+            assert!(
+                new_has_base,
+                "base tag mismatch at ({q}, {r}): terrain={:?}, composite={:?}",
+                old_tags.as_slice(), new_tags.iter().collect::<Vec<_>>()
+            );
+
+            // Check spine tag matches
+            if old_tags.len() > 1 {
+                let old_spine = old_tags[1];
+                assert!(
+                    new_tags.has(old_spine),
+                    "spine tag mismatch at ({q}, {r}): terrain has {:?}, composite missing it",
+                    old_spine
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn composite_deterministic() {
+        let composite = make_composite();
+        let a = composite.tile_at(100, 50);
+        let b = composite.tile_at(100, 50);
+        assert_eq!(a.tags, b.tags);
+        assert_eq!(a.elevation, b.elevation);
+    }
+
+    /// Broad determinism test: compare old Terrain and new Composite across
+    /// a wide grid, verifying elevation and tag equivalence at every point.
+    #[test]
+    fn composite_matches_terrain_broad() {
+        let terrain = Terrain::default();
+        let composite = make_composite();
+
+        let mut mismatches = Vec::new();
+        for q in (-100..=100).step_by(10) {
+            for r in (-100..=100).step_by(10) {
+                let old_h = terrain.get_height(q, r);
+                let new_h = composite.elevation_at(q, r);
+                if old_h != new_h {
+                    mismatches.push(format!("  elev ({q},{r}): terrain={old_h}, composite={new_h}"));
+                }
+
+                let old_tags = terrain.tags_at(q, r);
+                let new_tags = composite.tags_at(q, r);
+                if let Some(&base) = old_tags.first() {
+                    if !new_tags.has(base) {
+                        mismatches.push(format!("  base tag ({q},{r}): terrain={base:?}, composite missing"));
+                    }
+                }
+                if old_tags.len() > 1 {
+                    if !new_tags.has(old_tags[1]) {
+                        mismatches.push(format!("  spine tag ({q},{r}): terrain={:?}, composite missing", old_tags[1]));
+                    }
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "Found {} mismatches:\n{}",
+            mismatches.len(),
+            mismatches.join("\n")
+        );
     }
 }

@@ -1,8 +1,8 @@
 //! # Engagement Activation System
 //!
 //! Activates terrain-derived spawners when players approach.
-//! Spawners live in the terrain SpawnerCache (lazily evaluated),
-//! not as tiles in the Map.
+//! Spawners are placed by SpawnerEvent in the world event composite.
+//! The activation system reads SpawnerPlacementIndex for nearby placements.
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -52,17 +52,16 @@ pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 pub fn activate_spawners(
     mut commands: Commands,
     mut active: ResMut<ActiveSpawners>,
-    mut registry: ResMut<crate::resources::event_registry::EventRegistry>,
+    registry: Res<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
-    terrain: Res<crate::resources::terrain::Terrain>,
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
     engagement_query: Query<&Loc, With<Engagement>>,
 ) {
     for player_loc in &player_query {
-        let spawners = registry.spawners_near(&terrain, player_loc.q, player_loc.r);
+        let spawners = registry.spawners_near(player_loc.q, player_loc.r);
 
         for placement in &spawners {
-            let (q, r) = terrain::world_to_hex(placement.wx, placement.wy);
+            let (q, r) = (placement.q, placement.r);
             let dist = player_loc.flat_distance(&Loc::from_qrz(q, r, 0));
 
             if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
@@ -75,18 +74,18 @@ pub fn activate_spawners(
             if too_close { continue; }
 
             let archetype = match placement.archetype {
-                terrain::spawners::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
-                terrain::spawners::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
-                terrain::spawners::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
-                terrain::spawners::SpawnerArchetype::Defender => EnemyArchetype::Defender,
+                terrain::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
+                terrain::events::spawner::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
+                terrain::events::spawner::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
+                terrain::events::spawner::SpawnerArchetype::Defender => EnemyArchetype::Defender,
             };
 
             active.0.insert((q, r));
-            let spawn_z = terrain.get(q, r);
+            let spawn_z = registry.elevation_at(q, r);
             spawn_engagement(
                 Qrz { q, r, z: spawn_z + 1 },
                 archetype,
-                &mut commands, &time, &terrain,
+                &mut commands, &time, &registry,
             );
         }
     }
@@ -98,7 +97,7 @@ fn spawn_engagement(
     archetype: EnemyArchetype,
     commands: &mut Commands,
     time: &Time,
-    terrain: &crate::resources::terrain::Terrain,
+    registry: &crate::resources::event_registry::EventRegistry,
 ) {
     let level = calculate_enemy_level(location, HAVEN_LOCATION);
     let npc_count = rand::rng().random_range(1..=3u8);
@@ -119,7 +118,7 @@ fn spawn_engagement(
     for i in 0..npc_count {
         let offset = get_random_hex_offset(i as usize);
         let npc_location_base = location + offset;
-        let npc_z = terrain.get(npc_location_base.q, npc_location_base.r);
+        let npc_z = registry.elevation_at(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
 
         let actor_impl = ActorImpl {

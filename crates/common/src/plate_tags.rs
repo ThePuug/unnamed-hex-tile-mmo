@@ -17,6 +17,7 @@ pub const MAX_PLATE_TAGS: usize = 64;
 /// Pattern match on the variant to check presence, destructure to read data.
 /// All payloads must be Copy-compatible (u8, u16, etc.) — no heap allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum PlateTag {
     /// Base classification — assigned during plate generation.
     Sea,
@@ -71,6 +72,63 @@ pub trait Tagged {
     fn erase_tag(&mut self, tag: &PlateTag) {
         self.tags_mut()
             .retain(|t| mem::discriminant(t) != mem::discriminant(tag));
+    }
+}
+
+// ── TagSet ──────────────────────────────────────────────────────────────────
+
+/// All PlateTag variants, for iteration.
+const ALL_TAGS: &[PlateTag] = &[
+    PlateTag::Sea, PlateTag::Coast, PlateTag::Inland,
+    PlateTag::Ridge, PlateTag::Foothills, PlateTag::Highland,
+];
+
+/// Fixed-size bitfield for O(1) tag operations. Replaces `ArrayVec<[PlateTag; N]>`
+/// for composite tile queries where set membership is the primary operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TagSet(u64);
+
+impl TagSet {
+    pub fn new() -> Self { Self(0) }
+
+    pub fn has(&self, tag: PlateTag) -> bool {
+        self.0 & (1u64 << tag as u8) != 0
+    }
+
+    pub fn has_any(&self, tags: &[PlateTag]) -> bool {
+        tags.iter().any(|&t| self.has(t))
+    }
+
+    pub fn add(&mut self, tag: PlateTag) {
+        self.0 |= 1u64 << tag as u8;
+    }
+
+    pub fn remove(&mut self, tag: PlateTag) {
+        self.0 &= !(1u64 << tag as u8);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = PlateTag> + '_ {
+        ALL_TAGS.iter().copied().filter(|&t| self.has(t))
+    }
+}
+
+impl From<PlateTag> for TagSet {
+    fn from(tag: PlateTag) -> Self {
+        let mut s = Self::new();
+        s.add(tag);
+        s
+    }
+}
+
+impl FromIterator<PlateTag> for TagSet {
+    fn from_iter<I: IntoIterator<Item = PlateTag>>(iter: I) -> Self {
+        let mut s = Self::new();
+        for t in iter { s.add(t); }
+        s
     }
 }
 
@@ -163,5 +221,60 @@ mod tests {
         let p = plate(vec![PlateTag::Coast]);
         assert!(p.has_tag(&PlateTag::Coast));
         assert!(!p.has_tag(&PlateTag::Sea));
+    }
+
+    // ── TagSet tests ──
+
+    #[test]
+    fn tagset_add_and_has() {
+        let mut s = TagSet::new();
+        assert!(!s.has(PlateTag::Inland));
+        s.add(PlateTag::Inland);
+        assert!(s.has(PlateTag::Inland));
+        assert!(!s.has(PlateTag::Sea));
+    }
+
+    #[test]
+    fn tagset_remove() {
+        let mut s = TagSet::new();
+        s.add(PlateTag::Sea);
+        s.add(PlateTag::Inland);
+        s.remove(PlateTag::Sea);
+        assert!(!s.has(PlateTag::Sea));
+        assert!(s.has(PlateTag::Inland));
+    }
+
+    #[test]
+    fn tagset_has_any() {
+        let mut s = TagSet::new();
+        s.add(PlateTag::Ridge);
+        assert!(s.has_any(&[PlateTag::Sea, PlateTag::Ridge]));
+        assert!(!s.has_any(&[PlateTag::Sea, PlateTag::Coast]));
+    }
+
+    #[test]
+    fn tagset_from_tag() {
+        let s = TagSet::from(PlateTag::Highland);
+        assert!(s.has(PlateTag::Highland));
+        assert!(!s.has(PlateTag::Sea));
+    }
+
+    #[test]
+    fn tagset_iter() {
+        let mut s = TagSet::new();
+        s.add(PlateTag::Sea);
+        s.add(PlateTag::Ridge);
+        let collected: Vec<_> = s.iter().collect();
+        assert_eq!(collected.len(), 2);
+        assert!(collected.contains(&PlateTag::Sea));
+        assert!(collected.contains(&PlateTag::Ridge));
+    }
+
+    #[test]
+    fn tagset_from_iter() {
+        let s: TagSet = [PlateTag::Coast, PlateTag::Foothills].iter().copied().collect();
+        assert!(s.has(PlateTag::Coast));
+        assert!(s.has(PlateTag::Foothills));
+        assert!(!s.has(PlateTag::Sea));
     }
 }

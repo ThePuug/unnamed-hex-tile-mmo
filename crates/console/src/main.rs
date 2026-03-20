@@ -196,6 +196,29 @@ fn seg_half(ui: &mut egui::Ui, s: &str, color: Color32) {
     ui.label(colored_mono(s, color));
 }
 
+/// Row builder with auto-gapped segments.
+struct Seg<'a> {
+    ui: &'a mut egui::Ui,
+    cw: f32,
+    count: usize,
+}
+
+impl<'a> Seg<'a> {
+    fn half(&mut self, s: &str, color: Color32) {
+        if self.count > 0 { self.ui.add_space(self.cw); }
+        seg_half(self.ui, s, color);
+        self.count += 1;
+    }
+}
+
+fn seg_row(ui: &mut egui::Ui, cw: f32, f: impl FnOnce(&mut Seg)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let mut seg = Seg { ui, cw, count: 0 };
+        f(&mut seg);
+    });
+}
+
 /// Quarter-segment: 3 characters.
 #[allow(dead_code)]
 fn seg_quarter(ui: &mut egui::Ui, s: &str, color: Color32) {
@@ -643,24 +666,40 @@ impl eframe::App for ConsoleApp {
                     });
 
                     draw_section(&mut cols[2], "EVENTS", |ui| {
-                        let survey = self.field("evt.survey");
-                        let placed = self.field("evt.placed");
-                        let active = self.field("evt.active");
-                        let hits = self.field("evt.cache_hits");
-                        let misses = self.field("evt.cache_misses");
-                        let total = hits + misses;
-                        const HIT_FMT: NumFmt = NumFmt { width: 4, precision: Precision::Fixed(1), overflow: Overflow::Clamp };
-                        let hit_pct = if total > 0.0 {
-                            format!("{:<2}{}%", GLYPH_CACHE, HIT_FMT.fmt(hits / total * 100.0))
-                        } else {
-                            format!("{:<2}--.-%", GLYPH_CACHE)
-                        };
+                        let visible = self.field("evt.visible");
+                        let t_hits = self.field("evt.tile_hits");
+                        let t_misses = self.field("evt.tile_misses");
+                        let t_total = t_hits + t_misses;
+                        let tile_pct = if t_total > 0.0 { (t_hits / t_total * 100.0) as u32 } else { 0 };
 
-                        draw_funnel(ui, &[
-                            ("survey", survey, &hit_pct),
-                            ("placed", placed, ""),
-                            ("active", active, ""),
-                        ], cw, rh);
+                        // Composite row: visible tiles + tile hit%
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", ""), COLOR_DIM);
+                            s.half(&format!("{:>7}", "visible"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(visible)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "tile"), COLOR_DIM);
+                            s.half(&format!("{:>4}%  ", tile_pct), COLOR_DIM);
+                        });
+
+                        // Per-event rows: scan, index, cell hit%
+                        for name in &["plates", "spines", "spawner"] {
+                            let scan = self.field(&format!("evt.{name}.scan"));
+                            let index = self.field(&format!("evt.{name}.index"));
+                            let c_hits = self.field(&format!("evt.{name}.cell_hits"));
+                            let c_misses = self.field(&format!("evt.{name}.cell_misses"));
+                            let c_total = c_hits + c_misses;
+                            let cell_pct = if c_total > 0.0 { (c_hits / c_total * 100.0) as u32 } else { 0 };
+
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{:>7}", name), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", "scan"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", COUNT5.fmt(scan)), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", "index"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", COUNT5.fmt(index)), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", "cell"), COLOR_DIM);
+                                s.half(&format!("{:>4}%  ", cell_pct), COLOR_DIM);
+                            });
+                        }
                     });
                 });
 

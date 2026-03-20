@@ -144,7 +144,7 @@ const SEED_LATERAL:  u64 = 0xAAAA_BBBB_0002;
 const SEED_WIDTH:    u64 = 0xAAAA_BBBB_0003;
 const SEED_HEIGHT:   u64 = 0xAAAA_BBBB_0004;
 const SEED_MICRO:    u64 = 0xAAAA_BBBB_0005;
-const SEED_PRIORITY: u64 = 0xAAAA_BBBB_0006;
+pub(crate) const SEED_PRIORITY: u64 = 0xAAAA_BBBB_0006;
 const SEED_SKIP:     u64 = 0xAAAA_BBBB_0007;
 const SEED_FLANK:    u64 = 0xAAAA_BBBB_0008;
 
@@ -191,7 +191,7 @@ fn coastal_attenuation(coast_count: usize) -> f64 {
 
 // ── Tag priority ─────────────────────────────────────────────────────────────
 
-fn spine_tag_priority(tag: &PlateTag) -> u8 {
+pub(crate) fn spine_tag_priority(tag: &PlateTag) -> u8 {
     match tag {
         PlateTag::Ridge     => 3,
         PlateTag::Highland  => 2,
@@ -964,25 +964,25 @@ const HEX_ROW_HEIGHT: f64 = 0.8660254037844386;
 
 /// Evaluation chunk size. ≥ 2× SPINE_EXCLUSION_DIST guarantees a candidate
 /// can only conflict with candidates in immediately adjacent chunks.
-const SPINE_CHUNK_SIZE: f64 = 2.0 * SPINE_EXCLUSION_DIST;
+pub(crate) const SPINE_CHUNK_SIZE: f64 = 2.0 * SPINE_EXCLUSION_DIST;
 
 /// Maximum distance a spine arm can affect from its epicenter.
 /// Accounts for peak falloff radius plus ridgeline perpendicular width.
-const SPINE_INFLUENCE: f64 =
+pub(crate) const SPINE_INFLUENCE: f64 =
     SPINE_MAX_STEPS as f64 * SPINE_STEP + LATERAL_AMP + HALF_WIDTH_MAX * PEAK_FALLOFF_SCALE + RIDGE_HALF_WIDTH;
 
 /// A candidate epicenter for spine generation.
 #[derive(Clone)]
-struct SpineCandidate {
-    plate_id: u64,
-    wx: f64,
-    wy: f64,
-    priority: u64,
-    chunk_q: i32,
-    chunk_r: i32,
+pub(crate) struct SpineCandidate {
+    pub(crate) plate_id: u64,
+    pub(crate) wx: f64,
+    pub(crate) wy: f64,
+    pub(crate) priority: u64,
+    pub(crate) chunk_q: i32,
+    pub(crate) chunk_r: i32,
 }
 
-fn spine_chunk_coord(wx: f64, wy: f64) -> (i32, i32) {
+pub(crate) fn spine_chunk_coord(wx: f64, wy: f64) -> (i32, i32) {
     let row_height = SPINE_CHUNK_SIZE * HEX_ROW_HEIGHT;
     let cr = (wy / row_height).round() as i32;
     let odd_shift = if cr & 1 != 0 { SPINE_CHUNK_SIZE * 0.5 } else { 0.0 };
@@ -990,7 +990,7 @@ fn spine_chunk_coord(wx: f64, wy: f64) -> (i32, i32) {
     (cq, cr)
 }
 
-fn spine_chunk_1ring(cr: i32) -> [(i32, i32); 7] {
+pub(crate) fn spine_chunk_1ring(cr: i32) -> [(i32, i32); 7] {
     if cr & 1 == 0 {
         [(0, 0), (-1, 0), (1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1)]
     } else {
@@ -1053,7 +1053,7 @@ fn ensure_candidates(
     cache.insert((cq, cr), candidates);
 }
 
-fn resolve_chunk(
+pub(crate) fn resolve_chunk(
     cq: i32,
     cr: i32,
     candidate_cache: &HashMap<(i32, i32), Vec<SpineCandidate>>,
@@ -1104,7 +1104,7 @@ fn plates_bounding_box(plates: &[PlateCenter], margin: f64) -> (f64, f64, f64, f
     (min_x - margin, max_x + margin, min_y - margin, max_y + margin)
 }
 
-fn spine_chunks_in_bounds(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> Vec<(i32, i32)> {
+pub(crate) fn spine_chunks_in_bounds(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> Vec<(i32, i32)> {
     let row_height = SPINE_CHUNK_SIZE * HEX_ROW_HEIGHT;
     let cr_min = ((min_y / row_height) - 0.5).floor() as i32;
     let cr_max = ((max_y / row_height) + 0.5).ceil() as i32;
@@ -2055,7 +2055,7 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
 
 // ── Single spine growth ──────────────────────────────────────────────────────
 
-fn grow_spine(
+pub(crate) fn grow_spine(
     epi_wx: f64,
     epi_wy: f64,
     spine_id: u64,
@@ -2216,7 +2216,7 @@ pub fn micro_elevation_offset(micro_id: u64, macro_elevation: f64, seed: u64) ->
 // ── SpineCache ───────────────────────────────────────────────────────────────
 
 /// Maximum number of spine chunks to keep cached.
-const SPINE_CACHE_MAX_CHUNKS: usize = 32;
+const SPINE_CACHE_MAX_CHUNKS: usize = 256;
 
 struct SpineCacheEntry {
     instances: Vec<SpineInstance>,
@@ -2329,6 +2329,32 @@ impl SpineCache {
         });
 
         self.evict_if_over_budget();
+    }
+
+    /// Ensure all spine chunks within world-space bounds (+ influence margin)
+    /// are evaluated and cached. Call before iterating with `chunk_instances`.
+    pub fn ensure_bounds(
+        &mut self,
+        min_x: f64, max_x: f64,
+        min_y: f64, max_y: f64,
+        plate_cache: &mut PlateCache,
+    ) {
+        let target_chunks = spine_chunks_in_bounds(
+            min_x - SPINE_INFLUENCE, max_x + SPINE_INFLUENCE,
+            min_y - SPINE_INFLUENCE, max_y + SPINE_INFLUENCE,
+        );
+        for &(cq, cr) in &target_chunks {
+            for (dq, dr) in spine_chunk_1ring(cr) {
+                self.ensure_instances(cq + dq, cr + dr, plate_cache);
+            }
+        }
+    }
+
+    /// Access cached instances for a spine chunk. Must call `ensure_bounds` first.
+    pub fn chunk_instances(&self, cq: i32, cr: i32) -> &[SpineInstance] {
+        self.instance_cache.get(&(cq, cr))
+            .map(|e| e.instances.as_slice())
+            .unwrap_or(&[])
     }
 
     fn evict_if_over_budget(&mut self) {

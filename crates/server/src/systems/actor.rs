@@ -13,7 +13,7 @@ use common_bevy::{
     message::{Component, Event, *},
     resources::map::*,
 };
-use crate::resources::terrain::*;
+use crate::resources::event_registry::EventRegistry;
 
 
 
@@ -35,7 +35,7 @@ pub fn do_spawn_discover(
     mut writer: MessageWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
     query: Query<&Loc>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
 ) {
     for message in reader.read() {
         let Do { event: Event::Spawn { ent, .. } } = message else { continue };
@@ -57,7 +57,7 @@ pub fn do_spawn_discover(
         let current_chunk = loc_to_chunk(**loc);
 
         // Send radius matches client eviction: terrain_chunk_radius + 1
-        let max_z = chunk_max_z(current_chunk, |q, r| terrain.get(q, r));
+        let max_z = chunk_max_z(current_chunk, |q, r| registry.elevation_at(q, r));
         let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
         let chunks = calculate_visible_chunks(current_chunk, send_radius as u8);
@@ -82,7 +82,7 @@ pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
 ) {
     for message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
@@ -102,7 +102,7 @@ pub fn do_incremental(
         }
 
         // Boundary crossing — recompute send radius (matches client eviction)
-        let max_z = chunk_max_z(new_chunk, |q, r| terrain.get(q, r));
+        let max_z = chunk_max_z(new_chunk, |q, r| registry.elevation_at(q, r));
         let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
         let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
@@ -142,14 +142,14 @@ pub fn do_incremental(
 }
 
 /// Generate a chunk of terrain tiles.
-fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChunk {
+fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry, map: &Map) -> TerrainChunk {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]> = tinyvec::ArrayVec::new();
 
     for (q, r) in chunk::chunk_tiles(chunk_id) {
         let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(q, r) {
             (qrz, typ)
         } else {
-            let z = terrain.get(q, r);
+            let z = registry.elevation_at(q, r);
             let qrz = Qrz { q, r, z };
             let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
             (qrz, typ)
@@ -167,7 +167,7 @@ pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
     mut map: ResMut<Map>,
 ) {
     for message in reader.read() {
@@ -185,7 +185,7 @@ pub fn try_discover_chunk(
                 world_cache.access_order.get_or_insert(chunk_id, || ());
                 Arc::clone(world_cache.chunks.get(&chunk_id).unwrap())
             } else {
-                let generated = Arc::new(generate_chunk(chunk_id, &terrain, &map));
+                let generated = Arc::new(generate_chunk(chunk_id, &registry, &map));
 
                 if world_cache.chunks.len() >= world_cache.max_chunks {
                     if let Some((evicted_id, _)) = world_cache.access_order.pop_lru() {
@@ -226,7 +226,7 @@ pub fn try_discover(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut map: ResMut<Map>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
     query: Query<(&Loc, &EntityType)>,
 ) {
     for message in reader.read() {
@@ -238,7 +238,7 @@ pub fn try_discover(
             if let Some((qrz, typ)) = map.get_by_qr(qrz.q, qrz.r) {
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             } else {
-                let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(qrz.q, qrz.r)};
+                let qrz = Qrz { q:qrz.q, r:qrz.r, z:registry.elevation_at(qrz.q, qrz.r)};
                 let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
                 map.insert(qrz, typ);
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });

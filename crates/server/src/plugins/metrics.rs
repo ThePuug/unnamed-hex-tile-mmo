@@ -169,12 +169,24 @@ impl Plugin for MetricsPlugin {
         snapshot.register("net_ord_queue", Aggregator::Last);
         snapshot.register("net_unord_buf_pct", Aggregator::Last);
         snapshot.register("net_unord_queue", Aggregator::Last);
-        // Event metrics — 3-tier funnel
-        snapshot.register("evt.survey", Aggregator::Last);
-        snapshot.register("evt.placed", Aggregator::Last);
+        // Event metrics — deform/query cascade health
+        snapshot.register("evt.visible", Aggregator::Last);
+        snapshot.register("evt.tile_hits", Aggregator::Last);
+        snapshot.register("evt.tile_misses", Aggregator::Last);
         snapshot.register("evt.active", Aggregator::Last);
-        snapshot.register("evt.cache_hits", Aggregator::Last);
-        snapshot.register("evt.cache_misses", Aggregator::Last);
+        // Per-layer metrics
+        snapshot.register("evt.plates.scan", Aggregator::Last);
+        snapshot.register("evt.plates.index", Aggregator::Last);
+        snapshot.register("evt.plates.cell_hits", Aggregator::Last);
+        snapshot.register("evt.plates.cell_misses", Aggregator::Last);
+        snapshot.register("evt.spines.scan", Aggregator::Last);
+        snapshot.register("evt.spines.index", Aggregator::Last);
+        snapshot.register("evt.spines.cell_hits", Aggregator::Last);
+        snapshot.register("evt.spines.cell_misses", Aggregator::Last);
+        snapshot.register("evt.spawner.scan", Aggregator::Last);
+        snapshot.register("evt.spawner.index", Aggregator::Last);
+        snapshot.register("evt.spawner.cell_hits", Aggregator::Last);
+        snapshot.register("evt.spawner.cell_misses", Aggregator::Last);
         app.insert_resource(snapshot)
             .insert_resource(TickTimer::default())
             .add_systems(FixedFirst, tick_timer_start)
@@ -192,14 +204,26 @@ fn drain_event_metrics(
     active: Res<crate::systems::engagement_spawner::ActiveSpawners>,
     snapshot: Res<MetricSnapshot>,
 ) {
-    let m = registry.spawner_metrics();
+    let m = registry.drain_metrics();
     snapshot.record(&[
-        ("evt.survey", m.chunks_evaluated as f32),
-        ("evt.placed", m.chunks_with_output as f32),
+        ("evt.visible", m.visible as f32),
+        ("evt.tile_hits", m.tile_hits as f32),
+        ("evt.tile_misses", m.tile_misses as f32),
         ("evt.active", active.0.len() as f32),
-        ("evt.cache_hits", m.cache_hits as f32),
-        ("evt.cache_misses", m.cache_misses as f32),
     ]);
+    for layer in &m.layers {
+        let name = &layer.name;
+        let k_scan = format!("evt.{name}.scan");
+        let k_index = format!("evt.{name}.index");
+        let k_hits = format!("evt.{name}.cell_hits");
+        let k_misses = format!("evt.{name}.cell_misses");
+        snapshot.record(&[
+            (k_scan.as_str(), layer.scanned as f32),
+            (k_index.as_str(), layer.indexed as f32),
+            (k_hits.as_str(), layer.cell_hits as f32),
+            (k_misses.as_str(), layer.cell_misses as f32),
+        ]);
+    }
 }
 
 // ── Systems ──

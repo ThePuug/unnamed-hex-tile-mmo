@@ -240,4 +240,4 @@ None currently — implementation matches spec.
 ## Implementation Gaps
 
 - Sparkline rendering in client overlay (segment 2 reserved but empty)
-- Grid constants (`SEG_WIDTH`, `SEG_GAP`) still duplicated per-crate; extraction to shared location deferred
+- `Seg`/`seg_row` pattern duplicated in console and client — both use the same egui segment rendering approach. Extraction to common-bevy deferred (common crate has no egui dependency).

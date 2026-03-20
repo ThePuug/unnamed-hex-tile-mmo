@@ -51,10 +51,12 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 **Async Mesh Pipeline:**
 - All mesh generation off main thread via `AsyncComputeTaskPool`. In-place mesh update pattern — old entity stays visible until task completes.
 
-**Event Pipeline (terrain generation):**
-- Events read substrate (tags + tiles + elevation) from the center chunk + 6 neighbors at the event's scale. This is the complete input — no global queries, no unbounded lookups.
-- Events write tag mutations + tile mutations back to the substrate for downstream events.
-- DAG ordering: each event declares dependencies. Evaluation iterates in topological order.
+**World Event System ([spec](docs/design/world-events.md)):**
+- Events implement `WorldEvent` (name, scale, survey, deform, query). Deform builds indexes; query materializes one tile lazily (INV-E10).
+- Two independent cascades: deform (index→index, structural) and query (tile→tile, vertical). Deform never materializes tiles. Query never triggers deform.
+- Events evaluate in dependency order. Event N reads the composite of events 0..N-1 (INV-E03).
+- Each event has an independent cell grid at its own scale. Scale matches feature size (INV-E08).
+- Indexes are TypeId-keyed in a shared IndexRegistry, cell-partitioned for spatial scoping (INV-E09). Indexes carry metadata (`tile_view_at`) for survey evaluation without triggering tile materialization.
 
 ---
 

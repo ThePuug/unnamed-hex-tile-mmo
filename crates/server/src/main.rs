@@ -141,10 +141,11 @@ fn main() {
     app.init_resource::<InputQueues>();
     let terrain = Terrain::default();
     let seed = terrain.seed();
-    let spawn_z = terrain.get(0, 0) + 1;
+    let registry = crate::resources::event_registry::EventRegistry::new(seed);
+    let spawn_z = registry.elevation_at(0, 0) + 1;
     app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
     app.insert_resource(terrain);
-    app.insert_resource(crate::resources::event_registry::EventRegistry::new(seed));
+    app.insert_resource(registry);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();

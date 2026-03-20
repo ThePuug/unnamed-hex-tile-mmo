@@ -2,7 +2,7 @@
 
 ## Design Philosophy
 
-The world is built in two phases: a **plate substrate** provides the geological foundation (continents, coastlines, plate topology), then an **event pipeline** transforms the substrate through a dependency-ordered sequence of world events. Each event reads the substrate produced by earlier events and writes mutations back — elevation changes, tag additions, entity placement.
+Terrain is generated through the [World Event System](world-events.md) — a framework where events evaluate in dependency order over a flat hex substrate, each materializing per-tile output (tags, elevation, entity placements) into a composite that all layers above can read. This document covers the algorithm details for the currently implemented events.
 
 Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
 
@@ -16,9 +16,9 @@ Every value is procedurally evaluable per-tile from `(position, seed)`, satisfyi
 
 ---
 
-## Plate Substrate
+## Plates (Event #0)
 
-The substrate is the foundation that events build on. It produces tagged plates at two scales (macro and micro) with geological classification. The substrate is not an event — it is the base layer that all events read from.
+The first event in the pipeline. Evaluates at every tile in the cell (`Survey::all()`) — no survey filtering. Produces tagged plates at two scales (macro and micro) with geological classification. Registers the `plate_centroids` index for use by higher events.
 
 ### Regime Field
 
@@ -70,42 +70,9 @@ Both macro `PlateCenter.tags` and micro `MicroplateCenter.tags` carry tags. Macr
 
 ---
 
-## Event Pipeline
+## Continental Spines (Event #1)
 
-Events are transformations that read the substrate and write mutations back to it. Each event follows the same structural pattern:
-
-1. **Epicenter selection** — where can this event place instances? Evaluated per-chunk from substrate data in the neighborhood.
-2. **Scale** — defines the chunk grid for this event type. Determines the spatial resolution of evaluation.
-3. **Transformation** — reads the neighborhood substrate (tags + tiles + elevation), writes tag mutations + tile mutations back.
-4. **Dependencies** — which other event types must have run first. Forms a DAG.
-
-### The Substrate
-
-The substrate is the communication bus between events. It carries:
-
-- **Tags** — per-plate classification data (PlateTag enum: Sea, Coast, Inland, Ridge, Highland, Foothills, and future variants). Events read tags from earlier tiers and write new tags for downstream events.
-- **Elevation** — height values that events can read and deform.
-An event's output is **tag mutations** (new tags on the substrate for downstream events to read) and **elevation mutations** (height changes at positions). Some events produce **cache-only data** (e.g., spawner placement) that downstream systems query directly rather than materializing into tiles.
-
-### Neighborhood Principle
-
-Each event defines a chunk scale. The transformation function's input is always the center chunk + its 6 contiguous neighbors at that scale. This is the complete input — no global queries, no unbounded lookups. Each event's cache pads by its own margin, implicitly including margins of all events below it in the DAG.
-
-### Dependency DAG
-
-Events declare dependencies. Evaluation iterates the DAG in topological order. Each event's outputs are materialized into the substrate before the next runs. No event reads its own tier's mutations from other chunks. No circular dependencies.
-
-Events are organized into conceptual epochs — geological → erosion → ecological → social — but the DAG is the authority on ordering, not the epoch labels.
-
-### Caching
-
-Each event type maintains its own chunk cache. Deterministic from seed — evicted chunks regenerate identically on revisit.
-
----
-
-## Continental Spines (Geological Event)
-
-The first event in the pipeline. Reads Inland plate tags from the substrate, writes elevation + Ridge/Highland/Foothills tags.
+Reads Inland plate tags from the composite, writes elevation deltas + Ridge/Highland/Foothills tags. Surveys at centroid granularity via the `plate_centroids` index.
 
 ### Spine Placement
 
@@ -160,6 +127,8 @@ get_height(q, r) = discretize(raw_elevation)    // quantized to z-levels
 `SpineInstance::elevation_at(wx, wy)` computes the full chain: bounding check → max over peaks and ridgelines → ridge noise → ravine subtraction. `discretize_elevation` quantizes to integer z-levels.
 
 Outside spine influence, elevation is 0 (sea level). The elevation system produces mountains and valleys; biomes and water rendering are not yet implemented.
+
+After event system migration, elevation becomes a flat read from the materialized composite rather than per-query geometry evaluation. See [World Event System — Materialization](world-events.md#materialization).
 
 ---
 
@@ -235,23 +204,21 @@ Where the current implementation intentionally differs from spec:
 | # | Area | Spec Says | Implementation | Rationale |
 |---|------|-----------|----------------|-----------|
 | 1 | Elevation | Full biome-aware height | Spine-only elevation (peaks + ridgelines - ravines) | Biome system not yet built |
-| 2 | Event pipeline | Trait-based WorldEvent with DAG evaluation | Spines and spawners are direct pipeline stages, not WorldEvent implementations | Event system abstraction deferred until third event type exists to generalize from |
 
 ## Implementation Gaps
 
-**Current**: Event system abstraction — `WorldEvent` trait, DAG evaluation, substrate communication bus (two concrete events exist: spines and spawners; abstraction deferred until a third)
+**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=128), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + terrain-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
 
-**Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on plate tags + elevation + moisture
+**Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on composite tags + elevation + moisture
 
-**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation
-
-**Enabled by event pipeline**: Dynamic temporal events, fauna/flora distribution — future events in the DAG
+**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation — future events in the pipeline
 
 **Blocked by other systems**: Water rendering (ocean/coast), haven placement validation
 
 ---
 
 **Related Design Documents:**
+- [World Event System](world-events.md) — Framework contract, deform/query split, composite materialization, index system
 - [Haven System](haven.md) — Starter havens; biome types
 - [Hub System](hubs.md) — Player settlements interacting with terrain
 - [Siege System](siege.md) — Encroachment where terrain difficulty compounds with distance
