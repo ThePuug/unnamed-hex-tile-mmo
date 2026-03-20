@@ -54,7 +54,7 @@ Three functional methods:
 - **Cell grid management**: Independent spatial grid per event at the declared scale, LRU caching, deterministic regeneration on eviction
 - **Survey evaluation**: Framework-controlled predicate evaluation against index metadata or tile data
 - **Index registry**: Shared accumulating index storage that events populate during deform and reference in surveys and queries
-- **Funnel metrics**: Cells evaluated, cells with survey hits, cells with deform output — reported uniformly across all events
+- **Cascade metrics**: Per-event indexed cell gauge + cache hit% ring buffers. Composite-level cached tile gauge + tile hit%.
 
 ### What the Author Provides
 
@@ -239,7 +239,10 @@ For non-index filter closures (e.g., spawner tag/elevation checks), TileView com
 ```rust
 Survey::all()                        // every tile in cell
 Survey::from_index::<T>()            // tiles from typed index T
+Survey::none()                       // no tile enumeration (empty matched)
 ```
+
+`Survey::none()` produces an empty `matched` slice — the event's deform discovers features internally using the seed and cell bounds. Useful when the event's spatial structure doesn't align with tile enumeration (e.g., plates discovering centroids via lattice iteration).
 
 When using `from_index`, the framework computes which source-event cell IDs overlap the current cell's bounds (derived from the two events' scales), then calls `index.tiles(overlapping_ids)` to get the scoped tile set.
 
@@ -272,6 +275,16 @@ Spatial distance check against an index. No graph — pure geometric distance.
 
 The framework optimizes this using cell IDs: compute which source-event cells could contain entries within `radius`, query only those cells from the index.
 
+### Spacing Predicate
+
+Post-filter density control. Ensures selected tiles are at least N hexes apart.
+
+```rust
+.min_spacing(distance)
+```
+
+Applied after filter. Deterministic priority-ordered greedy exclusion — each candidate gets a priority from `hash_u64(q, r, seed)`, sorted highest first. Walk the sorted list; skip any candidate within `distance` hexes of an already-accepted tile. Same seed + same candidates → same selection.
+
 ### Filter Closure
 
 ```rust
@@ -283,16 +296,17 @@ Runs last, on the smallest candidate set. The author writes whatever O(1) per-ti
 ### Survey Examples
 
 ```rust
-// Plates: deform writes to all tiles, no filtering needed
-Survey::all()
+// Plates: centroids discovered internally, no tile enumeration
+Survey::none()
 
-// Spines: plate-level survey via centroid index (no tile materialization)
+// Spines: plate-level survey via centroid index + spacing (no tile materialization)
 Survey::from_index::<PlateCentroidIndex>()
     .all_neighbors_in::<PlateCentroidIndex>(
         |tile| tile.tags.has(PlateTag::Inland), 1)
     .filter(|tile, _seed| tile.tags.has(PlateTag::Inland))
+    .min_spacing(10_000)
 
-// Spawners: per-tile filter (triggers query cascade, small cell)
+// Spawners: per-tile filter + spacing (triggers query cascade, small cell)
 Survey::new()
     .filter(|tile, seed| {
         tile.tags.has_any(&[Highland, Foothills])
@@ -300,6 +314,7 @@ Survey::new()
             && simplex_2d(tile.wx / 800.0, tile.wy / 800.0,
                           seed + SPAWNER_SEED) > 0.1
     })
+    .min_spacing(50)
 
 // Flora (notional): proximity + filter
 Survey::new()
@@ -360,9 +375,9 @@ tile_at(q, r) requested → for each layer bottom-up:
 
 ### PlateEvent (Event #0)
 
-**Scale**: Matches plate feature size.
+**Scale**: Matches centroid spacing (~1800 tiles). Large cells avoid redundant centroid discovery across overlapping regions.
 
-**Survey**: `Survey::all()` — plates write to all tiles. No filtering.
+**Survey**: `Survey::none()` — plates discover centroids internally via lattice iteration over cell bounds. No tile enumeration needed.
 
 **Deform**: Discover plate centroids within cell bounds. Evaluate regime at centroid locations. Build Voronoi neighbor graph. Classify centroids (Sea/Coast/Inland). Register `PlateCentroidIndex` with centroids, tags, and neighbor graph.
 
@@ -372,9 +387,9 @@ tile_at(q, r) requested → for each layer bottom-up:
 
 **Scale**: Matches spine influence radius. Large cells contain full spine features — no cross-cell lookups needed in query.
 
-**Survey**: `Survey::from_index::<PlateCentroidIndex>()` — reads centroid tags via `tile_view_at`. No tile materialization. Finds Inland centroids with all-Inland plate-graph neighbors.
+**Survey**: `Survey::from_index::<PlateCentroidIndex>().all_neighbors_in(Inland).filter(Inland).min_spacing(10_000)` — reads centroid tags via `tile_view_at`. No tile materialization. Finds Inland centroids with all-Inland plate-graph neighbors, then greedy exclusion enforces minimum 10,000-hex separation between epicenters.
 
-**Deform**: Read qualifying centroids from `PlateCentroidIndex`. Priority-ordered greedy exclusion for epicenters. Generate peaks, arms, ridgelines, ravine networks. Register `SpineInstanceIndex` with generated instances and their parameters.
+**Deform**: Read qualifying centroids (already spaced by survey). Generate peaks, arms, ridgelines, ravine networks directly from matched centroids. Register `SpineInstanceIndex` with generated instances and their parameters.
 
 **Query(q, r)**: Read `SpineInstanceIndex` for nearby spine instances. Evaluate elevation contribution (peaks + ridgelines - ravines). Call `below(q, r)` for base tags. Return `TileOutput` with elevation delta + spine tags (Ridge/Highland/Foothills) where elevation > 0.
 
@@ -382,30 +397,29 @@ tile_at(q, r) requested → for each layer bottom-up:
 
 **Scale**: Game-chunk size. Small cells — query cascade during survey is bounded.
 
-**Survey**: `Survey::new().filter(tags + elevation + noise)` — triggers query cascade for tiles in the cell to evaluate filter predicates. Acceptable at this scale.
+**Survey**: `Survey::new().filter(tags + elevation + noise).min_spacing(50)` — triggers query cascade for tiles in the cell to evaluate filter predicates, then greedy exclusion enforces minimum 50-hex separation. Replaces runtime distance checks in the engagement spawner.
 
-**Deform**: Read matched tiles. Determine archetypes from composite tags (Highland→Berserker, Foothills→Juggernaut, Ridge→Defender, flat Inland→Kiter). Register `SpawnerCampIndex` with camp positions and archetypes.
+**Deform**: Read matched tiles. Determine archetypes from composite tags (Highland→Berserker, Foothills→Juggernaut, Ridge→Defender, flat Inland→Kiter). Register `SpawnerPlacementIndex` with camp positions and archetypes.
 
-**Query(q, r)**: Check `SpawnerCampIndex` for camp presence at this tile. Return camp tags if present.
+**Query(q, r)**: Check `SpawnerPlacementIndex` for camp presence at this tile. Return camp tags if present.
 
 ---
 
-## Funnel Metrics
+## Cascade Metrics
 
-Metrics reflect the two-cascade architecture. All counters are **gauges** (current working set, not lifetime accumulation) — cells and tiles are evicted from LRU caches, so cumulative counters would double-count re-evaluated cells.
+Metrics reflect the two-cascade architecture. Gauges show current working set size (not lifetime accumulation — LRU eviction would double-count). Hit percentages use **ring buffers** (256 samples per cell, 4096 per tile) — the displayed value holds steady when activity stops rather than decaying to zero.
 
 ### Composite Level (query cascade)
 
-- **visible** — gauge. Unique (q,r) positions currently cached in CellOutput across all layers.
-- **tile hit%** — interval. `tile_hits / (tile_hits + tile_misses)` over the reporting period.
+- **cached** — gauge. Unique (q,r) positions currently cached in CellOutput across all layers.
+- **tile hit%** — ring buffer. Recent `tile_hits / (tile_hits + tile_misses)`.
 
 ### Per Event (deform cascade)
 
-- **scanned** — gauge. Cells currently in deformed state for this event.
-- **indexed** — gauge. Cells currently with entries in this event's registered indexes.
-- **cell hit%** — interval. `cell_hits / (cell_hits + cell_misses)` over the reporting period.
+- **indexed** — gauge. Warm cells in LRU cache (`cache.cells.len()`).
+- **cell hit%** — ring buffer. Recent `cell_hits / (cell_hits + cell_misses)`.
 
-Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them. Hit percentages tell you how well the caches serve demand.
+Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them. Ring buffers give stable readout during steady-state operation.
 
 ---
 

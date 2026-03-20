@@ -672,32 +672,29 @@ impl eframe::App for ConsoleApp {
                         let t_total = t_hits + t_misses;
                         let tile_pct = if t_total > 0.0 { (t_hits / t_total * 100.0) as u32 } else { 0 };
 
-                        // Composite row: visible tiles + tile hit%
+                        let tile_pct = (tile_pct as u32).min(99);
+                        // Composite row: cached tiles + tile hit%
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", ""), COLOR_DIM);
-                            s.half(&format!("{:>7}", "visible"), COLOR_DIM);
+                            s.half("       ", COLOR_DIM);
+                            s.half(" cached", COLOR_DIM);
                             s.half(&format!("{:>5}  ", COUNT5.fmt(visible)), COLOR_DIM);
-                            s.half(&format!("{:>7}", "tile"), COLOR_DIM);
-                            s.half(&format!("{:>4}%  ", tile_pct), COLOR_DIM);
+                            s.half(&format!("{:<2}{:>2}%  ", GLYPH_CACHE, tile_pct), COLOR_DIM);
                         });
 
-                        // Per-event rows: scan, index, cell hit%
+                        // Per-event rows: index + cell hit%
                         for name in &["plates", "spines", "spawner"] {
-                            let scan = self.field(&format!("evt.{name}.scan"));
                             let index = self.field(&format!("evt.{name}.index"));
                             let c_hits = self.field(&format!("evt.{name}.cell_hits"));
                             let c_misses = self.field(&format!("evt.{name}.cell_misses"));
                             let c_total = c_hits + c_misses;
                             let cell_pct = if c_total > 0.0 { (c_hits / c_total * 100.0) as u32 } else { 0 };
+                            let cell_pct = cell_pct.min(99);
 
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("{:>7}", name), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", "scan"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", COUNT5.fmt(scan)), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", "index"), COLOR_DIM);
+                                s.half("indexed", COLOR_DIM);
                                 s.half(&format!("{:>5}  ", COUNT5.fmt(index)), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", "cell"), COLOR_DIM);
-                                s.half(&format!("{:>4}%  ", cell_pct), COLOR_DIM);
+                                s.half(&format!("{:<2}{:>2}%  ", GLYPH_CACHE, cell_pct), COLOR_DIM);
                             });
                         }
                     });

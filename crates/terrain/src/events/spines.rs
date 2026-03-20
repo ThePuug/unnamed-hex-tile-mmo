@@ -4,8 +4,8 @@
 //! radius of any spine epicenter within them. Query checks the cell + 1 neighbor
 //! ring in the SpineInstanceIndex — no wider search needed.
 //!
-//! Deform: reads PlateCentroidIndex for qualifying epicenters (survey-driven),
-//! runs greedy exclusion, generates spine instances, registers SpineInstanceIndex.
+//! Deform: reads PlateCentroidIndex for qualifying epicenters (survey-driven,
+//! spaced by min_spacing), generates spine instances, registers SpineInstanceIndex.
 //! Query: evaluates a single tile's elevation + tag from indexed instances.
 
 use std::collections::HashMap;
@@ -14,11 +14,10 @@ use std::sync::Mutex;
 use common::{HexLattice, PlateTag};
 
 use crate::hex_to_world;
-use crate::noise::hash_u64;
 use crate::plates::PlateCache;
 use crate::spine::{
-    SpineCandidate, SpineInstance, SPINE_INFLUENCE, SEED_PRIORITY,
-    grow_spine, resolve_chunk, spine_chunk_coord, spine_tag_priority,
+    SpineInstance, SPINE_INFLUENCE,
+    grow_spine, spine_tag_priority,
 };
 use super::index::{CellId, EventIndex, IndexRegistry};
 use super::plates::PlateCentroidIndex;
@@ -27,6 +26,10 @@ use super::{Survey, TileOutput, TileView, WorldEvent};
 /// Cell radius in tiles = SPINE_INFLUENCE. A cell contains the full influence
 /// extent of any epicenter within it. Query searches cell + 1 neighbor.
 const SPINE_CELL_SCALE: u32 = SPINE_INFLUENCE as u32;
+
+/// Minimum hex distance between spine epicenters.
+/// SPINE_EXCLUSION_DIST (10,000 world units) ≈ 10,000 hex tiles (1 tile ≈ 1 world unit).
+const SPINE_EXCLUSION_TILES: u32 = 10_000;
 
 // ── SpineInstanceIndex ──────────────────────────────────────────────────────
 
@@ -96,6 +99,7 @@ impl WorldEvent for SpineEvent {
                 1,
             )
             .filter(|tile, _seed| tile.tags.has(PlateTag::Inland))
+            .min_spacing(SPINE_EXCLUSION_TILES)
     }
 
     fn deform(
@@ -105,7 +109,7 @@ impl WorldEvent for SpineEvent {
         indexes: &mut IndexRegistry,
         _seed: u64,
     ) {
-        // Enrich matched centroids → SpineCandidates
+        // Enrich matched centroids (already spaced by min_spacing)
         let centroid_index = match indexes.get::<PlateCentroidIndex>() {
             Some(idx) => idx,
             None => {
@@ -115,33 +119,19 @@ impl WorldEvent for SpineEvent {
             }
         };
 
-        let candidates = enrich_candidates(matched, centroid_index, self.seed);
-
-        // Group by spine exclusion chunk, resolve each chunk
-        let mut by_chunk: HashMap<(i32, i32), Vec<SpineCandidate>> = HashMap::new();
-        for c in &candidates {
-            by_chunk.entry((c.chunk_q, c.chunk_r)).or_default().push(c.clone());
-        }
-
-        // Determine which spine exclusion chunks to resolve
-        let mut chunks_to_resolve: Vec<(i32, i32)> = Vec::new();
-        for &(cq, cr) in by_chunk.keys() {
-            if !chunks_to_resolve.contains(&(cq, cr)) {
-                chunks_to_resolve.push((cq, cr));
-            }
-        }
-
-        // Resolve: greedy exclusion across 1-ring neighborhoods
         let mut plate_cache = self.plate_cache.lock().unwrap();
         let empty_plates: Vec<crate::PlateCenter> = Vec::new();
         let empty_map: HashMap<u64, usize> = HashMap::new();
 
         let mut instances: Vec<SpineInstance> = Vec::new();
-        for (cq, cr) in chunks_to_resolve {
-            let survivors = resolve_chunk(cq, cr, &by_chunk);
-            for survivor in survivors {
+        for &(q, r) in matched {
+            let entry = centroid_index.cells.values()
+                .flat_map(|entries| entries.iter())
+                .find(|e| e.q == q && e.r == r);
+
+            if let Some(entry) = entry {
                 let inst = grow_spine(
-                    survivor.wx, survivor.wy, survivor.plate_id,
+                    entry.wx, entry.wy, entry.plate_id,
                     &mut empty_plates.clone(), &empty_map,
                     &mut plate_cache, self.seed,
                 );
@@ -196,37 +186,3 @@ impl WorldEvent for SpineEvent {
     }
 }
 
-/// Convert survey-matched centroid positions to SpineCandidates.
-fn enrich_candidates(
-    matched: &[(i32, i32)],
-    centroid_index: &PlateCentroidIndex,
-    seed: u64,
-) -> Vec<SpineCandidate> {
-    let mut result = Vec::new();
-
-    // Build a lookup from (q, r) → CentroidEntry data
-    for &(q, r) in matched {
-        // Find the centroid entry for this position
-        let entry = centroid_index.cells.values()
-            .flat_map(|entries| entries.iter())
-            .find(|e| e.q == q && e.r == r);
-
-        if let Some(entry) = entry {
-            let (chunk_q, chunk_r) = spine_chunk_coord(entry.wx, entry.wy);
-            let priority = hash_u64(
-                entry.cell_q as i64,
-                entry.cell_r as i64,
-                seed ^ SEED_PRIORITY,
-            );
-            result.push(SpineCandidate {
-                plate_id: entry.plate_id,
-                wx: entry.wx,
-                wy: entry.wy,
-                priority,
-                chunk_q,
-                chunk_r,
-            });
-        }
-    }
-    result
-}

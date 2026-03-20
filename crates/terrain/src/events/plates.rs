@@ -15,7 +15,7 @@ use crate::world_to_hex;
 use super::index::{CellId, EventIndex, IndexRegistry};
 use super::{Survey, TileOutput, TileView, WorldEvent};
 
-const PLATE_CELL_SCALE: u32 = 128;
+const PLATE_CELL_SCALE: u32 = 1800;
 
 // ── PlateCentroidIndex ──────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ impl PlateEvent {
 impl WorldEvent for PlateEvent {
     fn name(&self) -> &str { "plates" }
     fn scale(&self) -> u32 { PLATE_CELL_SCALE }
-    fn survey(&self) -> Survey { Survey::all() }
+    fn survey(&self) -> Survey { Survey::none() }
 
     fn deform(
         &self,

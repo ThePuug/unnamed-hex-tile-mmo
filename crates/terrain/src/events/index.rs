@@ -108,4 +108,5 @@ impl IndexRegistry {
             boxed.remove_cell(cell_id);
         }
     }
+
 }

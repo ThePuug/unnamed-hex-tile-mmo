@@ -18,7 +18,7 @@ Every value is procedurally evaluable per-tile from `(position, seed)`, satisfyi
 
 ## Plates (Event #0)
 
-The first event in the pipeline. Evaluates at every tile in the cell (`Survey::all()`) — no survey filtering. Produces tagged plates at two scales (macro and micro) with geological classification. Registers the `plate_centroids` index for use by higher events.
+The first event in the pipeline. Uses `Survey::none()` — plates discover centroids internally via lattice iteration over cell bounds, not through tile enumeration. Produces tagged plates at two scales (macro and micro) with geological classification. Registers the `plate_centroids` index for use by higher events.
 
 ### Regime Field
 
@@ -76,7 +76,7 @@ Reads Inland plate tags from the composite, writes elevation deltas + Ridge/High
 
 ### Spine Placement
 
-Locally deterministic via fixed-size evaluation chunks. Epicenter candidates: Inland plates with all-Inland neighbors. Priority-ordered greedy exclusion ensures same placement regardless of viewport.
+Epicenter candidates: Inland plates with all-Inland neighbors, filtered via `Survey::from_index` with `min_spacing(10_000)`. Deterministic priority-ordered greedy exclusion at the survey level ensures same placement regardless of viewport or evaluation order.
 
 ### Peaks
 
@@ -111,7 +111,7 @@ Sequential top-down stream generation. Origins distributed along ridgelines with
 
 ### Spine Caching
 
-`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit.
+`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Dead code on the server path (server uses `SpineInstanceIndex` via Composite); retained for client admin flyover and terrain-viewer.
 
 ---
 
@@ -207,7 +207,7 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=128), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + terrain-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
+**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + terrain-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
 
 **Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on composite tags + elevation + moisture
 

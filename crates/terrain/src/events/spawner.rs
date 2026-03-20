@@ -26,6 +26,9 @@ const SPAWNER_NOISE_SEED_OFFSET: u64 = 0x5370_6177_6E65_72; // "Spawner"
 
 const SPAWNER_CELL_SCALE: u32 = 9;
 
+/// Minimum hex distance between spawner placements.
+const MIN_PLACEMENT_SPACING: u32 = 50;
+
 // ── SpawnerArchetype (terrain-crate mirror) ─────────────────────────────────
 
 /// Enemy archetype determined by terrain tags. Mirrors common-bevy's EnemyArchetype.
@@ -108,7 +111,7 @@ impl SpawnerEvent {
 }
 
 impl WorldEvent for SpawnerEvent {
-    fn name(&self) -> &str { "spawners" }
+    fn name(&self) -> &str { "spawner" }
     fn scale(&self) -> u32 { SPAWNER_CELL_SCALE }
 
     fn survey(&self) -> Survey {
@@ -126,6 +129,7 @@ impl WorldEvent for SpawnerEvent {
                 // Must be on land with positive elevation
                 && tile.elevation > 0.0
             })
+            .min_spacing(MIN_PLACEMENT_SPACING)
     }
 
     fn deform(

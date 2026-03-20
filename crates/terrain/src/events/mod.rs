@@ -12,7 +12,7 @@ pub mod spawner;
 pub mod spines;
 pub mod survey;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use common::{HexLattice, TagSet};
@@ -180,28 +180,58 @@ pub trait WorldEvent: Send + Sync {
 
 // ── Metrics ─────────────────────────────────────────────────────────────────
 
-/// Per-event layer metrics (gauges + interval counters).
-#[derive(Default)]
+/// Ring buffer of hit/miss samples. Percentage reflects the last N lookups,
+/// not a time-based interval. Display holds steady when activity stops.
+struct HitRing {
+    buf: Box<[bool]>,
+    pos: usize,
+    len: usize,
+}
+
+impl HitRing {
+    fn new(capacity: usize) -> Self {
+        Self { buf: vec![false; capacity].into_boxed_slice(), pos: 0, len: 0 }
+    }
+    fn record(&mut self, hit: bool) {
+        self.buf[self.pos] = hit;
+        self.pos = (self.pos + 1) % self.buf.len();
+        if self.len < self.buf.len() { self.len += 1; }
+    }
+    fn hits(&self) -> u64 {
+        self.buf[..self.len].iter().filter(|&&b| b).count() as u64
+    }
+    fn misses(&self) -> u64 {
+        self.buf[..self.len].iter().filter(|&&b| !b).count() as u64
+    }
+}
+
+const CELL_RING_SIZE: usize = 256;
+const TILE_RING_SIZE: usize = 4096;
+
+/// Per-event layer metrics.
 struct LayerMetrics {
-    /// Cells currently in deformed state (gauge).
-    cells_deformed: usize,
-    /// Cells currently with index entries (gauge).
-    cells_indexed: usize,
-    /// Cell cache hits since last drain (interval).
-    cell_hits: u64,
-    /// Cell cache misses since last drain (interval).
-    cell_misses: u64,
+    /// Cell cache hit/miss ring.
+    cell_ring: HitRing,
+}
+
+impl Default for LayerMetrics {
+    fn default() -> Self {
+        Self { cell_ring: HitRing::new(CELL_RING_SIZE) }
+    }
 }
 
 /// Composite-level metrics.
-#[derive(Default)]
 struct CompositeMetrics {
     /// Tiles currently cached across all layers (gauge).
     visible_tiles: usize,
-    /// Tile cache hits since last drain (interval).
-    tile_hits: u64,
-    /// Tile cache misses since last drain (interval).
-    tile_misses: u64,
+    /// Tile cache hit/miss ring.
+    tile_ring: HitRing,
+}
+
+impl Default for CompositeMetrics {
+    fn default() -> Self {
+        Self { visible_tiles: 0, tile_ring: HitRing::new(TILE_RING_SIZE) }
+    }
 }
 
 /// Snapshot of event metrics for external consumption.
@@ -214,7 +244,7 @@ pub struct EventMetricsSnapshot {
 
 pub struct LayerMetricsSnapshot {
     pub name: String,
-    pub scanned: usize,
+    /// Cells currently in LRU cache with index entries (gauge — current coverage).
     pub indexed: usize,
     pub cell_hits: u64,
     pub cell_misses: u64,
@@ -253,7 +283,6 @@ impl CellCache {
             output: CellOutput::new(),
             last_accessed: self.access_counter,
         });
-        self.metrics.cells_deformed = self.cells.len();
         self.evict_if_over_budget();
     }
 
@@ -277,7 +306,6 @@ impl CellCache {
         let lru_key = self.cells.iter().min_by_key(|(_, e)| e.last_accessed).map(|(&k, _)| k);
         if let Some(key) = lru_key {
             self.cells.remove(&key);
-            self.metrics.cells_deformed = self.cells.len();
         }
     }
 }
@@ -340,10 +368,10 @@ impl Composite {
             // Check tile cache
             let cached = cell_caches[layer].get_tile(cell_id, q, r).copied();
             let tile_out = if let Some(to) = cached {
-                metrics.tile_hits += 1;
+                metrics.tile_ring.record(true);
                 to
             } else {
-                metrics.tile_misses += 1;
+                metrics.tile_ring.record(false);
                 // Split caches: lower (for below closure) vs current (for caching)
                 let (lower, upper) = cell_caches.split_at_mut(layer);
                 let current = &mut upper[0];
@@ -366,7 +394,6 @@ impl Composite {
             for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
             view.elevation += tile_out.elevation_delta;
         }
-
         view
     }
 
@@ -392,30 +419,22 @@ impl Composite {
         // Compute visible tiles gauge from all layers
         let visible: usize = cell_caches.iter().map(|c| c.tile_count()).sum();
 
-        // Drain composite interval counters
-        let tile_hits = metrics.tile_hits;
-        let tile_misses = metrics.tile_misses;
-        metrics.tile_hits = 0;
-        metrics.tile_misses = 0;
+        let tile_hits = metrics.tile_ring.hits();
+        let tile_misses = metrics.tile_ring.misses();
 
-        // Per-layer snapshots
-        let layers: Vec<LayerMetricsSnapshot> = cell_caches.iter_mut().enumerate().map(|(i, cache)| {
+        // Per-layer snapshots — compute gauges directly from state
+        let layers: Vec<LayerMetricsSnapshot> = cell_caches.iter().enumerate().map(|(i, cache)| {
             let name = if i < self.events.len() {
                 self.events[i].name().to_string()
             } else {
                 format!("layer_{i}")
             };
-            let snap = LayerMetricsSnapshot {
+            LayerMetricsSnapshot {
                 name,
-                scanned: cache.metrics.cells_deformed,
-                indexed: cache.metrics.cells_indexed,
-                cell_hits: cache.metrics.cell_hits,
-                cell_misses: cache.metrics.cell_misses,
-            };
-            // Drain interval counters
-            cache.metrics.cell_hits = 0;
-            cache.metrics.cell_misses = 0;
-            snap
+                indexed: cache.cells.len(),
+                cell_hits: cache.metrics.cell_ring.hits(),
+                cell_misses: cache.metrics.cell_ring.misses(),
+            }
         }).collect();
 
         EventMetricsSnapshot { visible, tile_hits, tile_misses, layers }
@@ -434,27 +453,44 @@ fn ensure_deformed(
     seed: u64,
 ) {
     if cell_caches[layer].has(cell_id) {
-        cell_caches[layer].metrics.cell_hits += 1;
+        cell_caches[layer].metrics.cell_ring.record(true);
         return;
     }
-    cell_caches[layer].metrics.cell_misses += 1;
+    cell_caches[layer].metrics.cell_ring.record(false);
 
     let lattice = &lattices[layer];
     let (cq, cr) = lattice.cell_center(cell_id);
 
-    // Cascade: ensure lower layers' overlapping cells are deformed
+    // Cascade: ensure lower layers' overlapping cells are deformed.
+    // When the current cell is small relative to a lower cell, enumerate
+    // actual tiles to find the 1–2 lower cells needed instead of the
+    // geometric over-estimate (which can be 19+ for tiny-over-huge).
     for sub_layer in 0..layer {
         let sub_lat = &lattices[sub_layer];
-        let reach = (sub_lat.radius + lattice.radius) as i32;
-        let lattice_reach = (reach as f64 / (2.0 * sub_lat.radius as f64 + 1.0)).ceil() as u32 + 1;
-        let center_sub_cell = sub_lat.cell_id(cq, cr);
-        for sub_cell in sub_lat.cells_within_distance(center_sub_cell, lattice_reach) {
+
+        let sub_cells: Vec<CellId> = if lattice.radius <= sub_lat.radius {
+            // Small-over-large: enumerate tiles to find exact lower cells needed.
+            let mut needed: HashSet<CellId> = HashSet::new();
+            for (tq, tr) in lattice.tiles_in_cell(cell_id) {
+                needed.insert(sub_lat.cell_id(tq, tr));
+            }
+            needed.into_iter().collect()
+        } else {
+            // Large-over-small: geometric reach. Use the minimum tile distance
+            // per lattice step — (3R+2)/2 in the diagonal — not the on-axis 2R+1.
+            let reach = (sub_lat.radius + lattice.radius) as f64;
+            let min_step = (3.0 * sub_lat.radius as f64 + 2.0) / 2.0;
+            let lattice_reach = (reach / min_step).ceil() as u32;
+            let center_sub_cell = sub_lat.cell_id(cq, cr);
+            sub_lat.cells_within_distance(center_sub_cell, lattice_reach)
+        };
+
+        for sub_cell in sub_cells {
             ensure_deformed(events, lattices, cell_caches, indexes, sub_layer, sub_cell, seed);
         }
     }
 
-    // Evaluate survey. For Survey::all() with filter, provide a resolve_tile
-    // callback that triggers the query cascade for layers below.
+    // Evaluate survey
     let surv = events[layer].survey();
     let resolve_tile = |q: i32, r: i32| -> TileView {
         resolve_below(events, lattices, &cell_caches[..layer], indexes, q, r, seed)
@@ -462,8 +498,10 @@ fn ensure_deformed(
     let matched = survey::evaluate_survey(
         &surv, cell_id, lattice, indexes, Some(&resolve_tile), seed,
     );
+
     // Deform: populate indexes only
     events[layer].deform(cell_id, &matched, indexes, seed);
+
 
     // Mark cell as deformed (insert empty CellOutput for tile caching)
     let (_, upper) = cell_caches.split_at_mut(layer);

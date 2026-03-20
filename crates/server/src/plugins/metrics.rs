@@ -175,15 +175,12 @@ impl Plugin for MetricsPlugin {
         snapshot.register("evt.tile_misses", Aggregator::Last);
         snapshot.register("evt.active", Aggregator::Last);
         // Per-layer metrics
-        snapshot.register("evt.plates.scan", Aggregator::Last);
         snapshot.register("evt.plates.index", Aggregator::Last);
         snapshot.register("evt.plates.cell_hits", Aggregator::Last);
         snapshot.register("evt.plates.cell_misses", Aggregator::Last);
-        snapshot.register("evt.spines.scan", Aggregator::Last);
         snapshot.register("evt.spines.index", Aggregator::Last);
         snapshot.register("evt.spines.cell_hits", Aggregator::Last);
         snapshot.register("evt.spines.cell_misses", Aggregator::Last);
-        snapshot.register("evt.spawner.scan", Aggregator::Last);
         snapshot.register("evt.spawner.index", Aggregator::Last);
         snapshot.register("evt.spawner.cell_hits", Aggregator::Last);
         snapshot.register("evt.spawner.cell_misses", Aggregator::Last);
@@ -213,12 +210,10 @@ fn drain_event_metrics(
     ]);
     for layer in &m.layers {
         let name = &layer.name;
-        let k_scan = format!("evt.{name}.scan");
         let k_index = format!("evt.{name}.index");
         let k_hits = format!("evt.{name}.cell_hits");
         let k_misses = format!("evt.{name}.cell_misses");
         snapshot.record(&[
-            (k_scan.as_str(), layer.scanned as f32),
             (k_index.as_str(), layer.indexed as f32),
             (k_hits.as_str(), layer.cell_hits as f32),
             (k_misses.as_str(), layer.cell_misses as f32),

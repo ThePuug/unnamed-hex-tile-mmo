@@ -40,22 +40,20 @@ const MIN_ACTIVATION_DISTANCE: i32 = 30;
 /// Must be within AOI_RADIUS (123) so the player can see the NPCs.
 const MAX_ACTIVATION_DISTANCE: i32 = 100;
 
-/// Minimum distance between active engagements (tiles)
-const MIN_ENGAGEMENT_DISTANCE: i32 = 50;
+
 
 /// Tracks which spawner tiles have active engagements.
 /// Cleared when engagement is cleaned up (allows re-activation).
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// Activate spawners near players. Two gates: already active, too close.
+/// Activate spawners near players. Spacing enforced at survey time (min_spacing).
 pub fn activate_spawners(
     mut commands: Commands,
     mut active: ResMut<ActiveSpawners>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
     player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
-    engagement_query: Query<&Loc, With<Engagement>>,
 ) {
     for player_loc in &player_query {
         let spawners = registry.spawners_near(player_loc.q, player_loc.r);
@@ -66,12 +64,6 @@ pub fn activate_spawners(
 
             if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
             if active.0.contains(&(q, r)) { continue; }
-
-            let location = Qrz { q, r, z: 0 };
-            let too_close = engagement_query.iter().any(|eloc| {
-                location.flat_distance(&**eloc) < MIN_ENGAGEMENT_DISTANCE
-            });
-            if too_close { continue; }
 
             let archetype = match placement.archetype {
                 terrain::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
