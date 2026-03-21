@@ -13,7 +13,7 @@ The primary development environment. You need:
 
 ### WSL / Linux
 
-Required for running headless tools like `terrain-viewer` on Linux, or for cross-platform validation.
+Required for running headless tools like `world-viewer` on Linux, or for cross-platform validation.
 
 Install the Rust toolchain:
 
@@ -49,17 +49,17 @@ cargo run -p client          # Run client (requires display)
 
 ## Development Tools
 
-### terrain-viewer
+### world-viewer
 
-Headless terrain visualization tool. Renders heightmap PNGs for validating terrain generation without running the full client.
+Headless world composite visualization tool. Renders PNGs for validating terrain generation and world event output without running the full client.
 
 ```bash
-cargo run -p terrain-viewer -- --mode elevation --radius 20000 --scale 10 --output elevation.png
+cargo run -p world-viewer -- --layers plates,elevation --radius 15000 --scale 8 --output world.png
 ```
 
-Available modes: `elevation`, `plates`, `boundary-type`, `plate-character`, `slope`
+Available layers: `plates`, `elevation`, `spines`, `centroids`, `spawners`, `spine-peaks`
 
-See `cargo run -p terrain-viewer -- --help` for all options.
+See `cargo run -p world-viewer -- --help` for all options.
 
 ### console
 

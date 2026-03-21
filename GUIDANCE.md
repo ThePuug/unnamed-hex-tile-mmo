@@ -13,8 +13,8 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 - `common-bevy/` — Bevy-specific shared code (components, chunk system, physics, messages, map)
 - `client/` — Rendering, input, networking
 - `server/` — Authority, AI, terrain serving, connections
-- `terrain/` — Pure terrain generation library (no Bevy). See `docs/design/terrain-generation.md`.
-- `terrain-viewer/` — CLI for rendering terrain layers to PNG
+- `world/` — World event system + terrain generation (no Bevy). See `docs/design/terrain-generation.md`.
+- `world-viewer/` — CLI for rendering world composite layers to PNG
 - `qrz/` — Hexagonal grid library. See `crates/qrz/GUIDANCE.md`.
 - `console/` — Server monitoring console
 

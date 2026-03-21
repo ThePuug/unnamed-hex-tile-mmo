@@ -113,6 +113,9 @@ impl SpawnerEvent {
 impl WorldEvent for SpawnerEvent {
     fn name(&self) -> &str { "spawner" }
     fn scale(&self) -> u32 { SPAWNER_CELL_SCALE }
+    fn register_indexes(&self, registry: &mut IndexRegistry) {
+        registry.pre_register::<SpawnerPlacementIndex>();
+    }
 
     fn survey(&self) -> Survey {
         let seed = self.seed;
@@ -136,7 +139,7 @@ impl WorldEvent for SpawnerEvent {
         &self,
         cell_id: CellId,
         matched: &[(i32, i32)],
-        indexes: &mut IndexRegistry,
+        indexes: &IndexRegistry,
         _seed: u64,
     ) {
         if matched.is_empty() { return; }
@@ -155,7 +158,7 @@ impl WorldEvent for SpawnerEvent {
         // determine archetype deterministically. We just need to know WHICH
         // tags. Since we can't access below here, defer archetype to query.
 
-        let placement_index = indexes.get_or_create::<SpawnerPlacementIndex>();
+        let mut placement_index = indexes.get_or_create::<SpawnerPlacementIndex>();
         let mut placements = Vec::new();
         for &(q, r) in matched {
             // We don't know the archetype yet — store as Kiter placeholder.

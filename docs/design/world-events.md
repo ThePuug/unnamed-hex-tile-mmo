@@ -12,18 +12,19 @@ The world is built from a flat, untagged hex substrate. Every feature — plates
 
 ## Framework Contract
 
-Every event implements five methods:
+Every event implements six methods:
 
 ```rust
 trait WorldEvent: Send + Sync {
     fn name(&self) -> &str;
     fn scale(&self) -> u32;
     fn survey(&self) -> Survey;
+    fn register_indexes(&self, indexes: &mut IndexRegistry);
     fn deform(
         &self,
         cell_id: CellId,
         matched: &[(i32, i32)],
-        indexes: &mut IndexRegistry,
+        indexes: &IndexRegistry,
         seed: u64,
     );
     fn query(
@@ -37,11 +38,13 @@ trait WorldEvent: Send + Sync {
 }
 ```
 
-Three functional methods:
+Four functional methods:
 
 **survey()**: Declarative predicates describing qualifying locations. The framework evaluates against index metadata or tile data. Returns tile coordinates that deform will receive as `matched`.
 
-**deform(cell_id, matched, indexes, seed)**: Structural work. Reads indexes from lower layers, generates features (peaks, ridgelines, camps), registers results as indexes for higher layers. **Never materializes tiles.** Never receives CellView or CellOutput.
+**register_indexes(indexes)**: Called once during `add_event()`. Pre-creates empty indexes in the registry so the HashMap is immutable at runtime. Takes `&mut IndexRegistry` — the only method that does.
+
+**deform(cell_id, matched, indexes, seed)**: Structural work. Reads indexes from lower layers, generates features (peaks, ridgelines, camps), registers results as indexes for higher layers. **Never materializes tiles.** Never receives CellView or CellOutput. Takes `&IndexRegistry` — per-index `RwLock` allows concurrent reads/writes to different indexes.
 
 **query(q, r, cell_id, indexes, below, seed)**: Materializes one tile. Called lazily when the composite needs this event's contribution at (q,r). Reads indexes (from own and lower layers) and calls `below(q, r)` for the composite tile from all layers below. Returns `Option<TileOutput>` — None means this event contributes nothing at this position. Framework caches results in `CellOutput`.
 
@@ -60,6 +63,7 @@ Three functional methods:
 
 - **Scale**: The natural spatial grain for this event's features
 - **Survey**: Declarative predicates describing qualifying tiles
+- **Register indexes**: Pre-create empty indexes during setup
 - **Deform**: Structural code that reads lower indexes and registers new indexes
 - **Query**: Per-tile materialization code that reads indexes and the layer below
 - Internal caches (optional): Event-private shared state that speeds up deform/query across cells
@@ -153,14 +157,16 @@ Events register spatial indexes during deform. Higher events read these indexes 
 Shared across all events. One registry in the Composite. Keyed by Rust type (`TypeId`). Accumulates across cell evaluations.
 
 ```rust
-struct IndexRegistry { /* HashMap<TypeId, Box<dyn AnyIndex>> */ }
+struct IndexRegistry { /* HashMap<TypeId, Arc<RwLock<Box<dyn AnyIndex>>>> */ }
 
 impl IndexRegistry {
-    fn get_or_create<T: EventIndex + Default + 'static>(&mut self) -> &mut T;
-    fn get<T: EventIndex + 'static>(&self) -> Option<&T>;
-    fn remove_cell(&mut self, cell_id: CellId);
+    fn get_or_create<T: EventIndex + Default + 'static>(&self) -> MappedRwLockWriteGuard<'_, T>;
+    fn get<T: EventIndex + 'static>(&self) -> Option<MappedRwLockReadGuard<'_, T>>;
+    fn remove_cell(&self, cell_id: CellId);
 }
 ```
+
+The HashMap is **immutable after init** — each event pre-registers its indexes via `register_indexes()` during `add_event()`. Per-index `RwLock` allows concurrent reads of different indexes (e.g., spine deform writes to `SpineInstanceIndex` without blocking concurrent plate reads from `PlateCentroidIndex`).
 
 Type-keyed storage prevents naming collisions. Two events can't accidentally collide because they'd need to reference the same concrete type.
 
@@ -190,16 +196,18 @@ trait EventIndex: Send + Sync + Default + 'static {
 Indexes are populated during deform as a natural side effect:
 
 ```rust
-fn deform(&self, cell_id: CellId, matched: &[(i32, i32)], indexes: &mut IndexRegistry, seed: u64) {
-    // Read lower layer indexes
-    let plate_index = indexes.get::<PlateCentroidIndex>().unwrap();
-    let inland_centroids = plate_index.tiles(&overlapping_cell_ids);
+fn deform(&self, cell_id: CellId, matched: &[(i32, i32)], indexes: &IndexRegistry, seed: u64) {
+    // Read lower layer indexes (read guard, dropped before write)
+    let centroids = {
+        let plate_index = indexes.get::<PlateCentroidIndex>().unwrap();
+        plate_index.tiles(&overlapping_cell_ids)
+    };
 
-    // Generate features
-    let spines = self.generate_spines(&inland_centroids, seed);
+    // Generate features (no guards held)
+    let spines = self.generate_spines(&centroids, seed);
 
-    // Register for higher layers and own query
-    let spine_index = indexes.get_or_create::<SpineInstanceIndex>();
+    // Register for higher layers and own query (brief write guard)
+    let mut spine_index = indexes.get_or_create::<SpineInstanceIndex>();
     spine_index.insert(cell_id, spines);
 }
 ```
@@ -334,10 +342,10 @@ Survey::from_index::<SpawnerCampIndex>()
 
 ## Composite
 
-Owns ordered event layers, cell caches, IndexRegistry. Provides the query API.
+Owns ordered event layers, cell caches, IndexRegistry. Provides the query API. Fully concurrent — no global lock. Multiple `tile_at()` calls proceed simultaneously.
 
 ```rust
-struct Composite { /* layers, caches, IndexRegistry, seed */ }
+struct Composite { /* layers: Vec<Layer>, indexes: IndexRegistry, seed */ }
 
 impl Composite {
     fn add_event(&mut self, event: Box<dyn WorldEvent>);
@@ -347,14 +355,21 @@ impl Composite {
 }
 ```
 
+### Concurrency Model
+
+Per-layer cell caches use `DashMap<CellId, Arc<CellEntry>>` — readers clone the Arc and release the DashMap shard immediately; eviction removes the map entry while the Arc keeps data alive for concurrent readers. Per-cell deform is serialized via double-checked locking (`DashMap<CellId, Arc<Mutex<()>>>`). IndexRegistry uses per-index `RwLock` (HashMap immutable after init) — different indexes can be read/written concurrently. No global Mutex.
+
+**Deadlock freedom**: Deform cascade is strictly bottom-up (layer N → N-1 → ... → 0). Per-cell locks within a layer don't cross-depend.
+
 ### Deform Flow
 
 ```
-cell deform requested → check if already deformed → no →
-    ensure all overlapping lower-layer cells deformed (recursive) →
+cell deform requested → check DashMap for cell entry → miss →
+    acquire per-cell deform lock → double-check (another thread may have deformed) →
+    ensure all overlapping lower-layer cells deformed (recursive, bottom-up) →
     event.survey() → evaluate against index metadata / tile data → matched →
-    event.deform(cell_id, matched, &mut indexes, seed) →
-    create empty CellOutput → mark cell as deformed
+    event.deform(cell_id, matched, &indexes, seed) →
+    insert empty CellEntry into DashMap → release deform lock
 ```
 
 ### Query Flow
@@ -407,19 +422,19 @@ tile_at(q, r) requested → for each layer bottom-up:
 
 ## Cascade Metrics
 
-Metrics reflect the two-cascade architecture. Gauges show current working set size (not lifetime accumulation — LRU eviction would double-count). Hit percentages use **ring buffers** (256 samples per cell, 4096 per tile) — the displayed value holds steady when activity stops rather than decaying to zero.
+Metrics reflect the two-cascade architecture. All counters are **lock-free** (`AtomicU64` hits/misses). Gauges show current working set size (not lifetime accumulation — LRU eviction would double-count).
 
 ### Composite Level (query cascade)
 
 - **cached** — gauge. Unique (q,r) positions currently cached in CellOutput across all layers.
-- **tile hit%** — ring buffer. Recent `tile_hits / (tile_hits + tile_misses)`.
+- **tile hit%** — atomic. `hits / (hits + misses)`.
 
 ### Per Event (deform cascade)
 
-- **indexed** — gauge. Warm cells in LRU cache (`cache.cells.len()`).
-- **cell hit%** — ring buffer. Recent `cell_hits / (cell_hits + cell_misses)`.
+- **indexed** — gauge. Warm cells in DashMap (`cache.cells.len()`).
+- **cell hit%** — atomic. `hits / (hits + misses)`.
 
-Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them. Ring buffers give stable readout during steady-state operation.
+Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them.
 
 ---
 
@@ -470,11 +485,11 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Cleanup**: SpawnerCache, SpineCache, and old Terrain methods are dead code on the server path. Retained for client admin flyover and terrain-viewer compatibility.
+**Cleanup**: SpawnerCache, SpineCache, and old Terrain methods are dead code on the server path. Retained for client admin flyover.
 
-**Deferred**: Client admin flyover — still uses Arc<terrain::Terrain> directly.
+**Deferred**: Client admin flyover — still uses Arc<world::Terrain> directly.
 
-**Deferred**: terrain-viewer — uses generate_region() separate code path.
+**Resolved**: world-viewer — migrated from generate_region() to Composite. Same event stack as server.
 
 **Post-migration**: Campsite terrain output (flora clearing, entity placements) — SpawnerEvent Pass 2
 

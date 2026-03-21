@@ -9,8 +9,8 @@
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
 
-/// Haven location - world origin where players spawn
-pub const HAVEN_LOCATION: Qrz = Qrz { q: 0, r: 0, z: 0 };
+/// Haven location — world coordinates (4000, 1000) → hex (3423, 1155)
+pub const HAVEN_LOCATION: Qrz = Qrz { q: 3423, r: 1155, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 ///

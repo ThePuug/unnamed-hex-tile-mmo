@@ -121,7 +121,8 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
-        actor::try_discover_chunk,  // Generates chunks, sends ChunkData
+        actor::try_discover_chunk,  // Dispatch chunk generation (cache hit → immediate, miss → async)
+        actor::poll_chunk_tasks,    // Poll completed async chunk tasks → Map + ChunkData
         engagement_spawner::activate_spawners, // Activate spawner tiles near players
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
@@ -142,12 +143,13 @@ fn main() {
     let terrain = Terrain::default();
     let seed = terrain.seed();
     let registry = crate::resources::event_registry::EventRegistry::new(seed);
-    let spawn_z = registry.elevation_at(0, 0) + 1;
-    app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
+    let spawn_z = registry.elevation_at(3423, 1155) + 1;
+    app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 3423, r: 1155, z: spawn_z }));
     app.insert_resource(terrain);
     app.insert_resource(registry);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
+    app.init_resource::<actor::ChunkTaskQueue>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();

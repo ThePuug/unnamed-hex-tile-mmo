@@ -36,23 +36,23 @@ regime = sigmoid(local_fBm × world_gate × regional_mod)
 
 **Output:** `regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
 
-**Implementation:** `crates/terrain/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
+**Implementation:** `crates/world/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
 
 ### Two-Level Voronoi Skeleton
 
 **Micro Cells (Primary Spatial Layer):** Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
 
-**Implementation:** `crates/terrain/src/microplates.rs` (`micro_cell_at`)
+**Implementation:** `crates/world/src/microplates.rs` (`micro_cell_at`)
 
 **Macro Plates (Geological Identity):** Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
 
 **Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates.
 
-**Implementation:** `crates/terrain/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
+**Implementation:** `crates/world/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
 
 **Orphan Correction:** Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned. Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
 
-**Implementation:** `crates/terrain/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
+**Implementation:** `crates/world/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
 
 ### Classification
 
@@ -66,7 +66,7 @@ Plates are tagged with geological roles after Voronoi assignment:
 
 Both macro `PlateCenter.tags` and micro `MicroplateCenter.tags` carry tags. Macro tags assigned by `PlateCache::classify_tags`; micro tags auto-populated by `populate_region` via `classify_micro_tags`.
 
-**Implementation:** `crates/common/src/plate_tags.rs` (PlateTag enum, Tagged trait), `crates/terrain/src/plates.rs` (classify_tags)
+**Implementation:** `crates/common/src/plate_tags.rs` (PlateTag enum, Tagged trait), `crates/world/src/plates.rs` (classify_tags)
 
 ---
 
@@ -107,11 +107,11 @@ Sequential top-down stream generation. Origins distributed along ridgelines with
 
 **Ridge paths:** Traversable crossings at ravine rims. Currently disabled.
 
-**Implementation:** `crates/terrain/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
+**Implementation:** `crates/world/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
 
 ### Spine Caching
 
-`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Dead code on the server path (server uses `SpineInstanceIndex` via Composite); retained for client admin flyover and terrain-viewer.
+`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Dead code on the server path (server uses `SpineInstanceIndex` via Composite); retained for client admin flyover and world-viewer.
 
 ---
 
@@ -158,10 +158,10 @@ hex_to_world(q, r) -> (f64, f64)
 
 ## Visualization
 
-The `terrain-viewer` crate renders terrain layers to PNG for development diagnostics:
+The `world-viewer` crate renders terrain layers to PNG for development diagnostics:
 
 ```bash
-cargo run -p terrain-viewer -- --layers plates,elevation --radius 200 --output terrain.png
+cargo run -p world-viewer -- --layers plates,elevation --radius 200 --output terrain.png
 ```
 
 | Layer | What It Shows |
@@ -207,7 +207,7 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + terrain-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
+**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + world-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
 
 **Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on composite tags + elevation + moisture
 

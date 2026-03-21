@@ -473,9 +473,10 @@ mod tests {
 
     fn make_composite() -> events::Composite {
         let seed = 0x9E3779B97F4A7C15; // same as Terrain::default()
+        let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(PlateCache::new(seed)));
         let mut composite = events::Composite::new(seed);
-        composite.add_event(Box::new(events::plates::PlateEvent::new(seed)));
-        composite.add_event(Box::new(events::spines::SpineEvent::new(seed)));
+        composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));
+        composite.add_event(Box::new(events::spines::SpineEvent::with_cache(plate_cache, seed)));
         composite
     }
 

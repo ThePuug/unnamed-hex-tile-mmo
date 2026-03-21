@@ -231,11 +231,14 @@ pub fn write_try(
     mut reader: MessageReader<Do>,
     loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
+    timings: Res<crate::plugins::metrics::SystemTimings>,
 ) {
+    let mut _t = None;
     for message in reader.read() {
+        if matches!(&message.event, Event::Spawn { .. }) { continue; }
+        _t.get_or_insert_with(|| timings.scope("send_do"));
         match &message.event {
-            // Spawn events are handled by the AOI system — skip here
-            Event::Spawn { .. } => {}
+            Event::Spawn { .. } => unreachable!(),
             Event::Incremental { ent, component } => {
                 let ent = *ent;
                 let component = *component;

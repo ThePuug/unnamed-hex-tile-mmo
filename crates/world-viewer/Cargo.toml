@@ -1,10 +1,10 @@
 [package]
-name = "terrain-viewer"
+name = "world-viewer"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-terrain = { path = "../terrain" }
+world = { path = "../world" }
 common = { path = "../common" }
 image = "0"
 rapid-qoi = "0"

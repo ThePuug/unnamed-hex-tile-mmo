@@ -13,7 +13,11 @@ pub mod spines;
 pub mod survey;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+use dashmap::DashMap;
+use parking_lot::Mutex;
 
 use common::{HexLattice, TagSet};
 
@@ -121,15 +125,6 @@ pub struct TileOutput {
     pub elevation_delta: f64,
 }
 
-/// Cached per-tile outputs for one cell. Lazily populated by query.
-pub struct CellOutput {
-    pub tiles: HashMap<(i32, i32), TileOutput>,
-}
-
-impl CellOutput {
-    pub fn new() -> Self { Self { tiles: HashMap::new() } }
-}
-
 /// Read-only composite view at a single tile.
 #[derive(Clone)]
 pub struct TileView {
@@ -155,13 +150,18 @@ pub trait WorldEvent: Send + Sync {
     fn scale(&self) -> u32;
     fn survey(&self) -> Survey;
 
+    /// Pre-register index types this event writes during deform.
+    /// Called once during `Composite::add_event()`. Events call
+    /// `registry.pre_register::<MyIndex>()` for each index they create.
+    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
+
     /// Structural work. Build indexes from survey results.
     /// No tile materialization — indexes only.
     fn deform(
         &self,
         cell_id: CellId,
         matched: &[(i32, i32)],
-        indexes: &mut IndexRegistry,
+        indexes: &IndexRegistry,
         seed: u64,
     );
 
@@ -180,57 +180,47 @@ pub trait WorldEvent: Send + Sync {
 
 // ── Metrics ─────────────────────────────────────────────────────────────────
 
-/// Ring buffer of hit/miss samples. Percentage reflects the last N lookups,
-/// not a time-based interval. Display holds steady when activity stops.
-struct HitRing {
-    buf: Box<[bool]>,
-    pos: usize,
-    len: usize,
+/// Atomic hit/miss counters. Lock-free, safe for concurrent access.
+/// Counters are cumulative lifetime totals; console computes rates.
+struct HitCounters {
+    hits: AtomicU64,
+    misses: AtomicU64,
 }
 
-impl HitRing {
-    fn new(capacity: usize) -> Self {
-        Self { buf: vec![false; capacity].into_boxed_slice(), pos: 0, len: 0 }
+impl HitCounters {
+    fn new() -> Self {
+        Self { hits: AtomicU64::new(0), misses: AtomicU64::new(0) }
     }
-    fn record(&mut self, hit: bool) {
-        self.buf[self.pos] = hit;
-        self.pos = (self.pos + 1) % self.buf.len();
-        if self.len < self.buf.len() { self.len += 1; }
+    fn record(&self, hit: bool) {
+        if hit {
+            self.hits.fetch_add(1, Relaxed);
+        } else {
+            self.misses.fetch_add(1, Relaxed);
+        }
     }
-    fn hits(&self) -> u64 {
-        self.buf[..self.len].iter().filter(|&&b| b).count() as u64
-    }
-    fn misses(&self) -> u64 {
-        self.buf[..self.len].iter().filter(|&&b| !b).count() as u64
-    }
+    fn hits(&self) -> u64 { self.hits.load(Relaxed) }
+    fn misses(&self) -> u64 { self.misses.load(Relaxed) }
 }
 
-const CELL_RING_SIZE: usize = 256;
-const TILE_RING_SIZE: usize = 4096;
-
-/// Per-event layer metrics.
+/// Per-event layer metrics (lock-free).
 struct LayerMetrics {
-    /// Cell cache hit/miss ring.
-    cell_ring: HitRing,
+    cell_counters: HitCounters,
 }
 
 impl Default for LayerMetrics {
     fn default() -> Self {
-        Self { cell_ring: HitRing::new(CELL_RING_SIZE) }
+        Self { cell_counters: HitCounters::new() }
     }
 }
 
-/// Composite-level metrics.
+/// Composite-level metrics (lock-free).
 struct CompositeMetrics {
-    /// Tiles currently cached across all layers (gauge).
-    visible_tiles: usize,
-    /// Tile cache hit/miss ring.
-    tile_ring: HitRing,
+    tile_counters: HitCounters,
 }
 
 impl Default for CompositeMetrics {
     fn default() -> Self {
-        Self { visible_tiles: 0, tile_ring: HitRing::new(TILE_RING_SIZE) }
+        Self { tile_counters: HitCounters::new() }
     }
 }
 
@@ -250,78 +240,106 @@ pub struct LayerMetricsSnapshot {
     pub cell_misses: u64,
 }
 
-// ── Cell Cache ──────────────────────────────────────────────────────────────
+// ── Cell Cache (concurrent) ─────────────────────────────────────────────────
 
 const DEFAULT_MAX_CELLS: usize = 2000;
 
+struct CellEntry {
+    tiles: parking_lot::RwLock<HashMap<(i32, i32), TileOutput>>,
+    last_accessed: AtomicU64,
+}
+
 struct CellCache {
-    cells: HashMap<CellId, CellCacheEntry>,
-    access_counter: u64,
+    /// Cell entries. Presence = cell has been deformed (Warm).
+    /// Arc-wrapped so readers clone the Arc and release the DashMap shard lock
+    /// immediately. Eviction removes the DashMap entry; the Arc keeps the data
+    /// alive until all readers finish.
+    cells: DashMap<CellId, Arc<CellEntry>>,
+    /// Per-cell deform serialization locks (double-checked locking).
+    deform_locks: DashMap<CellId, Arc<Mutex<()>>>,
+    /// Monotonic counter for LRU ordering (lock-free touch).
+    access_counter: AtomicU64,
     max_cells: usize,
     metrics: LayerMetrics,
 }
 
-struct CellCacheEntry {
-    output: CellOutput,
-    last_accessed: u64,
-}
-
 impl CellCache {
     fn new(max_cells: usize) -> Self {
-        Self { cells: HashMap::new(), access_counter: 0, max_cells, metrics: LayerMetrics::default() }
-    }
-    fn has(&self, cell_id: CellId) -> bool { self.cells.contains_key(&cell_id) }
-
-    fn get_tile(&self, cell_id: CellId, q: i32, r: i32) -> Option<&TileOutput> {
-        self.cells.get(&cell_id)
-            .and_then(|e| e.output.tiles.get(&(q, r)))
-    }
-
-    fn insert_empty(&mut self, cell_id: CellId) {
-        self.access_counter += 1;
-        self.cells.entry(cell_id).or_insert(CellCacheEntry {
-            output: CellOutput::new(),
-            last_accessed: self.access_counter,
-        });
-        self.evict_if_over_budget();
-    }
-
-    fn insert_tile(&mut self, cell_id: CellId, q: i32, r: i32, tile: TileOutput) {
-        if let Some(entry) = self.cells.get_mut(&cell_id) {
-            entry.output.tiles.insert((q, r), tile);
+        Self {
+            cells: DashMap::new(),
+            deform_locks: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cells,
+            metrics: LayerMetrics::default(),
         }
     }
 
-    fn touch(&mut self, cell_id: CellId) {
-        self.access_counter += 1;
-        if let Some(e) = self.cells.get_mut(&cell_id) { e.last_accessed = self.access_counter; }
+    fn has(&self, cell_id: CellId) -> bool {
+        self.cells.contains_key(&cell_id)
+    }
+
+    /// Get the per-cell deform lock (create if needed). Returns cloned Arc
+    /// so the DashMap ref is released before locking.
+    fn deform_lock(&self, cell_id: CellId) -> Arc<Mutex<()>> {
+        self.deform_locks
+            .entry(cell_id)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    fn get_tile(&self, cell_id: CellId, q: i32, r: i32) -> Option<TileOutput> {
+        self.cells.get(&cell_id)
+            .and_then(|entry| entry.tiles.read().get(&(q, r)).copied())
+    }
+
+    fn insert_empty(&self, cell_id: CellId) {
+        let stamp = self.access_counter.fetch_add(1, Relaxed) + 1;
+        self.cells.entry(cell_id).or_insert_with(|| Arc::new(CellEntry {
+            tiles: parking_lot::RwLock::new(HashMap::new()),
+            last_accessed: AtomicU64::new(stamp),
+        }));
+        self.evict_if_over_budget();
+    }
+
+    fn insert_tile(&self, cell_id: CellId, q: i32, r: i32, tile: TileOutput) {
+        if let Some(entry) = self.cells.get(&cell_id) {
+            entry.tiles.write().insert((q, r), tile);
+        }
+    }
+
+    fn touch(&self, cell_id: CellId) {
+        let stamp = self.access_counter.fetch_add(1, Relaxed) + 1;
+        if let Some(entry) = self.cells.get(&cell_id) {
+            entry.last_accessed.store(stamp, Relaxed);
+        }
     }
 
     fn tile_count(&self) -> usize {
-        self.cells.values().map(|e| e.output.tiles.len()).sum()
+        self.cells.iter().map(|e| e.tiles.read().len()).sum()
     }
 
-    fn evict_if_over_budget(&mut self) {
+    fn evict_if_over_budget(&self) {
         if self.cells.len() <= self.max_cells { return; }
-        let lru_key = self.cells.iter().min_by_key(|(_, e)| e.last_accessed).map(|(&k, _)| k);
+        let lru_key = self.cells.iter()
+            .min_by_key(|entry| entry.last_accessed.load(Relaxed))
+            .map(|entry| *entry.key());
         if let Some(key) = lru_key {
             self.cells.remove(&key);
+            self.deform_locks.remove(&key);
         }
     }
 }
 
 // ── Composite ───────────────────────────────────────────────────────────────
 
-struct CompositeState {
-    cell_caches: Vec<CellCache>,
-    indexes: IndexRegistry,
-    metrics: CompositeMetrics,
-}
-
+/// No global Mutex. Cell caches use DashMap + per-cell deform locks.
+/// IndexRegistry uses interior RwLock. All methods take `&self`.
 pub struct Composite {
     events: Vec<Box<dyn WorldEvent>>,
     lattices: Vec<HexLattice>,
-    state: Mutex<CompositeState>,
+    cell_caches: Vec<CellCache>,
+    indexes: IndexRegistry,
+    metrics: CompositeMetrics,
     seed: u64,
 }
 
@@ -330,31 +348,29 @@ impl Composite {
         Self {
             events: Vec::new(),
             lattices: Vec::new(),
-            state: Mutex::new(CompositeState {
-                cell_caches: Vec::new(),
-                indexes: IndexRegistry::new(),
-                metrics: CompositeMetrics::default(),
-            }),
+            cell_caches: Vec::new(),
+            indexes: IndexRegistry::new(),
+            metrics: CompositeMetrics::default(),
             seed,
         }
     }
 
     pub fn add_event(&mut self, event: Box<dyn WorldEvent>) {
         let lattice = HexLattice::new(event.scale());
-        self.state.lock().unwrap().cell_caches.push(CellCache::new(DEFAULT_MAX_CELLS));
+        // Pre-register indexes declared by this event (HashMap frozen after init)
+        event.register_indexes(&mut self.indexes);
+        self.cell_caches.push(CellCache::new(DEFAULT_MAX_CELLS));
         self.lattices.push(lattice);
         self.events.push(event);
     }
 
     /// Get the final tile state at (q, r). Lazily triggers deform + query cascades.
+    /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
-        let mut state = self.state.lock().unwrap();
-        let CompositeState { cell_caches, indexes, metrics } = &mut *state;
-
         // Phase 1: Deform cascade — ensure all cells containing this tile are deformed
         for layer in 0..self.events.len() {
             let cell_id = self.lattices[layer].cell_id(q, r);
-            ensure_deformed(&self.events, &self.lattices, cell_caches, indexes, layer, cell_id, self.seed);
+            self.ensure_deformed(layer, cell_id);
         }
 
         // Phase 2: Query cascade — resolve tile bottom-up
@@ -363,29 +379,20 @@ impl Composite {
 
         for layer in 0..self.events.len() {
             let cell_id = self.lattices[layer].cell_id(q, r);
-            cell_caches[layer].touch(cell_id);
+            self.cell_caches[layer].touch(cell_id);
 
-            // Check tile cache
-            let cached = cell_caches[layer].get_tile(cell_id, q, r).copied();
+            let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
             let tile_out = if let Some(to) = cached {
-                metrics.tile_ring.record(true);
+                self.metrics.tile_counters.record(true);
                 to
             } else {
-                metrics.tile_ring.record(false);
-                // Split caches: lower (for below closure) vs current (for caching)
-                let (lower, upper) = cell_caches.split_at_mut(layer);
-                let current = &mut upper[0];
-
-                let events = &self.events;
-                let lattices = &self.lattices;
-                let seed = self.seed;
+                self.metrics.tile_counters.record(false);
                 let below_fn = |bq: i32, br: i32| -> TileView {
-                    resolve_below(&*events, &*lattices, &*lower, &*indexes, bq, br, seed)
+                    self.resolve_below(layer, bq, br)
                 };
-
-                let result = self.events[layer].query(q, r, cell_id, &*indexes, &below_fn, self.seed);
+                let result = self.events[layer].query(q, r, cell_id, &self.indexes, &below_fn, self.seed);
                 match result {
-                    Some(to) => { current.insert_tile(cell_id, q, r, to); to }
+                    Some(to) => { self.cell_caches[layer].insert_tile(cell_id, q, r, to); to }
                     None => TileOutput::default(),
                 }
             };
@@ -397,6 +404,11 @@ impl Composite {
         view
     }
 
+    /// Batch-materialize tiles. No global lock — each tile_at is independent.
+    pub fn tiles_at(&self, coords: &[(i32, i32)]) -> HashMap<(i32, i32), TileView> {
+        coords.iter().map(|&(q, r)| ((q, r), self.tile_at(q, r))).collect()
+    }
+
     pub fn elevation_at(&self, q: i32, r: i32) -> i32 {
         crate::discretize_elevation(self.tile_at(q, r).elevation)
     }
@@ -405,25 +417,19 @@ impl Composite {
         self.tile_at(q, r).tags
     }
 
-    /// Access the IndexRegistry under the lock via closure.
+    /// Access the IndexRegistry directly (no lock needed — interior mutability).
     pub fn with_indexes<R>(&self, f: impl FnOnce(&IndexRegistry) -> R) -> R {
-        let state = self.state.lock().unwrap();
-        f(&state.indexes)
+        f(&self.indexes)
     }
 
     /// Read gauges and drain interval counters. Returns a snapshot for external reporting.
     pub fn drain_metrics(&self) -> EventMetricsSnapshot {
-        let mut state = self.state.lock().unwrap();
-        let CompositeState { cell_caches, metrics, .. } = &mut *state;
+        let visible: usize = self.cell_caches.iter().map(|c| c.tile_count()).sum();
 
-        // Compute visible tiles gauge from all layers
-        let visible: usize = cell_caches.iter().map(|c| c.tile_count()).sum();
+        let tile_hits = self.metrics.tile_counters.hits();
+        let tile_misses = self.metrics.tile_counters.misses();
 
-        let tile_hits = metrics.tile_ring.hits();
-        let tile_misses = metrics.tile_ring.misses();
-
-        // Per-layer snapshots — compute gauges directly from state
-        let layers: Vec<LayerMetricsSnapshot> = cell_caches.iter().enumerate().map(|(i, cache)| {
+        let layers: Vec<LayerMetricsSnapshot> = self.cell_caches.iter().enumerate().map(|(i, cache)| {
             let name = if i < self.events.len() {
                 self.events[i].name().to_string()
             } else {
@@ -432,115 +438,101 @@ impl Composite {
             LayerMetricsSnapshot {
                 name,
                 indexed: cache.cells.len(),
-                cell_hits: cache.metrics.cell_ring.hits(),
-                cell_misses: cache.metrics.cell_ring.misses(),
+                cell_hits: cache.metrics.cell_counters.hits(),
+                cell_misses: cache.metrics.cell_counters.misses(),
             }
         }).collect();
 
         EventMetricsSnapshot { visible, tile_hits, tile_misses, layers }
     }
-}
 
-// ── Deform cascade ──────────────────────────────────────────────────────────
+    // ── Deform cascade (per-cell double-checked locking) ────────────────────
 
-fn ensure_deformed(
-    events: &[Box<dyn WorldEvent>],
-    lattices: &[HexLattice],
-    cell_caches: &mut [CellCache],
-    indexes: &mut IndexRegistry,
-    layer: usize,
-    cell_id: CellId,
-    seed: u64,
-) {
-    if cell_caches[layer].has(cell_id) {
-        cell_caches[layer].metrics.cell_ring.record(true);
-        return;
-    }
-    cell_caches[layer].metrics.cell_ring.record(false);
-
-    let lattice = &lattices[layer];
-    let (cq, cr) = lattice.cell_center(cell_id);
-
-    // Cascade: ensure lower layers' overlapping cells are deformed.
-    // When the current cell is small relative to a lower cell, enumerate
-    // actual tiles to find the 1–2 lower cells needed instead of the
-    // geometric over-estimate (which can be 19+ for tiny-over-huge).
-    for sub_layer in 0..layer {
-        let sub_lat = &lattices[sub_layer];
-
-        let sub_cells: Vec<CellId> = if lattice.radius <= sub_lat.radius {
-            // Small-over-large: enumerate tiles to find exact lower cells needed.
-            let mut needed: HashSet<CellId> = HashSet::new();
-            for (tq, tr) in lattice.tiles_in_cell(cell_id) {
-                needed.insert(sub_lat.cell_id(tq, tr));
-            }
-            needed.into_iter().collect()
-        } else {
-            // Large-over-small: geometric reach. Use the minimum tile distance
-            // per lattice step — (3R+2)/2 in the diagonal — not the on-axis 2R+1.
-            let reach = (sub_lat.radius + lattice.radius) as f64;
-            let min_step = (3.0 * sub_lat.radius as f64 + 2.0) / 2.0;
-            let lattice_reach = (reach / min_step).ceil() as u32;
-            let center_sub_cell = sub_lat.cell_id(cq, cr);
-            sub_lat.cells_within_distance(center_sub_cell, lattice_reach)
-        };
-
-        for sub_cell in sub_cells {
-            ensure_deformed(events, lattices, cell_caches, indexes, sub_layer, sub_cell, seed);
+    fn ensure_deformed(&self, layer: usize, cell_id: CellId) {
+        // Fast path: already deformed
+        if self.cell_caches[layer].has(cell_id) {
+            self.cell_caches[layer].metrics.cell_counters.record(true);
+            return;
         }
-    }
 
-    // Evaluate survey
-    let surv = events[layer].survey();
-    let resolve_tile = |q: i32, r: i32| -> TileView {
-        resolve_below(events, lattices, &cell_caches[..layer], indexes, q, r, seed)
-    };
-    let matched = survey::evaluate_survey(
-        &surv, cell_id, lattice, indexes, Some(&resolve_tile), seed,
-    );
+        // Slow path: acquire per-cell deform lock
+        let lock = self.cell_caches[layer].deform_lock(cell_id);
+        let _guard = lock.lock();
 
-    // Deform: populate indexes only
-    events[layer].deform(cell_id, &matched, indexes, seed);
+        // Recheck after acquiring lock (another task may have deformed it)
+        if self.cell_caches[layer].has(cell_id) {
+            self.cell_caches[layer].metrics.cell_counters.record(true);
+            return;
+        }
+        self.cell_caches[layer].metrics.cell_counters.record(false);
 
+        let lattice = &self.lattices[layer];
+        let (cq, cr) = lattice.cell_center(cell_id);
 
-    // Mark cell as deformed (insert empty CellOutput for tile caching)
-    let (_, upper) = cell_caches.split_at_mut(layer);
-    upper[0].insert_empty(cell_id);
-}
+        // Cascade: ensure lower layers' overlapping cells are deformed.
+        for sub_layer in 0..layer {
+            let sub_lat = &self.lattices[sub_layer];
 
-/// Resolve the composite TileView from layers 0..N (read-only cache access).
-/// Used by the `below` closure passed to query. Recursively resolves uncached
-/// tiles via query but does NOT cache intermediate results (avoids mutable
-/// borrow conflicts). The main tile_at loop handles caching at each layer.
-fn resolve_below(
-    events: &[Box<dyn WorldEvent>],
-    lattices: &[HexLattice],
-    lower: &[CellCache],
-    indexes: &IndexRegistry,
-    q: i32, r: i32,
-    seed: u64,
-) -> TileView {
-    let (wx, wy) = hex_to_world(q, r);
-    let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
-
-    for (li, cache) in lower.iter().enumerate() {
-        let cell_id = lattices[li].cell_id(q, r);
-        let tile_out = if let Some(cached) = cache.get_tile(cell_id, q, r) {
-            *cached
-        } else {
-            let sub_below = |bq: i32, br: i32| -> TileView {
-                resolve_below(events, lattices, &lower[..li], indexes, bq, br, seed)
+            let sub_cells: Vec<CellId> = if lattice.radius <= sub_lat.radius {
+                let mut needed: HashSet<CellId> = HashSet::new();
+                for (tq, tr) in lattice.tiles_in_cell(cell_id) {
+                    needed.insert(sub_lat.cell_id(tq, tr));
+                }
+                needed.into_iter().collect()
+            } else {
+                let reach = (sub_lat.radius + lattice.radius) as f64;
+                let min_step = (3.0 * sub_lat.radius as f64 + 2.0) / 2.0;
+                let lattice_reach = (reach / min_step).ceil() as u32;
+                let center_sub_cell = sub_lat.cell_id(cq, cr);
+                sub_lat.cells_within_distance(center_sub_cell, lattice_reach)
             };
-            match events[li].query(q, r, cell_id, indexes, &sub_below, seed) {
-                Some(to) => to,
-                None => TileOutput::default(),
-            }
-        };
 
-        for t in tile_out.tags_added.iter() { view.tags.add(t); }
-        for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
-        view.elevation += tile_out.elevation_delta;
+            for sub_cell in sub_cells {
+                self.ensure_deformed(sub_layer, sub_cell);
+            }
+        }
+
+        // Evaluate survey
+        let surv = self.events[layer].survey();
+        let resolve_tile = |q: i32, r: i32| -> TileView {
+            self.resolve_below(layer, q, r)
+        };
+        let matched = survey::evaluate_survey(
+            &surv, cell_id, lattice, &self.indexes, Some(&resolve_tile), self.seed,
+        );
+
+        // Deform: populate indexes only
+        self.events[layer].deform(cell_id, &matched, &self.indexes, self.seed);
+
+        // Mark cell as deformed
+        self.cell_caches[layer].insert_empty(cell_id);
     }
 
-    view
+    /// Resolve the composite TileView from layers 0..up_to (read-only cache access).
+    /// Used by the `below` closure passed to query. Does NOT cache intermediate results.
+    fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
+        let (wx, wy) = hex_to_world(q, r);
+        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
+
+        for li in 0..up_to {
+            let cell_id = self.lattices[li].cell_id(q, r);
+            let tile_out = if let Some(cached) = self.cell_caches[li].get_tile(cell_id, q, r) {
+                cached
+            } else {
+                let sub_below = |bq: i32, br: i32| -> TileView {
+                    self.resolve_below(li, bq, br)
+                };
+                match self.events[li].query(q, r, cell_id, &self.indexes, &sub_below, self.seed) {
+                    Some(to) => to,
+                    None => TileOutput::default(),
+                }
+            };
+
+            for t in tile_out.tags_added.iter() { view.tags.add(t); }
+            for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
+            view.elevation += tile_out.elevation_delta;
+        }
+
+        view
+    }
 }

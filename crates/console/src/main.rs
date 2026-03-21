@@ -189,6 +189,13 @@ fn seg_gap(ui: &mut egui::Ui, char_width: f32) {
     ui.add_space(char_width);
 }
 
+/// Full segment: 15 characters.
+fn seg_full(ui: &mut egui::Ui, s: &str, color: Color32) {
+    debug_assert_eq!(s.chars().count(), 15,
+        "seg_full: 15 chars expected, got {} for {:?}", s.chars().count(), s);
+    ui.label(colored_mono(s, color));
+}
+
 /// Half-segment: 7 characters.
 fn seg_half(ui: &mut egui::Ui, s: &str, color: Color32) {
     debug_assert_eq!(s.chars().count(), 7,
@@ -359,6 +366,15 @@ fn receiver_loop(tx: mpsc::Sender<MetricsPacket>) {
     }
 }
 
+struct TimingEntry {
+    hist_p95: History,
+    hist_n: History,
+}
+
+impl TimingEntry {
+    fn new() -> Self { Self { hist_p95: History::new(), hist_n: History::new() } }
+}
+
 struct ConsoleApp {
     rx: mpsc::Receiver<MetricsPacket>,
     last_received: Option<Instant>,
@@ -380,6 +396,8 @@ struct ConsoleApp {
     hist_net_recv: History,
     hist_ord_queue: History,
     hist_unord_queue: History,
+
+    timing_entries: HashMap<String, TimingEntry>,
 }
 
 impl ConsoleApp {
@@ -398,6 +416,7 @@ impl ConsoleApp {
             hist_net_recv: History::new(),
             hist_ord_queue: History::new(),
             hist_unord_queue: History::new(),
+            timing_entries: HashMap::new(),
         }
     }
 
@@ -408,8 +427,25 @@ impl ConsoleApp {
     fn poll(&mut self) {
         while let Ok(packet) = self.rx.try_recv() {
             self.last_received = Some(Instant::now());
-            if packet.cadence == Cadence::Snapshot {
-                self.handle_snapshot(packet);
+            match packet.cadence {
+                Cadence::Snapshot => self.handle_snapshot(packet),
+                Cadence::Event => self.handle_event(packet),
+            }
+        }
+    }
+
+    fn handle_event(&mut self, packet: MetricsPacket) {
+        if packet.group != "timings" { return; }
+
+        for (field, val) in &packet.fields {
+            if let Some(sys) = field.strip_suffix(".p95") {
+                self.timing_entries.entry(sys.to_string())
+                    .or_insert_with(TimingEntry::new)
+                    .hist_p95.push(*val as f64);
+            } else if let Some(sys) = field.strip_suffix(".n") {
+                self.timing_entries.entry(sys.to_string())
+                    .or_insert_with(TimingEntry::new)
+                    .hist_n.push(*val as f64);
             }
         }
     }
@@ -646,6 +682,47 @@ impl eframe::App for ConsoleApp {
                             let pv = COUNT5.fmt(self.hist_async_queue.visible_max(bar_count));
                             seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
+                    });
+
+                    draw_section(&mut cols[1], "TIMINGS", |ui| {
+                        let mut names: Vec<&String> = self.timing_entries.keys().collect();
+                        names.sort();
+                        if names.is_empty() {
+                            seg_row(ui, cw, |s| { s.half("     --", COLOR_DIM); });
+                        }
+                        for name in names {
+                            let entry = &self.timing_entries[name];
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let display: String = if name.len() > 15 {
+                                    name[..15].to_string()
+                                } else {
+                                    format!("{:>15}", name)
+                                };
+                                seg_full(ui, &display, COLOR_DIM);
+                                seg_gap(ui, cw);
+                                // Label: p95 per invocation
+                                let p95_val = entry.hist_p95.0.back().copied().unwrap_or(0.0);
+                                seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(p95_val), "ms"), COLOR_DIM);
+                                seg_gap(ui, cw);
+                                // Sparkline: p95 per interval
+                                seg_spark(ui, &entry.hist_p95.as_f32(), SparkScale::Fixed(125.0), &ALARM_TIMING, cw, rh);
+                                seg_gap(ui, cw);
+                                // Peak: max p95 in visible sparkline window
+                                let peak = entry.hist_p95.visible_max(bar_count);
+                                seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(peak)), COLOR_DIM);
+                                seg_gap(ui, cw);
+                                // Overruns: count of intervals where p95 > 125ms
+                                let start = entry.hist_p95.0.len().saturating_sub(bar_count);
+                                let ov_val = entry.hist_p95.0.range(start..).filter(|&&v| v > 125.0).count() as f64;
+                                let ov = OVERRUN.fmt(ov_val);
+                                seg_quarter(ui, &format!("{}{:<2}", ov, GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
+                                seg_gap(ui, cw);
+                                // Total sample count across visible sparkline window
+                                let total_n = entry.hist_n.visible_sum(bar_count);
+                                seg_half(ui, &format!("n={:<5}", COUNT5.fmt(total_n)), COLOR_DIM);
+                            });
+                        }
                     });
 
                     draw_section(&mut cols[2], "WORLD", |ui| {

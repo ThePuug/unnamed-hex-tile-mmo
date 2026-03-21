@@ -10,7 +10,7 @@ use rand::Rng;
 
 use common_bevy::{
     components::{
-        behaviour::Behaviour,
+        behaviour::{Behaviour, PlayerControlled},
         engagement::{Engagement, EngagementMember, LastPlayerProximity, ZoneId},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
@@ -53,8 +53,12 @@ pub fn activate_spawners(
     mut active: ResMut<ActiveSpawners>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
-    player_query: Query<&Loc, (With<Behaviour>, Changed<Loc>)>,
+    timings: Res<crate::plugins::metrics::SystemTimings>,
+    player_query: Query<&Loc, (With<PlayerControlled>, Changed<Loc>)>,
 ) {
+    if player_query.is_empty() { return; }
+    let _t = timings.scope("spawner");
+
     for player_loc in &player_query {
         let spawners = registry.spawners_near(player_loc.q, player_loc.r);
 
@@ -66,10 +70,10 @@ pub fn activate_spawners(
             if active.0.contains(&(q, r)) { continue; }
 
             let archetype = match placement.archetype {
-                terrain::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
-                terrain::events::spawner::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
-                terrain::events::spawner::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
-                terrain::events::spawner::SpawnerArchetype::Defender => EnemyArchetype::Defender,
+                world::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
+                world::events::spawner::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
+                world::events::spawner::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
+                world::events::spawner::SpawnerArchetype::Defender => EnemyArchetype::Defender,
             };
 
             active.0.insert((q, r));

@@ -5,7 +5,7 @@
 //! Query: resolves a single tile's plate classification via warped Voronoi.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use common::{HexLattice, PlateTag, TagSet};
 
@@ -80,12 +80,16 @@ impl EventIndex for PlateCentroidIndex {
 // ── PlateEvent ──────────────────────────────────────────────────────────────
 
 pub struct PlateEvent {
-    plate_cache: Mutex<PlateCache>,
+    plate_cache: Arc<Mutex<PlateCache>>,
 }
 
 impl PlateEvent {
     pub fn new(seed: u64) -> Self {
-        Self { plate_cache: Mutex::new(PlateCache::new(seed)) }
+        Self::with_cache(Arc::new(Mutex::new(PlateCache::new(seed))))
+    }
+
+    pub fn with_cache(plate_cache: Arc<Mutex<PlateCache>>) -> Self {
+        Self { plate_cache }
     }
 }
 
@@ -93,12 +97,15 @@ impl WorldEvent for PlateEvent {
     fn name(&self) -> &str { "plates" }
     fn scale(&self) -> u32 { PLATE_CELL_SCALE }
     fn survey(&self) -> Survey { Survey::none() }
+    fn register_indexes(&self, registry: &mut IndexRegistry) {
+        registry.pre_register::<PlateCentroidIndex>();
+    }
 
     fn deform(
         &self,
         cell_id: CellId,
         _matched: &[(i32, i32)],
-        indexes: &mut IndexRegistry,
+        indexes: &IndexRegistry,
         _seed: u64,
     ) {
         let mut plate_cache = self.plate_cache.lock().unwrap();
@@ -139,7 +146,7 @@ impl WorldEvent for PlateEvent {
             tags_at_entries.push(((pq, pr), tag_set));
         }
 
-        let centroid_index = indexes.get_or_create::<PlateCentroidIndex>();
+        let mut centroid_index = indexes.get_or_create::<PlateCentroidIndex>();
         centroid_index.cells.insert(cell_id, centroids);
         for ((cq, cr), nbrs) in neighbor_edges {
             centroid_index.neighbor_graph.insert((cq, cr), nbrs);

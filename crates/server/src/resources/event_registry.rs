@@ -1,28 +1,30 @@
 use bevy::prelude::*;
 use common::HexLattice;
-use terrain::events::Composite;
-use terrain::events::plates::PlateEvent;
-use terrain::events::spawner::{SpawnerEvent, SpawnerPlacementIndex, SpawnerPlacement};
-use terrain::events::spines::SpineEvent;
-use terrain::TagSet;
+use world::events::Composite;
+use world::events::plates::PlateEvent;
+use world::events::spawner::{SpawnerEvent, SpawnerPlacementIndex, SpawnerPlacement};
+use world::events::spines::SpineEvent;
+use world::TagSet;
 
 /// Server-side registry of world events.
 ///
 /// Owns the Composite with PlateEvent + SpineEvent + SpawnerEvent.
 /// All terrain queries and spawner placement queries route through here.
-#[derive(Resource)]
+/// Arc-wrapped so async chunk generation tasks can share it.
+#[derive(Resource, Clone)]
 pub struct EventRegistry {
-    composite: Composite,
+    composite: std::sync::Arc<Composite>,
 }
 
 impl EventRegistry {
     pub fn new(seed: u64) -> Self {
+        let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(world::PlateCache::new(seed)));
         let mut composite = Composite::new(seed);
-        composite.add_event(Box::new(PlateEvent::new(seed)));
-        composite.add_event(Box::new(SpineEvent::new(seed)));
+        composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+        composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(SpawnerEvent::new(seed)));
 
-        Self { composite }
+        Self { composite: std::sync::Arc::new(composite) }
     }
 
     /// Get elevation at a hex tile position (discretized to z-level).
@@ -58,7 +60,7 @@ impl EventRegistry {
     }
 
     /// Drain event metrics (reads gauges, resets interval counters).
-    pub fn drain_metrics(&self) -> terrain::events::EventMetricsSnapshot {
+    pub fn drain_metrics(&self) -> world::events::EventMetricsSnapshot {
         self.composite.drain_metrics()
     }
 }

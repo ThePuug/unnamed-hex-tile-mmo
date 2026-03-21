@@ -3,9 +3,19 @@
 //! Events register index entries during deform. Other events query them during
 //! survey evaluation. The framework manages lifecycle (LRU eviction calls
 //! `remove_cell` on all indexes).
+//!
+//! The HashMap is immutable after initialization — all index types are
+//! pre-registered during `Composite::add_event()`. Each index has its own
+//! `RwLock` so independent indexes don't contend. No outer lock needed.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use parking_lot::{
+    RwLock, RwLockReadGuard, RwLockWriteGuard,
+    MappedRwLockReadGuard, MappedRwLockWriteGuard,
+};
 
 /// Cell identifier: lattice coordinates in the source event's hex ball grid.
 pub type CellId = (i32, i32);
@@ -57,8 +67,13 @@ impl<T: EventIndex + 'static> AnyIndex for T {
 // ── IndexRegistry ───────────────────────────────────────────────────────────
 
 /// Shared across all events. Keyed by TypeId. Accumulates across cell evaluations.
+///
+/// The HashMap is immutable after initialization. Each index has its own
+/// `RwLock` — independent indexes don't contend. Deform writes to one index
+/// while concurrent queries read from another without blocking.
 pub struct IndexRegistry {
-    entries: HashMap<TypeId, Box<dyn AnyIndex>>,
+    /// Immutable after init. Each value has an independent RwLock.
+    entries: HashMap<TypeId, Arc<RwLock<Box<dyn AnyIndex>>>>,
 }
 
 impl IndexRegistry {
@@ -66,47 +81,62 @@ impl IndexRegistry {
         Self { entries: HashMap::new() }
     }
 
-    pub fn get_or_create<T: EventIndex>(&mut self) -> &mut T {
-        let type_id = TypeId::of::<T>();
-        self.entries.entry(type_id)
-            .or_insert_with(|| Box::new(T::default()));
-        self.entries.get_mut(&type_id).unwrap()
-            .as_any_mut()
-            .downcast_mut::<T>()
-            .expect("TypeId mismatch in IndexRegistry")
+    /// Pre-register a typed index. Called during `Composite::add_event()`.
+    /// Must be called before any concurrent access begins.
+    pub fn pre_register<T: EventIndex>(&mut self) {
+        self.entries.entry(TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(RwLock::new(Box::new(T::default()))));
     }
 
-    pub fn get<T: EventIndex>(&self) -> Option<&T> {
-        self.entries.get(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.as_any().downcast_ref::<T>())
+
+    /// Typed read access. Returns a mapped guard implementing `Deref<Target = T>`.
+    /// Returns `None` if the index type has not been registered.
+    pub fn get<T: EventIndex>(&self) -> Option<MappedRwLockReadGuard<'_, T>> {
+        let arc = self.entries.get(&TypeId::of::<T>())?;
+        let guard = arc.read();
+        Some(RwLockReadGuard::map(guard, |boxed| {
+            boxed.as_any().downcast_ref::<T>().expect("TypeId mismatch in IndexRegistry")
+        }))
     }
+
+    /// Typed write access. Panics if the index type was not pre-registered.
+    /// Returns a mapped guard implementing `DerefMut<Target = T>`.
+    pub fn get_or_create<T: EventIndex>(&self) -> MappedRwLockWriteGuard<'_, T> {
+        let arc = self.entries.get(&TypeId::of::<T>())
+            .expect("Index type not pre-registered — add registers_indexes() to your WorldEvent");
+        let guard = arc.write();
+        RwLockWriteGuard::map(guard, |boxed| {
+            boxed.as_any_mut().downcast_mut::<T>().expect("TypeId mismatch in IndexRegistry")
+        })
+    }
+
+    // ── Type-erased access (used by survey evaluation) ──
 
     pub fn source_scale_of(&self, type_id: TypeId) -> Option<u32> {
-        self.entries.get(&type_id).map(|boxed| boxed.source_scale())
+        self.entries.get(&type_id).map(|arc| arc.read().source_scale())
     }
 
     pub fn tiles_by_type_id(&self, type_id: TypeId, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
         self.entries.get(&type_id)
-            .map(|boxed| boxed.tiles(cell_ids))
+            .map(|arc| arc.read().tiles(cell_ids))
             .unwrap_or_default()
     }
 
     pub fn neighbors_by_type_id(&self, type_id: TypeId, q: i32, r: i32) -> Vec<(i32, i32)> {
         self.entries.get(&type_id)
-            .map(|boxed| boxed.neighbors(q, r))
+            .map(|arc| arc.read().neighbors(q, r))
             .unwrap_or_default()
     }
 
-    /// Get a TileView from index metadata at (q, r) via type-erased TypeId.
     pub fn tile_view_at_by_type_id(&self, type_id: TypeId, q: i32, r: i32) -> Option<super::TileView> {
         self.entries.get(&type_id)
-            .and_then(|boxed| boxed.tile_view_at(q, r))
+            .and_then(|arc| arc.read().tile_view_at(q, r))
     }
 
-    pub fn remove_cell(&mut self, cell_id: CellId) {
-        for boxed in self.entries.values_mut() {
-            boxed.remove_cell(cell_id);
+    /// Remove cell entries from all indexes. Called on LRU eviction.
+    pub fn remove_cell(&self, cell_id: CellId) {
+        for arc in self.entries.values() {
+            arc.write().remove_cell(cell_id);
         }
     }
-
 }

@@ -61,14 +61,14 @@ impl Default for FlyoverState {
 #[derive(Component)]
 pub struct AdminChunk;
 
-/// Wraps terrain::Terrain for local chunk generation.
+/// Wraps world::Terrain for local chunk generation.
 /// Arc-wrapped so async tile generation tasks can share it cheaply.
 #[derive(Resource)]
-pub struct AdminTerrain(pub Arc<terrain::Terrain>);
+pub struct AdminTerrain(pub Arc<world::Terrain>);
 
 impl Default for AdminTerrain {
     fn default() -> Self {
-        Self(Arc::new(terrain::Terrain::default()))
+        Self(Arc::new(world::Terrain::default()))
     }
 }
 
@@ -111,7 +111,7 @@ fn flyover_radius(
     camera_scale: f32,
     player_z: i32,
     center: ChunkId,
-    terrain: &terrain::Terrain,
+    terrain: &world::Terrain,
 ) -> u8 {
     // Orthographic scale → virtual perspective FOV.
     // Zooming out (scale > 1) narrows the virtual FOV → loads more chunks.
@@ -154,7 +154,7 @@ pub fn execute_admin_actions(
         match action {
             DevConsoleAction::GotoWorldUnits(wx, wy) => {
                 // Terrain world units use a different coordinate system than Bevy Vec3.
-                // terrain::hex_to_world: wx = q + r*0.5, wy = r * sqrt(3)/2
+                // world::hex_to_world: wx = q + r*0.5, wy = r * sqrt(3)/2
                 // Invert to get hex q,r, then convert to Vec3 via Map.
                 let sqrt_3 = 1.7320508075688772_f64;
                 let rf = wy * 2.0 / sqrt_3;

@@ -9,7 +9,7 @@
 //! Query: evaluates a single tile's elevation + tag from indexed instances.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use common::{HexLattice, PlateTag};
 
@@ -36,7 +36,7 @@ const SPINE_EXCLUSION_TILES: u32 = 10_000;
 /// Index of generated spine instances, keyed by framework cell ID.
 /// Populated by SpineEvent::deform, read by SpineEvent::query.
 pub struct SpineInstanceIndex {
-    cells: HashMap<CellId, Vec<SpineInstance>>,
+    pub cells: HashMap<CellId, Vec<SpineInstance>>,
 }
 
 impl Default for SpineInstanceIndex {
@@ -75,22 +75,26 @@ impl EventIndex for SpineInstanceIndex {
 // ── SpineEvent ──────────────────────────────────────────────────────────────
 
 pub struct SpineEvent {
-    plate_cache: Mutex<PlateCache>,
+    plate_cache: Arc<Mutex<PlateCache>>,
     seed: u64,
 }
 
 impl SpineEvent {
     pub fn new(seed: u64) -> Self {
-        Self {
-            plate_cache: Mutex::new(PlateCache::new(seed)),
-            seed,
-        }
+        Self::with_cache(Arc::new(Mutex::new(PlateCache::new(seed))), seed)
+    }
+
+    pub fn with_cache(plate_cache: Arc<Mutex<PlateCache>>, seed: u64) -> Self {
+        Self { plate_cache, seed }
     }
 }
 
 impl WorldEvent for SpineEvent {
     fn name(&self) -> &str { "spines" }
     fn scale(&self) -> u32 { SPINE_CELL_SCALE }
+    fn register_indexes(&self, registry: &mut IndexRegistry) {
+        registry.pre_register::<SpineInstanceIndex>();
+    }
 
     fn survey(&self) -> Survey {
         Survey::from_index::<PlateCentroidIndex>()
@@ -106,43 +110,47 @@ impl WorldEvent for SpineEvent {
         &self,
         cell_id: CellId,
         matched: &[(i32, i32)],
-        indexes: &mut IndexRegistry,
+        indexes: &IndexRegistry,
         _seed: u64,
     ) {
-        // Enrich matched centroids (already spaced by min_spacing)
-        let centroid_index = match indexes.get::<PlateCentroidIndex>() {
-            Some(idx) => idx,
-            None => {
-                indexes.get_or_create::<SpineInstanceIndex>()
-                    .cells.insert(cell_id, Vec::new());
-                return;
-            }
-        };
+        // Collect centroid data under read lock, then drop it before write lock.
+        let centroid_data: Vec<(f64, f64, u64)> = {
+            let centroid_index = match indexes.get::<PlateCentroidIndex>() {
+                Some(idx) => idx,
+                None => {
+                    indexes.get_or_create::<SpineInstanceIndex>()
+                        .cells.insert(cell_id, Vec::new());
+                    return;
+                }
+            };
+            matched.iter().filter_map(|&(q, r)| {
+                centroid_index.cells.values()
+                    .flat_map(|entries| entries.iter())
+                    .find(|e| e.q == q && e.r == r)
+                    .map(|e| (e.wx, e.wy, e.plate_id))
+            }).collect()
+        }; // read guard dropped
 
+        // Expensive computation — no lock held
         let mut plate_cache = self.plate_cache.lock().unwrap();
         let empty_plates: Vec<crate::PlateCenter> = Vec::new();
         let empty_map: HashMap<u64, usize> = HashMap::new();
 
         let mut instances: Vec<SpineInstance> = Vec::new();
-        for &(q, r) in matched {
-            let entry = centroid_index.cells.values()
-                .flat_map(|entries| entries.iter())
-                .find(|e| e.q == q && e.r == r);
-
-            if let Some(entry) = entry {
-                let inst = grow_spine(
-                    entry.wx, entry.wy, entry.plate_id,
-                    &mut empty_plates.clone(), &empty_map,
-                    &mut plate_cache, self.seed,
-                );
-                if !inst.peaks.is_empty() {
-                    instances.push(inst);
-                }
+        for (wx, wy, plate_id) in centroid_data {
+            let inst = grow_spine(
+                wx, wy, plate_id,
+                &mut empty_plates.clone(), &empty_map,
+                &mut plate_cache, self.seed,
+            );
+            if !inst.peaks.is_empty() {
+                instances.push(inst);
             }
         }
 
-        let spine_index = indexes.get_or_create::<SpineInstanceIndex>();
-        spine_index.cells.insert(cell_id, instances);
+        // Brief write lock for the insert
+        indexes.get_or_create::<SpineInstanceIndex>()
+            .cells.insert(cell_id, instances);
     }
 
     fn query(
