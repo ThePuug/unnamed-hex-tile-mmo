@@ -62,7 +62,9 @@ pub fn write_do(
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("write_do");
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
 

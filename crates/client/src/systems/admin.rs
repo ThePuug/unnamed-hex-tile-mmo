@@ -15,7 +15,7 @@ use common_bevy::{
         entity_type::{EntityType, decorator::Decorator},
         Actor,
     },
-    resources::map::{Map, MapState, TileEvent},
+    resources::map::Map,
 };
 use qrz::Convert;
 
@@ -123,7 +123,6 @@ pub fn execute_admin_actions(
     admin_chunk_query: Query<Entity, With<AdminChunk>>,
     loaded_chunks: Res<LoadedChunks>,
     map: Res<Map>,
-    map_state: Res<MapState>,
     admin_composite: Res<AdminComposite>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
@@ -197,13 +196,16 @@ pub fn execute_admin_actions(
 
             // Despawn tiles for admin-only full-detail chunks (skip server-loaded ones)
             // Use O(1) map lookup instead of terrain evaluation
-            for &chunk_id in &flyover.admin_chunks {
-                if loaded_chunks.chunks.contains(&chunk_id) {
-                    continue;
-                }
-                for (q, r) in chunk_tiles(chunk_id) {
-                    if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                        map_state.queue_event(TileEvent::Despawn(qrz));
+            {
+                let mut map_w = map.write();
+                for &chunk_id in &flyover.admin_chunks {
+                    if loaded_chunks.chunks.contains(&chunk_id) {
+                        continue;
+                    }
+                    for (q, r) in chunk_tiles(chunk_id) {
+                        if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
+                            map_w.remove(qrz);
+                        }
                     }
                 }
             }
@@ -515,7 +517,7 @@ pub fn flyover_generate_chunks(
 pub fn poll_flyover_tile_tasks(
     mut commands: Commands,
     mut pending: ResMut<PendingFlyoverTiles>,
-    map_state: Res<MapState>,
+    map: Res<Map>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
     terrain_material: Option<Res<crate::resources::TerrainMaterial>>,
@@ -525,9 +527,11 @@ pub fn poll_flyover_tile_tasks(
     // Poll inner tile generation tasks
     pending.inner.retain(|&chunk_id, task| {
         if let Some(tiles) = block_on(future::poll_once(task)) {
+            let mut map_w = map.write();
             for (qrz, entity_type) in tiles {
-                map_state.queue_event(TileEvent::Spawn(qrz, entity_type));
+                map_w.insert(qrz, entity_type);
             }
+            drop(map_w);
             loaded_chunks.insert(chunk_id);
             false
         } else {
@@ -573,12 +577,13 @@ pub fn tag_admin_chunks(
 pub fn flyover_evict_chunks(
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
-    map_state: Res<MapState>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
     camera_query: Query<&Projection, With<Camera3d>>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("fly_evic");
     let scale = camera_query.single().ok().map_or(1.0, |p| {
         if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
     });
@@ -608,17 +613,17 @@ pub fn flyover_evict_chunks(
     if !evictable.is_empty() {
         let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
 
-        for &chunk_id in &evictable {
-            // Cancel pending tile generation tasks if still running
-            pending_tiles.inner.remove(&chunk_id);
-
-            if loaded_chunks.chunks.contains(&chunk_id) {
-                continue;
-            }
-            // Use O(1) map lookup instead of terrain evaluation for despawn
-            for (q, r) in chunk_tiles(chunk_id) {
-                if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                    map_state.queue_event(TileEvent::Despawn(qrz));
+        {
+            let mut map_w = map.write();
+            for &chunk_id in &evictable {
+                pending_tiles.inner.remove(&chunk_id);
+                if loaded_chunks.chunks.contains(&chunk_id) {
+                    continue;
+                }
+                for (q, r) in chunk_tiles(chunk_id) {
+                    if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
+                        map_w.remove(qrz);
+                    }
                 }
             }
         }

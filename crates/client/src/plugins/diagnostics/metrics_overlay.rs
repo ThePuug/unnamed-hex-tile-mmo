@@ -179,6 +179,7 @@ pub fn sample_metrics(
     mut history: ResMut<MetricsHistory>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("metrics");
     // Every frame: push raw frame time into the 2s p95 window
     let elapsed = time.elapsed_secs_f64();
     if let Some(ft) = diagnostics

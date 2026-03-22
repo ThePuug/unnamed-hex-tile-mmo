@@ -76,11 +76,9 @@ pub fn evict_data(
     mut lod_meshes: ResMut<ChunkLodMeshes>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common_bevy::resources::map::Map>,
-    map_state: Res<common_bevy::resources::map::MapState>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    use common_bevy::resources::map::TileEvent;
-
     let mut all_evicted = Vec::new();
 
     for message in reader.read() {
@@ -89,6 +87,7 @@ pub fn evict_data(
     }
 
     if all_evicted.is_empty() { return; }
+    let _t = client_timers.0.scope("evict");
 
     // Despawn actors on evicted chunks
     for (entity, loc, entity_type) in actor_query.iter() {
@@ -108,11 +107,14 @@ pub fn evict_data(
         }
     }
 
-    // Queue tile despawns
-    for &chunk_id in &all_evicted {
-        for (q, r) in chunk_tiles(chunk_id) {
-            if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                map_state.queue_event(TileEvent::Despawn(qrz));
+    // Remove tiles from map
+    {
+        let mut map_w = map.write();
+        for &chunk_id in &all_evicted {
+            for (q, r) in chunk_tiles(chunk_id) {
+                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
+                    map_w.remove(qrz);
+                }
             }
         }
     }
@@ -153,18 +155,13 @@ pub fn do_init(
 
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
-    map_state: Res<common_bevy::resources::map::MapState>,
+    map: Res<common_bevy::resources::map::Map>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    use common_bevy::resources::map::TileEvent;
-
-    // Queue tile spawn events (drain loop will process them)
-    // refresh_map system will swap in new snapshot and trigger Bevy change detection
+    let _t = client_timers.0.scope("do_spawn");
     for message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
-        let decorator = *decorator;
-        let qrz = *qrz;
-
-        map_state.queue_event(TileEvent::Spawn(qrz, EntityType::Decorator(decorator)));
+        map.insert(*qrz, EntityType::Decorator(*decorator));
     }
 }
 
@@ -262,7 +259,7 @@ pub fn dispatch_lod_tasks(
 ) {
     // Only re-check when new tile data arrives. Once all reachable chunks are
     // meshed or waiting on out-of-range neighbors, this skips entirely.
-    if !map.is_changed() {
+    if !map.take_changed() {
         return;
     }
     let _t = client_timers.0.scope("lod_disp");

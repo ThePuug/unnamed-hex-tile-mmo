@@ -181,19 +181,11 @@ Layers are composited bottom-to-top. Macro borders drawn as light grey lines; mi
 
 ### Chunk Loading (ADR-032)
 
-Server sends full-detail chunks within `terrain_chunk_radius(max_z) + 1` — a simple hex radius based on the player's chunk elevation. All chunks are inserted into the server's Map and sent as full 271-tile `ChunkData` events. No server-side LoD distinction.
+Server sends full-detail chunks within `terrain_chunk_radius(max_z) + 1` — a simple hex radius based on the player's chunk elevation. All chunks are inserted into the server's Map and sent as full 271-tile `ChunkData` events.
 
-### Client-Side LoD Rendering
+### LoD Rendering
 
-The client renders distant chunks at reduced detail using QEM (Quadric Error Metrics) decimation:
-
-**Boundary vertices**: 6 corner vertices (3-tile average, always retained) + up to 8 edge vertices per edge, RDP-decimated against `BORDER_ERROR_THRESHOLD`. Adjacent chunks share boundary vertices deterministically.
-
-**Interior vertices**: QEM-selected based on terrain variance against `SUMMARY_ERROR_THRESHOLD`. Mesh reconstructed via Delaunay triangulation.
-
-### Invariants
-
-**Continuous surface**: Adjacent summary meshes share deterministic boundary vertices (corners + RDP-decimated edges). No gaps.
+See **[lod.md](lod.md)** — hex-native decimation with continuous distance-driven thresholds. Client owns LoD within ~20 chunks; server generates and sends `DecimatedChunkData` beyond that.
 
 ---
 
@@ -219,10 +211,11 @@ Where the current implementation intentionally differs from spec:
 
 **Related Design Documents:**
 - [World Event System](world-events.md) — Framework contract, deform/query split, composite materialization, index system
+- [Level of Detail](lod.md) — Hex-native decimation, threshold model, client/server rendering regimes
 - [Haven System](haven.md) — Starter havens; biome types
 - [Hub System](hubs.md) — Player settlements interacting with terrain
 - [Siege System](siege.md) — Encroachment where terrain difficulty compounds with distance
 
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation
-- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Chunk loading with client-side LoD rendering
+- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Chunk loading; QEM rendering superseded by hex-native LoD
