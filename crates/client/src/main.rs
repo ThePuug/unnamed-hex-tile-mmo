@@ -183,13 +183,14 @@ fn main() {
     app.init_resource::<crate::resources::SkipNeighborRegen>();
     app.init_resource::<crate::resources::ChunkLodMeshes>();
     app.init_resource::<crate::resources::LodTriangleStats>();
+    app.init_resource::<crate::resources::ClientTimers>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
     {
         app.init_resource::<admin::FlyoverState>();
         app.init_resource::<admin::PendingFlyoverTiles>();
-        app.insert_resource(admin::AdminTerrain::default());
+        app.insert_resource(admin::AdminComposite::default());
 
         app.add_systems(Update, (
             admin::execute_admin_actions,

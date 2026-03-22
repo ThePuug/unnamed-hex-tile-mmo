@@ -260,18 +260,17 @@ impl Map {
             }
         }
 
+        let chunk_origin: Vec3 = map.convert(chunk_id.center());
         let geometry = if apply_slopes {
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &elevations, map.radius(), map.rise(),
+                &chunk_tiles, &elevations, map.radius(), map.rise(), chunk_origin,
             )
         } else {
-            // No slopes: use flat elevations (no neighbor adjustment)
-            // Build geometry without slope blending by passing empty neighbor set
             let chunk_only: std::collections::HashMap<(i32, i32), i32> = chunk_tiles.iter()
                 .map(|qrz| ((qrz.q, qrz.r), qrz.z))
                 .collect();
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &chunk_only, map.radius(), map.rise(),
+                &chunk_tiles, &chunk_only, map.radius(), map.rise(), chunk_origin,
             )
         };
 

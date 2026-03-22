@@ -128,6 +128,15 @@ impl FrameTimeWindow {
     }
 }
 
+/// Per-system timing entry (drained from ClientTimers).
+struct TimingEntry {
+    hist_p95: History,
+}
+
+impl TimingEntry {
+    fn new() -> Self { Self { hist_p95: History::new() } }
+}
+
 /// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
 #[derive(Resource)]
 pub struct MetricsHistory {
@@ -142,6 +151,8 @@ pub struct MetricsHistory {
     fps_p95: f64,
     bw: History,
     msg: History,
+    /// Per-system timing histories (drained from ClientTimers).
+    timings: std::collections::HashMap<&'static str, TimingEntry>,
 }
 
 impl Default for MetricsHistory {
@@ -154,6 +165,7 @@ impl Default for MetricsHistory {
             fps_p95: 0.0,
             bw: History::new(),
             msg: History::new(),
+            timings: std::collections::HashMap::new(),
         }
     }
 }
@@ -165,6 +177,7 @@ pub fn sample_metrics(
     diagnostics: Res<DiagnosticsStore>,
     network: Res<NetworkMetrics>,
     mut history: ResMut<MetricsHistory>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
     // Every frame: push raw frame time into the 2s p95 window
     let elapsed = time.elapsed_secs_f64();
@@ -188,6 +201,13 @@ pub fn sample_metrics(
     history.frame_ms.push(p95);
     history.bw.push(network.displayed_bytes_per_sec() as f64);
     history.msg.push(network.displayed_messages_per_sec() as f64);
+
+    // Drain system timers into per-system histories
+    for (name, p95, _count) in client_timers.0.drain() {
+        history.timings.entry(name)
+            .or_insert_with(TimingEntry::new)
+            .hist_p95.push(p95 as f64);
+    }
 }
 
 // ── Alarm bands (match server console pattern) ──
@@ -685,6 +705,48 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                     });
+
+                    // ── TIMINGS ──
+                    if !history.timings.is_empty() {
+                        ui.add_space(4.0);
+
+                        const ALARM_TIMING: Alarm = Alarm { bands: &[
+                            (16.667, COLOR_NORMAL),
+                            (33.333, COLOR_WARN),
+                            (f64::INFINITY, COLOR_CRITICAL),
+                        ]};
+                        const ALARM_OVERRUN: Alarm = Alarm { bands: &[
+                            (0.5, COLOR_DIM),
+                            (f64::INFINITY, COLOR_CRITICAL),
+                        ]};
+                        const TIME5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                        const OVERRUN: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
+
+                        draw_section(ui, "TIMINGS", content_width, |ui| {
+                            let mut names: Vec<&&str> = history.timings.keys().collect();
+                            names.sort();
+                            for &&name in &names {
+                                let entry = &history.timings[name];
+                                seg_row(ui, cw, |s| {
+                                    // Label (7ch)
+                                    let display = if name.len() > 7 { &name[..7] } else { name };
+                                    s.half(&format!("{:>7}", display), COLOR_DIM);
+                                    // Value (7ch): p95 + unit
+                                    let p95_val = entry.hist_p95.0.back().copied().unwrap_or(0.0);
+                                    s.half(&format!("{:>5}{:<2}", TIME5.fmt(p95_val), "ms"), COLOR_DIM);
+                                    // Sparkline (15ch)
+                                    s.spark(&entry.hist_p95.as_f32(), SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
+                                    // Peak (7ch)
+                                    let peak = entry.hist_p95.visible_max(bar_count);
+                                    s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(peak)), COLOR_DIM);
+                                    // Overruns: count of p95 > 16.667ms in visible window (7ch)
+                                    let start = entry.hist_p95.0.len().saturating_sub(bar_count);
+                                    let ov_val = entry.hist_p95.0.range(start..).filter(|&&v| v > 16.667).count() as f64;
+                                    s.half(&format!("{:>5}{:<2}", OVERRUN.fmt(ov_val), GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
+                                });
+                            }
+                        });
+                    }
                 });
         });
 }

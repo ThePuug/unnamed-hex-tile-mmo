@@ -89,6 +89,9 @@ pub struct ChunkLodState {
     pub lod2_tris: u32,
     pub active_lod: LodLevel,
     pub entity: Option<Entity>,
+    /// Chunk-local origin (world position of chunk center tile).
+    /// Mesh vertex positions are relative to this; entity Transform repositions.
+    pub chunk_origin: Vec3,
 }
 
 /// Tracks dual-LoD mesh generation for all chunks.
@@ -166,4 +169,13 @@ impl LoadedChunks {
             self.chunks.remove(chunk_id);
         }
     }
+}
+
+/// Client-side system timers. Wraps `common::timers::SystemTimers`.
+/// No transport — data accumulates locally. Can be drained for diagnostics.
+#[derive(Resource)]
+pub struct ClientTimers(pub common::timers::SystemTimers);
+
+impl Default for ClientTimers {
+    fn default() -> Self { Self(common::timers::SystemTimers::new()) }
 }

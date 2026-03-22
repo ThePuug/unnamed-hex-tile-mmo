@@ -128,35 +128,13 @@ impl MetricSnapshot {
     }
 }
 
-// ── SystemTimings ──
+// ── SystemTimings (wraps common::timers::SystemTimers + UDP transport) ──
 
-struct TimingBuffer {
-    observations: Vec<f32>,
-}
-
-impl TimingBuffer {
-    fn new() -> Self { Self { observations: Vec::with_capacity(64) } }
-
-    fn record(&mut self, ms: f32) { self.observations.push(ms); }
-
-    /// Compute p95 and sample count, then clear. Returns (p95_ms, count).
-    fn drain(&mut self) -> (f32, f32) {
-        if self.observations.is_empty() { return (0.0, 0.0); }
-        self.observations.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = self.observations.len();
-        let p95_idx = ((n as f64 * 0.95).ceil() as usize).saturating_sub(1).min(n - 1);
-        let p95 = self.observations[p95_idx];
-        let count = n as f32;
-        self.observations.clear();
-        (p95, count)
-    }
-}
-
-/// Accumulates per-system timing observations via RAII scope guards.
-/// Flushed periodically as `Cadence::Event` packets to the console.
+/// Server-side timing accumulator. Wraps `common::timers::SystemTimers` and
+/// periodically flushes drained p95/count data to the console via UDP.
 #[derive(Resource)]
 pub struct SystemTimings {
-    buffers: Mutex<HashMap<&'static str, TimingBuffer>>,
+    timers: common::timers::SystemTimers,
     transport: Transport,
     flush_interval: Duration,
     last_flush: Mutex<Duration>,
@@ -165,7 +143,7 @@ pub struct SystemTimings {
 impl SystemTimings {
     fn new(transport: Transport, interval: Duration) -> Self {
         Self {
-            buffers: Mutex::new(HashMap::new()),
+            timers: common::timers::SystemTimers::new(),
             transport,
             flush_interval: interval,
             last_flush: Mutex::new(Duration::ZERO),
@@ -173,28 +151,19 @@ impl SystemTimings {
     }
 
     /// Create a scoped timer. Records elapsed milliseconds on drop.
-    pub fn scope(&self, name: &'static str) -> ScopeTimer<'_> {
-        ScopeTimer { name, start: Instant::now(), timings: self }
-    }
-
-    fn record(&self, name: &'static str, ms: f32) {
-        self.buffers.lock().unwrap()
-            .entry(name)
-            .or_insert_with(TimingBuffer::new)
-            .record(ms);
+    pub fn scope(&self, name: &'static str) -> common::timers::ScopeTimer<'_> {
+        self.timers.scope(name)
     }
 
     fn flush(&self, timestamp_secs: f64) {
-        let mut buffers = self.buffers.lock().unwrap();
-        let mut fields = Vec::new();
+        let drained = self.timers.drain();
+        if drained.is_empty() { return; }
 
-        for (&name, buf) in buffers.iter_mut() {
-            let (p95, count) = buf.drain();
+        let mut fields = Vec::new();
+        for (name, p95, count) in drained {
             fields.push((format!("{name}.p95"), p95));
             fields.push((format!("{name}.n"), count));
         }
-
-        if fields.is_empty() { return; }
 
         self.transport.send_packet(&MetricsPacket {
             group: "timings".to_string(),
@@ -202,20 +171,6 @@ impl SystemTimings {
             timestamp_secs,
             fields,
         });
-    }
-}
-
-/// RAII timer guard. Records elapsed milliseconds into [`SystemTimings`] on drop.
-pub struct ScopeTimer<'a> {
-    name: &'static str,
-    start: Instant,
-    timings: &'a SystemTimings,
-}
-
-impl Drop for ScopeTimer<'_> {
-    fn drop(&mut self) {
-        let ms = self.start.elapsed().as_secs_f64() as f32 * 1000.0;
-        self.timings.record(self.name, ms);
     }
 }
 

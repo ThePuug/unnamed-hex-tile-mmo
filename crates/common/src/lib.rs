@@ -4,6 +4,7 @@ pub mod hex_spatial_grid;
 pub mod network;
 pub mod numfmt;
 pub mod plate_tags;
+pub mod timers;
 pub use hex_lattice::HexLattice;
 pub use hex_spatial_grid::HexSpatialGrid;
 pub use plate_tags::{PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};

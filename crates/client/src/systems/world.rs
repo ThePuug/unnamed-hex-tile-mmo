@@ -14,6 +14,7 @@ use crate::{
     plugins::diagnostics::DiagnosticsState,
     resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
 };
+use qrz::Convert;
 use common_bevy::{
     chunk::{self, chunk_hex_distance, chunk_tiles, loc_to_chunk, CHUNK_EXTENT_WU},
     components::{ *,
@@ -257,12 +258,14 @@ pub fn dispatch_lod_tasks(
     loaded_chunks: Res<LoadedChunks>,
     map: Res<common_bevy::resources::map::Map>,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
     // Only re-check when new tile data arrives. Once all reachable chunks are
     // meshed or waiting on out-of-range neighbors, this skips entirely.
     if !map.is_changed() {
         return;
     }
+    let _t = client_timers.0.scope("lod_disp");
 
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
@@ -271,8 +274,7 @@ pub fn dispatch_lod_tasks(
             continue; // Already dispatched
         }
 
-        // Neighbor gate (6 lookups). Skip the expensive 271-tile collection
-        // when neighbors haven't arrived yet.
+        // Neighbor gate (6 lookups — cheap, stays on main thread).
         let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
         let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
             let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
@@ -283,51 +285,19 @@ pub fn dispatch_lod_tasks(
             continue;
         }
 
-        // Build chunk tiles from populated Map
-        let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
-            .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
-            .collect();
+        // Clone Map Arc snapshot — tile collection + elevation build happens off-thread.
+        let map_snap = map.clone();
 
-        if chunk_tile_list.len() < 271 {
-            if chunk_tile_list.is_empty() {
-                continue;
-            }
-            bevy::log::warn!("chunk ({},{}) has only {} of 271 tiles in map",
-                chunk_id.0, chunk_id.1, chunk_tile_list.len());
-            continue;
-        }
-
-        let mut elevations = std::collections::HashMap::new();
-        for &qrz in &chunk_tile_list {
-            elevations.insert((qrz.q, qrz.r), qrz.z);
-            for direction in qrz::DIRECTIONS.iter() {
-                let n = qrz + *direction;
-                if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
-                    elevations.insert((actual.q, actual.r), actual.z);
-                }
-            }
-        }
-
-        // Dispatch LoD1 task — QEM at threshold 0 (lossless zero-error collapses only)
-        let tiles1 = chunk_tile_list.clone();
-        let elevs1 = elevations.clone();
+        // Single async task: collect tiles → build elevations → geometry → QEM for both LoDs
+        let lod1_map = map.clone();
         let lod1_task = pool.spawn(async move {
-            let geometry = common_bevy::geometry::compute_tile_geometry(
-                &tiles1, &elevs1, 1.0, 0.8,
-            );
-            common_bevy::qem::decimate_geometry(&geometry, LOD1_ERROR_THRESHOLD)
+            collect_and_decimate(chunk_id, &lod1_map, LOD1_ERROR_THRESHOLD)
         });
-
-        // Dispatch LoD2 task — QEM decimation
-        let tiles2 = chunk_tile_list;
-        let elevs2 = elevations;
         let lod2_task = pool.spawn(async move {
-            let geometry = common_bevy::geometry::compute_tile_geometry(
-                &tiles2, &elevs2, 1.0, 0.8,
-            );
-            common_bevy::qem::decimate_geometry(&geometry, LOD2_ERROR_THRESHOLD)
+            collect_and_decimate(chunk_id, &map_snap, LOD2_ERROR_THRESHOLD)
         });
 
+        let chunk_center: Vec3 = map.convert(chunk_id.center());
         lod_meshes.states.insert(chunk_id, ChunkLodState {
             lod1_task: Some(lod1_task),
             lod2_task: Some(lod2_task),
@@ -337,9 +307,39 @@ pub fn dispatch_lod_tasks(
             lod2_tris: 0,
             active_lod: LodLevel::Lod1,
             entity: None,
+            chunk_origin: chunk_center,
         });
     }
 
+}
+
+/// Collect tiles from Map snapshot, build elevations, compute geometry, decimate.
+/// Runs entirely off the main thread via AsyncComputeTaskPool.
+fn collect_and_decimate(
+    chunk_id: common_bevy::chunk::ChunkId,
+    map: &common_bevy::resources::map::Map,
+    threshold: f32,
+) -> common_bevy::qem::DecimatedMesh {
+    let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
+        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
+        .collect();
+
+    let mut elevations = std::collections::HashMap::new();
+    for &qrz in &chunk_tile_list {
+        elevations.insert((qrz.q, qrz.r), qrz.z);
+        for direction in qrz::DIRECTIONS.iter() {
+            let n = qrz + *direction;
+            if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
+                elevations.insert((actual.q, actual.r), actual.z);
+            }
+        }
+    }
+
+    let chunk_origin: Vec3 = map.convert(chunk_id.center());
+    let geometry = common_bevy::geometry::compute_tile_geometry(
+        &chunk_tile_list, &elevations, 1.0, 0.8, chunk_origin,
+    );
+    common_bevy::qem::decimate_geometry(&geometry, threshold)
 }
 
 /// Poll completed LoD tasks, upload meshes, select active LoD per chunk.
@@ -350,8 +350,10 @@ pub fn poll_and_swap_lod(
     mut tri_stats: ResMut<LodTriangleStats>,
     terrain_material: Option<Res<TerrainMaterial>>,
     player_query: Query<&Loc, With<PlayerControlled>>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let Some(terrain_material) = terrain_material else { return; };
+    let _t = client_timers.0.scope("lod_swap");
 
     let player_loc = player_query.iter().next();
     let player_chunk = player_loc.map(|loc| loc_to_chunk(**loc));
@@ -406,6 +408,7 @@ pub fn poll_and_swap_lod(
                 let entity = commands.spawn((
                     Mesh3d(mesh_handle),
                     MeshMaterial3d(terrain_material.handle.clone()),
+                    Transform::from_translation(state.chunk_origin),
                     ChunkMesh { chunk_id },
                 )).id();
                 state.entity = Some(entity);
@@ -426,7 +429,7 @@ fn target_lod_for_chunk(chunk_id: common_bevy::chunk::ChunkId, player_chunk: Opt
     }
 }
 
-fn build_bevy_mesh(decimated: &common_bevy::qem::DecimatedMesh) -> Mesh {
+pub fn build_bevy_mesh(decimated: &common_bevy::qem::DecimatedMesh) -> Mesh {
     let vert_count = decimated.positions.len();
     let verts: Vec<Vec3> = decimated.positions.iter().map(|p| Vec3::from_array(*p)).collect();
     let norms: Vec<Vec3> = decimated.normals.iter().map(|n| Vec3::from_array(*n)).collect();

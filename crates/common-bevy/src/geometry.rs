@@ -32,6 +32,7 @@ pub fn compute_tile_geometry(
     elevations: &HashMap<(i32, i32), i32>,
     radius: f32,
     rise: f32,
+    chunk_origin: Vec3,
 ) -> TileGeometry {
     // Empty map for vertex computation — only needs geometry params
     let map: qrz::Map<()> = qrz::Map::new(radius, rise, qrz::HexOrientation::FlatTop);
@@ -93,12 +94,13 @@ pub fn compute_tile_geometry(
         let base_idx = positions.len() as u32;
 
         // Center vertex (index 6 in tile_verts → first emitted vertex)
-        positions.push(tile_verts[6].into());
+        // Rebase to chunk-local coordinates for f32 precision at any world distance.
+        positions.push((tile_verts[6] - chunk_origin).into());
         normals.push(hex_vertex_normal(&tile_verts, 6).into());
 
         // Outer vertices (0-5)
         for i in 0..6 {
-            positions.push(tile_verts[i].into());
+            positions.push((tile_verts[i] - chunk_origin).into());
             normals.push(hex_vertex_normal(&tile_verts, i).into());
         }
 
@@ -144,10 +146,14 @@ pub fn compute_tile_geometry(
             let outward_normal = edge_dir.cross(Vec3::new(0., -1., 0.)).normalize();
 
             let skirt_base = positions.len() as u32;
-            positions.extend([[curr_v1.x, curr_v1.y, curr_v1.z],
-                              [curr_v2.x, curr_v2.y, curr_v2.z],
-                              [neighbor_v2.x, neighbor_v2.y, neighbor_v2.z],
-                              [neighbor_v1.x, neighbor_v1.y, neighbor_v1.z]]);
+            let cv1 = curr_v1 - chunk_origin;
+            let cv2 = curr_v2 - chunk_origin;
+            let nv2 = neighbor_v2 - chunk_origin;
+            let nv1 = neighbor_v1 - chunk_origin;
+            positions.extend([[cv1.x, cv1.y, cv1.z],
+                              [cv2.x, cv2.y, cv2.z],
+                              [nv2.x, nv2.y, nv2.z],
+                              [nv1.x, nv1.y, nv1.z]]);
             let n: [f32; 3] = outward_normal.into();
             normals.extend([n; 4]);
 
