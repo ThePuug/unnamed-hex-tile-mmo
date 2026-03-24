@@ -20,45 +20,105 @@ The terrain has three visual modes: flat (all vertices at same z), gentle slope 
 
 ## Hex-Native Decimation
 
-### Hexball Grouping
+### The Inscribed Hex
 
-The decimation unit is a radius-1 hexball: a center tile plus its 6 neighbors (7 tiles). The center tile's z-level is selected to minimize maximum deviation from any tile in the group. When multiple z-levels tie, any may be chosen (deterministic tiebreaker by lowest z).
+For any radius-N hexball (containing 3N²+3N+1 tiles), there exists a regular flat-top hexagon fully inscribed within the hexball boundary. This hex is defined by 6 vertices, each located at a specific outer vertex of an edge tile on ring N.
 
-The center z is always a discrete integer. No fractional heights. No interpolation.
+The vertex selection follows two alternating patterns based on radius parity, reflecting the half-offset stagger of the hex grid. Odd radii (1, 3, 5...) use one consistent set of vertex indices; even radii (2, 4, 6...) use another. Both produce a regular hexagon centered on the hexball center.
 
-### Decimated Geometry
+The inscribed hex grows with radius. At r=1 the vertices sit at distance ~2R from center; at r=4 they sit at ~7R. The hex always has the same flat-top orientation as the constituent tiles.
 
-The decimated hexball does not render as a hexball mesh. Instead, each neighbor tile is split in half by connecting its two "close" vertices — the vertices shared with its adjacent neighbors (not shared with the center tile). This produces:
+### Decimated Mesh Structure
 
-**Inner hex**: A regular hexagon whose 6 vertices sit at the close vertices of the 6 neighbors. The center vertex sits at the decimated z-level. 6 triangles fan from center to these vertices. This region absorbs the entire center tile plus the inward-facing half of each neighbor.
+The decimated mesh has exactly two components:
 
-**Outer fans**: Each neighbor retains its 3 outward-facing triangles (the half beyond the split line), radiating from the neighbor's original center toward the hexball perimeter. These preserve the hexball's outer silhouette exactly.
+**Inner Hex (always 6 triangles)**: A single center vertex fans to the 6 inscribed hex boundary vertices. Identical topology to a single tile at any scale.
 
-Total mesh: 1 center vertex + 6 inner hex boundary vertices + 6 neighbor centers + 12 hexball perimeter vertices = 25 vertices, 24 triangles. Down from 7 × 7 = 49 vertices and 7 × 6 = 42 triangles at full detail.
+The center vertex sits at a discrete integer z-level, chosen to minimize maximum deviation from all tiles within the hexball. The 6 boundary vertices sit at original grid positions — their heights are the real blended heights from the original mesh, derived from adjacent tile centers. Not approximated, not snapped.
+
+**Residual Wedges (6 identical clusters)**: Each of the 6 hexball "points" produces a wedge of surviving geometry radiating outward. A wedge contains two types of tiles:
+
+- *Partial tiles*: Their centers sit exactly on the inscribed hex edge. They are split — inward-facing triangles absorbed, outward-facing triangles survive as a fan (3 triangles per partial tile) radiating from the tile center to hexball perimeter vertices. Partial tile centers snap to the linearly interpolated z between the two adjacent hex boundary vertices (T-junction resolution — see below).
+- *Full residual tiles*: Sit entirely outside the inscribed hex. All 6 triangles survive unmodified.
+
+The residual structure pairs by radius:
+
+| Radius pair | Partial fans per side | Full tiles per side | Residual tri per side |
+|-------------|----------------------|--------------------|-----------------------|
+| r=1, r=2    | 1                    | 0                  | 3                     |
+| r=3, r=4    | 2                    | 1                  | 12                    |
+| r=5, r=6    | 3                    | 2                  | 21                    |
+| r=N, r=N+1  | ceil(N/2)            | ceil(N/2) - 1      | 9·ceil(N/2) − 6       |
+
+### Triangle Budget
+
+| Radius | Tiles | Original tri | Inner hex | Residual | Eliminated | Reduction |
+|--------|-------|-------------|-----------|----------|------------|-----------|
+| 1      | 7     | 42          | 6         | 18       | 18         | 43%       |
+| 2      | 19    | 114         | 6         | 18       | 90         | 79%       |
+| 3      | 37    | 222         | 6         | 72       | 144        | 65%       |
+| 4      | 61    | 366         | 6         | 72       | 288        | 79%       |
+
+Original triangles grow as O(r²). Residual triangles grow as O(r). The decimation ratio improves with radius — at large radii the inner hex dominates and the residual is a thin fringe.
+
+### T-Junction Resolution
+
+Partial tile centers sit exactly on the inscribed hex edge. If left at their original z-level they would be T-junctions — vertices of residual fan triangles touching the inner hex triangle edge without being vertices of those triangles. This causes rasterization cracks.
+
+**Resolution**: Partial tile centers snap to the linearly interpolated z between the two hex boundary vertices at either end of the edge they sit on. Since the inner hex triangle already interpolates linearly across that edge, the snapped center lies exactly on the triangle's plane. No crack, no floating-point precision issue.
+
+Snapped partial tile centers are generally not integer z-levels. This is the single exception to discrete center z. INV-009 applies to the inner hex center only.
+
+The residual fan triangles then express the slope from the snapped center (on the inner hex surface) outward to real hexball perimeter vertices — a smooth transition from decimated interior to surviving perimeter detail.
 
 ### Vertex Heights
 
-**Center vertex**: Discrete z-level chosen by minimizing max deviation across the group.
-
-**Inner hex boundary vertices (6)**: These sit at original grid positions where two neighbor tiles meet. Their height is the real blended height from the original mesh — derived from the two adjacent neighbor centers. Not approximated, not snapped.
-
-**Outer fan vertices**: All at original tile positions with original heights. No modification.
+| Vertex type                  | Height source                                      | Discrete z? |
+|------------------------------|---------------------------------------------------|-------------|
+| Inner hex center             | Chosen to minimize max deviation across all tiles  | Yes         |
+| Inner hex boundary (6)       | Real blended height, clamped to ±N×RISE from center | Real grid   |
+| Partial tile center (on edge)| Interpolated from the two adjacent hex vertices    | No (snapped)|
+| Residual tile centers        | Original discrete z-level                          | Yes         |
+| Residual perimeter vertices  | Original grid positions, original heights          | Real grid   |
 
 ### Slope Blending at Scale
 
-The existing rendering rule applies identically: each triangle blends from its center vertex z toward the boundary vertex height. At r=1 tile scale, the blend range is ±0.4 WU (half of RISE = 0.8 WU per z-level). The inner hex of a decimated hexball has roughly twice the center-to-vertex distance, so slope expression scales to ±0.8 WU — one full z-level.
+The terrain's visual vocabulary has a maximum slope rate: **±0.4 WU per tile radius of horizontal distance** (half of RISE per tile). This rate is constant in the original mesh and must be respected in decimated geometry.
 
-This means:
+For a radius-N hexball the total height budget from center to perimeter is:
 
-- A 1-z-level step across the inner hex reads as a gentle slope (same visual character as a 1-z step across a single tile)
-- A 3-z-level step that was three adjacent cliffs at full detail consolidates into one steeper cliff (accurate to the eye at distance — individual steps are sub-pixel)
-- Flat regions remain flat (center z matches boundary z)
+```
+max_drop = (2N + 1) × (RISE / 2) = (2N + 1) × 0.4 WU
+```
+
+This budget splits between the inner hex and the residual fans:
+
+| Component | Height budget |
+|-----------|--------------|
+| Inner hex (center → boundary vertex) | N × RISE = N × 0.8 WU |
+| Residual fan (boundary vertex → perimeter vertex) | ±0.4 WU (one half-tile) |
+
+**Clamping**: After computing the real blended height for an inner hex boundary vertex, it is clamped:
+
+```
+boundary_y = clamp(real_blended_y, center_y − N×RISE, center_y + N×RISE)
+```
+
+The real blended height is used for residual fan outer vertices (where they interface with external geometry). Those are additionally clamped so the total center-to-perimeter drop does not exceed `(2N+1) × 0.4 WU`.
+
+**Cliff faces at the perimeter**: The difference between the clamped perimeter height and the actual height of adjacent external geometry becomes a cliff face (skirt quad). This is where z-range that the hexball cannot express as slope is pushed. The hexball reads as a gently sloping plateau with a cliff edge — accurate to the eye at distance when individual steps cannot be resolved.
+
+Flat regions remain flat (center z matches boundary z, no clamping activates). Threshold 0 only decimates planar regions, so clamping never activates at threshold 0.
 
 ### Stitching
 
-Adjacent decimated hexballs share boundary vertices at original grid positions with real blended heights. Deterministic, seamless, no coordination needed — the same property the current system relies on.
+All boundary vertices between adjacent decimated hexballs resolve to positions and heights that exist in the original grid. Adjacent hexballs sharing a perimeter edge compute identical vertex positions from identical underlying tile data. Deterministic, seamless, no coordination protocol needed.
 
-Different LoD levels can tile together because all boundary vertices resolve to discrete or real-blended heights on the original grid. A decimated hexball next to full-detail tiles shares perimeter vertices that exist in both representations at identical positions.
+Different LoD levels (different decimation radii or undecimated full-detail tiles) tile together because all perimeter vertices are real grid vertices at real heights.
+
+### Scaling Property
+
+This geometry is self-similar. A radius-1 decimation and a radius-4 decimation produce the same structural pattern — an inner hex of 6 triangles plus residual wedges. The only differences are the hex size, the number of tiles in each residual wedge, and the z-threshold required to absorb the interior. A single code path handles all decimation radii.
 
 ---
 
@@ -91,7 +151,7 @@ This yields integer thresholds at specific distance bands:
 
 ### Threshold Semantics
 
-**Threshold 0 (lossless)**: A hexball decimates only when the resulting 24-triangle mesh is geometrically identical to the original 42 triangles. This requires the elevation field across the 7-tile group to be planar — flat terrain or a uniform slope with no curvature and no internal variation. Every removed vertex must lie exactly on the plane of the triangle replacing it.
+**Threshold 0 (lossless)**: A hexball decimates only when the resulting mesh is geometrically identical to the original full-detail triangles. This requires the elevation field across all tiles in the group to be planar — flat terrain or a uniform slope with no curvature and no internal variation. Every eliminated vertex must lie exactly on the plane of the triangle replacing it.
 
 **Threshold N > 0**: The center z may deviate up to N z-levels from any tile in the group. Internal staircase structures (multiple small cliffs) consolidate into fewer, taller cliffs. The terrain character (flat/slope/cliff) is preserved — only the resolution of elevation steps changes.
 
@@ -174,7 +234,9 @@ Exact format TBD during implementation, but the payload per chunk at high thresh
 
 **INV-008 (new)**: Decimation at any threshold recalculates from original tile data, never from a previous threshold's output. No cascading error.
 
-**INV-009 (new)**: All decimated center vertices are at discrete integer z-levels. No fractional heights on centers.
+**INV-009 (new)**: The inner hex center vertex is at a discrete integer z-level.
+
+**INV-010 (new)**: No decimated hexball expresses a steeper slope than the original mesh's maximum rate (±0.4 WU per tile radius). Inner hex boundary vertices are clamped to ±N×RISE from the center. Any z-range that exceeds this budget is expressed as a cliff face (skirt) at the hexball perimeter. Exception: partial tile centers on inscribed hex edges are snapped to the linearly interpolated z between their two adjacent hex boundary vertices (T-junction resolution). These are not integer z-levels, but they lie exactly on the inner hex triangle surface — no crack, no visual artifact.
 
 ---
 
@@ -200,7 +262,7 @@ Exact format TBD during implementation, but the payload per chunk at high thresh
 
 ## Implementation Deviations
 
-(None yet — spec precedes implementation)
+(None — spec precedes full implementation)
 
 ## Implementation Gaps
 

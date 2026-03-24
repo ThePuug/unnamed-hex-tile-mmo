@@ -12,7 +12,7 @@ pub const TILE_SIZE: f32 = 1.;
 use crate::{
     components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
-    resources::{ChunkLodMeshes, ChunkLodState, LodLevel, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
+    resources::{ChunkLodMeshes, ChunkLodState, LodTriangleStats, LoadedChunks, Server, TerrainMaterial},
 };
 use qrz::Convert;
 use common_bevy::{
@@ -242,37 +242,113 @@ pub fn update(
     }
 }
 
-// ── Client-Side LoD ──
+// ── Client-Side Hex-Native LoD ──
 
-/// QEM error threshold for LoD1 (lossless — removes only zero-error vertices).
-const LOD1_ERROR_THRESHOLD: f32 = 0.0;
-/// QEM error threshold for LoD2 (lossy — tune after viewing results).
-const LOD2_ERROR_THRESHOLD: f32 = 2.0;
+/// Hexball radius for all decimation thresholds.
+/// Start with radius 1 (7-tile hexballs). Higher radii can be added later
+/// for better triangle reduction at distance.
+const HEXBALL_RADIUS: u32 = 1;
 
-/// Dispatch dual-LoD QEM tasks for newly loaded chunks.
-/// Runs every frame — checks for chunks that have tiles but no LoD tasks yet.
+const TILE_RADIUS: f32 = 1.0;
+const RISE: f32 = 0.8;
+
+/// Compute the decimation threshold for a chunk at a given hex distance from the player.
+/// Derived from vertical visual acuity: how many z-levels fit in TILE_PIXEL_THRESHOLD pixels.
+///
+/// threshold(D) = floor(P × 2 × D_wu × tan(FOV/2) / (RISE × screen_height))
+pub fn lod_threshold(chunk_distance: i32) -> u32 {
+    if chunk_distance <= 0 {
+        return 0;
+    }
+    const TILE_PIXEL_THRESHOLD: f32 = 4.0;
+    const THRESHOLD_FOV: f32 = std::f32::consts::PI / 3.0; // 60°
+    const SCREEN_HEIGHT: f32 = 1080.0;
+
+    let d_wu = chunk_distance as f32 * CHUNK_EXTENT_WU;
+    let raw = TILE_PIXEL_THRESHOLD * 2.0 * d_wu * (THRESHOLD_FOV / 2.0).tan()
+        / (RISE * SCREEN_HEIGHT);
+    raw.floor() as u32
+}
+
+/// Dispatch hex-native decimation tasks for newly loaded chunks.
+/// Runs every frame — checks for chunks that have tiles but no task yet.
+/// Also re-dispatches when a chunk's distance crosses a threshold boundary.
 pub fn dispatch_lod_tasks(
     loaded_chunks: Res<LoadedChunks>,
     map: Res<common_bevy::resources::map::Map>,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
+    player_query: Query<&Loc, With<PlayerControlled>>,
     client_timers: Res<crate::resources::ClientTimers>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
+    #[cfg(feature = "admin")] flyover_config: Option<Res<crate::systems::admin::FlyoverDecimationConfig>>,
 ) {
-    // Only re-check when new tile data arrives. Once all reachable chunks are
-    // meshed or waiting on out-of-range neighbors, this skips entirely.
-    if !map.take_changed() {
+    if !map.take_changed() && player_query.is_empty() {
         return;
     }
     let _t = client_timers.0.scope("lod_disp");
 
+    // Use flyover position for threshold calculation when active
+    let player_chunk = {
+        #[cfg(feature = "admin")]
+        {
+            if let Some(ref fly) = flyover {
+                if fly.active {
+                    use qrz::Convert;
+                    let qrz: qrz::Qrz = map.convert(fly.world_position);
+                    Some(loc_to_chunk(qrz))
+                } else {
+                    player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+                }
+            } else {
+                player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+            }
+        }
+        #[cfg(not(feature = "admin"))]
+        { player_query.iter().next().map(|loc| loc_to_chunk(**loc)) }
+    };
+
+    // When flyover has a manual threshold, use it instead of distance-based
+    #[cfg(feature = "admin")]
+    let manual_threshold = flyover
+        .as_ref()
+        .filter(|f| f.active)
+        .and_then(|_| flyover_config.as_ref())
+        .map(|c| c.threshold);
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
     for &chunk_id in &loaded_chunks.chunks {
-        if lod_meshes.states.contains_key(&chunk_id) {
-            continue; // Already dispatched
+        let threshold = {
+            #[cfg(feature = "admin")]
+            {
+                manual_threshold.unwrap_or_else(|| {
+                    let dist = player_chunk
+                        .map(|pc| chunk_hex_distance(chunk_id, pc))
+                        .unwrap_or(0);
+                    lod_threshold(dist)
+                })
+            }
+            #[cfg(not(feature = "admin"))]
+            {
+                let dist = player_chunk
+                    .map(|pc| chunk_hex_distance(chunk_id, pc))
+                    .unwrap_or(0);
+                lod_threshold(dist)
+            }
+        };
+
+        // Skip if already at correct threshold (and not currently re-dispatching)
+        if let Some(state) = lod_meshes.states.get(&chunk_id) {
+            if state.task.is_some() {
+                continue; // task in flight — don't double-dispatch
+            }
+            if state.current_threshold == threshold && state.entity.is_some() {
+                continue; // already built at this threshold
+            }
+            // Threshold changed — need re-dispatch. Fall through.
         }
 
-        // Neighbor gate (6 lookups — cheap, stays on main thread).
-        let lattice_neighbors = [(1i32,0),(0,1),(-1,1),(-1,0),(0,-1),(1,-1)];
+        // Neighbor gate: all 6 lattice neighbors must have tiles in the Map.
+        let lattice_neighbors = [(1i32, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
         let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
             let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
             let nc = nid.center();
@@ -282,64 +358,96 @@ pub fn dispatch_lod_tasks(
             continue;
         }
 
-        // Clone Map Arc snapshot — tile collection + elevation build happens off-thread.
         let map_snap = map.clone();
-
-        // Single async task: collect tiles → build elevations → geometry → QEM for both LoDs
-        let lod1_map = map.clone();
-        let lod1_task = pool.spawn(async move {
-            collect_and_decimate(chunk_id, &lod1_map, LOD1_ERROR_THRESHOLD)
-        });
-        let lod2_task = pool.spawn(async move {
-            collect_and_decimate(chunk_id, &map_snap, LOD2_ERROR_THRESHOLD)
+        let task = pool.spawn(async move {
+            collect_and_build_mesh(chunk_id, &map_snap, threshold)
         });
 
-        let chunk_center: Vec3 = map.convert(chunk_id.center());
-        lod_meshes.states.insert(chunk_id, ChunkLodState {
-            lod1_task: Some(lod1_task),
-            lod2_task: Some(lod2_task),
-            lod1_mesh: None,
-            lod2_mesh: None,
-            lod1_tris: 0,
-            lod2_tris: 0,
-            active_lod: LodLevel::Lod1,
-            entity: None,
-            chunk_origin: chunk_center,
-        });
+        let chunk_origin: Vec3 = map.convert(chunk_id.center());
+
+        // Insert or update state — preserve existing entity for in-place swap
+        if let Some(state) = lod_meshes.states.get_mut(&chunk_id) {
+            state.task = Some(task);
+        } else {
+            lod_meshes.states.insert(
+                chunk_id,
+                ChunkLodState {
+                    task: Some(task),
+                    entity: None,
+                    mesh_handle: None,
+                    tri_count: 0,
+                    full_detail_tris: 0,
+                    current_threshold: threshold,
+                    chunk_origin: chunk_origin,
+                },
+            );
+        }
     }
-
 }
 
-/// Collect tiles from Map snapshot, build elevations, compute geometry, decimate.
+/// Collect tiles from Map snapshot, run hex-native decimation, build mesh.
 /// Runs entirely off the main thread via AsyncComputeTaskPool.
-fn collect_and_decimate(
+fn collect_and_build_mesh(
     chunk_id: common_bevy::chunk::ChunkId,
     map: &common_bevy::resources::map::Map,
-    threshold: f32,
-) -> common_bevy::qem::DecimatedMesh {
-    let chunk_tile_list: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
-        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
+    threshold: u32,
+) -> crate::resources::MeshBuildResult {
+    // Collect chunk tiles as (q, r, z) triples
+    let chunk_tile_list: Vec<(i32, i32, i32)> = chunk_tiles(chunk_id)
+        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| (qrz.q, qrz.r, qrz.z)))
         .collect();
 
+    // Build elevation lookup covering chunk + 1-ring neighbors
     let mut elevations = std::collections::HashMap::new();
-    for &qrz in &chunk_tile_list {
-        elevations.insert((qrz.q, qrz.r), qrz.z);
-        for direction in qrz::DIRECTIONS.iter() {
-            let n = qrz + *direction;
-            if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
-                elevations.insert((actual.q, actual.r), actual.z);
+    for &(q, r, z) in &chunk_tile_list {
+        elevations.insert((q, r), z);
+        for &(dq, dr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+            let nq = q + dq;
+            let nr = r + dr;
+            if !elevations.contains_key(&(nq, nr)) {
+                if let Some((actual, _)) = map.get_by_qr(nq, nr) {
+                    elevations.insert((actual.q, actual.r), actual.z);
+                }
             }
         }
     }
 
     let chunk_origin: Vec3 = map.convert(chunk_id.center());
-    let geometry = common_bevy::geometry::compute_tile_geometry(
-        &chunk_tile_list, &elevations, 1.0, 0.8, chunk_origin,
+    let lookup = |q: i32, r: i32| -> Option<i32> { elevations.get(&(q, r)).copied() };
+
+    // Count full-detail triangles: 6 per tile + 2 per downward cliff edge
+    let full_detail_tris = {
+        let mut count = chunk_tile_list.len() as u32 * 6;
+        for &(q, r, z) in &chunk_tile_list {
+            for &(dq, dr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+                if let Some(nz) = lookup(q + dq, r + dr) {
+                    if nz < z { count += 2; }
+                }
+            }
+        }
+        count
+    };
+
+    // Run hex-native decimation then build mesh via hexball geometry
+    let dec = common::hex_decimate::decimate_chunk(&chunk_tile_list, HEXBALL_RADIUS, threshold, &lookup);
+    let plan = common_bevy::hexball_geometry::ChunkDecimation {
+        hexballs: dec.hexballs.iter().map(|hb| common_bevy::hexball_geometry::HexballDecimation {
+            center_q: hb.center_q,
+            center_r: hb.center_r,
+            center_z: hb.center_z,
+            radius: HEXBALL_RADIUS,
+        }).collect(),
+        survivors: dec.survivors.clone(),
+    };
+    let mesh = common_bevy::hexball_geometry::build_chunk_mesh(
+        &plan, TILE_RADIUS, RISE, chunk_origin, &lookup,
     );
-    common_bevy::qem::decimate_geometry(&geometry, threshold)
+    let tri_count = mesh.indices().map(|i| i.len() / 3).unwrap_or(0) as u32;
+
+    crate::resources::MeshBuildResult { mesh, tri_count, full_detail_tris }
 }
 
-/// Poll completed LoD tasks, upload meshes, select active LoD per chunk.
+/// Poll completed decimation tasks, upload meshes, update diagnostics.
 pub fn poll_and_swap_lod(
     mut commands: Commands,
     mut lod_meshes: ResMut<ChunkLodMeshes>,
@@ -352,92 +460,94 @@ pub fn poll_and_swap_lod(
     let Some(terrain_material) = terrain_material else { return; };
     let _t = client_timers.0.scope("lod_swap");
 
-    let player_loc = player_query.iter().next();
-    let player_chunk = player_loc.map(|loc| loc_to_chunk(**loc));
+    let player_chunk = player_query.iter().next().map(|loc| loc_to_chunk(**loc));
+
+    // Accumulate per-tier stats from all active chunks
+    let mut tier_map: std::collections::BTreeMap<u32, (u32, u64, u64)> = std::collections::BTreeMap::new();
+    let mut total_tris = 0u64;
+    let mut mesh_count = 0u32;
 
     for (&chunk_id, state) in lod_meshes.states.iter_mut() {
-        // Poll LoD1
-        if let Some(task) = &mut state.lod1_task {
+        // Poll task
+        if let Some(task) = &mut state.task {
             if let Some(result) = block_on(future::poll_once(task)) {
-                state.lod1_tris = (result.indices.len() / 3) as u32;
-                tri_stats.push_lod1(result.raw_tris, state.lod1_tris, result.max_error);
-                state.lod1_task = None;
-                state.lod1_mesh = Some(meshes.add(build_bevy_mesh(&result)));
-            }
-        }
+                state.task = None;
+                state.tri_count = result.tri_count;
+                state.full_detail_tris = result.full_detail_tris;
+                // current_threshold was set at dispatch time — don't overwrite
 
-        // Poll LoD2
-        if let Some(task) = &mut state.lod2_task {
-            if let Some(result) = block_on(future::poll_once(task)) {
-                state.lod2_tris = (result.indices.len() / 3) as u32;
-                tri_stats.push_lod2(result.raw_tris, state.lod2_tris, result.max_error);
-                state.lod2_task = None;
-                state.lod2_mesh = Some(meshes.add(build_bevy_mesh(&result)));
-            }
-        }
+                let mesh_handle = meshes.add(result.mesh);
+                state.mesh_handle = Some(mesh_handle.clone());
 
-        // Determine which mesh to show
-        let target_lod = target_lod_for_chunk(chunk_id, player_chunk);
-
-        // Pick the best available mesh: prefer target, fallback to any
-        let (mesh_handle, actual_lod) = match target_lod {
-            LodLevel::Lod1 => {
-                if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
-                else if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
-                else { continue; }
-            }
-            LodLevel::Lod2 => {
-                if let Some(h) = state.lod2_mesh.clone() { (h, LodLevel::Lod2) }
-                else if let Some(h) = state.lod1_mesh.clone() { (h, LodLevel::Lod1) }
-                else { continue; }
-            }
-        };
-
-        match state.entity {
-            Some(entity) => {
-                // Update mesh if what's displayed differs from what we want
-                if state.active_lod != actual_lod {
-                    commands.entity(entity).insert(Mesh3d(mesh_handle));
-                    state.active_lod = actual_lod;
+                match state.entity {
+                    Some(entity) => {
+                        // In-place swap — old mesh stays visible until this frame
+                        commands.entity(entity).insert(Mesh3d(mesh_handle));
+                    }
+                    None => {
+                        let entity = commands
+                            .spawn((
+                                Mesh3d(mesh_handle),
+                                MeshMaterial3d(terrain_material.handle.clone()),
+                                Transform::from_translation(state.chunk_origin),
+                                ChunkMesh { chunk_id },
+                            ))
+                            .id();
+                        state.entity = Some(entity);
+                    }
                 }
             }
-            None => {
-                let entity = commands.spawn((
-                    Mesh3d(mesh_handle),
-                    MeshMaterial3d(terrain_material.handle.clone()),
-                    Transform::from_translation(state.chunk_origin),
-                    ChunkMesh { chunk_id },
-                )).id();
-                state.entity = Some(entity);
-                state.active_lod = actual_lod;
-            }
+        }
+
+        // Accumulate per-tier stats
+        if state.entity.is_some() {
+            total_tris += state.tri_count as u64;
+            mesh_count += 1;
+            let entry = tier_map.entry(state.current_threshold).or_insert((0, 0, 0));
+            entry.0 += 1;
+            entry.1 += state.tri_count as u64;
+            entry.2 += state.full_detail_tris as u64;
         }
     }
-}
 
-fn target_lod_for_chunk(chunk_id: common_bevy::chunk::ChunkId, player_chunk: Option<common_bevy::chunk::ChunkId>) -> LodLevel {
-    let Some(pc) = player_chunk else { return LodLevel::Lod1; };
-    let ring = chunk_hex_distance(chunk_id, pc);
-    let detail_radius = chunk::detail_boundary_radius(0, chunk::MAX_FOV) as i32;
-    if ring <= detail_radius {
-        LodLevel::Lod1
-    } else {
-        LodLevel::Lod2
+    // Build tier vec
+    let max_tier = tier_map.keys().last().copied().unwrap_or(0) as usize;
+    let mut tiers = vec![crate::resources::TierStats::default(); max_tier + 1];
+    for (&t, &(chunks, tris, full)) in &tier_map {
+        tiers[t as usize] = crate::resources::TierStats { chunks, tris, full_detail_tris: full };
     }
+    tri_stats.tiers = tiers;
+    tri_stats.total_tris = total_tris;
+    tri_stats.mesh_count = mesh_count;
 }
 
-pub fn build_bevy_mesh(decimated: &common_bevy::qem::DecimatedMesh) -> Mesh {
-    let vert_count = decimated.positions.len();
-    let verts: Vec<Vec3> = decimated.positions.iter().map(|p| Vec3::from_array(*p)).collect();
-    let norms: Vec<Vec3> = decimated.normals.iter().map(|n| Vec3::from_array(*n)).collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    Mesh::new(
-        bevy_mesh::PrimitiveTopology::TriangleList,
-        bevy_asset::RenderAssetUsages::MAIN_WORLD | bevy_asset::RenderAssetUsages::RENDER_WORLD,
-    )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0,
-            (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-        .with_inserted_indices(bevy_mesh::Indices::U32(decimated.indices.clone()))
+    #[test]
+    fn threshold_at_distance_0_is_0() {
+        assert_eq!(lod_threshold(0), 0);
+    }
+
+    #[test]
+    fn threshold_increases_with_distance() {
+        // At 60° FOV with spec constants, threshold boundaries are:
+        // 0: 0–7 chunks, 1: 7–13, 2: 13–20, 3: 20–26
+        assert_eq!(lod_threshold(1), 0);
+        assert_eq!(lod_threshold(6), 0);
+        assert!(lod_threshold(8) >= 1);
+        assert!(lod_threshold(14) >= 2);
+        assert!(lod_threshold(21) >= 3);
+    }
+
+    #[test]
+    fn threshold_is_monotonic() {
+        let mut prev = 0u32;
+        for d in 0..100 {
+            let t = lod_threshold(d);
+            assert!(t >= prev, "threshold({d})={t} < threshold({})={prev}", d - 1);
+            prev = t;
+        }
+    }
 }

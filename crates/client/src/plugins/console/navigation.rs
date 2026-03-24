@@ -29,13 +29,13 @@ pub fn handle_console_input(
         return;
     }
 
-    // Back key: Numpad0 normally, Escape when in text input mode
+    // Back key: Numpad0 normally, Escape when numpad digits have other meaning
     #[cfg(feature = "admin")]
-    let in_text_input = matches!(console.current_menu, MenuPath::GotoInput);
+    let uses_escape_back = matches!(console.current_menu, MenuPath::GotoInput | MenuPath::DecimationThreshold);
     #[cfg(not(feature = "admin"))]
-    let in_text_input = false;
+    let uses_escape_back = false;
 
-    let back_pressed = if in_text_input {
+    let back_pressed = if uses_escape_back {
         keyboard.just_pressed(KeyCode::Escape)
     } else {
         keyboard.just_pressed(KeyCode::Numpad0)
@@ -46,13 +46,13 @@ pub fn handle_console_input(
             console.visible = false;
         } else {
             #[cfg(feature = "admin")]
-            if in_text_input {
+            if matches!(console.current_menu, MenuPath::GotoInput) {
                 console.goto_input = None;
             }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
 
-        if in_text_input {
+        if uses_escape_back {
             keyboard.clear_just_pressed(KeyCode::Escape);
         } else {
             keyboard.clear_just_pressed(KeyCode::Numpad0);
@@ -75,6 +75,8 @@ pub fn handle_console_input(
         MenuPath::GotoSelect => handle_goto_select_menu(&mut keyboard, &mut console),
         #[cfg(feature = "admin")]
         MenuPath::GotoInput => handle_goto_input(&mut keyboard, &mut console, &mut action_writer),
+        #[cfg(feature = "admin")]
+        MenuPath::DecimationThreshold => handle_decimation_threshold(&mut keyboard, &mut console, &mut action_writer),
     }
 }
 
@@ -146,6 +148,13 @@ fn handle_flyover_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);
+    } else if keyboard.just_pressed(KeyCode::Numpad3) && flyover.active {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::DecimationThreshold;
+        consumed = Some(KeyCode::Numpad3);
+    } else if keyboard.just_pressed(KeyCode::Numpad4) && flyover.active {
+        action_writer.write(DevConsoleAction::ReportTerrain);
+        consumed = Some(KeyCode::Numpad4);
     }
 
     if let Some(key) = consumed {
@@ -256,5 +265,29 @@ fn handle_goto_input(
     if keyboard.just_pressed(KeyCode::Backspace) {
         input.buffers[input.active_field].pop();
         keyboard.clear_just_pressed(KeyCode::Backspace);
+    }
+}
+
+#[cfg(feature = "admin")]
+fn handle_decimation_threshold(
+    keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    let digit_keys = [
+        (KeyCode::Numpad0, 0u32), (KeyCode::Numpad1, 1), (KeyCode::Numpad2, 2),
+        (KeyCode::Numpad3, 3), (KeyCode::Numpad4, 4), (KeyCode::Numpad5, 5),
+        (KeyCode::Numpad6, 6), (KeyCode::Numpad7, 7), (KeyCode::Numpad8, 8),
+        (KeyCode::Numpad9, 9),
+    ];
+
+    for &(key, value) in &digit_keys {
+        if keyboard.just_pressed(key) {
+            action_writer.write(DevConsoleAction::SetDecimationThreshold(value));
+            // Return to flyover menu
+            console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
+            keyboard.clear_just_pressed(key);
+            return;
+        }
     }
 }

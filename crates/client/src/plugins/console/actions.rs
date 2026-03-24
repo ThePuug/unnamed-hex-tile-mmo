@@ -23,6 +23,10 @@ pub enum DevConsoleAction {
     GotoWorldUnits(f64, f64),
     #[cfg(feature = "admin")]
     GotoQR(i32, i32),
+    #[cfg(feature = "admin")]
+    SetDecimationThreshold(u32),
+    #[cfg(feature = "admin")]
+    ReportTerrain,
 }
 
 /// System that executes console actions
@@ -81,6 +85,10 @@ pub fn execute_console_actions(
             DevConsoleAction::GotoWorldUnits(_, _) => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::GotoQR(_, _) => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::SetDecimationThreshold(_) => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::ReportTerrain => {}
         }
     }
 }

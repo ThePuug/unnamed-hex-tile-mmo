@@ -456,6 +456,7 @@ pub fn update_metrics_overlay(
     tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] flyover_config: Res<crate::systems::admin::FlyoverDecimationConfig>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -543,31 +544,25 @@ pub fn update_metrics_overlay(
 
     let full_count = chunk_mesh_q.iter().count();
     let pending_lod = lod_meshes.states.values()
-        .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
+        .filter(|s| s.task.is_some()).count();
 
-    // Triangle stats (ratio, max_error) + per-level totals
-    let (lod1_ratio, lod1_err) = tri_stats.lod1_stats();
-    let (lod2_ratio, lod2_err) = tri_stats.lod2_stats();
-    let inner_r = common_bevy::chunk::detail_boundary_radius(0, common_bevy::chunk::MAX_FOV);
+    // Triangle stats from the hex-native LoD system
+    let lod_tiers = &tri_stats.tiers;
+    let total_tris = tri_stats.total_tris;
+    let mesh_count = tri_stats.mesh_count;
     let outer_r = terrain_chunk_radius(player_loc.map(|l| l.z).unwrap_or(0));
-    let (lod1_tris, lod2_tris) = lod_meshes.states.values()
-        .filter(|s| s.entity.is_some())
-        .fold((0u64, 0u64), |(l1, l2), s| match s.active_lod {
-            crate::resources::LodLevel::Lod1 => (l1 + s.lod1_tris as u64, l2),
-            crate::resources::LodLevel::Lod2 => (l1, l2 + s.lod2_tris as u64),
-        });
 
     #[cfg(feature = "admin")]
-    let (admin_count, admin_sum_count) = if flyover.active {
+    let (admin_count, admin_threshold) = if flyover.active {
         (
-            flyover.admin_chunks.len(),
-            flyover.admin_summary_chunks.len(),
+            flyover.generated_chunks.len(),
+            Some(flyover_config.threshold),
         )
     } else {
-        (0, 0)
+        (0, None)
     };
     #[cfg(not(feature = "admin"))]
-    let (admin_count, admin_sum_count) = (0usize, 0usize);
+    let (admin_count, admin_threshold) = (0usize, None::<u32>);
 
 
     let frame_p95 = history.frame_p95;
@@ -629,31 +624,38 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "pend"), COLOR_DIM);
                             s.half(&format!("{:>5}  ", CHUNK_CT.fmt(pending_lod as f64)), COLOR_DIM);
                         });
-                        // LoD lines: 5 half-segments each
-                        const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Fixed(2), overflow: Overflow::Suffix };
-                        const LOD_RADIUS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
-                        const LOD_RATIO: NumFmt = NumFmt { width: 6, precision: Precision::Fixed(2), overflow: Overflow::Clamp };
+                        // Hex-native LoD stats: per-tier breakdown
+                        const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const LOD_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        // Total row
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "LoD1"), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(lod1_tris as f64)), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_RADIUS, LOD_RADIUS.fmt(inner_r as f64)), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_COMPRESS, LOD_RATIO.fmt(lod1_ratio)), COLOR_DIM);
-                            s.half(&format!("{:>2}{:<5}", GLYPH_ERROR, LOD_RATIO.fmt(lod1_err)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "LoD"), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(total_tris as f64)), COLOR_DIM);
+                            s.half(&format!("{:>4}chk", LOD_CT.fmt(mesh_count as f64)), COLOR_DIM);
                         });
-                        seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "LoD2"), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(lod2_tris as f64)), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_RADIUS, LOD_RADIUS.fmt(outer_r as f64)), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_COMPRESS, LOD_RATIO.fmt(lod2_ratio)), COLOR_DIM);
-                            s.half(&format!("{:>2}{:<5}", GLYPH_ERROR, LOD_RATIO.fmt(lod2_err)), COLOR_DIM);
-                        });
-                        if admin_count > 0 || admin_sum_count > 0 {
+                        // Per-tier rows
+                        for (tier, stats) in lod_tiers.iter().enumerate() {
+                            if stats.chunks == 0 { continue; }
+                            let ratio = if stats.full_detail_tris > 0 {
+                                stats.tris as f64 / stats.full_detail_tris as f64
+                            } else {
+                                1.0
+                            };
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{:>7}", format!("t{}", tier)), COLOR_DIM);
+                                s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(stats.tris as f64)), COLOR_DIM);
+                                s.half(&format!("{:>4}chk", LOD_CT.fmt(stats.chunks as f64)), COLOR_DIM);
+                                s.half(&format!("{:>5.0}% ", ratio * 100.0), COLOR_DIM);
+                            });
+                        }
+                        if admin_count > 0 {
                             const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                             seg_row(ui, cw, |s| {
-                                s.half(&format!("{:>7}", "aChk"), COLOR_DIM);
+                                s.half(&format!("{:>7}", "gen"), COLOR_DIM);
                                 s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
-                                s.half(&format!("{:>7}", "aSum"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_sum_count as f64)), COLOR_DIM);
+                                if let Some(t) = admin_threshold {
+                                    s.half(&format!("{:>7}", format!("dec:{t}")), COLOR_DIM);
+                                }
                             });
                         }
                     });

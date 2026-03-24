@@ -1,10 +1,10 @@
 pub mod chunk;
 pub mod components;
 pub mod geometry;
+pub mod hexball_geometry;
 pub mod message;
 pub mod metrics;
 pub mod plugins;
-pub mod qem;
 pub mod resources;
 pub mod spatial_difficulty;
 pub mod systems;

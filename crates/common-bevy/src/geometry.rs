@@ -6,6 +6,75 @@
 use std::collections::HashMap;
 use bevy::math::Vec3;
 
+// Re-export slope blending from common (single source of truth for both
+// mesh generation and decimation).
+pub use common::hex_slope::{slope_adjustments, DIRECTION_TO_VERTICES};
+
+/// Skirt vertex mapping: for each direction, (curr_v1, curr_v2, neighbor_v1, neighbor_v2).
+/// curr_v1 ↔ neighbor_v1, curr_v2 ↔ neighbor_v2 are at the same XZ position.
+pub const SKIRT_VERTEX_MAP: [(usize, usize, usize, usize); 6] = [
+    (4, 5, 2, 1), // Dir 0
+    (3, 4, 1, 0), // Dir 1
+    (2, 3, 0, 5), // Dir 2
+    (1, 2, 5, 4), // Dir 3
+    (0, 1, 4, 3), // Dir 4
+    (5, 0, 3, 2), // Dir 5
+];
+
+/// Vertex XZ offsets for flat-top hex, relative to tile center.
+/// Returns [(x, z_world); 7] — 6 outer vertices + center.
+/// Y is not included; it comes from elevation + slope adjustment.
+pub fn flat_top_vertex_offsets(radius: f32) -> [(f32, f32); 7] {
+    let w = (radius as f64 * (3.0_f64).sqrt() / 2.0) as f32;
+    let h = radius / 2.0;
+    [
+        (h, -w),        // 0 NE
+        (radius, 0.0),  // 1 E
+        (h, w),         // 2 SE
+        (-h, w),        // 3 SW
+        (-radius, 0.0), // 4 W
+        (-h, -w),       // 5 NW
+        (0.0, 0.0),     // 6 Center
+    ]
+}
+
+/// Compute tile center world position (x, z_world) for flat-top hex.
+pub fn flat_top_tile_center(q: i32, r: i32, radius: f32) -> (f32, f32) {
+    let x = (1.5 * q as f64 * radius as f64) as f32;
+    let z = ((q as f64 * (3.0_f64).sqrt() / 2.0 + r as f64 * (3.0_f64).sqrt()) * radius as f64)
+        as f32;
+    (x, z)
+}
+
+/// Compute per-vertex normal for a hex tile from its actual geometry.
+///
+/// verts: 7 vertices [v0..v5 outer, v6 center].
+/// vertex_idx: 0-6.
+pub fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {
+    let center = verts[6];
+    if vertex_idx == 6 {
+        let mut sum = Vec3::ZERO;
+        for i in 0..6 {
+            sum += (verts[(i + 1) % 6] - center).cross(verts[i] - center);
+        }
+        if sum.length_squared() > 1e-10 {
+            sum.normalize()
+        } else {
+            Vec3::Y
+        }
+    } else {
+        let j = vertex_idx;
+        let n1 = (verts[(j + 1) % 6] - center).cross(verts[j] - center);
+        let n2 = (verts[j] - center).cross(verts[(j + 5) % 6] - center);
+        let sum = n1 + n2;
+        if sum.length_squared() > 1e-10 {
+            sum.normalize()
+        } else {
+            Vec3::Y
+        }
+    }
+}
+
 /// Raw geometry for a set of hex tiles. No Bevy types.
 pub struct TileGeometry {
     pub positions: Vec<[f32; 3]>,
@@ -48,23 +117,7 @@ pub fn compute_tile_geometry(
         .map(|t| (t.q, t.r))
         .collect();
 
-    let _direction_to_vertices = [
-        (4, 5), // Dir 0: West edge → SW(4), NW(5)
-        (3, 4), // Dir 1: SW edge → S(3), SW(4)
-        (2, 3), // Dir 2: SE edge → SE(2), S(3)
-        (1, 2), // Dir 3: East edge → NE(1), SE(2)
-        (0, 1), // Dir 4: NE edge → N(0), NE(1)
-        (5, 0), // Dir 5: NW edge → NW(5), N(0)
-    ];
-
-    let skirt_vertex_map = [
-        (4, 5, 2, 1), // Dir 0
-        (3, 4, 1, 0), // Dir 1
-        (2, 3, 0, 5), // Dir 2
-        (1, 2, 5, 4), // Dir 3
-        (0, 1, 4, 3), // Dir 4
-        (5, 0, 3, 2), // Dir 5
-    ];
+    let skirt_vertex_map = SKIRT_VERTEX_MAP;
 
     // Pre-compute surface_y for all tiles in the elevation lookup (chunk + 1-ring neighbors).
     // Both chunks sharing an edge will have the shared tiles in their lookup and produce
@@ -200,65 +253,18 @@ pub fn compute_tile_geometry(
 }
 
 /// Compute slope-adjusted vertices for a hex tile.
-/// Mechanical copy of `Map::vertices_with_slopes_inner`.
 fn vertices_with_slopes(
     map: &qrz::Map<()>,
     qrz: qrz::Qrz,
     elevations: &HashMap<(i32, i32), i32>,
 ) -> Vec<Vec3> {
     let mut verts = map.vertices(qrz);
-    let rise = map.rise();
-    let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
-
-    let direction_to_vertices = [
-        (4, 5), (3, 4), (2, 3), (1, 2), (0, 1), (5, 0),
-    ];
-
-    for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
-        let neighbor_qrz = qrz + *direction;
-        if let Some(&neighbor_z) = elevations.get(&(neighbor_qrz.q, neighbor_qrz.r)) {
-            let elevation_diff = neighbor_z - qrz.z;
-            let adjustment = if elevation_diff > 0 {
-                rise * 0.5
-            } else if elevation_diff < 0 {
-                rise * -0.5
-            } else {
-                0.0
-            };
-            if adjustment != 0.0 {
-                let (v1, v2) = direction_to_vertices[dir_idx];
-                vertex_adjustments[v1].push(adjustment);
-                vertex_adjustments[v2].push(adjustment);
-            }
-        }
+    let adjustments = slope_adjustments(qrz.z, map.rise(), |dir_idx| {
+        let n = qrz + qrz::DIRECTIONS[dir_idx];
+        elevations.get(&(n.q, n.r)).copied()
+    });
+    for i in 0..6 {
+        verts[i].y += adjustments[i];
     }
-
-    for (i, adjustments) in vertex_adjustments.iter().enumerate() {
-        if let Some(&max_adj) = adjustments.iter()
-            .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-        {
-            verts[i].y += max_adj;
-        }
-    }
-
     verts
-}
-
-/// Compute per-vertex normal for a hex tile from its actual geometry.
-/// Mechanical copy of `Map::hex_vertex_normal`.
-fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {
-    let center = verts[6];
-    if vertex_idx == 6 {
-        let mut sum = Vec3::ZERO;
-        for i in 0..6 {
-            sum += (verts[(i + 1) % 6] - center).cross(verts[i] - center);
-        }
-        if sum.length_squared() > 1e-10 { sum.normalize() } else { Vec3::Y }
-    } else {
-        let j = vertex_idx;
-        let n1 = (verts[(j + 1) % 6] - center).cross(verts[j] - center);
-        let n2 = (verts[j] - center).cross(verts[(j + 5) % 6] - center);
-        let sum = n1 + n2;
-        if sum.length_squared() > 1e-10 { sum.normalize() } else { Vec3::Y }
-    }
 }

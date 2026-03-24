@@ -120,10 +120,6 @@ fn fragment(
         base = CLIFF_COLOR;
     } else {
         base = elevation_color(elevation);
-        // Apply per-tile brightness noise
-        let noise = tile_noise(in.world_position.xz);
-        let variation = 1.0 + noise * NOISE_STRENGTH;
-        base = clamp(base * variation, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     // Atmospheric fade: derive loading radius from camera altitude, then

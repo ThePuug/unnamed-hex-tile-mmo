@@ -68,6 +68,8 @@ pub enum MenuPath {
     GotoSelect,
     #[cfg(feature = "admin")]
     GotoInput,
+    #[cfg(feature = "admin")]
+    DecimationThreshold,
 }
 
 impl MenuPath {
@@ -81,6 +83,8 @@ impl MenuPath {
             MenuPath::GotoSelect => "Goto — Select Coordinates",
             #[cfg(feature = "admin")]
             MenuPath::GotoInput => "Goto — Enter Coordinates",
+            #[cfg(feature = "admin")]
+            MenuPath::DecimationThreshold => "Decimation Threshold (0-9)",
         }
     }
 }
