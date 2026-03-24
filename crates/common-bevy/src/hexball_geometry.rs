@@ -249,11 +249,12 @@ fn build_rn(
         let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
 
         // The two inner vertices (ov[0] and ov[3]) sit on the inscribed hex
-        // boundary. Their heights must match the BV positions, not the tile's
-        // own slope blending (which uses a different tile z and can diverge).
+        // boundary. Override only their Y to match the inscribed hex edge
+        // height (from boundary_z). XZ stays at standard tile-blended positions
+        // so perimeter vertices agree with adjacent hexballs.
         let mut ov_pos = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
-        ov_pos[0] = bv_world[edge];      // ov[0] ↔ BV[edge]
-        ov_pos[3] = bv_world[edge_next]; // ov[3] ↔ BV[edge_next]
+        ov_pos[0].y = hb.boundary_z[edge] as f32 * rise + rise;
+        ov_pos[3].y = hb.boundary_z[edge_next] as f32 * rise + rise;
 
         let fan_base = positions.len() as u32;
 
