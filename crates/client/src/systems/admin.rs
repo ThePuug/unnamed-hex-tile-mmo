@@ -724,24 +724,16 @@ fn report_terrain_at_cursor(
         let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
         if dist > 1 { continue; } // r=1 hexball
 
-        info!("  HEXBALL[{hi}] center=({},{}) z={} bz={:?}",
-            hb.center_q, hb.center_r, hb.center_z,
-            hb.boundary_z.map(|b| format!("{:.2}", b)));
+        // Compute the actual rendered surface — single source of truth.
+        let surface = common_bevy::hexball_geometry::compute_hexball_surface(
+            hb.center_q, hb.center_r, hb.center_z, 1,
+            map.radius(), rise, &elev_lookup,
+        );
+        let bv = surface.hex_boundary.unwrap();
 
-        // Show actual rendered BV heights vs hex_decimate's boundary_z
-        for (bi, &(bt_q, bt_r, bt_vi)) in hb.boundary_tiles.iter().enumerate() {
-            let bt_z = elev_lookup(bt_q, bt_r).unwrap_or(0);
-            let adj = common_bevy::geometry::slope_adjustments(bt_z, rise, |d| {
-                let dir = qrz::DIRECTIONS[d];
-                elev_lookup(bt_q + dir.q, bt_r + dir.r)
-            });
-            let rendered_y = bt_z as f32 * rise + rise + adj[bt_vi as usize];
-            let decimate_y = hb.boundary_z[bi] as f32 * rise + rise;
-            let delta = rendered_y - decimate_y;
-            if delta.abs() > 1e-5 {
-                info!("    BV[{bi}] tile({bt_q},{bt_r})v{bt_vi} z={bt_z}: rendered_y={rendered_y:.4} decimate_y={decimate_y:.4} DELTA={delta:.4}");
-            }
-        }
+        info!("  HEXBALL[{hi}] center=({},{}) z={} bv_y={:?}",
+            hb.center_q, hb.center_r, hb.center_z,
+            bv.map(|v| format!("{:.2}", v.y)));
 
         // Log tiles in this hexball
         for ddq in -1..=1 {
@@ -751,7 +743,6 @@ fn report_terrain_at_cursor(
                 let tq = hb.center_q + ddq;
                 let tr = hb.center_r + ddr;
                 if let Some(tz) = elev_lookup(tq, tr) {
-                    // Show neighbor z values for slope context
                     let mut neighbors = Vec::new();
                     for &(ndq, ndr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
                         if let Some(nz) = elev_lookup(tq + ndq, tr + ndr) {
@@ -767,87 +758,38 @@ fn report_terrain_at_cursor(
             }
         }
 
-        for (pi, p) in hb.partial_residuals.iter().enumerate() {
-            let surv = p.surviving_triangles;
-            let absorbed: Vec<u8> = (0..6u8).filter(|t| !surv.contains(t)).collect();
-
-            // Determine which inscribed hex edge this partial straddles.
-            // SURVIVING_TRI[e] = [(e+5)%6, e, (e+1)%6], so edge = (surv[1]) for
-            // the middle surviving triangle.
-            let edge = surv[1];
+        // Partial fans — all values read from the rendered surface struct
+        for (pi, fan) in surface.partial_fans.iter().enumerate() {
+            let st = fan.surviving_triangles;
+            let edge = st[1] as usize;
             let edge_next = (edge + 1) % 6;
+            let absorbed: Vec<u8> = (0..6u8).filter(|t| !st.contains(t)).collect();
 
-            // Recompute t-value: project tile center onto inscribed hex edge in
-            // integer (a,b) space, same metric as hex_decimate::project_onto_edge.
-            // VX2/VZ2 constants for flat-top vertex offsets:
-            const VX2: [i32; 6] = [1, 2, 1, -1, -2, -1];
-            const VZ2: [i32; 6] = [-1, 0, 1, 1, 0, -1];
+            let d0 = fan.outer[0].y - bv[edge].y;
+            let d3 = fan.outer[3].y - bv[edge_next].y;
 
-            let bt0 = hb.boundary_tiles[edge as usize];
-            let bt1 = hb.boundary_tiles[edge_next as usize];
-            let v0a = 3 * bt0.0 + VX2[bt0.2 as usize];
-            let v0b = bt0.0 + 2 * bt0.1 + VZ2[bt0.2 as usize];
-            let v1a = 3 * bt1.0 + VX2[bt1.2 as usize];
-            let v1b = bt1.0 + 2 * bt1.1 + VZ2[bt1.2 as usize];
+            info!("    partial[{pi}] ({},{}) oz={} center_y={:.4} edge=V{}→V{} surv={:?} abs={:?}",
+                fan.q, fan.r, fan.z, fan.center.y,
+                edge, edge_next, st, absorbed);
+            info!("      ov[0] y={:.4} bv[{}] y={:.4} d={:.4}",
+                fan.outer[0].y, edge, bv[edge].y, d0);
+            info!("      ov[1] y={:.4}  ov[2] y={:.4}",
+                fan.outer[1].y, fan.outer[2].y);
+            info!("      ov[3] y={:.4} bv[{}] y={:.4} d={:.4}",
+                fan.outer[3].y, edge_next, bv[edge_next].y, d3);
+        }
 
-            let tile_a = 3 * p.q;
-            let tile_b = p.q + 2 * p.r;
-
-            let da = (v1a - v0a) as f64;
-            let db = (v1b - v0b) as f64;
-            let pa = (tile_a - v0a) as f64;
-            let pb = (tile_b - v0b) as f64;
-            let t = (pa * da + 3.0 * pb * db) / (da * da + 3.0 * db * db);
-
-            let z0 = hb.boundary_z[edge as usize];
-            let z1 = hb.boundary_z[edge_next as usize];
-
-            // Fan center: rendered Y from snapped_z
-            let fan_rendered_y = p.snapped_z as f32 * rise + rise;
-
-            // What the inscribed hex surface height is at this XZ (bilinear on the hex triangle)
-            // The edge interpolation gives: z0 + t*(z1-z0)
-            let edge_interp_y = (z0 + t * (z1 - z0)) as f32 * rise + rise;
-
-            // The fan's outer vertices — check if the two "inner" vertices
-            // (ov[0] and ov[3]) match the BV positions at the inscribed hex boundary
-            let ov_idxs = [surv[0] as usize, surv[1] as usize, surv[2] as usize, (surv[2] as usize + 1) % 6];
-            let tile_adj = common_bevy::geometry::slope_adjustments(p.original_z, rise, |d| {
-                let dir = qrz::DIRECTIONS[d];
-                elev_lookup(p.q + dir.q, p.r + dir.r)
-            });
-
-            // Check if fan vertex ov[0] or ov[3] shares grid position with any BV
-            let fan_inner_info = |ov_idx: usize| -> String {
-                let fan_va = 3 * p.q + VX2[ov_idx];
-                let fan_vb = p.q + 2 * p.r + VZ2[ov_idx];
-                let fan_y = p.original_z as f32 * rise + rise + tile_adj[ov_idx];
-                for bi in 0..6 {
-                    let (btq, btr, btvi) = hb.boundary_tiles[bi];
-                    let bv_a = 3 * btq + VX2[btvi as usize];
-                    let bv_b = btq + 2 * btr + VZ2[btvi as usize];
-                    if fan_va == bv_a && fan_vb == bv_b {
-                        let bv_z = elev_lookup(btq, btr).unwrap_or(0);
-                        let bv_adj = common_bevy::geometry::slope_adjustments(bv_z, rise, |d| {
-                            let dir = qrz::DIRECTIONS[d];
-                            elev_lookup(btq + dir.q, btr + dir.r)
-                        });
-                        let bv_y = bv_z as f32 * rise + rise + bv_adj[btvi as usize];
-                        let delta = fan_y - bv_y;
-                        return format!("v{}=BV[{}] fan_y={:.4} bv_y={:.4} d={:.4}", ov_idx, bi, fan_y, bv_y, delta);
-                    }
-                }
-                format!("v{}=perimeter fan_y={:.4}", ov_idx, fan_y)
-            };
-
-            info!("    partial[{pi}] ({},{}) oz={} sz={:.3} edge=V{}→V{} t={:.3} bz=[{:.2},{:.2}] surv={:?} abs={:?}",
-                p.q, p.r, p.original_z, p.snapped_z,
-                edge, edge_next, t, z0, z1,
-                surv, absorbed);
-            info!("      fan_center_y={fan_rendered_y:.4} edge_interp_y={edge_interp_y:.4} delta={:.4}",
-                fan_rendered_y - edge_interp_y);
-            info!("      {}", fan_inner_info(ov_idxs[0]));
-            info!("      {}", fan_inner_info(ov_idxs[3]));
+        // Skirts — all values read from the rendered surface struct
+        if !surface.skirts.is_empty() {
+            info!("    skirts: {} quads", surface.skirts.len());
+            for (si, skirt) in surface.skirts.iter().enumerate() {
+                info!("      skirt[{si}] ({},{})→({},{}) top=[{:.2},{:.2}] bot=[{:.2},{:.2}] drop=[{:.2},{:.2}]",
+                    skirt.from_q, skirt.from_r, skirt.to_q, skirt.to_r,
+                    skirt.top[0].y, skirt.top[1].y,
+                    skirt.bottom[0].y, skirt.bottom[1].y,
+                    skirt.top[0].y - skirt.bottom[0].y,
+                    skirt.top[1].y - skirt.bottom[1].y);
+            }
         }
     }
 

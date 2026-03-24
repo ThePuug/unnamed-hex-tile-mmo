@@ -1,8 +1,13 @@
 //! Hexball geometry — one function for any hex radius.
 //!
-//! A hexball is a tile at a larger scale. r=0 produces a single tile (identical
-//! to `compute_tile_geometry`). r≥1 uses `hex_decimate::decimate_hexball()` for
-//! tile classification, then generates inscribed hex + partial fans + full tiles.
+//! Two-phase architecture:
+//! 1. `compute_hexball_surface()` — computes all final vertex positions with
+//!    overrides applied (BV Y, snapped_z). Single source of truth.
+//! 2. `emit_hexball_mesh()` — pushes surface data into positions/normals/indices
+//!    arrays. No computation, no overrides, just emit.
+//!
+//! The terrain report reads from the same `HexballSurface` struct, so reported
+//! values always match rendered values.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -17,14 +22,56 @@ use crate::geometry::{
     SKIRT_VERTEX_MAP,
 };
 
-/// Raw geometry output from a single hexball.
+// ── Surface data (phase 1 output) ────────────────────────────────────────────
+
+/// Complete surface geometry for a single tile (r=0 or full residual).
+pub struct TileSurface {
+    pub verts: [Vec3; 7],
+    pub q: i32,
+    pub r: i32,
+    pub z: i32,
+}
+
+/// A partial fan's final vertex positions.
+pub struct PartialFanSurface {
+    pub center: Vec3,
+    /// 4 outer vertices [ov0, ov1, ov2, ov3] — inner vertex Y overrides applied.
+    pub outer: [Vec3; 4],
+    pub surviving_triangles: [u8; 3],
+    pub q: i32,
+    pub r: i32,
+    pub z: i32,
+}
+
+/// A skirt quad connecting a high edge to a low edge.
+pub struct SkirtQuad {
+    pub top: [Vec3; 2],
+    pub bottom: [Vec3; 2],
+    pub from_q: i32,
+    pub from_r: i32,
+    pub to_q: i32,
+    pub to_r: i32,
+}
+
+/// All computed surface data for a hexball, before mesh emission.
+/// Every Vec3 is the final rendered position — no further overrides.
+pub struct HexballSurface {
+    pub hex_center: Option<Vec3>,
+    pub hex_boundary: Option<[Vec3; 6]>,
+    pub partial_fans: Vec<PartialFanSurface>,
+    pub full_tiles: Vec<TileSurface>,
+    pub skirts: Vec<SkirtQuad>,
+}
+
+/// Raw mesh geometry output.
 pub struct HexballGeometry {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
 }
 
-/// A single decimated hexball within a chunk.
+// ── Public types for chunk decimation ────────────────────────────────────────
+
 pub struct HexballDecimation {
     pub center_q: i32,
     pub center_r: i32,
@@ -32,11 +79,12 @@ pub struct HexballDecimation {
     pub radius: u32,
 }
 
-/// Decimation plan for an entire chunk.
 pub struct ChunkDecimation {
     pub hexballs: Vec<HexballDecimation>,
     pub survivors: Vec<(i32, i32, i32)>,
 }
+
+// ── Public API ───────────────────────────────────────────────────────────────
 
 /// Build a combined Bevy `Mesh` from a chunk decimation plan.
 pub fn build_chunk_mesh(
@@ -83,34 +131,202 @@ pub fn build_chunk_mesh(
 }
 
 /// Produce mesh geometry for a hexball of the given radius.
-///
-/// r=0: Single hex tile, identical to `compute_tile_geometry()`.
-/// r≥1 (odd only): Inscribed hex + partial fans + full residuals via `hex_decimate`.
 pub fn compute_hexball_geometry(
-    center_q: i32,
-    center_r: i32,
-    center_z: i32,
-    radius: u32,
-    hex_radius: f32,
-    rise: f32,
-    chunk_origin: Vec3,
+    center_q: i32, center_r: i32, center_z: i32, radius: u32,
+    hex_radius: f32, rise: f32, chunk_origin: Vec3,
     tile_z: &impl Fn(i32, i32) -> Option<i32>,
 ) -> HexballGeometry {
-    assert!(
-        radius == 0 || radius % 2 == 1,
-        "hexball radius must be 0 or odd, got {radius}"
-    );
+    let surface = compute_hexball_surface(center_q, center_r, center_z, radius, hex_radius, rise, tile_z);
+    emit_hexball_mesh(&surface, chunk_origin)
+}
+
+/// Phase 1: Compute all final vertex positions for a hexball.
+///
+/// Every Vec3 in the returned struct is the final rendered position.
+/// BV Y overrides, snapped_z fan centers — all applied here.
+/// The terrain report can read this struct directly.
+pub fn compute_hexball_surface(
+    center_q: i32, center_r: i32, center_z: i32, radius: u32,
+    hex_radius: f32, rise: f32,
+    tile_z: &impl Fn(i32, i32) -> Option<i32>,
+) -> HexballSurface {
+    assert!(radius == 0 || radius % 2 == 1, "hexball radius must be 0 or odd, got {radius}");
 
     if radius == 0 {
-        return build_r0(center_q, center_r, center_z, hex_radius, rise, chunk_origin, tile_z);
+        let verts = tile_vertices(center_q, center_r, center_z, hex_radius, rise, tile_z);
+        let skirts = compute_tile_skirts(center_q, center_r, center_z, &verts, hex_radius, rise, tile_z);
+        return HexballSurface {
+            hex_center: None,
+            hex_boundary: None,
+            partial_fans: Vec::new(),
+            full_tiles: vec![TileSurface { verts, q: center_q, r: center_r, z: center_z }],
+            skirts,
+        };
     }
 
-    build_rn(center_q, center_r, center_z, radius, hex_radius, rise, chunk_origin, tile_z)
+    let hb = common::hex_decimate::decimate_hexball(
+        center_q, center_r, radius, u32::MAX, tile_z,
+    ).expect("all tiles within hexball must exist for geometry generation");
+
+    // Inscribed hex center
+    let center_y = center_z as f32 * rise + rise;
+    let (ccx, ccz) = flat_top_tile_center(center_q, center_r, hex_radius);
+    let hex_center = Vec3::new(ccx, center_y, ccz);
+
+    // Boundary vertices
+    let hex_boundary: [Vec3; 6] = std::array::from_fn(|i| {
+        let (tq, tr, vi) = hb.boundary_tiles[i];
+        let tz = tile_z(tq, tr).unwrap_or(center_z);
+        tile_vertex_pos(tq, tr, tz, vi as usize, hex_radius, rise, tile_z)
+    });
+
+    // Partial fans with BV Y overrides
+    let partial_fans: Vec<PartialFanSurface> = hb.partial_residuals.iter().map(|pr| {
+        let tv = tile_vertices(pr.q, pr.r, pr.original_z, hex_radius, rise, tile_z);
+        let st = pr.surviving_triangles;
+        let edge = st[1] as usize;
+        let edge_next = (edge + 1) % 6;
+        let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
+
+        let mut outer = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
+        outer[0].y = hb.boundary_z[edge] as f32 * rise + rise;
+        outer[3].y = hb.boundary_z[edge_next] as f32 * rise + rise;
+
+        let fan_center_y = pr.snapped_z as f32 * rise + rise;
+        let center = Vec3::new(tv[6].x, fan_center_y, tv[6].z);
+
+        PartialFanSurface {
+            center, outer, surviving_triangles: st,
+            q: pr.q, r: pr.r, z: pr.original_z,
+        }
+    }).collect();
+
+    // Full residual tiles
+    let full_tiles: Vec<TileSurface> = hb.full_residuals.iter().map(|fr| {
+        let verts = tile_vertices(fr.q, fr.r, fr.z, hex_radius, rise, tile_z);
+        TileSurface { verts, q: fr.q, r: fr.r, z: fr.z }
+    }).collect();
+
+    // Skirts — computed from final surface positions
+    let mut skirts = Vec::new();
+
+    // Fan skirts: 3 outward edges per fan, using final ov_pos values
+    for fan in &partial_fans {
+        let st = &fan.surviving_triangles;
+        for (k, &tri_idx) in st.iter().enumerate() {
+            let vi_a = tri_idx as usize;
+            let dir_idx = (4 + 6 - vi_a) % 6;
+            let dir = qrz::DIRECTIONS[dir_idx];
+            let nq = fan.q + dir.q;
+            let nr = fan.r + dir.r;
+            let nz = match tile_z(nq, nr) { Some(z) => z, None => continue };
+            if nz >= fan.z { continue; }
+
+            let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
+            let (_, _, nv1_idx, nv2_idx) = SKIRT_VERTEX_MAP[dir_idx];
+            skirts.push(SkirtQuad {
+                top: [fan.outer[k], fan.outer[k + 1]],
+                bottom: [n_verts[nv1_idx], n_verts[nv2_idx]],
+                from_q: fan.q, from_r: fan.r, to_q: nq, to_r: nr,
+            });
+        }
+    }
+
+    // Full residual skirts
+    for tile in &full_tiles {
+        skirts.extend(compute_tile_skirts(tile.q, tile.r, tile.z, &tile.verts, hex_radius, rise, tile_z));
+    }
+
+    HexballSurface {
+        hex_center: Some(hex_center),
+        hex_boundary: Some(hex_boundary),
+        partial_fans,
+        full_tiles,
+        skirts,
+    }
+}
+
+// ── Phase 2: Emit mesh from surface data ─────────────────────────────────────
+
+fn emit_hexball_mesh(surface: &HexballSurface, chunk_origin: Vec3) -> HexballGeometry {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Inscribed hex
+    if let (Some(center), Some(bv)) = (&surface.hex_center, &surface.hex_boundary) {
+        let inner_hex: [Vec3; 7] = {
+            let mut v = [Vec3::ZERO; 7];
+            for i in 0..6 { v[i] = bv[i]; }
+            v[6] = *center;
+            v
+        };
+        positions.push((*center - chunk_origin).into());
+        normals.push(hex_vertex_normal(&inner_hex, 6).into());
+        for i in 0..6 {
+            positions.push((bv[i] - chunk_origin).into());
+            normals.push(hex_vertex_normal(&inner_hex, i).into());
+        }
+        for i in 0..6u32 {
+            indices.extend([0, 1 + ((i + 1) % 6), 1 + i]);
+        }
+    }
+
+    // Partial fans
+    for fan in &surface.partial_fans {
+        let fan_base = positions.len() as u32;
+        positions.push((fan.center - chunk_origin).into());
+        for p in &fan.outer { positions.push((*p - chunk_origin).into()); }
+
+        indices.extend([fan_base, fan_base + 2, fan_base + 1]);
+        indices.extend([fan_base, fan_base + 3, fan_base + 2]);
+        indices.extend([fan_base, fan_base + 4, fan_base + 3]);
+
+        let fn0 = triangle_normal(fan.center, fan.outer[1], fan.outer[0]);
+        let fn1 = triangle_normal(fan.center, fan.outer[2], fan.outer[1]);
+        let fn2 = triangle_normal(fan.center, fan.outer[3], fan.outer[2]);
+        normals.push(avg_normal(&[fn0, fn1, fn2]).into());
+        normals.push(fn0.into());
+        normals.push(avg_normal(&[fn0, fn1]).into());
+        normals.push(avg_normal(&[fn1, fn2]).into());
+        normals.push(fn2.into());
+    }
+
+    // Full residual tiles
+    for tile in &surface.full_tiles {
+        let base = positions.len() as u32;
+        positions.push((tile.verts[6] - chunk_origin).into());
+        normals.push(hex_vertex_normal(&tile.verts, 6).into());
+        for i in 0..6 {
+            positions.push((tile.verts[i] - chunk_origin).into());
+            normals.push(hex_vertex_normal(&tile.verts, i).into());
+        }
+        for i in 0..6u32 {
+            indices.extend([base, base + 1 + ((i + 1) % 6), base + 1 + i]);
+        }
+    }
+
+    // Skirts
+    for skirt in &surface.skirts {
+        let edge_dir = (skirt.top[1] - skirt.top[0]).normalize();
+        let outward = edge_dir.cross(Vec3::new(0.0, -1.0, 0.0)).normalize();
+        let base = positions.len() as u32;
+        let v0: [f32; 3] = (skirt.top[0] - chunk_origin).into();
+        let v1: [f32; 3] = (skirt.top[1] - chunk_origin).into();
+        let v2: [f32; 3] = (skirt.bottom[1] - chunk_origin).into();
+        let v3: [f32; 3] = (skirt.bottom[0] - chunk_origin).into();
+        positions.extend([v0, v1, v2, v3]);
+        let n: [f32; 3] = outward.into();
+        normals.extend([n; 4]);
+        indices.extend([base, base + 1, base + 2]);
+        indices.extend([base, base + 2, base + 3]);
+    }
+
+    HexballGeometry { positions, normals, indices }
 }
 
 // ── Vertex helpers ───────────────────────────────────────────────────────────
 
-/// All 7 vertex positions for a tile (6 outer + center), slope-adjusted.
 fn tile_vertices(
     q: i32, r: i32, z: i32,
     hex_radius: f32, rise: f32,
@@ -131,7 +347,6 @@ fn tile_vertices(
     verts
 }
 
-/// World position of a single tile vertex, slope-adjusted.
 fn tile_vertex_pos(
     q: i32, r: i32, z: i32, vertex_idx: usize,
     hex_radius: f32, rise: f32,
@@ -144,222 +359,31 @@ fn tile_vertex_pos(
         let dir = qrz::DIRECTIONS[dir_idx];
         tile_z(q + dir.q, r + dir.r)
     });
-    let y = z as f32 * rise + rise + adj[vertex_idx];
-    Vec3::new(cx + ox, y, cz + oz)
-}
-
-// ── r=0: Single tile ─────────────────────────────────────────────────────────
-
-fn build_r0(
-    q: i32, r: i32, z: i32,
-    hex_radius: f32, rise: f32, chunk_origin: Vec3,
-    tile_z: &impl Fn(i32, i32) -> Option<i32>,
-) -> HexballGeometry {
-    let verts = tile_vertices(q, r, z, hex_radius, rise, tile_z);
-    let mut positions = Vec::with_capacity(31);
-    let mut normals = Vec::with_capacity(31);
-    let mut indices = Vec::with_capacity(54);
-
-    // Center vertex first
-    positions.push((verts[6] - chunk_origin).into());
-    normals.push(hex_vertex_normal(&verts, 6).into());
-
-    for i in 0..6 {
-        positions.push((verts[i] - chunk_origin).into());
-        normals.push(hex_vertex_normal(&verts, i).into());
-    }
-
-    // 6 triangles (CCW winding)
-    for i in 0..6u32 {
-        indices.extend([0, 1 + ((i + 1) % 6), 1 + i]);
-    }
-
-    emit_tile_skirts(q, r, z, &verts, hex_radius, rise, chunk_origin, tile_z,
-        &mut positions, &mut normals, &mut indices);
-
-    HexballGeometry { positions, normals, indices }
-}
-
-// ── r≥1: Unified path via hex_decimate ───────────────────────────────────────
-
-fn build_rn(
-    center_q: i32, center_r: i32, center_z: i32, radius: u32,
-    hex_radius: f32, rise: f32, chunk_origin: Vec3,
-    tile_z: &impl Fn(i32, i32) -> Option<i32>,
-) -> HexballGeometry {
-    let hb = common::hex_decimate::decimate_hexball(
-        center_q, center_r, radius, u32::MAX, tile_z,
-    ).expect("all tiles within hexball must exist for geometry generation");
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-
-    // ── Inscribed hex: 6 triangles ──
-    // Center vertex
-    let center_y = center_z as f32 * rise + rise;
-    let (ccx, ccz) = flat_top_tile_center(center_q, center_r, hex_radius);
-    let center_world = Vec3::new(ccx, center_y, ccz);
-
-    // 6 boundary vertices from DecimatedHexball.boundary_tiles
-    // These are in CCW order (NE→E→SE→SW→W→NW) matching flat-top vertex convention.
-    let bv_world: [Vec3; 6] = std::array::from_fn(|i| {
-        let (tq, tr, vi) = hb.boundary_tiles[i];
-        let tz = tile_z(tq, tr).unwrap_or(center_z);
-        tile_vertex_pos(tq, tr, tz, vi as usize, hex_radius, rise, tile_z)
-    });
-
-    // Build 7-vertex array for normal computation [BV0..BV5, center]
-    let inner_hex_verts: [Vec3; 7] = {
-        let mut v = [Vec3::ZERO; 7];
-        for i in 0..6 { v[i] = bv_world[i]; }
-        v[6] = center_world;
-        v
-    };
-
-    // Emit center (index 0)
-    positions.push((center_world - chunk_origin).into());
-    normals.push(hex_vertex_normal(&inner_hex_verts, 6).into());
-
-    // Emit boundary vertices (indices 1-6)
-    for i in 0..6 {
-        positions.push((bv_world[i] - chunk_origin).into());
-        normals.push(hex_vertex_normal(&inner_hex_verts, i).into());
-    }
-
-    // 6 triangles — CCW winding: [center, BV[(i+1)%6], BV[i]]
-    for i in 0..6u32 {
-        indices.extend([0, 1 + ((i + 1) % 6), 1 + i]);
-    }
-
-    // ── Partial fans: 3 triangles each ──
-    for pr in &hb.partial_residuals {
-        let tv = tile_vertices(pr.q, pr.r, pr.original_z, hex_radius, rise, tile_z);
-
-        // Fan center: tile center XZ, Y from snapped_z
-        let fan_center_y = pr.snapped_z as f32 * rise + rise;
-        let fan_center = Vec3::new(tv[6].x, fan_center_y, tv[6].z);
-
-        // Surviving triangles are 3 consecutive indices: [(e+5)%6, e, (e+1)%6]
-        // where e is the inscribed hex edge this tile straddles.
-        // The 4 unique outer vertices are: st[0], st[1], st[2], (st[2]+1)%6.
-        let st = &pr.surviving_triangles;
-        let edge = st[1] as usize;
-        let edge_next = (edge + 1) % 6;
-        let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
-
-        // The two inner vertices (ov[0] and ov[3]) sit on the inscribed hex
-        // boundary. Override only their Y to match the inscribed hex edge
-        // height (from boundary_z). XZ stays at standard tile-blended positions
-        // so perimeter vertices agree with adjacent hexballs.
-        let mut ov_pos = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
-        ov_pos[0].y = hb.boundary_z[edge] as f32 * rise + rise;
-        ov_pos[3].y = hb.boundary_z[edge_next] as f32 * rise + rise;
-
-        let fan_base = positions.len() as u32;
-
-        // Emit: center(0), ov[0](1), ov[1](2), ov[2](3), ov[3](4)
-        positions.push((fan_center - chunk_origin).into());
-        for p in &ov_pos {
-            positions.push((*p - chunk_origin).into());
-        }
-
-        // 3 triangles — CCW winding: center, v[(t+1)%6], v[t]
-        indices.extend([fan_base, fan_base + 2, fan_base + 1]);
-        indices.extend([fan_base, fan_base + 3, fan_base + 2]);
-        indices.extend([fan_base, fan_base + 4, fan_base + 3]);
-
-        // Per-vertex normals from adjacent face normals (using overridden positions)
-        let fn0 = triangle_normal(fan_center, ov_pos[1], ov_pos[0]);
-        let fn1 = triangle_normal(fan_center, ov_pos[2], ov_pos[1]);
-        let fn2 = triangle_normal(fan_center, ov_pos[3], ov_pos[2]);
-
-        normals.push(avg_normal(&[fn0, fn1, fn2]).into()); // center
-        normals.push(fn0.into());                           // ov[0]
-        normals.push(avg_normal(&[fn0, fn1]).into());       // ov[1]
-        normals.push(avg_normal(&[fn1, fn2]).into());       // ov[2]
-        normals.push(fn2.into());                           // ov[3]
-
-        // Fan skirts — only the 3 outward edges
-        for (k, &tri_idx) in st.iter().enumerate() {
-            let vi_a = tri_idx as usize;
-            let dir_idx = (4 + 6 - vi_a) % 6;
-            let dir = qrz::DIRECTIONS[dir_idx];
-            let nq = pr.q + dir.q;
-            let nr = pr.r + dir.r;
-
-            let nz = match tile_z(nq, nr) {
-                Some(z) => z,
-                None => continue,
-            };
-            if nz >= pr.original_z { continue; }
-
-            let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
-            let (_, _, nv1_idx, nv2_idx) = SKIRT_VERTEX_MAP[dir_idx];
-
-            let va = ov_pos[k];
-            let vb = ov_pos[k + 1];
-            emit_skirt_quad(va, vb, n_verts[nv1_idx], n_verts[nv2_idx],
-                chunk_origin, &mut positions, &mut normals, &mut indices);
-        }
-    }
-
-    // ── Full residuals: 6 triangles each ──
-    for fr in &hb.full_residuals {
-        let tile = build_r0(fr.q, fr.r, fr.z, hex_radius, rise, chunk_origin, tile_z);
-        merge_geometry_into(&mut positions, &mut normals, &mut indices, &tile);
-    }
-
-    HexballGeometry { positions, normals, indices }
+    Vec3::new(cx + ox, z as f32 * rise + rise + adj[vertex_idx], cz + oz)
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-fn emit_tile_skirts(
+fn compute_tile_skirts(
     q: i32, r: i32, z: i32, verts: &[Vec3; 7],
-    hex_radius: f32, rise: f32, chunk_origin: Vec3,
+    hex_radius: f32, rise: f32,
     tile_z: &impl Fn(i32, i32) -> Option<i32>,
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-) {
+) -> Vec<SkirtQuad> {
+    let mut skirts = Vec::new();
     for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
         let nq = q + direction.q;
         let nr = r + direction.r;
-        let neighbor_z = match tile_z(nq, nr) {
-            Some(nz) => nz,
-            None => continue,
-        };
-        if neighbor_z >= z { continue; }
-
-        let n_verts = tile_vertices(nq, nr, neighbor_z, hex_radius, rise, tile_z);
+        let nz = match tile_z(nq, nr) { Some(z) => z, None => continue };
+        if nz >= z { continue; }
+        let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
         let (cv1, cv2, nv1, nv2) = SKIRT_VERTEX_MAP[dir_idx];
-        emit_skirt_quad(verts[cv1], verts[cv2], n_verts[nv1], n_verts[nv2],
-            chunk_origin, positions, normals, indices);
+        skirts.push(SkirtQuad {
+            top: [verts[cv1], verts[cv2]],
+            bottom: [n_verts[nv1], n_verts[nv2]],
+            from_q: q, from_r: r, to_q: nq, to_r: nr,
+        });
     }
-}
-
-fn emit_skirt_quad(
-    curr_v1: Vec3, curr_v2: Vec3, neighbor_v1: Vec3, neighbor_v2: Vec3,
-    chunk_origin: Vec3,
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-) {
-    let edge_dir = (curr_v2 - curr_v1).normalize();
-    let outward_normal = edge_dir.cross(Vec3::new(0.0, -1.0, 0.0)).normalize();
-
-    let skirt_base = positions.len() as u32;
-    let cv1: [f32; 3] = (curr_v1 - chunk_origin).into();
-    let cv2: [f32; 3] = (curr_v2 - chunk_origin).into();
-    let nv2: [f32; 3] = (neighbor_v2 - chunk_origin).into();
-    let nv1: [f32; 3] = (neighbor_v1 - chunk_origin).into();
-    positions.extend([cv1, cv2, nv2, nv1]);
-    let n: [f32; 3] = outward_normal.into();
-    normals.extend([n; 4]);
-
-    indices.extend([skirt_base, skirt_base + 1, skirt_base + 2]);
-    indices.extend([skirt_base, skirt_base + 2, skirt_base + 3]);
+    skirts
 }
 
 fn triangle_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
@@ -379,18 +403,6 @@ fn merge_geometry(target: &mut HexballGeometry, source: &HexballGeometry) {
     target.indices.extend(source.indices.iter().map(|i| i + offset));
 }
 
-fn merge_geometry_into(
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-    source: &HexballGeometry,
-) {
-    let offset = positions.len() as u32;
-    positions.extend_from_slice(&source.positions);
-    normals.extend_from_slice(&source.normals);
-    indices.extend(source.indices.iter().map(|i| i + offset));
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -402,7 +414,6 @@ mod tests {
         move |q, r| elevations.get(&(q, r)).copied()
     }
 
-    /// Fill a hex area of given radius + 1-ring buffer, all at the same z.
     fn flat_tiles(cq: i32, cr: i32, radius: u32, z: i32) -> HashMap<(i32, i32), i32> {
         let n = (radius + 1) as i32;
         let mut map = HashMap::new();
@@ -414,7 +425,6 @@ mod tests {
         map
     }
 
-    // r=0 parity
     #[test]
     fn r0_matches_compute_tile_geometry() {
         let mut elevations = HashMap::new();
@@ -430,7 +440,6 @@ mod tests {
         let tile_geom = crate::geometry::compute_tile_geometry(
             &tiles, &elevations, 1.0, 0.8, Vec3::ZERO,
         );
-
         let tile_z = make_tile_z(&elevations);
         let hexball = compute_hexball_geometry(0, 0, 3, 0, 1.0, 0.8, Vec3::ZERO, &tile_z);
 
@@ -442,7 +451,6 @@ mod tests {
         assert_eq!(tile_geom.indices, hexball.indices, "indices differ");
     }
 
-    // Triangle counts
     #[test]
     fn r0_triangle_count() {
         let elevations = flat_tiles(0, 0, 0, 0);
@@ -475,7 +483,6 @@ mod tests {
         assert_eq!(hb.indices.len() / 3, 168, "r=5 should be 168 tri");
     }
 
-    // Flat terrain: all vertices at y=rise
     #[test]
     fn r1_flat_terrain_all_same_y() {
         let elevations = flat_tiles(0, 0, 1, 0);
@@ -496,7 +503,6 @@ mod tests {
         }
     }
 
-    // CCW winding
     #[test]
     fn r1_ccw_winding() {
         let elevations = flat_tiles(0, 0, 1, 0);
@@ -525,7 +531,6 @@ mod tests {
         }
     }
 
-    // Determinism
     #[test]
     fn deterministic() {
         let elevations = flat_tiles(0, 0, 3, 0);
@@ -537,12 +542,10 @@ mod tests {
         assert_eq!(a.indices, b.indices);
     }
 
-    // Perimeter stitching
     #[test]
     fn r1_perimeter_stitching() {
         let elevations = flat_tiles(0, 0, 4, 0);
         let tile_z = make_tile_z(&elevations);
-        // HexLattice(1) cell centers: (0,0) and (2,1)
         let a = compute_hexball_geometry(0, 0, 0, 1, 1.0, 0.8, Vec3::ZERO, &tile_z);
         let b = compute_hexball_geometry(2, 1, 0, 1, 1.0, 0.8, Vec3::ZERO, &tile_z);
         assert_shared_vertices(&a, &b, 2);
@@ -552,7 +555,6 @@ mod tests {
     fn r3_perimeter_stitching() {
         let elevations = flat_tiles(0, 0, 10, 0);
         let tile_z = make_tile_z(&elevations);
-        // HexLattice(3) v1=(4,3): adjacent centers (0,0) and (4,3)
         let a = compute_hexball_geometry(0, 0, 0, 3, 1.0, 0.8, Vec3::ZERO, &tile_z);
         let b = compute_hexball_geometry(4, 3, 0, 3, 1.0, 0.8, Vec3::ZERO, &tile_z);
         assert_shared_vertices(&a, &b, 2);
@@ -573,12 +575,32 @@ mod tests {
             "expected at least {min_shared} shared vertices, found {shared}");
     }
 
-    // Even radius panics
     #[test]
     #[should_panic(expected = "hexball radius must be 0 or odd")]
     fn even_radius_panics() {
         let elevations = HashMap::new();
         let tile_z = make_tile_z(&elevations);
         compute_hexball_geometry(0, 0, 0, 2, 1.0, 0.8, Vec3::ZERO, &tile_z);
+    }
+
+    #[test]
+    fn surface_reports_overridden_y() {
+        let mut elevations = HashMap::new();
+        for dq in -3..=3 {
+            for dr in (-3).max(-dq - 3)..=(3).min(-dq + 3) {
+                elevations.insert((dq, dr), dq + 3);
+            }
+        }
+        let tile_z = make_tile_z(&elevations);
+        let surface = compute_hexball_surface(0, 0, 3, 1, 1.0, 0.8, &tile_z);
+        let bv = surface.hex_boundary.unwrap();
+        for fan in &surface.partial_fans {
+            let edge = fan.surviving_triangles[1] as usize;
+            let edge_next = (edge + 1) % 6;
+            assert!((fan.outer[0].y - bv[edge].y).abs() < 1e-5,
+                "fan ov[0] y={:.4} != bv[{edge}] y={:.4}", fan.outer[0].y, bv[edge].y);
+            assert!((fan.outer[3].y - bv[edge_next].y).abs() < 1e-5,
+                "fan ov[3] y={:.4} != bv[{edge_next}] y={:.4}", fan.outer[3].y, bv[edge_next].y);
+        }
     }
 }
