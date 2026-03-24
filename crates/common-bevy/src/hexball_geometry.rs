@@ -244,30 +244,34 @@ fn build_rn(
         // where e is the inscribed hex edge this tile straddles.
         // The 4 unique outer vertices are: st[0], st[1], st[2], (st[2]+1)%6.
         let st = &pr.surviving_triangles;
+        let edge = st[1] as usize;
+        let edge_next = (edge + 1) % 6;
         let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
+
+        // The two inner vertices (ov[0] and ov[3]) sit on the inscribed hex
+        // boundary. Their heights must match the BV positions, not the tile's
+        // own slope blending (which uses a different tile z and can diverge).
+        let mut ov_pos = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
+        ov_pos[0] = bv_world[edge];      // ov[0] ↔ BV[edge]
+        ov_pos[3] = bv_world[edge_next]; // ov[3] ↔ BV[edge_next]
 
         let fan_base = positions.len() as u32;
 
         // Emit: center(0), ov[0](1), ov[1](2), ov[2](3), ov[3](4)
         positions.push((fan_center - chunk_origin).into());
-        for &vi in &ov_indices {
-            positions.push((tv[vi] - chunk_origin).into());
+        for p in &ov_pos {
+            positions.push((*p - chunk_origin).into());
         }
 
         // 3 triangles — CCW winding: center, v[(t+1)%6], v[t]
-        // In our layout: t0 uses ov[0] and ov[1], t1 uses ov[1] and ov[2], t2 uses ov[2] and ov[3]
-        // center=fan_base, ov[k]=fan_base+1+k
-        // T0: center, ov[1], ov[0] → fan_base, fan_base+2, fan_base+1
-        // T1: center, ov[2], ov[1] → fan_base, fan_base+3, fan_base+2
-        // T2: center, ov[3], ov[2] → fan_base, fan_base+4, fan_base+3
         indices.extend([fan_base, fan_base + 2, fan_base + 1]);
         indices.extend([fan_base, fan_base + 3, fan_base + 2]);
         indices.extend([fan_base, fan_base + 4, fan_base + 3]);
 
-        // Per-vertex normals from adjacent face normals
-        let fn0 = triangle_normal(fan_center, tv[ov_indices[1]], tv[ov_indices[0]]);
-        let fn1 = triangle_normal(fan_center, tv[ov_indices[2]], tv[ov_indices[1]]);
-        let fn2 = triangle_normal(fan_center, tv[ov_indices[3]], tv[ov_indices[2]]);
+        // Per-vertex normals from adjacent face normals (using overridden positions)
+        let fn0 = triangle_normal(fan_center, ov_pos[1], ov_pos[0]);
+        let fn1 = triangle_normal(fan_center, ov_pos[2], ov_pos[1]);
+        let fn2 = triangle_normal(fan_center, ov_pos[3], ov_pos[2]);
 
         normals.push(avg_normal(&[fn0, fn1, fn2]).into()); // center
         normals.push(fn0.into());                           // ov[0]
@@ -292,8 +296,8 @@ fn build_rn(
             let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
             let (_, _, nv1_idx, nv2_idx) = SKIRT_VERTEX_MAP[dir_idx];
 
-            let va = tv[ov_indices[k]];
-            let vb = tv[ov_indices[k + 1]];
+            let va = ov_pos[k];
+            let vb = ov_pos[k + 1];
             emit_skirt_quad(va, vb, n_verts[nv1_idx], n_verts[nv2_idx],
                 chunk_origin, &mut positions, &mut normals, &mut indices);
         }
