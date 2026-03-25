@@ -81,16 +81,45 @@ pub struct ChunkDecimation {
     pub effective_z: std::collections::HashMap<(i32, i32), i32>,
 }
 
+/// Perimeter edge of a chunk surface, keyed by canonical grid vertex IDs.
+/// Stored per-chunk so neighboring chunks can match against it for cross-chunk skirts.
+#[derive(Clone)]
+pub struct PerimeterEdge {
+    pub id_a: (i32, i32),
+    pub pos_a: Vec3,
+    pub pos_b: Vec3,
+}
+
+/// All perimeter edges of a chunk that had no intra-chunk match.
+/// Keyed by sorted pair of grid vertex IDs.
+#[derive(Clone, Default)]
+pub struct ChunkPerimeterEdges {
+    pub edges: HashMap<((i32, i32), (i32, i32)), PerimeterEdge>,
+}
+
+/// Diagnostic counts from the skirt stitching pass.
+#[derive(Debug, Default)]
+pub struct SkirtStats {
+    pub intra_chunk_quads: u32,
+    pub cross_chunk_quads: u32,
+    pub unmatched_edges: u32,
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Build a combined Bevy `Mesh` from a chunk decimation plan.
+///
+/// `neighbor_perimeters`: perimeter edges from already-built neighboring chunks.
+/// Cross-chunk skirts are emitted where this chunk's perimeter edges match a neighbor's.
+/// Returns the mesh and this chunk's own perimeter edges (for neighbors to use later).
 pub fn build_chunk_mesh(
     decimation: &ChunkDecimation,
     hex_radius: f32,
     rise: f32,
     chunk_origin: Vec3,
     tile_z: &impl Fn(i32, i32) -> Option<i32>,
-) -> Mesh {
+    neighbor_perimeters: &[&ChunkPerimeterEdges],
+) -> (Mesh, ChunkPerimeterEdges, SkirtStats) {
     // Unified lookup: effective_z for absorbed tiles, original_z for everything else.
     let effective_tile_z = |q: i32, r: i32| -> Option<i32> {
         if let Some(&ez) = decimation.effective_z.get(&(q, r)) {
@@ -124,14 +153,14 @@ pub fn build_chunk_mesh(
         merge_geometry(&mut combined, &emit_hexball_mesh(surface, chunk_origin));
     }
 
-    // Phase 3: Chunk-level skirt stitching
-    emit_chunk_skirts(&surfaces, chunk_origin, &mut combined);
+    // Phase 3: Chunk-level skirt stitching (intra-chunk + cross-chunk)
+    let (own_perimeter, skirt_stats) = emit_chunk_skirts(&surfaces, neighbor_perimeters, chunk_origin, &mut combined);
 
     let vert_count = combined.positions.len();
     let verts: Vec<Vec3> = combined.positions.iter().map(|p| Vec3::from_array(*p)).collect();
     let norms: Vec<Vec3> = combined.normals.iter().map(|n| Vec3::from_array(*n)).collect();
 
-    Mesh::new(
+    let mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
@@ -141,7 +170,9 @@ pub fn build_chunk_mesh(
         (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-    .with_inserted_indices(Indices::U32(combined.indices))
+    .with_inserted_indices(Indices::U32(combined.indices));
+
+    (mesh, own_perimeter, skirt_stats)
 }
 
 /// Produce mesh geometry for a hexball of the given radius.
@@ -369,17 +400,20 @@ pub fn grid_vertex_id(q: i32, r: i32, vidx: usize) -> (i32, i32) {
     (3 * q + VX2[vidx], q + 2 * r + VZ2[vidx])
 }
 
-/// Emit skirt quads between surfaces that share perimeter edges with different Y.
+/// Emit skirt quads between surfaces with different Y at shared perimeter edges.
+/// Handles both intra-chunk matches and cross-chunk matches (via neighbor perimeters).
+/// Returns this chunk's unmatched perimeter edges and diagnostic stats.
 fn emit_chunk_skirts(
     surfaces: &[HexballSurface],
+    neighbor_perimeters: &[&ChunkPerimeterEdges],
     chunk_origin: Vec3,
     combined: &mut HexballGeometry,
-) {
+) -> (ChunkPerimeterEdges, SkirtStats) {
     type VertexId = (i32, i32);
     type EdgeKey = (VertexId, VertexId);
 
     struct SkirtEdge {
-        sid: usize,
+        local: bool, // true = from this chunk's surfaces, false = from neighbor
         id_a: VertexId,
         pos_a: Vec3,
         pos_b: Vec3,
@@ -387,8 +421,8 @@ fn emit_chunk_skirts(
 
     let mut edge_map: HashMap<EdgeKey, Vec<SkirtEdge>> = HashMap::new();
 
-    for (sid, surface) in surfaces.iter().enumerate() {
-        // Fan perimeter edges — skip edges facing this hexball's absorbed tiles
+    // Register this chunk's perimeter edges
+    for surface in surfaces {
         for fan in &surface.partial_fans {
             let st = fan.surviving_triangles;
             let ov = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
@@ -402,11 +436,10 @@ fn emit_chunk_skirts(
                 let id_b = grid_vertex_id(fan.q, fan.r, (vi + 1) % 6);
                 let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
                 edge_map.entry(key).or_default().push(SkirtEdge {
-                    sid, id_a, pos_a: fan.outer[i], pos_b: fan.outer[i + 1],
+                    local: true, id_a, pos_a: fan.outer[i], pos_b: fan.outer[i + 1],
                 });
             }
         }
-        // Full residual tile edges — skip edges facing this hexball's absorbed tiles
         for tile in &surface.full_tiles {
             for i in 0..6 {
                 let dir = (10 - i) % 6;
@@ -417,18 +450,52 @@ fn emit_chunk_skirts(
                 let id_b = grid_vertex_id(tile.q, tile.r, (i + 1) % 6);
                 let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
                 edge_map.entry(key).or_default().push(SkirtEdge {
-                    sid, id_a, pos_a: tile.verts[i], pos_b: tile.verts[(i + 1) % 6],
+                    local: true, id_a, pos_a: tile.verts[i], pos_b: tile.verts[(i + 1) % 6],
                 });
             }
         }
     }
 
-    for (key, entries) in &edge_map {
-        if entries.len() < 2 { continue; }
-        let first_sid = entries[0].sid;
-        if entries.iter().all(|e| e.sid == first_sid) { continue; }
+    // Add neighbor perimeter edges (non-local)
+    for neighbor in neighbor_perimeters {
+        for (&key, pe) in &neighbor.edges {
+            edge_map.entry(key).or_default().push(SkirtEdge {
+                local: false, id_a: pe.id_a, pos_a: pe.pos_a, pos_b: pe.pos_b,
+            });
+        }
+    }
 
-        // Match endpoints to the canonical key order via grid identity
+    // Emit skirts and collect unmatched local edges
+    let mut own_perimeter = ChunkPerimeterEdges::default();
+    let mut stats = SkirtStats::default();
+
+    for (key, entries) in &edge_map {
+        let has_local = entries.iter().any(|e| e.local);
+        if !has_local { continue; } // not our responsibility
+
+        let has_match = entries.len() >= 2
+            && !(entries.iter().all(|e| e.local)
+                && entries.iter().map(|e| (e.pos_a.y, e.pos_b.y))
+                    .all(|y| {
+                        let first = entries[0].pos_a.y;
+                        let first_b = entries[0].pos_b.y;
+                        (y.0 - first).abs() < 1e-5 && (y.1 - first_b).abs() < 1e-5
+                    }));
+
+        if entries.len() < 2 || !has_match {
+            // Unmatched local edge — export for neighbor chunks
+            if let Some(local) = entries.iter().find(|e| e.local) {
+                own_perimeter.edges.insert(*key, PerimeterEdge {
+                    id_a: local.id_a, pos_a: local.pos_a, pos_b: local.pos_b,
+                });
+            }
+            stats.unmatched_edges += 1;
+            continue;
+        }
+
+        let is_cross_chunk = entries.iter().any(|e| !e.local);
+
+        // Matched edge — compute skirt Y from all entries
         let mut max_y0 = f32::NEG_INFINITY;
         let mut min_y0 = f32::INFINITY;
         let mut max_y1 = f32::NEG_INFINITY;
@@ -448,12 +515,18 @@ fn emit_chunk_skirts(
 
         if (max_y0 - min_y0) < 1e-5 && (max_y1 - min_y1) < 1e-5 { continue; }
 
-        // Use xz from first entry, oriented to match canonical key
-        let e0 = &entries[0];
-        let (p0, p1) = if e0.id_a == key.0 {
-            (e0.pos_a, e0.pos_b)
+        if is_cross_chunk {
+            stats.cross_chunk_quads += 1;
         } else {
-            (e0.pos_b, e0.pos_a)
+            stats.intra_chunk_quads += 1;
+        }
+
+        // Use xz from a local entry, oriented to match canonical key
+        let local_e = entries.iter().find(|e| e.local).unwrap();
+        let (p0, p1) = if local_e.id_a == key.0 {
+            (local_e.pos_a, local_e.pos_b)
+        } else {
+            (local_e.pos_b, local_e.pos_a)
         };
 
         let top0 = Vec3::new(p0.x, max_y0, p0.z);
@@ -478,6 +551,103 @@ fn emit_chunk_skirts(
         combined.normals.extend([n; 4]);
         combined.indices.extend([base, base + 1, base + 2]);
         combined.indices.extend([base, base + 2, base + 3]);
+    }
+
+    (own_perimeter, stats)
+}
+
+/// Match a chunk's unmatched perimeter edges against a newly available neighbor's
+/// perimeter. Returns skirt geometry to append and the matched edge keys to remove.
+pub fn match_cross_chunk_skirts(
+    unmatched: &ChunkPerimeterEdges,
+    new_neighbor: &ChunkPerimeterEdges,
+    chunk_origin: Vec3,
+) -> (HexballGeometry, Vec<((i32, i32), (i32, i32))>) {
+    let mut geom = HexballGeometry {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        indices: Vec::new(),
+    };
+    let mut matched_keys = Vec::new();
+
+    for (&key, local_edge) in &unmatched.edges {
+        let Some(remote_edge) = new_neighbor.edges.get(&key) else { continue };
+
+        let (ly0, ly1) = if local_edge.id_a == key.0 {
+            (local_edge.pos_a.y, local_edge.pos_b.y)
+        } else {
+            (local_edge.pos_b.y, local_edge.pos_a.y)
+        };
+        let (ry0, ry1) = if remote_edge.id_a == key.0 {
+            (remote_edge.pos_a.y, remote_edge.pos_b.y)
+        } else {
+            (remote_edge.pos_b.y, remote_edge.pos_a.y)
+        };
+
+        let (max_y0, min_y0) = (ly0.max(ry0), ly0.min(ry0));
+        let (max_y1, min_y1) = (ly1.max(ry1), ly1.min(ry1));
+        if (max_y0 - min_y0) < 1e-5 && (max_y1 - min_y1) < 1e-5 { continue; }
+
+        let (p0, p1) = if local_edge.id_a == key.0 {
+            (local_edge.pos_a, local_edge.pos_b)
+        } else {
+            (local_edge.pos_b, local_edge.pos_a)
+        };
+
+        let top0 = Vec3::new(p0.x, max_y0, p0.z);
+        let top1 = Vec3::new(p1.x, max_y1, p1.z);
+        let bot0 = Vec3::new(p0.x, min_y0, p0.z);
+        let bot1 = Vec3::new(p1.x, min_y1, p1.z);
+
+        let edge_dir = Vec3::new(p1.x - p0.x, 0.0, p1.z - p0.z);
+        let outward = edge_dir.cross(Vec3::new(0.0, -1.0, 0.0));
+        let n: [f32; 3] = if outward.length_squared() > 1e-10 {
+            outward.normalize().into()
+        } else {
+            Vec3::Y.into()
+        };
+
+        let base = geom.positions.len() as u32;
+        let v0: [f32; 3] = (top0 - chunk_origin).into();
+        let v1: [f32; 3] = (top1 - chunk_origin).into();
+        let v2: [f32; 3] = (bot1 - chunk_origin).into();
+        let v3: [f32; 3] = (bot0 - chunk_origin).into();
+        geom.positions.extend([v0, v1, v2, v3]);
+        geom.normals.extend([n; 4]);
+        geom.indices.extend([base, base + 1, base + 2]);
+        geom.indices.extend([base, base + 2, base + 3]);
+
+        matched_keys.push(key);
+    }
+
+    (geom, matched_keys)
+}
+
+/// Append skirt geometry to an existing mesh's vertex/index buffers.
+pub fn append_geometry_to_mesh(mesh: &mut Mesh, geom: &HexballGeometry) {
+    use bevy_mesh::VertexAttributeValues;
+
+    if geom.positions.is_empty() { return; }
+
+    let base_vertex = mesh.count_vertices() as u32;
+
+    if let Some(VertexAttributeValues::Float32x3(data)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    {
+        data.extend_from_slice(&geom.positions);
+    }
+    if let Some(VertexAttributeValues::Float32x3(data)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL)
+    {
+        data.extend_from_slice(&geom.normals);
+    }
+    if let Some(VertexAttributeValues::Float32x2(data)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
+    {
+        data.extend((0..geom.positions.len()).map(|_| [0.0f32, 0.0]));
+    }
+    if let Some(Indices::U32(data)) = mesh.indices_mut() {
+        data.extend(geom.indices.iter().map(|i| i + base_vertex));
     }
 }
 

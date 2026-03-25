@@ -360,9 +360,18 @@ pub fn dispatch_lod_tasks(
             continue;
         }
 
+        // Collect available neighbor perimeter edges for cross-chunk skirts
+        let nb_perimeters: Vec<common_bevy::hexball_geometry::ChunkPerimeterEdges> = {
+            let lattice_neighbors = [(1i32, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+            lattice_neighbors.iter().filter_map(|&(dn, dm)| {
+                let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
+                lod_meshes.states.get(&nid)?.perimeter.clone()
+            }).collect()
+        };
+
         let map_snap = map.clone();
         let task = pool.spawn(async move {
-            collect_and_build_mesh(chunk_id, &map_snap, threshold)
+            collect_and_build_mesh(chunk_id, &map_snap, threshold, nb_perimeters)
         });
 
         let chunk_origin: Vec3 = map.convert(chunk_id.center());
@@ -377,6 +386,7 @@ pub fn dispatch_lod_tasks(
                     task: Some(task),
                     entity: None,
                     mesh_handle: None,
+                    perimeter: None,
                     tri_count: 0,
                     full_detail_tris: 0,
                     current_threshold: threshold,
@@ -393,6 +403,7 @@ fn collect_and_build_mesh(
     chunk_id: common_bevy::chunk::ChunkId,
     map: &common_bevy::resources::map::Map,
     threshold: u32,
+    neighbor_perimeters: Vec<common_bevy::hexball_geometry::ChunkPerimeterEdges>,
 ) -> crate::resources::MeshBuildResult {
     // Collect chunk tiles as (q, r, z) triples
     let chunk_tile_list: Vec<(i32, i32, i32)> = chunk_tiles(chunk_id)
@@ -446,12 +457,19 @@ fn collect_and_build_mesh(
         survivors: dec.survivors.clone(),
         effective_z,
     };
-    let mesh = common_bevy::hexball_geometry::build_chunk_mesh(
-        &plan, TILE_RADIUS, RISE, chunk_origin, &lookup,
+    let nb_refs: Vec<&common_bevy::hexball_geometry::ChunkPerimeterEdges> =
+        neighbor_perimeters.iter().collect();
+    let nb_total_edges: usize = neighbor_perimeters.iter().map(|p| p.edges.len()).sum();
+    let (mesh, perimeter, skirt_stats) = common_bevy::hexball_geometry::build_chunk_mesh(
+        &plan, TILE_RADIUS, RISE, chunk_origin, &lookup, &nb_refs,
     );
+    bevy::log::info!("chunk {:?} built: nb_peris={} nb_edges={} intra={} cross={} unmatched={} own_perim={}",
+        chunk_id, neighbor_perimeters.len(), nb_total_edges,
+        skirt_stats.intra_chunk_quads, skirt_stats.cross_chunk_quads,
+        skirt_stats.unmatched_edges, perimeter.edges.len());
     let tri_count = mesh.indices().map(|i| i.len() / 3).unwrap_or(0) as u32;
 
-    crate::resources::MeshBuildResult { mesh, tri_count, full_detail_tris }
+    crate::resources::MeshBuildResult { mesh, tri_count, full_detail_tris, perimeter }
 }
 
 /// Poll completed decimation tasks, upload meshes, update diagnostics.
@@ -474,6 +492,8 @@ pub fn poll_and_swap_lod(
     let mut total_tris = 0u64;
     let mut mesh_count = 0u32;
 
+    let mut newly_built: Vec<common_bevy::chunk::ChunkId> = Vec::new();
+
     for (&chunk_id, state) in lod_meshes.states.iter_mut() {
         // Poll task
         if let Some(task) = &mut state.task {
@@ -481,6 +501,7 @@ pub fn poll_and_swap_lod(
                 state.task = None;
                 state.tri_count = result.tri_count;
                 state.full_detail_tris = result.full_detail_tris;
+                state.perimeter = Some(result.perimeter);
                 // current_threshold was set at dispatch time — don't overwrite
 
                 let mesh_handle = meshes.add(result.mesh);
@@ -503,6 +524,8 @@ pub fn poll_and_swap_lod(
                         state.entity = Some(entity);
                     }
                 }
+
+                newly_built.push(chunk_id);
             }
         }
 
@@ -514,6 +537,64 @@ pub fn poll_and_swap_lod(
             entry.0 += 1;
             entry.1 += state.tri_count as u64;
             entry.2 += state.full_detail_tris as u64;
+        }
+    }
+
+    // Phase 2: Deferred cross-chunk skirt patch. All perimeters from this frame
+    // are stored (phase 1 complete) before any patching runs — no race between
+    // chunks that completed in the same frame.
+    let lattice_dirs = [(1i32, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+    for new_chunk_id in &newly_built {
+        let new_perimeter = match lod_meshes.states.get(new_chunk_id) {
+            Some(s) => s.perimeter.clone(),
+            None => continue,
+        };
+        let Some(new_perimeter) = new_perimeter else { continue };
+
+        for &(dn, dm) in &lattice_dirs {
+            let nid = common_bevy::chunk::ChunkId(new_chunk_id.0 + dn, new_chunk_id.1 + dm);
+            if nid == *new_chunk_id { continue; }
+
+            // Patch neighbor using this chunk's perimeter
+            let neighbor_perimeter = lod_meshes.states.get(&nid)
+                .and_then(|s| s.perimeter.clone());
+
+            if let Some(_nb_peri) = &neighbor_perimeter {
+                let state = lod_meshes.states.get_mut(&nid).unwrap();
+                if let (Some(ref mesh_handle), Some(ref mut perimeter)) =
+                    (&state.mesh_handle, &mut state.perimeter)
+                {
+                    let (skirt_geom, matched_keys) =
+                        common_bevy::hexball_geometry::match_cross_chunk_skirts(
+                            perimeter, &new_perimeter, state.chunk_origin,
+                        );
+                    if !matched_keys.is_empty() {
+                        for key in &matched_keys { perimeter.edges.remove(key); }
+                        if let Some(mesh) = meshes.get_mut(mesh_handle) {
+                            common_bevy::hexball_geometry::append_geometry_to_mesh(mesh, &skirt_geom);
+                        }
+                    }
+                }
+            }
+
+            // Patch self using neighbor's already-stored perimeter
+            if let Some(nb_peri) = neighbor_perimeter {
+                let state = lod_meshes.states.get_mut(new_chunk_id).unwrap();
+                if let (Some(ref mesh_handle), Some(ref mut perimeter)) =
+                    (&state.mesh_handle, &mut state.perimeter)
+                {
+                    let (skirt_geom, matched_keys) =
+                        common_bevy::hexball_geometry::match_cross_chunk_skirts(
+                            perimeter, &nb_peri, state.chunk_origin,
+                        );
+                    if !matched_keys.is_empty() {
+                        for key in &matched_keys { perimeter.edges.remove(key); }
+                        if let Some(mesh) = meshes.get_mut(mesh_handle) {
+                            common_bevy::hexball_geometry::append_geometry_to_mesh(mesh, &skirt_geom);
+                        }
+                    }
+                }
+            }
         }
     }
 

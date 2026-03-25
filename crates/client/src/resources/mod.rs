@@ -82,6 +82,8 @@ pub struct MeshBuildResult {
     pub tri_count: u32,
     /// Triangle count if rendered at full detail (no decimation, with skirts).
     pub full_detail_tris: u32,
+    /// Perimeter edges for cross-chunk skirt stitching with neighbors.
+    pub perimeter: common_bevy::hexball_geometry::ChunkPerimeterEdges,
 }
 
 pub struct ChunkLodState {
@@ -91,6 +93,8 @@ pub struct ChunkLodState {
     pub entity: Option<Entity>,
     /// Handle to the active mesh asset (for grid overlay extraction).
     pub mesh_handle: Option<Handle<Mesh>>,
+    /// Perimeter edges for cross-chunk skirt stitching.
+    pub perimeter: Option<common_bevy::hexball_geometry::ChunkPerimeterEdges>,
     /// Triangle count of the active mesh (for diagnostics).
     pub tri_count: u32,
     /// Triangle count if rendered at full detail (for compression ratio).
