@@ -13,8 +13,8 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 - `common-bevy/` — Bevy-specific shared code (components, chunk system, physics, messages, map)
 - `client/` — Rendering, input, networking
 - `server/` — Authority, AI, terrain serving, connections
-- `terrain/` — Pure terrain generation library (no Bevy). See `docs/design/terrain-generation.md`.
-- `terrain-viewer/` — CLI for rendering terrain layers to PNG
+- `world/` — World event system + terrain generation (no Bevy). See `docs/design/terrain-generation.md`.
+- `world-viewer/` — CLI for rendering world composite layers to PNG
 - `qrz/` — Hexagonal grid library. See `crates/qrz/GUIDANCE.md`.
 - `console/` — Server monitoring console
 
@@ -50,6 +50,13 @@ Client-server MMO built with Bevy ECS. Authoritative server, client-side predict
 
 **Async Mesh Pipeline:**
 - All mesh generation off main thread via `AsyncComputeTaskPool`. In-place mesh update pattern — old entity stays visible until task completes.
+
+**World Event System ([spec](docs/design/world-events.md)):**
+- Events implement `WorldEvent` (name, scale, survey, deform, query). Deform builds indexes; query materializes one tile lazily (INV-E10).
+- Two independent cascades: deform (index→index, structural) and query (tile→tile, vertical). Deform never materializes tiles. Query never triggers deform.
+- Events evaluate in dependency order. Event N reads the composite of events 0..N-1 (INV-E03).
+- Each event has an independent cell grid at its own scale. Scale matches feature size (INV-E08).
+- Indexes are TypeId-keyed in a shared IndexRegistry, cell-partitioned for spatial scoping (INV-E09). Indexes carry metadata (`tile_view_at`) for survey evaluation without triggering tile materialization.
 
 ---
 

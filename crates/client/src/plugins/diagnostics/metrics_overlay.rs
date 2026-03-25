@@ -29,6 +29,8 @@ const FONT_SIZE: f32 = 12.0;
 const OUTER_MARGIN: f32 = 8.0;
 const SECTION_INNER_MARGIN: f32 = 4.0;
 
+use common::glyphs::*;
+
 // ── Colors (match server console) ──
 
 const COLOR_NORMAL: egui::Color32 = egui::Color32::from_rgb(180, 255, 180);
@@ -126,6 +128,15 @@ impl FrameTimeWindow {
     }
 }
 
+/// Per-system timing entry (drained from ClientTimers).
+struct TimingEntry {
+    hist_p95: History,
+}
+
+impl TimingEntry {
+    fn new() -> Self { Self { hist_p95: History::new() } }
+}
+
 /// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
 #[derive(Resource)]
 pub struct MetricsHistory {
@@ -140,6 +151,8 @@ pub struct MetricsHistory {
     fps_p95: f64,
     bw: History,
     msg: History,
+    /// Per-system timing histories (drained from ClientTimers).
+    timings: std::collections::HashMap<&'static str, TimingEntry>,
 }
 
 impl Default for MetricsHistory {
@@ -152,6 +165,7 @@ impl Default for MetricsHistory {
             fps_p95: 0.0,
             bw: History::new(),
             msg: History::new(),
+            timings: std::collections::HashMap::new(),
         }
     }
 }
@@ -163,7 +177,9 @@ pub fn sample_metrics(
     diagnostics: Res<DiagnosticsStore>,
     network: Res<NetworkMetrics>,
     mut history: ResMut<MetricsHistory>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("metrics");
     // Every frame: push raw frame time into the 2s p95 window
     let elapsed = time.elapsed_secs_f64();
     if let Some(ft) = diagnostics
@@ -186,6 +202,13 @@ pub fn sample_metrics(
     history.frame_ms.push(p95);
     history.bw.push(network.displayed_bytes_per_sec() as f64);
     history.msg.push(network.displayed_messages_per_sec() as f64);
+
+    // Drain system timers into per-system histories
+    for (name, p95, _count) in client_timers.0.drain() {
+        history.timings.entry(name)
+            .or_insert_with(TimingEntry::new)
+            .hist_p95.push(p95 as f64);
+    }
 }
 
 // ── Alarm bands (match server console pattern) ──
@@ -245,18 +268,10 @@ enum SparkScale {
 
 // ── Display width ──
 
-/// Display cell count for a string, accounting for known wide chars in Iosevka.
-fn display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| if matches!(c, '△' | '●' | '○' | '↑' | '↓' | '↔') { 2 } else { 1 })
-        .sum()
-}
-
 // ── Tile-width segment primitives ──
 //
-// Each function takes a pre-built string and asserts its display width matches the slot.
-// Callers use standard format!() for layout; wide chars (↑, ↔, △ etc.) are 2 display
-// cells but 1 Rust char — account for them at the call site, not here.
+// Each function takes a pre-built string and asserts its char count matches the slot.
+// Nerd Font glyphs use {:<2} for 2-cell width.
 
 /// Segment row builder — wraps `ui.horizontal`, auto-inserts 1-char gaps between segments.
 struct Seg<'a> {
@@ -266,9 +281,9 @@ struct Seg<'a> {
 }
 
 impl<'a> Seg<'a> {
-    fn emit(&mut self, s: &str, expected_width: usize, color: egui::Color32) {
-        debug_assert_eq!(display_width(s), expected_width,
-            "segment: {expected_width} cells expected, got {} for {:?}", display_width(s), s);
+    fn emit(&mut self, s: &str, expected_chars: usize, color: egui::Color32) {
+        debug_assert_eq!(s.chars().count(), expected_chars,
+            "segment: {expected_chars} chars expected, got {} for {:?}", s.chars().count(), s);
         if self.count > 0 { self.ui.add_space(self.cw); }
         self.ui.label(colored_mono(s, color));
         self.count += 1;
@@ -402,7 +417,7 @@ pub fn setup_overlay_camera(mut commands: Commands) {
 // ── Font setup ──
 
 pub fn setup_overlay_font(mut contexts: EguiContexts, overlay: Res<OverlayCameraEntity>) {
-    let font_bytes = include_bytes!("../../../../../assets/fonts/Iosevka-Regular.ttc");
+    let font_bytes = include_bytes!("../../../../../assets/fonts/IosevkaNerdFont-Regular.ttf");
     let Ok(ctx) = contexts.ctx_for_entity_mut(overlay.0) else {
         return;
     };
@@ -441,6 +456,7 @@ pub fn update_metrics_overlay(
     tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] flyover_config: Res<crate::systems::admin::FlyoverDecimationConfig>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -528,31 +544,25 @@ pub fn update_metrics_overlay(
 
     let full_count = chunk_mesh_q.iter().count();
     let pending_lod = lod_meshes.states.values()
-        .filter(|s| s.lod1_task.is_some() || s.lod2_task.is_some()).count();
+        .filter(|s| s.task.is_some()).count();
 
-    // Triangle stats (ratio, max_error) + per-level totals
-    let (lod1_ratio, lod1_err) = tri_stats.lod1_stats();
-    let (lod2_ratio, lod2_err) = tri_stats.lod2_stats();
-    let inner_r = common_bevy::chunk::detail_boundary_radius(0, common_bevy::chunk::MAX_FOV);
+    // Triangle stats from the hex-native LoD system
+    let lod_tiers = &tri_stats.tiers;
+    let total_tris = tri_stats.total_tris;
+    let mesh_count = tri_stats.mesh_count;
     let outer_r = terrain_chunk_radius(player_loc.map(|l| l.z).unwrap_or(0));
-    let (lod1_tris, lod2_tris) = lod_meshes.states.values()
-        .filter(|s| s.entity.is_some())
-        .fold((0u64, 0u64), |(l1, l2), s| match s.active_lod {
-            crate::resources::LodLevel::Lod1 => (l1 + s.lod1_tris as u64, l2),
-            crate::resources::LodLevel::Lod2 => (l1, l2 + s.lod2_tris as u64),
-        });
 
     #[cfg(feature = "admin")]
-    let (admin_count, admin_sum_count) = if flyover.active {
+    let (admin_count, admin_threshold) = if flyover.active {
         (
-            flyover.admin_chunks.len(),
-            flyover.admin_summary_chunks.len(),
+            flyover.generated_chunks.len(),
+            Some(flyover_config.threshold),
         )
     } else {
-        (0, 0)
+        (0, None)
     };
     #[cfg(not(feature = "admin"))]
-    let (admin_count, admin_sum_count) = (0usize, 0usize);
+    let (admin_count, admin_threshold) = (0usize, None::<u32>);
 
 
     let frame_p95 = history.frame_p95;
@@ -594,16 +604,15 @@ pub fn update_metrics_overlay(
                         let (q, r, z, wx, wy) = tile_data
                             .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
                             .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
-                        // qrz/xy — two 23ch super-segments (23 + 1 gap + 23 = 47)
-                        const COORD: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
-                        let fc = |v: f64| COORD.fmt(v);
-                        let qrz = format!("qrz:{},{},{}", fc(q), fc(r), fc(z));
-                        let xy = format!("xy:{},{}", fc(wx), fc(wy));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            ui.label(colored_mono(&format!("{:^23}", qrz), COLOR_DIM));
-                            ui.add_space(cw);
-                            ui.label(colored_mono(&format!("{:^23}", xy), COLOR_DIM));
+                        const COORD: NumFmt = NumFmt { width: 7, precision: Precision::Integer, overflow: Overflow::Clamp };
+                        seg_row(ui, cw, |s| {
+                            s.quarter(&format!(" {:<2}", GLYPH_HEX), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(q)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(r)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(z)), COLOR_DIM);
+                            s.quarter(&format!(" {:<2}", GLYPH_GRID), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(wx)), COLOR_DIM);
+                            s.half(&format!("{:<7}", COORD.fmt(wy)), COLOR_DIM);
                         });
                         // mesh/load/pending
                         const CHUNK_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -615,31 +624,38 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "pend"), COLOR_DIM);
                             s.half(&format!("{:>5}  ", CHUNK_CT.fmt(pending_lod as f64)), COLOR_DIM);
                         });
-                        // LoD lines: 5 half-segments each
-                        const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Fixed(2), overflow: Overflow::Suffix };
-                        const LOD_RADIUS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
-                        const LOD_RATIO: NumFmt = NumFmt { width: 6, precision: Precision::Fixed(2), overflow: Overflow::Clamp };
+                        // Hex-native LoD stats: per-tier breakdown
+                        const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        const LOD_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        // Total row
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "LoD1"), COLOR_DIM);
-                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod1_tris as f64)), COLOR_DIM);
-                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(inner_r as f64)), COLOR_DIM);
-                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod1_ratio)), COLOR_DIM);
-                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod1_err)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "LoD"), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(total_tris as f64)), COLOR_DIM);
+                            s.half(&format!("{:>4}chk", LOD_CT.fmt(mesh_count as f64)), COLOR_DIM);
                         });
-                        seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "LoD2"), COLOR_DIM);
-                            s.half(&format!("△{:<5}", LOD_TRIS.fmt(lod2_tris as f64)), COLOR_DIM);
-                            s.half(&format!("↔{:<5}", LOD_RADIUS.fmt(outer_r as f64)), COLOR_DIM);
-                            s.half(&format!("×{:<6}", LOD_RATIO.fmt(lod2_ratio)), COLOR_DIM);
-                            s.half(&format!("ε{:<6}", LOD_RATIO.fmt(lod2_err)), COLOR_DIM);
-                        });
-                        if admin_count > 0 || admin_sum_count > 0 {
+                        // Per-tier rows
+                        for (tier, stats) in lod_tiers.iter().enumerate() {
+                            if stats.chunks == 0 { continue; }
+                            let ratio = if stats.full_detail_tris > 0 {
+                                stats.tris as f64 / stats.full_detail_tris as f64
+                            } else {
+                                1.0
+                            };
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{:>7}", format!("t{}", tier)), COLOR_DIM);
+                                s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(stats.tris as f64)), COLOR_DIM);
+                                s.half(&format!("{:>4}chk", LOD_CT.fmt(stats.chunks as f64)), COLOR_DIM);
+                                s.half(&format!("{:>5.0}% ", ratio * 100.0), COLOR_DIM);
+                            });
+                        }
+                        if admin_count > 0 {
                             const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                             seg_row(ui, cw, |s| {
-                                s.half(&format!("{:>7}", "aChk"), COLOR_DIM);
+                                s.half(&format!("{:>7}", "gen"), COLOR_DIM);
                                 s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
-                                s.half(&format!("{:>7}", "aSum"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_sum_count as f64)), COLOR_DIM);
+                                if let Some(t) = admin_threshold {
+                                    s.half(&format!("{:>7}", format!("dec:{t}")), COLOR_DIM);
+                                }
                             });
                         }
                     });
@@ -658,7 +674,7 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
                             s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
-                            s.half(&format!("↑{:<5}", peak_v), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, peak_v), COLOR_DIM);
                             s.half(&format!("ƒ{:<6}", fps_v), fps_color);
                         });
                         const ENTS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -677,21 +693,63 @@ pub fn update_metrics_overlay(
                     draw_section(ui, "NETWORK", content_width, |ui| {
                         const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("↓NET  "), COLOR_DIM);
+                            s.half(&format!("{:<2}NET  ", GLYPH_NET_DOWN), COLOR_DIM);
                             s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
                             s.spark(&hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, rh);
                             let pv = NET_BPS.fmt(history.bw.visible_max(bar_count));
-                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                         const NET_MPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("↓MSG  "), COLOR_DIM);
+                            s.half(&format!("{:<2}MSG  ", GLYPH_NET_DOWN), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
                             s.spark(&hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, rh);
                             let pv = NET_MPS.fmt(history.msg.visible_max(bar_count));
-                            s.half(&format!("↑{:<5}", pv), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                     });
+
+                    // ── TIMINGS ──
+                    if !history.timings.is_empty() {
+                        ui.add_space(4.0);
+
+                        const ALARM_TIMING: Alarm = Alarm { bands: &[
+                            (16.667, COLOR_NORMAL),
+                            (33.333, COLOR_WARN),
+                            (f64::INFINITY, COLOR_CRITICAL),
+                        ]};
+                        const ALARM_OVERRUN: Alarm = Alarm { bands: &[
+                            (0.5, COLOR_DIM),
+                            (f64::INFINITY, COLOR_CRITICAL),
+                        ]};
+                        const TIME5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                        const OVERRUN: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
+
+                        draw_section(ui, "TIMINGS", content_width, |ui| {
+                            let mut names: Vec<&&str> = history.timings.keys().collect();
+                            names.sort();
+                            for &&name in &names {
+                                let entry = &history.timings[name];
+                                seg_row(ui, cw, |s| {
+                                    // Label (7ch)
+                                    let display = if name.len() > 7 { &name[..7] } else { name };
+                                    s.half(&format!("{:>7}", display), COLOR_DIM);
+                                    // Value (7ch): p95 + unit
+                                    let p95_val = entry.hist_p95.0.back().copied().unwrap_or(0.0);
+                                    s.half(&format!("{:>5}{:<2}", TIME5.fmt(p95_val), "ms"), COLOR_DIM);
+                                    // Sparkline (15ch)
+                                    s.spark(&entry.hist_p95.as_f32(), SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
+                                    // Peak (7ch)
+                                    let peak = entry.hist_p95.visible_max(bar_count);
+                                    s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(peak)), COLOR_DIM);
+                                    // Overruns: count of p95 > 16.667ms in visible window (7ch)
+                                    let start = entry.hist_p95.0.len().saturating_sub(bar_count);
+                                    let ov_val = entry.hist_p95.0.range(start..).filter(|&&v| v > 16.667).count() as f64;
+                                    s.half(&format!("{:>5}{:<2}", OVERRUN.fmt(ov_val), GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
+                                });
+                            }
+                        });
+                    }
                 });
         });
 }

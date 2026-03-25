@@ -85,7 +85,6 @@ fn main() {
     app.add_systems(PreUpdate, input::update_keybits.run_if(admin::not_in_flyover));
     #[cfg(not(feature = "admin"))]
     app.add_systems(PreUpdate, input::update_keybits);
-    app.add_systems(PreUpdate, common_bevy::resources::map::refresh_map);
 
     app.add_systems(FixedUpdate, (
         input::do_input.after(common_bevy::systems::behaviour::controlled::tick),
@@ -171,10 +170,9 @@ fn main() {
         renet::send_try,
     ));
 
-    let map_state = common_bevy::resources::map::MapState::new(qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop));
-    let map = map_state.as_map(); // Create Map that shares the same Arc
-    app.insert_resource(map_state);
-    app.insert_resource(map);
+    app.insert_resource(common_bevy::resources::map::Map::new(
+        qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop),
+    ));
 
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
@@ -183,17 +181,20 @@ fn main() {
     app.init_resource::<crate::resources::SkipNeighborRegen>();
     app.init_resource::<crate::resources::ChunkLodMeshes>();
     app.init_resource::<crate::resources::LodTriangleStats>();
+    app.init_resource::<crate::resources::ClientTimers>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
     {
         app.init_resource::<admin::FlyoverState>();
         app.init_resource::<admin::PendingFlyoverTiles>();
-        app.insert_resource(admin::AdminTerrain::default());
+        app.init_resource::<admin::FlyoverDecimationConfig>();
+        app.insert_resource(admin::AdminComposite::default());
 
         app.add_systems(Update, (
             admin::execute_admin_actions,
             admin::flyover_movement.run_if(admin::flyover_active),
+            admin::flyover_threshold_control.run_if(admin::flyover_active),
             admin::tag_admin_chunks,
             admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
             admin::flyover_generate_chunks

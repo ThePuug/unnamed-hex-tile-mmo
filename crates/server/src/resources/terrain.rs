@@ -3,18 +3,18 @@ use std::ops::Deref;
 
 /// Bevy Resource wrapper around the terrain generation library.
 #[derive(Resource)]
-pub struct Terrain(pub terrain::Terrain);
+pub struct Terrain(pub world::Terrain);
 
 impl Default for Terrain {
     fn default() -> Self {
-        Self(terrain::Terrain::default())
+        Self(world::Terrain::default())
     }
 }
 
 impl Terrain {
     #[allow(dead_code)]
     pub fn new(seed: u64) -> Self {
-        Self(terrain::Terrain::new(seed))
+        Self(world::Terrain::new(seed))
     }
 
     pub fn get(&self, q: i32, r: i32) -> i32 {
@@ -23,7 +23,7 @@ impl Terrain {
 }
 
 impl Deref for Terrain {
-    type Target = terrain::Terrain;
+    type Target = world::Terrain;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -38,7 +38,7 @@ mod tests {
     #[test]
     fn server_terrain_matches_library() {
         let server = Terrain::default();
-        let library = terrain::Terrain::default();
+        let library = world::Terrain::default();
 
         let coords: Vec<(i32, i32)> = vec![
             (0, 0), (100, -50), (-5000, 3000), (2500, 2500),

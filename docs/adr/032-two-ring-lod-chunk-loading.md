@@ -1,5 +1,7 @@
 # ADR-032: Two-Ring Level-of-Detail Chunk Loading
 
+> **Partially superseded** — The QEM client-side rendering decision is superseded by hex-native decimation. See [`docs/design/lod.md`](../design/lod.md). The uniform full-detail server send within `terrain_chunk_radius` remains current.
+
 ## Context
 
 The adaptive visibility system (per-chunk `visibility_radius`) already produces an asymmetric loading shape — extending toward valleys, retracting toward ridges. However, every discovered chunk transmits full 64-tile data regardless of distance. Continental elevations reach 200–600, giving high-elevation players visibility radii up to 12 chunks. At outer distances, tiles are sub-pixel: meshes are built for geometry nobody can distinguish, the Map grows by 64 entries per chunk, and network transmits ~2.6KB per chunk for terrain that reads as color blobs.

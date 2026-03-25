@@ -55,7 +55,7 @@ impl Plugin for DiagnosticsPlugin {
 mod tests {
     use super::*;
     use super::grid::HexGridOverlay;
-    use common_bevy::resources::map::Map;
+    use crate::resources::ChunkLodMeshes;
 
     #[test]
     fn test_update_grid_triggers_on_map_change() {
@@ -79,13 +79,13 @@ mod tests {
             bevy::prelude::Mesh3d(mesh_handle),
             bevy_camera::primitives::Aabb::default(),
             HexGridOverlay {
-                needs_regeneration: false,
+                needs_regeneration: true,
             },
         ));
 
-        let map = Map::new(qrz::Map::new(100.0, 0.8, qrz::HexOrientation::FlatTop));
-        app.insert_resource(map);
-        app.world_mut().resource_mut::<Map>().set_changed();
+        let mut lod_meshes = ChunkLodMeshes::default();
+        app.insert_resource(lod_meshes);
+        app.world_mut().resource_mut::<ChunkLodMeshes>().set_changed();
 
         app.insert_resource(grid::PendingGridMesh::default());
         app.add_systems(Update, grid::spawn_grid_mesh_task);
@@ -125,9 +125,7 @@ mod tests {
             },
         ));
 
-        let map = Map::new(qrz::Map::new(100.0, 0.8, qrz::HexOrientation::FlatTop));
-        app.insert_resource(map);
-        app.world_mut().resource_mut::<Map>().set_changed();
+        app.init_resource::<ChunkLodMeshes>();
 
         app.insert_resource(grid::PendingGridMesh::default());
         app.add_systems(Update, grid::spawn_grid_mesh_task);

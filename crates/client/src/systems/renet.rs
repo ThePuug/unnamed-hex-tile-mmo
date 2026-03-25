@@ -62,7 +62,9 @@ pub fn write_do(
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("write_do");
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
 
@@ -231,7 +233,9 @@ pub fn write_do(
 
         match message {
             Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
-                for (qrz, typ) in tiles {
+                // Reconstruct (q,r) from chunk_tiles iteration order
+                for ((q, r), (z, typ)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
+                    let qrz = Qrz { q, r, z };
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);

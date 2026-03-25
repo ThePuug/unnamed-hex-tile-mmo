@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["admin"]
-admin = ["dep:terrain"]
+admin = ["dep:world"]
 
 [dependencies]
 common = { path = "../common" }
@@ -27,6 +27,6 @@ bevy_egui = "0.39"
 [dependencies.qrz]
 path = "../qrz"
 
-[dependencies.terrain]
-path = "../terrain"
+[dependencies.world]
+path = "../world"
 optional = true

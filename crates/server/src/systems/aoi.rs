@@ -21,6 +21,7 @@ use common_bevy::{
     plugins::nntree::{NNTree, NearestNeighbor},
 };
 use crate::{
+    plugins::metrics::SystemTimings,
     resources::Lobby,
     systems::world::generate_actor_spawn_events,
 };
@@ -64,7 +65,10 @@ pub fn update_area_of_interest(
     nntree: Res<NNTree>,
     lobby: Res<Lobby>,
     mut conn: ResMut<ServerNet>,
+    timings: Res<SystemTimings>,
 ) {
+    if changed_query.is_empty() { return; }
+    let _t = timings.scope("aoi");
     for (ent, loc, _nn, player_controlled) in &changed_query {
         let is_player = player_controlled.is_some();
 

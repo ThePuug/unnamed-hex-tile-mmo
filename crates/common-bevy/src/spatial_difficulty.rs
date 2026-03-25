@@ -9,8 +9,8 @@
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
 
-/// Haven location - world origin where players spawn
-pub const HAVEN_LOCATION: Qrz = Qrz { q: 0, r: 0, z: 0 };
+/// Haven location — world coordinates (4000, 1000) → hex (3423, 1155)
+pub const HAVEN_LOCATION: Qrz = Qrz { q: 3423, r: 1155, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 ///
@@ -98,12 +98,13 @@ pub enum PositioningStrategy {
 }
 
 /// Enemy archetypes with distinct combat profiles
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
-    Berserker,   // North (45°-135°) - Aggressive melee burst (pure Might)
-    Juggernaut,  // East (315°-45°) - Tanky melee pressure (pure Vitality)
-    Kiter,       // South (225°-315°) - Ranged harassment (pure Grace)
-    Defender,    // West (135°-225°) - Reactive counter-attacks (pure Focus)
+    #[default]
+    Berserker,   // Highland - Aggressive melee burst (pure Might)
+    Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Grace)
+    Defender,    // Coast - Reactive counter-attacks (pure Focus)
 }
 
 impl EnemyArchetype {

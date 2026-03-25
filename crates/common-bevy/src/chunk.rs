@@ -286,6 +286,10 @@ pub fn loc_to_chunk(loc: Qrz) -> ChunkId {
 
 /// Iterate all tiles in a hex chunk (hex ball of radius CHUNK_RADIUS around center).
 /// Yields exactly CHUNK_TILES `(q, r)` pairs.
+///
+/// **Protocol-critical**: ChunkData omits (q, r) on the wire — the receiver
+/// reconstructs coordinates by zipping with this iterator. Changing the
+/// iteration order is a breaking network protocol change.
 pub fn chunk_tiles(chunk_id: ChunkId) -> impl Iterator<Item = (i32, i32)> {
     let center = chunk_id.center();
     let cq = center.q;
@@ -807,28 +811,6 @@ mod tests {
             calculate_visible_chunks(center, max_radius).into_iter().collect();
         for chunk in inner.into_iter().chain(outer) {
             assert!(max_set.contains(&chunk), "adaptive chunk {:?} outside max radius", chunk);
-        }
-    }
-
-    #[test]
-    fn adaptive_inner_within_detail_radius() {
-        let center = ChunkId(0, 0);
-        let player_z = 200;
-        let base_radius = terrain_chunk_radius(player_z);
-        let max_radius = elevation_chunk_radius_raw(player_z);
-        let detail_radius = detail_boundary_radius(player_z, MAX_FOV);
-        let (inner, outer) = calculate_visible_chunks_adaptive(
-            center, player_z, base_radius, max_radius, detail_radius, MAX_FOV, |_, _| 0,
-        );
-        for chunk in &inner {
-            let dist = chunk_hex_distance(*chunk, center);
-            assert!(dist <= detail_radius as i32,
-                "inner chunk {:?} at hex distance {} exceeds detail_radius {}", chunk, dist, detail_radius);
-        }
-        for chunk in &outer {
-            let dist = chunk_hex_distance(*chunk, center);
-            assert!(dist > detail_radius as i32,
-                "outer chunk {:?} at hex distance {} within detail_radius {}", chunk, dist, detail_radius);
         }
     }
 

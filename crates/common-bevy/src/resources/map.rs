@@ -5,7 +5,7 @@ use bevy::{
 };
 use bevy_camera::primitives::Aabb;
 use bevy_mesh::Indices;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use qrz::{self, Convert, Qrz};
 
@@ -14,154 +14,46 @@ use crate::{
     components::entity_type::*,
 };
 
-/// Events that modify the map (spawn/despawn tiles)
-#[derive(Clone, Debug)]
-pub enum TileEvent {
-    Spawn(Qrz, EntityType),
-    Despawn(Qrz),
-}
-
-/// Map resource with queued tile events for async coordination.
-/// The drain_loop owns a mutable working copy and publishes Arc snapshots
-/// via the `published` Mutex. No RwLock — zero deadlock risk.
-#[derive(Resource)]
-pub struct MapState {
-    /// Latest published snapshot, swapped atomically by drain_loop
-    published: Arc<Mutex<Arc<qrz::Map<EntityType>>>>,
-    /// Queue of pending tile events (spawns/despawns)
-    pub pending_events: Arc<Mutex<Vec<TileEvent>>>,
-}
-
-impl MapState {
-    pub fn new(map: qrz::Map<EntityType>) -> Self {
-        let published = Arc::new(Mutex::new(Arc::new(map.clone())));
-        let pending_arc = Arc::new(Mutex::new(Vec::new()));
-
-        // Spawn permanent background drain task
-        let published_clone = published.clone();
-        let pending_clone = pending_arc.clone();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            std::thread::spawn(move || {
-                drain_loop(map, published_clone, pending_clone);
-            });
-        }
-
-        Self {
-            published,
-            pending_events: pending_arc,
-        }
-    }
-
-    /// Queue a tile event (spawn or despawn)
-    pub fn queue_event(&self, event: TileEvent) {
-        let mut queue = self.pending_events.lock().unwrap();
-        queue.push(event);
-    }
-
-    /// Create a Map resource from the current published snapshot
-    pub fn as_map(&self) -> Map {
-        Map::from_arc(self.published.lock().unwrap().clone())
-    }
-
-    /// Check if the published snapshot differs from the given Arc.
-    /// Returns the new Arc if changed, None otherwise.
-    pub fn try_refresh(&self, current: &Arc<qrz::Map<EntityType>>) -> Option<Arc<qrz::Map<EntityType>>> {
-        let published = self.published.lock().unwrap();
-        if Arc::ptr_eq(current, &published) {
-            None
-        } else {
-            Some(published.clone())
-        }
-    }
-}
-
-/// Permanent background task that drains pending tile events and applies them to the map.
-/// Owns a mutable working copy. Publishes new Arc snapshots after processing events.
-fn drain_loop(
-    mut working: qrz::Map<EntityType>,
-    published: Arc<Mutex<Arc<qrz::Map<EntityType>>>>,
-    pending: Arc<Mutex<Vec<TileEvent>>>,
-) {
-    use std::time::Duration;
-
-    loop {
-        // Lock briefly to check and take events
-        let events = {
-            let mut queue = pending.lock().unwrap();
-            if queue.is_empty() {
-                drop(queue);
-                std::thread::sleep(Duration::from_millis(100));
-                continue;
-            }
-            std::mem::take(&mut *queue)
-        };
-
-        // Apply events directly to working copy (no locks needed for mutation)
-        for event in events {
-            match event {
-                TileEvent::Spawn(qrz, entity_type) => {
-                    working.insert(qrz, entity_type);
-                }
-                TileEvent::Despawn(qrz) => {
-                    working.remove(qrz);
-                }
-            }
-        }
-
-        // Publish new snapshot (brief Mutex lock)
-        {
-            let mut pub_lock = published.lock().unwrap();
-            *pub_lock = Arc::new(working.clone());
-        }
-
-        // Brief yield after publishing — one frame is enough for mesh tasks
-        // to grab the new snapshot before the next batch arrives.
-        std::thread::sleep(Duration::from_millis(16));
-    }
-}
-
-/// System that checks if drain_loop published a new map snapshot and swaps it in.
-/// Runs in PreUpdate so all Update/FixedUpdate systems see the latest map data.
-/// ResMut triggers Bevy change detection automatically when the Arc is swapped.
-pub fn refresh_map(
-    map_state: Res<MapState>,
-    mut map: ResMut<Map>,
-) {
-    if let Some(new_arc) = map_state.try_refresh(map.inner_arc()) {
-        map.0 = new_arc;
-    }
-}
-
-/// Map resource wrapping an immutable Arc snapshot of the hex tile map.
-/// Readers clone the Arc (O(1)) for async tasks. No RwLock anywhere.
-/// Server uses Arc::make_mut for zero-cost mutation when refcount=1.
+/// Map resource wrapping a concurrent hex tile map.
+/// RwLock allows concurrent reads from async tasks; writes block briefly.
+/// Clone is O(1) — clones the Arc handle, shares the same RwLock.
 #[derive(Clone, Resource)]
-pub struct Map(Arc<qrz::Map<EntityType>>);
+pub struct Map {
+    inner: Arc<parking_lot::RwLock<qrz::Map<EntityType>>>,
+    changed: Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl Map {
     pub fn new(map: qrz::Map<EntityType>) -> Map {
-        Map(Arc::new(map))
+        Map {
+            inner: Arc::new(parking_lot::RwLock::new(map)),
+            changed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
     }
 
-    /// Create from Arc snapshot
-    pub fn from_arc(arc: Arc<qrz::Map<EntityType>>) -> Map {
-        Map(arc)
+    /// Acquire a read lock on the inner map.
+    pub fn read(&self) -> parking_lot::RwLockReadGuard<'_, qrz::Map<EntityType>> {
+        self.inner.read()
     }
 
-    /// Get a reference to the inner Arc (for refresh comparison)
-    pub fn inner_arc(&self) -> &Arc<qrz::Map<EntityType>> {
-        &self.0
+    /// Acquire a write lock on the inner map. Sets changed flag on drop.
+    pub fn write(&self) -> MapWriteGuard<'_> {
+        MapWriteGuard {
+            guard: self.inner.write(),
+            changed: &self.changed,
+        }
     }
 
-    /// Get the vertical rise per Z level from the underlying map
+    /// Check and clear the changed flag. Used by dispatch_lod_tasks
+    /// to skip work when no tiles have been inserted since last check.
+    pub fn take_changed(&self) -> bool {
+        self.changed.swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn rise(&self) -> f32 {
-        self.0.rise()
+        self.inner.read().rise()
     }
 
-    /// Compute slope-adjusted vertices for a hex tile.
-    /// Outer vertex Y is shifted ±0.5×rise toward higher/lower neighbors.
     fn vertices_with_slopes_inner(map: &qrz::Map<EntityType>, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
         let mut verts = map.vertices(qrz);
         if !apply_slopes {
@@ -210,9 +102,8 @@ impl Map {
         verts
     }
 
-    /// Compute slope-adjusted vertices for a hex tile (public wrapper).
     pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
-        Self::vertices_with_slopes_inner(&self.0, qrz, apply_slopes)
+        Self::vertices_with_slopes_inner(&self.inner.read(), qrz, apply_slopes)
     }
 
     /// Compute per-vertex normal for a hex tile from its actual geometry.
@@ -240,7 +131,8 @@ impl Map {
     /// Generate a mesh for a single chunk using TriangleList topology.
     /// Color is computed in the terrain shader from world-space Y; no vertex colors emitted.
     pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
-        let map = &*self.0;
+        let guard = self.inner.read();
+        let map = &*guard;
 
         // Gather chunk tiles
         let chunk_tiles: Vec<Qrz> = map.iter()
@@ -260,18 +152,17 @@ impl Map {
             }
         }
 
+        let chunk_origin: Vec3 = map.convert(chunk_id.center());
         let geometry = if apply_slopes {
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &elevations, map.radius(), map.rise(),
+                &chunk_tiles, &elevations, map.radius(), map.rise(), chunk_origin,
             )
         } else {
-            // No slopes: use flat elevations (no neighbor adjustment)
-            // Build geometry without slope blending by passing empty neighbor set
             let chunk_only: std::collections::HashMap<(i32, i32), i32> = chunk_tiles.iter()
                 .map(|qrz| ((qrz.q, qrz.r), qrz.z))
                 .collect();
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &chunk_only, map.radius(), map.rise(),
+                &chunk_tiles, &chunk_only, map.radius(), map.rise(), chunk_origin,
             )
         };
 
@@ -301,7 +192,8 @@ impl Map {
     }
 
     pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
-        let map = &*self.0;
+        let guard = self.inner.read();
+        let map = &*guard;
 
         let mut verts:Vec<Vec3> = Vec::new();
         let mut norms:Vec<Vec3> = Vec::new();
@@ -405,51 +297,52 @@ impl Map {
         )
     }
 
-    /// O(1) lookup by (q, r) column — returns the Qrz (with correct z) and value.
     pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, EntityType)> {
-        self.0.get_by_qr(q, r)
+        self.inner.read().get_by_qr(q, r)
     }
 
     pub fn get(&self, qrz: Qrz) -> Option<EntityType> {
-        self.0.get(qrz).copied()
+        self.inner.read().get(qrz).copied()
     }
 
-    pub fn insert(&mut self, qrz: Qrz, obj: EntityType) {
-        if self.0.get(qrz).is_some() {
-            warn!("duplicate tile insert at ({}, {}, {})", qrz.q, qrz.r, qrz.z);
-        }
-        Arc::make_mut(&mut self.0).insert(qrz, obj);
+    pub fn insert(&self, qrz: Qrz, obj: EntityType) {
+        self.write().insert(qrz, obj);
     }
 
-    pub fn remove(&mut self, qrz: Qrz) -> Option<EntityType> {
-        Arc::make_mut(&mut self.0).remove(qrz)
+    pub fn remove(&self, qrz: Qrz) -> Option<EntityType> {
+        self.write().remove(qrz)
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.inner.read().len()
     }
 
     pub fn heap_size_estimate(&self) -> usize {
-        self.0.heap_size_estimate()
+        self.inner.read().heap_size_estimate()
     }
 
     pub fn radius(&self) -> f32 {
-        self.0.radius()
+        self.inner.read().radius()
     }
 
     pub fn orientation(&self) -> qrz::HexOrientation {
-        self.0.orientation()
+        self.inner.read().orientation()
     }
 
     pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> {
-        self.0.neighbors(qrz)
+        self.inner.read().neighbors(qrz)
     }
 
     /// Greedily walk toward `toward`, picking the neighbor closest each step.
     /// Uses `neighbors()` which is elevation-aware (±1 z-level, walkable only).
     /// Stops on: arrival, no walkable neighbors, no progress, or `max_steps`.
     /// Returns floor-level tiles visited (does NOT include `from`).
+    pub fn iter_tiles(&self) -> Vec<(Qrz, EntityType)> {
+        self.inner.read().iter().map(|(&qrz, &typ)| (qrz, typ)).collect()
+    }
+
     pub fn greedy_path(&self, from: Qrz, toward: Qrz, max_steps: usize) -> Vec<Qrz> {
+        let guard = self.inner.read();
         let mut path = Vec::new();
         let mut current = from;
 
@@ -458,14 +351,14 @@ impl Map {
                 break;
             }
 
-            let best = self.neighbors(current)
+            let best = guard.neighbors(current)
                 .into_iter()
                 .min_by_key(|(n, _)| n.flat_distance(&toward));
 
             let Some((next, _)) = best else { break };
 
             if next.flat_distance(&toward) >= current.flat_distance(&toward) {
-                break; // No progress
+                break;
             }
 
             current = next;
@@ -474,21 +367,38 @@ impl Map {
 
         path
     }
+}
 
-    pub fn iter_tiles(&self) -> impl Iterator<Item = (Qrz, EntityType)> + '_ {
-        self.0.iter().map(|(&qrz, &typ)| (qrz, typ))
+/// Write guard that sets the changed flag on drop.
+pub struct MapWriteGuard<'a> {
+    guard: parking_lot::RwLockWriteGuard<'a, qrz::Map<EntityType>>,
+    changed: &'a std::sync::atomic::AtomicBool,
+}
+
+impl Drop for MapWriteGuard<'_> {
+    fn drop(&mut self) {
+        self.changed.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+impl std::ops::Deref for MapWriteGuard<'_> {
+    type Target = qrz::Map<EntityType>;
+    fn deref(&self) -> &Self::Target { &self.guard }
+}
+
+impl std::ops::DerefMut for MapWriteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.guard }
 }
 
 impl Convert<Qrz, Vec3> for Map {
     fn convert(&self, it: Qrz) -> Vec3 {
-        self.0.convert(it)
+        self.inner.read().convert(it)
     }
 }
 
 impl Convert<Vec3, Qrz> for Map {
     fn convert(&self, it: Vec3) -> Qrz {
-        self.0.convert(it)
+        self.inner.read().convert(it)
     }
 }
 

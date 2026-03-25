@@ -2,13 +2,9 @@
 
 ## Design Philosophy
 
-The world is built from **tectonic plates** — large-scale geological provinces that define continents, coastlines, and mountain ranges. Terrain generation uses a **two-level Voronoi skeleton** where micro cells tile the world and macro plates label them, followed by **continental spine events** that raise elevation along inland mountain chains. Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
+Terrain is generated through the [World Event System](world-events.md) — a framework where events evaluate in dependency order over a flat hex substrate, each materializing per-tile output (tags, elevation, entity placements) into a composite that all layers above can read. This document covers the algorithm details for the currently implemented events.
 
-The pipeline flows bottom-up:
-1. **Regime field** — multiplicative noise defines where land and water exist
-2. **Two-level Voronoi** — micro cells provide spatial tiling; macro plates provide geological identity
-3. **Classification** — plates tagged as Sea/Coast/Inland based on regime values
-4. **Continental spines** — mountain chains with peaks, ridgelines, and ravine networks carve elevation
+Every value is procedurally evaluable per-tile from `(position, seed)`, satisfying ADR-001's deterministic generation invariant.
 
 ## Player Experience Goals
 
@@ -20,7 +16,11 @@ The pipeline flows bottom-up:
 
 ---
 
-## Layer 1: Regime Field
+## Plates (Event #0)
+
+The first event in the pipeline. Uses `Survey::none()` — plates discover centroids internally via lattice iteration over cell bounds, not through tile enumeration. Produces tagged plates at two scales (macro and micro) with geological classification. Registers the `plate_centroids` index for use by higher events.
+
+### Regime Field
 
 The regime field determines where land and water exist. It multiplies three independent noise factors:
 
@@ -28,53 +28,33 @@ The regime field determines where land and water exist. It multiplies three inde
 regime = sigmoid(local_fBm × world_gate × regional_mod)
 ```
 
-### World Gate (Cellular)
+**World Gate (Cellular):** Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs. Constants control cell size, jitter, warp amplitude/wavelength, and sigmoid activation.
 
-Domain-warped inverted-F1 Voronoi on a jittered hex lattice. Creates disconnected continental blobs. Constants control cell size, jitter, warp amplitude/wavelength, and sigmoid activation.
+**Local fBm (Triple-Prime Octaves):** Multi-octave simplex at prime wavelengths to avoid harmonic alignment. Creates coastline irregularity.
 
-### Local fBm (Triple-Prime Octaves)
+**Regional Modulator:** Low-frequency simplex remapped to a narrow band. Ensures every world gets land but continent sizes vary.
 
-Multi-octave simplex at prime wavelengths to avoid harmonic alignment. Creates coastline irregularity.
+**Output:** `regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
 
-### Regional Modulator
+**Implementation:** `crates/world/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
 
-Low-frequency simplex remapped to a narrow band. Ensures every world gets land but continent sizes vary.
+### Two-Level Voronoi Skeleton
 
-### Output
+**Micro Cells (Primary Spatial Layer):** Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
 
-`regime_value_at(wx, wy, seed)` returns [0, 1] after sigmoid. Values below the land threshold are water; above are land.
+**Implementation:** `crates/world/src/microplates.rs` (`micro_cell_at`)
 
-**Implementation:** `crates/terrain/src/plates.rs` (`regime_value_at`, `cellular_world_gate`)
-
----
-
-## Layer 2: Two-Level Voronoi Skeleton
-
-### Micro Cells (Primary Spatial Layer)
-
-Micro cells tile the world uniformly. Each cell is a small hexagonal Voronoi region. Assignment is pure Euclidean distance — no macro dependency at generation time. Constants control lattice spacing, jitter frequency, and suppression rate.
-
-**Implementation:** `crates/terrain/src/microplates.rs` (`micro_cell_at`)
-
-### Macro Plates (Geological Identity)
-
-Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
+**Macro Plates (Geological Identity):** Macro plates are labels assigned to micro cells via **anisotropic warped distance**. Coastal plates stretch along the shore; interior plates stay equidimensional. Constants control lattice spacing, suppression rate range, warp strength, and maximum elongation.
 
 **Anisotropic assignment:** `AnisoContext` compresses the along-coast axis of the distance metric based on regime gradient magnitude. High gradient (coastlines) → irregular, elongated plates. Low gradient (interiors) → regular convex plates.
 
-**Implementation:** `crates/terrain/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
+**Implementation:** `crates/world/src/plates.rs` (`warped_plate_at`, `AnisoContext`)
 
-### Orphan Correction
+**Orphan Correction:** Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned. Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
 
-Bottom-up assignment can create disconnected fragments within a plate. `fix_orphans` runs connected-component analysis and reassigns minority fragments to surrounding majority plates. Small isolated plates below a size threshold are also reassigned.
+**Implementation:** `crates/world/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
 
-Correction uses a margin-based approach to ensure sufficient context. Chunk authority invariant: only core chunks are marked corrected; margin chunks provide context only.
-
-**Implementation:** `crates/terrain/src/microplates.rs` (`MicroplateCache::populate_region`, `fix_orphans`)
-
----
-
-## Layer 3: Classification
+### Classification
 
 Plates are tagged with geological roles after Voronoi assignment:
 
@@ -86,17 +66,17 @@ Plates are tagged with geological roles after Voronoi assignment:
 
 Both macro `PlateCenter.tags` and micro `MicroplateCenter.tags` carry tags. Macro tags assigned by `PlateCache::classify_tags`; micro tags auto-populated by `populate_region` via `classify_micro_tags`.
 
-**Implementation:** `crates/common/src/plate_tags.rs` (PlateTag enum, Tagged trait), `crates/terrain/src/plates.rs` (classify_tags)
+**Implementation:** `crates/common/src/plate_tags.rs` (PlateTag enum, Tagged trait), `crates/world/src/plates.rs` (classify_tags)
 
 ---
 
-## Layer 4: Continental Spines
+## Continental Spines (Event #1)
 
-Mountain chains form along inland plate interiors. The spine system generates peaks, connects them with ridgelines, and carves ravine networks.
+Reads Inland plate tags from the composite, writes elevation deltas + Ridge/Highland/Foothills tags. Surveys at centroid granularity via the `plate_centroids` index.
 
 ### Spine Placement
 
-Locally deterministic via fixed-size evaluation chunks. Epicenter candidates: Inland plates with all-Inland neighbors. Priority-ordered greedy exclusion ensures same placement regardless of viewport.
+Epicenter candidates: Inland plates with all-Inland neighbors, filtered via `Survey::from_index` with `min_spacing(10_000)`. Deterministic priority-ordered greedy exclusion at the survey level ensures same placement regardless of viewport or evaluation order.
 
 ### Peaks
 
@@ -127,11 +107,11 @@ Sequential top-down stream generation. Origins distributed along ridgelines with
 
 **Ridge paths:** Traversable crossings at ravine rims. Currently disabled.
 
-**Implementation:** `crates/terrain/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
+**Implementation:** `crates/world/src/spine.rs` (`generate_spines`, `SpineInstance::elevation_at`, `RavineNetwork::carve`)
 
 ### Spine Caching
 
-`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit.
+`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Dead code on the server path (server uses `SpineInstanceIndex` via Composite); retained for client admin flyover and world-viewer.
 
 ---
 
@@ -148,6 +128,8 @@ get_height(q, r) = discretize(raw_elevation)    // quantized to z-levels
 
 Outside spine influence, elevation is 0 (sea level). The elevation system produces mountains and valleys; biomes and water rendering are not yet implemented.
 
+After event system migration, elevation becomes a flat read from the materialized composite rather than per-query geometry evaluation. See [World Event System — Materialization](world-events.md#materialization).
+
 ---
 
 ## Public API
@@ -158,6 +140,8 @@ Terrain::new(seed) -> Terrain
 Terrain::get_height(q, r) -> i32              // Discretized elevation
 Terrain::get_raw_elevation(q, r) -> f64       // Pre-discretization
 Terrain::plate_info_at(q, r) -> (PlateCenter, MicroplateCenter)
+Terrain::tags_at(q, r) -> ArrayVec<[PlateTag; 2]>  // Base tag + optional spine tag
+Terrain::spawners_near(q, r, radius) -> ...        // Query spawner cache for nearby spawner positions
 
 // Batch generation (viewer/server)
 generate_region(seed, cx, cy, radius, with_spines) -> RegionResult
@@ -174,10 +158,10 @@ hex_to_world(q, r) -> (f64, f64)
 
 ## Visualization
 
-The `terrain-viewer` crate renders terrain layers to PNG for development diagnostics:
+The `world-viewer` crate renders terrain layers to PNG for development diagnostics:
 
 ```bash
-cargo run -p terrain-viewer -- --layers plates,elevation --radius 200 --output terrain.png
+cargo run -p world-viewer -- --layers plates,elevation --radius 200 --output terrain.png
 ```
 
 | Layer | What It Shows |
@@ -197,19 +181,11 @@ Layers are composited bottom-to-top. Macro borders drawn as light grey lines; mi
 
 ### Chunk Loading (ADR-032)
 
-Server sends full-detail chunks within `terrain_chunk_radius(max_z) + 1` — a simple hex radius based on the player's chunk elevation. All chunks are inserted into the server's Map and sent as full 271-tile `ChunkData` events. No server-side LoD distinction.
+Server sends full-detail chunks within `terrain_chunk_radius(max_z) + 1` — a simple hex radius based on the player's chunk elevation. All chunks are inserted into the server's Map and sent as full 271-tile `ChunkData` events.
 
-### Client-Side LoD Rendering
+### LoD Rendering
 
-The client renders distant chunks at reduced detail using QEM (Quadric Error Metrics) decimation:
-
-**Boundary vertices**: 6 corner vertices (3-tile average, always retained) + up to 8 edge vertices per edge, RDP-decimated against `BORDER_ERROR_THRESHOLD`. Adjacent chunks share boundary vertices deterministically.
-
-**Interior vertices**: QEM-selected based on terrain variance against `SUMMARY_ERROR_THRESHOLD`. Mesh reconstructed via Delaunay triangulation.
-
-### Invariants
-
-**Continuous surface**: Adjacent summary meshes share deterministic boundary vertices (corners + RDP-decimated edges). No gaps.
+See **[lod.md](lod.md)** — hex-native decimation with continuous distance-driven thresholds. Client owns LoD within ~20 chunks; server generates and sends `DecimatedChunkData` beyond that.
 
 ---
 
@@ -223,19 +199,23 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on plate tags + elevation + moisture
+**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + world-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
 
-**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation, dynamic temporal events
+**Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on composite tags + elevation + moisture
+
+**Deferred**: Feature envelopes (swamps, plateaus), river systems beyond ravines, cave/underground generation — future events in the pipeline
 
 **Blocked by other systems**: Water rendering (ocean/coast), haven placement validation
 
 ---
 
 **Related Design Documents:**
+- [World Event System](world-events.md) — Framework contract, deform/query split, composite materialization, index system
+- [Level of Detail](lod.md) — Hex-native decimation, threshold model, client/server rendering regimes
 - [Haven System](haven.md) — Starter havens; biome types
 - [Hub System](hubs.md) — Player settlements interacting with terrain
 - [Siege System](siege.md) — Encroachment where terrain difficulty compounds with distance
 
 **Related ADRs:**
 - [ADR-001](../adr/001-chunk-based-world-partitioning.md) — Chunk-based caching; deterministic generation
-- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Chunk loading with client-side LoD rendering
+- [ADR-032](../adr/032-two-ring-lod-chunk-loading.md) — Chunk loading; QEM rendering superseded by hex-native LoD

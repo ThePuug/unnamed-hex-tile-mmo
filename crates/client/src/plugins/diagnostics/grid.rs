@@ -7,21 +7,12 @@ use bevy_asset::RenderAssetUsages;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use common_bevy::resources::map::Map;
+use common_bevy::{
+    chunk::{chunk_hex_distance, loc_to_chunk},
+    components::behaviour::PlayerControlled,
+};
+use crate::resources::ChunkLodMeshes;
 use super::config::DiagnosticsState;
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/// Number of vertices in a hex tile (6 perimeter + 1 center)
-const HEX_VERTEX_COUNT: usize = 7;
-
-/// Number of edges/perimeter vertices in a hex tile
-const HEX_EDGE_COUNT: usize = 6;
-
-/// Index of the center vertex in the vertex array
-const HEX_CENTER_INDEX: usize = 6;
 
 // ============================================================================
 // Resources
@@ -93,47 +84,101 @@ pub fn setup_grid_overlay(
     ));
 }
 
-/// Spawns async grid mesh generation task when needed
+/// Snapshot of a single chunk mesh's triangle data for grid line extraction.
+struct ChunkMeshSnapshot {
+    positions: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    origin: Vec3,
+}
+
+/// Spawns async grid mesh generation task when needed.
 ///
-/// This system responds to two triggers:
-/// 1. Map resource changes (new tiles discovered)
-/// 2. Forced regeneration flag (grid toggled on, or slope setting changed)
-///
-/// The task is only spawned when the grid is visible and no task is already pending.
+/// Extracts triangle edges from the actually-displayed chunk meshes so the grid
+/// outlines the decimated geometry (inner hex fans, partial residuals, etc.)
+/// rather than the full-detail tile hexagons.
+/// Maximum chunk distance from player/flyover for grid overlay.
+const GRID_RADIUS: i32 = 5;
+
 pub fn spawn_grid_mesh_task(
-    map: Res<Map>,
+    lod_meshes: Res<ChunkLodMeshes>,
+    mesh_assets: Res<Assets<Mesh>>,
     mut grid_query: Query<&mut HexGridOverlay>,
     state: Res<DiagnosticsState>,
     mut pending_mesh: ResMut<PendingGridMesh>,
+    player_query: Query<&common_bevy::components::Loc, With<PlayerControlled>>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
 ) {
     let Ok(mut overlay) = grid_query.single_mut() else {
         return;
     };
 
-    // Skip if task already pending
     if pending_mesh.task.is_some() {
         return;
     }
 
-    // Only update if there's a reason to (map changed or forced) and grid is visible
-    let should_update = (map.is_changed() || overlay.needs_regeneration) && state.grid_visible;
+    let should_update =
+        (lod_meshes.is_changed() || overlay.needs_regeneration) && state.grid_visible;
     if !should_update {
         return;
     }
 
-    // Clear the forced regeneration flag
     overlay.needs_regeneration = false;
 
-    // Clone the Map (O(1) Arc clone) for the async task
-    let map_snapshot = map.clone();
-    let apply_slopes = true;
+    // Determine center chunk from flyover position or player position
+    let center_chunk = {
+        #[cfg(feature = "admin")]
+        {
+            if let Some(ref fly) = flyover {
+                if fly.active {
+                    use qrz::Convert;
+                    let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+                    let qrz: qrz::Qrz = m.convert(fly.world_position);
+                    Some(loc_to_chunk(qrz))
+                } else {
+                    player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+                }
+            } else {
+                player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+            }
+        }
+        #[cfg(not(feature = "admin"))]
+        {
+            player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+        }
+    };
+
+    // Extract mesh data only for chunks within GRID_RADIUS of center
+    let mut snapshots: Vec<ChunkMeshSnapshot> = Vec::new();
+    for (&chunk_id, chunk_state) in lod_meshes.states.iter() {
+        if let Some(center) = center_chunk {
+            if chunk_hex_distance(chunk_id, center) > GRID_RADIUS {
+                continue;
+            }
+        }
+
+        let Some(ref handle) = chunk_state.mesh_handle else { continue };
+        let Some(mesh) = mesh_assets.get(handle) else { continue };
+
+        let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(bevy_mesh::VertexAttributeValues::Float32x3(v)) => v.clone(),
+            _ => continue,
+        };
+        let indices = match mesh.indices() {
+            Some(bevy_mesh::Indices::U32(v)) => v.clone(),
+            _ => continue,
+        };
+
+        snapshots.push(ChunkMeshSnapshot {
+            positions,
+            indices,
+            origin: chunk_state.chunk_origin,
+        });
+    }
+
     let pool = AsyncComputeTaskPool::get();
-
     let task = pool.spawn(async move {
-        let grid_builder = build_hex_grid_lines(&map_snapshot, apply_slopes);
-        grid_builder.into_mesh()
+        build_grid_from_mesh_edges(&snapshots)
     });
-
     pending_mesh.task = Some(task);
 }
 
@@ -197,27 +242,6 @@ impl HexGridBuilder {
         self.max_bounds = self.max_bounds.max(v1).max(v2);
     }
 
-    /// Adds the perimeter edges of a hex tile
-    ///
-    /// Vertices 0-5 represent the hex edges in order, so we connect each vertex
-    /// to the next one, wrapping around from vertex 5 back to vertex 0.
-    fn add_hex_perimeter(&mut self, vertices: &[Vec3; HEX_VERTEX_COUNT]) {
-        for i in 0..HEX_EDGE_COUNT {
-            let next_i = (i + 1) % HEX_EDGE_COUNT;
-            self.add_line(vertices[i], vertices[next_i]);
-        }
-    }
-
-    /// Adds radial lines from the hex center to each perimeter vertex
-    ///
-    /// This creates the characteristic hex grid pattern with center spokes.
-    fn add_center_spokes(&mut self, vertices: &[Vec3; HEX_VERTEX_COUNT]) {
-        let center = vertices[HEX_CENTER_INDEX];
-        for i in 0..HEX_EDGE_COUNT {
-            self.add_line(center, vertices[i]);
-        }
-    }
-
     /// Converts the builder into a Bevy mesh with correct AABB
     fn into_mesh(self) -> (Mesh, Aabb) {
         let mut mesh = Mesh::new(
@@ -231,23 +255,28 @@ impl HexGridBuilder {
     }
 }
 
-/// Builds a complete hex grid mesh from all tiles in the map
+/// Builds grid lines from triangle edges of the actually-displayed meshes.
 ///
-/// For each tile, retrieves vertices based on the slope rendering setting and
-/// adds both perimeter edges and center spokes to the grid.
-fn build_hex_grid_lines(map: &Map, apply_slopes: bool) -> HexGridBuilder {
+/// Extracts every triangle edge and draws it as a line. Edges shared by
+/// two triangles appear twice but overlap perfectly — no visual artifact.
+/// A small Y offset prevents z-fighting with the terrain surface.
+fn build_grid_from_mesh_edges(snapshots: &[ChunkMeshSnapshot]) -> (Mesh, Aabb) {
+    const Y_OFFSET: f32 = 0.02;
     let mut builder = HexGridBuilder::new();
 
-    for (qrz, _) in map.iter_tiles() {
-        let vertex_vec = map.vertices_with_slopes(qrz, apply_slopes);
-
-        // Convert Vec<Vec3> to fixed-size array for type safety
-        let vertices: [Vec3; HEX_VERTEX_COUNT] = vertex_vec.try_into()
-            .expect("vertices_with_slopes must return exactly 7 vertices");
-
-        builder.add_hex_perimeter(&vertices);
-        builder.add_center_spokes(&vertices);
+    for snap in snapshots {
+        for tri in snap.indices.chunks(3) {
+            if tri.len() < 3 {
+                continue;
+            }
+            let a = Vec3::from(snap.positions[tri[0] as usize]) + snap.origin + Vec3::Y * Y_OFFSET;
+            let b = Vec3::from(snap.positions[tri[1] as usize]) + snap.origin + Vec3::Y * Y_OFFSET;
+            let c = Vec3::from(snap.positions[tri[2] as usize]) + snap.origin + Vec3::Y * Y_OFFSET;
+            builder.add_line(a, b);
+            builder.add_line(b, c);
+            builder.add_line(c, a);
+        }
     }
 
-    builder
+    builder.into_mesh()
 }

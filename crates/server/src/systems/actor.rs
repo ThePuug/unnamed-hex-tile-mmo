@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use qrz::{Convert, Qrz};
 use std::sync::Arc;
 
@@ -13,7 +14,8 @@ use common_bevy::{
     message::{Component, Event, *},
     resources::map::*,
 };
-use crate::resources::terrain::*;
+use crate::resources::event_registry::EventRegistry;
+use crate::plugins::metrics::SystemTimings;
 
 
 
@@ -28,6 +30,15 @@ pub struct VisibleChunkCache {
     pub chunk_id: ChunkId,
 }
 
+/// In-flight async chunk generation tasks.
+/// Task returns (chunk, duration_ms) so we can report async metrics.
+#[derive(Resource, Default)]
+pub struct ChunkTaskQueue {
+    tasks: Vec<(Entity, ChunkId, Task<(TerrainChunk, f32)>)>,
+    /// Chunks currently being generated (avoid duplicate tasks).
+    pub in_flight: std::collections::HashSet<ChunkId>,
+}
+
 /// Discover initial chunks when a player first spawns
 pub fn do_spawn_discover(
     mut commands: Commands,
@@ -35,10 +46,13 @@ pub fn do_spawn_discover(
     mut writer: MessageWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
     query: Query<&Loc>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
+    timings: Res<SystemTimings>,
 ) {
+    let mut _t = None;
     for message in reader.read() {
         let Do { event: Event::Spawn { ent, .. } } = message else { continue };
+        _t.get_or_insert_with(|| timings.scope("spawn_disc"));
         let ent = *ent;
 
         // Only process entities with PlayerDiscoveryState (players)
@@ -57,7 +71,7 @@ pub fn do_spawn_discover(
         let current_chunk = loc_to_chunk(**loc);
 
         // Send radius matches client eviction: terrain_chunk_radius + 1
-        let max_z = chunk_max_z(current_chunk, |q, r| terrain.get(q, r));
+        let max_z = chunk_max_z(current_chunk, |q, r| registry.elevation_at(q, r));
         let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
         let chunks = calculate_visible_chunks(current_chunk, send_radius as u8);
@@ -82,8 +96,10 @@ pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
+    timings: Res<SystemTimings>,
 ) {
+    let mut _t = None;
     for message in reader.read() {
         let Do { event: Event::Incremental { ent, component } } = message else { continue; };
         let ent = *ent;
@@ -91,6 +107,7 @@ pub fn do_incremental(
 
         // Only process Loc changes for chunk-based discovery
         let Component::Loc(loc) = component else { continue };
+        _t.get_or_insert_with(|| timings.scope("incremental"));
 
         let Ok((mut player_state, mut cache)) = player_queries.get_mut(ent) else { continue };
 
@@ -102,7 +119,7 @@ pub fn do_incremental(
         }
 
         // Boundary crossing — recompute send radius (matches client eviction)
-        let max_z = chunk_max_z(new_chunk, |q, r| terrain.get(q, r));
+        let max_z = chunk_max_z(new_chunk, |q, r| registry.elevation_at(q, r));
         let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
 
         let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
@@ -141,36 +158,29 @@ pub fn do_incremental(
     }
 }
 
-/// Generate a chunk of terrain tiles
-fn generate_chunk(chunk_id: ChunkId, terrain: &Terrain, map: &Map) -> TerrainChunk {
-    let mut tiles = tinyvec::ArrayVec::new();
+/// Generate a chunk of terrain tiles (pure computation, no ECS access).
+fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
+    let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]> = tinyvec::ArrayVec::new();
 
     for (q, r) in chunk::chunk_tiles(chunk_id) {
-        // Check if tile already exists in map (player-modified or pre-placed)
-        let (qrz, typ) = if let Some((qrz, typ)) = map.get_by_qr(q, r) {
-            (qrz, typ)
-        } else {
-            // Generate new procedural tile with actual terrain height
-            let z = terrain.get(q, r);
-            let qrz = Qrz { q, r, z };
-            let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
-            (qrz, typ)
-        };
-
+        let z = registry.elevation_at(q, r);
+        let qrz = Qrz { q, r, z };
+        let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
         tiles.push((qrz, typ));
     }
 
     TerrainChunk::new(tiles)
 }
 
-/// Generates terrain for discovered chunks, inserts into Map, and sends to clients.
-/// Actor discovery is handled by the AOI system (aoi.rs) via LoadedBy tracking.
+/// Dispatch chunk generation: cache hits → immediate Do, cache misses → async task.
+/// EvictChunks passthrough is handled here too.
 pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
     mut map: ResMut<Map>,
+    mut task_queue: ResMut<ChunkTaskQueue>,
 ) {
     for message in reader.read() {
         // Passthrough: EvictChunks Try → Do (server-authoritative eviction)
@@ -182,42 +192,94 @@ pub fn try_discover_chunk(
             let ent = *ent;
             let chunk_id = *chunk_id;
 
-            // Generate/cache chunk
-            let chunk = if world_cache.chunks.contains_key(&chunk_id) {
+            // Cache hit → immediate send
+            if world_cache.chunks.contains_key(&chunk_id) {
                 world_cache.access_order.get_or_insert(chunk_id, || ());
-                Arc::clone(world_cache.chunks.get(&chunk_id).unwrap())
-            } else {
-                let generated = Arc::new(generate_chunk(chunk_id, &terrain, &map));
+                let chunk = Arc::clone(world_cache.chunks.get(&chunk_id).unwrap());
 
-                if world_cache.chunks.len() >= world_cache.max_chunks {
-                    if let Some((evicted_id, _)) = world_cache.access_order.pop_lru() {
-                        world_cache.chunks.remove(&evicted_id);
+                // Insert tiles into server Map for physics/collision/AI
+                for &(qrz, typ) in &chunk.tiles {
+                    if map.get(qrz).is_none() {
+                        map.insert(qrz, typ);
                     }
                 }
 
-                world_cache.chunks.insert(chunk_id, Arc::clone(&generated));
-                world_cache.access_order.get_or_insert(chunk_id, || ());
+                let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
+                    .map(|&(qrz, typ)| (qrz.z, typ))
+                    .collect();
+                writer.write(Do {
+                    event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
+                });
+                continue;
+            }
 
-                generated
-            };
+            // Already in flight → skip (result will be delivered when task completes)
+            if task_queue.in_flight.contains(&chunk_id) { continue; }
 
-            // Insert tiles into server Map for physics/collision/AI
+            // Cache miss → spawn async generation task
+            task_queue.in_flight.insert(chunk_id);
+            let reg = registry.clone();
+            let task = AsyncComputeTaskPool::get().spawn(async move {
+                let start = std::time::Instant::now();
+                let chunk = generate_chunk(chunk_id, &reg);
+                let duration_ms = start.elapsed().as_secs_f64() as f32 * 1000.0;
+                (chunk, duration_ms)
+            });
+            task_queue.tasks.push((ent, chunk_id, task));
+        }
+    }
+}
+
+/// Poll completed async chunk tasks. Inserts into Map + cache, sends ChunkData.
+pub fn poll_chunk_tasks(
+    mut writer: MessageWriter<Do>,
+    mut world_cache: ResMut<WorldDiscoveryCache>,
+    mut map: ResMut<Map>,
+    mut task_queue: ResMut<ChunkTaskQueue>,
+    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
+    timings: Res<SystemTimings>,
+) {
+    let mut _t = None;
+    let mut pending = Vec::new();
+    let current = std::mem::take(&mut task_queue.tasks);
+
+    for (ent, chunk_id, mut task) in current {
+        if let Some((chunk, duration_ms)) = block_on(poll_once(&mut task)) {
+            _t.get_or_insert_with(|| timings.scope("chunk_poll"));
+            snapshot.record(&[("async.task_duration_ms", duration_ms)]);
+            let chunk = Arc::new(chunk);
+
+            // Insert into world cache
+            if world_cache.chunks.len() >= world_cache.max_chunks {
+                if let Some((evicted_id, _)) = world_cache.access_order.pop_lru() {
+                    world_cache.chunks.remove(&evicted_id);
+                }
+            }
+            world_cache.chunks.insert(chunk_id, Arc::clone(&chunk));
+            world_cache.access_order.get_or_insert(chunk_id, || ());
+
+            // Insert tiles into server Map
             for &(qrz, typ) in &chunk.tiles {
                 if map.get(qrz).is_none() {
                     map.insert(qrz, typ);
                 }
             }
 
-            // Send ChunkData to client
+            // Send to client
+            let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
+                .map(|&(qrz, typ)| (qrz.z, typ))
+                .collect();
             writer.write(Do {
-                event: Event::ChunkData {
-                    ent,
-                    chunk_id,
-                    tiles: chunk.tiles.clone(),
-                }
+                event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
             });
+
+            task_queue.in_flight.remove(&chunk_id);
+        } else {
+            pending.push((ent, chunk_id, task));
         }
     }
+
+    task_queue.tasks = pending;
 }
 
 /// Legacy tile-based discovery system (kept for compatibility, may be removed later)
@@ -225,7 +287,7 @@ pub fn try_discover(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut map: ResMut<Map>,
-    terrain: Res<Terrain>,
+    registry: Res<EventRegistry>,
     query: Query<(&Loc, &EntityType)>,
 ) {
     for message in reader.read() {
@@ -237,7 +299,7 @@ pub fn try_discover(
             if let Some((qrz, typ)) = map.get_by_qr(qrz.q, qrz.r) {
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
             } else {
-                let qrz = Qrz { q:qrz.q, r:qrz.r, z:terrain.get(qrz.q, qrz.r)};
+                let qrz = Qrz { q:qrz.q, r:qrz.r, z:registry.elevation_at(qrz.q, qrz.r)};
                 let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
                 map.insert(qrz, typ);
                 writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
@@ -250,7 +312,10 @@ pub fn update(
     mut writer: MessageWriter<Try>,
     mut query: Query<(Entity, &mut Loc, &mut Position), Changed<Position>>,
     map: Res<Map>,
+    timings: Res<SystemTimings>,
 ) {
+    if query.is_empty() { return; }
+    let _t = timings.scope("actor_update");
     for (ent, mut loc0, mut position) in &mut query {
         let px = map.convert(**loc0);
         let qrz = map.convert(px + position.offset);

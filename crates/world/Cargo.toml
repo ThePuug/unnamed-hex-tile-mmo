@@ -1,0 +1,9 @@
+[package]
+name = "world"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+dashmap = "6"
+parking_lot = "0.12"

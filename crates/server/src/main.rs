@@ -20,7 +20,7 @@ use common_bevy::{
     resources::{map::*, *},
 };
 use crate::{
-    resources::{engagement_budget::EngagementBudget, terrain::*, *},
+    resources::{terrain::*, *},
     systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
 };
 
@@ -121,9 +121,9 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn_discover,   // Discover initial chunks after spawn
-        actor::try_discover_chunk,  // Generates chunks, sends ChunkData for all rings
-        engagement_spawner::try_spawn_engagement.after(actor::try_discover_chunk), // ADR-014: Validate and request engagement spawns
-        engagement_spawner::do_spawn_engagement, // ADR-014: Create engagements from validated requests
+        actor::try_discover_chunk,  // Dispatch chunk generation (cache hit → immediate, miss → async)
+        actor::poll_chunk_tasks,    // Poll completed async chunk tasks → Map + ChunkData
+        engagement_spawner::activate_spawners, // Activate spawner tiles near players
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
     ));
@@ -141,12 +141,16 @@ fn main() {
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
     let terrain = Terrain::default();
-    let spawn_z = terrain.get(0, 0) + 1;
-    app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 0, r: 0, z: spawn_z }));
+    let seed = terrain.seed();
+    let registry = crate::resources::event_registry::EventRegistry::new(seed);
+    let spawn_z = registry.elevation_at(3423, 1155) + 1;
+    app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 3423, r: 1155, z: spawn_z }));
     app.insert_resource(terrain);
+    app.insert_resource(registry);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
-    app.init_resource::<EngagementBudget>(); // ADR-014: Track engagement budget per zone
+    app.init_resource::<actor::ChunkTaskQueue>();
+    app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();
 }

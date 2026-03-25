@@ -1,6 +1,6 @@
-//! # Engagement Cleanup System (ADR-014)
+//! # Engagement Cleanup System
 //!
-//! Removes completed or abandoned engagements and unregisters from budget.
+//! Removes completed or abandoned engagements.
 //! Runs periodically to keep world state clean.
 
 use bevy::prelude::*;
@@ -14,7 +14,6 @@ use common_bevy::{
     },
     message::{Do, Event},
 };
-use crate::resources::engagement_budget::EngagementBudget;
 
 /// Abandonment timeout (30 seconds with no players nearby)
 const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -33,10 +32,9 @@ const PROXIMITY_RANGE: i32 = 150;
 ///
 /// Actions on cleanup:
 /// - Despawn engagement entity
-/// - Unregister from budget
 pub fn cleanup_engagements(
     mut commands: Commands,
-    mut budget: ResMut<EngagementBudget>,
+    mut active_spawners: ResMut<crate::systems::engagement_spawner::ActiveSpawners>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
@@ -75,8 +73,8 @@ pub fn cleanup_engagements(
         }
 
         if should_cleanup {
-            // Unregister from budget
-            budget.unregister_engagement(engagement.zone_id);
+            // Deactivate spawner tile so it can re-activate later
+            active_spawners.0.remove(&(engagement_loc.q, engagement_loc.r));
 
             // Emit Despawn events for all NPCs — send_do routes via LoadedBy,
             // cleanup_despawned handles actual entity removal

@@ -7,16 +7,15 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
 use common_bevy::{
     chunk::{
-        ChunkId, CHUNK_TILES, DEFAULT_FOV, FOV_CHUNK_RADIUS,
-        calculate_visible_chunks_adaptive, chunk_hex_distance,
-        chunk_tiles, loc_to_chunk, visibility_radius,
+        ChunkId, CHUNK_TILES, DEFAULT_FOV,
+        chunk_hex_distance, chunk_tiles, loc_to_chunk,
     },
     components::{
         behaviour::PlayerControlled,
         entity_type::{EntityType, decorator::Decorator},
         Actor,
     },
-    resources::map::{Map, MapState, TileEvent},
+    resources::map::Map,
 };
 use qrz::Convert;
 
@@ -29,18 +28,26 @@ use crate::{
 
 // ──── Resources ────
 
-/// Flyover camera state — tracks position, speed ramp, and owned chunks.
+/// Flyover camera state.
+///
+/// The flyover overrides two things in the normal pipeline:
+/// 1. Position — threshold calculations use flyover position instead of player position
+/// 2. Tile source — tiles come from a local composite instead of the server
+///
+/// `generated_chunks` tracks which chunks the flyover generated tiles for,
+/// so they can be cleaned up when flyover toggles off or threshold changes.
 #[derive(Resource)]
 pub struct FlyoverState {
     pub active: bool,
     pub world_position: Vec3,
     pub speed_multiplier: f32,
     pub hold_time: f32,
-    /// Full-detail chunks owned by flyover (inner ring)
-    pub admin_chunks: HashSet<ChunkId>,
-    /// Summary chunks owned by flyover (outer ring)
-    pub admin_summary_chunks: HashSet<ChunkId>,
+    /// Chunks whose tiles were generated locally (not server-sourced).
+    pub generated_chunks: HashSet<ChunkId>,
     pub saved_camera_scale: f32,
+    /// Stashed normal-play state, restored on flyover toggle-off.
+    pub stashed_lod: Option<HashMap<ChunkId, crate::resources::ChunkLodState>>,
+    pub stashed_loaded: Option<HashSet<ChunkId>>,
 }
 
 impl Default for FlyoverState {
@@ -50,33 +57,57 @@ impl Default for FlyoverState {
             world_position: Vec3::ZERO,
             speed_multiplier: 1.0,
             hold_time: 0.0,
-            admin_chunks: HashSet::new(),
-            admin_summary_chunks: HashSet::new(),
+            generated_chunks: HashSet::new(),
             saved_camera_scale: 1.0,
+            stashed_lod: None,
+            stashed_loaded: None,
         }
     }
 }
 
-/// Marker for admin-generated chunk mesh entities (cleanup target).
+/// Marker for chunk mesh entities spawned while flyover is active.
 #[derive(Component)]
 pub struct AdminChunk;
 
-/// Wraps terrain::Terrain for local chunk generation.
-/// Arc-wrapped so async tile generation tasks can share it cheaply.
-#[derive(Resource)]
-pub struct AdminTerrain(pub Arc<terrain::Terrain>);
+/// Marker for the flyover ground cursor.
+#[derive(Component)]
+pub struct FlyoverCursor;
 
-impl Default for AdminTerrain {
+/// Client-side Composite for local chunk generation (flyover).
+/// Same event stack as the server — deterministic from seed.
+#[derive(Resource)]
+pub struct AdminComposite(pub Arc<world::events::Composite>);
+
+impl Default for AdminComposite {
     fn default() -> Self {
-        Self(Arc::new(terrain::Terrain::default()))
+        let seed = 0x9E3779B97F4A7C15; // Same seed as server (Terrain::default)
+        let plate_cache = std::sync::Mutex::new(world::PlateCache::new(seed));
+        let plate_cache = std::sync::Arc::new(plate_cache);
+        let mut composite = world::events::Composite::new(seed);
+        composite.add_event(Box::new(world::events::plates::PlateEvent::with_cache(plate_cache.clone())));
+        composite.add_event(Box::new(world::events::spines::SpineEvent::with_cache(plate_cache, seed)));
+        composite.add_event(Box::new(world::events::spawner::SpawnerEvent::new(seed)));
+        Self(Arc::new(composite))
     }
 }
 
-/// Tracks pending async flyover tile/summary generation tasks.
+/// Pending async tile generation tasks.
 #[derive(Default, Resource)]
 pub struct PendingFlyoverTiles {
-    pub inner: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
-    pub outer: HashMap<ChunkId, Task<common_bevy::qem::DecimatedMesh>>,
+    pub tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
+}
+
+/// Manual decimation threshold for flyover inspection.
+/// Number keys 0-9 set the threshold during flyover.
+#[derive(Resource)]
+pub struct FlyoverDecimationConfig {
+    pub threshold: u32,
+}
+
+impl Default for FlyoverDecimationConfig {
+    fn default() -> Self {
+        Self { threshold: 0 }
+    }
 }
 
 // ──── Run Conditions ────
@@ -102,36 +133,6 @@ const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 /// Absolute cap on flyover generation radius
 const MAX_FLYOVER_RADIUS: u8 = 60;
 
-/// Compute a generation radius from camera zoom AND player elevation combined.
-///
-/// Samples terrain at the FOV boundary to find the lowest nearby ground,
-/// then projects a camera ray to that ground plane. This avoids the old
-/// worst-case sea-level assumption that produced radius ~82 at z=1745.
-fn flyover_radius(
-    camera_scale: f32,
-    player_z: i32,
-    center: ChunkId,
-    terrain: &terrain::Terrain,
-) -> u8 {
-    // Orthographic scale → virtual perspective FOV.
-    // Zooming out (scale > 1) narrows the virtual FOV → loads more chunks.
-    let fov = DEFAULT_FOV / camera_scale.max(0.1);
-
-    // Sample terrain at 9 points around the FOV boundary to find the
-    // lowest nearby ground elevation — this is the surface our camera
-    // ray needs to reach.
-    let detail_r = common_bevy::chunk::detail_boundary_radius(player_z, fov) as i32;
-    let mut min_z = player_z;
-    for &dq in &[-detail_r, 0, detail_r] {
-        for &dr in &[-detail_r, 0, detail_r] {
-            let ct = ChunkId(center.0 + dq, center.1 + dr).center();
-            let z = terrain.get_height(ct.q, ct.r);
-            min_z = min_z.min(z);
-        }
-    }
-
-    visibility_radius(player_z, min_z, fov).min(MAX_FLYOVER_RADIUS)
-}
 
 // ──── Systems ────
 
@@ -142,26 +143,26 @@ pub fn execute_admin_actions(
     player_query: Query<&Transform, (With<Actor>, With<PlayerControlled>, Without<Camera3d>)>,
     mut camera_query: Query<&mut Projection, With<Camera3d>>,
     mut commands: Commands,
-    admin_chunk_query: Query<Entity, With<AdminChunk>>,
-    loaded_chunks: Res<LoadedChunks>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
     map: Res<Map>,
-    map_state: Res<MapState>,
-    admin_terrain: Res<AdminTerrain>,
+    admin_composite: Res<AdminComposite>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
+    mut flyover_config: ResMut<FlyoverDecimationConfig>,
+    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
+    cursor_query: Query<Entity, With<FlyoverCursor>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for action in reader.read() {
         match action {
             DevConsoleAction::GotoWorldUnits(wx, wy) => {
-                // Terrain world units use a different coordinate system than Bevy Vec3.
-                // terrain::hex_to_world: wx = q + r*0.5, wy = r * sqrt(3)/2
-                // Invert to get hex q,r, then convert to Vec3 via Map.
                 let sqrt_3 = 1.7320508075688772_f64;
                 let rf = wy * 2.0 / sqrt_3;
                 let qf = wx - rf * 0.5;
                 let q = qf.round() as i32;
                 let r = rf.round() as i32;
-                let z = admin_terrain.0.get_height(q, r);
+                let z = admin_composite.0.elevation_at(q, r);
                 let target_qrz = qrz::Qrz { q, r, z };
                 let target: Vec3 = map.convert(target_qrz);
 
@@ -174,7 +175,7 @@ pub fn execute_admin_actions(
                 continue;
             }
             DevConsoleAction::GotoQR(q, r) => {
-                let z = admin_terrain.0.get_height(*q, *r);
+                let z = admin_composite.0.elevation_at(*q, *r);
                 let target_qrz = qrz::Qrz { q: *q, r: *r, z };
                 let target: Vec3 = map.convert(target_qrz);
 
@@ -183,6 +184,24 @@ pub fn execute_admin_actions(
                     info!("Goto: QR ({}, {}) → flyover", q, r);
                 } else {
                     info!("Goto: QR ({}, {}) — enable flyover first", q, r);
+                }
+                continue;
+            }
+            DevConsoleAction::SetDecimationThreshold(value) => {
+                let value = *value;
+                if value != flyover_config.threshold {
+                    info!("Decimation threshold: {} → {}", flyover_config.threshold, value);
+                    flyover_config.threshold = value;
+                    evict_generated_chunks(
+                        &mut commands, &mut flyover, &mut pending_tiles,
+                        &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
+                    );
+                }
+                continue;
+            }
+            DevConsoleAction::ReportTerrain => {
+                if flyover.active {
+                    report_terrain_at_cursor(&flyover, &map, &lod_meshes, flyover_config.threshold);
                 }
                 continue;
             }
@@ -195,46 +214,67 @@ pub fn execute_admin_actions(
             if let Ok(player_transform) = player_query.single() {
                 flyover.world_position = player_transform.translation;
             }
-
-            // Save current camera scale
             if let Ok(projection) = camera_query.single() {
                 if let Projection::Orthographic(ortho) = &*projection {
                     flyover.saved_camera_scale = ortho.scale;
                 }
             }
 
+            // Stash existing mesh + loaded state and hide entities — restored on toggle-off.
+            let stashed: HashMap<ChunkId, crate::resources::ChunkLodState> = lod_meshes.states.drain().collect();
+            for (_, state) in &stashed {
+                if let Some(entity) = state.entity {
+                    commands.entity(entity).insert(Visibility::Hidden);
+                }
+            }
+            flyover.stashed_lod = Some(stashed);
+            flyover.stashed_loaded = Some(loaded_chunks.chunks.drain().collect());
+
+            // Spawn ground cursor
+            let cursor_mesh = meshes.add(Sphere::new(0.25));
+            let cursor_mat = materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.0, 0.0, 0.5),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(cursor_mesh),
+                MeshMaterial3d(cursor_mat),
+                Transform::from_translation(flyover.world_position),
+                bevy_light::NotShadowCaster,
+                FlyoverCursor,
+            ));
+
             flyover.active = true;
             flyover.hold_time = 0.0;
             flyover.speed_multiplier = 1.0;
             info!("Flyover camera: ON");
         } else {
-            // Toggle OFF — cleanup
-            for entity in admin_chunk_query.iter() {
+            // Toggle OFF — despawn cursor
+            for entity in cursor_query.iter() {
                 commands.entity(entity).despawn();
             }
 
-            // Cancel all pending async flyover tasks
-            pending_tiles.inner.clear();
-            pending_tiles.outer.clear();
+            // Clean up flyover-generated chunks
+            evict_generated_chunks(
+                &mut commands, &mut flyover, &mut pending_tiles,
+                &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
+            );
 
-            // Despawn tiles for admin-only full-detail chunks (skip server-loaded ones)
-            // Use O(1) map lookup instead of terrain evaluation
-            for &chunk_id in &flyover.admin_chunks {
-                if loaded_chunks.chunks.contains(&chunk_id) {
-                    continue;
-                }
-                for (q, r) in chunk_tiles(chunk_id) {
-                    if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                        map_state.queue_event(TileEvent::Despawn(qrz));
+            // Restore stashed normal-play state
+            if let Some(stashed) = flyover.stashed_lod.take() {
+                for (chunk_id, state) in stashed {
+                    if let Some(entity) = state.entity {
+                        commands.entity(entity).insert(Visibility::Inherited);
                     }
+                    lod_meshes.states.insert(chunk_id, state);
                 }
             }
+            if let Some(stashed) = flyover.stashed_loaded.take() {
+                loaded_chunks.chunks.extend(stashed);
+            }
 
-            flyover.admin_chunks.clear();
-            flyover.admin_summary_chunks.clear();
-            skip_regen.chunks.clear();
-
-            // Restore camera scale (clamped to normal range)
             if let Ok(mut projection) = camera_query.single_mut() {
                 if let Projection::Orthographic(ortho) = projection.as_mut() {
                     ortho.scale = flyover.saved_camera_scale.clamp(NORMAL_ZOOM_MIN, NORMAL_ZOOM_MAX);
@@ -268,18 +308,16 @@ fn rotate_hex(dir: &qrz::Qrz, steps: i32) -> qrz::Qrz {
 }
 
 /// Smooth camera movement using hex-direction arrow keys with speed ramp.
-/// Camera rotation is integrated into movement input (same scheme as player input).
 pub fn flyover_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
     time: Res<Time>,
     map: Res<Map>,
-    admin_terrain: Res<AdminTerrain>,
     mut flyover: ResMut<FlyoverState>,
+    mut cursor_query: Query<&mut Transform, With<FlyoverCursor>>,
 ) {
     let dt = time.delta_secs();
 
-    // Skip movement when Shift is held (camera orbit mode)
     let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let has_arrows = !shift_pressed && keyboard.any_pressed([
         KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight,
@@ -291,61 +329,52 @@ pub fn flyover_movement(
         let left = keyboard.pressed(KeyCode::ArrowLeft);
         let right = keyboard.pressed(KeyCode::ArrowRight);
 
-        // Use discrete target_index as the stable camera frame
         let camera_idx = orbit.target_index;
 
-        // Same movement-driven rotation scheme as player input:
-        // Up+Left/Up+Right: move diagonally + rotate camera.
-        // Down variants: move backward, no rotation.
-        // Left/Right alone: rotate only.
         let visual_dir = if up && !down {
             if left && !right {
                 orbit.step_ccw();
-                qrz::Qrz { q: -1, r: 0, z: 0 }     // NW (forward-left)
+                qrz::Qrz { q: -1, r: 0, z: 0 }
             } else if right && !left {
                 orbit.step_cw();
-                qrz::Qrz { q: 1, r: -1, z: 0 }      // NE (forward-right)
+                qrz::Qrz { q: 1, r: -1, z: 0 }
             } else {
-                qrz::Qrz { q: 0, r: -1, z: 0 }      // N (forward)
+                qrz::Qrz { q: 0, r: -1, z: 0 }
             }
         } else if down && !up {
             if left && !right {
-                qrz::Qrz { q: -1, r: 1, z: 0 }      // SW (backward-left)
+                qrz::Qrz { q: -1, r: 1, z: 0 }
             } else if right && !left {
-                qrz::Qrz { q: 1, r: 0, z: 0 }       // SE (backward-right)
+                qrz::Qrz { q: 1, r: 0, z: 0 }
             } else {
-                qrz::Qrz { q: 0, r: 1, z: 0 }       // S (backward)
+                qrz::Qrz { q: 0, r: 1, z: 0 }
             }
         } else if left && !right {
             orbit.step_ccw();
-            qrz::Qrz { q: 0, r: 0, z: 0 }           // Rotate only
+            qrz::Qrz { q: 0, r: 0, z: 0 }
         } else if right && !left {
             orbit.step_cw();
-            qrz::Qrz { q: 0, r: 0, z: 0 }           // Rotate only
+            qrz::Qrz { q: 0, r: 0, z: 0 }
         } else {
             qrz::Qrz { q: 0, r: 0, z: 0 }
         };
 
         if visual_dir.q != 0 || visual_dir.r != 0 {
-            // Speed ramp: quadratic ease-in over RAMP_SECONDS
             flyover.hold_time += dt;
             let t = (flyover.hold_time / RAMP_SECONDS).min(1.0);
             flyover.speed_multiplier = 1.0 + (MAX_SPEED_MULTIPLIER - 1.0) * t * t;
 
-            // Rotate visual direction to world space using pre-rotation camera frame
             let world_dir = rotate_hex(&visual_dir, -(camera_idx as i32));
 
-            // Convert hex direction to world-space Vec3 via Map
             let origin = qrz::Qrz { q: 0, r: 0, z: 0 };
             let origin_world: Vec3 = map.convert(origin);
             let neighbor_world: Vec3 = map.convert(world_dir);
             let mut direction = (neighbor_world - origin_world).normalize();
-            direction.y = 0.0; // Keep movement horizontal
+            direction.y = 0.0;
 
             let speed = flyover.speed_multiplier;
             flyover.world_position += direction * BASE_SPEED * speed * dt;
         } else {
-            // Rotation-only input: reset speed ramp
             flyover.hold_time = 0.0;
             flyover.speed_multiplier = 1.0;
         }
@@ -354,14 +383,20 @@ pub fn flyover_movement(
         flyover.speed_multiplier = 1.0;
     }
 
-    // Surface following: lerp Y toward terrain height
+    // Surface following
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
-    let terrain_y = admin_terrain.0.get_height(qrz.q, qrz.r) as f32 * map.rise();
-    flyover.world_position.y += (terrain_y - flyover.world_position.y) * SURFACE_FOLLOW_SPEED * dt;
+    if let Some((loaded, _)) = map.get_by_qr(qrz.q, qrz.r) {
+        let terrain_y = loaded.z as f32 * map.rise() + map.rise();
+        flyover.world_position.y += (terrain_y - flyover.world_position.y) * SURFACE_FOLLOW_SPEED * dt;
+    }
+
+    // Update ground cursor position
+    if let Ok(mut cursor_tf) = cursor_query.single_mut() {
+        cursor_tf.translation = flyover.world_position;
+    }
 }
 
-/// Replaces camera::update when flyover is active. Same orbital math with extended zoom.
-/// Camera rotation is driven by flyover_movement (movement-integrated rotation).
+/// Replaces camera::update when flyover is active.
 pub fn flyover_camera_update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
@@ -370,7 +405,6 @@ pub fn flyover_camera_update(
     time: Res<Time>,
     flyover: Res<FlyoverState>,
 ) {
-    // Smooth interpolation toward target (same logic as camera::update)
     let target = orbit.target_angle();
     let diff = {
         let d = (target - orbit.current).rem_euclid(2.0 * PI);
@@ -386,7 +420,6 @@ pub fn flyover_camera_update(
     }
 
     if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
-        // Zoom controls (extended range for flyover)
         match c_projection.into_inner() {
             Projection::Perspective(c_perspective) => {
                 const MIN: f32 = 6_f32.to_radians();
@@ -409,7 +442,6 @@ pub fn flyover_camera_update(
             _ => {}
         }
 
-        // Position camera using same orbital math as camera::update
         let offset = Vec3::new(
             orbit.current.sin() * CAMERA_DISTANCE,
             CAMERA_HEIGHT,
@@ -421,130 +453,75 @@ pub fn flyover_camera_update(
     }
 }
 
-/// Generates terrain chunks around the flyover camera position.
-/// Inner ring: full tiles (prevents mesh cascade via SkipNeighborRegen).
-/// Outer ring: summaries stored in ChunkSummaries resource.
-/// Radius scales with camera zoom so zoomed-out views stay filled.
+/// Generates tiles around the flyover camera position using the local composite.
+/// Tiles are inserted into the Map — the normal mesh pipeline handles rendering.
 pub fn flyover_generate_chunks(
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
-    admin_terrain: Res<AdminTerrain>,
+    admin_composite: Res<AdminComposite>,
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
     camera_query: Query<&Projection, With<Camera3d>>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("fly_gen");
     let scale = camera_query.single().ok().map_or(1.0, |p| {
         if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
     });
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
-    let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
+    let player_z = (flyover.world_position.y / map.rise()) as i32;
     let center = loc_to_chunk(qrz);
     let fov = DEFAULT_FOV / scale.max(0.1);
 
-    // Always extend beyond detail boundary so there's an outer LoD ring
-    let vis_radius = flyover_radius(scale, player_z, center, &admin_terrain.0);
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
-    let max_radius = vis_radius.max(detail_radius + 3);
-    // Use FOV as unconditional base so per-chunk elevation checks in
-    // calculate_visible_chunks_adaptive actually run for distant chunks.
-    // Without this, base==max makes every chunk unconditionally included.
-    let base_radius = FOV_CHUNK_RADIUS;
+    let gen_radius = (detail_radius + 3).min(MAX_FLYOVER_RADIUS);
 
-    let (inner, outer) = calculate_visible_chunks_adaptive(
-        center, player_z, base_radius, max_radius, detail_radius, fov,
-        |q, r| admin_terrain.0.get_height(q, r),
-    );
-
-    // Inner ring: dispatch async tile generation (height computation off main thread)
-    let inner_candidates: Vec<ChunkId> = inner.into_iter()
-        .filter(|id| !flyover.admin_chunks.contains(id) && !loaded_chunks.chunks.contains(id))
+    let candidates: Vec<ChunkId> = common_bevy::chunk::calculate_visible_chunks(center, gen_radius)
+        .into_iter()
+        .filter(|id| !flyover.generated_chunks.contains(id) && !loaded_chunks.chunks.contains(id))
+        .filter(|id| !pending_tiles.tasks.contains_key(id))
         .collect();
 
     let pool = AsyncComputeTaskPool::get();
 
-    for chunk_id in inner_candidates {
-        // Track immediately to prevent re-generation on next tick.
-        // Leave summary DATA in ChunkSummaries so summary mesh persists until
-        // resolve_lod_overlap despawns it (once the full-detail mesh exists).
-        flyover.admin_summary_chunks.remove(&chunk_id);
-        flyover.admin_chunks.insert(chunk_id);
+    for chunk_id in candidates {
+        flyover.generated_chunks.insert(chunk_id);
         skip_regen.chunks.insert(chunk_id);
 
-        let terrain = admin_terrain.0.clone();
+        let composite = admin_composite.0.clone();
         let task = pool.spawn(async move {
             let mut tiles = Vec::with_capacity(CHUNK_TILES);
             for (q, r) in chunk_tiles(chunk_id) {
-                let z = terrain.get_height(q, r);
+                let z = composite.elevation_at(q, r);
                 let qrz = qrz::Qrz { q, r, z };
                 let decorator = Decorator { index: 3, is_solid: true };
                 tiles.push((qrz, EntityType::Decorator(decorator)));
             }
             tiles
         });
-        pending_tiles.inner.insert(chunk_id, task);
-    }
-
-    // Outer ring: dispatch async summary generation (no tiles in Map)
-    let outer_candidates: Vec<ChunkId> = outer.into_iter()
-        .filter(|id| {
-            !flyover.admin_chunks.contains(id)
-            && !flyover.admin_summary_chunks.contains(id)
-            && !loaded_chunks.chunks.contains(id)
-        })
-        .collect();
-
-    for chunk_id in outer_candidates {
-        flyover.admin_summary_chunks.insert(chunk_id);
-
-        let terrain = admin_terrain.0.clone();
-        let task = pool.spawn(async move {
-            use common_bevy::chunk::chunk_tiles;
-            let chunk_tiles_vec: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
-                .map(|(q, r)| {
-                    let z = terrain.get_height(q, r);
-                    qrz::Qrz { q, r, z }
-                })
-                .collect();
-            let mut elevations = std::collections::HashMap::new();
-            for &qrz in &chunk_tiles_vec {
-                elevations.insert((qrz.q, qrz.r), qrz.z);
-                for direction in qrz::DIRECTIONS.iter() {
-                    let n = qrz + *direction;
-                    elevations.entry((n.q, n.r))
-                        .or_insert_with(|| terrain.get_height(n.q, n.r));
-                }
-            }
-            let geometry = common_bevy::geometry::compute_tile_geometry(
-                &chunk_tiles_vec, &elevations, 1.0, 0.8,
-            );
-            common_bevy::qem::decimate_geometry(&geometry, 2.0)
-        });
-        pending_tiles.outer.insert(chunk_id, task);
+        pending_tiles.tasks.insert(chunk_id, task);
     }
 }
 
-/// Poll pending flyover tile/summary tasks and queue events when ready.
+/// Poll pending tile generation tasks — inserts tiles into Map.
+/// Meshing is handled by the normal dispatch_lod_tasks pipeline.
 pub fn poll_flyover_tile_tasks(
     mut pending: ResMut<PendingFlyoverTiles>,
-    map_state: Res<MapState>,
+    map: Res<Map>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    // Poll inner tile generation tasks
-    pending.inner.retain(|_chunk_id, task| {
+    let _t = client_timers.0.scope("fly_poll");
+    pending.tasks.retain(|&chunk_id, task| {
         if let Some(tiles) = block_on(future::poll_once(task)) {
+            let mut map_w = map.write();
             for (qrz, entity_type) in tiles {
-                map_state.queue_event(TileEvent::Spawn(qrz, entity_type));
+                map_w.insert(qrz, entity_type);
             }
-            false
-        } else {
-            true
-        }
-    });
-
-    // Poll outer summary generation tasks
-    pending.outer.retain(|_chunk_id, task| {
-        if let Some(_summary) = block_on(future::poll_once(task)) {
+            drop(map_w);
+            loaded_chunks.insert(chunk_id);
             false
         } else {
             true
@@ -559,105 +536,272 @@ pub fn tag_admin_chunks(
     new_chunks: Query<(Entity, &ChunkMesh), Added<ChunkMesh>>,
 ) {
     for (entity, chunk_mesh) in new_chunks.iter() {
-        if flyover.admin_chunks.contains(&chunk_mesh.chunk_id) {
+        if flyover.generated_chunks.contains(&chunk_mesh.chunk_id) {
             commands.entity(entity).insert(AdminChunk);
         }
     }
 }
 
-/// Evicts admin chunks (full-detail and summary) that are far from the camera position.
+/// Evicts generated chunks that are far from the flyover camera position.
 pub fn flyover_evict_chunks(
     mut flyover: ResMut<FlyoverState>,
+    mut commands: Commands,
     map: Res<Map>,
-    map_state: Res<MapState>,
-    admin_terrain: Res<AdminTerrain>,
-    loaded_chunks: Res<LoadedChunks>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
+    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
     camera_query: Query<&Projection, With<Camera3d>>,
+    client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = client_timers.0.scope("fly_evic");
     let scale = camera_query.single().ok().map_or(1.0, |p| {
         if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
     });
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
-    let player_z = admin_terrain.0.get_height(qrz.q, qrz.r);
+    let player_z = (flyover.world_position.y / map.rise()) as i32;
     let center = loc_to_chunk(qrz);
-    let radius = flyover_radius(scale, player_z, center, &admin_terrain.0);
     let fov = DEFAULT_FOV / scale.max(0.1);
 
-    // Full-detail keep: detail_boundary + 1 (matches generation inner ring)
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
-    let detail_buffer = detail_radius as i32 + 1;
+    let evict_radius = (detail_radius + 5).min(MAX_FLYOVER_RADIUS) as i32;
 
-    // Summary keep: per-chunk adaptive visibility.
-    // detail_buffer is the unconditional inner region; beyond that,
-    // each chunk must pass a per-chunk elevation-based visibility test.
-    let summary_keep: HashSet<ChunkId> = {
-        let r = (radius as i32) + 1;
-        let base = detail_radius as i32 + 1;
-        let mut kept = HashSet::new();
-        for dq in -r..=r {
-            let dr_min = (-r).max(-dq - r);
-            let dr_max = r.min(-dq + r);
-            for dr in dr_min..=dr_max {
-                let hex_dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
-                let chunk_id = ChunkId(center.0 + dq, center.1 + dr);
-                if hex_dist <= base {
-                    kept.insert(chunk_id);
-                    continue;
-                }
-                let ct = chunk_id.center();
-                let cz = admin_terrain.0.get_height(ct.q, ct.r);
-                let vis = visibility_radius(player_z, cz, fov) as i32 + 1;
-                if hex_dist <= vis {
-                    kept.insert(chunk_id);
-                }
-            }
-        }
-        kept
-    };
-
-    // Evict full-detail admin chunk data beyond detail boundary + 1.
-    let evictable: Vec<ChunkId> = flyover.admin_chunks
+    let evictable: Vec<ChunkId> = flyover.generated_chunks
         .iter()
-        .filter(|id| {
-            chunk_hex_distance(**id, center) > detail_buffer
-        })
+        .filter(|id| chunk_hex_distance(**id, center) > evict_radius)
         .copied()
         .collect();
 
-    if !evictable.is_empty() {
-        let evict_set: HashSet<ChunkId> = evictable.iter().copied().collect();
+    if evictable.is_empty() { return; }
 
+    // Despawn mesh entities first (before removing state)
+    for &chunk_id in &evictable {
+        pending_tiles.tasks.remove(&chunk_id);
+        if let Some(state) = lod_meshes.states.remove(&chunk_id) {
+            if let Some(entity) = state.entity {
+                commands.entity(entity).despawn();
+            }
+        }
+        loaded_chunks.chunks.remove(&chunk_id);
+    }
+
+    // Remove tiles from Map
+    {
+        let mut map_w = map.write();
         for &chunk_id in &evictable {
-            // Cancel pending tile generation tasks if still running
-            pending_tiles.inner.remove(&chunk_id);
-
-            if loaded_chunks.chunks.contains(&chunk_id) {
-                continue;
-            }
-            // Use O(1) map lookup instead of terrain evaluation for despawn
             for (q, r) in chunk_tiles(chunk_id) {
-                if let Some((qrz, _)) = map.get_by_qr(q, r) {
-                    map_state.queue_event(TileEvent::Despawn(qrz));
+                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
+                    map_w.remove(qrz);
+                }
+            }
+        }
+    }
+
+    let evict_set: HashSet<ChunkId> = evictable.into_iter().collect();
+    flyover.generated_chunks.retain(|id| !evict_set.contains(id));
+    skip_regen.chunks.retain(|id| !evict_set.contains(id));
+}
+
+/// Number keys 0-9 set the flyover decimation threshold (keyboard shortcut).
+pub fn flyover_threshold_control(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut config: ResMut<FlyoverDecimationConfig>,
+    mut flyover: ResMut<FlyoverState>,
+    mut commands: Commands,
+    mut pending_tiles: ResMut<PendingFlyoverTiles>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    map: Res<Map>,
+    mut skip_regen: ResMut<SkipNeighborRegen>,
+    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
+) {
+    let digit = [
+        (KeyCode::Digit0, 0u32), (KeyCode::Digit1, 1), (KeyCode::Digit2, 2),
+        (KeyCode::Digit3, 3), (KeyCode::Digit4, 4), (KeyCode::Digit5, 5),
+        (KeyCode::Digit6, 6), (KeyCode::Digit7, 7), (KeyCode::Digit8, 8),
+        (KeyCode::Digit9, 9),
+    ];
+
+    for &(key, value) in &digit {
+        if keyboard.just_pressed(key) && value != config.threshold {
+            info!("Flyover decimation threshold: {} → {}", config.threshold, value);
+            config.threshold = value;
+            evict_generated_chunks(
+                &mut commands, &mut flyover, &mut pending_tiles,
+                &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
+            );
+            break;
+        }
+    }
+}
+
+/// Remove all flyover-generated tiles, meshes, and tracking state.
+/// The normal pipeline + flyover_generate_chunks will repopulate.
+fn evict_generated_chunks(
+    commands: &mut Commands,
+    flyover: &mut FlyoverState,
+    pending_tiles: &mut PendingFlyoverTiles,
+    loaded_chunks: &mut LoadedChunks,
+    map: &Map,
+    skip_regen: &mut SkipNeighborRegen,
+    lod_meshes: &mut crate::resources::ChunkLodMeshes,
+) {
+    pending_tiles.tasks.clear();
+
+    // Despawn ALL mesh entities — ensures no stale-threshold meshes survive
+    for (_, state) in lod_meshes.states.drain() {
+        if let Some(entity) = state.entity {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Remove generated chunk data
+    for &chunk_id in &flyover.generated_chunks {
+        loaded_chunks.chunks.remove(&chunk_id);
+    }
+
+    // Remove tiles from Map
+    {
+        let mut map_w = map.write();
+        for &chunk_id in &flyover.generated_chunks {
+            for (q, r) in chunk_tiles(chunk_id) {
+                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
+                    map_w.remove(qrz);
+                }
+            }
+        }
+    }
+
+    flyover.generated_chunks.clear();
+    skip_regen.chunks.clear();
+}
+
+/// Report terrain data at the flyover cursor position.
+/// Runs decimation on the chunk and logs the hexball containing the cursor tile.
+fn report_terrain_at_cursor(
+    flyover: &FlyoverState,
+    map: &Map,
+    _lod_meshes: &crate::resources::ChunkLodMeshes,
+    threshold: u32,
+) {
+    use qrz::Convert;
+    let qrz: qrz::Qrz = map.convert(flyover.world_position);
+    let chunk_id = loc_to_chunk(qrz);
+    let rise = map.rise();
+
+    info!("=== TERRAIN REPORT at ({},{}) z={} chunk=({},{}) threshold={} ===",
+        qrz.q, qrz.r, qrz.z, chunk_id.0, chunk_id.1, threshold);
+
+    // Collect chunk tiles + elevations (same as collect_and_build_mesh)
+    let chunk_tile_list: Vec<(i32, i32, i32)> = chunk_tiles(chunk_id)
+        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(t, _)| (t.q, t.r, t.z)))
+        .collect();
+
+    let mut elevations = std::collections::HashMap::new();
+    for &(q, r, z) in &chunk_tile_list {
+        elevations.insert((q, r), z);
+        for &(dq, dr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+            let nq = q + dq;
+            let nr = r + dr;
+            if !elevations.contains_key(&(nq, nr)) {
+                if let Some((actual, _)) = map.get_by_qr(nq, nr) {
+                    elevations.insert((actual.q, actual.r), actual.z);
+                }
+            }
+        }
+    }
+
+    let elev_lookup = |q: i32, r: i32| -> Option<i32> { elevations.get(&(q, r)).copied() };
+    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, 1, threshold, &elev_lookup);
+
+    info!("  chunk tiles={} hexballs={} survivors={}",
+        chunk_tile_list.len(), decimation.hexballs.len(), decimation.survivors.len());
+
+    // Find hexball containing cursor tile
+    for (hi, hb) in decimation.hexballs.iter().enumerate() {
+        let dq = qrz.q - hb.center_q;
+        let dr = qrz.r - hb.center_r;
+        let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
+        if dist > 1 { continue; } // r=1 hexball
+
+        // Compute the actual rendered surface — single source of truth.
+        let surface = common_bevy::hexball_geometry::compute_hexball_surface(
+            hb.center_q, hb.center_r, hb.center_z, 1,
+            map.radius(), rise, &elev_lookup,
+        );
+        let bv = surface.hex_boundary.unwrap();
+
+        info!("  HEXBALL[{hi}] center=({},{}) z={} bv_y={:?}",
+            hb.center_q, hb.center_r, hb.center_z,
+            bv.map(|v| format!("{:.2}", v.y)));
+
+        // Log tiles in this hexball
+        for ddq in -1..=1 {
+            let dr_min = (-1).max(-ddq - 1);
+            let dr_max = 1.min(-ddq + 1);
+            for ddr in dr_min..=dr_max {
+                let tq = hb.center_q + ddq;
+                let tr = hb.center_r + ddr;
+                if let Some(tz) = elev_lookup(tq, tr) {
+                    let mut neighbors = Vec::new();
+                    for &(ndq, ndr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+                        if let Some(nz) = elev_lookup(tq + ndq, tr + ndr) {
+                            if nz != tz {
+                                neighbors.push(format!("{}({},{})", nz, ndq, ndr));
+                            }
+                        }
+                    }
+                    let marker = if tq == qrz.q && tr == qrz.r { " <<<" } else { "" };
+                    let nb = if neighbors.is_empty() { String::new() } else { format!(" nb=[{}]", neighbors.join(",")) };
+                    info!("    tile({tq},{tr}) z={tz}{nb}{marker}");
                 }
             }
         }
 
-        flyover.admin_chunks.retain(|id| !evict_set.contains(id));
-        skip_regen.chunks.retain(|id| !evict_set.contains(id));
+        // Partial fans — all values read from the rendered surface struct
+        for (pi, fan) in surface.partial_fans.iter().enumerate() {
+            let st = fan.surviving_triangles;
+            let edge = st[1] as usize;
+            let edge_next = (edge + 1) % 6;
+            let absorbed: Vec<u8> = (0..6u8).filter(|t| !st.contains(t)).collect();
+
+            let d0 = fan.outer[0].y - bv[edge].y;
+            let d3 = fan.outer[3].y - bv[edge_next].y;
+
+            info!("    partial[{pi}] ({},{}) oz={} center_y={:.4} edge=V{}→V{} surv={:?} abs={:?}",
+                fan.q, fan.r, fan.z, fan.center.y,
+                edge, edge_next, st, absorbed);
+            info!("      ov[0] y={:.4} bv[{}] y={:.4} d={:.4}",
+                fan.outer[0].y, edge, bv[edge].y, d0);
+            info!("      ov[1] y={:.4}  ov[2] y={:.4}",
+                fan.outer[1].y, fan.outer[2].y);
+            info!("      ov[3] y={:.4} bv[{}] y={:.4} d={:.4}",
+                fan.outer[3].y, edge_next, bv[edge_next].y, d3);
+        }
+
+        // Skirt edge diagnostics — show what each fan registers
+        use common_bevy::hexball_geometry::grid_vertex_id;
+        for (pi, fan) in surface.partial_fans.iter().enumerate() {
+            let st = fan.surviving_triangles;
+            let ov = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
+            for i in 0..3 {
+                let vi = ov[i];
+                let dir = (10 - vi) % 6;
+                let d = qrz::DIRECTIONS[dir];
+                let nq = fan.q + d.q;
+                let nr = fan.r + d.r;
+                let absorbed = surface.absorbed.contains(&(nq, nr));
+                let id_a = grid_vertex_id(fan.q, fan.r, vi);
+                let id_b = grid_vertex_id(fan.q, fan.r, (vi + 1) % 6);
+                let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
+                info!("    fan[{pi}] edge[{i}] v{}→v{} dir={dir} nb=({nq},{nr}) abs={absorbed} key={key:?} y=[{:.4},{:.4}]",
+                    vi, (vi+1)%6, fan.outer[i].y, fan.outer[i + 1].y);
+            }
+        }
     }
 
-    // Evict summary admin chunks (cancel pending tasks too).
-    let summary_evictable: Vec<ChunkId> = flyover.admin_summary_chunks
-        .iter()
-        .filter(|id| !summary_keep.contains(id))
-        .copied()
-        .collect();
-
-    for &chunk_id in &summary_evictable {
-        pending_tiles.outer.remove(&chunk_id);
+    // Check if cursor tile is a survivor instead
+    if decimation.survivors.iter().any(|&(q, r, _)| q == qrz.q && r == qrz.r) {
+        info!("  cursor tile ({},{}) is a SURVIVOR (not decimated)", qrz.q, qrz.r);
     }
-    flyover.admin_summary_chunks.retain(|id| summary_keep.contains(id));
 }

@@ -1,16 +1,16 @@
-//! # Engagement Spawning System (ADR-014)
+//! # Engagement Activation System
 //!
-//! Dynamically spawns enemy encounters when players explore new chunks.
-//! Replaces static spawners with exploration-driven content discovery.
+//! Activates terrain-derived spawners when players approach.
+//! Spawners are placed by SpawnerEvent in the world event composite.
+//! The activation system reads SpawnerPlacementIndex for nearby placements.
 
 use bevy::prelude::*;
 use qrz::Qrz;
 use rand::Rng;
 
 use common_bevy::{
-    chunk::ChunkId,
     components::{
-        behaviour::Behaviour,
+        behaviour::{Behaviour, PlayerControlled},
         engagement::{Engagement, EngagementMember, LastPlayerProximity, ZoneId},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
@@ -25,181 +25,98 @@ use common_bevy::{
         resources::{CombatState, Health, Mana, Stamina},
         AirTime, LastAutoAttack, Physics, Loc,
     },
-    message::{Do, Event},
     plugins::nntree::NearestNeighbor,
     spatial_difficulty::{
-        calculate_enemy_attributes, calculate_enemy_level, get_directional_zone,
+        calculate_enemy_attributes, calculate_enemy_level,
         EnemyArchetype, HAVEN_LOCATION,
     },
     systems::combat::resources as resource_calcs,
 };
-use crate::resources::engagement_budget::EngagementBudget;
 
-/// Spawn probability per chunk (50%)
-const SPAWN_PROBABILITY: f64 = 0.5;
+/// Minimum distance from player to activate a spawner (tiles)
+const MIN_ACTIVATION_DISTANCE: i32 = 30;
 
-/// Minimum distance from any player to spawn engagement (tiles)
-const MIN_DISTANCE_FROM_PLAYER: u32 = 30;
+/// Maximum distance from player to activate a spawner (tiles).
+/// Must be within AOI_RADIUS (123) so the player can see the NPCs.
+const MAX_ACTIVATION_DISTANCE: i32 = 100;
 
-/// Minimum distance from other engagements (tiles)
-const MIN_DISTANCE_FROM_ENGAGEMENT: u32 = 50;
 
-/// System that listens for ChunkData events and attempts to spawn engagements
-///
-/// Multi-stage validation:
-/// 1. Probability gate (50% chance)
-/// 2. Budget check (max 8 per zone)
-/// 3. Player proximity check (min 30 tiles)
-/// 4. Engagement proximity check (min 50 tiles)
-///
-/// If all pass, sends Try::SpawnEngagement event
-pub fn try_spawn_engagement(
-    mut reader: MessageReader<Do>,
-    mut writer: MessageWriter<common_bevy::message::Try>,
-    budget: Res<EngagementBudget>,
-    player_query: Query<(&Loc, &Behaviour)>,
-    engagement_query: Query<&Loc, With<Engagement>>,
-) {
-    for message in reader.read() {
-        // Only process ChunkData events
-        let Do { event: Event::ChunkData { chunk_id, .. } } = message else {
-            continue;
-        };
 
-        try_spawn_engagement_at_chunk(*chunk_id, &mut writer, &budget, &player_query, &engagement_query);
-    }
-}
+/// Tracks which spawner tiles have active engagements.
+/// Cleared when engagement is cleaned up (allows re-activation).
+#[derive(Resource, Default)]
+pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// System that processes Try::SpawnEngagement events and creates actual engagements
-pub fn do_spawn_engagement(
-    mut reader: MessageReader<common_bevy::message::Try>,
-    mut writer: MessageWriter<Do>,
+/// Activate spawners near players. Spacing enforced at survey time (min_spacing).
+pub fn activate_spawners(
     mut commands: Commands,
-    mut budget: ResMut<EngagementBudget>,
+    mut active: ResMut<ActiveSpawners>,
+    registry: Res<crate::resources::event_registry::EventRegistry>,
     time: Res<Time>,
-    terrain: Res<crate::resources::terrain::Terrain>,
-    map: Res<crate::Map>,
+    timings: Res<crate::plugins::metrics::SystemTimings>,
+    player_query: Query<&Loc, (With<PlayerControlled>, Changed<Loc>)>,
 ) {
-    for message in reader.read() {
-        // Only process SpawnEngagement events
-        let common_bevy::message::Try { event: Event::SpawnEngagement { location } } = message else {
-            continue;
-        };
+    if player_query.is_empty() { return; }
+    let _t = timings.scope("spawner");
 
-        // Double-check budget (prevents race condition when multiple chunks processed in same frame)
-        let zone_id = ZoneId::from_position(*location);
-        if !budget.can_spawn_in_zone(zone_id) {
-            continue;
+    for player_loc in &player_query {
+        let spawners = registry.spawners_near(player_loc.q, player_loc.r);
+
+        for placement in &spawners {
+            let (q, r) = (placement.q, placement.r);
+            let dist = player_loc.flat_distance(&Loc::from_qrz(q, r, 0));
+
+            if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
+            if active.0.contains(&(q, r)) { continue; }
+
+            let archetype = match placement.archetype {
+                world::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
+                world::events::spawner::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
+                world::events::spawner::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
+                world::events::spawner::SpawnerArchetype::Defender => EnemyArchetype::Defender,
+            };
+
+            active.0.insert((q, r));
+            let spawn_z = registry.elevation_at(q, r);
+            spawn_engagement(
+                Qrz { q, r, z: spawn_z + 1 },
+                archetype,
+                &mut commands, &time, &registry,
+            );
         }
-
-        spawn_engagement_at(*location, &mut commands, &mut writer, &mut budget, &time, &terrain, &map);
     }
 }
 
-/// Helper function to attempt spawning engagement at a chunk
-fn try_spawn_engagement_at_chunk(
-    chunk_id: ChunkId,
-    writer: &mut MessageWriter<common_bevy::message::Try>,
-    budget: &EngagementBudget,
-    player_query: &Query<(&Loc, &Behaviour)>,
-    engagement_query: &Query<&Loc, With<Engagement>>,
-) {
-    // Calculate chunk center position for spawning
-    let chunk_center = chunk_id.center();
-
-    // Stage 1: Probability gate (50% chance)
-    if !rand::rng().random_bool(SPAWN_PROBABILITY) {
-        return; // Silent skip
-    }
-
-    // Stage 2: Budget check (max 8 active per zone)
-    let zone_id = ZoneId::from_position(chunk_center);
-    if !budget.can_spawn_in_zone(zone_id) {
-        return; // Zone full
-    }
-
-    // Stage 3: Player proximity check (min 30 tiles from ANY ACTUAL player, not NPCs)
-    for (player_loc, behaviour) in player_query.iter() {
-        // Only check actual players (Behaviour::Controlled), not NPCs
-        if !matches!(behaviour, Behaviour::Controlled) {
-            continue;
-        }
-
-        let distance = chunk_center.flat_distance(&**player_loc);
-        if distance < MIN_DISTANCE_FROM_PLAYER as i32 {
-            return; // Too close to a player
-        }
-    }
-
-    // Stage 4: Engagement proximity check (min 50 tiles from other engagements)
-    for engagement_loc in engagement_query.iter() {
-        let distance = chunk_center.flat_distance(&**engagement_loc);
-        if distance < MIN_DISTANCE_FROM_ENGAGEMENT as i32 {
-            return; // Too close to another engagement
-        }
-    }
-    writer.write(common_bevy::message::Try {
-        event: Event::SpawnEngagement {
-            location: chunk_center,
-        },
-    });
-}
-
-/// Spawn an engagement at the given location
-fn spawn_engagement_at(
+/// Spawn an engagement at a spawner location with the given archetype.
+fn spawn_engagement(
     location: Qrz,
+    archetype: EnemyArchetype,
     commands: &mut Commands,
-    _writer: &mut MessageWriter<Do>,
-    budget: &mut EngagementBudget,
     time: &Time,
-    terrain: &crate::resources::terrain::Terrain,
-    _map: &crate::Map,
+    registry: &crate::resources::event_registry::EventRegistry,
 ) {
-    // Calculate terrain height at spawn location (spawn on top of terrain, not in it)
-    let terrain_z = terrain.get(location.q, location.r);
-    let location = Qrz { q: location.q, r: location.r, z: terrain_z + 1 };
-
-    // Calculate level from distance to haven
     let level = calculate_enemy_level(location, HAVEN_LOCATION);
+    let npc_count = rand::rng().random_range(1..=3u8);
 
-    // Determine archetype from directional zone
-    let zone = get_directional_zone(location, HAVEN_LOCATION);
-    let archetype = EnemyArchetype::from_zone(zone);
-
-    // Random group size (1-3 NPCs)
-    let npc_count = rand::rng().random_range(1..=3);
-
-    // Create engagement parent entity
     let mut engagement = Engagement::new(location, level, archetype, npc_count);
-    let zone_id = engagement.zone_id;
 
-    // Spawn engagement entity
     let engagement_entity = commands
         .spawn((
             engagement.clone(),
             Loc::new(location),
             LastPlayerProximity::new(time.elapsed()),
-            HexAssignment::default(),  // SOW-018: Hex assignment tracking
+            HexAssignment::default(),
         ))
         .id();
 
-    // Register in budget
-    budget.register_engagement(zone_id);
-
-    // Spawn NPCs as children
     let attributes = calculate_enemy_attributes(level, archetype);
-    let _ability = archetype.ability();
 
     for i in 0..npc_count {
-        // Spawn NPC slightly offset from engagement center (random hex neighbor)
         let offset = get_random_hex_offset(i as usize);
         let npc_location_base = location + offset;
-
-        // Calculate terrain height at NPC location (spawn on top of terrain, not in it)
-        let npc_z = terrain.get(npc_location_base.q, npc_location_base.r);
+        let npc_z = registry.elevation_at(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
 
-        // Create NPC ActorImpl with triumvirate based on archetype (ADR-014)
         let actor_impl = ActorImpl {
             origin: Origin::Evolved,
             approach: archetype.approach(),
@@ -207,76 +124,49 @@ fn spawn_engagement_at(
             identity: ActorIdentity::Npc(archetype.npc_type()),
         };
 
-        // Initialize resources from attributes (same as spawner.rs)
         let max_health = attributes.max_health();
         let max_stamina = resource_calcs::calculate_max_stamina(&attributes);
         let max_mana = resource_calcs::calculate_max_mana(&attributes);
         let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attributes);
         let mana_regen = resource_calcs::calculate_mana_regen_rate(&attributes);
 
-        let health = Health {
-            state: max_health,
-            step: max_health,
-            max: max_health,
-        };
-        let stamina = Stamina {
-            state: max_stamina,
-            step: max_stamina,
-            max: max_stamina,
-            regen_rate: stamina_regen,
-            last_update: time.elapsed(),
-        };
-        let mana = Mana {
-            state: max_mana,
-            step: max_mana,
-            max: max_mana,
-            regen_rate: mana_regen,
-            last_update: time.elapsed(),
-        };
-        let combat_state = CombatState {
-            in_combat: false,
-            last_action: time.elapsed(),
-        };
-
-        // Initialize reaction queue with capacity based on Focus attribute
+        let health = Health { state: max_health, step: max_health, max: max_health };
+        let stamina = Stamina { state: max_stamina, step: max_stamina, max: max_stamina, regen_rate: stamina_regen, last_update: time.elapsed() };
+        let mana = Mana { state: max_mana, step: max_mana, max: max_mana, regen_rate: mana_regen, last_update: time.elapsed() };
+        let combat_state = CombatState { in_combat: false, last_action: time.elapsed() };
         let queue_capacity = attributes.window_size();
         let reaction_queue = ReactionQueue::new(queue_capacity);
 
-        // Spawn NPC entity (will be discovered when player gets near)
         let npc_loc = Loc::new(npc_location);
         let npc_entity = commands
             .spawn((
                 EntityType::Actor(actor_impl),
                 npc_loc,
                 attributes,
-                health,
-                stamina,
-                mana,
+                health, stamina, mana,
                 combat_state,
                 reaction_queue,
-                Gcd::new(),                   // GCD tracking for abilities
-                LastAutoAttack::default(),    // Auto-attack cooldown tracking
+                Gcd::new(),
+                LastAutoAttack::default(),
                 Physics,
-                Behaviour::default(),         // Will be set by AI system based on archetype
+                Behaviour::default(),
                 EngagementMember(engagement_entity),
-                common_bevy::components::loaded_by::LoadedBy::default(),  // AOI: Track which players see this NPC
+                common_bevy::components::loaded_by::LoadedBy::default(),
             ))
             .id();
 
-        // Add AI behavior based on archetype (ADR-014 Phase 3)
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => {
-                // Melee aggressors - Chase behavior (aggressive pursuit)
                 let chase = crate::systems::behaviour::chase::Chase {
-                    acquisition_range: 15,  // 15 hex aggro range
-                    leash_distance: 30,     // 30 hex leash distance
-                    attack_range: 1,        // 1 hex melee range
+                    acquisition_range: 15,
+                    leash_distance: 30,
+                    attack_range: 1,
                 };
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
-                    NpcRecovery::for_archetype(archetype),  // SOW-018: Per-archetype recovery timer
-                    common_bevy::components::target::Target::default(),  // Target tracking for AI
+                    NpcRecovery::for_archetype(archetype),
+                    common_bevy::components::target::Target::default(),
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
@@ -284,16 +174,15 @@ fn spawn_engagement_at(
                 ));
             }
             EnemyArchetype::Kiter => {
-                // Ranged kiter - Kite behavior (Forest Sprite stats)
                 let kite = crate::systems::behaviour::kite::Kite::forest_sprite();
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     kite,
-                    common_bevy::components::target::Target::default(),  // Target tracking for AI
+                    common_bevy::components::target::Target::default(),
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    common_bevy::components::AttackRange(6),  // Ranged auto-attack
+                    common_bevy::components::AttackRange(6),
                     LastAutoAttack::default(),
                     NpcRecovery::for_archetype(archetype),
                     common_bevy::components::movement_intent_state::MovementIntentState::default(),
@@ -301,40 +190,20 @@ fn spawn_engagement_at(
             }
         }
 
-        // Track NPC in engagement
         engagement.add_npc(npc_entity);
-
-        // NOTE: NPCs are NOT broadcast immediately - they're sent when clients discover the chunk
-        // See try_discover_chunk in actor.rs which sends all actors when chunk is discovered
-        // This prevents "ghost NPCs" when engagements are abandoned but not yet cleaned up
     }
 
-    // Update engagement with tracked NPCs
     commands.entity(engagement_entity).insert(engagement);
 }
 
-/// Get random hex offset for NPC positioning
-/// Returns one of the 6 hex directions based on index
 fn get_random_hex_offset(index: usize) -> Qrz {
-    use qrz::DIRECTIONS;
-    DIRECTIONS[index % 6]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hex_offset() {
-        // Should cycle through 6 directions
-        let offset0 = get_random_hex_offset(0);
-        let offset1 = get_random_hex_offset(1);
-        let offset6 = get_random_hex_offset(6);
-
-        // Index 6 should wrap to index 0
-        assert_eq!(offset0, offset6);
-
-        // Offsets should be different
-        assert_ne!(offset0, offset1);
-    }
+    let directions = [
+        Qrz { q: 1, r: 0, z: 0 },
+        Qrz { q: -1, r: 0, z: 0 },
+        Qrz { q: 0, r: 1, z: 0 },
+        Qrz { q: 0, r: -1, z: 0 },
+        Qrz { q: 1, r: -1, z: 0 },
+        Qrz { q: -1, r: 1, z: 0 },
+    ];
+    directions[index % directions.len()]
 }
