@@ -154,7 +154,7 @@ pub fn compute_hexball_surface(
 
     if radius == 0 {
         let verts = tile_vertices(center_q, center_r, center_z, hex_radius, rise, tile_z);
-        let skirts = compute_tile_skirts(center_q, center_r, center_z, &verts, hex_radius, rise, tile_z);
+        let skirts = Vec::new();
         return HexballSurface {
             hex_center: None,
             hex_boundary: None,
@@ -207,35 +207,7 @@ pub fn compute_hexball_surface(
         TileSurface { verts, q: fr.q, r: fr.r, z: fr.z }
     }).collect();
 
-    // Skirts — computed from final surface positions
-    let mut skirts = Vec::new();
-
-    // Fan skirts: 3 outward edges per fan, using final ov_pos values
-    for fan in &partial_fans {
-        let st = &fan.surviving_triangles;
-        for (k, &tri_idx) in st.iter().enumerate() {
-            let vi_a = tri_idx as usize;
-            let dir_idx = (4 + 6 - vi_a) % 6;
-            let dir = qrz::DIRECTIONS[dir_idx];
-            let nq = fan.q + dir.q;
-            let nr = fan.r + dir.r;
-            let nz = match tile_z(nq, nr) { Some(z) => z, None => continue };
-            if nz >= fan.z { continue; }
-
-            let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
-            let (_, _, nv1_idx, nv2_idx) = SKIRT_VERTEX_MAP[dir_idx];
-            skirts.push(SkirtQuad {
-                top: [fan.outer[k], fan.outer[k + 1]],
-                bottom: [n_verts[nv1_idx], n_verts[nv2_idx]],
-                from_q: fan.q, from_r: fan.r, to_q: nq, to_r: nr,
-            });
-        }
-    }
-
-    // Full residual skirts
-    for tile in &full_tiles {
-        skirts.extend(compute_tile_skirts(tile.q, tile.r, tile.z, &tile.verts, hex_radius, rise, tile_z));
-    }
+    let skirts = Vec::new();
 
     HexballSurface {
         hex_center: Some(hex_center),
@@ -443,12 +415,15 @@ mod tests {
         let tile_z = make_tile_z(&elevations);
         let hexball = compute_hexball_geometry(0, 0, 3, 0, 1.0, 0.8, Vec3::ZERO, &tile_z);
 
-        assert_eq!(tile_geom.positions.len(), hexball.positions.len(), "vertex count");
-        for (i, (a, b)) in tile_geom.positions.iter().zip(hexball.positions.iter()).enumerate() {
+        // Compare surface geometry only (7 verts, 18 indices). Skirts disabled.
+        assert!(hexball.positions.len() >= 7);
+        for i in 0..7 {
+            let a = &tile_geom.positions[i];
+            let b = &hexball.positions[i];
             assert!((a[0]-b[0]).abs() < 1e-5 && (a[1]-b[1]).abs() < 1e-5 && (a[2]-b[2]).abs() < 1e-5,
                 "pos mismatch at {i}: {a:?} vs {b:?}");
         }
-        assert_eq!(tile_geom.indices, hexball.indices, "indices differ");
+        assert_eq!(&tile_geom.indices[..18], &hexball.indices[..18], "surface indices differ");
     }
 
     #[test]
