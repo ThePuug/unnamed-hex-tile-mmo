@@ -17,7 +17,7 @@ use bevy::{
 };
 use bevy_mesh::Indices;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::geometry::{
     flat_top_tile_center, flat_top_vertex_offsets, hex_vertex_normal, slope_adjustments,
@@ -51,6 +51,9 @@ pub struct HexballSurface {
     pub hex_boundary: Option<[Vec3; 6]>,
     pub partial_fans: Vec<PartialFanSurface>,
     pub full_tiles: Vec<TileSurface>,
+    /// Tile positions absorbed by this hexball's inscribed hex (no surface geometry).
+    /// Used by the skirt pass to skip internal edges that face the inscribed hex.
+    pub absorbed: HashSet<(i32, i32)>,
 }
 
 /// Raw mesh geometry output.
@@ -170,6 +173,7 @@ pub fn compute_hexball_surface(
             hex_boundary: None,
             partial_fans: Vec::new(),
             full_tiles: vec![TileSurface { verts, q: center_q, r: center_r, z: center_z }],
+            absorbed: HashSet::new(),
         };
     }
 
@@ -232,11 +236,25 @@ pub fn compute_hexball_surface(
         TileSurface { verts, q: fr.q, r: fr.r, z: ez }
     }).collect();
 
+    // Absorbed tiles: all hexball tiles that aren't partial fans or full residuals
+    let mut absorbed = HashSet::new();
+    {
+        let n = radius as i32;
+        for dq in -n..=n {
+            for dr in (-n).max(-dq - n)..=n.min(-dq + n) {
+                absorbed.insert((center_q + dq, center_r + dr));
+            }
+        }
+        for pr in &hb.partial_residuals { absorbed.remove(&(pr.q, pr.r)); }
+        for fr in &hb.full_residuals { absorbed.remove(&(fr.q, fr.r)); }
+    }
+
     HexballSurface {
         hex_center: Some(hex_center),
         hex_boundary: Some(hex_boundary),
         partial_fans,
         full_tiles,
+        absorbed,
     }
 }
 
@@ -342,16 +360,13 @@ fn tile_vertex_pos(
 
 // ── Chunk-level skirt stitching ──────────────────────────────────────────────
 
-/// Quantize an xz position to an integer key for edge matching.
-fn xz_key(v: Vec3) -> (i64, i64) {
-    ((v.x * 10000.0).round() as i64, (v.z * 10000.0).round() as i64)
-}
-
-/// Canonical (sorted) key for an edge defined by two xz positions.
-fn sorted_edge_key(a: Vec3, b: Vec3) -> ((i64, i64), (i64, i64)) {
-    let ka = xz_key(a);
-    let kb = xz_key(b);
-    if ka <= kb { (ka, kb) } else { (kb, ka) }
+/// Integer grid identity for a hex vertex. Two tiles sharing the same physical
+/// vertex produce identical `(a, b)` regardless of which `(q, r, vidx)` is used.
+/// Uses the doubled-coordinate system from hex_decimate.
+pub fn grid_vertex_id(q: i32, r: i32, vidx: usize) -> (i32, i32) {
+    const VX2: [i32; 6] = [1, 2, 1, -1, -2, -1];
+    const VZ2: [i32; 6] = [-1, 0, 1, 1, 0, -1];
+    (3 * q + VX2[vidx], q + 2 * r + VZ2[vidx])
 }
 
 /// Emit skirt quads between surfaces that share perimeter edges with different Y.
@@ -360,39 +375,71 @@ fn emit_chunk_skirts(
     chunk_origin: Vec3,
     combined: &mut HexballGeometry,
 ) {
-    type EdgeKey = ((i64, i64), (i64, i64));
-    let mut edge_map: HashMap<EdgeKey, Vec<(usize, Vec3, Vec3)>> = HashMap::new();
+    type VertexId = (i32, i32);
+    type EdgeKey = (VertexId, VertexId);
+
+    struct SkirtEdge {
+        sid: usize,
+        id_a: VertexId,
+        pos_a: Vec3,
+        pos_b: Vec3,
+    }
+
+    let mut edge_map: HashMap<EdgeKey, Vec<SkirtEdge>> = HashMap::new();
 
     for (sid, surface) in surfaces.iter().enumerate() {
+        // Fan perimeter edges — skip edges facing this hexball's absorbed tiles
         for fan in &surface.partial_fans {
+            let st = fan.surviving_triangles;
+            let ov = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
             for i in 0..3 {
-                let (a, b) = (fan.outer[i], fan.outer[i + 1]);
-                let key = sorted_edge_key(a, b);
-                edge_map.entry(key).or_default().push((sid, a, b));
+                let vi = ov[i];
+                let dir = (10 - vi) % 6;
+                let d = qrz::DIRECTIONS[dir];
+                if surface.absorbed.contains(&(fan.q + d.q, fan.r + d.r)) { continue; }
+
+                let id_a = grid_vertex_id(fan.q, fan.r, vi);
+                let id_b = grid_vertex_id(fan.q, fan.r, (vi + 1) % 6);
+                let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
+                edge_map.entry(key).or_default().push(SkirtEdge {
+                    sid, id_a, pos_a: fan.outer[i], pos_b: fan.outer[i + 1],
+                });
             }
         }
+        // Full residual tile edges — skip edges facing this hexball's absorbed tiles
         for tile in &surface.full_tiles {
             for i in 0..6 {
-                let (a, b) = (tile.verts[i], tile.verts[(i + 1) % 6]);
-                let key = sorted_edge_key(a, b);
-                edge_map.entry(key).or_default().push((sid, a, b));
+                let dir = (10 - i) % 6;
+                let d = qrz::DIRECTIONS[dir];
+                if surface.absorbed.contains(&(tile.q + d.q, tile.r + d.r)) { continue; }
+
+                let id_a = grid_vertex_id(tile.q, tile.r, i);
+                let id_b = grid_vertex_id(tile.q, tile.r, (i + 1) % 6);
+                let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
+                edge_map.entry(key).or_default().push(SkirtEdge {
+                    sid, id_a, pos_a: tile.verts[i], pos_b: tile.verts[(i + 1) % 6],
+                });
             }
         }
     }
 
     for (key, entries) in &edge_map {
         if entries.len() < 2 { continue; }
-        let first_sid = entries[0].0;
-        if entries.iter().all(|(sid, _, _)| *sid == first_sid) { continue; }
+        let first_sid = entries[0].sid;
+        if entries.iter().all(|e| e.sid == first_sid) { continue; }
 
-        // Match endpoints to the canonical key order
+        // Match endpoints to the canonical key order via grid identity
         let mut max_y0 = f32::NEG_INFINITY;
         let mut min_y0 = f32::INFINITY;
         let mut max_y1 = f32::NEG_INFINITY;
         let mut min_y1 = f32::INFINITY;
 
-        for &(_, a, b) in entries {
-            let (y0, y1) = if xz_key(a) == key.0 { (a.y, b.y) } else { (b.y, a.y) };
+        for e in entries {
+            let (y0, y1) = if e.id_a == key.0 {
+                (e.pos_a.y, e.pos_b.y)
+            } else {
+                (e.pos_b.y, e.pos_a.y)
+            };
             max_y0 = max_y0.max(y0);
             min_y0 = min_y0.min(y0);
             max_y1 = max_y1.max(y1);
@@ -402,9 +449,11 @@ fn emit_chunk_skirts(
         if (max_y0 - min_y0) < 1e-5 && (max_y1 - min_y1) < 1e-5 { continue; }
 
         // Use xz from first entry, oriented to match canonical key
-        let (p0, p1) = {
-            let (a, b) = (entries[0].1, entries[0].2);
-            if xz_key(a) == key.0 { (a, b) } else { (b, a) }
+        let e0 = &entries[0];
+        let (p0, p1) = if e0.id_a == key.0 {
+            (e0.pos_a, e0.pos_b)
+        } else {
+            (e0.pos_b, e0.pos_a)
         };
 
         let top0 = Vec3::new(p0.x, max_y0, p0.z);

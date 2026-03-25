@@ -779,7 +779,25 @@ fn report_terrain_at_cursor(
                 fan.outer[3].y, edge_next, bv[edge_next].y, d3);
         }
 
-        // Skirts are now chunk-level (not per-hexball) — see build_chunk_mesh.
+        // Skirt edge diagnostics — show what each fan registers
+        use common_bevy::hexball_geometry::grid_vertex_id;
+        for (pi, fan) in surface.partial_fans.iter().enumerate() {
+            let st = fan.surviving_triangles;
+            let ov = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
+            for i in 0..3 {
+                let vi = ov[i];
+                let dir = (10 - vi) % 6;
+                let d = qrz::DIRECTIONS[dir];
+                let nq = fan.q + d.q;
+                let nr = fan.r + d.r;
+                let absorbed = surface.absorbed.contains(&(nq, nr));
+                let id_a = grid_vertex_id(fan.q, fan.r, vi);
+                let id_b = grid_vertex_id(fan.q, fan.r, (vi + 1) % 6);
+                let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
+                info!("    fan[{pi}] edge[{i}] v{}→v{} dir={dir} nb=({nq},{nr}) abs={absorbed} key={key:?} y=[{:.4},{:.4}]",
+                    vi, (vi+1)%6, fan.outer[i].y, fan.outer[i + 1].y);
+            }
+        }
     }
 
     // Check if cursor tile is a survivor instead
