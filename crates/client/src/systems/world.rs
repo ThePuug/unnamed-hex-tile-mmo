@@ -55,6 +55,8 @@ pub fn setup(
     let material = materials.add(bevy::pbr::ExtendedMaterial {
         base: StandardMaterial {
             perceptual_roughness: 1.,
+            double_sided: true,
+            cull_mode: None,
             ..default()
         },
         extension: crate::resources::TerrainExtension {},

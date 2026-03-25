@@ -779,18 +779,7 @@ fn report_terrain_at_cursor(
                 fan.outer[3].y, edge_next, bv[edge_next].y, d3);
         }
 
-        // Skirts — all values read from the rendered surface struct
-        if !surface.skirts.is_empty() {
-            info!("    skirts: {} quads", surface.skirts.len());
-            for (si, skirt) in surface.skirts.iter().enumerate() {
-                info!("      skirt[{si}] ({},{})→({},{}) top=[{:.2},{:.2}] bot=[{:.2},{:.2}] drop=[{:.2},{:.2}]",
-                    skirt.from_q, skirt.from_r, skirt.to_q, skirt.to_r,
-                    skirt.top[0].y, skirt.top[1].y,
-                    skirt.bottom[0].y, skirt.bottom[1].y,
-                    skirt.top[0].y - skirt.bottom[0].y,
-                    skirt.top[1].y - skirt.bottom[1].y);
-            }
-        }
+        // Skirts are now chunk-level (not per-hexball) — see build_chunk_mesh.
     }
 
     // Check if cursor tile is a survivor instead

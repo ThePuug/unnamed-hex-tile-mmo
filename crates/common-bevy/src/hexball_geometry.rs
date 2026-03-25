@@ -17,9 +17,10 @@ use bevy::{
 };
 use bevy_mesh::Indices;
 
+use std::collections::HashMap;
+
 use crate::geometry::{
     flat_top_tile_center, flat_top_vertex_offsets, hex_vertex_normal, slope_adjustments,
-    SKIRT_VERTEX_MAP,
 };
 
 // ── Surface data (phase 1 output) ────────────────────────────────────────────
@@ -43,16 +44,6 @@ pub struct PartialFanSurface {
     pub z: i32,
 }
 
-/// A skirt quad connecting a high edge to a low edge.
-pub struct SkirtQuad {
-    pub top: [Vec3; 2],
-    pub bottom: [Vec3; 2],
-    pub from_q: i32,
-    pub from_r: i32,
-    pub to_q: i32,
-    pub to_r: i32,
-}
-
 /// All computed surface data for a hexball, before mesh emission.
 /// Every Vec3 is the final rendered position — no further overrides.
 pub struct HexballSurface {
@@ -60,7 +51,6 @@ pub struct HexballSurface {
     pub hex_boundary: Option<[Vec3; 6]>,
     pub partial_fans: Vec<PartialFanSurface>,
     pub full_tiles: Vec<TileSurface>,
-    pub skirts: Vec<SkirtQuad>,
 }
 
 /// Raw mesh geometry output.
@@ -107,24 +97,32 @@ pub fn build_chunk_mesh(
         }
     };
 
+    // Phase 1: Compute all surfaces
+    let mut surfaces = Vec::new();
+    for hb in &decimation.hexballs {
+        surfaces.push(compute_hexball_surface(
+            hb.center_q, hb.center_r, hb.center_z, hb.radius,
+            hex_radius, rise, &effective_tile_z,
+        ));
+    }
+    for &(q, r, z) in &decimation.survivors {
+        surfaces.push(compute_hexball_surface(
+            q, r, z, 0, hex_radius, rise, &effective_tile_z,
+        ));
+    }
+
+    // Phase 2: Emit all surface geometry
     let mut combined = HexballGeometry {
         positions: Vec::new(),
         normals: Vec::new(),
         indices: Vec::new(),
     };
-
-    for hb in &decimation.hexballs {
-        let geom = compute_hexball_geometry(
-            hb.center_q, hb.center_r, hb.center_z, hb.radius,
-            hex_radius, rise, chunk_origin, &effective_tile_z,
-        );
-        merge_geometry(&mut combined, &geom);
+    for surface in &surfaces {
+        merge_geometry(&mut combined, &emit_hexball_mesh(surface, chunk_origin));
     }
 
-    for &(q, r, z) in &decimation.survivors {
-        let geom = compute_hexball_geometry(q, r, z, 0, hex_radius, rise, chunk_origin, &effective_tile_z);
-        merge_geometry(&mut combined, &geom);
-    }
+    // Phase 3: Chunk-level skirt stitching
+    emit_chunk_skirts(&surfaces, chunk_origin, &mut combined);
 
     let vert_count = combined.positions.len();
     let verts: Vec<Vec3> = combined.positions.iter().map(|p| Vec3::from_array(*p)).collect();
@@ -167,13 +165,11 @@ pub fn compute_hexball_surface(
 
     if radius == 0 {
         let verts = tile_vertices(center_q, center_r, center_z, hex_radius, rise, tile_z);
-        let skirts = Vec::new();
         return HexballSurface {
             hex_center: None,
             hex_boundary: None,
             partial_fans: Vec::new(),
             full_tiles: vec![TileSurface { verts, q: center_q, r: center_r, z: center_z }],
-            skirts,
         };
     }
 
@@ -236,14 +232,11 @@ pub fn compute_hexball_surface(
         TileSurface { verts, q: fr.q, r: fr.r, z: ez }
     }).collect();
 
-    let skirts = Vec::new();
-
     HexballSurface {
         hex_center: Some(hex_center),
         hex_boundary: Some(hex_boundary),
         partial_fans,
         full_tiles,
-        skirts,
     }
 }
 
@@ -307,22 +300,6 @@ fn emit_hexball_mesh(surface: &HexballSurface, chunk_origin: Vec3) -> HexballGeo
         }
     }
 
-    // Skirts
-    for skirt in &surface.skirts {
-        let edge_dir = (skirt.top[1] - skirt.top[0]).normalize();
-        let outward = edge_dir.cross(Vec3::new(0.0, -1.0, 0.0)).normalize();
-        let base = positions.len() as u32;
-        let v0: [f32; 3] = (skirt.top[0] - chunk_origin).into();
-        let v1: [f32; 3] = (skirt.top[1] - chunk_origin).into();
-        let v2: [f32; 3] = (skirt.bottom[1] - chunk_origin).into();
-        let v3: [f32; 3] = (skirt.bottom[0] - chunk_origin).into();
-        positions.extend([v0, v1, v2, v3]);
-        let n: [f32; 3] = outward.into();
-        normals.extend([n; 4]);
-        indices.extend([base, base + 1, base + 2]);
-        indices.extend([base, base + 2, base + 3]);
-    }
-
     HexballGeometry { positions, normals, indices }
 }
 
@@ -363,29 +340,99 @@ fn tile_vertex_pos(
     Vec3::new(cx + ox, z as f32 * rise + rise + adj[vertex_idx], cz + oz)
 }
 
-// ── Shared helpers ───────────────────────────────────────────────────────────
+// ── Chunk-level skirt stitching ──────────────────────────────────────────────
 
-fn compute_tile_skirts(
-    q: i32, r: i32, z: i32, verts: &[Vec3; 7],
-    hex_radius: f32, rise: f32,
-    tile_z: &impl Fn(i32, i32) -> Option<i32>,
-) -> Vec<SkirtQuad> {
-    let mut skirts = Vec::new();
-    for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
-        let nq = q + direction.q;
-        let nr = r + direction.r;
-        let nz = match tile_z(nq, nr) { Some(z) => z, None => continue };
-        if nz >= z { continue; }
-        let n_verts = tile_vertices(nq, nr, nz, hex_radius, rise, tile_z);
-        let (cv1, cv2, nv1, nv2) = SKIRT_VERTEX_MAP[dir_idx];
-        skirts.push(SkirtQuad {
-            top: [verts[cv1], verts[cv2]],
-            bottom: [n_verts[nv1], n_verts[nv2]],
-            from_q: q, from_r: r, to_q: nq, to_r: nr,
-        });
-    }
-    skirts
+/// Quantize an xz position to an integer key for edge matching.
+fn xz_key(v: Vec3) -> (i64, i64) {
+    ((v.x * 10000.0).round() as i64, (v.z * 10000.0).round() as i64)
 }
+
+/// Canonical (sorted) key for an edge defined by two xz positions.
+fn sorted_edge_key(a: Vec3, b: Vec3) -> ((i64, i64), (i64, i64)) {
+    let ka = xz_key(a);
+    let kb = xz_key(b);
+    if ka <= kb { (ka, kb) } else { (kb, ka) }
+}
+
+/// Emit skirt quads between surfaces that share perimeter edges with different Y.
+fn emit_chunk_skirts(
+    surfaces: &[HexballSurface],
+    chunk_origin: Vec3,
+    combined: &mut HexballGeometry,
+) {
+    type EdgeKey = ((i64, i64), (i64, i64));
+    let mut edge_map: HashMap<EdgeKey, Vec<(usize, Vec3, Vec3)>> = HashMap::new();
+
+    for (sid, surface) in surfaces.iter().enumerate() {
+        for fan in &surface.partial_fans {
+            for i in 0..3 {
+                let (a, b) = (fan.outer[i], fan.outer[i + 1]);
+                let key = sorted_edge_key(a, b);
+                edge_map.entry(key).or_default().push((sid, a, b));
+            }
+        }
+        for tile in &surface.full_tiles {
+            for i in 0..6 {
+                let (a, b) = (tile.verts[i], tile.verts[(i + 1) % 6]);
+                let key = sorted_edge_key(a, b);
+                edge_map.entry(key).or_default().push((sid, a, b));
+            }
+        }
+    }
+
+    for (key, entries) in &edge_map {
+        if entries.len() < 2 { continue; }
+        let first_sid = entries[0].0;
+        if entries.iter().all(|(sid, _, _)| *sid == first_sid) { continue; }
+
+        // Match endpoints to the canonical key order
+        let mut max_y0 = f32::NEG_INFINITY;
+        let mut min_y0 = f32::INFINITY;
+        let mut max_y1 = f32::NEG_INFINITY;
+        let mut min_y1 = f32::INFINITY;
+
+        for &(_, a, b) in entries {
+            let (y0, y1) = if xz_key(a) == key.0 { (a.y, b.y) } else { (b.y, a.y) };
+            max_y0 = max_y0.max(y0);
+            min_y0 = min_y0.min(y0);
+            max_y1 = max_y1.max(y1);
+            min_y1 = min_y1.min(y1);
+        }
+
+        if (max_y0 - min_y0) < 1e-5 && (max_y1 - min_y1) < 1e-5 { continue; }
+
+        // Use xz from first entry, oriented to match canonical key
+        let (p0, p1) = {
+            let (a, b) = (entries[0].1, entries[0].2);
+            if xz_key(a) == key.0 { (a, b) } else { (b, a) }
+        };
+
+        let top0 = Vec3::new(p0.x, max_y0, p0.z);
+        let top1 = Vec3::new(p1.x, max_y1, p1.z);
+        let bot0 = Vec3::new(p0.x, min_y0, p0.z);
+        let bot1 = Vec3::new(p1.x, min_y1, p1.z);
+
+        let edge_dir = Vec3::new(p1.x - p0.x, 0.0, p1.z - p0.z);
+        let outward = edge_dir.cross(Vec3::new(0.0, -1.0, 0.0));
+        let n: [f32; 3] = if outward.length_squared() > 1e-10 {
+            outward.normalize().into()
+        } else {
+            Vec3::Y.into()
+        };
+
+        let base = combined.positions.len() as u32;
+        let v0: [f32; 3] = (top0 - chunk_origin).into();
+        let v1: [f32; 3] = (top1 - chunk_origin).into();
+        let v2: [f32; 3] = (bot1 - chunk_origin).into();
+        let v3: [f32; 3] = (bot0 - chunk_origin).into();
+        combined.positions.extend([v0, v1, v2, v3]);
+        combined.normals.extend([n; 4]);
+        combined.indices.extend([base, base + 1, base + 2]);
+        combined.indices.extend([base, base + 2, base + 3]);
+    }
+}
+
+// ── Shared helpers ───────────────────────────────────────────────────────────
 
 fn triangle_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     let n = (b - a).cross(c - a);
@@ -648,4 +695,5 @@ mod tests {
                 "vertex {i} y={:.4} below z=9 base {min_y:.4}", pos[1]);
         }
     }
+
 }
