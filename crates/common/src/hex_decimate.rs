@@ -71,6 +71,9 @@ pub struct DecimatedHexball {
     pub partial_residuals: Vec<PartialResidual>,
     /// Full residual tiles (entirely outside inscribed hex, all 6 triangles survive).
     pub full_residuals: Vec<FullResidual>,
+    /// Effective z for each absorbed tile: slopes gently from center_z.
+    /// Used by the geometry pipeline so fans blend toward compressed z values.
+    pub effective_z: HashMap<(i32, i32), i32>,
 }
 
 /// A tile whose center lies on an inscribed hex edge, split into inner (absorbed)
@@ -106,7 +109,7 @@ pub struct ChunkDecimation {
 // ── Hex Math ──
 
 /// Hex distance between two axial offsets.
-fn hex_dist(dq: i32, dr: i32) -> i32 {
+pub fn hex_dist(dq: i32, dr: i32) -> i32 {
     dq.abs().max(dr.abs()).max((dq + dr).abs())
 }
 
@@ -284,6 +287,7 @@ pub fn decimate_hexball(
     // Step 1: Gather all tiles, find z range
     let mut z_min = i32::MAX;
     let mut z_max = i32::MIN;
+    let mut z_values = Vec::new();
 
     for dq in -n..=n {
         let dr_min = (-n).max(-dq - n);
@@ -293,14 +297,24 @@ pub fn decimate_hexball(
                 Some(z) => {
                     z_min = z_min.min(z);
                     z_max = z_max.max(z);
+                    z_values.push(z);
                 }
                 None => return None,
             }
         }
     }
 
-    // Step 2: Select center z — minimizes max deviation, ties → lowest z
-    let center_z = ((z_min as i64 + z_max as i64).div_euclid(2)) as i32;
+    // Step 2: Select center z — minimizes max deviation, ties → median
+    let z_sum = z_min as i64 + z_max as i64;
+    let center_z = if z_sum % 2 == 0 {
+        (z_sum / 2) as i32
+    } else {
+        let lo = z_sum.div_euclid(2) as i32;
+        let hi = lo + 1;
+        z_values.sort_unstable();
+        let median = z_values[z_values.len() / 2];
+        if (median - hi).abs() <= (median - lo).abs() { hi } else { lo }
+    };
 
     // Step 3: Check threshold
     let dev_low = (center_z as i64 - z_min as i64) as u32;
@@ -349,6 +363,7 @@ pub fn decimate_hexball(
     // The inscribed hex edge can pass through tiles at ANY ring, not just ring N.
     let mut partial_residuals = Vec::new();
     let mut full_residuals = Vec::new();
+    let mut effective_z = HashMap::new();
 
     for dq in -n..=n {
         let dr_min = (-n).max(-dq - n);
@@ -358,6 +373,11 @@ pub fn decimate_hexball(
             let r = center_r + dr;
             let z = tiles(q, r).unwrap();
             let (ta, tb) = (3 * q, q + 2 * r);
+
+            // Effective z for ALL hexball tiles — slopes gently from center_z
+            let dist = hex_dist(dq, dr);
+            let ez = z.max(center_z - dist).min(center_z + dist);
+            effective_z.insert((q, r), ez);
 
             let inside: [bool; 6] =
                 std::array::from_fn(|t| is_centroid_inside(&vertices, ta, tb, t));
@@ -396,6 +416,7 @@ pub fn decimate_hexball(
         boundary_tiles,
         partial_residuals,
         full_residuals,
+        effective_z,
     })
 }
 
@@ -618,12 +639,58 @@ mod tests {
     }
 
     #[test]
-    fn center_z_ties_broken_by_lowest() {
-        // z range [0, 3] → midpoint 1.5, floor = 1
-        // Both z=1 and z=2 give max_dev = 2; lowest wins
+    fn center_z_ties_broken_by_median() {
+        // z range [0, 3] → candidates 1 and 2
+        // z values mostly 0, median=0 → closer to 1
         let map = tiles_from_fn(0, 0, 1, |q, _r| if q > 0 { 3 } else { 0 });
         let hb = decimate_hexball(0, 0, 1, 2, &lookup(&map)).unwrap();
-        assert_eq!(hb.center_z, 1, "ties should break to lowest z");
+        assert_eq!(hb.center_z, 1, "median tiebreaker picks 1 (closer to majority z=0)");
+    }
+
+    #[test]
+    fn center_z_median_picks_majority() {
+        // 5 tiles z=10, 2 tiles z=9 → median=10, picks 10 not 9
+        let mut map = HashMap::new();
+        map.insert((0, 0), 10);
+        map.insert((-1, 0), 9);
+        map.insert((-1, 1), 10);
+        map.insert((0, 1), 10);
+        map.insert((1, 0), 10);
+        map.insert((1, -1), 10);
+        map.insert((0, -1), 9);
+        for dq in -2..=2 {
+            for dr in (-2).max(-dq - 2)..=(2).min(-dq + 2) {
+                map.entry((dq, dr)).or_insert(10);
+            }
+        }
+        let hb = decimate_hexball(0, 0, 1, 1, &lookup(&map)).unwrap();
+        assert_eq!(hb.center_z, 10, "median should prefer majority z=10 over z=9");
+    }
+
+    #[test]
+    fn effective_z_clamps_all_hexball_tiles() {
+        // center_z=45 (midpoint of 40..50), all 7 tiles get effective_z
+        let mut map = HashMap::new();
+        map.insert((0, 0), 50);
+        for &(dq, dr) in &[(-1,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+            map.insert((dq, dr), 40);
+        }
+        for dq in -2..=2 {
+            for dr in (-2).max(-dq - 2)..=(2).min(-dq + 2) {
+                map.entry((dq, dr)).or_insert(40);
+            }
+        }
+        let hb = decimate_hexball(0, 0, 1, 10, &lookup(&map)).unwrap();
+        // All 7 hexball tiles have effective_z
+        assert_eq!(hb.effective_z.len(), 7);
+        // Center tile (distance 0) → effective_z = center_z
+        assert_eq!(*hb.effective_z.get(&(0, 0)).unwrap(), hb.center_z);
+        // Ring-1 tiles (distance 1) → clamp(40, center_z-1, center_z+1)
+        for &(dq, dr) in &[(-1,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
+            let ez = *hb.effective_z.get(&(dq, dr)).unwrap();
+            assert!((ez - hb.center_z).abs() <= 1,
+                "ring-1 tile ({dq},{dr}) effective_z={ez} too far from center_z={}", hb.center_z);
+        }
     }
 
     #[test]

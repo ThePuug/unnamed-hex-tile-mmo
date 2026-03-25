@@ -430,6 +430,10 @@ fn collect_and_build_mesh(
 
     // Run hex-native decimation then build mesh via hexball geometry
     let dec = common::hex_decimate::decimate_chunk(&chunk_tile_list, HEXBALL_RADIUS, threshold, &lookup);
+    let mut effective_z = std::collections::HashMap::new();
+    for hb in &dec.hexballs {
+        effective_z.extend(&hb.effective_z);
+    }
     let plan = common_bevy::hexball_geometry::ChunkDecimation {
         hexballs: dec.hexballs.iter().map(|hb| common_bevy::hexball_geometry::HexballDecimation {
             center_q: hb.center_q,
@@ -438,6 +442,7 @@ fn collect_and_build_mesh(
             radius: HEXBALL_RADIUS,
         }).collect(),
         survivors: dec.survivors.clone(),
+        effective_z,
     };
     let mesh = common_bevy::hexball_geometry::build_chunk_mesh(
         &plan, TILE_RADIUS, RISE, chunk_origin, &lookup,

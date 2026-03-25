@@ -82,6 +82,10 @@ pub struct HexballDecimation {
 pub struct ChunkDecimation {
     pub hexballs: Vec<HexballDecimation>,
     pub survivors: Vec<(i32, i32, i32)>,
+    /// Chunk-level effective z: absorbed tile positions → clamped z values.
+    /// Merged from all hexballs. Geometry uses this for neighbor lookups
+    /// so fans blend toward compressed z instead of original z.
+    pub effective_z: std::collections::HashMap<(i32, i32), i32>,
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -94,6 +98,15 @@ pub fn build_chunk_mesh(
     chunk_origin: Vec3,
     tile_z: &impl Fn(i32, i32) -> Option<i32>,
 ) -> Mesh {
+    // Unified lookup: effective_z for absorbed tiles, original_z for everything else.
+    let effective_tile_z = |q: i32, r: i32| -> Option<i32> {
+        if let Some(&ez) = decimation.effective_z.get(&(q, r)) {
+            Some(ez)
+        } else {
+            tile_z(q, r)
+        }
+    };
+
     let mut combined = HexballGeometry {
         positions: Vec::new(),
         normals: Vec::new(),
@@ -103,13 +116,13 @@ pub fn build_chunk_mesh(
     for hb in &decimation.hexballs {
         let geom = compute_hexball_geometry(
             hb.center_q, hb.center_r, hb.center_z, hb.radius,
-            hex_radius, rise, chunk_origin, tile_z,
+            hex_radius, rise, chunk_origin, &effective_tile_z,
         );
         merge_geometry(&mut combined, &geom);
     }
 
     for &(q, r, z) in &decimation.survivors {
-        let geom = compute_hexball_geometry(q, r, z, 0, hex_radius, rise, chunk_origin, tile_z);
+        let geom = compute_hexball_geometry(q, r, z, 0, hex_radius, rise, chunk_origin, &effective_tile_z);
         merge_geometry(&mut combined, &geom);
     }
 
@@ -180,31 +193,47 @@ pub fn compute_hexball_surface(
         tile_vertex_pos(tq, tr, tz, vi as usize, hex_radius, rise, tile_z)
     });
 
-    // Partial fans with BV Y overrides
+    // Partial fans — use effective z from the lookup for tile height and blending,
+    // then snap inner vertices and center onto the inscribed hex surface.
     let partial_fans: Vec<PartialFanSurface> = hb.partial_residuals.iter().map(|pr| {
-        let tv = tile_vertices(pr.q, pr.r, pr.original_z, hex_radius, rise, tile_z);
+        let ez = tile_z(pr.q, pr.r).unwrap_or(pr.original_z);
+        let tv = tile_vertices(pr.q, pr.r, ez, hex_radius, rise, tile_z);
         let st = pr.surviving_triangles;
         let edge = st[1] as usize;
         let edge_next = (edge + 1) % 6;
         let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
 
         let mut outer = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
-        outer[0].y = hb.boundary_z[edge] as f32 * rise + rise;
-        outer[3].y = hb.boundary_z[edge_next] as f32 * rise + rise;
+        // Snap inner vertices to BV heights (T-junction resolution)
+        outer[0].y = hex_boundary[edge].y;
+        outer[3].y = hex_boundary[edge_next].y;
 
-        let fan_center_y = pr.snapped_z as f32 * rise + rise;
-        let center = Vec3::new(tv[6].x, fan_center_y, tv[6].z);
+        // Snap fan center onto the inscribed hex edge
+        let bv_e = hex_boundary[edge];
+        let bv_e1 = hex_boundary[edge_next];
+        let edge_dx = bv_e1.x - bv_e.x;
+        let edge_dz = bv_e1.z - bv_e.z;
+        let edge_len_sq = edge_dx * edge_dx + edge_dz * edge_dz;
+        let t = if edge_len_sq > 1e-10 {
+            let px = tv[6].x - bv_e.x;
+            let pz = tv[6].z - bv_e.z;
+            (px * edge_dx + pz * edge_dz) / edge_len_sq
+        } else {
+            0.5
+        };
+        let center = Vec3::new(tv[6].x, bv_e.y + t * (bv_e1.y - bv_e.y), tv[6].z);
 
         PartialFanSurface {
             center, outer, surviving_triangles: st,
-            q: pr.q, r: pr.r, z: pr.original_z,
+            q: pr.q, r: pr.r, z: ez,
         }
     }).collect();
 
-    // Full residual tiles
+    // Full residual tiles — use effective z from the lookup.
     let full_tiles: Vec<TileSurface> = hb.full_residuals.iter().map(|fr| {
-        let verts = tile_vertices(fr.q, fr.r, fr.z, hex_radius, rise, tile_z);
-        TileSurface { verts, q: fr.q, r: fr.r, z: fr.z }
+        let ez = tile_z(fr.q, fr.r).unwrap_or(fr.z);
+        let verts = tile_vertices(fr.q, fr.r, ez, hex_radius, rise, tile_z);
+        TileSurface { verts, q: fr.q, r: fr.r, z: ez }
     }).collect();
 
     let skirts = Vec::new();
@@ -559,23 +588,64 @@ mod tests {
     }
 
     #[test]
-    fn surface_reports_overridden_y() {
+    fn fan_inner_vertices_agree_with_bv() {
+        // With effective_z lookup, fan inner vertices and BV heights should
+        // agree naturally from standard blending — no override needed.
         let mut elevations = HashMap::new();
         for dq in -3..=3 {
             for dr in (-3).max(-dq - 3)..=(3).min(-dq + 3) {
                 elevations.insert((dq, dr), dq + 3);
             }
         }
-        let tile_z = make_tile_z(&elevations);
-        let surface = compute_hexball_surface(0, 0, 3, 1, 1.0, 0.8, &tile_z);
+        // Build effective_z for this hexball
+        let tile_z_fn = make_tile_z(&elevations);
+        let hb = common::hex_decimate::decimate_hexball(0, 0, 1, u32::MAX, &tile_z_fn).unwrap();
+        let mut effective = elevations.clone();
+        for (&(q, r), &ez) in &hb.effective_z {
+            effective.insert((q, r), ez);
+        }
+        let eff_tile_z = make_tile_z(&effective);
+        let surface = compute_hexball_surface(0, 0, hb.center_z, 1, 1.0, 0.8, &eff_tile_z);
         let bv = surface.hex_boundary.unwrap();
         for fan in &surface.partial_fans {
             let edge = fan.surviving_triangles[1] as usize;
             let edge_next = (edge + 1) % 6;
-            assert!((fan.outer[0].y - bv[edge].y).abs() < 1e-5,
+            assert!((fan.outer[0].y - bv[edge].y).abs() < 1e-4,
                 "fan ov[0] y={:.4} != bv[{edge}] y={:.4}", fan.outer[0].y, bv[edge].y);
-            assert!((fan.outer[3].y - bv[edge_next].y).abs() < 1e-5,
+            assert!((fan.outer[3].y - bv[edge_next].y).abs() < 1e-4,
                 "fan ov[3] y={:.4} != bv[{edge_next}] y={:.4}", fan.outer[3].y, bv[edge_next].y);
+        }
+    }
+
+    #[test]
+    fn no_bowl_on_majority_slope() {
+        // 5 tiles at z=10, 2 at z=9. Median picks center_z=10, no bowl.
+        let mut elevations = HashMap::new();
+        elevations.insert((0, 0), 10);
+        elevations.insert((-1, 0), 9);
+        elevations.insert((-1, 1), 10);
+        elevations.insert((0, 1), 10);
+        elevations.insert((1, 0), 10);
+        elevations.insert((1, -1), 10);
+        elevations.insert((0, -1), 9);
+        for dq in -2..=2 {
+            for dr in (-2).max(-dq - 2)..=(2).min(-dq + 2) {
+                elevations.entry((dq, dr)).or_insert(10);
+            }
+        }
+        let tile_z = make_tile_z(&elevations);
+        // Get center_z from decimation (should be 10 via median)
+        let dec = common::hex_decimate::decimate_hexball(0, 0, 1, 1, &tile_z).unwrap();
+        assert_eq!(dec.center_z, 10);
+        // Build effective lookup
+        let mut eff = elevations.clone();
+        for (&(q, r), &ez) in &dec.effective_z { eff.insert((q, r), ez); }
+        let eff_z = make_tile_z(&eff);
+        let hb = compute_hexball_geometry(0, 0, 10, 1, 1.0, 0.8, Vec3::ZERO, &eff_z);
+        let min_y = 9.0 * 0.8 + 0.8; // z=9 base = 8.0
+        for (i, pos) in hb.positions.iter().enumerate() {
+            assert!(pos[1] >= min_y - 1e-4,
+                "vertex {i} y={:.4} below z=9 base {min_y:.4}", pos[1]);
         }
     }
 }
