@@ -712,7 +712,7 @@ fn report_terrain_at_cursor(
     }
 
     let elev_lookup = |q: i32, r: i32| -> Option<i32> { elevations.get(&(q, r)).copied() };
-    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, 1, threshold, &elev_lookup);
+    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, crate::resources::MAX_HEXBALL_RADIUS, threshold, &elev_lookup);
 
     info!("  chunk tiles={} hexballs={} survivors={}",
         chunk_tile_list.len(), decimation.hexballs.len(), decimation.survivors.len());
@@ -722,11 +722,11 @@ fn report_terrain_at_cursor(
         let dq = qrz.q - hb.center_q;
         let dr = qrz.r - hb.center_r;
         let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
-        if dist > 1 { continue; } // r=1 hexball
+        if dist > hb.radius as i32 { continue; }
 
         // Compute the actual rendered surface — single source of truth.
         let surface = common_bevy::hexball_geometry::compute_hexball_surface(
-            hb.center_q, hb.center_r, hb.center_z, 1,
+            hb.center_q, hb.center_r, hb.center_z, hb.radius,
             map.radius(), rise, &elev_lookup,
         );
         let bv = surface.hex_boundary.unwrap();

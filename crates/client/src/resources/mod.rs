@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 use common_bevy::chunk::ChunkId;
 
+/// Maximum hexball radius. Decimation tries r=max down to r=1.
+pub const MAX_HEXBALL_RADIUS: u32 = 9;
+
 /// Custom terrain material extension that computes elevation color in the fragment shader.
 /// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
