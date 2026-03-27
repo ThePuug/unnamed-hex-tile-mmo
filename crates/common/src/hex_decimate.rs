@@ -62,6 +62,8 @@ pub struct DecimatedHexball {
     pub center_r: i32,
     /// Discrete integer z-level chosen to minimize max deviation (INV-009).
     pub center_z: i32,
+    /// Hexball radius used for this decimation.
+    pub radius: u32,
     /// Blended z-heights at the 6 inscribed hex boundary vertices.
     /// Index matches flat-top vertex convention: 0=NE, 1=E, 2=SE, 3=SW, 4=W, 5=NW.
     pub boundary_z: [f64; 6],
@@ -412,6 +414,7 @@ pub fn decimate_hexball(
         center_q,
         center_r,
         center_z,
+        radius,
         boundary_z,
         boundary_tiles,
         partial_residuals,
@@ -424,25 +427,23 @@ pub fn decimate_hexball(
 
 /// Decimate all possible hexballs within a chunk's tiles at the given threshold.
 ///
-/// Uses the `HexLattice` at the given hexball radius to tile hexball centers
-/// across the chunk. Only hexballs whose tiles are entirely present in the
-/// input are attempted. Tiles not absorbed by any successfully-decimated
-/// hexball remain as survivors.
-///
-/// The tiling is gap-free: every tile belongs to exactly one lattice cell,
-/// so no tile can be claimed by multiple hexballs.
-/// Decimate all possible hexballs within a chunk's tiles at the given threshold.
+/// Tries each odd radius from `max_radius` down to 1. Larger hexballs are
+/// placed first on their lattice; unclaimed tiles fall through to smaller
+/// radii. Tiles not absorbed by any hexball remain as survivors.
 ///
 /// `elevations` must cover the chunk tiles plus their 1-ring neighbors —
 /// the same lookup used for mesh slope blending. This ensures the blended
 /// vertex threshold check sees the same neighbor data as the mesh builder.
 pub fn decimate_chunk(
     tiles: &[(i32, i32, i32)],
-    radius: u32,
+    max_radius: u32,
     threshold: u32,
     elevations: &impl Fn(i32, i32) -> Option<i32>,
 ) -> ChunkDecimation {
-    if radius == 0 || tiles.is_empty() {
+    assert!(max_radius == 0 || max_radius % 2 == 1,
+        "max_radius must be 0 or odd, got {max_radius}");
+
+    if max_radius == 0 || tiles.is_empty() {
         return ChunkDecimation {
             hexballs: Vec::new(),
             survivors: tiles.to_vec(),
@@ -452,37 +453,44 @@ pub fn decimate_chunk(
     let tile_map: HashMap<(i32, i32), i32> =
         tiles.iter().map(|&(q, r, z)| ((q, r), z)).collect();
 
-    let lattice = HexLattice::new(radius);
-
-    // Find unique lattice cells for all chunk tiles
-    let mut cells: Vec<(i32, i32)> = tiles
-        .iter()
-        .map(|&(q, r, _)| lattice.cell_id(q, r))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    cells.sort(); // deterministic order
-
     let mut hexballs = Vec::new();
     let mut consumed: HashSet<(i32, i32)> = HashSet::new();
 
-    for cell in &cells {
-        // Only attempt if every tile in this hexball is present
-        let all_present = lattice
-            .tiles_in_cell(*cell)
-            .all(|(q, r)| tile_map.contains_key(&(q, r)));
-        if !all_present {
-            continue;
-        }
+    // Try each odd radius from largest to smallest
+    let mut r = max_radius;
+    loop {
+        let lattice = HexLattice::new(r);
 
-        let (cq, cr) = lattice.cell_center(*cell);
+        let mut cells: Vec<(i32, i32)> = tiles
+            .iter()
+            .filter(|(q, r, _)| !consumed.contains(&(*q, *r)))
+            .map(|&(q, r, _)| lattice.cell_id(q, r))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        cells.sort(); // deterministic order
 
-        if let Some(hexball) = decimate_hexball(cq, cr, radius, threshold, elevations) {
-            for (q, r) in lattice.tiles_in_cell(*cell) {
-                consumed.insert((q, r));
+        for cell in &cells {
+            // All tiles in this hexball must be present AND unclaimed
+            let all_available = lattice
+                .tiles_in_cell(*cell)
+                .all(|(q, r)| tile_map.contains_key(&(q, r)) && !consumed.contains(&(q, r)));
+            if !all_available {
+                continue;
             }
-            hexballs.push(hexball);
+
+            let (cq, cr) = lattice.cell_center(*cell);
+
+            if let Some(hexball) = decimate_hexball(cq, cr, r, threshold, elevations) {
+                for (q, r) in lattice.tiles_in_cell(*cell) {
+                    consumed.insert((q, r));
+                }
+                hexballs.push(hexball);
+            }
         }
+
+        if r <= 1 { break; }
+        r -= 2;
     }
 
     let survivors: Vec<(i32, i32, i32)> = tiles

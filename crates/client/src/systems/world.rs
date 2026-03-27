@@ -246,10 +246,8 @@ pub fn update(
 
 // ── Client-Side Hex-Native LoD ──
 
-/// Hexball radius for all decimation thresholds.
-/// Start with radius 1 (7-tile hexballs). Higher radii can be added later
-/// for better triangle reduction at distance.
-const HEXBALL_RADIUS: u32 = 1;
+/// Maximum hexball radius. Decimation tries r=max down to r=1.
+const MAX_HEXBALL_RADIUS: u32 = 3;
 
 const TILE_RADIUS: f32 = 1.0;
 const RISE: f32 = 0.8;
@@ -442,7 +440,7 @@ fn collect_and_build_mesh(
     };
 
     // Run hex-native decimation then build mesh via hexball geometry
-    let dec = common::hex_decimate::decimate_chunk(&chunk_tile_list, HEXBALL_RADIUS, threshold, &lookup);
+    let dec = common::hex_decimate::decimate_chunk(&chunk_tile_list, MAX_HEXBALL_RADIUS, threshold, &lookup);
     let mut effective_z = std::collections::HashMap::new();
     for hb in &dec.hexballs {
         effective_z.extend(&hb.effective_z);
@@ -452,21 +450,16 @@ fn collect_and_build_mesh(
             center_q: hb.center_q,
             center_r: hb.center_r,
             center_z: hb.center_z,
-            radius: HEXBALL_RADIUS,
+            radius: hb.radius,
         }).collect(),
         survivors: dec.survivors.clone(),
         effective_z,
     };
     let nb_refs: Vec<&common_bevy::hexball_geometry::ChunkPerimeterEdges> =
         neighbor_perimeters.iter().collect();
-    let nb_total_edges: usize = neighbor_perimeters.iter().map(|p| p.edges.len()).sum();
-    let (mesh, perimeter, skirt_stats) = common_bevy::hexball_geometry::build_chunk_mesh(
+    let (mesh, perimeter, _skirt_stats) = common_bevy::hexball_geometry::build_chunk_mesh(
         &plan, TILE_RADIUS, RISE, chunk_origin, &lookup, &nb_refs,
     );
-    bevy::log::info!("chunk {:?} built: nb_peris={} nb_edges={} intra={} cross={} unmatched={} own_perim={}",
-        chunk_id, neighbor_perimeters.len(), nb_total_edges,
-        skirt_stats.intra_chunk_quads, skirt_stats.cross_chunk_quads,
-        skirt_stats.unmatched_edges, perimeter.edges.len());
     let tri_count = mesh.indices().map(|i| i.len() / 3).unwrap_or(0) as u32;
 
     crate::resources::MeshBuildResult { mesh, tri_count, full_detail_tris, perimeter }

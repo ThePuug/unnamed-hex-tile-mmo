@@ -224,6 +224,21 @@ pub fn compute_hexball_surface(
         tile_vertex_pos(tq, tr, tz, vi as usize, hex_radius, rise, tile_z)
     });
 
+    // Interpolate Y along an inscribed hex edge at the given xz position.
+    let edge_snap_y = |v: Vec3, e: usize| -> f32 {
+        let bv_e = hex_boundary[e];
+        let bv_e1 = hex_boundary[(e + 1) % 6];
+        let dx = bv_e1.x - bv_e.x;
+        let dz = bv_e1.z - bv_e.z;
+        let len_sq = dx * dx + dz * dz;
+        let t = if len_sq > 1e-10 {
+            ((v.x - bv_e.x) * dx + (v.z - bv_e.z) * dz) / len_sq
+        } else {
+            0.5
+        };
+        bv_e.y + t * (bv_e1.y - bv_e.y)
+    };
+
     // Partial fans — use effective z from the lookup for tile height and blending,
     // then snap inner vertices and center onto the inscribed hex surface.
     let partial_fans: Vec<PartialFanSurface> = hb.partial_residuals.iter().map(|pr| {
@@ -231,28 +246,15 @@ pub fn compute_hexball_surface(
         let tv = tile_vertices(pr.q, pr.r, ez, hex_radius, rise, tile_z);
         let st = pr.surviving_triangles;
         let edge = st[1] as usize;
-        let edge_next = (edge + 1) % 6;
         let ov_indices = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
 
         let mut outer = [tv[ov_indices[0]], tv[ov_indices[1]], tv[ov_indices[2]], tv[ov_indices[3]]];
-        // Snap inner vertices to BV heights (T-junction resolution)
-        outer[0].y = hex_boundary[edge].y;
-        outer[3].y = hex_boundary[edge_next].y;
-
-        // Snap fan center onto the inscribed hex edge
-        let bv_e = hex_boundary[edge];
-        let bv_e1 = hex_boundary[edge_next];
-        let edge_dx = bv_e1.x - bv_e.x;
-        let edge_dz = bv_e1.z - bv_e.z;
-        let edge_len_sq = edge_dx * edge_dx + edge_dz * edge_dz;
-        let t = if edge_len_sq > 1e-10 {
-            let px = tv[6].x - bv_e.x;
-            let pz = tv[6].z - bv_e.z;
-            (px * edge_dx + pz * edge_dz) / edge_len_sq
-        } else {
-            0.5
-        };
-        let center = Vec3::new(tv[6].x, bv_e.y + t * (bv_e1.y - bv_e.y), tv[6].z);
+        // Snap inner vertices to interpolated edge height at their actual xz position.
+        // At r=1 these happen to be at the BV endpoints (t≈0 and t≈1).
+        // At r≥3 they may be mid-edge (t between 0 and 1).
+        outer[0].y = edge_snap_y(outer[0], edge);
+        outer[3].y = edge_snap_y(outer[3], edge);
+        let center = Vec3::new(tv[6].x, edge_snap_y(tv[6], edge), tv[6].z);
 
         PartialFanSurface {
             center, outer, surviving_triangles: st,
@@ -261,9 +263,15 @@ pub fn compute_hexball_surface(
     }).collect();
 
     // Full residual tiles — use effective z from the lookup.
+    // Snap any outer vertex that sits on an inscribed hex edge (r≥3 only).
     let full_tiles: Vec<TileSurface> = hb.full_residuals.iter().map(|fr| {
         let ez = tile_z(fr.q, fr.r).unwrap_or(fr.z);
-        let verts = tile_vertices(fr.q, fr.r, ez, hex_radius, rise, tile_z);
+        let mut verts = tile_vertices(fr.q, fr.r, ez, hex_radius, rise, tile_z);
+        for vi in 0..6 {
+            if let Some(y) = snap_to_hex_edge(verts[vi], &hex_boundary) {
+                verts[vi].y = y;
+            }
+        }
         TileSurface { verts, q: fr.q, r: fr.r, z: ez }
     }).collect();
 
@@ -372,6 +380,32 @@ fn tile_vertices(
     }
     verts[6] = Vec3::new(cx, base_y, cz);
     verts
+}
+
+/// If the vertex xz sits on any inscribed hex edge, return the interpolated Y.
+fn snap_to_hex_edge(v: Vec3, hex_boundary: &[Vec3; 6]) -> Option<f32> {
+    for e in 0..6 {
+        let bv_e = hex_boundary[e];
+        let bv_e1 = hex_boundary[(e + 1) % 6];
+        let dx = bv_e1.x - bv_e.x;
+        let dz = bv_e1.z - bv_e.z;
+        let len_sq = dx * dx + dz * dz;
+        if len_sq < 1e-10 { continue; }
+
+        let px = v.x - bv_e.x;
+        let pz = v.z - bv_e.z;
+        let t = (px * dx + pz * dz) / len_sq;
+        if t < -0.01 || t > 1.01 { continue; }
+
+        // Perpendicular distance squared
+        let proj_x = bv_e.x + t * dx;
+        let proj_z = bv_e.z + t * dz;
+        let perp_sq = (v.x - proj_x) * (v.x - proj_x) + (v.z - proj_z) * (v.z - proj_z);
+        if perp_sq > 0.001 { continue; }
+
+        return Some(bv_e.y + t * (bv_e1.y - bv_e.y));
+    }
+    None
 }
 
 fn tile_vertex_pos(
