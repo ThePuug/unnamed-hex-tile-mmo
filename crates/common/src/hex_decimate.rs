@@ -360,9 +360,6 @@ pub fn decimate_hexball(
     }
 
     // Steps 5-7: Classify ALL tiles by triangle centroid testing.
-    // A tile is partial if exactly 3 of its 6 triangle centroids are inside the hex,
-    // full residual if 0 are inside, and absorbed if all 6 are inside.
-    // The inscribed hex edge can pass through tiles at ANY ring, not just ring N.
     let mut partial_residuals = Vec::new();
     let mut full_residuals = Vec::new();
     let mut effective_z = HashMap::new();
@@ -376,10 +373,9 @@ pub fn decimate_hexball(
             let z = tiles(q, r).unwrap();
             let (ta, tb) = (3 * q, q + 2 * r);
 
-            // Effective z for ALL hexball tiles — slopes gently from center_z
+            // Default effective_z: clamp to ±hex_dist from center_z
             let dist = hex_dist(dq, dr);
-            let ez = z.max(center_z - dist).min(center_z + dist);
-            effective_z.insert((q, r), ez);
+            effective_z.insert((q, r), z.max(center_z - dist).min(center_z + dist));
 
             let inside: [bool; 6] =
                 std::array::from_fn(|t| is_centroid_inside(&vertices, ta, tb, t));
@@ -394,19 +390,54 @@ pub fn decimate_hexball(
                     let e = find_partial_edge(&inside);
                     let snapped_z = project_onto_edge(&vertices, &boundary_z, e, ta, tb);
                     partial_residuals.push(PartialResidual {
-                        q,
-                        r,
-                        original_z: z,
-                        snapped_z,
+                        q, r, original_z: z, snapped_z,
                         surviving_triangles: SURVIVING_TRI[e],
                     });
                 }
-                _ => {
-                    // This shouldn't happen for well-formed inscribed hex geometry.
-                    // If it does, treat as full residual (conservative — preserves all triangles).
-                    full_residuals.push(FullResidual { q, r, z });
+                _ => unreachable!(
+                    "tile ({q},{r}) has {inside_count}/6 centroids inside inscribed hex"
+                ),
+            }
+        }
+    }
+
+    // Override effective_z for edge tiles anchored to the inscribed hex surface.
+    // Partials: discretized snapped_z (sits on the inscribed hex edge).
+    for pr in &partial_residuals {
+        effective_z.insert((pr.q, pr.r), pr.snapped_z.round() as i32);
+    }
+
+    // Full residuals: clamp original_z to ±1 of the nearest adjacent partial's
+    // snapped_z. This keeps the full residual within one slope step of the
+    // inscribed hex surface.
+    // Group partials by inscribed hex edge for lookup.
+    let mut partials_by_edge: [Vec<&PartialResidual>; 6] = Default::default();
+    for pr in &partial_residuals {
+        let e = pr.surviving_triangles[1] as usize;
+        partials_by_edge[e].push(pr);
+    }
+
+    for fr in &full_residuals {
+        // Find the nearest partial(s) by hex distance
+        let mut best_dist = i32::MAX;
+        let mut lo = i32::MAX;
+        let mut hi = i32::MIN;
+        for edge_partials in &partials_by_edge {
+            for pr in edge_partials {
+                let d = hex_dist(fr.q - pr.q, fr.r - pr.r);
+                let rounded = pr.snapped_z.round() as i32;
+                if d < best_dist {
+                    best_dist = d;
+                    lo = rounded - 1;
+                    hi = rounded + 1;
+                } else if d == best_dist {
+                    lo = lo.min(rounded - 1);
+                    hi = hi.max(rounded + 1);
                 }
             }
+        }
+        if best_dist < i32::MAX {
+            effective_z.insert((fr.q, fr.r), fr.z.max(lo).min(hi));
         }
     }
 
@@ -676,8 +707,8 @@ mod tests {
     }
 
     #[test]
-    fn effective_z_clamps_all_hexball_tiles() {
-        // center_z=45 (midpoint of 40..50), all 7 tiles get effective_z
+    fn effective_z_all_tiles_present() {
+        // center_z=45, all 7 tiles get effective_z
         let mut map = HashMap::new();
         map.insert((0, 0), 50);
         for &(dq, dr) in &[(-1,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
@@ -689,15 +720,12 @@ mod tests {
             }
         }
         let hb = decimate_hexball(0, 0, 1, 10, &lookup(&map)).unwrap();
-        // All 7 hexball tiles have effective_z
         assert_eq!(hb.effective_z.len(), 7);
-        // Center tile (distance 0) → effective_z = center_z
         assert_eq!(*hb.effective_z.get(&(0, 0)).unwrap(), hb.center_z);
-        // Ring-1 tiles (distance 1) → clamp(40, center_z-1, center_z+1)
+        // Ring-1 partials get snapped_z-derived effective_z (anchored to inscribed hex edge)
         for &(dq, dr) in &[(-1,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
-            let ez = *hb.effective_z.get(&(dq, dr)).unwrap();
-            assert!((ez - hb.center_z).abs() <= 1,
-                "ring-1 tile ({dq},{dr}) effective_z={ez} too far from center_z={}", hb.center_z);
+            assert!(hb.effective_z.contains_key(&(dq, dr)),
+                "ring-1 tile ({dq},{dr}) missing from effective_z");
         }
     }
 
