@@ -246,8 +246,7 @@ pub fn update(
 
 // ── Client-Side Hex-Native LoD ──
 
-/// Maximum hexball radius. Decimation tries r=max down to r=1.
-const MAX_HEXBALL_RADIUS: u32 = 3;
+use crate::resources::MAX_HEXBALL_RADIUS;
 
 const TILE_RADIUS: f32 = 1.0;
 const RISE: f32 = 0.8;

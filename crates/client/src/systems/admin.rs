@@ -712,7 +712,7 @@ fn report_terrain_at_cursor(
     }
 
     let elev_lookup = |q: i32, r: i32| -> Option<i32> { elevations.get(&(q, r)).copied() };
-    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, 3, threshold, &elev_lookup);
+    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, crate::resources::MAX_HEXBALL_RADIUS, threshold, &elev_lookup);
 
     info!("  chunk tiles={} hexballs={} survivors={}",
         chunk_tile_list.len(), decimation.hexballs.len(), decimation.survivors.len());
