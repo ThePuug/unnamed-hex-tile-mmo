@@ -79,18 +79,11 @@ pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
-    #[cfg(feature = "admin")] flyover_config: Res<crate::systems::admin::FlyoverDecimationConfig>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
     mut commands: Commands,
 ) {
-    let config_changed = {
-        #[cfg(feature = "admin")]
-        { flyover_config.is_changed() }
-        #[cfg(not(feature = "admin"))]
-        { false }
-    };
-    if !console.is_changed() && !diagnostics_state.is_changed() && !config_changed {
+    if !console.is_changed() && !diagnostics_state.is_changed() {
         return;
     }
 
@@ -194,13 +187,7 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
-                        Text::new(format!("3. Decimation Threshold      [{}]", flyover_config.threshold)),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(active_color),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Report Terrain at Cursor"),
+                        Text::new("3. Report Terrain at Cursor"),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(active_color),
                     ));
@@ -282,24 +269,7 @@ pub fn update_console_menu(
                 #[cfg(feature = "admin")]
                 MenuPath::DecimationThreshold => {
                     parent.spawn((
-                        Text::new(format!("Current threshold: {}", flyover_config.threshold)),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(Color::srgb(0.3, 0.9, 0.3)),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("Press 0-9 to set threshold"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("0 = full detail, higher = more decimation"),
+                        Text::new("(Decimation not implemented)"),
                         TextFont { font_size: 14.0, ..default() },
                         TextColor(Color::srgb(0.5, 0.5, 0.5)),
                     ));

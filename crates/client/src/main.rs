@@ -188,13 +188,11 @@ fn main() {
     {
         app.init_resource::<admin::FlyoverState>();
         app.init_resource::<admin::PendingFlyoverTiles>();
-        app.init_resource::<admin::FlyoverDecimationConfig>();
         app.insert_resource(admin::AdminComposite::default());
 
         app.add_systems(Update, (
             admin::execute_admin_actions,
             admin::flyover_movement.run_if(admin::flyover_active),
-            admin::flyover_threshold_control.run_if(admin::flyover_active),
             admin::tag_admin_chunks,
             admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
             admin::flyover_generate_chunks

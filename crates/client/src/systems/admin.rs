@@ -97,18 +97,6 @@ pub struct PendingFlyoverTiles {
     pub tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
 }
 
-/// Manual decimation threshold for flyover inspection.
-/// Number keys 0-9 set the threshold during flyover.
-#[derive(Resource)]
-pub struct FlyoverDecimationConfig {
-    pub threshold: u32,
-}
-
-impl Default for FlyoverDecimationConfig {
-    fn default() -> Self {
-        Self { threshold: 0 }
-    }
-}
 
 // ──── Run Conditions ────
 
@@ -148,7 +136,6 @@ pub fn execute_admin_actions(
     admin_composite: Res<AdminComposite>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    mut flyover_config: ResMut<FlyoverDecimationConfig>,
     mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -187,21 +174,12 @@ pub fn execute_admin_actions(
                 }
                 continue;
             }
-            DevConsoleAction::SetDecimationThreshold(value) => {
-                let value = *value;
-                if value != flyover_config.threshold {
-                    info!("Decimation threshold: {} → {}", flyover_config.threshold, value);
-                    flyover_config.threshold = value;
-                    evict_generated_chunks(
-                        &mut commands, &mut flyover, &mut pending_tiles,
-                        &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
-                    );
-                }
+            DevConsoleAction::SetDecimationThreshold(_) => {
                 continue;
             }
             DevConsoleAction::ReportTerrain => {
                 if flyover.active {
-                    report_terrain_at_cursor(&flyover, &map, &lod_meshes, flyover_config.threshold);
+                    report_terrain_at_cursor(&flyover, &map);
                 }
                 continue;
             }
@@ -603,38 +581,6 @@ pub fn flyover_evict_chunks(
     skip_regen.chunks.retain(|id| !evict_set.contains(id));
 }
 
-/// Number keys 0-9 set the flyover decimation threshold (keyboard shortcut).
-pub fn flyover_threshold_control(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut config: ResMut<FlyoverDecimationConfig>,
-    mut flyover: ResMut<FlyoverState>,
-    mut commands: Commands,
-    mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    mut loaded_chunks: ResMut<LoadedChunks>,
-    map: Res<Map>,
-    mut skip_regen: ResMut<SkipNeighborRegen>,
-    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
-) {
-    let digit = [
-        (KeyCode::Digit0, 0u32), (KeyCode::Digit1, 1), (KeyCode::Digit2, 2),
-        (KeyCode::Digit3, 3), (KeyCode::Digit4, 4), (KeyCode::Digit5, 5),
-        (KeyCode::Digit6, 6), (KeyCode::Digit7, 7), (KeyCode::Digit8, 8),
-        (KeyCode::Digit9, 9),
-    ];
-
-    for &(key, value) in &digit {
-        if keyboard.just_pressed(key) && value != config.threshold {
-            info!("Flyover decimation threshold: {} → {}", config.threshold, value);
-            config.threshold = value;
-            evict_generated_chunks(
-                &mut commands, &mut flyover, &mut pending_tiles,
-                &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
-            );
-            break;
-        }
-    }
-}
-
 /// Remove all flyover-generated tiles, meshes, and tracking state.
 /// The normal pipeline + flyover_generate_chunks will repopulate.
 fn evict_generated_chunks(
@@ -677,131 +623,32 @@ fn evict_generated_chunks(
 }
 
 /// Report terrain data at the flyover cursor position.
-/// Runs decimation on the chunk and logs the hexball containing the cursor tile.
 fn report_terrain_at_cursor(
     flyover: &FlyoverState,
     map: &Map,
-    _lod_meshes: &crate::resources::ChunkLodMeshes,
-    threshold: u32,
 ) {
     use qrz::Convert;
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
     let chunk_id = loc_to_chunk(qrz);
-    let rise = map.rise();
 
-    info!("=== TERRAIN REPORT at ({},{}) z={} chunk=({},{}) threshold={} ===",
-        qrz.q, qrz.r, qrz.z, chunk_id.0, chunk_id.1, threshold);
+    info!("=== TERRAIN REPORT at ({},{}) z={} chunk=({},{}) ===",
+        qrz.q, qrz.r, qrz.z, chunk_id.0, chunk_id.1);
 
-    // Collect chunk tiles + elevations (same as collect_and_build_mesh)
-    let chunk_tile_list: Vec<(i32, i32, i32)> = chunk_tiles(chunk_id)
-        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(t, _)| (t.q, t.r, t.z)))
-        .collect();
+    let chunk_tile_count = chunk_tiles(chunk_id)
+        .filter(|&(q, r)| map.get_by_qr(q, r).is_some())
+        .count();
+    info!("  chunk tiles={}", chunk_tile_count);
 
-    let mut elevations = std::collections::HashMap::new();
-    for &(q, r, z) in &chunk_tile_list {
-        elevations.insert((q, r), z);
+    if let Some((_, _)) = map.get_by_qr(qrz.q, qrz.r) {
+        let mut neighbors = Vec::new();
         for &(dq, dr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
-            let nq = q + dq;
-            let nr = r + dr;
-            if !elevations.contains_key(&(nq, nr)) {
-                if let Some((actual, _)) = map.get_by_qr(nq, nr) {
-                    elevations.insert((actual.q, actual.r), actual.z);
+            if let Some((n, _)) = map.get_by_qr(qrz.q + dq, qrz.r + dr) {
+                if n.z != qrz.z {
+                    neighbors.push(format!("{}({},{})", n.z, dq, dr));
                 }
             }
         }
-    }
-
-    let elev_lookup = |q: i32, r: i32| -> Option<i32> { elevations.get(&(q, r)).copied() };
-    let decimation = common::hex_decimate::decimate_chunk(&chunk_tile_list, crate::resources::MAX_HEXBALL_RADIUS, threshold, &elev_lookup);
-
-    info!("  chunk tiles={} hexballs={} survivors={}",
-        chunk_tile_list.len(), decimation.hexballs.len(), decimation.survivors.len());
-
-    // Find hexball containing cursor tile
-    for (hi, hb) in decimation.hexballs.iter().enumerate() {
-        let dq = qrz.q - hb.center_q;
-        let dr = qrz.r - hb.center_r;
-        let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
-        if dist > hb.radius as i32 { continue; }
-
-        // Compute the actual rendered surface — single source of truth.
-        let surface = common_bevy::hexball_geometry::compute_hexball_surface(
-            hb.center_q, hb.center_r, hb.center_z, hb.radius,
-            map.radius(), rise, &elev_lookup,
-        );
-        let bv = surface.hex_boundary.unwrap();
-
-        info!("  HEXBALL[{hi}] center=({},{}) z={} bv_y={:?}",
-            hb.center_q, hb.center_r, hb.center_z,
-            bv.map(|v| format!("{:.2}", v.y)));
-
-        // Log tiles in this hexball
-        for ddq in -1..=1 {
-            let dr_min = (-1).max(-ddq - 1);
-            let dr_max = 1.min(-ddq + 1);
-            for ddr in dr_min..=dr_max {
-                let tq = hb.center_q + ddq;
-                let tr = hb.center_r + ddr;
-                if let Some(tz) = elev_lookup(tq, tr) {
-                    let mut neighbors = Vec::new();
-                    for &(ndq, ndr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
-                        if let Some(nz) = elev_lookup(tq + ndq, tr + ndr) {
-                            if nz != tz {
-                                neighbors.push(format!("{}({},{})", nz, ndq, ndr));
-                            }
-                        }
-                    }
-                    let marker = if tq == qrz.q && tr == qrz.r { " <<<" } else { "" };
-                    let nb = if neighbors.is_empty() { String::new() } else { format!(" nb=[{}]", neighbors.join(",")) };
-                    info!("    tile({tq},{tr}) z={tz}{nb}{marker}");
-                }
-            }
-        }
-
-        // Partial fans — all values read from the rendered surface struct
-        for (pi, fan) in surface.partial_fans.iter().enumerate() {
-            let st = fan.surviving_triangles;
-            let edge = st[1] as usize;
-            let edge_next = (edge + 1) % 6;
-            let absorbed: Vec<u8> = (0..6u8).filter(|t| !st.contains(t)).collect();
-
-            let d0 = fan.outer[0].y - bv[edge].y;
-            let d3 = fan.outer[3].y - bv[edge_next].y;
-
-            info!("    partial[{pi}] ({},{}) oz={} center_y={:.4} edge=V{}→V{} surv={:?} abs={:?}",
-                fan.q, fan.r, fan.z, fan.center.y,
-                edge, edge_next, st, absorbed);
-            info!("      ov[0] y={:.4} bv[{}] y={:.4} d={:.4}",
-                fan.outer[0].y, edge, bv[edge].y, d0);
-            info!("      ov[1] y={:.4}  ov[2] y={:.4}",
-                fan.outer[1].y, fan.outer[2].y);
-            info!("      ov[3] y={:.4} bv[{}] y={:.4} d={:.4}",
-                fan.outer[3].y, edge_next, bv[edge_next].y, d3);
-        }
-
-        // Skirt edge diagnostics — show what each fan registers
-        use common_bevy::hexball_geometry::grid_vertex_id;
-        for (pi, fan) in surface.partial_fans.iter().enumerate() {
-            let st = fan.surviving_triangles;
-            let ov = [st[0] as usize, st[1] as usize, st[2] as usize, (st[2] as usize + 1) % 6];
-            for i in 0..3 {
-                let vi = ov[i];
-                let dir = (10 - vi) % 6;
-                let d = qrz::DIRECTIONS[dir];
-                let nq = fan.q + d.q;
-                let nr = fan.r + d.r;
-                let absorbed = surface.absorbed.contains(&(nq, nr));
-                let id_a = grid_vertex_id(fan.q, fan.r, vi);
-                let id_b = grid_vertex_id(fan.q, fan.r, (vi + 1) % 6);
-                let key = if id_a <= id_b { (id_a, id_b) } else { (id_b, id_a) };
-                info!("    fan[{pi}] edge[{i}] v{}→v{} dir={dir} nb=({nq},{nr}) abs={absorbed} key={key:?} y=[{:.4},{:.4}]",
-                    vi, (vi+1)%6, fan.outer[i].y, fan.outer[i + 1].y);
-            }
-        }
-    }
-
-    // Check if cursor tile is a survivor instead
-    if decimation.survivors.iter().any(|&(q, r, _)| q == qrz.q && r == qrz.r) {
-        info!("  cursor tile ({},{}) is a SURVIVOR (not decimated)", qrz.q, qrz.r);
+        let nb = if neighbors.is_empty() { String::new() } else { format!(" nb=[{}]", neighbors.join(",")) };
+        info!("  tile({},{}) z={}{nb}", qrz.q, qrz.r, qrz.z);
     }
 }

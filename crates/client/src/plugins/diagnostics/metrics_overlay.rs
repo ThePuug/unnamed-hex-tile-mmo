@@ -8,7 +8,6 @@ use bevy_egui::{egui, EguiContext, EguiContexts};
 use super::config::DiagnosticsState;
 use super::network_ui::NetworkMetrics;
 use common_bevy::{
-    chunk::terrain_chunk_radius,
     components::{behaviour::PlayerControlled, Actor, Loc},
     resources::map::Map,
 };
@@ -456,7 +455,6 @@ pub fn update_metrics_overlay(
     tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
-    #[cfg(feature = "admin")] flyover_config: Res<crate::systems::admin::FlyoverDecimationConfig>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -526,7 +524,7 @@ pub fn update_metrics_overlay(
         }
     };
 
-    let player_loc = player_q.single().ok().and_then(|(_, loc)| loc.copied());
+    let _player_loc = player_q.single().ok().and_then(|(_, loc)| loc.copied());
 
     let tile_data = world_pos.map(|pos| {
         let qrz: qrz::Qrz = map.convert(pos);
@@ -546,23 +544,13 @@ pub fn update_metrics_overlay(
     let pending_lod = lod_meshes.states.values()
         .filter(|s| s.task.is_some()).count();
 
-    // Triangle stats from the hex-native LoD system
-    let lod_tiers = &tri_stats.tiers;
     let total_tris = tri_stats.total_tris;
     let mesh_count = tri_stats.mesh_count;
-    let outer_r = terrain_chunk_radius(player_loc.map(|l| l.z).unwrap_or(0));
 
     #[cfg(feature = "admin")]
-    let (admin_count, admin_threshold) = if flyover.active {
-        (
-            flyover.generated_chunks.len(),
-            Some(flyover_config.threshold),
-        )
-    } else {
-        (0, None)
-    };
+    let admin_count = if flyover.active { flyover.generated_chunks.len() } else { 0 };
     #[cfg(not(feature = "admin"))]
-    let (admin_count, admin_threshold) = (0usize, None::<u32>);
+    let admin_count = 0usize;
 
 
     let frame_p95 = history.frame_p95;
@@ -633,29 +621,11 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(total_tris as f64)), COLOR_DIM);
                             s.half(&format!("{:>4}chk", LOD_CT.fmt(mesh_count as f64)), COLOR_DIM);
                         });
-                        // Per-tier rows
-                        for (tier, stats) in lod_tiers.iter().enumerate() {
-                            if stats.chunks == 0 { continue; }
-                            let ratio = if stats.full_detail_tris > 0 {
-                                stats.tris as f64 / stats.full_detail_tris as f64
-                            } else {
-                                1.0
-                            };
-                            seg_row(ui, cw, |s| {
-                                s.half(&format!("{:>7}", format!("t{}", tier)), COLOR_DIM);
-                                s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(stats.tris as f64)), COLOR_DIM);
-                                s.half(&format!("{:>4}chk", LOD_CT.fmt(stats.chunks as f64)), COLOR_DIM);
-                                s.half(&format!("{:>5.0}% ", ratio * 100.0), COLOR_DIM);
-                            });
-                        }
                         if admin_count > 0 {
                             const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("{:>7}", "gen"), COLOR_DIM);
                                 s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
-                                if let Some(t) = admin_threshold {
-                                    s.half(&format!("{:>7}", format!("dec:{t}")), COLOR_DIM);
-                                }
                             });
                         }
                     });

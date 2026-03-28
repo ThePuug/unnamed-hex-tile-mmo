@@ -9,9 +9,6 @@ use std::collections::{HashMap, HashSet};
 
 use common_bevy::chunk::ChunkId;
 
-/// Maximum hexball radius. Decimation tries r=max down to r=1.
-pub const MAX_HEXBALL_RADIUS: u32 = 9;
-
 /// Custom terrain material extension that computes elevation color in the fragment shader.
 /// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
@@ -77,60 +74,38 @@ pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
 }
 
-/// Per-chunk hex-native decimation mesh state.
-/// Result from async mesh build task: the mesh plus diagnostic counts.
+/// Result from async mesh build task.
 pub struct MeshBuildResult {
     pub mesh: Mesh,
-    /// Triangle count of the decimated mesh.
+    /// Triangle count of the mesh.
     pub tri_count: u32,
-    /// Triangle count if rendered at full detail (no decimation, with skirts).
-    pub full_detail_tris: u32,
-    /// Perimeter edges for cross-chunk skirt stitching with neighbors.
-    pub perimeter: common_bevy::hexball_geometry::ChunkPerimeterEdges,
 }
 
+/// Per-chunk mesh state.
 pub struct ChunkLodState {
-    /// In-flight async task producing a decimated Mesh.
+    /// In-flight async task producing a Mesh.
     pub task: Option<Task<MeshBuildResult>>,
     /// Entity displaying this chunk's mesh.
     pub entity: Option<Entity>,
     /// Handle to the active mesh asset (for grid overlay extraction).
     pub mesh_handle: Option<Handle<Mesh>>,
-    /// Perimeter edges for cross-chunk skirt stitching.
-    pub perimeter: Option<common_bevy::hexball_geometry::ChunkPerimeterEdges>,
     /// Triangle count of the active mesh (for diagnostics).
     pub tri_count: u32,
-    /// Triangle count if rendered at full detail (for compression ratio).
-    pub full_detail_tris: u32,
-    /// Decimation threshold the current mesh was built at.
-    pub current_threshold: u32,
     /// Chunk-local origin (world position of chunk center tile).
     /// Mesh vertex positions are relative to this; entity Transform repositions.
     pub chunk_origin: Vec3,
 }
 
-/// Tracks hex-native decimation mesh state for all chunks.
+/// Tracks mesh state for all chunks.
 #[derive(Resource, Default)]
 pub struct ChunkLodMeshes {
     pub states: HashMap<ChunkId, ChunkLodState>,
 }
 
-/// Per-threshold-tier statistics.
-#[derive(Clone, Copy, Default)]
-pub struct TierStats {
-    pub chunks: u32,
-    pub tris: u64,
-    /// What the triangle count would be at full detail (no decimation).
-    pub full_detail_tris: u64,
-}
-
-/// LoD triangle statistics grouped by threshold tier.
+/// Triangle statistics.
 #[derive(Resource, Default)]
 pub struct LodTriangleStats {
-    /// Stats per threshold tier. Index = threshold value.
-    /// Tiers beyond the vec length have zero chunks.
-    pub tiers: Vec<TierStats>,
-    /// Total triangles across all tiers.
+    /// Total triangles across all meshes.
     pub total_tris: u64,
     /// Total chunks with active meshes.
     pub mesh_count: u32,

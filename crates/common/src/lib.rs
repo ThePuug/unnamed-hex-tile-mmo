@@ -1,5 +1,4 @@
 pub mod glyphs;
-pub mod hex_decimate;
 pub mod hex_lattice;
 pub mod hex_slope;
 pub mod hex_spatial_grid;
