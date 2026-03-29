@@ -48,7 +48,15 @@ pub struct SummaryMeshResult {
     pub mesh_origin: Vec3,
     /// Edges at the mesh region boundary, for cross-region skirt exchange.
     pub perimeter_edges: Vec<PerimeterEdge>,
+    /// How many summaries had complete tile data and were built.
+    /// A mesh region has 271 summary slots. If `summaries_built < 271`,
+    /// some summaries were skipped due to missing tile data and the
+    /// region should be rebuilt when more data arrives.
+    pub summaries_built: u32,
 }
+
+/// Number of summary slots in a mesh region (radius-9 hex ball).
+pub const MESH_REGION_SUMMARIES: u32 = 271;
 
 /// Build a summary mesh region for the given radius.
 ///
@@ -137,6 +145,7 @@ pub fn build_summary_mesh_region(
         tri_count,
         mesh_origin,
         perimeter_edges,
+        summaries_built: surfaces.len() as u32,
     })
 }
 

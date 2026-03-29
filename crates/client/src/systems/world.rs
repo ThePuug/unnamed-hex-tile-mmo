@@ -451,8 +451,15 @@ pub fn dispatch_summary_tasks(
 
     for region_key in regions {
         if let Some(state) = summary_meshes.states.get(&region_key) {
-            if state.task.is_some() || state.entity.is_some() {
-                continue;
+            if state.task.is_some() {
+                continue; // build in flight, wait for it
+            }
+            // Allow re-dispatch of incomplete regions (summaries_built < 271)
+            // when new tiles arrive. Complete regions are skipped.
+            if state.entity.is_some()
+                && state.summaries_built >= common_bevy::summary_mesh::MESH_REGION_SUMMARIES
+            {
+                continue; // fully built, no re-dispatch needed
             }
         }
 
@@ -468,21 +475,27 @@ pub fn dispatch_summary_tasks(
         let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
         let mesh_origin = Vec3::new(wx, 0.0, wz);
 
-        summary_meshes.states.insert(
-            region_key,
-            SummaryMeshState {
-                task: Some(task),
-                entity: None,
-                mesh_handle: None,
-                tri_count: 0,
-                mesh_origin,
-                base_positions: Vec::new(),
-                base_normals: Vec::new(),
-                base_indices: Vec::new(),
-                base_tri_count: 0,
-                perimeter_edges: Vec::new(),
-            },
-        );
+        // Preserve existing entity so poll can do an in-place mesh swap
+        if let Some(state) = summary_meshes.states.get_mut(&region_key) {
+            state.task = Some(task);
+        } else {
+            summary_meshes.states.insert(
+                region_key,
+                SummaryMeshState {
+                    task: Some(task),
+                    entity: None,
+                    mesh_handle: None,
+                    tri_count: 0,
+                    mesh_origin,
+                    base_positions: Vec::new(),
+                    base_normals: Vec::new(),
+                    base_indices: Vec::new(),
+                    base_tri_count: 0,
+                    perimeter_edges: Vec::new(),
+                    summaries_built: 0,
+                },
+            );
+        }
     }
 }
 
@@ -505,6 +518,7 @@ fn collect_and_build_summary_mesh(
             tri_count: smr.tri_count,
             mesh_origin: smr.mesh_origin,
             perimeter_edges: smr.perimeter_edges,
+            summaries_built: smr.summaries_built,
         },
         None => SummaryMeshBuildResult {
             positions: Vec::new(),
@@ -513,6 +527,7 @@ fn collect_and_build_summary_mesh(
             tri_count: 0,
             mesh_origin: Vec3::ZERO,
             perimeter_edges: Vec::new(),
+            summaries_built: 0,
         },
     }
 }
@@ -616,6 +631,7 @@ pub fn poll_summary_meshes(
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.perimeter_edges = result.perimeter_edges;
+                state.summaries_built = result.summaries_built;
                 just_completed.push(region_key);
             }
         }

@@ -158,6 +158,8 @@ pub struct SummaryMeshState {
     pub base_tri_count: u32,
     /// Perimeter edges for cross-region exchange.
     pub perimeter_edges: Vec<common_bevy::summary_mesh::PerimeterEdge>,
+    /// How many summaries were built. < 271 means incomplete; re-dispatch on new data.
+    pub summaries_built: u32,
 }
 
 /// Result from an async summary mesh build task.
@@ -169,6 +171,9 @@ pub struct SummaryMeshBuildResult {
     pub tri_count: u32,
     pub mesh_origin: Vec3,
     pub perimeter_edges: Vec<common_bevy::summary_mesh::PerimeterEdge>,
+    /// How many summaries were built. < 271 means incomplete data;
+    /// region should be rebuilt when more tiles arrive.
+    pub summaries_built: u32,
 }
 
 /// Tracks mesh state for all summary mesh regions.
