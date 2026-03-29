@@ -22,7 +22,7 @@ use qrz::Convert;
 use crate::{
     components::ChunkMesh,
     plugins::console::DevConsoleAction,
-    resources::{LoadedChunks, SkipNeighborRegen},
+    resources::{ForcedSummaryRadius, LoadedChunks, SkipNeighborRegen},
     systems::camera::{CameraOrbit, CAMERA_DISTANCE, CAMERA_HEIGHT},
 };
 
@@ -137,6 +137,8 @@ pub fn execute_admin_actions(
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
     mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
+    mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
+    mut forced_radius: ResMut<ForcedSummaryRadius>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -174,7 +176,25 @@ pub fn execute_admin_actions(
                 }
                 continue;
             }
-            DevConsoleAction::SetDecimationThreshold(_) => {
+            DevConsoleAction::SetForcedSummaryRadius(new_radius) => {
+                if forced_radius.0 != *new_radius {
+                    let label = new_radius.map_or("Auto".to_string(), |r| format!("r={r}"));
+                    info!("Summary radius: {label}");
+                    forced_radius.0 = *new_radius;
+                    // Clear all mesh entities so the correct pipeline rebuilds
+                    for (_, state) in lod_meshes.states.drain() {
+                        if let Some(entity) = state.entity {
+                            commands.entity(entity).despawn();
+                        }
+                    }
+                    for (_, state) in summary_meshes.states.drain() {
+                        if let Some(entity) = state.entity {
+                            commands.entity(entity).despawn();
+                        }
+                    }
+                    // Trigger rebuild
+                    map.force_changed();
+                }
                 continue;
             }
             DevConsoleAction::ReportTerrain => {

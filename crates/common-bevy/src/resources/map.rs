@@ -50,6 +50,11 @@ impl Map {
         self.changed.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Force the changed flag on, triggering mesh pipeline dispatch on next frame.
+    pub fn force_changed(&self) {
+        self.changed.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn rise(&self) -> f32 {
         self.inner.read().rise()
     }

@@ -31,7 +31,10 @@ pub fn handle_console_input(
 
     // Back key: Numpad0 normally, Escape when numpad digits have other meaning
     #[cfg(feature = "admin")]
-    let uses_escape_back = matches!(console.current_menu, MenuPath::GotoInput | MenuPath::DecimationThreshold);
+    let uses_escape_back = matches!(
+        console.current_menu,
+        MenuPath::GotoInput | MenuPath::SummaryRadius
+    );
     #[cfg(not(feature = "admin"))]
     let uses_escape_back = false;
 
@@ -76,7 +79,7 @@ pub fn handle_console_input(
         #[cfg(feature = "admin")]
         MenuPath::GotoInput => handle_goto_input(&mut keyboard, &mut console, &mut action_writer),
         #[cfg(feature = "admin")]
-        MenuPath::DecimationThreshold => handle_decimation_threshold(&mut keyboard, &mut console, &mut action_writer),
+        MenuPath::SummaryRadius => handle_summary_radius(&mut keyboard, &mut console, &mut action_writer),
     }
 }
 
@@ -150,7 +153,7 @@ fn handle_flyover_menu(
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) && flyover.active {
         console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::DecimationThreshold;
+        console.current_menu = MenuPath::SummaryRadius;
         consumed = Some(KeyCode::Numpad3);
     } else if keyboard.just_pressed(KeyCode::Numpad4) && flyover.active {
         action_writer.write(DevConsoleAction::ReportTerrain);
@@ -269,22 +272,28 @@ fn handle_goto_input(
 }
 
 #[cfg(feature = "admin")]
-fn handle_decimation_threshold(
+fn handle_summary_radius(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
-    let digit_keys = [
-        (KeyCode::Numpad0, 0u32), (KeyCode::Numpad1, 1), (KeyCode::Numpad2, 2),
-        (KeyCode::Numpad3, 3), (KeyCode::Numpad4, 4), (KeyCode::Numpad5, 5),
-        (KeyCode::Numpad6, 6), (KeyCode::Numpad7, 7), (KeyCode::Numpad8, 8),
-        (KeyCode::Numpad9, 9),
+    // 0→Auto(None), 1→r=0, 2→r=1, 3→r=2, 4→r=3, 5→r=5, 6→r=7, 7→r=9, 8→r=12, 9→r=20
+    let presets: [(KeyCode, Option<u32>); 10] = [
+        (KeyCode::Numpad0, None),
+        (KeyCode::Numpad1, Some(0)),
+        (KeyCode::Numpad2, Some(1)),
+        (KeyCode::Numpad3, Some(2)),
+        (KeyCode::Numpad4, Some(3)),
+        (KeyCode::Numpad5, Some(5)),
+        (KeyCode::Numpad6, Some(7)),
+        (KeyCode::Numpad7, Some(9)),
+        (KeyCode::Numpad8, Some(12)),
+        (KeyCode::Numpad9, Some(20)),
     ];
 
-    for &(key, value) in &digit_keys {
+    for &(key, value) in &presets {
         if keyboard.just_pressed(key) {
-            action_writer.write(DevConsoleAction::SetDecimationThreshold(value));
-            // Return to flyover menu
+            action_writer.write(DevConsoleAction::SetForcedSummaryRadius(value));
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
             keyboard.clear_just_pressed(key);
             return;

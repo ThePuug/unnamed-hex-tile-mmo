@@ -8,6 +8,7 @@ use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
 use common_bevy::chunk::ChunkId;
+use common_bevy::summary_mesh::MeshRegionKey;
 
 /// Custom terrain material extension that computes elevation color in the fragment shader.
 /// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
@@ -129,6 +130,58 @@ impl LoadedChunks {
             self.chunks.remove(chunk_id);
         }
     }
+}
+
+/// Forced summary radius for flyover inspection.
+///
+/// `None` = auto (use r(d) formula; currently falls back to tile meshes).
+/// `Some(0)` = individual tiles everywhere (existing pipeline, parity test).
+/// `Some(r)` = all terrain at summary radius r.
+#[derive(Resource)]
+pub struct ForcedSummaryRadius(pub Option<u32>);
+
+impl Default for ForcedSummaryRadius {
+    fn default() -> Self { Self(Some(0)) }
+}
+
+/// Per-mesh-region state for summary rendering.
+pub struct SummaryMeshState {
+    pub task: Option<bevy::tasks::Task<SummaryMeshBuildResult>>,
+    pub entity: Option<Entity>,
+    pub mesh_handle: Option<Handle<Mesh>>,
+    pub tri_count: u32,
+    pub mesh_origin: Vec3,
+    /// Base geometry from the async build (for cross-region skirt rebuilds).
+    pub base_positions: Vec<[f32; 3]>,
+    pub base_normals: Vec<[f32; 3]>,
+    pub base_indices: Vec<u32>,
+    pub base_tri_count: u32,
+    /// Perimeter edges for cross-region exchange.
+    pub perimeter_edges: Vec<common_bevy::summary_mesh::PerimeterEdge>,
+}
+
+/// Result from an async summary mesh build task.
+/// Carries raw geometry (Mesh constructed on main thread after cross-region stitching).
+pub struct SummaryMeshBuildResult {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+    pub tri_count: u32,
+    pub mesh_origin: Vec3,
+    pub perimeter_edges: Vec<common_bevy::summary_mesh::PerimeterEdge>,
+}
+
+/// Tracks mesh state for all summary mesh regions.
+#[derive(Resource, Default)]
+pub struct SummaryMeshes {
+    pub states: HashMap<MeshRegionKey, SummaryMeshState>,
+}
+
+/// Marker component for summary mesh entities.
+#[derive(Component)]
+#[allow(dead_code)]
+pub struct SummaryMesh {
+    pub region_key: MeshRegionKey,
 }
 
 /// Client-side system timers. Wraps `common::timers::SystemTimers`.

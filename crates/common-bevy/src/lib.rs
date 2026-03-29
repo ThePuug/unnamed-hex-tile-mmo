@@ -6,4 +6,6 @@ pub mod metrics;
 pub mod plugins;
 pub mod resources;
 pub mod spatial_difficulty;
+pub mod summary;
+pub mod summary_mesh;
 pub mod systems;

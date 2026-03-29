@@ -24,7 +24,7 @@ pub enum DevConsoleAction {
     #[cfg(feature = "admin")]
     GotoQR(i32, i32),
     #[cfg(feature = "admin")]
-    SetDecimationThreshold(u32),
+    SetForcedSummaryRadius(Option<u32>),
     #[cfg(feature = "admin")]
     ReportTerrain,
 }
@@ -86,7 +86,7 @@ pub fn execute_console_actions(
             #[cfg(feature = "admin")]
             DevConsoleAction::GotoQR(_, _) => {}
             #[cfg(feature = "admin")]
-            DevConsoleAction::SetDecimationThreshold(_) => {}
+            DevConsoleAction::SetForcedSummaryRadius(_) => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::ReportTerrain => {}
         }

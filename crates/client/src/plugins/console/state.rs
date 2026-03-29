@@ -69,7 +69,7 @@ pub enum MenuPath {
     #[cfg(feature = "admin")]
     GotoInput,
     #[cfg(feature = "admin")]
-    DecimationThreshold,
+    SummaryRadius,
 }
 
 impl MenuPath {
@@ -84,7 +84,7 @@ impl MenuPath {
             #[cfg(feature = "admin")]
             MenuPath::GotoInput => "Goto — Enter Coordinates",
             #[cfg(feature = "admin")]
-            MenuPath::DecimationThreshold => "Decimation Threshold (0-9)",
+            MenuPath::SummaryRadius => "Summary Radius (0=Auto, 1-9=presets)",
         }
     }
 }

@@ -79,6 +79,7 @@ pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] forced_radius: Res<crate::resources::ForcedSummaryRadius>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
     mut commands: Commands,
@@ -187,7 +188,13 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
-                        Text::new("3. Report Terrain at Cursor"),
+                        Text::new("3. Summary Radius"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(active_color),
+                    ));
+
+                    parent.spawn((
+                        Text::new("4. Report Terrain at Cursor"),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(active_color),
                     ));
@@ -267,11 +274,22 @@ pub fn update_console_menu(
                     }
                 }
                 #[cfg(feature = "admin")]
-                MenuPath::DecimationThreshold => {
+                MenuPath::SummaryRadius => {
+                    let current = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
                     parent.spawn((
-                        Text::new("(Decimation not implemented)"),
+                        Text::new(format!("Current: {current}")),
                         TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                        TextColor(Color::srgb(0.6, 0.8, 1.0)),
+                    ));
+                    parent.spawn((
+                        Text::new("0=Auto  1=r0  2=r1  3=r2  4=r3"),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                    parent.spawn((
+                        Text::new("5=r5  6=r7  7=r9  8=r12  9=r20"),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(Color::WHITE),
                     ));
 
                     parent.spawn((
