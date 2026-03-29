@@ -44,6 +44,8 @@ pub struct DevConsole {
     pub history: Vec<MenuPath>,
     /// Active goto text input (when in GotoInput menu)
     pub goto_input: Option<GotoInputState>,
+    /// Text buffer for summary radius input (when in SummaryRadius menu)
+    pub summary_radius_buf: String,
 }
 
 impl Default for DevConsole {
@@ -53,6 +55,7 @@ impl Default for DevConsole {
             current_menu: MenuPath::Root,
             history: Vec::new(),
             goto_input: None,
+            summary_radius_buf: String::new(),
         }
     }
 }
@@ -84,7 +87,7 @@ impl MenuPath {
             #[cfg(feature = "admin")]
             MenuPath::GotoInput => "Goto — Enter Coordinates",
             #[cfg(feature = "admin")]
-            MenuPath::SummaryRadius => "Summary Radius (0=Auto, 1-9=presets)",
+            MenuPath::SummaryRadius => "Summary Radius",
         }
     }
 }

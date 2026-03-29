@@ -187,8 +187,9 @@ pub fn update_console_menu(
                         TextColor(active_color),
                     ));
 
+                    let radius_label = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
                     parent.spawn((
-                        Text::new("3. Summary Radius"),
+                        Text::new(format!("3. Summary Radius    [{radius_label}]")),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(active_color),
                     ));
@@ -281,15 +282,19 @@ pub fn update_console_menu(
                         TextFont { font_size: 14.0, ..default() },
                         TextColor(Color::srgb(0.6, 0.8, 1.0)),
                     ));
+
+                    let buf = &console.summary_radius_buf;
+                    let display = if buf.is_empty() { "_" } else { buf };
                     parent.spawn((
-                        Text::new("0=Auto  1=r0  2=r1  3=r2  4=r3"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::WHITE),
+                        Text::new(format!("r = {display}")),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.4)),
                     ));
+
                     parent.spawn((
-                        Text::new("5=r5  6=r7  7=r9  8=r12  9=r20"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::WHITE),
+                        Text::new("Enter number, press Enter (empty = Auto)"),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
 
                     parent.spawn((

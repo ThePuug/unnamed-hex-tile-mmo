@@ -52,6 +52,10 @@ pub fn handle_console_input(
             if matches!(console.current_menu, MenuPath::GotoInput) {
                 console.goto_input = None;
             }
+            #[cfg(feature = "admin")]
+            if matches!(console.current_menu, MenuPath::SummaryRadius) {
+                console.summary_radius_buf.clear();
+            }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
 
@@ -154,6 +158,7 @@ fn handle_flyover_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad3) && flyover.active {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::SummaryRadius;
+        console.summary_radius_buf.clear();
         consumed = Some(KeyCode::Numpad3);
     } else if keyboard.just_pressed(KeyCode::Numpad4) && flyover.active {
         action_writer.write(DevConsoleAction::ReportTerrain);
@@ -277,26 +282,48 @@ fn handle_summary_radius(
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
-    // 0→Auto(None), 1→r=0, 2→r=1, 3→r=2, 4→r=3, 5→r=5, 6→r=7, 7→r=9, 8→r=12, 9→r=20
-    let presets: [(KeyCode, Option<u32>); 10] = [
-        (KeyCode::Numpad0, None),
-        (KeyCode::Numpad1, Some(0)),
-        (KeyCode::Numpad2, Some(1)),
-        (KeyCode::Numpad3, Some(2)),
-        (KeyCode::Numpad4, Some(3)),
-        (KeyCode::Numpad5, Some(5)),
-        (KeyCode::Numpad6, Some(7)),
-        (KeyCode::Numpad7, Some(9)),
-        (KeyCode::Numpad8, Some(12)),
-        (KeyCode::Numpad9, Some(20)),
+    // Enter: submit. Empty → Auto (None). Number → Some(r).
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
+        let buf = console.summary_radius_buf.trim().to_string();
+        let value = if buf.is_empty() {
+            None // Auto
+        } else if let Ok(r) = buf.parse::<u32>() {
+            Some(r)
+        } else {
+            info!("Summary radius: invalid input '{buf}'");
+            keyboard.clear_just_pressed(KeyCode::Enter);
+            keyboard.clear_just_pressed(KeyCode::NumpadEnter);
+            return;
+        };
+        action_writer.write(DevConsoleAction::SetForcedSummaryRadius(value));
+        console.summary_radius_buf.clear();
+        console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
+        keyboard.clear_just_pressed(KeyCode::Enter);
+        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
+        return;
+    }
+
+    // Digit keys (numpad + top row)
+    let digit_keys: &[(KeyCode, char)] = &[
+        (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
+        (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
+        (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
+        (KeyCode::Digit9, '9'),
+        (KeyCode::Numpad0, '0'), (KeyCode::Numpad1, '1'), (KeyCode::Numpad2, '2'),
+        (KeyCode::Numpad3, '3'), (KeyCode::Numpad4, '4'), (KeyCode::Numpad5, '5'),
+        (KeyCode::Numpad6, '6'), (KeyCode::Numpad7, '7'), (KeyCode::Numpad8, '8'),
+        (KeyCode::Numpad9, '9'),
     ];
 
-    for &(key, value) in &presets {
+    for &(key, ch) in digit_keys {
         if keyboard.just_pressed(key) {
-            action_writer.write(DevConsoleAction::SetForcedSummaryRadius(value));
-            console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
+            console.summary_radius_buf.push(ch);
             keyboard.clear_just_pressed(key);
-            return;
         }
+    }
+
+    if keyboard.just_pressed(KeyCode::Backspace) {
+        console.summary_radius_buf.pop();
+        keyboard.clear_just_pressed(KeyCode::Backspace);
     }
 }
