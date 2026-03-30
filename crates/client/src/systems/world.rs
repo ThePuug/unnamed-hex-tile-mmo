@@ -10,15 +10,13 @@ use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 pub const TILE_SIZE: f32 = 1.;
 
 use crate::{
-    components::ChunkMesh,
     plugins::diagnostics::DiagnosticsState,
     resources::{
-        ChunkLodMeshes, ChunkLodState, ForcedSummaryRadius, LodTriangleStats, LoadedChunks,
+        ForcedSummaryRadius, LodTriangleStats, LoadedChunks,
         Server, SummaryMesh, SummaryMeshBuildResult, SummaryMeshState, SummaryMeshes,
         TerrainMaterial,
     },
 };
-use qrz::Convert;
 use common_bevy::{
     chunk::{self, chunk_tiles, loc_to_chunk, CHUNK_EXTENT_WU},
     components::{ *,
@@ -75,11 +73,12 @@ pub fn setup(
 // Client removes tiles, meshes, and actors on those chunks.
 
 /// Process EvictChunks messages from the server.
+/// Removes tiles and loaded_chunks tracking. Mesh lifecycle is handled
+/// by dispatch_summary_tasks (auto-evicts regions when chunks disappear).
 pub fn evict_data(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut loaded_chunks: ResMut<LoadedChunks>,
-    mut lod_meshes: ResMut<ChunkLodMeshes>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common_bevy::resources::map::Map>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
@@ -113,7 +112,7 @@ pub fn evict_data(
         }
     }
 
-    // Remove tiles from map
+    // Remove tiles from map (triggers mesh rebuild via changed flag)
     {
         let mut map_w = map.write();
         for &chunk_id in &all_evicted {
@@ -125,15 +124,6 @@ pub fn evict_data(
         }
     }
     loaded_chunks.evict(&all_evicted);
-
-    // Evict LoD mesh state for evicted chunks
-    for &cid in &all_evicted {
-        if let Some(state) = lod_meshes.states.remove(&cid) {
-            if let Some(entity) = state.entity {
-                commands.entity(entity).despawn();
-            }
-        }
-    }
 }
 
 pub fn do_init(
@@ -248,224 +238,89 @@ pub fn update(
     }
 }
 
-// ── Chunk Mesh Pipeline ──
-
-const TILE_RADIUS: f32 = 1.0;
-const RISE: f32 = 0.8;
-
-/// Dispatch mesh build tasks for chunks that have tiles but no mesh yet.
-/// Skipped when forced summary radius is > 0 (summaries take over rendering).
-pub fn dispatch_lod_tasks(
-    loaded_chunks: Res<LoadedChunks>,
-    map: Res<common_bevy::resources::map::Map>,
-    mut lod_meshes: ResMut<ChunkLodMeshes>,
-    client_timers: Res<crate::resources::ClientTimers>,
-    forced_radius: Res<ForcedSummaryRadius>,
-) {
-    // When forced radius > 0, summaries handle all rendering
-    if matches!(forced_radius.0, Some(r) if r > 0) {
-        return;
-    }
-    if !map.take_changed() {
-        return;
-    }
-    let _t = client_timers.0.scope("lod_disp");
-
-    let pool = bevy::tasks::AsyncComputeTaskPool::get();
-
-    for &chunk_id in &loaded_chunks.chunks {
-        // Skip if already built or in flight
-        if let Some(state) = lod_meshes.states.get(&chunk_id) {
-            if state.task.is_some() || state.entity.is_some() {
-                continue;
-            }
-        }
-
-        // Neighbor gate: all 6 chunk neighbors must have tiles in the Map
-        let lattice_neighbors = [(1i32, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
-        let all_neighbors_in_map = lattice_neighbors.iter().all(|&(dn, dm)| {
-            let nid = common_bevy::chunk::ChunkId(chunk_id.0 + dn, chunk_id.1 + dm);
-            let nc = nid.center();
-            map.get_by_qr(nc.q, nc.r).is_some()
-        });
-        if !all_neighbors_in_map {
-            continue;
-        }
-
-        let map_snap = map.clone();
-        let task = pool.spawn(async move {
-            collect_and_build_mesh(chunk_id, &map_snap)
-        });
-
-        let chunk_origin: Vec3 = map.convert(chunk_id.center());
-
-        if let Some(state) = lod_meshes.states.get_mut(&chunk_id) {
-            state.task = Some(task);
-        } else {
-            lod_meshes.states.insert(chunk_id, ChunkLodState {
-                task: Some(task),
-                entity: None,
-                mesh_handle: None,
-                tri_count: 0,
-                chunk_origin,
-            });
-        }
-    }
-}
-
-/// Build a full-detail tile mesh from Map data.
-/// Runs off the main thread via AsyncComputeTaskPool.
-fn collect_and_build_mesh(
-    chunk_id: common_bevy::chunk::ChunkId,
-    map: &common_bevy::resources::map::Map,
-) -> crate::resources::MeshBuildResult {
-    // Collect chunk tiles
-    let chunk_tiles_vec: Vec<qrz::Qrz> = chunk_tiles(chunk_id)
-        .filter_map(|(q, r)| map.get_by_qr(q, r).map(|(qrz, _)| qrz))
-        .collect();
-
-    // Build elevation lookup covering chunk + 1-ring neighbors
-    let mut elevations = std::collections::HashMap::new();
-    for &tile in &chunk_tiles_vec {
-        elevations.insert((tile.q, tile.r), tile.z);
-        for &(dq, dr) in &[(-1i32,0),(-1,1),(0,1),(1,0),(1,-1),(0,-1)] {
-            let nq = tile.q + dq;
-            let nr = tile.r + dr;
-            if !elevations.contains_key(&(nq, nr)) {
-                if let Some((actual, _)) = map.get_by_qr(nq, nr) {
-                    elevations.insert((actual.q, actual.r), actual.z);
-                }
-            }
-        }
-    }
-
-    let chunk_origin: Vec3 = map.convert(chunk_id.center());
-
-    let tile_geom = common_bevy::geometry::compute_tile_geometry(
-        &chunk_tiles_vec, &elevations, TILE_RADIUS, RISE, chunk_origin,
-    );
-
-    let tri_count = tile_geom.indices.len() as u32 / 3;
-
-    use bevy::render::render_resource::PrimitiveTopology;
-    use bevy::asset::RenderAssetUsages;
-    use bevy_mesh::Indices;
-
-    let verts: Vec<Vec3> = tile_geom.positions.iter().map(|p| Vec3::from_array(*p)).collect();
-    let norms: Vec<Vec3> = tile_geom.normals.iter().map(|n| Vec3::from_array(*n)).collect();
-    let vert_count = verts.len();
-
-    let mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-    .with_inserted_indices(Indices::U32(tile_geom.indices));
-
-    crate::resources::MeshBuildResult { mesh, tri_count }
-}
-
-/// Poll completed mesh tasks, upload meshes, update diagnostics.
-pub fn poll_and_swap_lod(
-    mut commands: Commands,
-    mut lod_meshes: ResMut<ChunkLodMeshes>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut tri_stats: ResMut<LodTriangleStats>,
-    terrain_material: Option<Res<TerrainMaterial>>,
-    client_timers: Res<crate::resources::ClientTimers>,
-) {
-    let Some(terrain_material) = terrain_material else { return; };
-    let _t = client_timers.0.scope("lod_swap");
-
-    let mut total_tris = 0u64;
-    let mut mesh_count = 0u32;
-
-    for (&chunk_id, state) in lod_meshes.states.iter_mut() {
-        if let Some(task) = &mut state.task {
-            if let Some(result) = block_on(future::poll_once(task)) {
-                state.task = None;
-                state.tri_count = result.tri_count;
-
-                let mesh_handle = meshes.add(result.mesh);
-                state.mesh_handle = Some(mesh_handle.clone());
-
-                match state.entity {
-                    Some(entity) => {
-                        commands.entity(entity).insert(Mesh3d(mesh_handle));
-                    }
-                    None => {
-                        let entity = commands
-                            .spawn((
-                                Mesh3d(mesh_handle),
-                                MeshMaterial3d(terrain_material.handle.clone()),
-                                Transform::from_translation(state.chunk_origin),
-                                ChunkMesh { chunk_id },
-                            ))
-                            .id();
-                        state.entity = Some(entity);
-                    }
-                }
-            }
-        }
-
-        if state.entity.is_some() {
-            total_tris += state.tri_count as u64;
-            mesh_count += 1;
-        }
-    }
-
-    tri_stats.total_tris = total_tris;
-    tri_stats.mesh_count = mesh_count;
-}
-
 // ── Summary Mesh Pipeline ──
+// All terrain rendering — r=0 tiles through r=N summaries — goes through
+// this unified pipeline. No separate chunk mesh path.
 
 /// Dispatch async tasks to build summary mesh regions.
-/// Only active when ForcedSummaryRadius is Some(r > 0).
+///
+/// **Forced mode** (`Some(r)`): single band at that radius, all visible regions.
+/// **Auto mode** (`None`): multiple bands from `compute_active_bands`, with overlap.
 pub fn dispatch_summary_tasks(
+    mut commands: Commands,
     loaded_chunks: Res<LoadedChunks>,
     map: Res<common_bevy::resources::map::Map>,
     mut summary_meshes: ResMut<SummaryMeshes>,
     forced_radius: Res<ForcedSummaryRadius>,
     client_timers: Res<crate::resources::ClientTimers>,
+    player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
 ) {
-    let radius = match forced_radius.0 {
-        Some(r) if r > 0 => r,
-        _ => return,
-    };
-
     if !map.take_changed() {
         return;
     }
     let _t = client_timers.0.scope("sum_disp");
 
+    // Determine camera world position for distance-based band computation
+    #[cfg(feature = "admin")]
+    let camera_pos = flyover
+        .as_ref()
+        .filter(|f| f.active)
+        .map(|f| f.world_position)
+        .or_else(|| player_query.single().ok().map(|t| t.translation));
+    #[cfg(not(feature = "admin"))]
+    let camera_pos = player_query.single().ok().map(|t| t.translation);
+
+    let camera_pos = camera_pos.unwrap_or(Vec3::ZERO);
+
+    // Compute which mesh regions are needed
+    let needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
+        match forced_radius.0 {
+            Some(r) => {
+                // Single band: all visible regions at that radius
+                common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks)
+            }
+            None => {
+                // Auto: multiple bands based on camera distance
+                compute_auto_mode_regions(camera_pos, &loaded_chunks.chunks)
+            }
+        };
+
+    // Evict regions no longer needed
+    let stale: Vec<common_bevy::summary_mesh::MeshRegionKey> = summary_meshes
+        .states
+        .keys()
+        .filter(|k| !needed.contains(k))
+        .copied()
+        .collect();
+    for key in stale {
+        if let Some(state) = summary_meshes.states.remove(&key) {
+            if let Some(entity) = state.entity {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+
+    // Dispatch build tasks for needed regions
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
 
-    let regions =
-        common_bevy::summary_mesh::visible_mesh_regions(radius, &loaded_chunks.chunks);
-
-    for region_key in regions {
-        if let Some(state) = summary_meshes.states.get(&region_key) {
+    for region_key in &needed {
+        if let Some(state) = summary_meshes.states.get(region_key) {
             if state.task.is_some() {
-                continue; // build in flight, wait for it
+                continue;
             }
-            // Allow re-dispatch of incomplete regions (summaries_built < 271)
-            // when new tiles arrive. Complete regions are skipped.
             if state.entity.is_some()
                 && state.summaries_built >= common_bevy::summary_mesh::MESH_REGION_SUMMARIES
             {
-                continue; // fully built, no re-dispatch needed
+                continue;
             }
         }
 
+        let radius = region_key.r;
+        let rk = *region_key;
         let map_snap = map.clone();
         let task = pool.spawn(async move {
-            collect_and_build_summary_mesh(radius, region_key, &map_snap)
+            collect_and_build_summary_mesh(radius, rk, &map_snap)
         });
 
         let summary_lat = common_bevy::summary::summary_lattice(radius);
@@ -475,12 +330,11 @@ pub fn dispatch_summary_tasks(
         let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
         let mesh_origin = Vec3::new(wx, 0.0, wz);
 
-        // Preserve existing entity so poll can do an in-place mesh swap
-        if let Some(state) = summary_meshes.states.get_mut(&region_key) {
+        if let Some(state) = summary_meshes.states.get_mut(region_key) {
             state.task = Some(task);
         } else {
             summary_meshes.states.insert(
-                region_key,
+                *region_key,
                 SummaryMeshState {
                     task: Some(task),
                     entity: None,
@@ -497,6 +351,45 @@ pub fn dispatch_summary_tasks(
             );
         }
     }
+}
+
+/// Compute visible mesh regions for auto mode (multi-band).
+fn compute_auto_mode_regions(
+    camera_pos: Vec3,
+    loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
+) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
+    use common_bevy::summary::compute_active_bands;
+    use common_bevy::summary_mesh::visible_mesh_regions_in_band;
+
+    // Estimate max render distance from loaded chunks
+    let mut max_dist = 0.0_f32;
+    for &chunk_id in loaded_chunks {
+        let center = chunk_id.center();
+        let (wx, wz) = common_bevy::geometry::flat_top_tile_center(center.q, center.r, 1.0);
+        let dx = wx - camera_pos.x;
+        let dz = wz - camera_pos.z;
+        let d = (dx * dx + dz * dz).sqrt();
+        if d > max_dist {
+            max_dist = d;
+        }
+    }
+
+    let bands = compute_active_bands(max_dist);
+    let mut all_regions = std::collections::HashSet::new();
+
+    for band in &bands {
+        let regions = visible_mesh_regions_in_band(
+            band.r,
+            camera_pos.x,
+            camera_pos.z,
+            band.inner_wu,
+            band.outer_wu,
+            loaded_chunks,
+        );
+        all_regions.extend(regions);
+    }
+
+    all_regions
 }
 
 /// Build a summary mesh region from Map data (runs off main thread).
@@ -574,7 +467,10 @@ fn append_cross_region_skirts(
 
     let mut tris = 0u32;
     for neighbor_key in mesh_region_neighbors(my_key) {
-        // Ownership: lower key owns the skirt
+        // Ownership: lower key owns the skirt (same band only)
+        if neighbor_key.r != my_key.r {
+            continue;
+        }
         if (my_key.mn, my_key.mm) >= (neighbor_key.mn, neighbor_key.mm) {
             continue;
         }
@@ -608,12 +504,8 @@ pub fn poll_summary_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     mut tri_stats: ResMut<LodTriangleStats>,
     terrain_material: Option<Res<TerrainMaterial>>,
-    forced_radius: Res<ForcedSummaryRadius>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    if !matches!(forced_radius.0, Some(r) if r > 0) {
-        return;
-    }
     let Some(terrain_material) = terrain_material else { return };
     let _t = client_timers.0.scope("sum_poll");
 
@@ -657,7 +549,9 @@ pub fn poll_summary_meshes(
             }
             // If neighbor has lower key, it owns the cross-region skirts
             // and needs to rebuild to include skirts against our new data.
-            if (neighbor_key.mn, neighbor_key.mm) < (region_key.mn, region_key.mm) {
+            if neighbor_key.r == region_key.r
+                && (neighbor_key.mn, neighbor_key.mm) < (region_key.mn, region_key.mm)
+            {
                 if !needs_rebuild.contains(&neighbor_key) {
                     needs_rebuild.push(neighbor_key);
                 }
@@ -668,6 +562,18 @@ pub fn poll_summary_meshes(
     // Combine: all regions that need a mesh (re)build this frame
     let mut all_build: Vec<common_bevy::summary_mesh::MeshRegionKey> = just_completed;
     all_build.extend(needs_rebuild);
+
+    // Also handle orphaned states: have base geometry but no entity.
+    // Occurs after a flyover stash restore (entities were despawned on toggle-on).
+    // A task may already be pending (dispatch_summary_tasks ran first this frame);
+    // we still rebuild immediately from the stored base geometry so there is no flash.
+    for (&region_key, state) in summary_meshes.states.iter() {
+        if !state.base_positions.is_empty() && state.entity.is_none() {
+            if !all_build.contains(&region_key) {
+                all_build.push(region_key);
+            }
+        }
+    }
 
     // Phase 3: Build/rebuild meshes with cross-region skirts.
     // We need read access to all states for neighbor perimeter lookups,
@@ -744,7 +650,7 @@ pub fn poll_summary_meshes(
         }
     }
 
-    // Phase 5: Accumulate diagnostics.
+    // Phase 5: Diagnostics.
     let mut total_tris = 0u64;
     let mut mesh_count = 0u32;
     for state in summary_meshes.states.values() {
@@ -753,6 +659,6 @@ pub fn poll_summary_meshes(
             mesh_count += 1;
         }
     }
-    tri_stats.total_tris += total_tris;
-    tri_stats.mesh_count += mesh_count;
+    tri_stats.total_tris = total_tris;
+    tri_stats.mesh_count = mesh_count;
 }

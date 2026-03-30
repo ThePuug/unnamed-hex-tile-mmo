@@ -75,14 +75,15 @@ pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
 }
 
-/// Result from async mesh build task.
+/// Result from async mesh build task (legacy — used by diagnostics grid overlay).
+#[allow(dead_code)]
 pub struct MeshBuildResult {
     pub mesh: Mesh,
-    /// Triangle count of the mesh.
     pub tri_count: u32,
 }
 
-/// Per-chunk mesh state.
+/// Per-chunk mesh state (legacy — used by diagnostics grid overlay).
+#[allow(dead_code)]
 pub struct ChunkLodState {
     /// In-flight async task producing a Mesh.
     pub task: Option<Task<MeshBuildResult>>,

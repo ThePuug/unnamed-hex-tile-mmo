@@ -17,8 +17,9 @@ pub enum Info {
     DistanceIndicator,  // ADR-014 Phase 4: Shows distance from haven, zone, and expected enemy level
 }
 
-/// Component linking mesh entities to their chunk for eviction
+/// Component linking mesh entities to their chunk (legacy — used by diagnostics).
 #[derive(Component)]
+#[allow(dead_code)]
 pub struct ChunkMesh {
     pub chunk_id: ChunkId,
 }

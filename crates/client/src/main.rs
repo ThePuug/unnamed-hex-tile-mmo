@@ -161,8 +161,6 @@ fn main() {
         renet::handle_pong,
         renet::periodic_ping,
         world::do_spawn,
-        world::dispatch_lod_tasks.after(world::do_spawn),
-        world::poll_and_swap_lod.after(world::dispatch_lod_tasks),
         world::dispatch_summary_tasks.after(world::do_spawn),
         world::poll_summary_meshes.after(world::dispatch_summary_tasks),
         world::update,
@@ -181,7 +179,6 @@ fn main() {
     app.init_resource::<Server>();
     app.init_resource::<LoadedChunks>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
-    app.init_resource::<crate::resources::ChunkLodMeshes>();
     app.init_resource::<crate::resources::LodTriangleStats>();
     app.init_resource::<crate::resources::ClientTimers>();
     app.init_resource::<crate::resources::ForcedSummaryRadius>();

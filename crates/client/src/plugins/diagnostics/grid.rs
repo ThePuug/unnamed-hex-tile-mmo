@@ -7,11 +7,8 @@ use bevy_asset::RenderAssetUsages;
 use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use common_bevy::{
-    chunk::{chunk_hex_distance, loc_to_chunk},
-    components::behaviour::PlayerControlled,
-};
-use crate::resources::ChunkLodMeshes;
+use common_bevy::components::behaviour::PlayerControlled;
+use crate::resources::SummaryMeshes;
 use super::config::DiagnosticsState;
 
 // ============================================================================
@@ -100,7 +97,7 @@ struct ChunkMeshSnapshot {
 const GRID_RADIUS: i32 = 5;
 
 pub fn spawn_grid_mesh_task(
-    lod_meshes: Res<ChunkLodMeshes>,
+    summary_meshes: Res<SummaryMeshes>,
     mesh_assets: Res<Assets<Mesh>>,
     mut grid_query: Query<&mut HexGridOverlay>,
     state: Res<DiagnosticsState>,
@@ -117,46 +114,58 @@ pub fn spawn_grid_mesh_task(
     }
 
     let should_update =
-        (lod_meshes.is_changed() || overlay.needs_regeneration) && state.grid_visible;
+        (summary_meshes.is_changed() || overlay.needs_regeneration) && state.grid_visible;
     if !should_update {
         return;
     }
 
     overlay.needs_regeneration = false;
 
-    // Determine center chunk from flyover position or player position
-    let center_chunk = {
+    // Determine center position from flyover or player
+    let center_pos: Option<Vec3> = {
         #[cfg(feature = "admin")]
         {
             if let Some(ref fly) = flyover {
                 if fly.active {
-                    use qrz::Convert;
-                    let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-                    let qrz: qrz::Qrz = m.convert(fly.world_position);
-                    Some(loc_to_chunk(qrz))
+                    Some(fly.world_position)
                 } else {
-                    player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+                    player_query.iter().next().map(|loc| {
+                        use qrz::Convert;
+                        let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+                        m.convert(**loc)
+                    })
                 }
             } else {
-                player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+                player_query.iter().next().map(|loc| {
+                    use qrz::Convert;
+                    let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+                    m.convert(**loc)
+                })
             }
         }
         #[cfg(not(feature = "admin"))]
         {
-            player_query.iter().next().map(|loc| loc_to_chunk(**loc))
+            player_query.iter().next().map(|loc| {
+                use qrz::Convert;
+                let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+                m.convert(**loc)
+            })
         }
     };
 
-    // Extract mesh data only for chunks within GRID_RADIUS of center
+    // Extract mesh data from nearby summary mesh regions
+    let grid_wu = GRID_RADIUS as f32 * common_bevy::chunk::CHUNK_EXTENT_WU;
     let mut snapshots: Vec<ChunkMeshSnapshot> = Vec::new();
-    for (&chunk_id, chunk_state) in lod_meshes.states.iter() {
-        if let Some(center) = center_chunk {
-            if chunk_hex_distance(chunk_id, center) > GRID_RADIUS {
+    for (_, region_state) in summary_meshes.states.iter() {
+        if let Some(center) = center_pos {
+            let dx = region_state.mesh_origin.x - center.x;
+            let dz = region_state.mesh_origin.z - center.z;
+            if (dx * dx + dz * dz).sqrt() > grid_wu {
                 continue;
             }
         }
 
-        let Some(ref handle) = chunk_state.mesh_handle else { continue };
+        let Some(ref handle) = region_state.mesh_handle else { continue };
         let Some(mesh) = mesh_assets.get(handle) else { continue };
 
         let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
@@ -171,7 +180,7 @@ pub fn spawn_grid_mesh_task(
         snapshots.push(ChunkMeshSnapshot {
             positions,
             indices,
-            origin: chunk_state.chunk_origin,
+            origin: region_state.mesh_origin,
         });
     }
 

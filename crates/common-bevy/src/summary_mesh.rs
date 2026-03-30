@@ -9,17 +9,19 @@ use std::collections::{HashMap, HashSet};
 use bevy::math::Vec3;
 
 use crate::{
-    chunk::{self, ChunkId},
-    geometry::flat_top_tile_center,
+    chunk::{self, ChunkId, CHUNK_RADIUS},
+    geometry::{compute_tile_geometry, flat_top_tile_center},
     summary::{
         SummaryLattice, SummarySurface,
         mesh_region_lattice, select_center_z, summary_lattice,
     },
 };
 
-/// Key identifying a mesh region within a single distance band.
+/// Key identifying a mesh region within a specific distance band.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MeshRegionKey {
+    /// Summary radius for this band.
+    pub r: u32,
     /// Mesh region lattice coordinates (in summary-lattice space).
     pub mn: i32,
     pub mm: i32,
@@ -74,7 +76,9 @@ pub fn build_summary_mesh_region(
     region_key: MeshRegionKey,
     elevation_fn: &dyn Fn(i32, i32) -> Option<i32>,
 ) -> Option<SummaryMeshResult> {
-    debug_assert!(radius > 0, "r=0 should use tile passthrough");
+    if radius == 0 {
+        return build_r0_mesh_region(region_key, elevation_fn);
+    }
 
     let summary_lat = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -146,6 +150,84 @@ pub fn build_summary_mesh_region(
         mesh_origin,
         perimeter_edges,
         summaries_built: surfaces.len() as u32,
+    })
+}
+
+/// Build an r=0 mesh region: 271 tiles = one game chunk, via compute_tile_geometry.
+///
+/// At r=0, summary lattice scale=1 (every tile is its own summary).
+/// Mesh region = radius-9 in summary-lattice space = radius-9 in tile space = 271 tiles.
+/// This produces byte-identical output to the old per-chunk tile pipeline.
+///
+/// Requires all 6 neighbor chunks to have tiles (for slope blending at edges).
+/// Returns None if center tile or any neighbor chunk center is missing.
+fn build_r0_mesh_region(
+    region_key: MeshRegionKey,
+    elevation_fn: &dyn Fn(i32, i32) -> Option<i32>,
+) -> Option<SummaryMeshResult> {
+    let region_lat = mesh_region_lattice();
+    let region_center = region_lat.cell_center((region_key.mn, region_key.mm));
+    let (cq, cr) = (region_center.0, region_center.1);
+
+    // Neighbor gate: all 6 chunk neighbors must have tiles (same as old pipeline)
+    for &(dn, dm) in &[(1i32, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
+        let nbr = region_lat.cell_center((region_key.mn + dn, region_key.mm + dm));
+        if elevation_fn(nbr.0, nbr.1).is_none() {
+            return None;
+        }
+    }
+
+    // Collect tiles in the region (hex ball of radius CHUNK_RADIUS around center)
+    let mut tiles: Vec<qrz::Qrz> = Vec::new();
+    let mut elevations: std::collections::HashMap<(i32, i32), i32> = std::collections::HashMap::new();
+
+    let r = CHUNK_RADIUS;
+    for dq in -r..=r {
+        let dr_min = (-r).max(-dq - r);
+        let dr_max = r.min(-dq + r);
+        for dr in dr_min..=dr_max {
+            let tq = cq + dq;
+            let tr = cr + dr;
+            if let Some(z) = elevation_fn(tq, tr) {
+                tiles.push(qrz::Qrz { q: tq, r: tr, z });
+                elevations.insert((tq, tr), z);
+            }
+        }
+    }
+
+    if tiles.is_empty() {
+        return None;
+    }
+
+    // Build 1-ring neighbor elevation lookup (for slope blending at edges)
+    for tile in &tiles.clone() {
+        for &(dq, dr) in &[(-1i32, 0), (-1, 1), (0, 1), (1, 0), (1, -1), (0, -1)] {
+            let nq = tile.q + dq;
+            let nr = tile.r + dr;
+            if !elevations.contains_key(&(nq, nr)) {
+                if let Some(z) = elevation_fn(nq, nr) {
+                    elevations.insert((nq, nr), z);
+                }
+            }
+        }
+    }
+
+    let (origin_wx, origin_wz) = flat_top_tile_center(cq, cr, 1.0);
+    let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
+
+    let tile_geom = compute_tile_geometry(&tiles, &elevations, 1.0, 0.8, mesh_origin);
+
+    let tri_count = tile_geom.indices.len() as u32 / 3;
+    let summaries_built = tiles.len() as u32;
+
+    Some(SummaryMeshResult {
+        positions: tile_geom.positions,
+        normals: tile_geom.normals,
+        indices: tile_geom.indices,
+        tri_count,
+        mesh_origin,
+        perimeter_edges: Vec::new(),
+        summaries_built,
     })
 }
 
@@ -328,12 +410,13 @@ pub struct CrossRegionSkirtQuad {
     pub normal: Vec3,
 }
 
-/// The 6 mesh region neighbors in lattice space.
+/// The 6 mesh region neighbors in lattice space (same band).
 pub fn mesh_region_neighbors(key: MeshRegionKey) -> [MeshRegionKey; 6] {
     const OFFSETS: [(i32, i32); 6] = [
         (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1),
     ];
     OFFSETS.map(|(dn, dm)| MeshRegionKey {
+        r: key.r,
         mn: key.mn + dn,
         mm: key.mm + dm,
     })
@@ -353,8 +436,86 @@ pub fn contributing_chunks(
     chunks
 }
 
+/// Enumerate mesh regions within a distance band that overlap loaded chunks.
+///
+/// `camera_wx/wz`: camera world position (XZ plane).
+/// `inner_wu/outer_wu`: extended band range (natural + overlap).
+/// Only includes regions whose world-space centers fall within range
+/// AND overlap at least one loaded chunk.
+pub fn visible_mesh_regions_in_band(
+    r: u32,
+    camera_wx: f32,
+    camera_wz: f32,
+    inner_wu: f32,
+    outer_wu: f32,
+    loaded_chunks: &HashSet<ChunkId>,
+) -> HashSet<MeshRegionKey> {
+    let summary_lat = summary_lattice(r);
+    let region_lat = mesh_region_lattice();
+
+    // Convert camera world position to tile coordinates using flat-top inverse,
+    // then to summary-lattice coordinates, then to mesh-region lattice.
+    // Flat-top: x = 1.5*q, z = sqrt(3)/2*q + sqrt(3)*r
+    // Inverse: q = x/1.5, r = (z - sqrt(3)/2*q) / sqrt(3)
+    let cam_q = camera_wx as f64 / 1.5;
+    let cam_r = (camera_wz as f64 - cam_q * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt();
+    let cam_sq = (cam_q / summary_lat.scale as f64).round() as i32;
+    let cam_sr = (cam_r / summary_lat.scale as f64).round() as i32;
+    let cam_region = region_lat.cell_id(cam_sq, cam_sr);
+
+    // Search radius in mesh-region lattice units. Conservative estimate.
+    let region_extent = crate::summary::mesh_region_extent_wu(r).max(1.0);
+    let search_radius = ((outer_wu / region_extent) as i32 + 2).min(60);
+
+    let mut regions = HashSet::new();
+    let sr = search_radius;
+    for dn in -sr..=sr {
+        let dm_min = (-sr).max(-dn - sr);
+        let dm_max = sr.min(-dn + sr);
+        for dm in dm_min..=dm_max {
+            let mn = cam_region.0 + dn;
+            let mm = cam_region.1 + dm;
+
+            // Check world-space distance of this region's center from camera
+            let region_center = region_lat.cell_center((mn, mm));
+            let (scq, scr) = summary_lat.cell_center(region_center);
+            let (rwx, rwz) = flat_top_tile_center(scq, scr, 1.0);
+            let dx = rwx - camera_wx;
+            let dz = rwz - camera_wz;
+            let dist = (dx * dx + dz * dz).sqrt();
+
+            if dist < inner_wu || dist > outer_wu {
+                continue;
+            }
+
+            // Check overlap with loaded chunks: at least one summary's tiles
+            // must be in loaded chunks. Quick check: region center's tile.
+            let qrz = qrz::Qrz { q: scq, r: scr, z: 0 };
+            let chunk_id = chunk::loc_to_chunk(qrz);
+            if !loaded_chunks.contains(&chunk_id) {
+                // Try neighbor summary centers
+                let mut any_loaded = false;
+                for &(dsn, dsm) in &[(1,0),(-1,0),(0,1),(0,-1),(1,-1),(-1,1)] {
+                    let nb = (region_center.0 + dsn, region_center.1 + dsm);
+                    let (nq, nr) = summary_lat.cell_center(nb);
+                    let nqrz = qrz::Qrz { q: nq, r: nr, z: 0 };
+                    if loaded_chunks.contains(&chunk::loc_to_chunk(nqrz)) {
+                        any_loaded = true;
+                        break;
+                    }
+                }
+                if !any_loaded { continue; }
+            }
+
+            regions.insert(MeshRegionKey { r, mn, mm });
+        }
+    }
+
+    regions
+}
+
 /// Enumerate all mesh region keys that overlap a set of loaded chunks,
-/// for a given summary radius.
+/// for a given summary radius. Used by forced-radius mode (no distance filter).
 pub fn visible_mesh_regions(
     radius: u32,
     loaded_chunks: &HashSet<ChunkId>,
@@ -368,14 +529,15 @@ pub fn visible_mesh_regions(
         let summary_cell = summary_lat.cell_id(center.q, center.r);
         let region = region_lat.cell_id(summary_cell.0, summary_cell.1);
         regions.insert(MeshRegionKey {
+            r: radius,
             mn: region.0,
             mm: region.1,
         });
 
         for &(dn, dm) in &[(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
             let nb = (summary_cell.0 + dn, summary_cell.1 + dm);
-            let r = region_lat.cell_id(nb.0, nb.1);
-            regions.insert(MeshRegionKey { mn: r.0, mm: r.1 });
+            let rid = region_lat.cell_id(nb.0, nb.1);
+            regions.insert(MeshRegionKey { r: radius, mn: rid.0, mm: rid.1 });
         }
     }
 
@@ -397,7 +559,7 @@ mod tests {
     fn build_flat_region_r1() {
         let result = build_summary_mesh_region(
             1,
-            MeshRegionKey { mn: 0, mm: 0 },
+            MeshRegionKey { r: 1, mn: 0, mm: 0 },
             &|_q, _r| Some(5),
         );
         assert!(result.is_some());
@@ -412,7 +574,7 @@ mod tests {
     fn build_returns_none_when_no_data() {
         let result = build_summary_mesh_region(
             1,
-            MeshRegionKey { mn: 0, mm: 0 },
+            MeshRegionKey { r: 1, mn: 0, mm: 0 },
             &|_q, _r| None,
         );
         assert!(result.is_none());
@@ -423,7 +585,7 @@ mod tests {
         let summary_lat = summary_lattice(1);
         let result = build_summary_mesh_region(
             1,
-            MeshRegionKey { mn: 0, mm: 0 },
+            MeshRegionKey { r: 1, mn: 0, mm: 0 },
             &|q, r| {
                 let cell = summary_lat.cell_id(q, r);
                 Some(if (cell.0 + cell.1) % 2 == 0 { 0 } else { 10 })
@@ -442,7 +604,7 @@ mod tests {
     fn perimeter_edges_have_sorted_ids() {
         let result = build_summary_mesh_region(
             1,
-            MeshRegionKey { mn: 0, mm: 0 },
+            MeshRegionKey { r: 1, mn: 0, mm: 0 },
             &|_q, _r| Some(5),
         )
         .unwrap();
@@ -458,8 +620,8 @@ mod tests {
     #[test]
     fn cross_region_skirts_between_adjacent_regions() {
         // Build two adjacent regions with different z values
-        let key_a = MeshRegionKey { mn: 0, mm: 0 };
-        let key_b = MeshRegionKey { mn: 1, mm: 0 };
+        let key_a = MeshRegionKey { r: 1, mn: 0, mm: 0 };
+        let key_b = MeshRegionKey { r: 1, mn: 1, mm: 0 };
         let result_a = build_summary_mesh_region(
             1,
             key_a,
@@ -486,8 +648,8 @@ mod tests {
 
     #[test]
     fn cross_region_skirts_zero_when_same_z() {
-        let key_a = MeshRegionKey { mn: 0, mm: 0 };
-        let key_b = MeshRegionKey { mn: 1, mm: 0 };
+        let key_a = MeshRegionKey { r: 1, mn: 0, mm: 0 };
+        let key_b = MeshRegionKey { r: 1, mn: 1, mm: 0 };
         let result_a = build_summary_mesh_region(
             1,
             key_a,
@@ -514,7 +676,7 @@ mod tests {
 
     #[test]
     fn mesh_region_neighbors_count() {
-        let neighbors = mesh_region_neighbors(MeshRegionKey { mn: 0, mm: 0 });
+        let neighbors = mesh_region_neighbors(MeshRegionKey { r: 1, mn: 0, mm: 0 });
         assert_eq!(neighbors.len(), 6);
         // All should be distinct
         let set: HashSet<_> = neighbors.iter().collect();

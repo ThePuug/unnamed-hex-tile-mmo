@@ -56,6 +56,76 @@ pub fn summary_radius_with_screen(camera_distance_wu: f32, screen_height: f32) -
     r_exact.max(0.0).ceil() as u32
 }
 
+// ── Distance Bands ──
+
+/// A distance band: all mesh regions at a specific summary radius.
+#[derive(Clone, Debug)]
+pub struct Band {
+    /// Summary radius for this band.
+    pub r: u32,
+    /// Inner edge of the band's natural range in world units from camera.
+    pub inner_wu: f32,
+    /// Outer edge of the band's natural range in world units from camera.
+    pub outer_wu: f32,
+}
+
+/// Compute active distance bands from camera to `max_distance_wu`.
+///
+/// Inverts `summary_radius(d)` to find the distance thresholds where r
+/// increments. Each band spans from one threshold to the next.
+/// Returns bands sorted by r (finest first).
+pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
+    if max_distance_wu <= 0.0 {
+        return vec![Band { r: 0, inner_wu: 0.0, outer_wu: 0.0 }];
+    }
+
+    let mut bands = Vec::new();
+    let mut prev_threshold = 0.0_f32;
+    let max_r = summary_radius(max_distance_wu);
+
+    for r in 0..=max_r {
+        // Find the distance where summary_radius first returns r+1
+        // (i.e. the outer boundary of band r).
+        let next_threshold = band_outer_threshold(r);
+        let outer = next_threshold.min(max_distance_wu);
+        bands.push(Band {
+            r,
+            inner_wu: prev_threshold,
+            outer_wu: outer,
+        });
+        prev_threshold = next_threshold;
+        if next_threshold >= max_distance_wu {
+            break;
+        }
+    }
+
+    bands
+}
+
+/// Distance (WU) at which `summary_radius` transitions from r to r+1.
+///
+/// Inverts: `r_exact = (MIN_SCREEN_PX * d / (tile_diameter * pixel_scale) - 1) / 2`
+/// Setting `r_exact = r + 0.5` (ceil boundary) → solve for d.
+fn band_outer_threshold(r: u32) -> f32 {
+    let pixel_scale = DEFAULT_SCREEN_HEIGHT / (2.0 * (MAX_VFOV / 2.0).tan());
+    let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
+    // summary_radius returns ceil(r_exact), so band r spans r_exact in [r-1, r).
+    // The outer boundary is where r_exact = r (ceil gives r+1 beyond this).
+    // r_exact = r → d = (2*r + 1) * tile_diameter * pixel_scale / MIN_SCREEN_PX
+    let r_exact = r as f32;
+    (2.0 * r_exact + 1.0) * tile_diameter * pixel_scale / MIN_SCREEN_PX
+}
+
+/// Approximate world-space width of one mesh region at radius r.
+/// Used for overlap extension at band boundaries.
+pub fn mesh_region_extent_wu(r: u32) -> f32 {
+    let scale = (2 * r + 1) as f32;
+    // A mesh region spans ~2*MESH_REGION_RADIUS summaries across.
+    // Each summary is scale tiles wide. Flat-to-flat width ≈ scale * sqrt(3).
+    let summary_flat_to_flat = scale * HEX_OUTER_RADIUS * (3.0_f32).sqrt();
+    (2 * MESH_REGION_RADIUS) as f32 * summary_flat_to_flat
+}
+
 // ── Summary Lattice ──
 
 /// Axis-aligned summary lattice. Centers are placed at integer multiples

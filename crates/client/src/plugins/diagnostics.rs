@@ -55,7 +55,7 @@ impl Plugin for DiagnosticsPlugin {
 mod tests {
     use super::*;
     use super::grid::HexGridOverlay;
-    use crate::resources::ChunkLodMeshes;
+    use crate::resources::SummaryMeshes;
 
     #[test]
     fn test_update_grid_triggers_on_map_change() {
@@ -83,9 +83,8 @@ mod tests {
             },
         ));
 
-        let mut lod_meshes = ChunkLodMeshes::default();
-        app.insert_resource(lod_meshes);
-        app.world_mut().resource_mut::<ChunkLodMeshes>().set_changed();
+        app.insert_resource(SummaryMeshes::default());
+        app.world_mut().resource_mut::<SummaryMeshes>().set_changed();
 
         app.insert_resource(grid::PendingGridMesh::default());
         app.add_systems(Update, grid::spawn_grid_mesh_task);
@@ -125,7 +124,7 @@ mod tests {
             },
         ));
 
-        app.init_resource::<ChunkLodMeshes>();
+        app.init_resource::<SummaryMeshes>();
 
         app.insert_resource(grid::PendingGridMesh::default());
         app.add_systems(Update, grid::spawn_grid_mesh_task);

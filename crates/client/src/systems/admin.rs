@@ -20,7 +20,6 @@ use common_bevy::{
 use qrz::Convert;
 
 use crate::{
-    components::ChunkMesh,
     plugins::console::DevConsoleAction,
     resources::{ForcedSummaryRadius, LoadedChunks, SkipNeighborRegen},
     systems::camera::{CameraOrbit, CAMERA_DISTANCE, CAMERA_HEIGHT},
@@ -46,7 +45,7 @@ pub struct FlyoverState {
     pub generated_chunks: HashSet<ChunkId>,
     pub saved_camera_scale: f32,
     /// Stashed normal-play state, restored on flyover toggle-off.
-    pub stashed_lod: Option<HashMap<ChunkId, crate::resources::ChunkLodState>>,
+    pub stashed_summary_meshes: Option<HashMap<common_bevy::summary_mesh::MeshRegionKey, crate::resources::SummaryMeshState>>,
     pub stashed_loaded: Option<HashSet<ChunkId>>,
 }
 
@@ -59,7 +58,7 @@ impl Default for FlyoverState {
             hold_time: 0.0,
             generated_chunks: HashSet::new(),
             saved_camera_scale: 1.0,
-            stashed_lod: None,
+            stashed_summary_meshes: None,
             stashed_loaded: None,
         }
     }
@@ -136,7 +135,6 @@ pub fn execute_admin_actions(
     admin_composite: Res<AdminComposite>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     mut forced_radius: ResMut<ForcedSummaryRadius>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
@@ -181,18 +179,12 @@ pub fn execute_admin_actions(
                     let label = new_radius.map_or("Auto".to_string(), |r| format!("r={r}"));
                     info!("Summary radius: {label}");
                     forced_radius.0 = *new_radius;
-                    // Clear all mesh entities so the correct pipeline rebuilds
-                    for (_, state) in lod_meshes.states.drain() {
-                        if let Some(entity) = state.entity {
-                            commands.entity(entity).despawn();
-                        }
-                    }
+                    // Clear all mesh entities so the new band configuration rebuilds
                     for (_, state) in summary_meshes.states.drain() {
                         if let Some(entity) = state.entity {
                             commands.entity(entity).despawn();
                         }
                     }
-                    // Trigger rebuild
                     map.force_changed();
                 }
                 continue;
@@ -218,14 +210,19 @@ pub fn execute_admin_actions(
                 }
             }
 
-            // Stash existing mesh + loaded state and hide entities — restored on toggle-off.
-            let stashed: HashMap<ChunkId, crate::resources::ChunkLodState> = lod_meshes.states.drain().collect();
-            for (_, state) in &stashed {
-                if let Some(entity) = state.entity {
-                    commands.entity(entity).insert(Visibility::Hidden);
+            // Stash existing mesh state so geometry can be restored on toggle-off.
+            // Despawn the entities rather than hiding them — on toggle-off we rebuild
+            // from stored base_positions via poll_summary_meshes Phase 0, avoiding
+            // command-ordering races with dispatch_summary_tasks.
+            let mut stashed: HashMap<common_bevy::summary_mesh::MeshRegionKey, crate::resources::SummaryMeshState> =
+                summary_meshes.states.drain().collect();
+            for state in stashed.values_mut() {
+                if let Some(entity) = state.entity.take() {
+                    commands.entity(entity).despawn();
                 }
+                state.mesh_handle = None;
             }
-            flyover.stashed_lod = Some(stashed);
+            flyover.stashed_summary_meshes = Some(stashed);
             flyover.stashed_loaded = Some(loaded_chunks.chunks.drain().collect());
 
             // Spawn ground cursor
@@ -257,21 +254,22 @@ pub fn execute_admin_actions(
             // Clean up flyover-generated chunks
             evict_generated_chunks(
                 &mut commands, &mut flyover, &mut pending_tiles,
-                &mut loaded_chunks, &map, &mut skip_regen, &mut lod_meshes,
+                &mut loaded_chunks, &map, &mut skip_regen, &mut summary_meshes,
             );
 
-            // Restore stashed normal-play state
-            if let Some(stashed) = flyover.stashed_lod.take() {
-                for (chunk_id, state) in stashed {
-                    if let Some(entity) = state.entity {
-                        commands.entity(entity).insert(Visibility::Inherited);
-                    }
-                    lod_meshes.states.insert(chunk_id, state);
+            // Restore stashed normal-play state.
+            // Entities were despawned on toggle-on; poll_summary_meshes Phase 0
+            // will rebuild them from stored base_positions this same frame.
+            if let Some(stashed) = flyover.stashed_summary_meshes.take() {
+                for (key, state) in stashed {
+                    summary_meshes.states.insert(key, state);
                 }
             }
             if let Some(stashed) = flyover.stashed_loaded.take() {
                 loaded_chunks.chunks.extend(stashed);
             }
+            // Signal dispatch_summary_tasks to re-evaluate visible regions.
+            map.force_changed();
 
             if let Ok(mut projection) = camera_query.single_mut() {
                 if let Projection::Orthographic(ortho) = projection.as_mut() {
@@ -527,28 +525,29 @@ pub fn poll_flyover_tile_tasks(
     });
 }
 
-/// Tags newly spawned chunk meshes that belong to admin-generated chunks.
+/// Tags newly spawned mesh entities that belong to admin-generated chunks.
 pub fn tag_admin_chunks(
     mut commands: Commands,
     flyover: Res<FlyoverState>,
-    new_chunks: Query<(Entity, &ChunkMesh), Added<ChunkMesh>>,
+    new_meshes: Query<Entity, Added<crate::resources::SummaryMesh>>,
 ) {
-    for (entity, chunk_mesh) in new_chunks.iter() {
-        if flyover.generated_chunks.contains(&chunk_mesh.chunk_id) {
-            commands.entity(entity).insert(AdminChunk);
-        }
+    if !flyover.active { return; }
+    for entity in new_meshes.iter() {
+        // try_insert: silently no-ops if the entity is already despawned by the
+        // time this command is applied (dispatch_summary_tasks may evict it in the
+        // same frame).
+        commands.entity(entity).try_insert(AdminChunk);
     }
 }
 
 /// Evicts generated chunks that are far from the flyover camera position.
+/// Removes tiles from Map; dispatch_summary_tasks handles mesh entity lifecycle.
 pub fn flyover_evict_chunks(
     mut flyover: ResMut<FlyoverState>,
-    mut commands: Commands,
     map: Res<Map>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    mut lod_meshes: ResMut<crate::resources::ChunkLodMeshes>,
     camera_query: Query<&Projection, With<Camera3d>>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
@@ -573,18 +572,12 @@ pub fn flyover_evict_chunks(
 
     if evictable.is_empty() { return; }
 
-    // Despawn mesh entities first (before removing state)
     for &chunk_id in &evictable {
         pending_tiles.tasks.remove(&chunk_id);
-        if let Some(state) = lod_meshes.states.remove(&chunk_id) {
-            if let Some(entity) = state.entity {
-                commands.entity(entity).despawn();
-            }
-        }
         loaded_chunks.chunks.remove(&chunk_id);
     }
 
-    // Remove tiles from Map
+    // Remove tiles from Map (triggers mesh rebuild via changed flag)
     {
         let mut map_w = map.write();
         for &chunk_id in &evictable {
@@ -610,12 +603,12 @@ fn evict_generated_chunks(
     loaded_chunks: &mut LoadedChunks,
     map: &Map,
     skip_regen: &mut SkipNeighborRegen,
-    lod_meshes: &mut crate::resources::ChunkLodMeshes,
+    summary_meshes: &mut crate::resources::SummaryMeshes,
 ) {
     pending_tiles.tasks.clear();
 
-    // Despawn ALL mesh entities — ensures no stale-threshold meshes survive
-    for (_, state) in lod_meshes.states.drain() {
+    // Despawn ALL mesh entities — ensures no stale meshes survive
+    for (_, state) in summary_meshes.states.drain() {
         if let Some(entity) = state.entity {
             commands.entity(entity).despawn();
         }
