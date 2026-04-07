@@ -142,7 +142,7 @@ impl LoadedChunks {
 pub struct ForcedSummaryRadius(pub Option<u32>);
 
 impl Default for ForcedSummaryRadius {
-    fn default() -> Self { Self(Some(0)) }
+    fn default() -> Self { Self(None) }
 }
 
 /// Per-mesh-region state for summary rendering.

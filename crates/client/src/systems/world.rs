@@ -351,6 +351,7 @@ pub fn dispatch_summary_tasks(
             );
         }
     }
+
 }
 
 /// Compute visible mesh regions for auto mode (multi-band).
@@ -361,7 +362,10 @@ fn compute_auto_mode_regions(
     use common_bevy::summary::compute_active_bands;
     use common_bevy::summary_mesh::visible_mesh_regions_in_band;
 
-    // Estimate max render distance from loaded chunks
+    use common_bevy::summary::mesh_region_extent_wu;
+
+    // Estimate max render distance from loaded chunks, pull back by the
+    // outermost band's region extent so we don't create perpetually-incomplete bands.
     let mut max_dist = 0.0_f32;
     for &chunk_id in loaded_chunks {
         let center = chunk_id.center();
@@ -374,16 +378,29 @@ fn compute_auto_mode_regions(
         }
     }
 
-    let bands = compute_active_bands(max_dist);
+    let outer_r = common_bevy::summary::summary_radius(max_dist);
+    let margin = mesh_region_extent_wu(outer_r);
+    let effective_max = (max_dist - margin).max(0.0);
+    let bands = compute_active_bands(effective_max);
     let mut all_regions = std::collections::HashSet::new();
 
-    for band in &bands {
+    for (i, band) in bands.iter().enumerate() {
+        // Extend each band's OUTER edge by the next (coarser) band's mesh-region
+        // extent. The coarser lattice is sparser, so the first coarser-band region
+        // center may be far past the natural boundary. Extending the finer band
+        // fills the gap with higher-detail geometry — the finer mesh occludes any
+        // coarser mesh behind it, so the double-draw is hidden.
+        let outer = if i + 1 < bands.len() {
+            band.outer_wu + mesh_region_extent_wu(bands[i + 1].r)
+        } else {
+            band.outer_wu
+        };
         let regions = visible_mesh_regions_in_band(
             band.r,
             camera_pos.x,
             camera_pos.z,
             band.inner_wu,
-            band.outer_wu,
+            outer,
             loaded_chunks,
         );
         all_regions.extend(regions);
@@ -662,3 +679,4 @@ pub fn poll_summary_meshes(
     tri_stats.total_tris = total_tris;
     tri_stats.mesh_count = mesh_count;
 }
+
