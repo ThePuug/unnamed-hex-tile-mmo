@@ -224,9 +224,10 @@ pub fn update(
     // maximum_distance is measured from the camera, not the player,
     // so add the camera-to-player distance to the terrain radius.
     if let Ok(player_loc) = player_query.single() {
-        use crate::systems::camera::{CAMERA_DISTANCE, CAMERA_HEIGHT};
+        use crate::systems::camera::{CAMERA_DISTANCE, gameplay_camera_height};
+        let height = gameplay_camera_height();
         let loading_r = chunk::terrain_chunk_radius(player_loc.z) as f32;
-        let camera_to_player = (CAMERA_DISTANCE * CAMERA_DISTANCE + CAMERA_HEIGHT * CAMERA_HEIGHT).sqrt();
+        let camera_to_player = (CAMERA_DISTANCE * CAMERA_DISTANCE + height * height).sqrt();
         let max_dist = camera_to_player + loading_r * 0.8 * CHUNK_EXTENT_WU;
         let current_max = cascade_config.bounds.last().copied().unwrap_or(0.0);
         if (max_dist - current_max).abs() > 1.0 {

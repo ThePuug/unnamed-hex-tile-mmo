@@ -16,12 +16,30 @@ const INTERPOLATION_SPEED: f32 = 12.0;
 /// Threshold below which interpolation snaps to target
 const SNAP_THRESHOLD: f32 = 0.005;
 
-/// Camera distance from player (scaled up for narrow FOV perspective)
+/// Camera distance from player (horizontal, scaled up for narrow FOV perspective).
 pub const CAMERA_DISTANCE: f32 = 120.0;
-/// Camera height above player (preserves original pitch angle)
-pub const CAMERA_HEIGHT: f32 = 90.0;
-/// Default vertical field of view (narrow telephoto for isometric feel)
+/// Minimum degrees the frustum top stays below the horizon at max FOV.
+pub const HORIZON_MARGIN_DEG: f32 = 5.0;
+/// Default vertical field of view (narrow telephoto for isometric feel).
 const DEFAULT_FOV: f32 = 15_f32.to_radians();
+/// Maximum FOV for normal gameplay zoom.
+pub const MAX_GAMEPLAY_FOV: f32 = 60_f32.to_radians();
+/// Maximum FOV for flyover mode (admin).
+pub const MAX_FLYOVER_FOV: f32 = 90_f32.to_radians();
+
+/// Camera height that keeps the horizon `HORIZON_MARGIN_DEG` below the top
+/// of the frustum at the given maximum vertical field of view.
+///
+/// `pitch = half_fov + margin`, `height = distance × tan(pitch)`.
+pub fn camera_height(max_fov: f32) -> f32 {
+    let margin = HORIZON_MARGIN_DEG.to_radians();
+    CAMERA_DISTANCE * (max_fov * 0.5 + margin).tan()
+}
+
+/// Camera height for normal gameplay (convenience alias).
+pub fn gameplay_camera_height() -> f32 {
+    camera_height(MAX_GAMEPLAY_FOV)
+}
 
 /// Camera orbit state with discrete 60° stops and smooth interpolation.
 #[derive(Resource)]
@@ -110,35 +128,22 @@ pub fn update(
 
     if let Ok(a_transform) = actor.single() {
         if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
-            // Zoom controls
-            match c_projection.into_inner() {
-                Projection::Perspective(c_perspective) => {
-                    const MIN: f32 = 6_f32.to_radians();
-                    const MAX: f32 = 60_f32.to_radians();
-                    if keyboard.any_pressed([KeyCode::Minus]) {
-                        c_perspective.fov = (c_perspective.fov * 1.01).clamp(MIN, MAX);
-                    }
-                    if keyboard.any_pressed([KeyCode::Equal]) {
-                        c_perspective.fov = (c_perspective.fov / 1.01).clamp(MIN, MAX);
-                    }
+            // Zoom controls (perspective FOV)
+            if let Projection::Perspective(c_perspective) = c_projection.into_inner() {
+                const MIN: f32 = 6_f32.to_radians();
+                if keyboard.any_pressed([KeyCode::Minus]) {
+                    c_perspective.fov = (c_perspective.fov * 1.01).clamp(MIN, MAX_GAMEPLAY_FOV);
                 }
-                Projection::Orthographic(c_orthographic) => {
-                    const MIN: f32 = 0.08;
-                    const MAX: f32 = 2.0;
-                    if keyboard.any_pressed([KeyCode::Minus]) {
-                        c_orthographic.scale = (c_orthographic.scale * 1.01).clamp(MIN, MAX);
-                    }
-                    if keyboard.any_pressed([KeyCode::Equal]) {
-                        c_orthographic.scale = (c_orthographic.scale / 1.01).clamp(MIN, MAX);
-                    }
+                if keyboard.any_pressed([KeyCode::Equal]) {
+                    c_perspective.fov = (c_perspective.fov / 1.01).clamp(MIN, MAX_GAMEPLAY_FOV);
                 }
-                _ => {}
             }
 
             // Calculate camera offset from orbit angle
+            let height = gameplay_camera_height();
             let offset = Vec3::new(
                 orbit.current.sin() * CAMERA_DISTANCE,
-                CAMERA_HEIGHT,
+                height,
                 orbit.current.cos() * CAMERA_DISTANCE,
             );
 

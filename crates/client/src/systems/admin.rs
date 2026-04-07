@@ -22,7 +22,7 @@ use qrz::Convert;
 use crate::{
     plugins::console::DevConsoleAction,
     resources::{ForcedSummaryRadius, LoadedChunks, SkipNeighborRegen},
-    systems::camera::{CameraOrbit, CAMERA_DISTANCE, CAMERA_HEIGHT},
+    systems::camera::{CameraOrbit, CAMERA_DISTANCE, MAX_FLYOVER_FOV, camera_height},
 };
 
 // ──── Resources ────
@@ -43,7 +43,6 @@ pub struct FlyoverState {
     pub hold_time: f32,
     /// Chunks whose tiles were generated locally (not server-sourced).
     pub generated_chunks: HashSet<ChunkId>,
-    pub saved_camera_scale: f32,
     /// Stashed normal-play state, restored on flyover toggle-off.
     pub stashed_summary_meshes: Option<HashMap<common_bevy::summary_mesh::MeshRegionKey, crate::resources::SummaryMeshState>>,
     pub stashed_loaded: Option<HashSet<ChunkId>>,
@@ -57,7 +56,6 @@ impl Default for FlyoverState {
             speed_multiplier: 1.0,
             hold_time: 0.0,
             generated_chunks: HashSet::new(),
-            saved_camera_scale: 1.0,
             stashed_summary_meshes: None,
             stashed_loaded: None,
         }
@@ -112,9 +110,6 @@ pub fn not_in_flyover(flyover: Option<Res<FlyoverState>>) -> bool {
 const BASE_SPEED: f32 = 15.0;
 const RAMP_SECONDS: f32 = 3.0;
 const MAX_SPEED_MULTIPLIER: f32 = 10.0;
-const ADMIN_ZOOM_MAX: f32 = 10.0;
-const NORMAL_ZOOM_MIN: f32 = 0.08;
-const NORMAL_ZOOM_MAX: f32 = 2.0;
 const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 
 /// Absolute cap on flyover generation radius
@@ -128,7 +123,6 @@ pub fn execute_admin_actions(
     mut flyover: ResMut<FlyoverState>,
     mut reader: MessageReader<DevConsoleAction>,
     player_query: Query<&Transform, (With<Actor>, With<PlayerControlled>, Without<Camera3d>)>,
-    mut camera_query: Query<&mut Projection, With<Camera3d>>,
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
     map: Res<Map>,
@@ -204,11 +198,6 @@ pub fn execute_admin_actions(
             if let Ok(player_transform) = player_query.single() {
                 flyover.world_position = player_transform.translation;
             }
-            if let Ok(projection) = camera_query.single() {
-                if let Projection::Orthographic(ortho) = &*projection {
-                    flyover.saved_camera_scale = ortho.scale;
-                }
-            }
 
             // Stash existing mesh state so geometry can be restored on toggle-off.
             // Despawn the entities rather than hiding them — on toggle-off we rebuild
@@ -270,12 +259,6 @@ pub fn execute_admin_actions(
             }
             // Signal dispatch_summary_tasks to re-evaluate visible regions.
             map.force_changed();
-
-            if let Ok(mut projection) = camera_query.single_mut() {
-                if let Projection::Orthographic(ortho) = projection.as_mut() {
-                    ortho.scale = flyover.saved_camera_scale.clamp(NORMAL_ZOOM_MIN, NORMAL_ZOOM_MAX);
-                }
-            }
 
             flyover.active = false;
             info!("Flyover camera: OFF");
@@ -416,31 +399,20 @@ pub fn flyover_camera_update(
     }
 
     if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
-        match c_projection.into_inner() {
-            Projection::Perspective(c_perspective) => {
-                const MIN: f32 = 6_f32.to_radians();
-                const MAX: f32 = 90_f32.to_radians();
-                if keyboard.any_pressed([KeyCode::Minus]) {
-                    c_perspective.fov = (c_perspective.fov * 1.01).clamp(MIN, MAX);
-                }
-                if keyboard.any_pressed([KeyCode::Equal]) {
-                    c_perspective.fov = (c_perspective.fov / 1.01).clamp(MIN, MAX);
-                }
+        if let Projection::Perspective(c_perspective) = c_projection.into_inner() {
+            const MIN: f32 = 6_f32.to_radians();
+            if keyboard.any_pressed([KeyCode::Minus]) {
+                c_perspective.fov = (c_perspective.fov * 1.01).clamp(MIN, MAX_FLYOVER_FOV);
             }
-            Projection::Orthographic(c_orthographic) => {
-                if keyboard.any_pressed([KeyCode::Minus]) {
-                    c_orthographic.scale = (c_orthographic.scale * 1.01).clamp(NORMAL_ZOOM_MIN, ADMIN_ZOOM_MAX);
-                }
-                if keyboard.any_pressed([KeyCode::Equal]) {
-                    c_orthographic.scale = (c_orthographic.scale / 1.01).clamp(NORMAL_ZOOM_MIN, ADMIN_ZOOM_MAX);
-                }
+            if keyboard.any_pressed([KeyCode::Equal]) {
+                c_perspective.fov = (c_perspective.fov / 1.01).clamp(MIN, MAX_FLYOVER_FOV);
             }
-            _ => {}
         }
 
+        let height = camera_height(MAX_FLYOVER_FOV);
         let offset = Vec3::new(
             orbit.current.sin() * CAMERA_DISTANCE,
-            CAMERA_HEIGHT,
+            height,
             orbit.current.cos() * CAMERA_DISTANCE,
         );
 
@@ -462,14 +434,13 @@ pub fn flyover_generate_chunks(
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("fly_gen");
-    let scale = camera_query.single().ok().map_or(1.0, |p| {
-        if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
+    let fov = camera_query.single().ok().map_or(DEFAULT_FOV, |p| {
+        if let Projection::Perspective(persp) = p { persp.fov } else { DEFAULT_FOV }
     });
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
     let player_z = (flyover.world_position.y / map.rise()) as i32;
     let center = loc_to_chunk(qrz);
-    let fov = DEFAULT_FOV / scale.max(0.1);
 
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
     let gen_radius = (detail_radius + 3).min(MAX_FLYOVER_RADIUS);
@@ -552,14 +523,13 @@ pub fn flyover_evict_chunks(
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("fly_evic");
-    let scale = camera_query.single().ok().map_or(1.0, |p| {
-        if let Projection::Orthographic(o) = p { o.scale } else { 1.0 }
+    let fov = camera_query.single().ok().map_or(DEFAULT_FOV, |p| {
+        if let Projection::Perspective(persp) = p { persp.fov } else { DEFAULT_FOV }
     });
 
     let qrz: qrz::Qrz = map.convert(flyover.world_position);
     let player_z = (flyover.world_position.y / map.rise()) as i32;
     let center = loc_to_chunk(qrz);
-    let fov = DEFAULT_FOV / scale.max(0.1);
 
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
     let evict_radius = (detail_radius + 5).min(MAX_FLYOVER_RADIUS) as i32;

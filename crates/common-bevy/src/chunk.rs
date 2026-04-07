@@ -72,17 +72,21 @@ pub const CHUNK_EXTENT_WU: f32 = 28.5; // √813 ≈ 28.513
 pub fn visibility_radius(player_z: i32, ground_z: i32, fov: f32) -> u8 {
     let floor = FOV_CHUNK_RADIUS + MIN_SUMMARY_RING;
 
-    // Camera geometry (matches camera.rs constants)
-    const CAMERA_HEIGHT: f32 = 90.0;
+    // Camera geometry (matches camera.rs: camera_height(fov) formula)
     const CAMERA_DISTANCE: f32 = 120.0;
+    const HORIZON_MARGIN_DEG: f32 = 5.0;
     const RISE: f32 = 0.8;
 
+    // Camera height derived from max FOV + horizon margin (same as camera.rs)
+    let margin = HORIZON_MARGIN_DEG.to_radians();
+    let camera_height = CAMERA_DISTANCE * (fov * 0.5 + margin).tan();
+
     // Camera altitude above the ground plane.
-    // Even when ground >= player, camera is still CAMERA_HEIGHT above the player.
-    let height_above_ground = CAMERA_HEIGHT + (player_z.max(ground_z) - ground_z) as f32 * RISE;
+    // Even when ground >= player, camera is still camera_height above the player.
+    let height_above_ground = camera_height + (player_z.max(ground_z) - ground_z) as f32 * RISE;
 
     // Camera pitch below horizontal: atan2(height, horizontal_distance)
-    let pitch = (CAMERA_HEIGHT as f64 / CAMERA_DISTANCE as f64).atan() as f32;
+    let pitch = (camera_height as f64 / CAMERA_DISTANCE as f64).atan() as f32;
 
     // Top ray of frustum (shallowest angle, sees farthest)
     let top_ray_angle = pitch - fov * 0.5;
@@ -117,13 +121,18 @@ pub fn visibility_radius(player_z: i32, ground_z: i32, fov: f32) -> u8 {
 /// Returns at least `FOV_CHUNK_RADIUS` — there's always a guaranteed
 /// gameplay-ready area of full detail around the player.
 pub fn detail_boundary_radius(player_z: i32, fov: f32) -> u8 {
-    const CAMERA_HEIGHT: f32 = 90.0;
+    const CAMERA_DISTANCE: f32 = 120.0;
+    const HORIZON_MARGIN_DEG: f32 = 5.0;
     const RISE: f32 = 0.8;
     /// World-space extent of a single hex tile
     const TILE_EXTENT_WU: f32 = 1.5;
 
+    // Camera height derived from FOV + horizon margin (matches camera.rs)
+    let margin = HORIZON_MARGIN_DEG.to_radians();
+    let camera_height = CAMERA_DISTANCE * (fov * 0.5 + margin).tan();
+
     // Camera altitude above the ground plane at player height
-    let h = CAMERA_HEIGHT + player_z.max(0) as f32 * RISE;
+    let h = camera_height + player_z.max(0) as f32 * RISE;
 
     // Angular size of one pixel (radians)
     let pixel_angle = fov / SCREEN_HEIGHT_PX;
@@ -656,9 +665,11 @@ mod tests {
 
     #[test]
     fn visibility_radius_spot_checks() {
+        // At ground level, floor dominates (h=26.6, gd=184, needed=7 < floor=8)
         assert_eq!(visibility_radius(0, 0, DEFAULT_FOV), 8);
-        assert_eq!(visibility_radius(50, 0, DEFAULT_FOV), 8);
-        assert_eq!(visibility_radius(100, 0, DEFAULT_FOV), 8);
+        // Elevated: shallow pitch sees far down to sea level
+        assert_eq!(visibility_radius(50, 0, DEFAULT_FOV), 23);
+        assert_eq!(visibility_radius(100, 0, DEFAULT_FOV), 39);
     }
 
     #[test]
