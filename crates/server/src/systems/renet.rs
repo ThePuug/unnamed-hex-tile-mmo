@@ -157,12 +157,12 @@ pub fn do_manage_connections(
 
                 // Send Despawn to all players who had this entity loaded
                 if let Ok(loaded_by) = loaded_by_query.get(ent) {
+                    let bytes = bincode::serde::encode_to_vec(
+                        Do { event: Event::Despawn { ent }},
+                        bincode::config::legacy()).unwrap();
                     for &player_ent in &loaded_by.players {
                         if let Some(player_client_id) = lobby.get_by_right(&player_ent) {
-                            let message = bincode::serde::encode_to_vec(
-                                Do { event: Event::Despawn { ent }},
-                                bincode::config::legacy()).unwrap();
-                            conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, message);
+                            conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, bytes.clone());
                         }
                     }
                 }
@@ -243,40 +243,24 @@ pub fn write_try(
                 let ent = *ent;
                 let component = *component;
                 if matches!(component, Component::KeyBits(_)) { continue; }
-
-                // Send to owning client
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Incremental { ent, component }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-
-                // Send to all players who have this entity loaded (skip owner to avoid duplicate)
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Incremental { ent, component }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::Incremental { ent, component }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::Despawn { ent } => {
                 let ent = *ent;
-                // Send despawn to all players who have this entity loaded
                 let Ok(loaded_by) = loaded_by_query.get(ent) else {
                     warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
                     continue;
                 };
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::Despawn { ent }},
+                    bincode::config::legacy()).unwrap();
                 for &player_ent in &loaded_by.players {
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Despawn { ent }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
+                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
                 }
             }
             Event::ChunkData { ent, .. } => {
@@ -303,84 +287,39 @@ pub fn write_try(
             Event::InsertThreat { ent, threat } => {
                 let ent = *ent;
                 let threat = *threat;
-                // Send to owning client (player receiving threat needs to see it)
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::InsertThreat { ent, threat }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::InsertThreat { ent, threat }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::InsertThreat { ent, threat }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::ApplyDamage { ent, damage, source } => {
                 let ent = *ent;
                 let damage = *damage;
                 let source = *source;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::ApplyDamage { ent, damage, source }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::ApplyDamage { ent, damage, source }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::ApplyDamage { ent, damage, source }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::ClearQueue { ent, clear_type } => {
                 let ent = *ent;
                 let clear_type = *clear_type;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::ClearQueue { ent, clear_type }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::ClearQueue { ent, clear_type }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::ClearQueue { ent, clear_type }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::Gcd { ent, typ } => {
                 let ent = *ent;
                 let typ = *typ;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Gcd { ent, typ }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::Gcd { ent, typ }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::Gcd { ent, typ }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::AbilityFailed { ent, reason } => {
                 let ent = *ent;
@@ -397,22 +336,11 @@ pub fn write_try(
                 let ent = *ent;
                 let ability = *ability;
                 let target = *target;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::UseAbility { ent, ability, target }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                for &player_ent in &loaded_by.players {
-                    if player_ent == ent { continue; }
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::UseAbility { ent, ability, target }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                    }
-                }
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::UseAbility { ent, ability, target }},
+                    bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::MovementIntent { ent, destination, duration_ms } => {
                 let ent = *ent;
@@ -420,13 +348,12 @@ pub fn write_try(
                 let duration_ms = *duration_ms;
                 // ADR-011: Movement intent via Unreliable channel for client-side prediction
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                let bytes = bincode::serde::encode_to_vec(
+                    Do { event: Event::MovementIntent { ent, destination, duration_ms }},
+                    bincode::config::legacy()).unwrap();
                 for &player_ent in &loaded_by.players {
-                    if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                        let message = bincode::serde::encode_to_vec(
-                            Do { event: Event::MovementIntent { ent, destination, duration_ms }},
-                            bincode::config::legacy()).unwrap();
-                        conn.send_unreliable(*client_id, message);
-                    }
+                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
+                    conn.send_unreliable(*client_id, bytes.clone());
                 }
             }
             Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
@@ -450,6 +377,24 @@ pub fn write_try(
             }
             _ => {}
         }
+    }
+}
+
+/// Encode once, send cloned bytes to owner + all LoadedBy observers.
+fn broadcast_reliable(
+    conn: &mut ServerNet,
+    lobby: &Lobby,
+    loaded_by: &common_bevy::components::loaded_by::LoadedBy,
+    owner_ent: Entity,
+    bytes: Vec<u8>,
+) {
+    if let Some(client_id) = lobby.get_by_right(&owner_ent) {
+        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
+    }
+    for &player_ent in &loaded_by.players {
+        if player_ent == owner_ent { continue; }
+        let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
+        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
     }
 }
 

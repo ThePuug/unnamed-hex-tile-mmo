@@ -256,7 +256,7 @@ The result is a system graph that works today but that nobody can reason about h
 
 ### Tier 1: Fix Before Next Playtest *(hours, not days)*
 
-1. **Encode-once broadcast** — Server `send_do` and AOI spawn encoding. Highest ROI.
+1. ~~**Encode-once broadcast**~~ ✅ Done (2026-04-08). `send_do` encodes once, clones bytes per observer. AOI confirmed already single-client. Extracted `broadcast_reliable` helper.
 2. **Client text caching** — `resource_bars.rs` and `ui.rs` format strings. 5 minutes per file.
 3. **Client message budget** — Cap `write_do` at 500 messages/frame. One `if` statement.
 4. **Diagnostics string allocation** — `get_message_type_name()` -> `&'static str`.
