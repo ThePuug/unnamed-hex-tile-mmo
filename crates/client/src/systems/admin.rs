@@ -131,6 +131,7 @@ pub fn execute_admin_actions(
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     mut forced_radius: ResMut<ForcedSummaryRadius>,
+    summary_cache: Res<crate::resources::SummaryCache>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -199,6 +200,9 @@ pub fn execute_admin_actions(
                 flyover.world_position = player_transform.translation;
             }
 
+            // Clear remote summaries (server-sent data won't match flyover terrain)
+            summary_cache.clear();
+
             // Stash existing mesh state so geometry can be restored on toggle-off.
             // Despawn the entities rather than hiding them — on toggle-off we rebuild
             // from stored base_positions via poll_summary_meshes Phase 0, avoiding
@@ -257,6 +261,10 @@ pub fn execute_admin_actions(
             if let Some(stashed) = flyover.stashed_loaded.take() {
                 loaded_chunks.chunks.extend(stashed);
             }
+            // Clear flyover summaries so they don't contaminate normal gameplay.
+            // Server will resend its summaries on the next movement update.
+            summary_cache.clear();
+
             // Signal dispatch_summary_tasks to re-evaluate visible regions.
             map.force_changed();
 

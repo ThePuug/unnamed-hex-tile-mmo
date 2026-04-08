@@ -46,7 +46,6 @@ pub fn do_spawn_discover(
     mut writer: MessageWriter<Try>,
     mut player_states: Query<&mut PlayerDiscoveryState>,
     query: Query<&Loc>,
-    registry: Res<EventRegistry>,
     timings: Res<SystemTimings>,
 ) {
     let mut _t = None;
@@ -70,9 +69,9 @@ pub fn do_spawn_discover(
 
         let current_chunk = loc_to_chunk(**loc);
 
-        // Send radius matches client eviction: terrain_chunk_radius + 1
-        let max_z = chunk_max_z(current_chunk, |q, r| registry.elevation_at(q, r));
-        let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
+        // Fixed streaming radius — covers gameplay area (AOI, physics, r=0–r=2).
+        // Visual frontier beyond this is handled by server-sent summaries.
+        let send_radius = FIXED_STREAM_RADIUS as i32;
 
         let chunks = calculate_visible_chunks(current_chunk, send_radius as u8);
 
@@ -83,10 +82,13 @@ pub fn do_spawn_discover(
 
         player_state.last_chunk = Some(current_chunk);
 
-        commands.entity(ent).insert(VisibleChunkCache {
-            sent: chunks.into_iter().collect(),
-            chunk_id: current_chunk,
-        });
+        commands.entity(ent).insert((
+            VisibleChunkCache {
+                sent: chunks.into_iter().collect(),
+                chunk_id: current_chunk,
+            },
+            crate::systems::summary::VisibleSummaryCache::default(),
+        ));
     }
 }
 
@@ -96,7 +98,6 @@ pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
     mut player_queries: Query<(&mut PlayerDiscoveryState, &mut VisibleChunkCache)>,
-    registry: Res<EventRegistry>,
     timings: Res<SystemTimings>,
 ) {
     let mut _t = None;
@@ -118,9 +119,8 @@ pub fn do_incremental(
             continue;
         }
 
-        // Boundary crossing — recompute send radius (matches client eviction)
-        let max_z = chunk_max_z(new_chunk, |q, r| registry.elevation_at(q, r));
-        let send_radius = terrain_chunk_radius(max_z) as i32 + 1;
+        // Fixed streaming radius (same as do_spawn_discover)
+        let send_radius = FIXED_STREAM_RADIUS as i32;
 
         let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
         let new_set: std::collections::HashSet<ChunkId> = new_chunks.iter().copied().collect();

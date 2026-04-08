@@ -183,6 +183,7 @@ fn main() {
     app.init_resource::<crate::resources::ClientTimers>();
     app.init_resource::<crate::resources::ForcedSummaryRadius>();
     app.init_resource::<crate::resources::SummaryMeshes>();
+    app.init_resource::<crate::resources::SummaryCache>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]

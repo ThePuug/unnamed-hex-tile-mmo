@@ -21,7 +21,7 @@ use common_bevy::{
 };
 use crate::{
     resources::{terrain::*, *},
-    systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
+    systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, summary, targeting, world},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
@@ -126,6 +126,7 @@ fn main() {
         engagement_spawner::activate_spawners, // Activate spawner tiles near players
         actor::try_discover,        // Legacy tile discovery (for compatibility)
         common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
+        summary::compute_and_send_summaries, // Server-sent summaries for visual frontier
     ));
 
     app.add_systems(PostUpdate, (
@@ -146,7 +147,9 @@ fn main() {
     let spawn_z = registry.elevation_at(3423, 1155) + 1;
     app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 3423, r: 1155, z: spawn_z }));
     app.insert_resource(terrain);
+    let summary_cache = crate::resources::summary_cache::SummaryCache::new(registry.clone());
     app.insert_resource(registry);
+    app.insert_resource(summary_cache);
     app.init_resource::<RunTime>();
     app.init_resource::<WorldDiscoveryCache>();
     app.init_resource::<actor::ChunkTaskQueue>();

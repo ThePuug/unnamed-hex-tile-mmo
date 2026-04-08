@@ -78,6 +78,13 @@ pub enum Event {
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
     /// to prevent client/server sync drift on which chunks are loaded.
     EvictChunks { ent: Entity, chunks: ArrayVec<[ChunkId; 64]> },
+    /// Server → Client: batch of summary hex updates for the visual frontier.
+    /// Summaries beyond the fixed streaming radius are computed server-side.
+    SummaryBatch {
+        ent: Entity,
+        additions: Vec<SummaryData>,
+        removals: Vec<SummaryKey>,
+    },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,
@@ -146,6 +153,23 @@ pub enum Component {
     Returning(crate::components::returning::Returning),
     Stamina(Stamina),
     TierLock(crate::components::tier_lock::TierLock),
+}
+
+/// Server-sent summary hex: one flat hex at summary-lattice coords (sq, sr).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct SummaryData {
+    pub r: u32,
+    pub sq: i32,
+    pub sr: i32,
+    pub center_z: i32,
+}
+
+/// Key identifying a summary hex in a specific band (summary-lattice coords).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct SummaryKey {
+    pub r: u32,
+    pub sq: i32,
+    pub sr: i32,
 }
 
 #[derive(Clone, Debug, Deserialize, Event, Message, Serialize)]

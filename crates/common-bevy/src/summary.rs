@@ -116,6 +116,51 @@ fn band_outer_threshold(r: u32) -> f32 {
     (2.0 * r_exact + 1.0) * tile_diameter * pixel_scale / MIN_SCREEN_PX
 }
 
+/// Enumerate summary-lattice cells within a world-space annulus.
+///
+/// Returns `(sq, sr)` lattice coordinates for summaries whose world-space
+/// centers fall within `[inner_wu, outer_wu]` of the given point.
+/// Used by the server to determine which summaries to send per band.
+pub fn visible_summary_cells_in_band(
+    r: u32,
+    center_wx: f32,
+    center_wz: f32,
+    inner_wu: f32,
+    outer_wu: f32,
+) -> Vec<(i32, i32)> {
+    let lat = SummaryLattice::new(r);
+    let scale = lat.scale as f64;
+
+    // Convert world position to summary-lattice coordinates
+    let cam_q = center_wx as f64 / 1.5;
+    let cam_r = (center_wz as f64 - cam_q * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt();
+    let cam_sq = (cam_q / scale).round() as i32;
+    let cam_sr = (cam_r / scale).round() as i32;
+
+    // Search radius in summary-lattice units
+    let summary_flat = (2 * r + 1) as f32 * HEX_OUTER_RADIUS * (3.0_f32).sqrt();
+    let search = ((outer_wu / summary_flat) as i32 + 2).min(200);
+
+    let mut cells = Vec::new();
+    for dq in -search..=search {
+        let dr_min = (-search).max(-dq - search);
+        let dr_max = search.min(-dq + search);
+        for dr in dr_min..=dr_max {
+            let sq = cam_sq + dq;
+            let sr = cam_sr + dr;
+            let (cq, cr) = lat.cell_center((sq, sr));
+            let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+            let dx = wx - center_wx;
+            let dz = wz - center_wz;
+            let dist = (dx * dx + dz * dz).sqrt();
+            if dist >= inner_wu && dist <= outer_wu {
+                cells.push((sq, sr));
+            }
+        }
+    }
+    cells
+}
+
 /// Approximate world-space width of one mesh region at radius r.
 /// Used for overlap extension at band boundaries.
 pub fn mesh_region_extent_wu(r: u32) -> f32 {

@@ -30,6 +30,15 @@ pub const MAX_TERRAIN_CHUNK_RADIUS: u8 = 255;
 /// Guarantees an outer LoD ring always exists, even at ground level.
 pub const MIN_SUMMARY_RING: u8 = 3;
 
+/// Fixed full-detail streaming radius in chunks (hex distance).
+/// All chunks within this radius receive full tile data from the server.
+/// Beyond this, the server sends lightweight summary data instead.
+/// 21 chunks × 28.5 WU/chunk ≈ 599 WU — covers r=0 through r=2 bands.
+pub const FIXED_STREAM_RADIUS: u8 = 21;
+
+/// World-unit extent of the fixed streaming radius.
+pub const FIXED_STREAM_RADIUS_WU: f32 = FIXED_STREAM_RADIUS as f32 * CHUNK_EXTENT_WU;
+
 /// Tile angular-size threshold in pixels. When a single tile subtends
 /// fewer than this many pixels on screen, it becomes indistinguishable
 /// and we switch to summary LoD.

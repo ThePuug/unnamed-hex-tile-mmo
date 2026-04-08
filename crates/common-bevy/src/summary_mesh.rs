@@ -153,6 +153,73 @@ pub fn build_summary_mesh_region(
     })
 }
 
+/// Build a summary mesh region from pre-computed center_z values.
+///
+/// Like `build_summary_mesh_region` but skips per-tile iteration — the
+/// `summary_z_fn` provides center_z directly for each summary-lattice cell.
+/// Used for server-sent summaries beyond the streaming radius.
+///
+/// `summary_z_fn(sq, sr)` returns the center_z for summary at lattice coords,
+/// or None if not available.
+pub fn build_summary_mesh_region_from_summaries(
+    radius: u32,
+    region_key: MeshRegionKey,
+    summary_z_fn: &dyn Fn(i32, i32) -> Option<i32>,
+) -> Option<SummaryMeshResult> {
+    if radius == 0 {
+        return None; // r=0 always uses tile data, never remote summaries
+    }
+
+    let summary_lat = summary_lattice(radius);
+    let region_lat = mesh_region_lattice();
+
+    let region_center = region_lat.cell_center((region_key.mn, region_key.mm));
+    let (origin_cq, origin_cr) = summary_lat.cell_center(region_center);
+    let (origin_wx, origin_wz) = flat_top_tile_center(origin_cq, origin_cr, 1.0);
+    let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
+
+    let mut surfaces: Vec<SummarySurface> = Vec::new();
+
+    for (sn, sm) in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
+        let (cq, cr) = summary_lat.cell_center((sn, sm));
+        if let Some(center_z) = summary_z_fn(sn, sm) {
+            surfaces.push(SummarySurface::flat(sn, sm, radius, cq, cr, center_z));
+        }
+    }
+
+    if surfaces.is_empty() {
+        return None;
+    }
+
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut tri_count = 0u32;
+
+    for surface in &surfaces {
+        tri_count += surface.emit_geometry(&mut positions, &mut normals, &mut indices, mesh_origin);
+    }
+
+    let (skirt_tris, perimeter_edges) = emit_skirts(
+        &surfaces,
+        &mut positions,
+        &mut normals,
+        &mut indices,
+        mesh_origin,
+    );
+    tri_count += skirt_tris;
+
+    Some(SummaryMeshResult {
+        positions,
+        normals,
+        indices,
+        tri_count,
+        mesh_origin,
+        perimeter_edges,
+        summaries_built: surfaces.len() as u32,
+    })
+}
+
 /// Build an r=0 mesh region: 271 tiles = one game chunk, via compute_tile_geometry.
 ///
 /// At r=0, summary lattice scale=1 (every tile is its own summary).
@@ -505,6 +572,54 @@ pub fn visible_mesh_regions_in_band(
                     }
                 }
                 if !any_loaded { continue; }
+            }
+
+            regions.insert(MeshRegionKey { r, mn, mm });
+        }
+    }
+
+    regions
+}
+
+/// Like `visible_mesh_regions_in_band` but without the loaded-chunk gate.
+/// Used for remote summary bands where data comes from server, not local tiles.
+pub fn visible_mesh_regions_in_band_ungated(
+    r: u32,
+    camera_wx: f32,
+    camera_wz: f32,
+    inner_wu: f32,
+    outer_wu: f32,
+) -> HashSet<MeshRegionKey> {
+    let summary_lat = summary_lattice(r);
+    let region_lat = mesh_region_lattice();
+
+    let cam_q = camera_wx as f64 / 1.5;
+    let cam_r = (camera_wz as f64 - cam_q * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt();
+    let cam_sq = (cam_q / summary_lat.scale as f64).round() as i32;
+    let cam_sr = (cam_r / summary_lat.scale as f64).round() as i32;
+    let cam_region = region_lat.cell_id(cam_sq, cam_sr);
+
+    let region_extent = crate::summary::mesh_region_extent_wu(r).max(1.0);
+    let search_radius = ((outer_wu / region_extent) as i32 + 2).min(60);
+
+    let mut regions = HashSet::new();
+    let sr = search_radius;
+    for dn in -sr..=sr {
+        let dm_min = (-sr).max(-dn - sr);
+        let dm_max = sr.min(-dn + sr);
+        for dm in dm_min..=dm_max {
+            let mn = cam_region.0 + dn;
+            let mm = cam_region.1 + dm;
+
+            let region_center = region_lat.cell_center((mn, mm));
+            let (scq, scr) = summary_lat.cell_center(region_center);
+            let (rwx, rwz) = flat_top_tile_center(scq, scr, 1.0);
+            let dx = rwx - camera_wx;
+            let dz = rwz - camera_wz;
+            let dist = (dx * dx + dz * dz).sqrt();
+
+            if dist < inner_wu || dist > outer_wu {
+                continue;
             }
 
             regions.insert(MeshRegionKey { r, mn, mm });

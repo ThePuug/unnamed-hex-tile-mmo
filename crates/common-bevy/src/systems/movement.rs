@@ -403,8 +403,8 @@ pub fn calculate_movement(
                 airtime = Some(air);
                 offset.y += dt as f32 * GRAVITY * JUMP_ASCENT_MULTIPLIER;
             } else {
-                // Falling
-                air -= dt;
+                // Falling — clamp to prevent i16 overflow on long falls
+                air = air.saturating_sub(dt);
                 airtime = Some(air);
                 let dy = -dt as f32 * GRAVITY;
                 if floor.is_none() || map.convert(map.convert(tile) + Vec3::Y * (offset.y + dy)).z > floor.unwrap().0.z + 1 {

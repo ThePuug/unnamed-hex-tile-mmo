@@ -47,6 +47,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
         Event::EvictChunks { .. } => "EvictChunks",
+        Event::SummaryBatch { .. } => "SummaryBatch",
         _ => "Other",
     }
 }
@@ -59,6 +60,7 @@ pub fn write_do(
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
+    summary_cache: Res<crate::resources::SummaryCache>,
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
@@ -242,6 +244,17 @@ pub fn write_do(
             }
             Do { event: Event::EvictChunks { ent: _, chunks } } => {
                 do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
+            }
+            Do { event: Event::SummaryBatch { ent: _, additions, removals } } => {
+                if !additions.is_empty() || !removals.is_empty() {
+                    debug!(
+                        "[summary-client] batch: +{} -{} (cache total after: ~{})",
+                        additions.len(),
+                        removals.len(),
+                        additions.len(), // approximate; exact count not worth a read lock
+                    );
+                }
+                summary_cache.apply_batch(&additions, &removals);
             }
             _ => {
                 warn!("Unexpected message type on ReliableUnordered channel");

@@ -228,7 +228,7 @@ Exact format TBD during implementation, but the payload per chunk at high thresh
 
 **INV-001 (extended)**: DecimatedChunkData is rendering-only. Physics, movement, and pathfinding read the Map, never decimated chunks. This extends the existing summary separation invariant to cover server-side decimated data.
 
-**INV-005 (extended)**: Server and client agree on the 20-chunk full-detail boundary. Promotion/demotion is server-authoritative via new message types.
+**INV-005 (extended)**: Server and client agree on the full-detail boundary (FIXED_STREAM_RADIUS = 21 chunks). Promotion/demotion is server-authoritative via new message types.
 
 **INV-007 (preserved)**: Adjacent chunks at any LoD threshold share deterministic boundary vertices. No gaps. Guaranteed by all boundary vertices resolving to original grid positions with real blended heights.
 
@@ -246,7 +246,7 @@ Exact format TBD during implementation, but the payload per chunk at high thresh
 |----------|-------|------------|
 | TILE_PIXEL_THRESHOLD | 4 px | Visual acuity floor |
 | THRESHOLD_FOV | 60° (π/3) | Worst-case vertical subtension |
-| FULL_DETAIL_RADIUS | ~20 chunks | Threshold 3 boundary at 60° FOV |
+| FIXED_STREAM_RADIUS | 21 chunks / 599 WU | Full-detail streaming boundary |
 | REFERENCE_SCREEN_HEIGHT | 1080 px | Baseline; future: dynamic |
 | RISE | 0.8 WU/z-level | Existing constant |
 
@@ -262,15 +262,18 @@ Exact format TBD during implementation, but the payload per chunk at high thresh
 
 ## Implementation Deviations
 
-(None — spec precedes full implementation)
+| # | Area | Spec Says | Implementation | Rationale |
+|---|------|-----------|----------------|-----------|
+| 1 | Naming | DecimatedChunkData | SummaryData / SummaryKey / SummaryBatch | Summary terminology carried over from prior LoD system |
+| 2 | Server pipeline | Server runs hex-native decimation, sends per-hexball geometry | Server computes center_z per summary cell from EventRegistry, sends SummaryBatch; client builds mesh from center_z values directly | Simpler pipeline — summary cells already provide the aggregated elevation; full hexball decimation deferred to when multi-radius support lands |
+| 3 | Visibility | Per-direction frustum sweep with asymmetric termination | Band enumeration (annulus between FIXED_STREAM_RADIUS and visual horizon) | Frustum sweep is a future optimization; band enumeration is sufficient for initial implementation |
+| 4 | Full-detail radius | ~20 chunks (elevation-adaptive via terrain_chunk_radius) | FIXED_STREAM_RADIUS = 21 chunks (fixed) | Decoupled from elevation-dependent radius; fixed boundary simplifies promotion/demotion |
 
 ## Implementation Gaps
 
-**Current**: Wire format for DecimatedChunkData not yet defined. Visibility sweep algorithm not yet specified in detail.
+**Deferred**: Dynamic resolution support, mega-chunk consolidation, per-direction frustum culling.
 
-**Deferred**: Dynamic resolution support, mega-chunk consolidation.
-
-**Blocked by**: Nothing — this system is independently implementable.
+**Blocked by**: Nothing.
 
 ---
 

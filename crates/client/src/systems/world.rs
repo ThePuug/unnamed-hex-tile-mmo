@@ -253,16 +253,20 @@ pub fn dispatch_summary_tasks(
     map: Res<common_bevy::resources::map::Map>,
     mut summary_meshes: ResMut<SummaryMeshes>,
     forced_radius: Res<ForcedSummaryRadius>,
+    summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
     player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
+    #[cfg(feature = "admin")] admin_composite: Option<Res<crate::systems::admin::AdminComposite>>,
 ) {
-    if !map.take_changed() {
+    let map_changed = map.take_changed();
+    let summaries_changed = summary_cache.take_changed();
+    if !map_changed && !summaries_changed {
         return;
     }
     let _t = client_timers.0.scope("sum_disp");
 
-    // Determine camera world position for distance-based band computation
+    // Determine camera world position for local band computation
     #[cfg(feature = "admin")]
     let camera_pos = flyover
         .as_ref()
@@ -272,26 +276,41 @@ pub fn dispatch_summary_tasks(
     #[cfg(not(feature = "admin"))]
     let camera_pos = player_query.single().ok().map(|t| t.translation);
 
-    let camera_pos = camera_pos.unwrap_or(Vec3::ZERO);
-
-    // Compute which mesh regions are needed
-    let needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
-        match forced_radius.0 {
-            Some(r) => {
-                // Single band: all visible regions at that radius
+    // Local regions: camera-dependent (bands within streaming radius).
+    // Only computed when we have a camera position.
+    let mut needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
+        match (camera_pos, forced_radius.0) {
+            (_, Some(r)) => {
                 common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks)
             }
-            None => {
-                // Auto: multiple bands based on camera distance
-                compute_auto_mode_regions(camera_pos, &loaded_chunks.chunks)
+            (Some(pos), None) => {
+                compute_auto_mode_regions(pos, &loaded_chunks.chunks)
+            }
+            (None, None) => {
+                // No camera yet — can't compute local regions.
+                // Re-arm map changed so we retry once the player spawns.
+                if map_changed { map.force_changed(); }
+                std::collections::HashSet::new()
             }
         };
 
-    // Evict regions no longer needed
+    // Server/flyover regions: add any mesh regions with new summary data.
+    // Only includes regions that changed since last dispatch — O(dirty), not O(cache).
+    if summaries_changed {
+        needed.extend(summary_cache.take_dirty_regions());
+    }
+
+    // Evict stale regions.
+    // r=0: evict when no longer in the camera-based needed set (chunks unloaded).
+    // r>0: evict only when explicitly removed via SummaryBatch removals or cache clear.
+    let removed = if summaries_changed { summary_cache.take_removed_regions() } else { std::collections::HashSet::new() };
     let stale: Vec<common_bevy::summary_mesh::MeshRegionKey> = summary_meshes
         .states
         .keys()
-        .filter(|k| !needed.contains(k))
+        .filter(|k| {
+            if k.r == 0 { !needed.contains(k) }
+            else { removed.contains(k) }
+        })
         .copied()
         .collect();
     for key in stale {
@@ -320,8 +339,27 @@ pub fn dispatch_summary_tasks(
         let radius = region_key.r;
         let rk = *region_key;
         let map_snap = map.clone();
+        let cache_snap = summary_cache.clone();
+
+        // In flyover, pass AdminComposite Arc so async task can compute
+        // elevation_at() for cells beyond the chunk generation radius.
+        // In flyover, pass an elevation function for cells beyond chunk gen radius.
+        // Wraps AdminComposite::elevation_at in an Arc closure for Send + Sync.
+        #[cfg(feature = "admin")]
+        let elevation_fallback: Option<std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>> =
+            flyover
+                .as_ref()
+                .filter(|f| f.active)
+                .and_then(|_| admin_composite.as_ref().map(|c| {
+                    let comp = c.0.clone();
+                    std::sync::Arc::new(move |q: i32, r: i32| comp.elevation_at(q, r))
+                        as std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>
+                }));
+        #[cfg(not(feature = "admin"))]
+        let elevation_fallback: Option<std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>> = None;
+
         let task = pool.spawn(async move {
-            collect_and_build_summary_mesh(radius, rk, &map_snap)
+            collect_and_build_summary_mesh(radius, rk, &map_snap, &cache_snap, elevation_fallback.as_ref())
         });
 
         let summary_lat = common_bevy::summary::summary_lattice(radius);
@@ -356,90 +394,171 @@ pub fn dispatch_summary_tasks(
 }
 
 /// Compute visible mesh regions for auto mode (multi-band).
+///
+/// Local bands (within streaming radius): gated on loaded chunks.
+/// Remote bands (beyond streaming radius): ungated — data from server summaries.
 fn compute_auto_mode_regions(
     camera_pos: Vec3,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-    use common_bevy::summary::compute_active_bands;
-    use common_bevy::summary_mesh::visible_mesh_regions_in_band;
+    use common_bevy::chunk::FIXED_STREAM_RADIUS_WU;
+    use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
+    use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
-    use common_bevy::summary::mesh_region_extent_wu;
+    // Max render distance = visual horizon from camera geometry.
+    // camera_height = CAMERA_DISTANCE * tan(half_fov + margin) + player_z * RISE
+    // far_ground = camera_height / tan(margin)
+    // Approximate player_z from camera Y (camera Y ≈ player terrain Y + camera height offset)
+    let camera_height_offset = crate::systems::camera::gameplay_camera_height();
+    let player_approx_y = (camera_pos.y - camera_height_offset).max(0.0);
+    let camera_total_height = camera_height_offset + player_approx_y;
+    let margin_rad = crate::systems::camera::HORIZON_MARGIN_DEG.to_radians();
+    let far_ground = camera_total_height / margin_rad.tan();
 
-    // Estimate max render distance from loaded chunks, pull back by the
-    // outermost band's region extent so we don't create perpetually-incomplete bands.
-    let mut max_dist = 0.0_f32;
+    // Also compute max loaded distance for local bands
+    let mut max_loaded = 0.0_f32;
     for &chunk_id in loaded_chunks {
         let center = chunk_id.center();
         let (wx, wz) = common_bevy::geometry::flat_top_tile_center(center.q, center.r, 1.0);
         let dx = wx - camera_pos.x;
         let dz = wz - camera_pos.z;
-        let d = (dx * dx + dz * dz).sqrt();
-        if d > max_dist {
-            max_dist = d;
-        }
+        max_loaded = max_loaded.max((dx * dx + dz * dz).sqrt());
     }
 
-    let outer_r = common_bevy::summary::summary_radius(max_dist);
-    let margin = mesh_region_extent_wu(outer_r);
-    let effective_max = (max_dist - margin).max(0.0);
-    let bands = compute_active_bands(effective_max);
+    // Cap local-only distance at loaded extent (minus margin for readiness)
+    let local_outer_r = common_bevy::summary::summary_radius(max_loaded);
+    let local_margin = mesh_region_extent_wu(local_outer_r);
+    let local_max = (max_loaded - local_margin).max(0.0);
+
+    let bands = compute_active_bands(far_ground);
     let mut all_regions = std::collections::HashSet::new();
 
     for (i, band) in bands.iter().enumerate() {
-        // Extend each band's OUTER edge by the next (coarser) band's mesh-region
-        // extent. The coarser lattice is sparser, so the first coarser-band region
-        // center may be far past the natural boundary. Extending the finer band
-        // fills the gap with higher-detail geometry — the finer mesh occludes any
-        // coarser mesh behind it, so the double-draw is hidden.
         let outer = if i + 1 < bands.len() {
             band.outer_wu + mesh_region_extent_wu(bands[i + 1].r)
         } else {
             band.outer_wu
         };
-        let regions = visible_mesh_regions_in_band(
-            band.r,
-            camera_pos.x,
-            camera_pos.z,
-            band.inner_wu,
-            outer,
-            loaded_chunks,
-        );
-        all_regions.extend(regions);
+
+        if band.outer_wu <= FIXED_STREAM_RADIUS_WU {
+            // Band fully within streaming radius: gate on loaded chunks,
+            // cap at local_max to avoid perpetually-incomplete regions.
+            let capped_outer = outer.min(local_max);
+            if capped_outer <= band.inner_wu {
+                continue;
+            }
+            let regions = visible_mesh_regions_in_band(
+                band.r,
+                camera_pos.x,
+                camera_pos.z,
+                band.inner_wu,
+                capped_outer,
+                loaded_chunks,
+            );
+            all_regions.extend(regions);
+        } else {
+            // Band beyond streaming radius: ungated (server provides data)
+            let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
+            let regions = visible_mesh_regions_in_band_ungated(
+                band.r,
+                camera_pos.x,
+                camera_pos.z,
+                inner,
+                outer,
+            );
+            all_regions.extend(regions);
+        }
     }
 
     all_regions
 }
 
-/// Build a summary mesh region from Map data (runs off main thread).
-/// Returns raw geometry + perimeter edges; Mesh built on main thread.
+/// Build a summary mesh region (runs off main thread).
+///
+/// r=0: full tile geometry from Map (slope blending, cliff skirts).
+/// r>0: reads SummaryCache first, falls back to Map tile data, then
+///      optionally to Composite elevation_at() (flyover beyond chunk radius).
+///      Writes computed values back to cache for future rebuilds.
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
     map: &common_bevy::resources::map::Map,
+    cache: &crate::resources::SummaryCache,
+    elevation_fallback: Option<&std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>>,
 ) -> SummaryMeshBuildResult {
-    let elevation_fn = |q: i32, r: i32| -> Option<i32> {
-        map.get_by_qr(q, r).map(|(qrz, _)| qrz.z)
+    let empty = SummaryMeshBuildResult {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        indices: Vec::new(),
+        tri_count: 0,
+        mesh_origin: Vec3::ZERO,
+        perimeter_edges: Vec::new(),
+        summaries_built: 0,
     };
 
-    match common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &elevation_fn) {
-        Some(smr) => SummaryMeshBuildResult {
-            positions: smr.positions,
-            normals: smr.normals,
-            indices: smr.indices,
-            tri_count: smr.tri_count,
-            mesh_origin: smr.mesh_origin,
-            perimeter_edges: smr.perimeter_edges,
-            summaries_built: smr.summaries_built,
-        },
-        None => SummaryMeshBuildResult {
-            positions: Vec::new(),
-            normals: Vec::new(),
-            indices: Vec::new(),
-            tri_count: 0,
-            mesh_origin: Vec3::ZERO,
-            perimeter_edges: Vec::new(),
-            summaries_built: 0,
-        },
+    if radius == 0 {
+        let elevation_fn = |q: i32, r: i32| -> Option<i32> {
+            map.get_by_qr(q, r).map(|(qrz, _)| qrz.z)
+        };
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &elevation_fn)
+            .as_ref()
+            .map_or(empty, smr_to_result);
+    }
+
+    // r>0: cache → Map → Composite fallback chain.
+    let summary_lat = common_bevy::summary::summary_lattice(radius);
+    let summary_z_fn = |sq: i32, sr: i32| -> Option<i32> {
+        // 1. Cache hit (server-sent or previously computed)
+        if let Some(z) = cache.get_by_lattice(radius, sq, sr) {
+            return Some(z);
+        }
+        // 2. Compute from Map tile data
+        let mut tile_zs = Vec::new();
+        let mut all_present = true;
+        for (tq, tr) in summary_lat.tiles_in_cell((sq, sr)) {
+            if let Some((qrz, _)) = map.get_by_qr(tq, tr) {
+                tile_zs.push(qrz.z);
+            } else {
+                all_present = false;
+                break;
+            }
+        }
+        if all_present && !tile_zs.is_empty() {
+            let center_z = common_bevy::summary::select_center_z(&tile_zs);
+            cache.insert(common_bevy::message::SummaryKey { r: radius, sq, sr }, center_z);
+            return Some(center_z);
+        }
+        // 3. Flyover fallback: procedural elevation (no tile gen needed)
+        if let Some(fallback) = elevation_fallback {
+            let tile_zs: Vec<i32> = summary_lat
+                .tiles_in_cell((sq, sr))
+                .map(|(tq, tr)| fallback(tq, tr))
+                .collect();
+            if !tile_zs.is_empty() {
+                let center_z = common_bevy::summary::select_center_z(&tile_zs);
+                cache.insert(common_bevy::message::SummaryKey { r: radius, sq, sr }, center_z);
+                return Some(center_z);
+            }
+        }
+        None
+    };
+
+    common_bevy::summary_mesh::build_summary_mesh_region_from_summaries(
+        radius, region_key, &summary_z_fn,
+    )
+    .as_ref()
+    .map_or(empty, smr_to_result)
+}
+
+fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {
+    SummaryMeshBuildResult {
+        positions: smr.positions.clone(),
+        normals: smr.normals.clone(),
+        indices: smr.indices.clone(),
+        tri_count: smr.tri_count,
+        mesh_origin: smr.mesh_origin,
+        perimeter_edges: smr.perimeter_edges.clone(),
+        summaries_built: smr.summaries_built,
     }
 }
 
