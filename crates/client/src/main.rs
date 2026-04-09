@@ -64,6 +64,7 @@ fn main() {
         common_bevy::plugins::controlled::ControlledPlugin,
         DevConsolePlugin,
         DiagnosticsPlugin,
+        crate::plugins::world_streaming::WorldStreamingPlugin,
         UiPlugin,
         VignettePlugin,
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
@@ -160,9 +161,6 @@ fn main() {
         world::do_init,
         renet::handle_pong,
         renet::periodic_ping,
-        world::do_spawn,
-        world::dispatch_summary_tasks.after(world::do_spawn),
-        world::poll_summary_meshes.after(world::dispatch_summary_tasks),
         world::update,
     ));
 
@@ -177,13 +175,8 @@ fn main() {
     app.init_resource::<InputQueues>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
-    app.init_resource::<LoadedChunks>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
-    app.init_resource::<crate::resources::LodTriangleStats>();
     app.init_resource::<crate::resources::ClientTimers>();
-    app.init_resource::<crate::resources::ForcedSummaryRadius>();
-    app.init_resource::<crate::resources::SummaryMeshes>();
-    app.init_resource::<crate::resources::SummaryCache>();
 
     // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
@@ -206,12 +199,6 @@ fn main() {
         ));
     }
 
-    // Data eviction: remove tiles/summaries beyond view range (timer, every 5s)
-    // Server-authoritative eviction — runs every frame, only processes EvictChunks messages
-    #[cfg(feature = "admin")]
-    app.add_systems(Update, world::evict_data.run_if(admin::not_in_flyover));
-    #[cfg(not(feature = "admin"))]
-    app.add_systems(Update, world::evict_data);
 
     app.run();
 }
