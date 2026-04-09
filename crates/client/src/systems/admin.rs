@@ -88,6 +88,13 @@ impl Default for AdminComposite {
     }
 }
 
+/// Tracks the visible summary set during flyover for eviction diffing.
+#[derive(Resource, Default)]
+pub struct FlyoverVisibleSummaries {
+    tracked: HashSet<common_bevy::message::SummaryKey>,
+    last_pos: Vec3,
+}
+
 /// Pending async tile generation tasks.
 #[derive(Default, Resource)]
 pub struct PendingFlyoverTiles {
@@ -112,8 +119,7 @@ const RAMP_SECONDS: f32 = 3.0;
 const MAX_SPEED_MULTIPLIER: f32 = 10.0;
 const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 
-/// Absolute cap on flyover generation radius
-const MAX_FLYOVER_RADIUS: u8 = 60;
+const MIN_UPDATE_DISTANCE: f32 = 20.0;
 
 
 // ──── Systems ────
@@ -133,6 +139,7 @@ pub fn execute_admin_actions(
     mut forced_radius: ResMut<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
+    mut flyover_vis: ResMut<FlyoverVisibleSummaries>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -264,6 +271,8 @@ pub fn execute_admin_actions(
             // Clear flyover summaries so they don't contaminate normal gameplay.
             // Server will resend its summaries on the next movement update.
             summary_cache.clear();
+
+            flyover_vis.tracked.clear();
 
             // Signal dispatch_summary_tasks to re-evaluate visible regions.
             map.force_changed();
@@ -451,7 +460,7 @@ pub fn flyover_generate_chunks(
     let center = loc_to_chunk(qrz);
 
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
-    let gen_radius = (detail_radius + 3).min(MAX_FLYOVER_RADIUS);
+    let gen_radius = detail_radius + 3;
 
     let candidates: Vec<ChunkId> = common_bevy::chunk::calculate_visible_chunks(center, gen_radius)
         .into_iter()
@@ -538,7 +547,7 @@ pub fn flyover_evict_chunks(
     let center = loc_to_chunk(qrz);
 
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
-    let evict_radius = (detail_radius + 5).min(MAX_FLYOVER_RADIUS) as i32;
+    let evict_radius = (detail_radius + 5) as i32;
 
     let evictable: Vec<ChunkId> = flyover.generated_chunks
         .iter()
@@ -626,4 +635,55 @@ fn report_terrain_at_cursor(
         let nb = if neighbors.is_empty() { String::new() } else { format!(" nb=[{}]", neighbors.join(",")) };
         info!("  tile({},{}) z={}{nb}", qrz.q, qrz.r, qrz.z);
     }
+}
+
+/// Evicts summary mesh regions that are no longer visible during flyover.
+/// Mirrors the server's visible-set diff pattern, feeding removals through
+/// `summary_cache.apply_batch()` so eviction uses one code path.
+pub fn flyover_evict_summaries(
+    flyover: Res<FlyoverState>,
+    mut vis: ResMut<FlyoverVisibleSummaries>,
+    summary_cache: Res<crate::resources::SummaryCache>,
+) {
+    if !flyover.active { return; }
+
+    let pos = flyover.world_position;
+    let horiz_dist = ((pos.x - vis.last_pos.x).powi(2) + (pos.z - vis.last_pos.z).powi(2)).sqrt();
+    if horiz_dist < MIN_UPDATE_DISTANCE && !vis.tracked.is_empty() {
+        return;
+    }
+    vis.last_pos = pos;
+
+    use common_bevy::chunk::FIXED_STREAM_RADIUS_WU;
+    use common_bevy::message::SummaryKey;
+    use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band};
+    use crate::systems::camera::{gameplay_camera_height, HORIZON_MARGIN_DEG};
+
+    let camera_height_offset = gameplay_camera_height();
+    let player_approx_y = (pos.y - camera_height_offset).max(0.0);
+    let camera_total_height = camera_height_offset + player_approx_y;
+    let far_ground = camera_total_height / HORIZON_MARGIN_DEG.to_radians().tan();
+
+    let bands = compute_active_bands(far_ground);
+    let mut visible: HashSet<SummaryKey> = HashSet::new();
+    for band in &bands {
+        if band.outer_wu <= FIXED_STREAM_RADIUS_WU { continue; }
+        let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
+        let cells = visible_summary_cells_in_band(band.r, pos.x, pos.z, inner, band.outer_wu);
+        for (sq, sr) in cells {
+            visible.insert(SummaryKey { r: band.r, sq, sr });
+        }
+    }
+
+    let removals: Vec<SummaryKey> = vis.tracked
+        .iter()
+        .filter(|k| !visible.contains(k))
+        .copied()
+        .collect();
+
+    if !removals.is_empty() {
+        summary_cache.apply_batch(&[], &removals);
+    }
+
+    vis.tracked = visible;
 }
