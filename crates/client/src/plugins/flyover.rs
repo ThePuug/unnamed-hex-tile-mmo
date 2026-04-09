@@ -705,7 +705,7 @@ fn flyover_summary_dispatch(
     let camera_total_height = camera_height_offset + player_approx_y;
     let far_ground = camera_total_height / HORIZON_MARGIN_DEG.to_radians().tan();
 
-    let bands = compute_active_bands(far_ground);
+    let bands = compute_active_bands(far_ground, camera_total_height);
     let mut visible: HashSet<SummaryKey> = HashSet::new();
     for band in &bands {
         if band.r == 0 { continue; } // r=0 uses tile data from Map, not summaries

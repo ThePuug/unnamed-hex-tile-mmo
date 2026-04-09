@@ -68,37 +68,46 @@ pub struct Band {
     pub outer_wu: f32,
 }
 
-/// Compute active distance bands from camera to `max_distance_wu`.
+/// Compute active distance bands from camera to `max_distance_wu` (horizontal).
 ///
-/// Inverts `summary_radius(d)` to find the distance thresholds where r
-/// increments. Each band spans from one threshold to the next.
-/// Returns bands sorted by r (finest first).
-pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
+/// `band_outer_threshold` returns 3D camera-to-ground distances.
+/// `camera_height` converts these to horizontal ground distances so that
+/// band boundaries reflect actual pixel subtension at each ground point.
+/// Returns bands sorted by r (finest first), thresholds in horizontal WU.
+pub fn compute_active_bands(max_distance_wu: f32, camera_height: f32) -> Vec<Band> {
     if max_distance_wu <= 0.0 {
         return vec![Band { r: 0, inner_wu: 0.0, outer_wu: 0.0 }];
     }
 
+    // Convert horizontal max to 3D camera distance for summary_radius
+    let max_camera_dist = (max_distance_wu * max_distance_wu + camera_height * camera_height).sqrt();
+    let max_r = summary_radius(max_camera_dist);
+
     let mut bands = Vec::new();
-    let mut prev_threshold = 0.0_f32;
-    let max_r = summary_radius(max_distance_wu);
+    let mut prev_horiz = 0.0_f32;
 
     for r in 0..=max_r {
-        // Find the distance where summary_radius first returns r+1
-        // (i.e. the outer boundary of band r).
-        let next_threshold = band_outer_threshold(r);
-        let outer = next_threshold.min(max_distance_wu);
+        let next_3d = band_outer_threshold(r);
+        let next_horiz = camera_to_horizontal(next_3d, camera_height);
+        let outer = next_horiz.min(max_distance_wu);
         bands.push(Band {
             r,
-            inner_wu: prev_threshold,
+            inner_wu: prev_horiz,
             outer_wu: outer,
         });
-        prev_threshold = next_threshold;
-        if next_threshold >= max_distance_wu {
+        prev_horiz = next_horiz;
+        if next_horiz >= max_distance_wu {
             break;
         }
     }
 
     bands
+}
+
+/// Convert 3D camera-to-ground distance to horizontal ground distance.
+fn camera_to_horizontal(camera_dist: f32, camera_height: f32) -> f32 {
+    let sq = camera_dist * camera_dist - camera_height * camera_height;
+    if sq > 0.0 { sq.sqrt() } else { 0.0 }
 }
 
 /// Distance (WU) at which `summary_radius` transitions from r to r+1.
