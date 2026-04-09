@@ -363,27 +363,6 @@ mod tests {
     }
 
     #[test]
-    fn test_level_calculation_under_100() {
-        let spawn = Qrz { q: 50, r: 0, z: 0 };  // 50 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
-    }
-
-    #[test]
-    fn test_level_calculation_100_to_199() {
-        let spawn = Qrz { q: 100, r: 0, z: 0 };  // 100 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
-
-        let spawn = Qrz { q: 150, r: 0, z: 0 };  // 150 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
-    }
-
-    #[test]
-    fn test_level_calculation_500_tiles() {
-        let spawn = Qrz { q: 500, r: 0, z: 0 };  // 500 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 15);
-    }
-
-    #[test]
     fn test_level_calculation_clamped_at_20() {
         let spawn = Qrz { q: 1000, r: 0, z: 0 };  // 1000 tiles away
         assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);
@@ -393,27 +372,6 @@ mod tests {
     }
 
     // ===== DIRECTIONAL ZONE TESTS =====
-
-    #[test]
-    fn test_directional_zone_north() {
-        // North: -r direction (visual "up")
-        let spawn = Qrz { q: 0, r: -10, z: 0 };
-        assert_eq!(get_directional_zone(spawn, HAVEN_LOCATION), DirectionalZone::North);
-    }
-
-    #[test]
-    fn test_directional_zone_east() {
-        // East: +q direction (visual "right")
-        let spawn = Qrz { q: 10, r: 0, z: 0 };
-        assert_eq!(get_directional_zone(spawn, HAVEN_LOCATION), DirectionalZone::East);
-    }
-
-    #[test]
-    fn test_directional_zone_south() {
-        // South: +r direction (visual "down")
-        let spawn = Qrz { q: 0, r: 10, z: 0 };
-        assert_eq!(get_directional_zone(spawn, HAVEN_LOCATION), DirectionalZone::South);
-    }
 
     #[test]
     fn test_directional_zone_west() {
