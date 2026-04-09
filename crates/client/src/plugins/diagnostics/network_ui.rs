@@ -5,9 +5,9 @@ use std::collections::HashMap;
 #[derive(Resource, Debug, Clone)]
 pub struct NetworkMetrics {
     /// Total bytes received this frame by message type
-    pub bytes_received_per_type: HashMap<String, usize>,
+    pub bytes_received_per_type: HashMap<&'static str, usize>,
     /// Total messages received this frame by message type
-    pub messages_received_per_type: HashMap<String, usize>,
+    pub messages_received_per_type: HashMap<&'static str, usize>,
     /// Smoothed bytes/sec using exponential moving average (updated every frame)
     pub bytes_per_sec: f32,
     /// Smoothed messages/sec using exponential moving average (updated every frame)
@@ -45,8 +45,8 @@ impl Default for NetworkMetrics {
 
 impl NetworkMetrics {
     /// Record a received message
-    pub fn record_received(&mut self, message_type: String, bytes: usize) {
-        *self.bytes_received_per_type.entry(message_type.clone()).or_insert(0) += bytes;
+    pub fn record_received(&mut self, message_type: &'static str, bytes: usize) {
+        *self.bytes_received_per_type.entry(message_type).or_insert(0) += bytes;
         *self.messages_received_per_type.entry(message_type).or_insert(0) += 1;
         self.frame_bytes += bytes;
         self.frame_messages += 1;

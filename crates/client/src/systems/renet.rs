@@ -16,38 +16,38 @@ use common_bevy::{
 };
 
 // Helper function to get human-readable message type name
-fn get_message_type_name(message: &Do) -> String {
+fn get_message_type_name(message: &Do) -> &'static str {
     match &message.event {
-        Event::Init { .. } => "Init".to_string(),
-        Event::Spawn { .. } => "Spawn".to_string(),
-        Event::Input { .. } => "Input".to_string(),
-        Event::Despawn { .. } => "Despawn".to_string(),
+        Event::Init { .. } => "Init",
+        Event::Spawn { .. } => "Spawn",
+        Event::Input { .. } => "Input",
+        Event::Despawn { .. } => "Despawn",
         Event::Incremental { component, .. } => {
             match component {
-                Component::Loc(_) => "Inc:Loc".to_string(),
-                Component::Heading(_) => "Inc:Heading".to_string(),
-                Component::Health(_) => "Inc:Health".to_string(),
-                Component::Mana(_) => "Inc:Mana".to_string(),
-                Component::Stamina(_) => "Inc:Stamina".to_string(),
-                Component::TierLock(_) => "Inc:TierLock".to_string(),
-                Component::CombatState(_) => "Inc:Combat".to_string(),
-                Component::Behaviour(_) => "Inc:Behaviour".to_string(),
-                Component::KeyBits(_) => "Inc:KeyBits".to_string(),
-                Component::PlayerControlled(_) => "Inc:PlayerControlled".to_string(),
-                Component::Returning(_) => "Inc:Returning".to_string(),
+                Component::Loc(_) => "Inc:Loc",
+                Component::Heading(_) => "Inc:Heading",
+                Component::Health(_) => "Inc:Health",
+                Component::Mana(_) => "Inc:Mana",
+                Component::Stamina(_) => "Inc:Stamina",
+                Component::TierLock(_) => "Inc:TierLock",
+                Component::CombatState(_) => "Inc:Combat",
+                Component::Behaviour(_) => "Inc:Behaviour",
+                Component::KeyBits(_) => "Inc:KeyBits",
+                Component::PlayerControlled(_) => "Inc:PlayerControlled",
+                Component::Returning(_) => "Inc:Returning",
             }
         },
-        Event::Gcd { .. } => "Gcd".to_string(),
-        Event::ChunkData { .. } => "ChunkData".to_string(),
-        Event::InsertThreat { .. } => "InsertThreat".to_string(),
-        Event::ApplyDamage { .. } => "ApplyDamage".to_string(),
-        Event::ClearQueue { .. } => "ClearQueue".to_string(),
-        Event::AbilityFailed { .. } => "AbilityFailed".to_string(),
-        Event::UseAbility { .. } => "UseAbility".to_string(),
-        Event::Pong { .. } => "Pong".to_string(),
-        Event::MovementIntent { .. } => "MovementIntent".to_string(),
-        Event::EvictChunks { .. } => "EvictChunks".to_string(),
-        _ => "Other".to_string(),
+        Event::Gcd { .. } => "Gcd",
+        Event::ChunkData { .. } => "ChunkData",
+        Event::InsertThreat { .. } => "InsertThreat",
+        Event::ApplyDamage { .. } => "ApplyDamage",
+        Event::ClearQueue { .. } => "ClearQueue",
+        Event::AbilityFailed { .. } => "AbilityFailed",
+        Event::UseAbility { .. } => "UseAbility",
+        Event::Pong { .. } => "Pong",
+        Event::MovementIntent { .. } => "MovementIntent",
+        Event::EvictChunks { .. } => "EvictChunks",
+        _ => "Other",
     }
 }
 
