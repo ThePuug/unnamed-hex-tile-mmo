@@ -13,7 +13,6 @@ use bevy_easings::*;
 use serde::{Deserialize, Serialize};
 
 use common_bevy::{
-    chunk::WorldDiscoveryCache,
     components::{behaviour::*, entity_type::*},
     message::*,
     plugins::nntree,
@@ -21,7 +20,7 @@ use common_bevy::{
 };
 use crate::{
     resources::{terrain::*, *},
-    systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, summary, targeting, world},
+    systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
@@ -50,6 +49,7 @@ fn main() {
         common_bevy::plugins::controlled::ControlledPlugin,
         crate::plugins::behaviour::BehaviourPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
+        crate::plugins::world_streaming::WorldStreamingPlugin,
     ));
 
     app.add_message::<Do>();
@@ -60,10 +60,6 @@ fn main() {
     app.add_observer(renet::do_manage_connections);
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
-
-    app.add_systems(Startup, (
-        world::setup,
-    ));
 
     app.add_systems(FixedUpdate, (
         common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
@@ -118,12 +114,8 @@ fn main() {
     ));
 
     app.add_systems(Update, (
-        actor::do_spawn_discover,   // Discover initial chunks after spawn
-        actor::try_discover_chunk,  // Dispatch chunk generation (cache hit → immediate, miss → async)
-        actor::poll_chunk_tasks,    // Poll completed async chunk tasks → Map + ChunkData
-        engagement_spawner::activate_spawners, // Activate spawner tiles near players
-        common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
-        summary::compute_and_send_summaries, // Server-sent summaries for visual frontier
+        engagement_spawner::activate_spawners,
+        common_bevy::systems::combat::resources::process_respawn,
     ));
 
     app.add_systems(PostUpdate, (
@@ -148,8 +140,6 @@ fn main() {
     app.insert_resource(registry);
     app.insert_resource(summary_cache);
     app.init_resource::<RunTime>();
-    app.init_resource::<WorldDiscoveryCache>();
-    app.init_resource::<actor::ChunkTaskQueue>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();
