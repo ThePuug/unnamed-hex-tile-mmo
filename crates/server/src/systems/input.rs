@@ -55,20 +55,6 @@ pub fn send_input(
     }
 }
 
-/// try_gcd is now vestigial - Event::Gcd only contains GcdType::Attack
-/// which is handled by the ability systems, not here.
-///
-/// This function exists to satisfy the event pipeline but does nothing.
-/// Event::Gcd { typ: GcdType::Attack } is sent but not processed here.
-pub fn try_gcd(
-    mut _reader: MessageReader<Try>,
-) {
-    // GcdType::Attack is handled by ability systems (auto_attack, lunge, etc.)
-    // PlaceSpawner and Spawn were removed - spawners are placed during terrain generation
-
-    // This system could be removed entirely if Event::Gcd is not used elsewhere
-}
-
 /// Handle tier lock requests from clients (ADR-010 Phase 1)
 ///
 /// Clients send SetTierLock events when pressing 1/2/3 keys.

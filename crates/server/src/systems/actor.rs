@@ -282,32 +282,6 @@ pub fn poll_chunk_tasks(
     task_queue.tasks = pending;
 }
 
-/// Legacy tile-based discovery system (kept for compatibility, may be removed later)
-pub fn try_discover(
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    mut map: ResMut<Map>,
-    registry: Res<EventRegistry>,
-    query: Query<(&Loc, &EntityType)>,
-) {
-    for message in reader.read() {
-        if let Try { event: Event::Discover { ent, qrz } } = message {
-            let ent = *ent;
-            let qrz = *qrz;
-            let (&loc, _) = query.get(ent).unwrap();
-            if loc.flat_distance(&qrz) > 25 { continue; }
-            if let Some((qrz, typ)) = map.get_by_qr(qrz.q, qrz.r) {
-                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
-            } else {
-                let qrz = Qrz { q:qrz.q, r:qrz.r, z:registry.elevation_at(qrz.q, qrz.r)};
-                let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
-                map.insert(qrz, typ);
-                writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None } });
-            }
-        }
-    }
-}
-
 pub fn update(
     mut writer: MessageWriter<Try>,
     mut query: Query<(Entity, &mut Loc, &mut Position), Changed<Position>>,

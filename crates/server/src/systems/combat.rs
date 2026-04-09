@@ -206,10 +206,6 @@ pub fn validate_ability_prerequisites(
 // - abilities::volley::handle_volley
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
-/// CRITICAL: until we add a new system ... we need this one to bypass a random magic 
-/// number of systems causing scheduling issues
-pub fn do_nothing(){}
-
 /// System to automatically trigger auto-attacks when adjacent to hostiles (ADR-009)
 /// Runs periodically to check if actors have adjacent hostiles and can auto-attack
 /// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)

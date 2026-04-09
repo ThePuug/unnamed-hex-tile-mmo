@@ -87,7 +87,6 @@ fn main() {
         actor::do_incremental,
         actor::update,
         targeting::update_targets, // Update targets every frame (detects when targets move)
-        combat::do_nothing, // CRITICAL: needed because of some magic number of systems
         combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
         npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // ADR-014 Phase 3B: NPCs use signature abilities (check every 0.5s for responsive Defender counters)
         combat::validate_ability_prerequisites,
@@ -108,7 +107,6 @@ fn main() {
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
         input::send_input,
-        input::try_gcd,
         input::try_input,
         input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
@@ -124,7 +122,6 @@ fn main() {
         actor::try_discover_chunk,  // Dispatch chunk generation (cache hit → immediate, miss → async)
         actor::poll_chunk_tasks,    // Poll completed async chunk tasks → Map + ChunkData
         engagement_spawner::activate_spawners, // Activate spawner tiles near players
-        actor::try_discover,        // Legacy tile discovery (for compatibility)
         common_bevy::systems::combat::resources::process_respawn, // Process respawn timers, teleport to origin
         summary::compute_and_send_summaries, // Server-sent summaries for visual frontier
     ));
