@@ -127,19 +127,17 @@ When a player moves and a chunk crosses the streaming boundary:
 
 ### SummaryCache (Server)
 
-Global resource caching center_z per `SummaryKey(r, sq, sr)`. On cache miss, computes from EventRegistry: iterates all tiles in the summary's hexball, calls `elevation_at()` for each, runs `select_center_z()`. Deterministic — same key always produces the same result.
+Simple get/insert cache of center_z per `SummaryKey(r, sq, sr)`. No computation — populated by async tasks. Deterministic: same key always produces the same result.
 
 ### VisibleSummaryCache (Per-Client)
 
-Component tracking which summaries have been sent to each client. Recomputes the visible set when the player moves >20 WU or >10 z-levels. Budget-limited to 200 summaries per frame.
+Component tracking which summaries have been sent to each client. Recomputes the visible set when the player moves >20 WU or >10 z-levels.
 
-### compute_and_send_summaries System
+### dispatch_summary_tasks + poll_summary_tasks Systems
 
-1. Check if player moved enough to trigger recomputation
-2. Compute active bands from camera position to visual horizon
-3. For each band r>0 beyond FIXED_STREAM_RADIUS: enumerate summary cells via `visible_summary_cells_in_band()`
-4. Diff against previously sent set → additions and removals
-5. Send as `SummaryBatch` (contains `Vec<SummaryData>` additions + `Vec<SummaryKey>` removals)
+**dispatch_summary_tasks**: For each player, checks if movement threshold crossed. Computes active bands to visual horizon, enumerates summary cells via `visible_summary_cells_in_band()`, diffs against previously sent set. Cache misses are dispatched to `AsyncComputeTaskPool` — each task iterates the hexball's tiles, calls `EventRegistry::elevation_at()`, runs `select_center_z()`. `SummaryTaskQueue` tracks in-flight keys to prevent duplicates.
+
+**poll_summary_tasks**: Polls completed async tasks, inserts results into SummaryCache. Sends completed summaries to clients as `SummaryBatch` (additions + removals). No per-frame budget — async tasks don't block the tick.
 
 ### Wire Format
 
