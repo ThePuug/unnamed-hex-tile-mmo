@@ -55,7 +55,7 @@ You hold the full map in your head. When a change to the terrain system has impl
 
 Maintain `ROLES/ARCHITECT-MEMORY.md` — a living document that persists your current train of thought across sessions.
 
-**Update at the end of every session.** Contents should include:
+**Update incrementally as you work** — after each review, not just at session end. Context is lost if the session compacts or is interrupted. Contents should include:
 
 - **Active concerns**: Discrepancies found but not yet resolved
 - **Documentation queue**: Specs/ADRs/guidance that need updating
@@ -84,7 +84,7 @@ Maintain `ROLES/ARCHITECT-MEMORY.md` — a living document that persists your cu
 5. Check cross-system implications — note ripple effects
 6. Report discrepancies (using the format above)
 7. Update documentation for anything that's confirmed intentional
-8. Update ARCHITECT-MEMORY.md
+8. Update ARCHITECT-MEMORY.md (incrementally — don't defer to session end)
 
 ### Before Implementation (Secondary Trigger)
 

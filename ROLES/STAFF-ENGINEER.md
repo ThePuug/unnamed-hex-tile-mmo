@@ -57,7 +57,7 @@ Code organization isn't aesthetics — it's the difference between a system you 
 
 Maintain `ROLES/STAFF_ENGINEER-MEMORY.md` — a living document that persists your current train of thought across sessions.
 
-**Update at the end of every session.** Contents should include:
+**Update incrementally as you work** — after each review, not just at session end. Context is lost if the session compacts or is interrupted. Contents should include:
 
 - **Active performance concerns**: Issues found but not yet resolved, with severity
 - **Systems reviewed**: What was reviewed and what was the verdict
