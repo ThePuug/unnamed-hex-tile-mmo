@@ -29,7 +29,7 @@ Last updated: 2026-04-09
 |---|---|
 | Unbounded removal batch | Teleport dumps all removals in one SummaryBatch, no budget cap |
 | Client poll mesh budget | No per-frame cap on mesh builds in poll_summary_meshes |
-| SummaryCache eviction | HashMap grows monotonically, no eviction, no cap |
+| SummaryCache eviction | ✅ FIXED (691dd19→d0be542). Flyover is now a local summary server — additions+removals through apply_batch. Extracted to FlyoverPlugin. Remaining: remove `.after()/.before()` ordering constraint (unnecessary, one-frame lag is fine). Progressive fill visual artifact on first activation (cosmetic, not blocking). |
 | Spec reconciliation | Architect role — flat-hex vs hex-native decimation from spec |
 | `mesh_region_lattice()` alloc | Creates new HexLattice on every call, should be OnceLock |
 
@@ -46,7 +46,7 @@ Last updated: 2026-04-09
 
 - **Client message budget** — DEFERRED intentionally. Capping hides upstream problems (AOI burst size, chunk delivery rate) that we need visible during dev. Correct sequence: instrument, fix sources, then cap as guardrail.
 - **Targeting systems** — `update_targets()` and `update_ally_targets()` run every frame querying all entities. 10Hz is sufficient. Fix: `run_if(on_timer(Duration::from_millis(100)))`.
-- **Server hot-path allocations** — `aoi.rs` Vec<Entity> per moved entity, `chase.rs` Vec<Entity> per NPC, `input.rs` bincode encode per confirmation. Should use pre-allocated buffers.
+- **Server hot-path allocations** — `aoi.rs` ✅ FIXED (b4353f2, Local buffers). Remaining: `chase.rs` Vec<Entity> per NPC target search (conditional, low priority), `input.rs` bincode encode_to_vec per confirmation (medium priority at scale).
 - **Client ships admin by default** — `client/Cargo.toml` defaults to `features = ["admin"]`, pulls in entire `world` crate. Release builds should not include flyover code. Fix: `default = []`.
 
 ---

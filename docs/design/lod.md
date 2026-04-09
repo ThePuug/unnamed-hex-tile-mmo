@@ -91,18 +91,20 @@ At r=0, each summary is a single tile. The mesh is built using the existing `com
 
 ## Two Rendering Regimes
 
-### Client-Owned (within FIXED_STREAM_RADIUS)
+### Gated (within loaded extent)
 
-The server sends full 271-tile ChunkData within FIXED_STREAM_RADIUS (21 chunks / 599 WU). The client stores tiles in the Map and computes summaries locally:
+The server sends full 271-tile ChunkData within FIXED_STREAM_RADIUS (21 chunks / 599 WU). For mesh region computation, the client uses the actual loaded chunk extent (`local_max`) as the gated/ungated boundary — not the streaming constant. In normal gameplay these are equivalent. In flyover (where loaded chunks are fewer), `local_max` is smaller, so ungated rendering starts earlier.
 
+Within the loaded extent:
 - **r=0**: Full tile geometry from Map data via `compute_tile_geometry()`
 - **r≥1**: `select_center_z()` from Map tile elevations, written to SummaryCache
+- Mesh regions are **gated** on loaded chunks — a region is only dispatched if its chunks are present
 
 The client recomputes visible regions when the camera moves, dispatching async mesh tasks for newly-visible regions.
 
-### Server-Owned (beyond FIXED_STREAM_RADIUS)
+### Ungated (beyond loaded extent)
 
-The server computes center_z values procedurally from EventRegistry and sends them as `SummaryBatch` messages on `ReliableUnordered`. The client stores them in SummaryCache and builds mesh from the received values — it doesn't have the underlying tile data.
+Beyond the loaded extent, mesh regions are **ungated** — dispatched whenever SummaryCache has data, regardless of chunk presence. The server computes center_z values procedurally from EventRegistry and sends them as `SummaryBatch` messages on `ReliableUnordered`. In flyover, the `FlyoverSummaryTracker` provides the same data locally. The client builds mesh from cache values — it doesn't have the underlying tile data.
 
 ### Unified SummaryCache
 
@@ -110,7 +112,7 @@ A single `SummaryCache` (Arc-wrapped) serves as the client's source of truth for
 
 1. **Local Map**: For r≥1 regions within FIXED_STREAM_RADIUS, `dispatch_summary_tasks` reads tile elevations from Map, calls `select_center_z()`, writes to cache
 2. **Server SummaryBatch**: For regions beyond FIXED_STREAM_RADIUS, received summaries are written directly
-3. **Flyover AdminComposite**: During admin flyover, procedural elevation from `AdminComposite.elevation_at()`
+3. **Flyover FlyoverSummaryTracker**: During admin flyover, `flyover_summary_dispatch` computes the visible summary set (same `compute_active_bands` + `visible_summary_cells_in_band` as server), diffs against tracked state, and feeds both additions and removals through `apply_batch()`. Cache misses dispatch async tasks that compute center_z via `AdminComposite.elevation_at()`, polled by `flyover_poll_summary_tasks`. Visible-set recomputation is throttled to 20 WU of horizontal movement.
 
 One consumer reads it: the async mesh builder (`collect_and_build_summary_mesh`), which branches cleanly — r=0 reads Map (full tile geometry), r>0 reads SummaryCache (one lookup per summary).
 

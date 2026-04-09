@@ -12,6 +12,8 @@ None pending.
 
 | Date | Summary | Specs Checked | Findings |
 |------|---------|---------------|----------|
+| 2026-04-09 | Per-band stats + band overlap/boundary fix (2df9507, cd71ab7) | lod.md | Two Rendering Regimes rewritten: gated/ungated boundary is local_max (loaded extent), not FIXED_STREAM_RADIUS_WU constant. Overlap inflation removal aligns with spec. |
+| 2026-04-09 | Flyover summary eviction + FlyoverPlugin extraction (691dd19, 036e599, d0be542) | lod.md | Flyover producer description updated: elevation_fallback → FlyoverSummaryTracker dispatch/poll via apply_batch(). File moved systems/admin.rs → plugins/flyover.rs. Ordering drop noted (acceptable per anti-pattern #1). |
 | 2026-04-09 | Terrain/SpawnerCache/EventCache deletion + metrics overlay caching | terrain-generation.md, world-events.md | Public API rewritten (Terrain→Composite). Implementation Gaps updated in both specs. Spine Caching section corrected. Elevation pipeline tense fixed (migration complete). Metrics commit: pure perf, no doc impact. |
 | 2026-04-09 | lod.md full rewrite | lod.md, memory | Spec described deleted inscribed hex system; rewrote to match actual summary hex implementation. Removed hex_decimate.rs and hex_decimate_mesh.rs from memory (files deleted). |
 | 2026-04-09 | Dead code removal, plugin extraction, Tracy, metrics alloc | docs, GUIDANCE.md, memory | No stale doc references found. Stale spatial_difficulty test note removed from memory. |
@@ -25,7 +27,7 @@ None currently.
 
 | Document | Last Reconciled | Notes |
 |----------|----------------|-------|
-| docs/design/lod.md | 2026-04-09 | Full rewrite — matches summary hex implementation |
+| docs/design/lod.md | 2026-04-09 | Gated/ungated regimes rewritten for local_max boundary; flyover producer updated |
 | docs/design/terrain-generation.md | 2026-04-09 | Public API, Spine Caching, Implementation Gaps all updated for Terrain deletion |
 | docs/design/world-events.md | 2026-04-09 | Implementation Gaps updated — cleanup complete, flyover resolved |
 | docs/design/metrics-console.md | 2026-03-31 | seg_row duplication gap noted |
