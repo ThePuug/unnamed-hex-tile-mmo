@@ -696,7 +696,6 @@ fn flyover_summary_dispatch(
     }
     tracker.last_pos = pos;
 
-    use common_bevy::chunk::FIXED_STREAM_RADIUS_WU;
     use common_bevy::message::{SummaryKey, SummaryData};
     use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band, summary_lattice, select_center_z};
     use crate::systems::camera::{gameplay_camera_height, HORIZON_MARGIN_DEG};
@@ -709,26 +708,16 @@ fn flyover_summary_dispatch(
     let bands = compute_active_bands(far_ground);
     let mut visible: HashSet<SummaryKey> = HashSet::new();
     for band in &bands {
-        if band.outer_wu <= FIXED_STREAM_RADIUS_WU { continue; }
-        let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
-        let cells = visible_summary_cells_in_band(band.r, pos.x, pos.z, inner, band.outer_wu);
+        if band.r == 0 { continue; } // r=0 uses tile data from Map, not summaries
+        let cells = visible_summary_cells_in_band(band.r, pos.x, pos.z, band.inner_wu, band.outer_wu);
         for (sq, sr) in cells {
             visible.insert(SummaryKey { r: band.r, sq, sr });
         }
     }
 
-    // Removals: tracked - visible
-    let removals: Vec<SummaryKey> = tracker.tracked
-        .iter()
-        .filter(|k| !visible.contains(k))
-        .copied()
-        .collect();
-    if !removals.is_empty() {
-        summary_cache.apply_batch(&[], &removals);
-    }
-    for key in &removals {
-        tracker.tracked.remove(key);
-    }
+    // Update tracked set: remove keys no longer visible.
+    // Mesh eviction is position-based (!needed), no removal events needed.
+    tracker.tracked.retain(|k| visible.contains(k));
 
     // Additions: visible - tracked
     let mut cached_additions = Vec::new();

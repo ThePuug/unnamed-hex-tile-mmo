@@ -292,17 +292,11 @@ pub fn dispatch_summary_tasks(
         needed.extend(summary_cache.take_dirty_regions());
     }
 
-    // Evict stale regions.
-    // r=0: evict when no longer in the camera-based needed set (chunks unloaded).
-    // r>0: evict only when explicitly removed via SummaryBatch removals or cache clear.
-    let removed = if summaries_changed { summary_cache.take_removed_regions() } else { std::collections::HashSet::new() };
+    // Evict any mesh region not in the current needed set.
     let stale: Vec<common_bevy::summary_mesh::MeshRegionKey> = summary_meshes
         .states
         .keys()
-        .filter(|k| {
-            if k.r == 0 { !needed.contains(k) }
-            else { removed.contains(k) }
-        })
+        .filter(|k| !needed.contains(k))
         .copied()
         .collect();
     for key in stale {

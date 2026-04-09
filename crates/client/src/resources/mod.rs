@@ -186,8 +186,6 @@ struct SummaryCacheInner {
     changed: bool,
     /// Mesh region keys that have new/updated data since last take.
     dirty_regions: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
-    /// Mesh region keys whose data was removed since last take.
-    removed_regions: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
 }
 
 impl Default for SummaryCache {
@@ -197,7 +195,6 @@ impl Default for SummaryCache {
                 entries: HashMap::new(),
                 changed: false,
                 dirty_regions: HashSet::new(),
-                removed_regions: HashSet::new(),
             })),
         }
     }
@@ -213,7 +210,7 @@ impl SummaryCache {
 
     /// Apply a batch of additions and removals (server SummaryBatch or flyover).
     /// Tracks affected mesh regions so dispatch can target just those.
-    pub fn apply_batch(&self, additions: &[SummaryData], removals: &[SummaryKey]) {
+    pub fn apply_batch(&self, additions: &[SummaryData], _removals: &[SummaryKey]) {
         let mut inner = self.inner.write();
         let region_lat = common_bevy::summary::mesh_region_lattice();
         for add in additions {
@@ -222,14 +219,8 @@ impl SummaryCache {
             let (mn, mm) = region_lat.cell_id(add.sq, add.sr);
             inner.dirty_regions.insert(common_bevy::summary_mesh::MeshRegionKey { r: add.r, mn, mm });
         }
-        for key in removals {
-            inner.entries.remove(key);
-            let (mn, mm) = region_lat.cell_id(key.sq, key.sr);
-            let rk = common_bevy::summary_mesh::MeshRegionKey { r: key.r, mn, mm };
-            inner.dirty_regions.remove(&rk);
-            inner.removed_regions.insert(rk);
-        }
-        if !additions.is_empty() || !removals.is_empty() {
+        // Removals are no-ops: cache stays warm, mesh eviction is position-based.
+        if !additions.is_empty() {
             inner.changed = true;
         }
     }
@@ -245,15 +236,6 @@ impl SummaryCache {
     /// Clear all entries (used when switching between flyover and normal mode).
     pub fn clear(&self) {
         let mut inner = self.inner.write();
-        // Move all existing regions to removed so dispatch evicts them.
-        let region_lat = common_bevy::summary::mesh_region_lattice();
-        let to_remove: Vec<_> = inner.entries.keys()
-            .map(|key| {
-                let (mn, mm) = region_lat.cell_id(key.sq, key.sr);
-                common_bevy::summary_mesh::MeshRegionKey { r: key.r, mn, mm }
-            })
-            .collect();
-        inner.removed_regions.extend(to_remove);
         inner.entries.clear();
         inner.dirty_regions.clear();
         inner.changed = true;
@@ -275,11 +257,6 @@ impl SummaryCache {
         std::mem::take(&mut inner.dirty_regions)
     }
 
-    /// Drain the set of mesh regions whose data was removed.
-    pub fn take_removed_regions(&self) -> HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-        let mut inner = self.inner.write();
-        std::mem::take(&mut inner.removed_regions)
-    }
 }
 
 /// Client-side system timers. Wraps `common::timers::SystemTimers`.
