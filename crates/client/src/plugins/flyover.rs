@@ -698,14 +698,14 @@ fn flyover_summary_dispatch(
 
     use common_bevy::message::{SummaryKey, SummaryData};
     use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band, summary_lattice, select_center_z};
-    use crate::systems::camera::{gameplay_camera_height, HORIZON_MARGIN_DEG};
+    use crate::systems::camera::HORIZON_MARGIN_DEG;
 
-    let camera_height_offset = gameplay_camera_height();
+    let camera_height_offset = camera_height(MAX_FLYOVER_FOV);
     let player_approx_y = (pos.y - camera_height_offset).max(0.0);
     let camera_total_height = camera_height_offset + player_approx_y;
     let far_ground = camera_total_height / HORIZON_MARGIN_DEG.to_radians().tan();
 
-    let bands = compute_active_bands(far_ground, camera_total_height, MAX_FLYOVER_FOV);
+    let bands = compute_active_bands(far_ground, camera_height_offset, MAX_FLYOVER_FOV);
     let mut visible: HashSet<SummaryKey> = HashSet::new();
     for band in &bands {
         if band.r == 0 { continue; } // r=0 uses tile data from Map, not summaries

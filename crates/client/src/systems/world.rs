@@ -276,7 +276,15 @@ pub fn dispatch_summary_tasks(
                 common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks)
             }
             (Some(pos), None) => {
-                compute_auto_mode_regions(pos, &loaded_chunks.chunks)
+                #[cfg(feature = "admin")]
+                let max_fov = if flyover.as_ref().map_or(false, |f| f.active) {
+                    crate::systems::camera::MAX_FLYOVER_FOV
+                } else {
+                    crate::systems::camera::MAX_GAMEPLAY_FOV
+                };
+                #[cfg(not(feature = "admin"))]
+                let max_fov = crate::systems::camera::MAX_GAMEPLAY_FOV;
+                compute_auto_mode_regions(pos, &loaded_chunks.chunks, max_fov)
             }
             (None, None) => {
                 // No camera yet — can't compute local regions.
@@ -369,6 +377,7 @@ pub fn dispatch_summary_tasks(
 fn compute_auto_mode_regions(
     camera_pos: Vec3,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
+    fov: f32,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
     use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
@@ -398,7 +407,7 @@ fn compute_auto_mode_regions(
     let local_margin = mesh_region_extent_wu(local_outer_r);
     let local_max = (max_loaded - local_margin).max(0.0);
 
-    let bands = compute_active_bands(far_ground, camera_total_height, crate::systems::camera::MAX_GAMEPLAY_FOV);
+    let bands = compute_active_bands(far_ground, camera_height_offset, fov);
     let mut all_regions = std::collections::HashSet::new();
 
     for band in &bands {
