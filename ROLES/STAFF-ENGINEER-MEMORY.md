@@ -271,7 +271,7 @@ The result is a system graph that works today but that nobody can reason about h
 ### Tier 3: Fix Before Scaling *(before 50+ players)*
 
 9. **Spine.rs split and spatial indexing** — Unlock terrain generation performance.
-10. **Map triple storage** — Consolidate to single backing store.
+10. **Map dead code + triple storage** — `regenerate_mesh` in `common-bevy::Map` wrapper is dead (never called in production). The `BTreeMap` in `qrz::Map` exists solely to support `iter()` which only `regenerate_mesh` and `generate_chunk_mesh` use. Kill `regenerate_mesh`, then restructure: flat index for hot-path elevation lookups, chunk-keyed storage for mesh gen. Change lives in wrapper, not `qrz`.
 11. **NPC spatial query optimization** — Pre-computed occupancy grid instead of per-NPC NNTree queries.
 12. **Network delta encoding** — At least for high-frequency components (stamina, mana).
 
@@ -323,3 +323,7 @@ Systems that can't answer question 4 are the ones that will break at scale. Righ
 - **spine.rs at world scale:** O(peaks^2) ridgeline building blocks terrain generation
 - **No degradation strategy:** Unknown behavior when tick budget exceeded
 - **No load testing harness:** All performance claims are theoretical until stress-tested
+
+## Lessons / Self-Corrections
+
+- **Dead code review must follow data structure dependencies.** The 2026-04-08 pass caught dead functions (`do_nothing`, `try_gcd`, dead event variants) but missed that `regenerate_mesh` was dead — and more importantly, missed that the `BTreeMap` in `qrz::Map` only existed to support dead code. When flagging dead functions, trace what data structures and indices exist solely to support them. The supporting infrastructure is often the bigger cost.
