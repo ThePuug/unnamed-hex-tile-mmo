@@ -18,7 +18,7 @@ use crate::{
     },
 };
 use common_bevy::{
-    chunk::{self, chunk_tiles, loc_to_chunk, CHUNK_EXTENT_WU},
+    chunk::{self, loc_to_chunk, CHUNK_EXTENT_WU},
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
@@ -113,15 +113,8 @@ pub fn evict_data(
     }
 
     // Remove tiles from map (triggers mesh rebuild via changed flag)
-    {
-        let mut map_w = map.write();
-        for &chunk_id in &all_evicted {
-            for (q, r) in chunk_tiles(chunk_id) {
-                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
-                    map_w.remove(qrz);
-                }
-            }
-        }
+    for &chunk_id in &all_evicted {
+        map.remove_chunk(chunk_id);
     }
     loaded_chunks.evict(&all_evicted);
 }

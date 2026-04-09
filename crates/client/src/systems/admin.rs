@@ -491,11 +491,9 @@ pub fn poll_flyover_tile_tasks(
     let _t = client_timers.0.scope("fly_poll");
     pending.tasks.retain(|&chunk_id, task| {
         if let Some(tiles) = block_on(future::poll_once(task)) {
-            let mut map_w = map.write();
             for (qrz, entity_type) in tiles {
-                map_w.insert(qrz, entity_type);
+                map.insert(qrz, entity_type);
             }
-            drop(map_w);
             loaded_chunks.insert(chunk_id);
             false
         } else {
@@ -556,15 +554,8 @@ pub fn flyover_evict_chunks(
     }
 
     // Remove tiles from Map (triggers mesh rebuild via changed flag)
-    {
-        let mut map_w = map.write();
-        for &chunk_id in &evictable {
-            for (q, r) in chunk_tiles(chunk_id) {
-                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
-                    map_w.remove(qrz);
-                }
-            }
-        }
+    for &chunk_id in &evictable {
+        map.remove_chunk(chunk_id);
     }
 
     let evict_set: HashSet<ChunkId> = evictable.into_iter().collect();
@@ -598,15 +589,8 @@ fn evict_generated_chunks(
     }
 
     // Remove tiles from Map
-    {
-        let mut map_w = map.write();
-        for &chunk_id in &flyover.generated_chunks {
-            for (q, r) in chunk_tiles(chunk_id) {
-                if let Some((qrz, _)) = map_w.get_by_qr(q, r) {
-                    map_w.remove(qrz);
-                }
-            }
-        }
+    for &chunk_id in &flyover.generated_chunks {
+        map.remove_chunk(chunk_id);
     }
 
     flyover.generated_chunks.clear();

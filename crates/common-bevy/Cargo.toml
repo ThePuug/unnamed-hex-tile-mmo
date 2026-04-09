@@ -8,8 +8,8 @@ common = { path = "../common" }
 bevy = { version = "0.18", features = ["dynamic_linking"] }
 bevy_camera = "0.18"
 bevy_mesh = "0.18"
+dashmap = "6"
 lru = "0"
-parking_lot = "0.12"
 rand = "0.9"
 rstar = "0"
 serde = { version = "1", features = ["derive"] }

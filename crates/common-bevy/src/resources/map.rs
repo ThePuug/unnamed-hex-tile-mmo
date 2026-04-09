@@ -5,7 +5,10 @@ use bevy::{
 };
 use bevy_camera::primitives::Aabb;
 use bevy_mesh::Indices;
+use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use qrz::{self, Convert, Qrz};
 
@@ -14,72 +17,203 @@ use crate::{
     components::entity_type::*,
 };
 
-/// Map resource wrapping a concurrent hex tile map.
-/// RwLock allows concurrent reads from async tasks; writes block briefly.
-/// Clone is O(1) — clones the Arc handle, shares the same RwLock.
+/// Data stored per tile.
+#[derive(Clone, Copy)]
+pub struct TileRecord {
+    pub z: i32,
+    pub typ: EntityType,
+}
+
+/// Map resource with chunk-sharded storage and flat elevation index.
+///
+/// Two indexes, each optimized for its access pattern:
+/// - `flat`: single DashMap shard probe for elevation lookups (hot path — physics)
+/// - `chunks`: O(1) chunk lookup for mesh generation and bulk eviction
+///
+/// Clone is O(1) — clones the Arc handles.
 #[derive(Clone, Resource)]
 pub struct Map {
-    inner: Arc<parking_lot::RwLock<qrz::Map<EntityType>>>,
-    changed: Arc<std::sync::atomic::AtomicBool>,
+    radius: f32,
+    rise: f32,
+    orientation: qrz::HexOrientation,
+    /// Hot-path elevation index: single shard probe, no chunk derivation.
+    flat: Arc<DashMap<(i32, i32), i32>>,
+    /// Chunk-sharded storage for mesh generation and EntityType lookups.
+    chunks: Arc<DashMap<ChunkId, HashMap<(i32, i32), TileRecord>>>,
+    changed: Arc<AtomicBool>,
+    /// Geometry-only delegate for coordinate conversion and vertex computation.
+    geo: Arc<qrz::Map<()>>,
 }
 
 impl Map {
     pub fn new(map: qrz::Map<EntityType>) -> Map {
+        let radius = map.radius();
+        let rise = map.rise();
+        let orientation = map.orientation();
+
+        let flat: DashMap<(i32, i32), i32> = DashMap::new();
+        let chunks: DashMap<ChunkId, HashMap<(i32, i32), TileRecord>> = DashMap::new();
+        for (&qrz, &typ) in map.iter() {
+            flat.insert((qrz.q, qrz.r), qrz.z);
+            let chunk_id = loc_to_chunk(qrz);
+            chunks.entry(chunk_id).or_default().insert(
+                (qrz.q, qrz.r),
+                TileRecord { z: qrz.z, typ },
+            );
+        }
+
+        let geo = qrz::Map::<()>::new(radius, rise, orientation);
+
         Map {
-            inner: Arc::new(parking_lot::RwLock::new(map)),
-            changed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            radius,
+            rise,
+            orientation,
+            flat: Arc::new(flat),
+            chunks: Arc::new(chunks),
+            changed: Arc::new(AtomicBool::new(false)),
+            geo: Arc::new(geo),
         }
     }
 
-    /// Acquire a read lock on the inner map.
-    pub fn read(&self) -> parking_lot::RwLockReadGuard<'_, qrz::Map<EntityType>> {
-        self.inner.read()
+    pub fn insert(&self, qrz: Qrz, typ: EntityType) {
+        self.flat.insert((qrz.q, qrz.r), qrz.z);
+        let chunk_id = loc_to_chunk(qrz);
+        self.chunks.entry(chunk_id).or_default().insert(
+            (qrz.q, qrz.r),
+            TileRecord { z: qrz.z, typ },
+        );
+        self.changed.store(true, Ordering::Relaxed);
     }
 
-    /// Acquire a write lock on the inner map. Sets changed flag on drop.
-    pub fn write(&self) -> MapWriteGuard<'_> {
-        MapWriteGuard {
-            guard: self.inner.write(),
-            changed: &self.changed,
+    pub fn remove(&self, qrz: Qrz) -> Option<EntityType> {
+        self.flat.remove(&(qrz.q, qrz.r));
+        let chunk_id = loc_to_chunk(qrz);
+        let removed = self.chunks.get_mut(&chunk_id)
+            .and_then(|mut bucket| bucket.remove(&(qrz.q, qrz.r)).map(|r| r.typ));
+        if removed.is_some() {
+            if self.chunks.get(&chunk_id).map_or(false, |b| b.is_empty()) {
+                self.chunks.remove(&chunk_id);
+            }
+            self.changed.store(true, Ordering::Relaxed);
+        }
+        removed
+    }
+
+    /// O(1) chunk eviction — removes all tiles in the chunk from both indexes.
+    pub fn remove_chunk(&self, chunk_id: ChunkId) {
+        if let Some((_, bucket)) = self.chunks.remove(&chunk_id) {
+            for &(q, r) in bucket.keys() {
+                self.flat.remove(&(q, r));
+            }
+            self.changed.store(true, Ordering::Relaxed);
         }
     }
 
-    /// Check and clear the changed flag. Used by dispatch_lod_tasks
-    /// to skip work when no tiles have been inserted since last check.
+    /// Hot-path elevation + type lookup. Single flat-index shard probe for z,
+    /// then chunk lookup for EntityType.
+    pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, EntityType)> {
+        let z = *self.flat.get(&(q, r))?.value();
+        let chunk_id = loc_to_chunk(Qrz { q, r, z });
+        let typ = self.chunks.get(&chunk_id)
+            .and_then(|b| b.get(&(q, r)).map(|r| r.typ))
+            .unwrap_or(EntityType::Unset);
+        Some((Qrz { q, r, z }, typ))
+    }
+
+    pub fn get(&self, qrz: Qrz) -> Option<EntityType> {
+        let chunk_id = loc_to_chunk(qrz);
+        self.chunks.get(&chunk_id)?
+            .get(&(qrz.q, qrz.r))
+            .filter(|r| r.z == qrz.z)
+            .map(|r| r.typ)
+    }
+
     pub fn take_changed(&self) -> bool {
-        self.changed.swap(false, std::sync::atomic::Ordering::Relaxed)
+        self.changed.swap(false, Ordering::Relaxed)
     }
 
-    /// Force the changed flag on, triggering mesh pipeline dispatch on next frame.
     pub fn force_changed(&self) {
-        self.changed.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.changed.store(true, Ordering::Relaxed);
     }
 
-    pub fn rise(&self) -> f32 {
-        self.inner.read().rise()
+    pub fn rise(&self) -> f32 { self.rise }
+    pub fn radius(&self) -> f32 { self.radius }
+    pub fn orientation(&self) -> qrz::HexOrientation { self.orientation }
+
+    pub fn len(&self) -> usize {
+        self.chunks.iter().map(|e| e.value().len()).sum()
     }
 
-    fn vertices_with_slopes_inner(map: &qrz::Map<EntityType>, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
-        let mut verts = map.vertices(qrz);
+    pub fn heap_size_estimate(&self) -> usize {
+        // Rough estimate: per entry ~48 bytes (key + TileRecord + HashMap overhead)
+        self.len() * 48
+    }
+
+    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> {
+        let mut result = Vec::new();
+        for direction in qrz::DIRECTIONS.iter() {
+            let n = qrz + *direction;
+            if let Some((actual, typ)) = self.get_by_qr(n.q, n.r) {
+                if (actual.z - qrz.z).abs() <= 1 {
+                    result.push((actual, typ));
+                }
+            }
+        }
+        result
+    }
+
+    pub fn iter_tiles(&self) -> Vec<(Qrz, EntityType)> {
+        self.chunks.iter()
+            .flat_map(|entry| {
+                entry.value().iter()
+                    .map(|(&(q, r), rec)| (Qrz { q, r, z: rec.z }, rec.typ))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub fn greedy_path(&self, from: Qrz, toward: Qrz, max_steps: usize) -> Vec<Qrz> {
+        let mut path = Vec::new();
+        let mut current = from;
+
+        for _ in 0..max_steps {
+            if current.flat_distance(&toward) == 0 {
+                break;
+            }
+
+            let best = self.neighbors(current)
+                .into_iter()
+                .min_by_key(|(n, _)| n.flat_distance(&toward));
+
+            let Some((next, _)) = best else { break };
+
+            if next.flat_distance(&toward) >= current.flat_distance(&toward) {
+                break;
+            }
+
+            current = next;
+            path.push(current);
+        }
+
+        path
+    }
+
+    fn vertices_with_slopes_inner(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
+        let mut verts = self.geo.vertices(qrz);
         if !apply_slopes {
             return verts;
         }
 
-        let rise = map.rise();
+        let rise = self.rise;
         let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
 
         let direction_to_vertices = [
-            (4, 5), // Dir 0: West edge → SW(4), NW(5)
-            (3, 4), // Dir 1: SW edge → S(3), SW(4)
-            (2, 3), // Dir 2: SE edge → SE(2), S(3)
-            (1, 2), // Dir 3: East edge → NE(1), SE(2)
-            (0, 1), // Dir 4: NE edge → N(0), NE(1)
-            (5, 0), // Dir 5: NW edge → NW(5), N(0)
+            (4, 5), (3, 4), (2, 3), (1, 2), (0, 1), (5, 0),
         ];
 
         for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
             let neighbor_qrz = qrz + *direction;
-            if let Some((actual_neighbor_qrz, _)) = map.get_by_qr(neighbor_qrz.q, neighbor_qrz.r) {
+            if let Some((actual_neighbor_qrz, _)) = self.get_by_qr(neighbor_qrz.q, neighbor_qrz.r) {
                 let elevation_diff = actual_neighbor_qrz.z - qrz.z;
                 let adjustment = if elevation_diff > 0 {
                     rise * 0.5
@@ -108,23 +242,18 @@ impl Map {
     }
 
     pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
-        Self::vertices_with_slopes_inner(&self.inner.read(), qrz, apply_slopes)
+        self.vertices_with_slopes_inner(qrz, apply_slopes)
     }
 
-    /// Compute per-vertex normal for a hex tile from its actual geometry.
-    /// `verts` layout: [0..5] = outer (N, NE, SE, S, SW, NW), [6] = center.
-    /// Each outer vertex participates in 2 triangles; the center in all 6.
     pub fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {
         let center = verts[6];
         if vertex_idx == 6 {
-            // Center: average all 6 face normals
             let mut sum = Vec3::ZERO;
             for i in 0..6 {
                 sum += (verts[(i + 1) % 6] - center).cross(verts[i] - center);
             }
             if sum.length_squared() > 1e-10 { sum.normalize() } else { Vec3::Y }
         } else {
-            // Outer vertex j: average the 2 adjacent face normals
             let j = vertex_idx;
             let n1 = (verts[(j + 1) % 6] - center).cross(verts[j] - center);
             let n2 = (verts[j] - center).cross(verts[(j + 5) % 6] - center);
@@ -133,17 +262,14 @@ impl Map {
         }
     }
 
-    /// Generate a mesh for a single chunk using TriangleList topology.
-    /// Color is computed in the terrain shader from world-space Y; no vertex colors emitted.
     pub fn generate_chunk_mesh(&self, chunk_id: ChunkId, apply_slopes: bool) -> (Mesh, Aabb) {
-        let guard = self.inner.read();
-        let map = &*guard;
-
-        // Gather chunk tiles
-        let chunk_tiles: Vec<Qrz> = map.iter()
-            .filter(|(&qrz, _)| loc_to_chunk(qrz) == chunk_id)
-            .map(|(&qrz, _)| qrz)
-            .collect();
+        // O(1) chunk lookup instead of O(n) filter
+        let chunk_tiles: Vec<Qrz> = match self.chunks.get(&chunk_id) {
+            Some(bucket) => bucket.iter()
+                .map(|(&(q, r), rec)| Qrz { q, r, z: rec.z })
+                .collect(),
+            None => Vec::new(),
+        };
 
         // Build elevation lookup: chunk tiles + 1-ring neighbors
         let mut elevations = std::collections::HashMap::new();
@@ -151,23 +277,23 @@ impl Map {
             elevations.insert((qrz.q, qrz.r), qrz.z);
             for direction in qrz::DIRECTIONS.iter() {
                 let n = qrz + *direction;
-                if let Some((actual, _)) = map.get_by_qr(n.q, n.r) {
+                if let Some((actual, _)) = self.get_by_qr(n.q, n.r) {
                     elevations.insert((actual.q, actual.r), actual.z);
                 }
             }
         }
 
-        let chunk_origin: Vec3 = map.convert(chunk_id.center());
+        let chunk_origin: Vec3 = self.geo.convert(chunk_id.center());
         let geometry = if apply_slopes {
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &elevations, map.radius(), map.rise(), chunk_origin,
+                &chunk_tiles, &elevations, self.radius, self.rise, chunk_origin,
             )
         } else {
             let chunk_only: std::collections::HashMap<(i32, i32), i32> = chunk_tiles.iter()
                 .map(|qrz| ((qrz.q, qrz.r), qrz.z))
                 .collect();
             crate::geometry::compute_tile_geometry(
-                &chunk_tiles, &chunk_only, map.radius(), map.rise(), chunk_origin,
+                &chunk_tiles, &chunk_only, self.radius, self.rise, chunk_origin,
             )
         };
 
@@ -195,215 +321,17 @@ impl Map {
             Aabb::from_min_max(min, max),
         )
     }
-
-    pub fn regenerate_mesh(&self, apply_slopes: bool) -> (Mesh,Aabb) {
-        let guard = self.inner.read();
-        let map = &*guard;
-
-        let mut verts:Vec<Vec3> = Vec::new();
-        let mut norms:Vec<Vec3> = Vec::new();
-        let mut last_qrz:Option<Qrz> = None;
-        let mut skip_sw = false;
-        let mut west_skirt_verts: Vec<Vec3> = Vec::new();
-        let mut west_skirt_norms: Vec<Vec3> = Vec::new();
-
-        map.iter().for_each(|(&it_qrz, _)| {
-            let it_vrt = Self::vertices_with_slopes_inner(&map, it_qrz, apply_slopes);
-
-            if let Some(last_qrz) = last_qrz {
-                if last_qrz.q*2+last_qrz.r != it_qrz.q*2+it_qrz.r {
-                    verts.append(&mut west_skirt_verts);
-                    norms.append(&mut west_skirt_norms);
-                }
-            }
-
-            let sw_neighbor = it_qrz + qrz::DIRECTIONS[1];
-            let sw_result = map.get_by_qr(sw_neighbor.q, sw_neighbor.r);
-            let sw_data = sw_result.map(|(qrz, _)| Self::vertices_with_slopes_inner(&map, qrz, apply_slopes));
-
-            if skip_sw {
-                let last_vrt = Self::vertices_with_slopes_inner(&map, last_qrz.unwrap(), apply_slopes);
-                let last_vrt_underover = Vec3::new(last_vrt[3].x, it_vrt[0].y, last_vrt[3].z);
-                verts.extend([ last_vrt_underover, last_vrt_underover, it_vrt[0], it_vrt[0] ]);
-                norms.extend([ Vec3::new(0., 1., 0.); 4 ]);
-                skip_sw = false;
-            }
-
-            let norm_0 = Self::hex_vertex_normal(&it_vrt, 0);
-            let norm_5 = Self::hex_vertex_normal(&it_vrt, 5);
-            let norm_4 = Self::hex_vertex_normal(&it_vrt, 4);
-            let norm_3 = Self::hex_vertex_normal(&it_vrt, 3);
-            let center_normal = Self::hex_vertex_normal(&it_vrt, 6);
-
-            verts.extend([ it_vrt[0], it_vrt[5], it_vrt[6], it_vrt[4], it_vrt[3] ]);
-            norms.extend([ norm_0, norm_5, center_normal, norm_4, norm_3 ]);
-
-            if let Some(sw_vrt) = sw_data {
-                let sw_norm_0 = Self::hex_vertex_normal(&sw_vrt, 0);
-                let sw_norm_1 = Self::hex_vertex_normal(&sw_vrt, 1);
-                let sw_norm_2 = Self::hex_vertex_normal(&sw_vrt, 2);
-                let sw_norm_3 = Self::hex_vertex_normal(&sw_vrt, 3);
-                let sw_center = Self::hex_vertex_normal(&sw_vrt, 6);
-
-                verts.extend([ sw_vrt[0], sw_vrt[1], sw_vrt[6], sw_vrt[2], sw_vrt[3]]);
-                norms.extend([ sw_norm_0, sw_norm_1, sw_center, sw_norm_2, sw_norm_3 ]);
-            } else {
-                verts.extend([ it_vrt[3] ]);
-                norms.extend([ norm_3 ]);
-                skip_sw = true;
-            }
-
-            let we_neighbor = it_qrz + qrz::DIRECTIONS[0];
-            let we_result = map.get_by_qr(we_neighbor.q, we_neighbor.r);
-            let we_qrz = we_result.unwrap_or((it_qrz + qrz::DIRECTIONS[0], EntityType::Decorator(default()))).0;
-            let mut we_vrt = if we_result.is_some() {
-                Self::vertices_with_slopes_inner(&map, we_qrz, apply_slopes)
-            } else {
-                map.vertices(we_qrz)
-            };
-
-            if we_result.is_none() {
-                we_vrt[1].y = it_vrt[5].y;
-                we_vrt[2].y = it_vrt[4].y;
-            }
-
-            let we_norm_1 = Self::hex_vertex_normal(&we_vrt, 1);
-            let we_norm_2 = Self::hex_vertex_normal(&we_vrt, 2);
-
-            if let Some(last_qrz) = last_qrz {
-                let last_vrt = Self::vertices_with_slopes_inner(&map, last_qrz, apply_slopes);
-                let last_vrt_underover = Vec3::new(it_vrt[5].x, last_vrt[4].y, it_vrt[5].z);
-                west_skirt_verts.extend([ last_vrt_underover, last_vrt_underover ]);
-                west_skirt_norms.extend([ Vec3::new(0., 1., 0.); 2 ]);
-            }
-            west_skirt_verts.extend([ it_vrt[5], we_vrt[1], it_vrt[4], we_vrt[2], it_vrt[4], it_vrt[4] ]);
-            west_skirt_norms.extend([ norm_5, we_norm_1, norm_4, we_norm_2, norm_4, norm_4 ]);
-
-            last_qrz = Some(it_qrz);
-        });
-
-        let mut min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
-        let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
-        for vert in &verts {
-            min = Vec3::min(min, *vert);
-            max = Vec3::max(max, *vert);
-        }
-
-        let len = verts.clone().len() as u32;
-        println!("Terrain mesh: {} tiles, {} vertices, AABB: {:?} to {:?}",
-                 map.len(), len, min, max);
-        (
-            Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, verts)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (0..len).map(|_| [0., 0.]).collect::<Vec<[f32; 2]>>())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-                .with_inserted_indices(Indices::U32((0..len).collect())),
-            Aabb::from_min_max(min, max),
-        )
-    }
-
-    pub fn get_by_qr(&self, q: i32, r: i32) -> Option<(Qrz, EntityType)> {
-        self.inner.read().get_by_qr(q, r)
-    }
-
-    pub fn get(&self, qrz: Qrz) -> Option<EntityType> {
-        self.inner.read().get(qrz).copied()
-    }
-
-    pub fn insert(&self, qrz: Qrz, obj: EntityType) {
-        self.write().insert(qrz, obj);
-    }
-
-    pub fn remove(&self, qrz: Qrz) -> Option<EntityType> {
-        self.write().remove(qrz)
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.read().len()
-    }
-
-    pub fn heap_size_estimate(&self) -> usize {
-        self.inner.read().heap_size_estimate()
-    }
-
-    pub fn radius(&self) -> f32 {
-        self.inner.read().radius()
-    }
-
-    pub fn orientation(&self) -> qrz::HexOrientation {
-        self.inner.read().orientation()
-    }
-
-    pub fn neighbors(&self, qrz: Qrz) -> Vec<(Qrz, EntityType)> {
-        self.inner.read().neighbors(qrz)
-    }
-
-    /// Greedily walk toward `toward`, picking the neighbor closest each step.
-    /// Uses `neighbors()` which is elevation-aware (±1 z-level, walkable only).
-    /// Stops on: arrival, no walkable neighbors, no progress, or `max_steps`.
-    /// Returns floor-level tiles visited (does NOT include `from`).
-    pub fn iter_tiles(&self) -> Vec<(Qrz, EntityType)> {
-        self.inner.read().iter().map(|(&qrz, &typ)| (qrz, typ)).collect()
-    }
-
-    pub fn greedy_path(&self, from: Qrz, toward: Qrz, max_steps: usize) -> Vec<Qrz> {
-        let guard = self.inner.read();
-        let mut path = Vec::new();
-        let mut current = from;
-
-        for _ in 0..max_steps {
-            if current.flat_distance(&toward) == 0 {
-                break;
-            }
-
-            let best = guard.neighbors(current)
-                .into_iter()
-                .min_by_key(|(n, _)| n.flat_distance(&toward));
-
-            let Some((next, _)) = best else { break };
-
-            if next.flat_distance(&toward) >= current.flat_distance(&toward) {
-                break;
-            }
-
-            current = next;
-            path.push(current);
-        }
-
-        path
-    }
-}
-
-/// Write guard that sets the changed flag on drop.
-pub struct MapWriteGuard<'a> {
-    guard: parking_lot::RwLockWriteGuard<'a, qrz::Map<EntityType>>,
-    changed: &'a std::sync::atomic::AtomicBool,
-}
-
-impl Drop for MapWriteGuard<'_> {
-    fn drop(&mut self) {
-        self.changed.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl std::ops::Deref for MapWriteGuard<'_> {
-    type Target = qrz::Map<EntityType>;
-    fn deref(&self) -> &Self::Target { &self.guard }
-}
-
-impl std::ops::DerefMut for MapWriteGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.guard }
 }
 
 impl Convert<Qrz, Vec3> for Map {
     fn convert(&self, it: Qrz) -> Vec3 {
-        self.inner.read().convert(it)
+        self.geo.convert(it)
     }
 }
 
 impl Convert<Vec3, Qrz> for Map {
     fn convert(&self, it: Vec3) -> Qrz {
-        self.inner.read().convert(it)
+        self.geo.convert(it)
     }
 }
 
@@ -437,7 +365,6 @@ mod tests {
     #[test]
     fn greedy_path_follows_slope() {
         let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        // Gradual uphill: z increases by 1 each tile
         for q in 0..=4 {
             qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
         }
@@ -457,7 +384,6 @@ mod tests {
         let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
         qrz_map.insert(Qrz { q: 1, r: 0, z: 0 }, EntityType::Decorator(default()));
-        // Cliff: q=2 is 5 levels higher (not walkable via neighbors)
         qrz_map.insert(Qrz { q: 2, r: 0, z: 5 }, EntityType::Decorator(default()));
         let map = Map::new(qrz_map);
 
@@ -466,7 +392,6 @@ mod tests {
             Qrz { q: 3, r: 0, z: 0 },
             10,
         );
-        // Should reach q=1 then stop (cliff blocks further progress)
         assert_eq!(path.len(), 1);
         assert_eq!(path[0], Qrz { q: 1, r: 0, z: 0 });
     }
@@ -492,10 +417,8 @@ mod tests {
 
     #[test]
     fn greedy_path_no_progress_stops() {
-        // Island with no walkable path toward destination
         let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
-        // No neighbors at all
         let map = Map::new(qrz_map);
 
         let path = map.greedy_path(
@@ -508,141 +431,80 @@ mod tests {
 
     #[test]
     fn test_normals_consider_neighboring_hexes() {
-        // Create two adjacent flat hexes at same elevation
-        // If normals only consider the current hex, they'll be tilted toward/away from neighbors
-        // If normals consider neighbors too, they should point straight up (smooth flat plane)
         let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         let hex1 = Qrz { q: 0, r: 0, z: 0 };
-        let hex2 = Qrz { q: 1, r: 0, z: 0 }; // Adjacent hex at same elevation
+        let hex2 = Qrz { q: 1, r: 0, z: 0 };
 
         qrz_map.insert(hex1, EntityType::Decorator(default()));
         qrz_map.insert(hex2, EntityType::Decorator(default()));
 
         let map = Map::new(qrz_map);
 
-        // Get vertices for hex1 to understand its structure
         let hex1_verts = map.vertices_with_slopes(hex1, true);
-
-        // Calculate normal for the vertex that's shared between hex1 and hex2
-        // Vertex 1 (NE) of hex1 points toward hex2 (which is to the East, direction index 3)
-        // Actually, hex2 is at direction index 3 (East), so vertices 1 and 2 are shared
         let shared_vertex_normal = Map::hex_vertex_normal(&hex1_verts, 1);
 
-        // On a flat plane with neighbors, the normal should point straight up
-        // If we only considered the current hex's triangles, it would be tilted
-        // This tests that we're considering the neighboring hex's triangles too
-
-        // The Y component should dominate (close to 1.0)
-        assert!(
-            shared_vertex_normal.y > 0.95,
-            "Expected shared vertex normal to point mostly upward (Y > 0.95) on flat adjacent hexes, \
-             but got normal: {:?} with Y = {}. This suggests normals aren't considering neighboring hexes.",
-            shared_vertex_normal,
-            shared_vertex_normal.y
-        );
-
-        // X and Z should be very small
-        assert!(
-            shared_vertex_normal.x.abs() < 0.3,
-            "Expected X component of normal to be small on flat terrain, but got {}",
-            shared_vertex_normal.x
-        );
-        assert!(
-            shared_vertex_normal.z.abs() < 0.3,
-            "Expected Z component of normal to be small on flat terrain, but got {}",
-            shared_vertex_normal.z
-        );
+        assert!(shared_vertex_normal.y > 0.95,
+            "Expected Y > 0.95, got {:?}", shared_vertex_normal);
+        assert!(shared_vertex_normal.x.abs() < 0.3);
+        assert!(shared_vertex_normal.z.abs() < 0.3);
     }
 
     #[test]
     fn test_generate_chunk_mesh() {
         use crate::chunk::{ChunkId, chunk_tiles, CHUNK_TILES};
 
-        // Create a map with tiles in multiple chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
-        // Chunk (0,0) - add all hex tiles (flat terrain for exact vertex count checks)
         for (q, r) in chunk_tiles(ChunkId(0, 0)) {
-            let tile = Qrz { q, r, z: 0 };
-            qrz_map.insert(tile, EntityType::Decorator(default()));
+            qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
         }
-
-        // Chunk (1,1) - add all hex tiles
         for (q, r) in chunk_tiles(ChunkId(1, 1)) {
-            let tile = Qrz { q, r, z: 0 };
-            qrz_map.insert(tile, EntityType::Decorator(default()));
+            qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
         }
 
         let map = Map::new(qrz_map);
-
-        // Generate mesh for chunk (0,0) only
         let (mesh, aabb) = map.generate_chunk_mesh(ChunkId(0, 0), true);
 
-        // Verify mesh properties
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-            .expect("Mesh should have positions")
-            .as_float3()
-            .expect("Positions should be Vec3");
+            .unwrap().as_float3().unwrap();
+        assert_eq!(positions.len(), CHUNK_TILES * 7);
 
-        // Each hex has 7 vertices (1 center + 6 outer)
-        assert_eq!(positions.len(), CHUNK_TILES * 7, "Expected CHUNK_TILES * 7 vertices per tile");
-
-        // Verify mesh has indices for TriangleList
         let indices = match mesh.indices() {
             Some(bevy_mesh::Indices::U32(idx)) => idx,
             _ => panic!("Expected U32 indices"),
         };
+        assert_eq!(indices.len(), CHUNK_TILES * 6 * 3);
 
-        // Each hex has 6 triangles (18 indices)
-        assert_eq!(indices.len(), CHUNK_TILES * 6 * 3, "Expected CHUNK_TILES * 6 triangles * 3 indices");
-
-        // Verify AABB is reasonable (not empty in horizontal extents)
-        assert!(aabb.min().x < aabb.max().x, "AABB should have width");
-        assert!(aabb.min().y <= aabb.max().y, "AABB Y min should not exceed max");
-        assert!(aabb.min().z < aabb.max().z, "AABB should have depth");
+        assert!(aabb.min().x < aabb.max().x);
+        assert!(aabb.min().z < aabb.max().z);
     }
 
     #[test]
     fn test_generate_chunk_mesh_filters_to_chunk() {
         use crate::chunk::{ChunkId, chunk_tiles};
 
-        // Create a map with tiles in two different chunks
         let mut qrz_map = qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
 
-        // Chunk (0,0) - add 4 tiles near center
-        let center_00 = ChunkId(0, 0).center();
         let tiles_00: Vec<_> = chunk_tiles(ChunkId(0, 0)).take(4).collect();
         for &(q, r) in &tiles_00 {
-            let tile = Qrz { q, r, z: 0 };
-            qrz_map.insert(tile, EntityType::Decorator(default()));
+            qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
         }
 
-        // Chunk (1,1) - add 9 tiles near center
         let tiles_11: Vec<_> = chunk_tiles(ChunkId(1, 1)).take(9).collect();
         for &(q, r) in &tiles_11 {
-            let tile = Qrz { q, r, z: 0 };
-            qrz_map.insert(tile, EntityType::Decorator(default()));
+            qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
         }
 
         let map = Map::new(qrz_map);
 
-        // Generate mesh for chunk (0,0) - should only include 4 tiles
         let (mesh_00, _) = map.generate_chunk_mesh(ChunkId(0, 0), true);
         let positions_00 = mesh_00.attribute(Mesh::ATTRIBUTE_POSITION)
-            .expect("Mesh should have positions")
-            .as_float3()
-            .expect("Positions should be Vec3");
+            .unwrap().as_float3().unwrap();
+        assert_eq!(positions_00.len(), 4 * 7);
 
-        assert_eq!(positions_00.len(), 4 * 7, "Chunk (0,0) should have 4 tiles * 7 vertices");
-
-        // Generate mesh for chunk (1,1) - should only include 9 tiles
         let (mesh_11, _) = map.generate_chunk_mesh(ChunkId(1, 1), true);
         let positions_11 = mesh_11.attribute(Mesh::ATTRIBUTE_POSITION)
-            .expect("Mesh should have positions")
-            .as_float3()
-            .expect("Positions should be Vec3");
-
-        assert_eq!(positions_11.len(), 9 * 7, "Chunk (1,1) should have 9 tiles * 7 vertices");
+            .unwrap().as_float3().unwrap();
+        assert_eq!(positions_11.len(), 9 * 7);
     }
-
 }
