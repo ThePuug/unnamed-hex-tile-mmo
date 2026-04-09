@@ -3,7 +3,6 @@
 
 pub mod damage;
 pub mod gcd;
-pub mod heal;
 pub mod queue;
 pub mod recovery;
 pub mod resources;

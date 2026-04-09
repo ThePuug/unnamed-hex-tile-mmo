@@ -2,7 +2,6 @@ pub mod actor;
 pub mod aoi;
 pub mod behaviour;
 pub mod combat;
-pub mod diagnostics;
 pub mod engagement_cleanup;
 pub mod engagement_spawner;
 pub mod input;

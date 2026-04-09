@@ -1,0 +1,57 @@
+thread 'rustc' panicked at /rustc-dev/a293cc4af8b26701c42738381c0c6f9d2ba881e0/compiler\rustc_query_system\src\dep_graph\graph.rs:1417:9:
+assertion `left == right` failed: trying to encode a dep node twice
+  left: 591185
+ right: 4294967295
+stack backtrace:
+   0:     0x7ffe92820cae - std::backtrace_rs::backtrace::win64::trace
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1:     0x7ffe92820cae - std::backtrace_rs::backtrace::trace_unsynchronized
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2:     0x7ffe92820cae - std::backtrace::Backtrace::create
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\backtrace.rs:331
+   3:     0x7ffe92820bea - std::backtrace::Backtrace::force_capture
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\backtrace.rs:312
+   4:     0x7ffe93ff4b36 - core[5595a8517a18387c]::slice::sort::unstable::heapsort::heapsort::<((rustc_lint_defs[f6207d32d4ee4568]::Level, &str), usize), <((rustc_lint_defs[f6207d32d4ee4568]::Level, &str), usize) as core[5595a8517a18387c]::cmp::PartialOrd>::lt>
+   5:     0x7ffe928345c4 - std::panicking::panic_with_hook
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\panicking.rs:833
+   6:     0x7ffe9281a284 - std::panicking::panic_handler::closure$0
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\panicking.rs:698
+   7:     0x7ffe9281776f - std::sys::backtrace::__rust_end_short_backtrace<std::panicking::panic_handler::closure_env$0,never$>
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\sys\backtrace.rs:182
+   8:     0x7ffe9281ae5e - std::panicking::panic_handler
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\panicking.rs:689
+   9:     0x7ffe96a703cd - core::panicking::panic_fmt
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\core\src\panicking.rs:80
+  10:     0x7ffe96a7028a - core::panicking::assert_failed_inner
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\core\src\panicking.rs:434
+  11:     0x7ffe9696d2b4 - core[5595a8517a18387c]::panicking::assert_failed::<u32, u32>
+  12:     0x7ffe936fcc5f - RINvNtNtCsePTOtm4b1RC_18rustc_query_system5query8plumbing17try_execute_queryINtCs90mibWJIKod_16rustc_query_impl26SemiDynamicQueryDispatcherINtNtCs6SWGadNKOVr_21rustc_data_structures9vec_cache8VecCacheNtNtCs6wXTm4A5lwB_10rustc_span6def_id10LocalDefIdINtNtNt
+  13:     0x7ffe95e95ac8 - core[5595a8517a18387c]::panicking::assert_matches_failed::<rustc_query_system[acd11f6b3596d96a]::dep_graph::graph::DepNodeColor>
+  14:     0x7ffe923bd286 - rustc_query_impl[68e567f2f5cb5a87]::profiling_support::alloc_self_profile_query_strings
+  15:     0x7ffe9365ab88 - RINvMs6_NtCsdkAfZi48O6c_9hashbrown3rawINtB6_8RawTableTNtNtNtCsePTOtm4b1RC_18rustc_query_system9dep_graph8dep_node7DepNodeTNtNtCs6wXTm4A5lwB_10rustc_span6def_id5DefIdNtNtCsiOlp0imAgI8_13rustc_type_ir5solve14SizedTraitKindEEE14reserve_rehashNCINvNtB8_3map11m
+  16:     0x7ffe9365ab05 - RINvMs6_NtCsdkAfZi48O6c_9hashbrown3rawINtB6_8RawTableTNtNtNtCsePTOtm4b1RC_18rustc_query_system9dep_graph8dep_node7DepNodeTNtNtCs6wXTm4A5lwB_10rustc_span6def_id5DefIdNtNtCsiOlp0imAgI8_13rustc_type_ir5solve14SizedTraitKindEEE14reserve_rehashNCINvNtB8_3map11m
+  17:     0x7ffe9365ab05 - RINvMs6_NtCsdkAfZi48O6c_9hashbrown3rawINtB6_8RawTableTNtNtNtCsePTOtm4b1RC_18rustc_query_system9dep_graph8dep_node7DepNodeTNtNtCs6wXTm4A5lwB_10rustc_span6def_id5DefIdNtNtCsiOlp0imAgI8_13rustc_type_ir5solve14SizedTraitKindEEE14reserve_rehashNCINvNtB8_3map11m
+  18:     0x7ffe9365a8e3 - RINvMs6_NtCsdkAfZi48O6c_9hashbrown3rawINtB6_8RawTableTNtNtNtCsePTOtm4b1RC_18rustc_query_system9dep_graph8dep_node7DepNodeTNtNtCs6wXTm4A5lwB_10rustc_span6def_id5DefIdNtNtCsiOlp0imAgI8_13rustc_type_ir5solve14SizedTraitKindEEE14reserve_rehashNCINvNtB8_3map11m
+  19:     0x7ffe922ce556 - RINvNtNtCsePTOtm4b1RC_18rustc_query_system5query8plumbing17try_execute_queryINtCs90mibWJIKod_16rustc_query_impl26SemiDynamicQueryDispatcherINtNtB4_6caches12DefaultCacheINtNtCsjzNUYn9NOVi_12rustc_middle2ty20PseudoCanonicalInputNtNtNtB2L_3mir9interpret8Globa
+  20:     0x7ffe92365d0b - rustc_query_impl[68e567f2f5cb5a87]::profiling_support::alloc_self_profile_query_strings
+  21:     0x7ffe93deba4e - <rustc_middle[e40801dc223159d2]::ty::context::TyCtxt>::const_eval_resolve
+  22:     0x7ffe92e7e8a7 - <rustc_mir_transform[e94a0765f21946ca]::known_panics_lint::ConstPropagator as rustc_middle[e40801dc223159d2]::mir::visit::Visitor>::visit_body
+  23:     0x7ffe92dfc520 - <rustc_mir_transform[e94a0765f21946ca]::known_panics_lint::KnownPanicsLint as rustc_mir_transform[e94a0765f21946ca]::pass_manager::MirLint>::run_lint
+  24:     0x7ffe92d42711 - rustc_mir_transform[e94a0765f21946ca]::run_analysis_to_runtime_passes
+  25:     0x7ffe92d46002 - rustc_mir_transform[e94a0765f21946ca]::mir_drops_elaborated_and_const_checked
+  26:     0x7ffe93662ccb - RINvMs6_NtCsdkAfZi48O6c_9hashbrown3rawINtB6_8RawTableTNtNtNtCsePTOtm4b1RC_18rustc_query_system9dep_graph8dep_node7DepNodeTNtNtCs6wXTm4A5lwB_10rustc_span6def_id5DefIdNtNtCsiOlp0imAgI8_13rustc_type_ir5solve14SizedTraitKindEEE14reserve_rehashNCINvNtB8_3map11m
+  27:     0x7ffe936f96d2 - RINvNtNtCsePTOtm4b1RC_18rustc_query_system5query8plumbing17try_execute_queryINtCs90mibWJIKod_16rustc_query_impl26SemiDynamicQueryDispatcherINtNtCs6SWGadNKOVr_21rustc_data_structures9vec_cache8VecCacheNtNtCs6wXTm4A5lwB_10rustc_span6def_id10LocalDefIdINtNtNt
+  28:     0x7ffe9236ec57 - rustc_query_impl[68e567f2f5cb5a87]::profiling_support::alloc_self_profile_query_strings
+  29:     0x7ffe928928be - <tracing_subscriber[dac16cd6dd470c19]::registry::sharded::Registry as core[5595a8517a18387c]::default::Default>::default
+  30:     0x7ffe9412e258 - core[5595a8517a18387c]::slice::sort::unstable::heapsort::heapsort::<(usize, usize, usize, &rustc_span[4c1430802f6b90d3]::symbol::Symbol, rustc_span[4c1430802f6b90d3]::hygiene::MacroKind), <(usize, usize, usize, &rustc_span[4c1430802f6b90d3]::symbol::Symbol, rustc_span[4c1430802f6b90d3]::hygiene::MacroKind) as core[5595a8517a18387c]::cmp::PartialOrd>::lt>
+  31:     0x7ffe9414ed71 - <thin_vec[1a35460b855316ff]::IntoIter<_> as core[5595a8517a18387c]::ops::drop::Drop>::drop::drop_non_singleton::<rustc_hir[9db9479cfc2ea9f5]::attrs::data_structures::CrateType>
+  32:     0x7ffe9412e2bf - core[5595a8517a18387c]::slice::sort::unstable::heapsort::heapsort::<(usize, usize, usize, &rustc_span[4c1430802f6b90d3]::symbol::Symbol, rustc_span[4c1430802f6b90d3]::hygiene::MacroKind), <(usize, usize, usize, &rustc_span[4c1430802f6b90d3]::symbol::Symbol, rustc_span[4c1430802f6b90d3]::hygiene::MacroKind) as core[5595a8517a18387c]::cmp::PartialOrd>::lt>
+  33:     0x7ffe941944fe - <&str as serde_core[a34ffdd778f421b0]::de::Expected>::fmt
+  34:     0x7ffe96a45ea6 - <rustc_thread_pool[ae2feb51d2dc50fd]::registry::WorkerThread>::wait_or_steal_until_cold
+  35:     0x7ffe96a443bc - <rustc_thread_pool[ae2feb51d2dc50fd]::registry::ThreadBuilder>::run
+  36:     0x7ffe93feb8d5 - RINvNtNtCsbutoRP9H6jn_3std3sys9backtrace28___rust_begin_short_backtraceNCNCNCINvMs1_CseXc2S3lUkZR_17rustc_thread_poolNtB1k_17ThreadPoolBuilder12build_scopedNCNCNCINvNtCs8UTuCNcS7hn_15rustc_interface4util31run_in_thread_pool_with_globalsNCINvNtB2F_9interfac
+  37:     0x7ffe93ffaa12 - core[5595a8517a18387c]::slice::sort::unstable::heapsort::heapsort::<((rustc_lint_defs[f6207d32d4ee4568]::Level, &str), usize), <((rustc_lint_defs[f6207d32d4ee4568]::Level, &str), usize) as core[5595a8517a18387c]::cmp::PartialOrd>::lt>
+  38:     0x7ffe9283e0dc - std::sys::thread::windows::impl$0::new::thread_start
+                               at /rustc/a293cc4af8b26701c42738381c0c6f9d2ba881e0/library\std\src\sys\thread\windows.rs:58
+  39:     0x7fffd140e8d7 - BaseThreadInitThunk
+  40:     0x7fffd214c48c - RtlUserThreadStart

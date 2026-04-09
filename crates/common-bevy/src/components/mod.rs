@@ -4,7 +4,6 @@ pub mod engagement;
 pub mod entity_type;
 pub mod gcd;
 pub mod heading;
-pub mod heal;
 pub mod hex_assignment;
 pub mod keybits;
 pub mod loaded_by;
