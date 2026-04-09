@@ -103,7 +103,7 @@ pub fn spawn_grid_mesh_task(
     state: Res<DiagnosticsState>,
     mut pending_mesh: ResMut<PendingGridMesh>,
     player_query: Query<&common_bevy::components::Loc, With<PlayerControlled>>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let Ok(mut overlay) = grid_query.single_mut() else {
         return;

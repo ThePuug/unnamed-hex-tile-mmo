@@ -33,7 +33,7 @@ use crate::{
     systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
-use crate::systems::admin;
+use crate::plugins::flyover;
 
 fn setup(
     mut config_store: ResMut<GizmoConfigStore>,
@@ -83,7 +83,7 @@ fn main() {
 
     // Ensure proper ordering: update_keybits -> tick -> do_input
     #[cfg(feature = "admin")]
-    app.add_systems(PreUpdate, input::update_keybits.run_if(admin::not_in_flyover));
+    app.add_systems(PreUpdate, input::update_keybits.run_if(flyover::not_in_flyover));
     #[cfg(not(feature = "admin"))]
     app.add_systems(PreUpdate, input::update_keybits);
 
@@ -119,8 +119,7 @@ fn main() {
     // Camera: conditional on flyover state in admin builds
     #[cfg(feature = "admin")]
     app.add_systems(Update, (
-        camera::update.run_if(admin::not_in_flyover),
-        admin::flyover_camera_update.run_if(admin::flyover_active),
+        camera::update.run_if(flyover::not_in_flyover),
     ));
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
@@ -178,29 +177,8 @@ fn main() {
     app.init_resource::<crate::resources::SkipNeighborRegen>();
     app.init_resource::<crate::resources::ClientTimers>();
 
-    // Admin resources and systems (compile-time feature gate)
     #[cfg(feature = "admin")]
-    {
-        app.init_resource::<admin::FlyoverState>();
-        app.init_resource::<admin::FlyoverSummaryTracker>();
-        app.init_resource::<admin::PendingFlyoverTiles>();
-        app.insert_resource(admin::AdminComposite::default());
-
-        app.add_systems(Update, (
-            admin::execute_admin_actions,
-            admin::flyover_movement.run_if(admin::flyover_active),
-            admin::tag_admin_chunks,
-            admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
-            admin::flyover_poll_summary_tasks.run_if(admin::flyover_active),
-            admin::flyover_summary_dispatch.run_if(admin::flyover_active),
-            admin::flyover_generate_chunks
-                .run_if(admin::flyover_active)
-                .run_if(on_timer(Duration::from_millis(200))),
-            admin::flyover_evict_chunks
-                .run_if(admin::flyover_active)
-                .run_if(on_timer(Duration::from_secs(1))),
-        ));
-    }
+    app.add_plugins(flyover::FlyoverPlugin);
 
 
     app.run();

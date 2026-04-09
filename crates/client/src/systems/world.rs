@@ -249,7 +249,7 @@ pub fn dispatch_summary_tasks(
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
     player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let map_changed = map.take_changed();
     let summaries_changed = summary_cache.take_changed();

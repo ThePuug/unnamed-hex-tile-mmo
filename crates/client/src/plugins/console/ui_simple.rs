@@ -78,7 +78,7 @@ pub fn update_console_visibility(
 pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
-    #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
     #[cfg(feature = "admin")] forced_radius: Res<crate::resources::ForcedSummaryRadius>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,

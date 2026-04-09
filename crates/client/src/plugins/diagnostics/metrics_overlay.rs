@@ -471,7 +471,7 @@ pub fn update_metrics_overlay(
     >,
     loaded_chunks: Res<LoadedChunks>,
     tri_stats: Res<crate::resources::LodTriangleStats>,
-    #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {

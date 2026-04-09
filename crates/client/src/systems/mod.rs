@@ -1,5 +1,3 @@
-#[cfg(feature = "admin")]
-pub mod admin;
 pub mod ability_prediction;
 pub mod action_bar;
 pub mod actor;

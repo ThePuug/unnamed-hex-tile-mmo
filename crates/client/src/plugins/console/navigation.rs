@@ -10,7 +10,7 @@ pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
     mut action_writer: MessageWriter<DevConsoleAction>,
-    #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
+    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     // Toggle console visibility with NumpadDivide
     if keyboard.just_pressed(KeyCode::NumpadDivide) {
@@ -144,7 +144,7 @@ fn handle_flyover_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
-    flyover: &crate::systems::admin::FlyoverState,
+    flyover: &crate::plugins::flyover::FlyoverState,
 ) {
     let mut consumed = None;
 

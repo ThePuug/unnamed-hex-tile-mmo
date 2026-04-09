@@ -28,7 +28,7 @@ impl Plugin for WorldStreamingPlugin {
         #[cfg(feature = "admin")]
         app.add_systems(
             Update,
-            world::evict_data.run_if(crate::systems::admin::not_in_flyover),
+            world::evict_data.run_if(crate::plugins::flyover::not_in_flyover),
         );
         #[cfg(not(feature = "admin"))]
         app.add_systems(Update, world::evict_data);

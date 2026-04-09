@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::time::common_conditions::on_timer;
 
 use common_bevy::{
     chunk::{
@@ -24,6 +26,38 @@ use crate::{
     resources::{ForcedSummaryRadius, LoadedChunks, SkipNeighborRegen},
     systems::camera::{CameraOrbit, CAMERA_DISTANCE, MAX_FLYOVER_FOV, camera_height},
 };
+
+// ──── Plugin ────
+
+pub struct FlyoverPlugin;
+
+impl Plugin for FlyoverPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<FlyoverState>();
+        app.init_resource::<FlyoverSummaryTracker>();
+        app.init_resource::<PendingFlyoverTiles>();
+        app.insert_resource(AdminComposite::default());
+
+        app.add_systems(Update, (
+            flyover_camera_update.run_if(flyover_active),
+        ));
+
+        app.add_systems(Update, (
+            execute_admin_actions,
+            flyover_movement.run_if(flyover_active),
+            tag_admin_chunks,
+            poll_flyover_tile_tasks.run_if(flyover_active),
+            flyover_poll_summary_tasks.run_if(flyover_active),
+            flyover_summary_dispatch.run_if(flyover_active),
+            flyover_generate_chunks
+                .run_if(flyover_active)
+                .run_if(on_timer(Duration::from_millis(200))),
+            flyover_evict_chunks
+                .run_if(flyover_active)
+                .run_if(on_timer(Duration::from_secs(1))),
+        ));
+    }
+}
 
 // ──── Resources ────
 
@@ -68,12 +102,12 @@ pub struct AdminChunk;
 
 /// Marker for the flyover ground cursor.
 #[derive(Component)]
-pub struct FlyoverCursor;
+struct FlyoverCursor;
 
 /// Client-side Composite for local chunk generation (flyover).
 /// Same event stack as the server — deterministic from seed.
 #[derive(Resource)]
-pub struct AdminComposite(pub Arc<world::events::Composite>);
+struct AdminComposite(pub Arc<world::events::Composite>);
 
 impl Default for AdminComposite {
     fn default() -> Self {
@@ -93,7 +127,7 @@ impl Default for AdminComposite {
 /// `summary_cache.apply_batch()` so the downstream mesh pipeline sees them
 /// identically to server-sent data.
 #[derive(Resource, Default)]
-pub struct FlyoverSummaryTracker {
+struct FlyoverSummaryTracker {
     tracked: HashSet<common_bevy::message::SummaryKey>,
     tasks: Vec<(Vec<common_bevy::message::SummaryKey>, Task<Vec<common_bevy::message::SummaryData>>)>,
     in_flight: HashSet<common_bevy::message::SummaryKey>,
@@ -102,8 +136,8 @@ pub struct FlyoverSummaryTracker {
 
 /// Pending async tile generation tasks.
 #[derive(Default, Resource)]
-pub struct PendingFlyoverTiles {
-    pub tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
+struct PendingFlyoverTiles {
+    tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
 }
 
 
@@ -130,7 +164,7 @@ const MIN_UPDATE_DISTANCE: f32 = 20.0;
 // ──── Systems ────
 
 /// Reads DevConsoleAction events and toggles flyover on/off.
-pub fn execute_admin_actions(
+fn execute_admin_actions(
     mut flyover: ResMut<FlyoverState>,
     mut reader: MessageReader<DevConsoleAction>,
     player_query: Query<&Transform, (With<Actor>, With<PlayerControlled>, Without<Camera3d>)>,
@@ -311,7 +345,7 @@ fn rotate_hex(dir: &qrz::Qrz, steps: i32) -> qrz::Qrz {
 }
 
 /// Smooth camera movement using hex-direction arrow keys with speed ramp.
-pub fn flyover_movement(
+fn flyover_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
     time: Res<Time>,
@@ -400,7 +434,7 @@ pub fn flyover_movement(
 }
 
 /// Replaces camera::update when flyover is active.
-pub fn flyover_camera_update(
+fn flyover_camera_update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
     mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
@@ -447,7 +481,7 @@ pub fn flyover_camera_update(
 
 /// Generates tiles around the flyover camera position using the local composite.
 /// Tiles are inserted into the Map — the normal mesh pipeline handles rendering.
-pub fn flyover_generate_chunks(
+fn flyover_generate_chunks(
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
     admin_composite: Res<AdminComposite>,
@@ -498,7 +532,7 @@ pub fn flyover_generate_chunks(
 
 /// Poll pending tile generation tasks — inserts tiles into Map.
 /// Meshing is handled by the normal dispatch_lod_tasks pipeline.
-pub fn poll_flyover_tile_tasks(
+fn poll_flyover_tile_tasks(
     mut pending: ResMut<PendingFlyoverTiles>,
     map: Res<Map>,
     mut loaded_chunks: ResMut<LoadedChunks>,
@@ -519,7 +553,7 @@ pub fn poll_flyover_tile_tasks(
 }
 
 /// Tags newly spawned mesh entities that belong to admin-generated chunks.
-pub fn tag_admin_chunks(
+fn tag_admin_chunks(
     mut commands: Commands,
     flyover: Res<FlyoverState>,
     new_meshes: Query<Entity, Added<crate::resources::SummaryMesh>>,
@@ -535,7 +569,7 @@ pub fn tag_admin_chunks(
 
 /// Evicts generated chunks that are far from the flyover camera position.
 /// Removes tiles from Map; dispatch_summary_tasks handles mesh entity lifecycle.
-pub fn flyover_evict_chunks(
+fn flyover_evict_chunks(
     mut flyover: ResMut<FlyoverState>,
     map: Res<Map>,
     mut loaded_chunks: ResMut<LoadedChunks>,
@@ -647,7 +681,7 @@ fn report_terrain_at_cursor(
 /// Computes visible summary keys, produces additions and removals through
 /// `summary_cache.apply_batch()`. Cache hits are added immediately; misses
 /// are dispatched as async tasks (polled by `flyover_poll_summary_tasks`).
-pub fn flyover_summary_dispatch(
+fn flyover_summary_dispatch(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
     summary_cache: Res<crate::resources::SummaryCache>,
@@ -737,7 +771,7 @@ pub fn flyover_summary_dispatch(
 }
 
 /// Polls completed async summary tasks and feeds results through `apply_batch`.
-pub fn flyover_poll_summary_tasks(
+fn flyover_poll_summary_tasks(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
     summary_cache: Res<crate::resources::SummaryCache>,
