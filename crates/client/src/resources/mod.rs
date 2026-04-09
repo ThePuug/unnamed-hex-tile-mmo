@@ -84,6 +84,8 @@ pub struct LodTriangleStats {
     pub total_tris: u64,
     /// Total chunks with active meshes.
     pub mesh_count: u32,
+    /// Per-band breakdown: r → (tris, mesh_count).
+    pub per_band: std::collections::BTreeMap<u32, (u64, u32)>,
 }
 
 /// Tracks which chunks have been received on the client

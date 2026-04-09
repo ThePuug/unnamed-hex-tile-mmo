@@ -408,32 +408,23 @@ fn compute_auto_mode_regions(
     let bands = compute_active_bands(far_ground);
     let mut all_regions = std::collections::HashSet::new();
 
-    for (i, band) in bands.iter().enumerate() {
-        let outer = if i + 1 < bands.len() {
-            band.outer_wu + mesh_region_extent_wu(bands[i + 1].r)
-        } else {
-            band.outer_wu
-        };
+    for band in &bands {
+        let outer = band.outer_wu;
 
-        if band.outer_wu <= FIXED_STREAM_RADIUS_WU {
-            // Band fully within streaming radius: gate on loaded chunks,
-            // cap at local_max to avoid perpetually-incomplete regions.
-            let capped_outer = outer.min(local_max);
-            if capped_outer <= band.inner_wu {
-                continue;
-            }
+        if outer <= local_max {
+            // Band within loaded extent: gate on loaded chunks.
             let regions = visible_mesh_regions_in_band(
                 band.r,
                 camera_pos.x,
                 camera_pos.z,
                 band.inner_wu,
-                capped_outer,
+                outer,
                 loaded_chunks,
             );
             all_regions.extend(regions);
         } else {
-            // Band beyond streaming radius: ungated (server provides data)
-            let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
+            // Band beyond loaded extent: ungated (server or flyover local server provides data)
+            let inner = band.inner_wu.max(local_max);
             let regions = visible_mesh_regions_in_band_ungated(
                 band.r,
                 camera_pos.x,
