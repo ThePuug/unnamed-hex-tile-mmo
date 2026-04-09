@@ -6,8 +6,9 @@ pub mod network_ui;
 use bevy::{
     diagnostic::*,
     prelude::*,
-    render::diagnostic::*,
 };
+#[cfg(not(feature = "trace"))]
+use bevy::render::diagnostic::*;
 use bevy_egui::EguiPlugin;
 
 pub use config::DiagnosticsState;
@@ -19,9 +20,11 @@ impl Plugin for DiagnosticsPlugin {
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             EntityCountDiagnosticsPlugin::default(),
-            RenderDiagnosticsPlugin,
             EguiPlugin::default(),
         ));
+        // trace_tracy auto-registers RenderDiagnosticsPlugin; skip when active.
+        #[cfg(not(feature = "trace"))]
+        app.add_plugins(RenderDiagnosticsPlugin);
 
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<network_ui::NetworkMetrics>();
