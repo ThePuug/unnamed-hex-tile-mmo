@@ -398,7 +398,7 @@ fn compute_auto_mode_regions(
     let local_margin = mesh_region_extent_wu(local_outer_r);
     let local_max = (max_loaded - local_margin).max(0.0);
 
-    let bands = compute_active_bands(far_ground, camera_total_height);
+    let bands = compute_active_bands(far_ground, camera_total_height, crate::systems::camera::MAX_GAMEPLAY_FOV);
     let mut all_regions = std::collections::HashSet::new();
 
     for band in &bands {

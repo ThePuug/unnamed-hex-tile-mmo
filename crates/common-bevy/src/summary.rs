@@ -15,8 +15,8 @@ use crate::geometry::flat_top_tile_center;
 /// Minimum rendered size in pixels for a summary hex.
 pub const MIN_SCREEN_PX: f32 = 16.0;
 
-/// Maximum vertical FOV used for worst-case radius calculation (60deg).
-const MAX_VFOV: f32 = std::f32::consts::PI / 3.0;
+/// Default vertical FOV for radius calculation (60deg gameplay).
+const DEFAULT_VFOV: f32 = std::f32::consts::PI / 3.0;
 
 /// Default screen height for radius calculation.
 const DEFAULT_SCREEN_HEIGHT: f32 = 1080.0;
@@ -48,11 +48,15 @@ pub fn summary_radius(camera_distance_wu: f32) -> u32 {
 
 /// Like `summary_radius` but with an explicit screen height.
 pub fn summary_radius_with_screen(camera_distance_wu: f32, screen_height: f32) -> u32 {
-    let pixel_scale = screen_height / (2.0 * (MAX_VFOV / 2.0).tan());
+    let pixel_scale = screen_height / (2.0 * (DEFAULT_VFOV / 2.0).tan());
     let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
     let r_exact =
         (MIN_SCREEN_PX * camera_distance_wu / (tile_diameter * pixel_scale) - 1.0) / 2.0;
     r_exact.max(0.0).ceil() as u32
+}
+
+fn pixel_scale_for_fov(fov: f32) -> f32 {
+    DEFAULT_SCREEN_HEIGHT / (2.0 * (fov / 2.0).tan())
 }
 
 // ── Distance Bands ──
@@ -70,24 +74,28 @@ pub struct Band {
 
 /// Compute active distance bands from camera to `max_distance_wu` (horizontal).
 ///
-/// `band_outer_threshold` returns 3D camera-to-ground distances.
-/// `camera_height` converts these to horizontal ground distances so that
-/// band boundaries reflect actual pixel subtension at each ground point.
+/// `band_outer_threshold` returns 3D camera-to-ground distances using `fov`
+/// for pixel subtension. `camera_height` converts these to horizontal ground
+/// distances so that band boundaries reflect actual pixel resolution.
 /// Returns bands sorted by r (finest first), thresholds in horizontal WU.
-pub fn compute_active_bands(max_distance_wu: f32, camera_height: f32) -> Vec<Band> {
+pub fn compute_active_bands(max_distance_wu: f32, camera_height: f32, fov: f32) -> Vec<Band> {
     if max_distance_wu <= 0.0 {
         return vec![Band { r: 0, inner_wu: 0.0, outer_wu: 0.0 }];
     }
 
-    // Convert horizontal max to 3D camera distance for summary_radius
+    let ps = pixel_scale_for_fov(fov);
+
+    // Convert horizontal max to 3D camera distance for radius calculation
     let max_camera_dist = (max_distance_wu * max_distance_wu + camera_height * camera_height).sqrt();
-    let max_r = summary_radius(max_camera_dist);
+    let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
+    let max_r_exact = (MIN_SCREEN_PX * max_camera_dist / (tile_diameter * ps) - 1.0) / 2.0;
+    let max_r = max_r_exact.max(0.0).ceil() as u32;
 
     let mut bands = Vec::new();
     let mut prev_horiz = 0.0_f32;
 
     for r in 0..=max_r {
-        let next_3d = band_outer_threshold(r);
+        let next_3d = band_outer_threshold_with_ps(r, ps);
         let next_horiz = camera_to_horizontal(next_3d, camera_height);
         let outer = next_horiz.min(max_distance_wu);
         bands.push(Band {
@@ -113,13 +121,13 @@ fn camera_to_horizontal(camera_dist: f32, camera_height: f32) -> f32 {
 /// Distance (WU) at which `summary_radius` transitions from r to r+1.
 ///
 /// Inverts: `r_exact = (MIN_SCREEN_PX * d / (tile_diameter * pixel_scale) - 1) / 2`
-/// Setting `r_exact = r + 0.5` (ceil boundary) → solve for d.
+/// Setting `r_exact = r` (ceil boundary) → solve for d.
 fn band_outer_threshold(r: u32) -> f32 {
-    let pixel_scale = DEFAULT_SCREEN_HEIGHT / (2.0 * (MAX_VFOV / 2.0).tan());
+    band_outer_threshold_with_ps(r, pixel_scale_for_fov(DEFAULT_VFOV))
+}
+
+fn band_outer_threshold_with_ps(r: u32, pixel_scale: f32) -> f32 {
     let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
-    // summary_radius returns ceil(r_exact), so band r spans r_exact in [r-1, r).
-    // The outer boundary is where r_exact = r (ceil gives r+1 beyond this).
-    // r_exact = r → d = (2*r + 1) * tile_diameter * pixel_scale / MIN_SCREEN_PX
     let r_exact = r as f32;
     (2.0 * r_exact + 1.0) * tile_diameter * pixel_scale / MIN_SCREEN_PX
 }
