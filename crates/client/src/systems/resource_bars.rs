@@ -23,17 +23,17 @@ pub struct ManaBar {
     pub current_percent: f32,
 }
 
-/// Marker component for the health bar text label
+/// Marker component for the health bar text label, caches last-formatted values
 #[derive(Component)]
-pub struct HealthText;
+pub struct HealthText(i32, i32);
 
-/// Marker component for the stamina bar text label
+/// Marker component for the stamina bar text label, caches last-formatted values
 #[derive(Component)]
-pub struct StaminaText;
+pub struct StaminaText(i32, i32);
 
-/// Marker component for the mana bar text label
+/// Marker component for the mana bar text label, caches last-formatted values
 #[derive(Component)]
-pub struct ManaText;
+pub struct ManaText(i32, i32);
 
 /// Setup resource bars in the player HUD
 /// Creates health, stamina, and mana bars in bottom-center position
@@ -107,7 +107,7 @@ pub fn setup(
                     position_type: PositionType::Relative,
                     ..default()
                 },
-                StaminaText,
+                StaminaText(i32::MIN, i32::MIN),
             ));
         });
 
@@ -150,7 +150,7 @@ pub fn setup(
                     position_type: PositionType::Relative,
                     ..default()
                 },
-                HealthText,
+                HealthText(i32::MIN, i32::MIN),
             ));
         });
 
@@ -193,7 +193,7 @@ pub fn setup(
                     position_type: PositionType::Relative,
                     ..default()
                 },
-                ManaText,
+                ManaText(i32::MIN, i32::MIN),
             ));
         });
     });
@@ -207,9 +207,9 @@ pub fn update(
     mut health_query: Query<(&mut HealthBar, &mut Node), (Without<StaminaBar>, Without<ManaBar>)>,
     mut stamina_query: Query<(&mut StaminaBar, &mut Node), (Without<HealthBar>, Without<ManaBar>)>,
     mut mana_query: Query<(&mut ManaBar, &mut Node), (Without<HealthBar>, Without<StaminaBar>)>,
-    mut health_text_query: Query<&mut Text, (With<HealthText>, Without<StaminaText>, Without<ManaText>)>,
-    mut stamina_text_query: Query<&mut Text, (With<StaminaText>, Without<HealthText>, Without<ManaText>)>,
-    mut mana_text_query: Query<&mut Text, (With<ManaText>, Without<HealthText>, Without<StaminaText>)>,
+    mut health_text_query: Query<(&mut Text, &mut HealthText), (Without<StaminaText>, Without<ManaText>)>,
+    mut stamina_text_query: Query<(&mut Text, &mut StaminaText), (Without<HealthText>, Without<ManaText>)>,
+    mut mana_text_query: Query<(&mut Text, &mut ManaText), (Without<HealthText>, Without<StaminaText>)>,
     player_query: Query<(&Health, &Stamina, &Mana), With<Actor>>,
     time: Res<Time>,
 ) {
@@ -232,9 +232,15 @@ pub fn update(
             node.width = Val::Percent(health_bar.current_percent);
         }
 
-        // Update health text
-        for mut text in &mut health_text_query {
-            **text = format!("{:.0} / {:.0}", health.step, health.max);
+        // Update health text (only when displayed integer changes)
+        for (mut text, mut cache) in &mut health_text_query {
+            let cur = health.step as i32;
+            let max = health.max as i32;
+            if cache.0 != cur || cache.1 != max {
+                cache.0 = cur;
+                cache.1 = max;
+                **text = format!("{cur} / {max}");
+            }
         }
 
         // Update stamina bar width
@@ -250,9 +256,15 @@ pub fn update(
             node.width = Val::Percent(stamina_bar.current_percent);
         }
 
-        // Update stamina text
-        for mut text in &mut stamina_text_query {
-            **text = format!("{:.0} / {:.0}", stamina.step, stamina.max);
+        // Update stamina text (only when displayed integer changes)
+        for (mut text, mut cache) in &mut stamina_text_query {
+            let cur = stamina.step as i32;
+            let max = stamina.max as i32;
+            if cache.0 != cur || cache.1 != max {
+                cache.0 = cur;
+                cache.1 = max;
+                **text = format!("{cur} / {max}");
+            }
         }
 
         // Update mana bar width
@@ -268,9 +280,15 @@ pub fn update(
             node.width = Val::Percent(mana_bar.current_percent);
         }
 
-        // Update mana text
-        for mut text in &mut mana_text_query {
-            **text = format!("{:.0} / {:.0}", mana.step, mana.max);
+        // Update mana text (only when displayed integer changes)
+        for (mut text, mut cache) in &mut mana_text_query {
+            let cur = mana.step as i32;
+            let max = mana.max as i32;
+            if cache.0 != cur || cache.1 != max {
+                cache.0 = cur;
+                cache.1 = max;
+                **text = format!("{cur} / {max}");
+            }
         }
 
         // Only update for the first player found (local player)

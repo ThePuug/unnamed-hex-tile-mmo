@@ -257,7 +257,7 @@ The result is a system graph that works today but that nobody can reason about h
 ### Tier 1: Fix Before Next Playtest *(hours, not days)*
 
 1. ~~**Encode-once broadcast**~~ ✅ Done (2026-04-08). `send_do` encodes once, clones bytes per observer. AOI confirmed already single-client. Extracted `broadcast_reliable` helper.
-2. **Client text caching** — `resource_bars.rs` and `ui.rs` format strings. 5 minutes per file.
+2. ~~**Client text caching**~~ ✅ Done (2026-04-09). Resource bar text caches `(i32, i32)` per bar, only formats on change. UI time text caches minute-tick, distance indicator caches `(distance, zone, level)` tuple.
 3. **Client message budget** — Cap `write_do` at 500 messages/frame. One `if` statement.
 4. **Diagnostics string allocation** — `get_message_type_name()` -> `&'static str`.
 

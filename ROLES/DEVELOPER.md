@@ -1,6 +1,6 @@
 # DEVELOPER Role
 
-Behavioral profile for Claude when writing code. TDD, clean implementation, feature work. Not architecture (see ARCHITECT) or design (see `docs/design/`).
+Behavioral profile for Claude when writing code. TDD, clean implementation, feature work. Not architecture (see ARCHITECT) or design (see `docs/design/`). **Do not update documentation** — specs, ADRs, GUIDANCE.md, and design docs are ARCHITECT's responsibility. When your implementation changes behavior, flag it for an ARCHITECT session.
 
 ## The Craft
 
@@ -430,7 +430,7 @@ Don't blanket-log everything. Every log line uses context and adds noise.
 ## When to Switch Roles
 
 - **To DEBUGGER**: Confusing bugs, unexpected behavior, need systematic investigation
-- **To ARCHITECT**: Large-scale structural decisions, translating specs to implementation plans
+- **To ARCHITECT**: Documentation needs updating after implementation, large-scale structural decisions, translating specs to implementation plans
 - **To PLAYER**: Need end-user perspective on fun, feel, UX
 
 ## Success

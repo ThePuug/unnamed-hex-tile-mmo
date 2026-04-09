@@ -132,11 +132,16 @@ pub fn update(
     server: Res<Server>,
     time: Res<Time>,
     _camera_angle: Res<CameraOrbit>,
+    mut time_cache: Local<Option<u128>>,
+    mut dist_cache: Local<Option<(i32, DirectionalZone, u8)>>,
 ) {
     for (mut span, info) in &mut query {
-        **span = match info {
+        match info {
             Info::Time => {
                 let dt = server.current_time(time.elapsed().as_millis());
+                let tick = dt / MINUTE_MS;
+                if *time_cache == Some(tick) { continue; }
+                *time_cache = Some(tick);
                 let season = match dt % YEAR_MS / SEASON_MS {
                     0 => "Thaw",
                     1 => "Blaze",
@@ -155,27 +160,28 @@ pub fn update(
                 let day = dt % WEEK_MS / DAY_MS;
                 let hour = dt % DAY_MS / HOUR_MS;
                 let minute = dt % HOUR_MS / MINUTE_MS;
-                format!("{hour:02}:{minute:02} {day}.{week}.{season}")
+                **span = format!("{hour:02}:{minute:02} {day}.{week}.{season}");
             }
             Info::DistanceIndicator => {
-                // ADR-014 Phase 4: Distance indicator showing haven distance, zone, and enemy level
                 if let Ok(player_loc) = player_query.single() {
                     let distance = HAVEN_LOCATION.flat_distance(&**player_loc);
                     let zone = get_directional_zone(**player_loc, HAVEN_LOCATION);
                     let level = calculate_enemy_level(**player_loc, HAVEN_LOCATION);
-
+                    let val = (distance, zone, level);
+                    if *dist_cache == Some(val) { continue; }
+                    *dist_cache = Some(val);
                     let zone_name = match zone {
                         DirectionalZone::North => "North",
                         DirectionalZone::East => "East",
                         DirectionalZone::South => "South",
                         DirectionalZone::West => "West",
                     };
-
-                    format!("Haven: {} tiles | Zone: {} | Enemy Lv. {}", distance, zone_name, level)
+                    **span = format!("Haven: {} tiles | Zone: {} | Enemy Lv. {}", distance, zone_name, level);
                 } else {
-                    String::from("Haven: -- tiles | Zone: -- | Enemy Lv. --")
+                    *dist_cache = None;
+                    **span = String::from("Haven: -- tiles | Zone: -- | Enemy Lv. --");
                 }
             }
-        };
+        }
     }
 }
