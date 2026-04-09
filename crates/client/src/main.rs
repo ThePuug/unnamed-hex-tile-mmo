@@ -192,10 +192,7 @@ fn main() {
             admin::tag_admin_chunks,
             admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
             admin::flyover_poll_summary_tasks.run_if(admin::flyover_active),
-            admin::flyover_summary_dispatch
-                .run_if(admin::flyover_active)
-                .after(admin::flyover_poll_summary_tasks)
-                .before(world::dispatch_summary_tasks),
+            admin::flyover_summary_dispatch.run_if(admin::flyover_active),
             admin::flyover_generate_chunks
                 .run_if(admin::flyover_active)
                 .run_if(on_timer(Duration::from_millis(200))),
