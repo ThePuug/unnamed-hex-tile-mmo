@@ -376,7 +376,6 @@ fn compute_auto_mode_regions(
     camera_pos: Vec3,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-    use common_bevy::chunk::FIXED_STREAM_RADIUS_WU;
     use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
@@ -742,10 +741,14 @@ pub fn poll_summary_meshes(
     // Phase 5: Diagnostics.
     let mut total_tris = 0u64;
     let mut mesh_count = 0u32;
-    for state in summary_meshes.states.values() {
+    tri_stats.per_band.clear();
+    for (&region_key, state) in summary_meshes.states.iter() {
         if state.entity.is_some() {
             total_tris += state.tri_count as u64;
             mesh_count += 1;
+            let entry = tri_stats.per_band.entry(region_key.r).or_insert((0, 0));
+            entry.0 += state.tri_count as u64;
+            entry.1 += 1;
         }
     }
     tri_stats.total_tris = total_tris;
