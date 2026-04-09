@@ -10,9 +10,10 @@ Available roles: **DEVELOPER**, **DEBUGGER**, **ARCHITECT**, **STAFF_ENGINEER**,
 
 - User can switch roles at any time
 - Periodically re-read your role document during long sessions
-- Read and adopt the DEVELOPER role at the start of each session by default
+- Default to DEVELOPER only if no role has been assigned yet — don't override an active role
+- Only switch roles when the user explicitly requests it
 - Read your role's `*-MEMORY.md` at session start for cross-session continuity
-- Update your role's `*-MEMORY.md` at session end with current train of thought
+- Update your role's `*-MEMORY.md` incrementally at milestones during the session (not just at the end)
 
 ## Commands
 

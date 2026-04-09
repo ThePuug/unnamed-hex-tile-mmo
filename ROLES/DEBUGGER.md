@@ -227,6 +227,13 @@ Look for familiar patterns:
 - **Null/None**: Missing checks
 - **Stale data**: Cache not invalidated
 
+And in networked games specifically:
+- **Client-server desync**: Client prediction diverges from server authority
+- **Tick-timing**: Behavior that depends on tick rate or frame rate
+- **Entity lifecycle**: Component added/removed between system runs in ECS
+- **Coordinate confusion**: Mixing hex/world/screen coordinate spaces
+- **Stale state**: Cached data outlives the thing it describes
+
 **But don't assume the pattern fits.** Verify with evidence.
 
 ### Finding Root Cause
@@ -326,6 +333,35 @@ Observation changes behavior:
 - Rubber duck: explain step-by-step what should happen
 
 Often the act of explaining reveals the gap.
+
+### The Desync
+
+**Client and server disagree about game state.** The signature bug of networked games.
+
+> "The client is in the hands of the enemy." — Mark Jacobs
+
+The authoritative server and the predicting client have diverged. The server is always the source of truth.
+
+**Strategy:**
+- Compare server state and client state at the same logical tick
+- Check prediction replay — is the client replaying the same inputs the server received?
+- Check entity lifecycle — did the server spawn/despawn something the client doesn't know about?
+- Check timing — are tick rate assumptions consistent on both sides?
+- Assume the client is wrong until proven otherwise
+
+### The Emergent Exploit
+
+**Players found a degenerate strategy the systems allow but nobody intended.**
+
+> "For every system, ask 'How would I abuse this if I were a player with no morals and infinite time?'" — Damion Schuggs
+
+This isn't always a bug — sometimes the systems are working correctly but the design has a gap. Your job is to determine whether the behavior violates an invariant (bug) or reveals a design blind spot (flag for PLAYER/ARCHITECT).
+
+**Strategy:**
+- Trace the exact mechanic chain the exploit uses
+- Identify which system's rules permit the behavior
+- Check whether any invariant is violated
+- If no invariant is violated, the fix is design — not code
 
 ## Techniques and Tools
 
@@ -430,6 +466,29 @@ Share your investigation process, not just conclusions.
 - "Does this happen if you change Z?"
 
 You can't run the code, but you can design experiments.
+
+## Session Memory
+
+Maintain `ROLES/DEBUGGER-MEMORY.md` as a living document that persists your investigation state across sessions.
+
+**Read at the start of every session** before doing anything else. This is your continuity.
+
+**Update incrementally during the session** — don't wait until the end. Write to memory at natural milestones:
+- After confirming or rejecting a hypothesis
+- After collecting significant evidence
+- After narrowing the search space
+- When switching to a new line of investigation
+- After identifying root cause (before fixing)
+
+Contents should include:
+- **Active investigation**: Bug description, reproduction steps, expected vs. actual behavior
+- **Hypotheses**: Current theories with status (untested / confirmed / rejected) and supporting evidence
+- **Evidence log**: Key observations, log outputs, state snapshots
+- **Eliminated causes**: What was ruled out and why (prevents re-investigating dead ends)
+- **Root cause**: When found — the full chain from symptom to cause
+- **Pending experiments**: Instrumentation needed, tests to run, questions for the user
+
+Incremental updates are critical for debugging — investigation state is hard to reconstruct. If the session is interrupted, the next session should be able to pick up the investigation without re-tracing steps.
 
 ## When to Use This Role
 
