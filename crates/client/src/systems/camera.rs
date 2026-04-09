@@ -16,25 +16,13 @@ const INTERPOLATION_SPEED: f32 = 12.0;
 /// Threshold below which interpolation snaps to target
 const SNAP_THRESHOLD: f32 = 0.005;
 
-/// Camera distance from player (horizontal, scaled up for narrow FOV perspective).
-pub const CAMERA_DISTANCE: f32 = 120.0;
-/// Minimum degrees the frustum top stays below the horizon at max FOV.
-pub const HORIZON_MARGIN_DEG: f32 = 5.0;
+// Re-export canonical camera constants from common.
+pub use common::camera::{CAMERA_DISTANCE, HORIZON_MARGIN_DEG, MAX_GAMEPLAY_FOV, camera_height};
+
 /// Default vertical field of view (narrow telephoto for isometric feel).
 const DEFAULT_FOV: f32 = 15_f32.to_radians();
-/// Maximum FOV for normal gameplay zoom.
-pub const MAX_GAMEPLAY_FOV: f32 = 60_f32.to_radians();
 /// Maximum FOV for flyover mode (admin).
 pub const MAX_FLYOVER_FOV: f32 = 90_f32.to_radians();
-
-/// Camera height that keeps the horizon `HORIZON_MARGIN_DEG` below the top
-/// of the frustum at the given maximum vertical field of view.
-///
-/// `pitch = half_fov + margin`, `height = distance × tan(pitch)`.
-pub fn camera_height(max_fov: f32) -> f32 {
-    let margin = HORIZON_MARGIN_DEG.to_radians();
-    CAMERA_DISTANCE * (max_fov * 0.5 + margin).tan()
-}
 
 /// Camera height for normal gameplay (convenience alias).
 pub fn gameplay_camera_height() -> f32 {

@@ -77,15 +77,9 @@ pub fn dispatch_summary_tasks(
 
         let (cam_wx, cam_wz) = flat_top_tile_center(q, r, 1.0);
 
-        const CAMERA_DISTANCE: f32 = 120.0;
-        const HORIZON_MARGIN_DEG: f32 = 5.0;
-        const MAX_GAMEPLAY_FOV: f32 = std::f32::consts::PI / 3.0;
-        const RISE: f32 = 0.8;
-
-        let margin = HORIZON_MARGIN_DEG.to_radians();
-        let base_height = CAMERA_DISTANCE * (MAX_GAMEPLAY_FOV * 0.5 + margin).tan();
-        let camera_height = base_height + z.max(0) as f32 * RISE;
-        let far_ground = camera_height / margin.tan();
+        let cam_h = common::camera::camera_height(common::camera::MAX_GAMEPLAY_FOV)
+            + z.max(0) as f32 * common::camera::RISE;
+        let far_ground = cam_h / common::camera::HORIZON_MARGIN_DEG.to_radians().tan();
 
         let bands = compute_active_bands(far_ground);
 

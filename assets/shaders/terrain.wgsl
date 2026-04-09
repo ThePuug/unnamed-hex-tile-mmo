@@ -29,7 +29,7 @@ const BASE_RADIUS_WU: f32 = 627.0;  // ~22 chunks × 28.5 wu (MAX_FOV at sea lev
 const FADE_START_FRAC: f32 = 0.80;
 
 // Hex tile rise (vertical spacing per elevation unit).
-// Must match qrz::Map::new(radius, rise) in main.rs.
+// Must match common::camera::RISE.
 const RISE: f32 = 0.8;
 
 // Number of elevation ramp stops.

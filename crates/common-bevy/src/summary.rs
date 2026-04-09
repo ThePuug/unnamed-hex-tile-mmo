@@ -24,8 +24,7 @@ const DEFAULT_SCREEN_HEIGHT: f32 = 1080.0;
 /// Hex outer radius (vertex-to-vertex half-diameter) in world units.
 const HEX_OUTER_RADIUS: f32 = 1.0;
 
-/// World units per z-level (RISE).
-const Z_SCALE: f32 = 0.8;
+use common::camera::RISE as Z_SCALE;
 
 /// Vertex offset tables for canonical doubled-integer coordinates.
 /// Same formula as the tile grid canonical IDs, applied to summary-lattice coords.
