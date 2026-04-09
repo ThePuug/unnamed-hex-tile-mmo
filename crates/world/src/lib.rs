@@ -2,7 +2,6 @@ pub(crate) mod noise;
 mod plates;
 mod microplates;
 pub mod events;
-pub mod spawners;
 pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
@@ -193,105 +192,6 @@ pub fn world_to_hex(wx: f64, wy: f64) -> (i32, i32) {
     (q, r)
 }
 
-// ──── Terrain ────
-
-pub struct Terrain {
-    seed: u64,
-    caches: std::sync::Mutex<TerrainCaches>,
-}
-
-struct TerrainCaches {
-    plate_cache: PlateCache,
-    spine_cache: SpineCache,
-}
-
-impl Default for Terrain {
-    fn default() -> Self {
-        Self::new(0x9E3779B97F4A7C15)
-    }
-}
-
-impl Terrain {
-    pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            caches: std::sync::Mutex::new(TerrainCaches {
-                plate_cache: PlateCache::new(seed),
-                spine_cache: SpineCache::new(seed),
-            }),
-        }
-    }
-
-    pub fn seed(&self) -> u64 {
-        self.seed
-    }
-
-    /// Return terrain tags at a hex tile position.
-    /// Includes the base plate tag (Sea/Coast/Inland) and, if within a spine's
-    /// influence, the spine cross-section tag (Ridge/Highland/Foothills).
-    /// Lazily generates and caches data as needed.
-    pub fn tags_at(&self, q: i32, r: i32) -> ArrayVec<[PlateTag; 2]> {
-        let (wx, wy) = hex_to_world(q, r);
-        let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
-
-        // Base tag from plate classification
-        let mut plate = plate_cache.plate_at(wx, wy);
-        plate_cache.classify_tags(std::slice::from_mut(&mut plate));
-        let mut tags = ArrayVec::new();
-        if let Some(base) = plate.tags.first() {
-            tags.push(*base);
-        }
-
-        // Spine tag (Ridge/Highland/Foothills) if within influence
-        if let Some(spine_tag) = spine_cache.tag_at(wx, wy, plate_cache) {
-            tags.push(spine_tag);
-        }
-
-        tags
-    }
-
-    /// Evaluate terrain height at a hex tile position.
-    /// Lazily generates and caches spine data as needed.
-    pub fn get_height(&self, q: i32, r: i32) -> i32 {
-        let (wx, wy) = hex_to_world(q, r);
-        let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
-        let spine_elev = spine_cache.elevation_at(wx, wy, plate_cache);
-        discretize_elevation(spine_elev)
-    }
-
-    /// Return the continuous f64 elevation before discretization.
-    pub fn get_raw_elevation(&self, q: i32, r: i32) -> f64 {
-        let (wx, wy) = hex_to_world(q, r);
-        let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
-        spine_cache.elevation_at(wx, wy, plate_cache)
-    }
-
-    /// Evaluate continuous elevation at arbitrary world coordinates.
-    /// Uses the terrain's internal coordinate system (from `hex_to_world`).
-    pub fn elevation_at_world(&self, wx: f64, wy: f64) -> f64 {
-        let mut caches = self.caches.lock().unwrap();
-        let TerrainCaches { ref mut spine_cache, ref mut plate_cache, .. } = *caches;
-        spine_cache.elevation_at(wx, wy, plate_cache)
-    }
-
-    /// UNCACHED — creates throwaway caches per call.
-    /// For hot paths, use `MicroplateCache::plate_info_at` directly.
-    pub fn plate_info_at(&self, q: i32, r: i32) -> (PlateCenter, MicroplateCenter) {
-        let (wx, wy) = hex_to_world(q, r);
-        plate_info_at(wx, wy, self.seed)
-    }
-
-    /// UNCACHED — creates throwaway cache per call.
-    /// For hot paths, use `PlateCache::plate_at` directly.
-    pub fn macro_plate_at(&self, q: i32, r: i32) -> PlateCenter {
-        let (wx, wy) = hex_to_world(q, r);
-        macro_plate_at(wx, wy, self.seed)
-    }
-}
-
 // ──── Metrics ────
 
 /// A single timing measurement from a terrain generation phase.
@@ -428,12 +328,29 @@ pub fn generate_region(
 mod tests {
     use super::*;
 
+    const DEFAULT_SEED: u64 = 0x9E3779B97F4A7C15;
+
+    fn tags_at(q: i32, r: i32, plate_cache: &mut PlateCache, spine_cache: &mut SpineCache) -> ArrayVec<[PlateTag; 2]> {
+        let (wx, wy) = hex_to_world(q, r);
+        let mut plate = plate_cache.plate_at(wx, wy);
+        plate_cache.classify_tags(std::slice::from_mut(&mut plate));
+        let mut tags = ArrayVec::new();
+        if let Some(base) = plate.tags.first() {
+            tags.push(*base);
+        }
+        if let Some(spine_tag) = spine_cache.tag_at(wx, wy, plate_cache) {
+            tags.push(spine_tag);
+        }
+        tags
+    }
+
     #[test]
     fn tags_at_returns_base_tag() {
-        let terrain = Terrain::default();
-        let tags = terrain.tags_at(0, 0);
-        assert!(!tags.is_empty(), "should have at least a base tag");
-        let base = tags[0];
+        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let mut spine_cache = SpineCache::new(DEFAULT_SEED);
+        let t = tags_at(0, 0, &mut plate_cache, &mut spine_cache);
+        assert!(!t.is_empty(), "should have at least a base tag");
+        let base = t[0];
         assert!(
             matches!(base, PlateTag::Sea | PlateTag::Coast | PlateTag::Inland),
             "base tag should be Sea, Coast, or Inland, got {:?}", base
@@ -442,22 +359,23 @@ mod tests {
 
     #[test]
     fn tags_at_deterministic() {
-        let terrain = Terrain::default();
-        let a = terrain.tags_at(100, 50);
-        let b = terrain.tags_at(100, 50);
+        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let mut spine_cache = SpineCache::new(DEFAULT_SEED);
+        let a = tags_at(100, 50, &mut plate_cache, &mut spine_cache);
+        let b = tags_at(100, 50, &mut plate_cache, &mut spine_cache);
         assert_eq!(a.as_slice(), b.as_slice());
     }
 
     #[test]
     fn tags_at_spine_region_has_spine_tag() {
-        // Probe a grid of points — at least some should be within spine influence
-        let terrain = Terrain::default();
+        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let mut spine_cache = SpineCache::new(DEFAULT_SEED);
         let mut found_spine = false;
         for q in (-200..=200).step_by(20) {
             for r in (-200..=200).step_by(20) {
-                let tags = terrain.tags_at(q, r);
-                if tags.len() > 1 {
-                    let spine_tag = tags[1];
+                let t = tags_at(q, r, &mut plate_cache, &mut spine_cache);
+                if t.len() > 1 {
+                    let spine_tag = t[1];
                     assert!(
                         matches!(spine_tag, PlateTag::Ridge | PlateTag::Highland | PlateTag::Foothills),
                         "second tag should be a spine tag, got {:?}", spine_tag
@@ -472,7 +390,7 @@ mod tests {
     // ── Composite determinism tests ─────────────────────────────────────────
 
     fn make_composite() -> events::Composite {
-        let seed = 0x9E3779B97F4A7C15; // same as Terrain::default()
+        let seed = DEFAULT_SEED;
         let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(PlateCache::new(seed)));
         let mut composite = events::Composite::new(seed);
         composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));

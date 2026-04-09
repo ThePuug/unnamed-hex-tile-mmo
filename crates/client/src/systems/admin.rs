@@ -77,7 +77,7 @@ pub struct AdminComposite(pub Arc<world::events::Composite>);
 
 impl Default for AdminComposite {
     fn default() -> Self {
-        let seed = 0x9E3779B97F4A7C15; // Same seed as server (Terrain::default)
+        let seed = 0x9E3779B97F4A7C15;
         let plate_cache = std::sync::Mutex::new(world::PlateCache::new(seed));
         let plate_cache = std::sync::Arc::new(plate_cache);
         let mut composite = world::events::Composite::new(seed);

@@ -2982,12 +2982,16 @@ mod tests {
 
     #[test]
     fn get_height_nonzero_somewhere() {
-        let terrain = crate::Terrain::default();
+        let seed = 0x9E3779B97F4A7C15;
+        let mut plate_cache = crate::PlateCache::new(seed);
+        let mut spine_cache = SpineCache::new(seed);
 
         let mut found_nonzero = false;
         'outer: for q in (-20000..=20000).step_by(500) {
             for r in (-20000..=20000).step_by(500) {
-                if terrain.get_height(q, r) != 0 {
+                let (wx, wy) = crate::hex_to_world(q, r);
+                let elev = spine_cache.elevation_at(wx, wy, &mut plate_cache);
+                if crate::discretize_elevation(elev) != 0 {
                     found_nonzero = true;
                     break 'outer;
                 }
