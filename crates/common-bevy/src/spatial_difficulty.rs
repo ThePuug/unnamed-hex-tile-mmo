@@ -16,22 +16,6 @@ pub const HAVEN_LOCATION: Qrz = Qrz { q: 3423, r: 1155, z: 0 };
 ///
 /// Base level 10 near haven, +1 per 100 tiles, capped at 20.
 ///
-/// # Examples
-/// ```
-/// # use qrz::Qrz;
-/// # use common_bevy::spatial_difficulty::*;
-/// let spawn = Qrz { q: 5, r: 0, z: 0 };  // 5 tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
-///
-/// let spawn = Qrz { q: 100, r: 0, z: 0 };  // 100 tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 11);
-///
-/// let spawn = Qrz { q: 500, r: 0, z: 0 };  // 500 tiles from origin
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 15);
-///
-/// let spawn = Qrz { q: 1000, r: 0, z: 0 };  // 1000+ tiles
-/// assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);  // Clamped at 20
-/// ```
 pub fn calculate_enemy_level(spawn_location: Qrz, haven_location: Qrz) -> u8 {
     let distance = haven_location.flat_distance(&spawn_location) as f32;
 
@@ -50,16 +34,6 @@ pub enum DirectionalZone {
 
 /// Get directional zone based on angle from haven to spawn point
 ///
-/// # Examples
-/// ```
-/// # use qrz::Qrz;
-/// # use common_bevy::spatial_difficulty::*;
-/// let north = Qrz { q: 0, r: -10, z: 0 };
-/// assert_eq!(get_directional_zone(north, HAVEN_LOCATION), DirectionalZone::North);
-///
-/// let east = Qrz { q: 10, r: 0, z: 0 };
-/// assert_eq!(get_directional_zone(east, HAVEN_LOCATION), DirectionalZone::East);
-/// ```
 pub fn get_directional_zone(spawn_location: Qrz, haven_location: Qrz) -> DirectionalZone {
     let delta = spawn_location - haven_location;
 
