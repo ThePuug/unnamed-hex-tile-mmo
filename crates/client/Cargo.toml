@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["admin", "trace"]
+default = ["admin"]
 admin = ["dep:world"]
 trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 
