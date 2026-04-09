@@ -182,7 +182,7 @@ fn main() {
     #[cfg(feature = "admin")]
     {
         app.init_resource::<admin::FlyoverState>();
-        app.init_resource::<admin::FlyoverVisibleSummaries>();
+        app.init_resource::<admin::FlyoverSummaryTracker>();
         app.init_resource::<admin::PendingFlyoverTiles>();
         app.insert_resource(admin::AdminComposite::default());
 
@@ -191,7 +191,11 @@ fn main() {
             admin::flyover_movement.run_if(admin::flyover_active),
             admin::tag_admin_chunks,
             admin::poll_flyover_tile_tasks.run_if(admin::flyover_active),
-            admin::flyover_evict_summaries.run_if(admin::flyover_active),
+            admin::flyover_poll_summary_tasks.run_if(admin::flyover_active),
+            admin::flyover_summary_dispatch
+                .run_if(admin::flyover_active)
+                .after(admin::flyover_poll_summary_tasks)
+                .before(world::dispatch_summary_tasks),
             admin::flyover_generate_chunks
                 .run_if(admin::flyover_active)
                 .run_if(on_timer(Duration::from_millis(200))),

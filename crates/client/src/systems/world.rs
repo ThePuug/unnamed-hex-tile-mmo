@@ -250,7 +250,6 @@ pub fn dispatch_summary_tasks(
     client_timers: Res<crate::resources::ClientTimers>,
     player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::systems::admin::FlyoverState>>,
-    #[cfg(feature = "admin")] admin_composite: Option<Res<crate::systems::admin::AdminComposite>>,
 ) {
     let map_changed = map.take_changed();
     let summaries_changed = summary_cache.take_changed();
@@ -334,25 +333,8 @@ pub fn dispatch_summary_tasks(
         let map_snap = map.clone();
         let cache_snap = summary_cache.clone();
 
-        // In flyover, pass AdminComposite Arc so async task can compute
-        // elevation_at() for cells beyond the chunk generation radius.
-        // In flyover, pass an elevation function for cells beyond chunk gen radius.
-        // Wraps AdminComposite::elevation_at in an Arc closure for Send + Sync.
-        #[cfg(feature = "admin")]
-        let elevation_fallback: Option<std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>> =
-            flyover
-                .as_ref()
-                .filter(|f| f.active)
-                .and_then(|_| admin_composite.as_ref().map(|c| {
-                    let comp = c.0.clone();
-                    std::sync::Arc::new(move |q: i32, r: i32| comp.elevation_at(q, r))
-                        as std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>
-                }));
-        #[cfg(not(feature = "admin"))]
-        let elevation_fallback: Option<std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>> = None;
-
         let task = pool.spawn(async move {
-            collect_and_build_summary_mesh(radius, rk, &map_snap, &cache_snap, elevation_fallback.as_ref())
+            collect_and_build_summary_mesh(radius, rk, &map_snap, &cache_snap)
         });
 
         let summary_lat = common_bevy::summary::summary_lattice(radius);
@@ -469,15 +451,13 @@ fn compute_auto_mode_regions(
 /// Build a summary mesh region (runs off main thread).
 ///
 /// r=0: full tile geometry from Map (slope blending, cliff skirts).
-/// r>0: reads SummaryCache first, falls back to Map tile data, then
-///      optionally to Composite elevation_at() (flyover beyond chunk radius).
+/// r>0: reads SummaryCache first, falls back to Map tile data.
 ///      Writes computed values back to cache for future rebuilds.
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
     map: &common_bevy::resources::map::Map,
     cache: &crate::resources::SummaryCache,
-    elevation_fallback: Option<&std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>>,
 ) -> SummaryMeshBuildResult {
     let empty = SummaryMeshBuildResult {
         positions: Vec::new(),
@@ -520,18 +500,6 @@ fn collect_and_build_summary_mesh(
             let center_z = common_bevy::summary::select_center_z(&tile_zs);
             cache.insert(common_bevy::message::SummaryKey { r: radius, sq, sr }, center_z);
             return Some(center_z);
-        }
-        // 3. Flyover fallback: procedural elevation (no tile gen needed)
-        if let Some(fallback) = elevation_fallback {
-            let tile_zs: Vec<i32> = summary_lat
-                .tiles_in_cell((sq, sr))
-                .map(|(tq, tr)| fallback(tq, tr))
-                .collect();
-            if !tile_zs.is_empty() {
-                let center_z = common_bevy::summary::select_center_z(&tile_zs);
-                cache.insert(common_bevy::message::SummaryKey { r: radius, sq, sr }, center_z);
-                return Some(center_z);
-            }
         }
         None
     };

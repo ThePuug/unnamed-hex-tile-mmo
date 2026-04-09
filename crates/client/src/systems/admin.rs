@@ -88,10 +88,15 @@ impl Default for AdminComposite {
     }
 }
 
-/// Tracks the visible summary set during flyover for eviction diffing.
+/// Tracks the visible summary set during flyover for addition/removal diffing.
+/// Mirrors the server's VisibleSummaryCache pattern — additions flow through
+/// `summary_cache.apply_batch()` so the downstream mesh pipeline sees them
+/// identically to server-sent data.
 #[derive(Resource, Default)]
-pub struct FlyoverVisibleSummaries {
+pub struct FlyoverSummaryTracker {
     tracked: HashSet<common_bevy::message::SummaryKey>,
+    tasks: Vec<(Vec<common_bevy::message::SummaryKey>, Task<Vec<common_bevy::message::SummaryData>>)>,
+    in_flight: HashSet<common_bevy::message::SummaryKey>,
     last_pos: Vec3,
 }
 
@@ -139,7 +144,7 @@ pub fn execute_admin_actions(
     mut forced_radius: ResMut<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
     cursor_query: Query<Entity, With<FlyoverCursor>>,
-    mut flyover_vis: ResMut<FlyoverVisibleSummaries>,
+    mut flyover_tracker: ResMut<FlyoverSummaryTracker>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -272,7 +277,9 @@ pub fn execute_admin_actions(
             // Server will resend its summaries on the next movement update.
             summary_cache.clear();
 
-            flyover_vis.tracked.clear();
+            flyover_tracker.tracked.clear();
+            flyover_tracker.tasks.clear();
+            flyover_tracker.in_flight.clear();
 
             // Signal dispatch_summary_tasks to re-evaluate visible regions.
             map.force_changed();
@@ -637,26 +644,27 @@ fn report_terrain_at_cursor(
     }
 }
 
-/// Evicts summary mesh regions that are no longer visible during flyover.
-/// Mirrors the server's visible-set diff pattern, feeding removals through
-/// `summary_cache.apply_batch()` so eviction uses one code path.
-pub fn flyover_evict_summaries(
+/// Computes visible summary keys, produces additions and removals through
+/// `summary_cache.apply_batch()`. Cache hits are added immediately; misses
+/// are dispatched as async tasks (polled by `flyover_poll_summary_tasks`).
+pub fn flyover_summary_dispatch(
     flyover: Res<FlyoverState>,
-    mut vis: ResMut<FlyoverVisibleSummaries>,
+    mut tracker: ResMut<FlyoverSummaryTracker>,
     summary_cache: Res<crate::resources::SummaryCache>,
+    admin_composite: Res<AdminComposite>,
 ) {
     if !flyover.active { return; }
 
     let pos = flyover.world_position;
-    let horiz_dist = ((pos.x - vis.last_pos.x).powi(2) + (pos.z - vis.last_pos.z).powi(2)).sqrt();
-    if horiz_dist < MIN_UPDATE_DISTANCE && !vis.tracked.is_empty() {
+    let horiz_dist = ((pos.x - tracker.last_pos.x).powi(2) + (pos.z - tracker.last_pos.z).powi(2)).sqrt();
+    if horiz_dist < MIN_UPDATE_DISTANCE && !tracker.tracked.is_empty() {
         return;
     }
-    vis.last_pos = pos;
+    tracker.last_pos = pos;
 
     use common_bevy::chunk::FIXED_STREAM_RADIUS_WU;
-    use common_bevy::message::SummaryKey;
-    use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band};
+    use common_bevy::message::{SummaryKey, SummaryData};
+    use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band, summary_lattice, select_center_z};
     use crate::systems::camera::{gameplay_camera_height, HORIZON_MARGIN_DEG};
 
     let camera_height_offset = gameplay_camera_height();
@@ -675,15 +683,80 @@ pub fn flyover_evict_summaries(
         }
     }
 
-    let removals: Vec<SummaryKey> = vis.tracked
+    // Removals: tracked - visible
+    let removals: Vec<SummaryKey> = tracker.tracked
         .iter()
         .filter(|k| !visible.contains(k))
         .copied()
         .collect();
-
     if !removals.is_empty() {
         summary_cache.apply_batch(&[], &removals);
     }
+    for key in &removals {
+        tracker.tracked.remove(key);
+    }
 
-    vis.tracked = visible;
+    // Additions: visible - tracked
+    let mut cached_additions = Vec::new();
+    let mut to_compute = Vec::new();
+    for key in &visible {
+        if tracker.tracked.contains(key) { continue; }
+        if let Some(center_z) = summary_cache.get(key) {
+            cached_additions.push(SummaryData {
+                r: key.r, sq: key.sq, sr: key.sr, center_z,
+            });
+            tracker.tracked.insert(*key);
+        } else if !tracker.in_flight.contains(key) {
+            to_compute.push(*key);
+        }
+    }
+    if !cached_additions.is_empty() {
+        summary_cache.apply_batch(&cached_additions, &[]);
+    }
+
+    // Dispatch async for cache misses
+    if !to_compute.is_empty() {
+        for key in &to_compute {
+            tracker.in_flight.insert(*key);
+        }
+        let composite = admin_composite.0.clone();
+        let keys = to_compute.clone();
+        let task = AsyncComputeTaskPool::get().spawn(async move {
+            keys.iter().map(|key| {
+                let lat = summary_lattice(key.r);
+                let tile_zs: Vec<i32> = lat
+                    .tiles_in_cell((key.sq, key.sr))
+                    .map(|(tq, tr)| composite.elevation_at(tq, tr))
+                    .collect();
+                let center_z = select_center_z(&tile_zs);
+                SummaryData { r: key.r, sq: key.sq, sr: key.sr, center_z }
+            }).collect()
+        });
+        tracker.tasks.push((to_compute, task));
+    }
+}
+
+/// Polls completed async summary tasks and feeds results through `apply_batch`.
+pub fn flyover_poll_summary_tasks(
+    flyover: Res<FlyoverState>,
+    mut tracker: ResMut<FlyoverSummaryTracker>,
+    summary_cache: Res<crate::resources::SummaryCache>,
+) {
+    if !flyover.active { return; }
+
+    let current = std::mem::take(&mut tracker.tasks);
+    let mut pending = Vec::new();
+
+    for (keys, mut task) in current {
+        if let Some(results) = block_on(future::poll_once(&mut task)) {
+            summary_cache.apply_batch(&results, &[]);
+            for key in &keys {
+                tracker.in_flight.remove(key);
+                tracker.tracked.insert(*key);
+            }
+        } else {
+            pending.push((keys, task));
+        }
+    }
+    tracker.tasks = pending;
 }
