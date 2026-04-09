@@ -36,7 +36,7 @@ fn main() {
         MinimalPlugins,
         LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=warn,renetcode=warn,renet=warn,".to_owned()
+            filter:  "wgpu=error,bevy=info,renetcode=warn,renet=warn,".to_owned()
                     +"server=trace,"
                     ,
             custom_layer: |_| None,
@@ -136,9 +136,8 @@ fn main() {
     let spawn_z = registry.elevation_at(3423, 1155) + 1;
     app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 3423, r: 1155, z: spawn_z }));
     app.insert_resource(terrain);
-    let summary_cache = crate::resources::summary_cache::SummaryCache::new(registry.clone());
     app.insert_resource(registry);
-    app.insert_resource(summary_cache);
+    app.init_resource::<crate::resources::summary_cache::SummaryCache>();
     app.init_resource::<RunTime>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
 
