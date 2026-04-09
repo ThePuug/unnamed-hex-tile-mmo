@@ -12,7 +12,6 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Event {
     Despawn { ent: Entity },
-    Discover { ent: Entity, qrz: Qrz },
     /// Server-side only: request to discover a chunk and send ChunkData to client
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
     /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles).
@@ -30,8 +29,6 @@ pub enum Event {
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
     Death { ent: Entity },
-    /// Server-internal: Request to spawn engagement at location (Try event - ADR-014)
-    SpawnEngagement { location: Qrz },
     /// Server-internal: Deal damage (Try event)
     /// Triggers damage calculation and queue insertion
     DealDamage {
