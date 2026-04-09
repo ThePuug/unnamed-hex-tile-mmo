@@ -263,15 +263,15 @@ The result is a system graph that works today but that nobody can reason about h
 
 ### Tier 2: Fix This Sprint *(structural, a few days)*
 
-5. **System timing instrumentation** — Wire up per-system budget tracking so you can measure everything else.
+5. ~~**System timing instrumentation**~~ ✅ Done (2026-04-09). Tracy integration via `bevy/trace_tracy` (enabled by default in dev builds). Metrics flush path: `MetricsPacket` fields → `Cow<'static, str>`, `last_flush` → `AtomicU64`, `drain_event_metrics` uses static key strings. Coverage: 100% of systems via Tracy spans, zero manual instrumentation needed.
 6. **Kill the dual terrain architecture** — Migrate admin flyover to Composite. Delete `Terrain` struct.
-7. **Map lock contention** — Snapshot pattern for physics reads.
+7. ~~**Map lock contention**~~ ✅ Done (2026-04-09). Dual DashMap: `flat` for physics hot path (single shard probe), `chunks` for O(1) mesh gen. RwLock, MapWriteGuard, regenerate_mesh, parking_lot all removed. Eviction now O(1) via `remove_chunk`.
 8. **Movement change detection** — Skip idle entities in physics.
 
 ### Tier 3: Fix Before Scaling *(before 50+ players)*
 
 9. **Spine.rs split and spatial indexing** — Unlock terrain generation performance.
-10. **Map triple storage** — Consolidate to single backing store.
+10. ~~**Map triple storage**~~ ✅ Done (2026-04-09). Resolved by dual DashMap refactor (item 7).
 11. **NPC spatial query optimization** — Pre-computed occupancy grid instead of per-NPC NNTree queries.
 12. **Network delta encoding** — At least for high-frequency components (stamina, mana).
 
@@ -306,20 +306,37 @@ Systems that can't answer question 4 are the ones that will break at scale. Righ
 | NNTree change detection | GOOD | Correct use of `Changed<Loc>` |
 | Summary batching | GOOD | Rate-limited cold path |
 | Hex-native LoD spec | GOOD | Elegant math |
-| Server `send_do` broadcast | BAD | O(observers x encode_cost) per tick |
-| Map RwLock | BAD | Global contention on hot path |
-| Client UI text rendering | BAD | ~450 String allocs/sec |
-| Client message receive | BAD | Unbounded per-frame processing |
+| Server `send_do` broadcast | ~~BAD~~ FIXED | Encode-once broadcast (2026-04-08) |
+| Map RwLock | ~~BAD~~ FIXED | Dual DashMap (flat + chunks), no global lock (2026-04-09) |
+| Client UI text rendering | ~~BAD~~ FIXED | Cached with dirty flags (2026-04-09) |
+| Client message receive | BAD (deferred) | Unbounded per-frame processing — intentional during dev |
 | Movement/physics | BAD | No idle entity filtering |
 | Dual terrain architecture | UGLY | Compound technical debt |
 | `spine.rs` monolith | UGLY | O(n^2) algorithms, 3,746 lines |
-| System budget tracking | UGLY | Flying blind, metrics contend |
-| `qrz::Map` triple storage | UGLY | 3x memory, 3x mutation cost |
+| System budget tracking | ~~UGLY~~ FIXED | Tracy default, metrics flush lock-free (2026-04-09) |
+| `qrz::Map` triple storage | ~~UGLY~~ FIXED | Dual DashMap replaces triple storage + RwLock (2026-04-09) |
+| Server summary computation | ~~BAD~~ FIXED | Async via AsyncComputeTaskPool (2026-04-09) |
+| Camera constant duplication | ~~BAD~~ FIXED | Single source in `common::camera` (2026-04-09) |
+| System sprawl (client) | ~~BAD~~ IMPROVED | WorldStreamingPlugin extracted (2026-04-09) |
+| System sprawl (server) | ~~BAD~~ IMPROVED | WorldStreamingPlugin extracted (2026-04-09) |
+| Dead code (server+client) | ~~BAD~~ FIXED | do_nothing, try_gcd, try_discover, Discover variant, heal module, effect.rs, diagnostics.rs, dead resources removed (2026-04-09) |
 
 ## Deferred Risks (Time Bombs)
 
 - **AOI at 50+ players:** O(n^2) spawn event encoding will dominate tick budget
-- **Map contention at scale:** Single RwLock blocks all physics during chunk writes
+- ~~**Map contention at scale:**~~ ✅ Resolved — dual DashMap, no global lock (2026-04-09)
 - **spine.rs at world scale:** O(peaks^2) ridgeline building blocks terrain generation
 - **No degradation strategy:** Unknown behavior when tick budget exceeded
 - **No load testing harness:** All performance claims are theoretical until stress-tested
+
+## LoD Review Items (2026-04-09)
+
+Remaining items from the single-hex-lod branch review:
+
+| # | Concern | Status |
+|---|---|---|
+| Unbounded removal batch | Open — teleport dumps all removals in one SummaryBatch, no budget cap |
+| Client poll mesh budget | Open — no per-frame cap on mesh builds in poll_summary_meshes |
+| SummaryCache eviction | Open — HashMap grows monotonically, no eviction, no cap |
+| Spec reconciliation | Architect role — flat-hex vs hex-native decimation from spec |
+| `mesh_region_lattice()` allocation | Open — creates new HexLattice on every call, should be OnceLock |

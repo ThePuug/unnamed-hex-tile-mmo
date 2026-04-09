@@ -19,7 +19,7 @@ use common_bevy::{
     resources::{map::*, *},
 };
 use crate::{
-    resources::{terrain::*, *},
+    resources::*,
     systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
 };
 
@@ -130,12 +130,10 @@ fn main() {
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
-    let terrain = Terrain::default();
-    let seed = terrain.seed();
+    let seed = 0x9E3779B97F4A7C15; // world::Terrain::default() seed
     let registry = crate::resources::event_registry::EventRegistry::new(seed);
     let spawn_z = registry.elevation_at(3423, 1155) + 1;
     app.insert_resource(common_bevy::components::resources::SpawnPoint(qrz::Qrz { q: 3423, r: 1155, z: spawn_z }));
-    app.insert_resource(terrain);
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
     app.init_resource::<RunTime>();
