@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
@@ -59,10 +60,10 @@ struct SnapshotField {
 pub struct MetricSnapshot {
     group: &'static str,
     field_indices: HashMap<&'static str, usize>,
-    state: Mutex<Vec<SnapshotField>>,
+    state: std::sync::Mutex<Vec<SnapshotField>>,
     transport: Transport,
     flush_interval: Duration,
-    last_flush: Mutex<Duration>,
+    last_flush_ms: AtomicU64,
 }
 
 impl MetricSnapshot {
@@ -70,10 +71,10 @@ impl MetricSnapshot {
         Self {
             group,
             field_indices: HashMap::new(),
-            state: Mutex::new(Vec::new()),
+            state: std::sync::Mutex::new(Vec::new()),
             transport,
             flush_interval: interval,
-            last_flush: Mutex::new(Duration::ZERO),
+            last_flush_ms: AtomicU64::new(0),
         }
     }
 
@@ -105,13 +106,13 @@ impl MetricSnapshot {
     fn flush(&self, timestamp_secs: f64) {
         let mut state = self.state.lock().unwrap();
 
-        let fields: Vec<(String, f32)> = state
+        let fields: Vec<(std::borrow::Cow<'static, str>, f32)> = state
             .iter()
-            .map(|f| (f.name.to_string(), f.value))
+            .map(|f| (std::borrow::Cow::Borrowed(f.name), f.value))
             .collect();
 
         let packet = MetricsPacket {
-            group: self.group.to_string(),
+            group: std::borrow::Cow::Borrowed(self.group),
             cadence: Cadence::Snapshot,
             timestamp_secs,
             fields,
@@ -137,7 +138,7 @@ pub struct SystemTimings {
     timers: common::timers::SystemTimers,
     transport: Transport,
     flush_interval: Duration,
-    last_flush: Mutex<Duration>,
+    last_flush_ms: AtomicU64,
 }
 
 impl SystemTimings {
@@ -146,7 +147,7 @@ impl SystemTimings {
             timers: common::timers::SystemTimers::new(),
             transport,
             flush_interval: interval,
-            last_flush: Mutex::new(Duration::ZERO),
+            last_flush_ms: AtomicU64::new(0),
         }
     }
 
@@ -156,17 +157,18 @@ impl SystemTimings {
     }
 
     fn flush(&self, timestamp_secs: f64) {
+        use std::borrow::Cow;
         let drained = self.timers.drain();
         if drained.is_empty() { return; }
 
         let mut fields = Vec::new();
         for (name, p95, count) in drained {
-            fields.push((format!("{name}.p95"), p95));
-            fields.push((format!("{name}.n"), count));
+            fields.push((Cow::Owned(format!("{name}.p95")), p95));
+            fields.push((Cow::Owned(format!("{name}.n")), count));
         }
 
         self.transport.send_packet(&MetricsPacket {
-            group: "timings".to_string(),
+            group: Cow::Borrowed("timings"),
             cadence: Cadence::Event,
             timestamp_secs,
             fields,
@@ -176,13 +178,11 @@ impl SystemTimings {
 
 fn maybe_flush_timings(timings: Res<SystemTimings>, time: Res<Time>) {
     let elapsed = time.elapsed();
-    let should_flush = {
-        let last = *timings.last_flush.lock().unwrap();
-        elapsed - last >= timings.flush_interval
-    };
-    if should_flush {
+    let elapsed_ms = elapsed.as_millis() as u64;
+    let last_ms = timings.last_flush_ms.load(Ordering::Relaxed);
+    if elapsed_ms.saturating_sub(last_ms) >= timings.flush_interval.as_millis() as u64 {
         timings.flush(elapsed.as_secs_f64());
-        *timings.last_flush.lock().unwrap() = elapsed;
+        timings.last_flush_ms.store(elapsed_ms, Ordering::Relaxed);
     }
 }
 
@@ -271,15 +271,18 @@ fn drain_event_metrics(
         ("evt.tile_misses", m.tile_misses as f32),
         ("evt.active", active.0.len() as f32),
     ]);
+    // Layer names are static ("plates", "spines", "spawner") — map to pre-registered keys
     for layer in &m.layers {
-        let name = &layer.name;
-        let k_index = format!("evt.{name}.index");
-        let k_hits = format!("evt.{name}.cell_hits");
-        let k_misses = format!("evt.{name}.cell_misses");
+        let (k_index, k_hits, k_misses) = match layer.name.as_str() {
+            "plates" => ("evt.plates.index", "evt.plates.cell_hits", "evt.plates.cell_misses"),
+            "spines" => ("evt.spines.index", "evt.spines.cell_hits", "evt.spines.cell_misses"),
+            "spawner" => ("evt.spawner.index", "evt.spawner.cell_hits", "evt.spawner.cell_misses"),
+            _ => continue,
+        };
         snapshot.record(&[
-            (k_index.as_str(), layer.indexed as f32),
-            (k_hits.as_str(), layer.cell_hits as f32),
-            (k_misses.as_str(), layer.cell_misses as f32),
+            (k_index, layer.indexed as f32),
+            (k_hits, layer.cell_hits as f32),
+            (k_misses, layer.cell_misses as f32),
         ]);
     }
 }
@@ -320,8 +323,9 @@ fn track_frame_time(time: Res<Time>, snapshot: Res<MetricSnapshot>) {
 }
 
 fn flush_due(snapshot: Res<MetricSnapshot>, time: Res<Time>) -> bool {
-    let last = *snapshot.last_flush.lock().unwrap();
-    time.elapsed() - last >= snapshot.flush_interval
+    let last_ms = snapshot.last_flush_ms.load(Ordering::Relaxed);
+    let elapsed_ms = time.elapsed().as_millis() as u64;
+    elapsed_ms.saturating_sub(last_ms) >= snapshot.flush_interval.as_millis() as u64
 }
 
 fn refresh_metric_gauges(
@@ -365,13 +369,11 @@ fn refresh_metric_gauges(
 
 fn maybe_flush_snapshot(snapshot: Res<MetricSnapshot>, time: Res<Time>) {
     let elapsed = time.elapsed();
-    let should_flush = {
-        let last = *snapshot.last_flush.lock().unwrap();
-        elapsed - last >= snapshot.flush_interval
-    };
-    if should_flush {
+    let elapsed_ms = elapsed.as_millis() as u64;
+    let last_ms = snapshot.last_flush_ms.load(Ordering::Relaxed);
+    if elapsed_ms.saturating_sub(last_ms) >= snapshot.flush_interval.as_millis() as u64 {
         snapshot.flush(elapsed.as_secs_f64());
-        *snapshot.last_flush.lock().unwrap() = elapsed;
+        snapshot.last_flush_ms.store(elapsed_ms, Ordering::Relaxed);
     }
 }
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
@@ -28,8 +29,8 @@ pub enum Cadence {
 /// Both MetricSnapshot::flush and MetricEvent::record produce these.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MetricsPacket {
-    pub group: String,
+    pub group: Cow<'static, str>,
     pub cadence: Cadence,
     pub timestamp_secs: f64,
-    pub fields: Vec<(String, f32)>,
+    pub fields: Vec<(Cow<'static, str>, f32)>,
 }
