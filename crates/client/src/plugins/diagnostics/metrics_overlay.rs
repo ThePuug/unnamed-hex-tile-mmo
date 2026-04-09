@@ -14,7 +14,7 @@ use common_bevy::{
 use qrz::Convert;
 
 use crate::components::ChunkMesh;
-use crate::resources::{LoadedChunks, ChunkLodMeshes};
+use crate::resources::LoadedChunks;
 
 // ── Layout constants (match server console) ──
 
@@ -451,7 +451,6 @@ pub fn update_metrics_overlay(
         (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
     >,
     loaded_chunks: Res<LoadedChunks>,
-    lod_meshes: Option<Res<ChunkLodMeshes>>,
     tri_stats: Res<crate::resources::LodTriangleStats>,
     chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
@@ -541,9 +540,7 @@ pub fn update_metrics_overlay(
 
 
     let full_count = chunk_mesh_q.iter().count();
-    let pending_lod = lod_meshes.as_ref()
-        .map(|m| m.states.values().filter(|s| s.task.is_some()).count())
-        .unwrap_or(0);
+    let pending_lod = 0;
 
     let total_tris = tri_stats.total_tris;
     let mesh_count = tri_stats.mesh_count;

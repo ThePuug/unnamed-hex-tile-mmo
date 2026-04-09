@@ -63,8 +63,6 @@ impl Server {
     }
 }
 
-use bevy::tasks::Task;
-
 /// Shared material for all chunk meshes (elevation color computed in shader)
 #[derive(Resource)]
 pub struct TerrainMaterial {
@@ -77,35 +75,6 @@ pub struct TerrainMaterial {
 #[derive(Debug, Default, Resource)]
 pub struct SkipNeighborRegen {
     pub chunks: HashSet<ChunkId>,
-}
-
-/// Result from async mesh build task (legacy — used by diagnostics grid overlay).
-#[allow(dead_code)]
-pub struct MeshBuildResult {
-    pub mesh: Mesh,
-    pub tri_count: u32,
-}
-
-/// Per-chunk mesh state (legacy — used by diagnostics grid overlay).
-#[allow(dead_code)]
-pub struct ChunkLodState {
-    /// In-flight async task producing a Mesh.
-    pub task: Option<Task<MeshBuildResult>>,
-    /// Entity displaying this chunk's mesh.
-    pub entity: Option<Entity>,
-    /// Handle to the active mesh asset (for grid overlay extraction).
-    pub mesh_handle: Option<Handle<Mesh>>,
-    /// Triangle count of the active mesh (for diagnostics).
-    pub tri_count: u32,
-    /// Chunk-local origin (world position of chunk center tile).
-    /// Mesh vertex positions are relative to this; entity Transform repositions.
-    pub chunk_origin: Vec3,
-}
-
-/// Tracks mesh state for all chunks.
-#[derive(Resource, Default)]
-pub struct ChunkLodMeshes {
-    pub states: HashMap<ChunkId, ChunkLodState>,
 }
 
 /// Triangle statistics.
