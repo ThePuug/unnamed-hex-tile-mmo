@@ -53,7 +53,7 @@ fn main() {
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
             filter:  "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
-                    +"bevy=warn,cosmic_text=warn,renetcode=warn,renet=warn,client=trace,"
+                    +"bevy=info,cosmic_text=warn,renetcode=warn,renet=warn,client=trace,"
                     ,
             custom_layer: |_| None,
             ..default()

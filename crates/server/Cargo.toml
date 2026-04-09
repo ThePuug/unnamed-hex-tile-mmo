@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
-trace = ["bevy/trace", "bevy/trace_tracy"]
+default = ["trace"]
+trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 
 [dependencies]
 common = { path = "../common" }

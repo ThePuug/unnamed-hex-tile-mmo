@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["admin"]
+default = ["admin", "trace"]
 admin = ["dep:world"]
-trace = ["bevy/trace", "bevy/trace_tracy"]
+trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 
 [dependencies]
 common = { path = "../common" }
