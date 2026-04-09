@@ -4,6 +4,8 @@
 //! component tracking which players can see it. When entities move, this system
 //! updates membership and sends Spawn/Despawn events directly.
 
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 use renet::DefaultChannel;
 use crate::network::ServerNet;
@@ -66,6 +68,9 @@ pub fn update_area_of_interest(
     lobby: Res<Lobby>,
     mut conn: ResMut<ServerNet>,
     timings: Res<SystemTimings>,
+    mut buf_nearby: Local<Vec<Entity>>,
+    mut buf_exited: Local<Vec<Entity>>,
+    mut buf_nearby_set: Local<HashSet<Entity>>,
 ) {
     if changed_query.is_empty() { return; }
     let _t = timings.scope("aoi");
@@ -73,13 +78,15 @@ pub fn update_area_of_interest(
         let is_player = player_controlled.is_some();
 
         // Step 1+2: Find nearby entities and handle enters
-        let nearby: Vec<Entity> = nntree
-            .locate_within_distance(*loc, AOI_RADIUS_SQ)
-            .filter(|nn| nn.ent != ent)
-            .map(|nn| nn.ent)
-            .collect();
+        buf_nearby.clear();
+        buf_nearby.extend(
+            nntree
+                .locate_within_distance(*loc, AOI_RADIUS_SQ)
+                .filter(|nn| nn.ent != ent)
+                .map(|nn| nn.ent),
+        );
 
-        for &other_ent in &nearby {
+        for &other_ent in &*buf_nearby {
             // If other is a player → check if other should have E loaded
             if let Some(other_client_id) = lobby.get_by_right(&other_ent) {
                 // other_ent is a player: ensure E is in E.LoadedBy with other_ent
@@ -125,17 +132,20 @@ pub fn update_area_of_interest(
         }
 
         // Step 3: Check exits from E.LoadedBy — players that are no longer nearby
-        let nearby_set: std::collections::HashSet<Entity> = nearby.iter().copied().collect();
+        buf_nearby_set.clear();
+        buf_nearby_set.extend(buf_nearby.iter().copied());
 
         if let Ok(mut e_loaded_by) = loaded_by_query.get_mut(ent) {
-            let exited: Vec<Entity> = e_loaded_by
-                .players
-                .iter()
-                .filter(|p| !nearby_set.contains(p))
-                .copied()
-                .collect();
+            buf_exited.clear();
+            buf_exited.extend(
+                e_loaded_by
+                    .players
+                    .iter()
+                    .filter(|p| !buf_nearby_set.contains(p))
+                    .copied(),
+            );
 
-            for player_ent in exited {
+            for &player_ent in &*buf_exited {
                 e_loaded_by.players.remove(&player_ent);
                 // Send Despawn(E) to player
                 if let Some(client_id) = lobby.get_by_right(&player_ent) {
@@ -152,17 +162,19 @@ pub fn update_area_of_interest(
         // Query at EXIT_RADIUS to find entities that still have E in their LoadedBy
         // but are now beyond AOI_RADIUS
         if is_player {
-            let exit_nearby: Vec<Entity> = nntree
-                .locate_within_distance(*loc, EXIT_RADIUS_SQ)
-                .filter(|nn| nn.ent != ent)
-                .map(|nn| nn.ent)
-                .collect();
+            buf_nearby.clear();
+            buf_nearby.extend(
+                nntree
+                    .locate_within_distance(*loc, EXIT_RADIUS_SQ)
+                    .filter(|nn| nn.ent != ent)
+                    .map(|nn| nn.ent),
+            );
 
             let client_id = lobby.get_by_right(&ent);
 
-            for other_ent in exit_nearby {
+            for &other_ent in &*buf_nearby {
                 // Skip entities already in nearby (within AOI) — they're fine
-                if nearby_set.contains(&other_ent) {
+                if buf_nearby_set.contains(&other_ent) {
                     continue;
                 }
 
