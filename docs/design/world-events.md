@@ -485,9 +485,9 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Cleanup**: SpawnerCache, SpineCache, and old Terrain methods are dead code on the server path. Retained for client admin flyover.
+**Cleanup complete**: Terrain struct, SpawnerCache, and legacy EventCache deleted. SpineCache retained for tests and world-viewer.
 
-**Deferred**: Client admin flyover — still uses Arc<world::Terrain> directly.
+**Resolved**: Client admin flyover — migrated from Arc<world::Terrain> to AdminComposite (same Composite event stack as server).
 
 **Resolved**: world-viewer — migrated from generate_region() to Composite. Same event stack as server.
 

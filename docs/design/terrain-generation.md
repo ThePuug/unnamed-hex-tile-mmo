@@ -111,7 +111,7 @@ Sequential top-down stream generation. Origins distributed along ridgelines with
 
 ### Spine Caching
 
-`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Dead code on the server path (server uses `SpineInstanceIndex` via Composite); retained for client admin flyover and world-viewer.
+`SpineCache` provides lazy per-chunk generation with LRU eviction. `elevation_at(wx, wy, plate_cache)` resolves the point's chunk + 1-ring. Evicted chunks regenerate deterministically on revisit. Not used at runtime (server and client both use Composite); retained for tests and world-viewer's `generate_region()` path.
 
 ---
 
@@ -128,30 +128,35 @@ get_height(q, r) = discretize(raw_elevation)    // quantized to z-levels
 
 Outside spine influence, elevation is 0 (sea level). The elevation system produces mountains and valleys; biomes and water rendering are not yet implemented.
 
-After event system migration, elevation becomes a flat read from the materialized composite rather than per-query geometry evaluation. See [World Event System — Materialization](world-events.md#materialization).
+At runtime, elevation is a flat read from the materialized composite (`Composite::elevation_at`) rather than per-query geometry evaluation. See [World Event System — Materialization](world-events.md#materialization).
 
 ---
 
 ## Public API
 
 ```rust
-// Core terrain
-Terrain::new(seed) -> Terrain
-Terrain::get_height(q, r) -> i32              // Discretized elevation
-Terrain::get_raw_elevation(q, r) -> f64       // Pre-discretization
-Terrain::plate_info_at(q, r) -> (PlateCenter, MicroplateCenter)
-Terrain::tags_at(q, r) -> ArrayVec<[PlateTag; 2]>  // Base tag + optional spine tag
-Terrain::spawners_near(q, r, radius) -> ...        // Query spawner cache for nearby spawner positions
+// Composite (primary API — server via EventRegistry, client via AdminComposite)
+Composite::new(seed) -> Composite
+Composite::add_event(Box<dyn WorldEvent>)
+Composite::tile_at(q, r) -> TileView            // Tags + elevation, lazily materialized
+Composite::elevation_at(q, r) -> i32            // Discretized elevation
+Composite::tags_at(q, r) -> TagSet              // All tags at tile
+Composite::tiles_at(&[(i32, i32)]) -> HashMap   // Batch materialization
 
-// Batch generation (viewer/server)
+// Caches (used by Composite internals, tests, and world-viewer)
+PlateCache::new(seed)                            // Plate generation + classification
+SpineCache::new(seed)                            // Spine elevation + tags (lazy LRU chunks)
+
+// Batch generation (world-viewer)
 generate_region(seed, cx, cy, radius, with_spines) -> RegionResult
 
 // Regime field
-regime_value_at(wx, wy, seed) -> f64          // [0, 1]
+regime_value_at(wx, wy, seed) -> f64            // [0, 1]
 warp_strength_at(wx, wy, seed) -> f64
 
 // Coordinate conversion
 hex_to_world(q, r) -> (f64, f64)
+world_to_hex(wx, wy) -> (i32, i32)
 ```
 
 ---
@@ -199,7 +204,7 @@ Where the current implementation intentionally differs from spec:
 
 ## Implementation Gaps
 
-**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. SpawnerCache, SpineCache, and old Terrain methods are dead code on server path (retained for client admin flyover + world-viewer). See [world-events.md](world-events.md) for framework spec and remaining gaps.
+**Complete**: All 3 events migrated to deform/query split — PlateEvent (scale=1800), SpineEvent (scale=SPINE_INFLUENCE/15,225), SpawnerEvent (scale=9/271 tiles, min_spacing=50). Server queries route through EventRegistry → Composite. Client admin flyover uses AdminComposite (same event stack). Old Terrain struct, SpawnerCache, and legacy EventCache deleted. SpineCache retained for tests and world-viewer. See [world-events.md](world-events.md) for framework spec and remaining gaps.
 
 **Current**: Biome system — classify terrain into biomes (forest, desert, plains) based on composite tags + elevation + moisture
 

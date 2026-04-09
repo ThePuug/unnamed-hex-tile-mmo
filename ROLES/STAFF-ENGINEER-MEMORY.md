@@ -48,7 +48,6 @@ Last updated: 2026-04-09
 - **Targeting systems** — `update_targets()` and `update_ally_targets()` run every frame querying all entities. 10Hz is sufficient. Fix: `run_if(on_timer(Duration::from_millis(100)))`.
 - **Server hot-path allocations** — `aoi.rs` Vec<Entity> per moved entity, `chase.rs` Vec<Entity> per NPC, `input.rs` bincode encode per confirmation. Should use pre-allocated buffers.
 - **Client ships admin by default** — `client/Cargo.toml` defaults to `features = ["admin"]`, pulls in entire `world` crate. Release builds should not include flyover code. Fix: `default = []`.
-- **Old `world::Terrain` struct** — No runtime callers after server resource removal. Still exists in `world` crate with `TerrainCaches`, `PlateCache`, `SpineCache`. Dead code to delete when convenient.
 
 ---
 
