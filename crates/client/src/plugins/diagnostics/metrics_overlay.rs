@@ -130,10 +130,11 @@ impl FrameTimeWindow {
 /// Per-system timing entry (drained from ClientTimers).
 struct TimingEntry {
     hist_p95: History,
+    cached_p95: Vec<f32>,
 }
 
 impl TimingEntry {
-    fn new() -> Self { Self { hist_p95: History::new() } }
+    fn new() -> Self { Self { hist_p95: History::new(), cached_p95: Vec::new() } }
 }
 
 /// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
@@ -152,6 +153,10 @@ pub struct MetricsHistory {
     msg: History,
     /// Per-system timing histories (drained from ClientTimers).
     timings: std::collections::HashMap<&'static str, TimingEntry>,
+    cached_frame: Vec<f32>,
+    cached_bw: Vec<f32>,
+    cached_msg: Vec<f32>,
+    cached_chunk_count: usize,
 }
 
 impl Default for MetricsHistory {
@@ -165,6 +170,10 @@ impl Default for MetricsHistory {
             bw: History::new(),
             msg: History::new(),
             timings: std::collections::HashMap::new(),
+            cached_frame: Vec::new(),
+            cached_bw: Vec::new(),
+            cached_msg: Vec::new(),
+            cached_chunk_count: 0,
         }
     }
 }
@@ -177,6 +186,7 @@ pub fn sample_metrics(
     network: Res<NetworkMetrics>,
     mut history: ResMut<MetricsHistory>,
     client_timers: Res<crate::resources::ClientTimers>,
+    chunk_mesh_q: Query<&ChunkMesh>,
 ) {
     let _t = client_timers.0.scope("metrics");
     // Every frame: push raw frame time into the 2s p95 window
@@ -202,11 +212,20 @@ pub fn sample_metrics(
     history.bw.push(network.displayed_bytes_per_sec() as f64);
     history.msg.push(network.displayed_messages_per_sec() as f64);
 
+    history.cached_frame = history.frame_ms.as_f32();
+    history.cached_bw = history.bw.as_f32();
+    history.cached_msg = history.msg.as_f32();
+    history.cached_chunk_count = chunk_mesh_q.iter().count();
+
     // Drain system timers into per-system histories
     for (name, p95, _count) in client_timers.0.drain() {
         history.timings.entry(name)
             .or_insert_with(TimingEntry::new)
             .hist_p95.push(p95 as f64);
+    }
+
+    for entry in history.timings.values_mut() {
+        entry.cached_p95 = entry.hist_p95.as_f32();
     }
 }
 
@@ -452,7 +471,6 @@ pub fn update_metrics_overlay(
     >,
     loaded_chunks: Res<LoadedChunks>,
     tri_stats: Res<crate::resources::LodTriangleStats>,
-    chunk_mesh_q: Query<&ChunkMesh>,
     #[cfg(feature = "admin")] flyover: Res<crate::systems::admin::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
@@ -539,7 +557,7 @@ pub fn update_metrics_overlay(
     });
 
 
-    let full_count = chunk_mesh_q.iter().count();
+    let full_count = history.cached_chunk_count;
     let pending_lod = 0;
 
     let total_tris = tri_stats.total_tris;
@@ -560,10 +578,9 @@ pub fn update_metrics_overlay(
     let bps = network.displayed_bytes_per_sec() as f64;
     let mps = network.displayed_messages_per_sec() as f64;
 
-    // Pre-compute sparkline data
-    let hist_frame = history.frame_ms.as_f32();
-    let hist_bw = history.bw.as_f32();
-    let hist_msg = history.msg.as_f32();
+    let hist_frame = &history.cached_frame;
+    let hist_bw = &history.cached_bw;
+    let hist_msg = &history.cached_msg;
 
     use numfmt::{NumFmt, Precision, Overflow};
 
@@ -706,7 +723,7 @@ pub fn update_metrics_overlay(
                                     let p95_val = entry.hist_p95.0.back().copied().unwrap_or(0.0);
                                     s.half(&format!("{:>5}{:<2}", TIME5.fmt(p95_val), "ms"), COLOR_DIM);
                                     // Sparkline (15ch)
-                                    s.spark(&entry.hist_p95.as_f32(), SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
+                                    s.spark(&entry.cached_p95, SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
                                     // Peak (7ch)
                                     let peak = entry.hist_p95.visible_max(bar_count);
                                     s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(peak)), COLOR_DIM);
