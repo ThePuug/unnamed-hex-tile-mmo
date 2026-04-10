@@ -152,6 +152,25 @@ pub enum Component {
     TierLock(crate::components::tier_lock::TierLock),
 }
 
+impl Component {
+    /// Insert this component into an entity via commands.
+    /// Panics on Loc/Heading — those require special handling in do_incremental.
+    pub fn insert_into(self, entity: &mut EntityCommands) {
+        match self {
+            Component::Behaviour(v) => { entity.insert(v); }
+            Component::CombatState(v) => { entity.insert(v); }
+            Component::Health(v) => { entity.insert(v); }
+            Component::KeyBits(v) => { entity.insert(v); }
+            Component::Mana(v) => { entity.insert(v); }
+            Component::PlayerControlled(v) => { entity.insert(v); }
+            Component::Returning(v) => { entity.insert(v); }
+            Component::Stamina(v) => { entity.insert(v); }
+            Component::TierLock(v) => { entity.insert(v); }
+            _ => unreachable!("Loc/Heading require special handling"),
+        }
+    }
+}
+
 /// Server-sent summary hex: one flat hex at summary-lattice coords (sq, sr).
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct SummaryData {

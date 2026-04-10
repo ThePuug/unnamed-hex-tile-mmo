@@ -27,14 +27,7 @@ pub fn do_incremental(
     mut query: Query<(
         Option<&mut Loc>,
         Option<&mut Heading>,
-        Option<&mut KeyBits>,
-        Option<&mut Behaviour>,
-        Option<&mut Health>,
-        Option<&mut Stamina>,
-        Option<&mut Mana>,
-        Option<&mut CombatState>,
-        Option<&mut PlayerControlled>,
-        Option<&mut crate::components::tier_lock::TierLock>,
+        Option<&PlayerControlled>,
         Option<&crate::components::movement_prediction::MovementPrediction>,
         Option<&mut Position>,
         Option<&mut VisualPosition>,
@@ -47,7 +40,7 @@ pub fn do_incremental(
         let ent = *ent;
         let component = component.clone();
 
-        let Ok((o_loc, o_heading, o_keybits, o_behaviour, o_health, o_stamina, o_mana, o_combat_state, o_player_controlled, o_tier_lock, o_prediction, o_position, o_visual, o_ability_displacement)) = query.get_mut(ent) else {
+        let Ok((o_loc, o_heading, o_player_controlled, o_prediction, o_position, o_visual, o_ability_displacement)) = query.get_mut(ent) else {
             // Entity might have been despawned
             continue;
         };
@@ -185,65 +178,9 @@ pub fn do_incremental(
 
                 *heading0 = heading;
             }
-            Component::Behaviour(behaviour) => {
-                if let Some(mut behaviour0) = o_behaviour {
-                    *behaviour0 = behaviour;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(behaviour);
-                }
-            }
-            Component::KeyBits(keybits) => {
-                if let Some(mut keybits0) = o_keybits {
-                    *keybits0 = keybits;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(keybits);
-                }
-            }
-            Component::Health(health) => {
-                if let Some(mut health0) = o_health {
-                    *health0 = health;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(health);
-                }
-            }
-            Component::Stamina(stamina) => {
-                if let Some(mut stamina0) = o_stamina {
-                    *stamina0 = stamina;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(stamina);
-                }
-            }
-            Component::Mana(mana) => {
-                if let Some(mut mana0) = o_mana {
-                    *mana0 = mana;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(mana);
-                }
-            }
-            Component::CombatState(combat_state) => {
-                if let Some(mut combat_state0) = o_combat_state {
-                    *combat_state0 = combat_state;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(combat_state);
-                }
-            }
-            Component::PlayerControlled(player_controlled) => {
-                if o_player_controlled.is_none() {
-                    if let Ok(mut e) = commands.get_entity(ent) {
-                        e.insert(player_controlled);
-                    }
-                }
-            }
-            Component::TierLock(tier_lock) => {
-                if let Some(mut tier_lock0) = o_tier_lock {
-                    *tier_lock0 = tier_lock;
-                } else if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(tier_lock);
-                }
-            }
-            Component::Returning(returning) => {
+            other => {
                 if let Ok(mut e) = commands.get_entity(ent) {
-                    e.insert(returning);
+                    other.insert_into(&mut e);
                 }
             }
         }
