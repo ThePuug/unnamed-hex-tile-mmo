@@ -471,30 +471,9 @@ fn collect_and_build_summary_mesh(
             .map_or(empty, smr_to_result);
     }
 
-    // r>0: cache → Map → Composite fallback chain.
-    let summary_lat = common_bevy::summary::summary_lattice(radius);
+    // r>0: cache-only (server or flyover local server populates SummaryCache).
     let summary_z_fn = |sq: i32, sr: i32| -> Option<i32> {
-        // 1. Cache hit (server-sent or previously computed)
-        if let Some(z) = cache.get_by_lattice(radius, sq, sr) {
-            return Some(z);
-        }
-        // 2. Compute from Map tile data
-        let mut tile_zs = Vec::new();
-        let mut all_present = true;
-        for (tq, tr) in summary_lat.tiles_in_cell((sq, sr)) {
-            if let Some((qrz, _)) = map.get_by_qr(tq, tr) {
-                tile_zs.push(qrz.z);
-            } else {
-                all_present = false;
-                break;
-            }
-        }
-        if all_present && !tile_zs.is_empty() {
-            let center_z = common_bevy::summary::select_center_z(&tile_zs);
-            cache.insert(common_bevy::message::SummaryKey { r: radius, sq, sr }, center_z);
-            return Some(center_z);
-        }
-        None
+        cache.get_by_lattice(radius, sq, sr)
     };
 
     common_bevy::summary_mesh::build_summary_mesh_region_from_summaries(
