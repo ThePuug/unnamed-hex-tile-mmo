@@ -52,9 +52,11 @@ fn main() {
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,".to_owned()
-                    +"bevy=info,cosmic_text=warn,renetcode=warn,renet=warn,client=trace,"
-                    ,
+            filter: format!(
+                "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,\
+                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,client=trace,bevy={}",
+                if cfg!(feature = "trace") { "info" } else { "warn" },
+            ),
             custom_layer: |_| None,
             ..default()
         }),
