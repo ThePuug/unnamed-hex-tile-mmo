@@ -122,15 +122,13 @@ impl Default for AdminComposite {
     }
 }
 
-/// Tracks the visible summary set during flyover for addition/removal diffing.
-/// Mirrors the server's VisibleSummaryCache pattern — additions flow through
-/// `summary_cache.apply_batch()` so the downstream mesh pipeline sees them
-/// identically to server-sent data.
+/// Tracks flyover summary computation at mesh-region granularity.
+/// One async task per MeshRegionKey computes all 271 center_z values atomically.
 #[derive(Resource, Default)]
 struct FlyoverSummaryTracker {
-    tracked: HashSet<common_bevy::message::SummaryKey>,
-    tasks: Vec<(Vec<common_bevy::message::SummaryKey>, Task<Vec<common_bevy::message::SummaryData>>)>,
-    in_flight: HashSet<common_bevy::message::SummaryKey>,
+    computed: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
+    in_flight: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
+    tasks: Vec<(common_bevy::summary_mesh::MeshRegionKey, Task<Vec<common_bevy::message::SummaryData>>)>,
     last_pos: Vec3,
 }
 
@@ -311,9 +309,9 @@ fn execute_admin_actions(
             // Server will resend its summaries on the next movement update.
             summary_cache.clear();
 
-            flyover_tracker.tracked.clear();
-            flyover_tracker.tasks.clear();
+            flyover_tracker.computed.clear();
             flyover_tracker.in_flight.clear();
+            flyover_tracker.tasks.clear();
 
             // Signal dispatch_summary_tasks to re-evaluate visible regions.
             map.force_changed();
@@ -678,26 +676,25 @@ fn report_terrain_at_cursor(
     }
 }
 
-/// Computes visible summary keys, produces additions and removals through
-/// `summary_cache.apply_batch()`. Cache hits are added immediately; misses
-/// are dispatched as async tasks (polled by `flyover_poll_summary_tasks`).
+/// Computes visible mesh regions and dispatches one async task per new region.
+/// Each task computes all 271 center_z values atomically — no partial regions.
 fn flyover_summary_dispatch(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
-    summary_cache: Res<crate::resources::SummaryCache>,
     admin_composite: Res<AdminComposite>,
 ) {
     if !flyover.active { return; }
 
     let pos = flyover.world_position;
     let horiz_dist = ((pos.x - tracker.last_pos.x).powi(2) + (pos.z - tracker.last_pos.z).powi(2)).sqrt();
-    if horiz_dist < MIN_UPDATE_DISTANCE && !tracker.tracked.is_empty() {
+    if horiz_dist < MIN_UPDATE_DISTANCE && !tracker.computed.is_empty() {
         return;
     }
     tracker.last_pos = pos;
 
-    use common_bevy::message::{SummaryKey, SummaryData};
-    use common_bevy::summary::{compute_active_bands, visible_summary_cells_in_band, summary_lattice, select_center_z};
+    use common_bevy::message::SummaryData;
+    use common_bevy::summary::{compute_active_bands, summary_lattice, mesh_region_lattice, select_center_z};
+    use common_bevy::summary_mesh::{MeshRegionKey, visible_mesh_regions_in_band_ungated};
     use crate::systems::camera::HORIZON_MARGIN_DEG;
 
     let camera_height_offset = camera_height(MAX_FLYOVER_FOV);
@@ -706,60 +703,46 @@ fn flyover_summary_dispatch(
     let far_ground = camera_total_height / HORIZON_MARGIN_DEG.to_radians().tan();
 
     let bands = compute_active_bands(far_ground, MAX_FLYOVER_FOV);
-    let mut visible: HashSet<SummaryKey> = HashSet::new();
+    let mut visible_regions: HashSet<MeshRegionKey> = HashSet::new();
     for band in &bands {
-        if band.r == 0 { continue; } // r=0 uses tile data from Map, not summaries
-        let cells = visible_summary_cells_in_band(band.r, pos.x, pos.z, band.inner_wu, band.outer_wu);
-        for (sq, sr) in cells {
-            visible.insert(SummaryKey { r: band.r, sq, sr });
-        }
+        if band.r == 0 { continue; }
+        let regions = visible_mesh_regions_in_band_ungated(
+            band.r, pos.x, pos.z, band.inner_wu, band.outer_wu,
+        );
+        visible_regions.extend(regions);
     }
 
-    // Update tracked set: remove keys no longer visible.
-    // Mesh eviction is position-based (!needed), no removal events needed.
-    tracker.tracked.retain(|k| visible.contains(k));
+    // Dispatch one async task per new mesh region
+    let pool = AsyncComputeTaskPool::get();
+    for &region_key in &visible_regions {
+        if tracker.computed.contains(&region_key) { continue; }
+        if tracker.in_flight.contains(&region_key) { continue; }
 
-    // Additions: visible - tracked
-    let mut cached_additions = Vec::new();
-    let mut to_compute = Vec::new();
-    for key in &visible {
-        if tracker.tracked.contains(key) { continue; }
-        if let Some(center_z) = summary_cache.get(key) {
-            cached_additions.push(SummaryData {
-                r: key.r, sq: key.sq, sr: key.sr, center_z,
-            });
-            tracker.tracked.insert(*key);
-        } else if !tracker.in_flight.contains(key) {
-            to_compute.push(*key);
-        }
-    }
-    if !cached_additions.is_empty() {
-        summary_cache.apply_batch(&cached_additions, &[]);
-    }
+        tracker.in_flight.insert(region_key);
 
-    // Dispatch async for cache misses
-    if !to_compute.is_empty() {
-        for key in &to_compute {
-            tracker.in_flight.insert(*key);
-        }
         let composite = admin_composite.0.clone();
-        let keys = to_compute.clone();
-        let task = AsyncComputeTaskPool::get().spawn(async move {
-            keys.iter().map(|key| {
-                let lat = summary_lattice(key.r);
-                let tile_zs: Vec<i32> = lat
-                    .tiles_in_cell((key.sq, key.sr))
-                    .map(|(tq, tr)| composite.elevation_at(tq, tr))
-                    .collect();
-                let center_z = select_center_z(&tile_zs);
-                SummaryData { r: key.r, sq: key.sq, sr: key.sr, center_z }
-            }).collect()
+        let rk = region_key;
+        let task = pool.spawn(async move {
+            let summary_lat = summary_lattice(rk.r);
+            let region_lat = mesh_region_lattice();
+            region_lat.tiles_in_cell((rk.mn, rk.mm))
+                .map(|(sn, sm)| {
+                    let tile_zs: Vec<i32> = summary_lat
+                        .tiles_in_cell((sn, sm))
+                        .map(|(tq, tr)| composite.elevation_at(tq, tr))
+                        .collect();
+                    let center_z = select_center_z(&tile_zs);
+                    SummaryData { r: rk.r, sq: sn, sr: sm, center_z }
+                })
+                .collect()
         });
-        tracker.tasks.push((to_compute, task));
+        tracker.tasks.push((region_key, task));
     }
+
+    tracker.computed.retain(|k| visible_regions.contains(k));
 }
 
-/// Polls completed async summary tasks and feeds results through `apply_batch`.
+/// Polls completed per-region tasks and feeds all 271 values through `apply_batch`.
 fn flyover_poll_summary_tasks(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
@@ -770,15 +753,13 @@ fn flyover_poll_summary_tasks(
     let current = std::mem::take(&mut tracker.tasks);
     let mut pending = Vec::new();
 
-    for (keys, mut task) in current {
+    for (region_key, mut task) in current {
         if let Some(results) = block_on(future::poll_once(&mut task)) {
             summary_cache.apply_batch(&results, &[]);
-            for key in &keys {
-                tracker.in_flight.remove(key);
-                tracker.tracked.insert(*key);
-            }
+            tracker.in_flight.remove(&region_key);
+            tracker.computed.insert(region_key);
         } else {
-            pending.push((keys, task));
+            pending.push((region_key, task));
         }
     }
     tracker.tasks = pending;
