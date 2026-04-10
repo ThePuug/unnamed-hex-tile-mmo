@@ -171,7 +171,7 @@ pub fn handle_attribute_buttons(
                     if draft.total_investment() >= max_level {
                         continue; // No budget
                     }
-                    if draft.might_grace_spectrum >= 127 {
+                    if draft.might_grace_spectrum == i8::MAX {
                         continue; // Prevent i8 overflow
                     }
                     draft.might_grace_spectrum = draft.might_grace_spectrum + 1;
@@ -183,7 +183,7 @@ pub fn handle_attribute_buttons(
                     if draft.total_investment() >= max_level {
                         continue;
                     }
-                    if draft.vitality_focus_spectrum >= 127 {
+                    if draft.vitality_focus_spectrum == i8::MAX {
                         continue;
                     }
                     draft.vitality_focus_spectrum = draft.vitality_focus_spectrum + 1;
@@ -195,7 +195,7 @@ pub fn handle_attribute_buttons(
                     if draft.total_investment() >= max_level {
                         continue;
                     }
-                    if draft.instinct_presence_spectrum >= 127 {
+                    if draft.instinct_presence_spectrum == i8::MAX {
                         continue;
                     }
                     draft.instinct_presence_spectrum = draft.instinct_presence_spectrum + 1;

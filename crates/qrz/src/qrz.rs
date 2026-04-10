@@ -75,7 +75,7 @@ pub const DIRECTIONS: [Qrz; 6] = [
 /// let s = -coord.q - coord.r; // s = 0
 /// assert_eq!(coord.q + coord.r + s, 0); // Invariant holds
 /// ```
-#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Qrz {
     pub q: i32,
     pub r: i32,
@@ -93,12 +93,6 @@ impl PartialOrd for Qrz {
     }
 }
 
-impl Eq for Qrz {}
-impl PartialEq for Qrz {
-    fn eq(&self, other: &Self) -> bool {
-        self.q == other.q && self.r == other.r && self.z == other.z
-    }
-}
 
 impl Qrz {
     pub const Q: Qrz = Qrz{q:1,r:0,z:0};

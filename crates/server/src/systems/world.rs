@@ -130,7 +130,7 @@ pub fn try_spawn(
 pub fn do_spawn(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    mut map: ResMut<crate::Map>,
+    map: ResMut<crate::Map>,
     entities: &Entities,
     existing_actors: Query<(), With<Actor>>,
 ) {

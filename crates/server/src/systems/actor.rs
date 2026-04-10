@@ -179,7 +179,7 @@ pub fn try_discover_chunk(
     mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
     registry: Res<EventRegistry>,
-    mut map: ResMut<Map>,
+    map: ResMut<Map>,
     mut task_queue: ResMut<ChunkTaskQueue>,
 ) {
     for message in reader.read() {
@@ -234,7 +234,7 @@ pub fn try_discover_chunk(
 pub fn poll_chunk_tasks(
     mut writer: MessageWriter<Do>,
     mut world_cache: ResMut<WorldDiscoveryCache>,
-    mut map: ResMut<Map>,
+    map: ResMut<Map>,
     mut task_queue: ResMut<ChunkTaskQueue>,
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
     timings: Res<SystemTimings>,

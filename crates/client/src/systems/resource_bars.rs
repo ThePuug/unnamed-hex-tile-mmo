@@ -216,7 +216,7 @@ pub fn update(
     const INTERPOLATION_SPEED: f32 = 5.0; // Same as world-space health bars
 
     // Find the local player (has Actor component)
-    for (health, stamina, mana) in &player_query {
+    if let Ok((health, stamina, mana)) = player_query.single() {
         let delta = time.delta_secs();
 
         // Update health bar width (use step for client prediction)
@@ -291,7 +291,5 @@ pub fn update(
             }
         }
 
-        // Only update for the first player found (local player)
-        break;
     }
 }
