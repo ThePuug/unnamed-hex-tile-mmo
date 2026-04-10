@@ -81,7 +81,7 @@ pub fn dispatch_summary_tasks(
             + z.max(0) as f32 * common::camera::RISE;
         let far_ground = cam_h / common::camera::HORIZON_MARGIN_DEG.to_radians().tan();
 
-        let bands = compute_active_bands(far_ground, cam_h, common::camera::MAX_GAMEPLAY_FOV);
+        let bands = compute_active_bands(far_ground, common::camera::MAX_GAMEPLAY_FOV);
 
         let mut visible_set: HashSet<SummaryKey> = HashSet::new();
 
