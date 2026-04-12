@@ -5,7 +5,7 @@
 //! Query: resolves a single tile's plate classification via warped Voronoi.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use common::{HexLattice, PlateTag, TagSet};
 
@@ -80,15 +80,15 @@ impl EventIndex for PlateCentroidIndex {
 // ── PlateEvent ──────────────────────────────────────────────────────────────
 
 pub struct PlateEvent {
-    plate_cache: Arc<Mutex<PlateCache>>,
+    plate_cache: Arc<PlateCache>,
 }
 
 impl PlateEvent {
     pub fn new(seed: u64) -> Self {
-        Self::with_cache(Arc::new(Mutex::new(PlateCache::new(seed))))
+        Self::with_cache(Arc::new(PlateCache::new(seed)))
     }
 
-    pub fn with_cache(plate_cache: Arc<Mutex<PlateCache>>) -> Self {
+    pub fn with_cache(plate_cache: Arc<PlateCache>) -> Self {
         Self { plate_cache }
     }
 }
@@ -108,16 +108,13 @@ impl WorldEvent for PlateEvent {
         indexes: &IndexRegistry,
         _seed: u64,
     ) {
-        let mut plate_cache = self.plate_cache.lock().unwrap();
         let lattice = HexLattice::new(self.scale());
         let (center_q, center_r) = lattice.cell_center(cell_id);
         let (center_wx, center_wy) = hex_to_world(center_q, center_r);
 
-        // Discover plates at centroid granularity (not per-tile).
-        // Radius in world units: hex ball radius in tiles × ~1.5 world units/tile + margin.
         let cell_world_radius = self.scale() as f64 * 1.5 + crate::MACRO_CELL_SIZE;
-        let mut plates = plate_cache.plates_in_radius(center_wx, center_wy, cell_world_radius);
-        plate_cache.classify_tags(&mut plates);
+        let mut plates = self.plate_cache.plates_in_radius(center_wx, center_wy, cell_world_radius);
+        self.plate_cache.classify_tags(&mut plates);
 
         let mut centroids: Vec<CentroidEntry> = Vec::new();
         let mut neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)> = Vec::new();
@@ -138,7 +135,7 @@ impl WorldEvent for PlateEvent {
                 tags: tag_set,
             });
 
-            let nbrs = plate_cache.plate_neighbors(plate.wx, plate.wy);
+            let nbrs = self.plate_cache.plate_neighbors(plate.wx, plate.wy);
             let nbr_coords: Vec<(i32, i32)> = nbrs.iter()
                 .map(|n| world_to_hex(n.wx, n.wy))
                 .collect();
@@ -164,10 +161,9 @@ impl WorldEvent for PlateEvent {
         _below: &dyn Fn(i32, i32) -> TileView,
         _seed: u64,
     ) -> Option<TileOutput> {
-        let mut plate_cache = self.plate_cache.lock().unwrap();
         let (wx, wy) = hex_to_world(q, r);
-        let mut plate = plate_cache.warped_plate_at(wx, wy);
-        plate_cache.classify_tags(std::slice::from_mut(&mut plate));
+        let mut plate = self.plate_cache.warped_plate_at(wx, wy);
+        self.plate_cache.classify_tags(std::slice::from_mut(&mut plate));
         let tag = plate.tags.first().copied().unwrap_or(PlateTag::Sea);
 
         let mut out = TileOutput::default();

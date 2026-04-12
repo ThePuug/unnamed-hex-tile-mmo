@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use dashmap::DashMap;
+
 use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
@@ -460,19 +462,17 @@ const GRAD_CACHE_CELL: f64 = 32.0;
 /// queries gather candidates from a 1-ring hex neighborhood (7 chunks)
 /// instead of iterating individual grid cells per pixel.
 pub struct PlateCache {
-    chunks: HashMap<(i32, i32), PlateChunk>,
-    gradients: HashMap<(i64, i64), RegimeGradient>,
+    chunks: DashMap<(i32, i32), PlateChunk>,
+    gradients: DashMap<(i64, i64), RegimeGradient>,
     seed: u64,
 }
 
 impl PlateCache {
     pub fn new(seed: u64) -> Self {
-        Self { chunks: HashMap::new(), gradients: HashMap::new(), seed }
+        Self { chunks: DashMap::new(), gradients: DashMap::new(), seed }
     }
 
-    /// Cached gradient lookup. Snaps to a coarse grid so adjacent
-    /// pixels share the same gradient computation.
-    fn cached_gradient(&mut self, wx: f64, wy: f64) -> (f64, AnisoContext) {
+    fn cached_gradient(&self, wx: f64, wy: f64) -> (f64, AnisoContext) {
         let cx = (wx / GRAD_CACHE_CELL).floor() as i64;
         let cy = (wy / GRAD_CACHE_CELL).floor() as i64;
         let seed = self.seed;
@@ -486,26 +486,22 @@ impl PlateCache {
         (rg.warp_strength, rg.ctx)
     }
 
-    /// Ensure a chunk is populated in the cache.
-    fn ensure_chunk(&mut self, cq: i32, cr: i32) {
+    fn ensure_chunk(&self, cq: i32, cr: i32) {
         let seed = self.seed;
         self.chunks.entry((cq, cr))
             .or_insert_with(|| populate_chunk(cq, cr, seed));
     }
 
-    /// Cached pure Euclidean nearest-seed lookup.
-    pub fn plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
+    pub fn plate_at(&self, wx: f64, wy: f64) -> PlateCenter {
         let (cq, cr) = plate_chunk_coord(wx, wy);
-
         for (dq, dr) in chunk_1ring(cr) {
             self.ensure_chunk(cq + dq, cr + dr);
         }
-
         let mut best: Option<PlateCenter> = None;
         let mut best_dist_sq = f64::MAX;
-
         for (dq, dr) in chunk_1ring(cr) {
-            for candidate in &self.chunks[&(cq + dq, cr + dr)].centers {
+            let chunk = self.chunks.get(&(cq + dq, cr + dr)).unwrap();
+            for candidate in &chunk.centers {
                 let d = dist_sq(wx, wy, candidate.wx, candidate.wy);
                 if d < best_dist_sq {
                     best = Some(candidate.clone());
@@ -513,34 +509,28 @@ impl PlateCache {
                 }
             }
         }
-
         best.expect("no plate center found in chunk neighborhood")
     }
 
-    /// Cached regime value at a world position. Delegates to the standalone
-    /// computation (3 simplex calls). Provides a uniform cache-method API surface.
     pub fn regime_value_at(&self, wx: f64, wy: f64) -> f64 {
         regime_value_at(wx, wy, self.seed)
     }
 
-    /// Cached warp strength via the gradient cache. Returns the warp_strength
-    /// field from the cached RegimeGradient at the snapped grid position.
-    pub fn warp_strength_at(&mut self, wx: f64, wy: f64) -> f64 {
+    pub fn warp_strength_at(&self, wx: f64, wy: f64) -> f64 {
         self.cached_gradient(wx, wy).0
     }
 
-    /// All plate centers within `radius` of a world position, gathered from chunks.
-    pub fn plates_in_radius(&mut self, wx: f64, wy: f64, radius: f64) -> Vec<PlateCenter> {
+    pub fn plates_in_radius(&self, wx: f64, wy: f64, radius: f64) -> Vec<PlateCenter> {
         let radius_sq = radius * radius;
         let row_height = PLATE_CHUNK_SIZE * HEX_ROW_HEIGHT;
         let chunk_reach = ((radius + PLATE_CHUNK_SIZE) / row_height).ceil() as i32 + 1;
         let (cq, cr) = plate_chunk_coord(wx, wy);
-
         let mut result = Vec::new();
         for dr in -chunk_reach..=chunk_reach {
             for dq in -chunk_reach..=chunk_reach {
                 self.ensure_chunk(cq + dq, cr + dr);
-                for center in &self.chunks[&(cq + dq, cr + dr)].centers {
+                let chunk = self.chunks.get(&(cq + dq, cr + dr)).unwrap();
+                for center in &chunk.centers {
                     if dist_sq(wx, wy, center.wx, center.wy) <= radius_sq {
                         result.push(center.clone());
                     }
@@ -550,21 +540,16 @@ impl PlateCache {
         result
     }
 
-    /// Voronoi neighbors of the plate owning position (wx, wy).
-    /// Uses midpoint sampling to test adjacency.
-    pub fn plate_neighbors(&mut self, wx: f64, wy: f64) -> Vec<PlateCenter> {
+    pub fn plate_neighbors(&self, wx: f64, wy: f64) -> Vec<PlateCenter> {
         let owner = self.plate_at(wx, wy);
         let search_radius = MACRO_CELL_SIZE * 4.0;
         let candidates = self.plates_in_radius(owner.wx, owner.wy, search_radius);
-
         let mut neighbors = Vec::new();
         for candidate in &candidates {
             if candidate.id == owner.id { continue; }
-
             let mid_x = (owner.wx + candidate.wx) * 0.5;
             let mid_y = (owner.wy + candidate.wy) * 0.5;
             let at_mid = self.plate_at(mid_x, mid_y);
-
             if at_mid.id == owner.id || at_mid.id == candidate.id {
                 neighbors.push(candidate.clone());
             }
@@ -572,14 +557,7 @@ impl PlateCache {
         neighbors
     }
 
-    /// Assign Sea, Coast, or Inland tags to each plate in `plates`.
-    ///
-    /// - **Sea**: water plate below the regime threshold with low warp.
-    /// - **Coast**: any plate with `warp_strength > COASTAL_WARP_THRESHOLD`.
-    /// - **Inland**: land plate above the regime threshold with low warp.
-    ///
-    /// Each plate receives exactly one base tag. Call after [`Self::plates_in_radius`].
-    pub fn classify_tags(&mut self, plates: &mut [PlateCenter]) {
+    pub fn classify_tags(&self, plates: &mut [PlateCenter]) {
         for plate in plates.iter_mut() {
             let regime = self.regime_value_at(plate.wx, plate.wy);
             let strength = self.warp_strength_at(plate.wx, plate.wy);
@@ -595,22 +573,17 @@ impl PlateCache {
         }
     }
 
-    /// Cached anisotropic warped-distance plate assignment. Used by micro cell → macro
-    /// assignment in the bottom-up flow. Gathers candidates from a 1-ring chunk
-    /// neighborhood and uses gradient cache for anisotropy context.
-    pub fn warped_plate_at(&mut self, wx: f64, wy: f64) -> PlateCenter {
+    pub fn warped_plate_at(&self, wx: f64, wy: f64) -> PlateCenter {
         let (cq, cr) = plate_chunk_coord(wx, wy);
         let (strength, ctx) = self.cached_gradient(wx, wy);
-
         for (dq, dr) in chunk_1ring(cr) {
             self.ensure_chunk(cq + dq, cr + dr);
         }
-
         let mut best: Option<PlateCenter> = None;
         let mut best_eff_dist = f64::MAX;
-
         for (dq, dr) in chunk_1ring(cr) {
-            for candidate in &self.chunks[&(cq + dq, cr + dr)].centers {
+            let chunk = self.chunks.get(&(cq + dq, cr + dr)).unwrap();
+            for candidate in &chunk.centers {
                 let d = effective_distance(wx, wy, candidate, strength, &ctx, self.seed);
                 if d < best_eff_dist {
                     best = Some(candidate.clone());
@@ -618,7 +591,6 @@ impl PlateCache {
                 }
             }
         }
-
         best.expect("no plate center found in chunk neighborhood")
     }
 }

@@ -185,7 +185,7 @@ fn main() {
     });
     let needs_spawners = layers.contains(&Layer::Spawners);
 
-    let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(world::PlateCache::new(cli.seed)));
+    let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     if needs_spines || needs_spawners {

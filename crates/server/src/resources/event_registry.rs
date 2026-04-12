@@ -18,7 +18,7 @@ pub struct EventRegistry {
 
 impl EventRegistry {
     pub fn new(seed: u64) -> Self {
-        let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(world::PlateCache::new(seed)));
+        let plate_cache = std::sync::Arc::new(world::PlateCache::new(seed));
         let mut composite = Composite::new(seed);
         composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, seed)));

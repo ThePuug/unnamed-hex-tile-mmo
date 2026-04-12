@@ -226,7 +226,7 @@ pub fn generate_region(
 
     // Phase 1: Plate generation (seed scatter + warped Voronoi assignment)
     let lap = Instant::now();
-    let mut plate_cache = PlateCache::new(seed);
+    let plate_cache = PlateCache::new(seed);
     let mut plates = plate_cache.plates_in_radius(
         center_x, center_y,
         radius * std::f64::consts::SQRT_2 + MACRO_CELL_SIZE * 2.0,
@@ -251,7 +251,7 @@ pub fn generate_region(
     // Phase 3: Spine generation (candidate selection, growth, peak scattering)
     let spine_instances = if with_spines {
         let lap = Instant::now();
-        let instances = generate_spines(&mut plates, &mut plate_cache, seed);
+        let instances = generate_spines(&mut plates, &plate_cache, seed);
         let total_peaks: u64 = instances.iter()
             .map(|i| i.peaks.len() as u64)
             .sum();
@@ -330,7 +330,7 @@ mod tests {
 
     const DEFAULT_SEED: u64 = 0x9E3779B97F4A7C15;
 
-    fn tags_at(q: i32, r: i32, plate_cache: &mut PlateCache, spine_cache: &mut SpineCache) -> ArrayVec<[PlateTag; 2]> {
+    fn tags_at(q: i32, r: i32, plate_cache: &PlateCache, spine_cache: &mut SpineCache) -> ArrayVec<[PlateTag; 2]> {
         let (wx, wy) = hex_to_world(q, r);
         let mut plate = plate_cache.plate_at(wx, wy);
         plate_cache.classify_tags(std::slice::from_mut(&mut plate));
@@ -346,9 +346,9 @@ mod tests {
 
     #[test]
     fn tags_at_returns_base_tag() {
-        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let plate_cache = PlateCache::new(DEFAULT_SEED);
         let mut spine_cache = SpineCache::new(DEFAULT_SEED);
-        let t = tags_at(0, 0, &mut plate_cache, &mut spine_cache);
+        let t = tags_at(0, 0, &plate_cache, &mut spine_cache);
         assert!(!t.is_empty(), "should have at least a base tag");
         let base = t[0];
         assert!(
@@ -359,21 +359,21 @@ mod tests {
 
     #[test]
     fn tags_at_deterministic() {
-        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let plate_cache = PlateCache::new(DEFAULT_SEED);
         let mut spine_cache = SpineCache::new(DEFAULT_SEED);
-        let a = tags_at(100, 50, &mut plate_cache, &mut spine_cache);
-        let b = tags_at(100, 50, &mut plate_cache, &mut spine_cache);
+        let a = tags_at(100, 50, &plate_cache, &mut spine_cache);
+        let b = tags_at(100, 50, &plate_cache, &mut spine_cache);
         assert_eq!(a.as_slice(), b.as_slice());
     }
 
     #[test]
     fn tags_at_spine_region_has_spine_tag() {
-        let mut plate_cache = PlateCache::new(DEFAULT_SEED);
+        let plate_cache = PlateCache::new(DEFAULT_SEED);
         let mut spine_cache = SpineCache::new(DEFAULT_SEED);
         let mut found_spine = false;
         for q in (-200..=200).step_by(20) {
             for r in (-200..=200).step_by(20) {
-                let t = tags_at(q, r, &mut plate_cache, &mut spine_cache);
+                let t = tags_at(q, r, &plate_cache, &mut spine_cache);
                 if t.len() > 1 {
                     let spine_tag = t[1];
                     assert!(
@@ -391,7 +391,7 @@ mod tests {
 
     fn make_composite() -> events::Composite {
         let seed = DEFAULT_SEED;
-        let plate_cache = std::sync::Arc::new(std::sync::Mutex::new(PlateCache::new(seed)));
+        let plate_cache = std::sync::Arc::new(PlateCache::new(seed));
         let mut composite = events::Composite::new(seed);
         composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(events::spines::SpineEvent::with_cache(plate_cache, seed)));

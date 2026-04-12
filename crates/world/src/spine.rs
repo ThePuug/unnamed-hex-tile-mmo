@@ -1011,7 +1011,7 @@ const SPINE_GATHER_RADIUS: f64 = SPINE_CHUNK_SIZE * 0.6 + MACRO_CELL_SIZE * 4.0;
 fn compute_spine_candidates(
     cq: i32,
     cr: i32,
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
     seed: u64,
 ) -> Vec<SpineCandidate> {
     let (cx, cy) = spine_chunk_center(cq, cr);
@@ -1045,7 +1045,7 @@ fn ensure_candidates(
     cq: i32,
     cr: i32,
     cache: &mut HashMap<(i32, i32), Vec<SpineCandidate>>,
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
     seed: u64,
 ) {
     if cache.contains_key(&(cq, cr)) { return; }
@@ -1151,7 +1151,7 @@ fn grow_arm_steps(
     spine_dy: f64,
     dir_sign: f64,
     spine_id: u64,
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
     seed: u64,
 ) -> Vec<ArmStep> {
     let arm_seed = if dir_sign > 0.0 { 0 } else { SEED_ARM_FLIP };
@@ -1269,7 +1269,7 @@ fn apply_peak_to_plates(
     peak: &Peak,
     plates: &mut [PlateCenter],
     plate_map: &HashMap<u64, usize>,
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
 ) {
     let candidates = plate_cache.plates_in_radius(peak.wx, peak.wy, peak.falloff_radius);
     for candidate in candidates {
@@ -2061,7 +2061,7 @@ pub(crate) fn grow_spine(
     spine_id: u64,
     plates: &mut [PlateCenter],
     plate_map: &HashMap<u64, usize>,
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
     seed: u64,
 ) -> SpineInstance {
     let cell_q = (epi_wx / MACRO_CELL_SIZE) as i64;
@@ -2163,7 +2163,7 @@ pub fn discretize_elevation(elevation: f64) -> i32 {
 /// for conflict resolution.
 pub fn generate_spines(
     plates: &mut [PlateCenter],
-    plate_cache: &mut PlateCache,
+    plate_cache: &PlateCache,
     seed: u64,
 ) -> Vec<SpineInstance> {
     let plate_map: HashMap<u64, usize> = plates
@@ -2246,7 +2246,7 @@ impl SpineCache {
     /// Return the highest-priority spine tag at a world position, if any.
     /// Only returns a tag if the spine actually raised terrain above sea level
     /// at this position — prevents tagging submerged slopes.
-    pub fn tag_at(&mut self, wx: f64, wy: f64, plate_cache: &mut PlateCache) -> Option<PlateTag> {
+    pub fn tag_at(&mut self, wx: f64, wy: f64, plate_cache: &PlateCache) -> Option<PlateTag> {
         let (cq, cr) = spine_chunk_coord(wx, wy);
         self.access_counter += 1;
         let stamp = self.access_counter;
@@ -2277,7 +2277,7 @@ impl SpineCache {
 
     /// Return the combined spine elevation at a world position.
     /// Lazily generates and caches spine chunks as needed.
-    pub fn elevation_at(&mut self, wx: f64, wy: f64, plate_cache: &mut PlateCache) -> f64 {
+    pub fn elevation_at(&mut self, wx: f64, wy: f64, plate_cache: &PlateCache) -> f64 {
         let (cq, cr) = spine_chunk_coord(wx, wy);
         self.access_counter += 1;
         let stamp = self.access_counter;
@@ -2299,7 +2299,7 @@ impl SpineCache {
         max_elev
     }
 
-    fn ensure_instances(&mut self, cq: i32, cr: i32, plate_cache: &mut PlateCache) {
+    fn ensure_instances(&mut self, cq: i32, cr: i32, plate_cache: &PlateCache) {
         if self.instance_cache.contains_key(&(cq, cr)) { return; }
 
         for (dq, dr) in spine_chunk_1ring(cr) {
@@ -2337,7 +2337,7 @@ impl SpineCache {
         &mut self,
         min_x: f64, max_x: f64,
         min_y: f64, max_y: f64,
-        plate_cache: &mut PlateCache,
+        plate_cache: &PlateCache,
     ) {
         let target_chunks = spine_chunks_in_bounds(
             min_x - SPINE_INFLUENCE, max_x + SPINE_INFLUENCE,
@@ -2901,12 +2901,12 @@ mod tests {
     fn spine_cache_matches_generate_spines() {
         let seed = 0x9E3779B97F4A7C15u64;
         let mut spine_cache = SpineCache::new(seed);
-        let mut plate_cache_for_spine = PlateCache::new(seed);
+        let plate_cache_for_spine = PlateCache::new(seed);
 
-        let mut plate_cache = PlateCache::new(seed);
+        let plate_cache = PlateCache::new(seed);
         let mut plates = plate_cache.plates_in_radius(0.0, 0.0, 80_000.0);
         plate_cache.classify_tags(&mut plates);
-        let instances = generate_spines(&mut plates, &mut plate_cache, seed);
+        let instances = generate_spines(&mut plates, &plate_cache, seed);
 
         let test_point = instances.iter().find_map(|inst| {
             inst.peaks.first().map(|p| (p.wx, p.wy))
@@ -2914,7 +2914,7 @@ mod tests {
 
         if let Some((wx, wy)) = test_point {
             let reference = evaluate_elevation(&instances, wx, wy);
-            let cached = spine_cache.elevation_at(wx, wy, &mut plate_cache_for_spine);
+            let cached = spine_cache.elevation_at(wx, wy, &plate_cache_for_spine);
 
             assert!(reference > 0.0, "reference should have elevation at spine center");
             assert_eq!(
@@ -2928,14 +2928,14 @@ mod tests {
     fn spine_cache_nonzero_on_land() {
         let seed = 0x9E3779B97F4A7C15u64;
         let mut cache = SpineCache::new(seed);
-        let mut plate_cache = PlateCache::new(seed);
+        let plate_cache = PlateCache::new(seed);
 
         let mut found_nonzero = false;
         'outer: for gx in -10..=10 {
             for gy in -10..=10 {
                 let wx = gx as f64 * 2000.0;
                 let wy = gy as f64 * 2000.0;
-                if cache.elevation_at(wx, wy, &mut plate_cache) > 0.0 {
+                if cache.elevation_at(wx, wy, &plate_cache) > 0.0 {
                     found_nonzero = true;
                     break 'outer;
                 }
@@ -2983,14 +2983,14 @@ mod tests {
     #[test]
     fn get_height_nonzero_somewhere() {
         let seed = 0x9E3779B97F4A7C15;
-        let mut plate_cache = crate::PlateCache::new(seed);
+        let plate_cache = crate::PlateCache::new(seed);
         let mut spine_cache = SpineCache::new(seed);
 
         let mut found_nonzero = false;
         'outer: for q in (-20000..=20000).step_by(500) {
             for r in (-20000..=20000).step_by(500) {
                 let (wx, wy) = crate::hex_to_world(q, r);
-                let elev = spine_cache.elevation_at(wx, wy, &mut plate_cache);
+                let elev = spine_cache.elevation_at(wx, wy, &plate_cache);
                 if crate::discretize_elevation(elev) != 0 {
                     found_nonzero = true;
                     break 'outer;

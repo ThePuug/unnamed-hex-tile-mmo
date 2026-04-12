@@ -9,7 +9,7 @@
 //! Query: evaluates a single tile's elevation + tag from indexed instances.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use common::{HexLattice, PlateTag};
 
@@ -75,16 +75,16 @@ impl EventIndex for SpineInstanceIndex {
 // ── SpineEvent ──────────────────────────────────────────────────────────────
 
 pub struct SpineEvent {
-    plate_cache: Arc<Mutex<PlateCache>>,
+    plate_cache: Arc<PlateCache>,
     seed: u64,
 }
 
 impl SpineEvent {
     pub fn new(seed: u64) -> Self {
-        Self::with_cache(Arc::new(Mutex::new(PlateCache::new(seed))), seed)
+        Self::with_cache(Arc::new(PlateCache::new(seed)), seed)
     }
 
-    pub fn with_cache(plate_cache: Arc<Mutex<PlateCache>>, seed: u64) -> Self {
+    pub fn with_cache(plate_cache: Arc<PlateCache>, seed: u64) -> Self {
         Self { plate_cache, seed }
     }
 }
@@ -131,8 +131,6 @@ impl WorldEvent for SpineEvent {
             }).collect()
         }; // read guard dropped
 
-        // Expensive computation — no lock held
-        let mut plate_cache = self.plate_cache.lock().unwrap();
         let empty_plates: Vec<crate::PlateCenter> = Vec::new();
         let empty_map: HashMap<u64, usize> = HashMap::new();
 
@@ -141,7 +139,7 @@ impl WorldEvent for SpineEvent {
             let inst = grow_spine(
                 wx, wy, plate_id,
                 &mut empty_plates.clone(), &empty_map,
-                &mut plate_cache, self.seed,
+                &self.plate_cache, self.seed,
             );
             if !inst.peaks.is_empty() {
                 instances.push(inst);
