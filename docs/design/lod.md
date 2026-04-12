@@ -72,16 +72,18 @@ r = ceil((MIN_SCREEN_PX × D / (tile_diameter × pixel_scale) − 1) / 2)
 ```
 
 Where:
-- MIN_SCREEN_PX = 16 pixels (minimum visual size for a summary hex)
+- MIN_SCREEN_PX = 12 pixels (minimum visual size for a summary hex)
 - tile_diameter = 2 × HEX_OUTER_RADIUS = 2.0 WU
-- pixel_scale = screen_height / (2 × D × tan(FOV/2))
-- FOV = 60° (worst-case vertical)
+- pixel_scale = screen_height / (2 × tan(FOV/2))
+- FOV = caller-provided vertical FOV (gameplay: 60°, flyover: 90°)
 
-This ensures every summary subtends at least MIN_SCREEN_PX on screen. As distance increases, r increases — summaries cover more tiles but remain visually legible.
+This ensures every summary subtends at least MIN_SCREEN_PX on screen. As distance increases, r increases — summaries cover more tiles but remain visually legible. At wider FOV, pixel_scale drops and bands shift inward — each summary covers fewer tiles to maintain the same screen-space size.
 
 ### Distance Bands
 
-Inverting `summary_radius(D)` produces discrete distance thresholds where r changes. `compute_active_bands(max_distance)` returns a sorted list of `(r, inner_wu, outer_wu)` bands from the camera to the visual horizon. Each band uses a single summary radius.
+Band thresholds are player-centric horizontal distances: `band_outer_threshold(r) - CAMERA_DISTANCE`. At horizontal distance D from the player, the worst-case camera-to-ground distance is `D + CAMERA_DISTANCE` (point directly away from camera). Conservative — hexes on the camera side subtend more pixels.
+
+`compute_active_bands(max_distance, fov)` returns a sorted list of `(r, inner_wu, outer_wu)` bands from the player to the visual horizon. Zero-width bands are skipped (e.g., r=0 at 90° flyover FOV where CAMERA_DISTANCE consumes the entire r=0 threshold).
 
 ### r=0 Full Detail
 
@@ -108,13 +110,21 @@ Beyond the loaded extent, mesh regions are **ungated** — dispatched whenever S
 
 ### Unified SummaryCache
 
-A single `SummaryCache` (Arc-wrapped) serves as the client's source of truth for all r≥1 summary data. Three producers write to it:
+`SummaryCache` is a `DashMap<MeshRegionKey, Arc<RegionData>>` — per-region locking, no global lock. Each `RegionData` holds all ~271 center_z values for one mesh region. Three producers write via `insert_region()`:
 
-1. **Local Map**: For r≥1 regions within FIXED_STREAM_RADIUS, `dispatch_summary_tasks` reads tile elevations from Map, calls `select_center_z()`, writes to cache
-2. **Server SummaryBatch**: For regions beyond FIXED_STREAM_RADIUS, received summaries are written directly
-3. **Flyover FlyoverSummaryTracker**: During admin flyover, `flyover_summary_dispatch` computes the visible summary set (same `compute_active_bands` + `visible_summary_cells_in_band` as server), diffs against tracked state, and feeds both additions and removals through `apply_batch()`. Cache misses dispatch async tasks that compute center_z via `AdminComposite.elevation_at()`, polled by `flyover_poll_summary_tasks`. Visible-set recomputation is throttled to 20 WU of horizontal movement.
+1. **Local Map**: For r≥1 regions within loaded extent, `dispatch_summary_tasks` reads tile elevations from Map, calls `select_center_z()`, writes complete region to cache
+2. **Server SummaryBatch**: For regions beyond FIXED_STREAM_RADIUS, renet groups received additions by `MeshRegionKey` before inserting
+3. **Flyover FlyoverSummaryTracker**: During admin flyover, `flyover_summary_dispatch` computes visible mesh regions via `visible_mesh_regions_in_band_ungated` (same function the mesh pipeline uses), diffs against tracked `MeshRegionKey` set. Each new region dispatches one async task that computes all 271 center_z values atomically via `AdminComposite.elevation_at()`, polled by `flyover_poll_summary_tasks`. No partial regions — a region is either fully cached or pending. Visible-set recomputation is throttled to 20 WU of horizontal movement.
 
-One consumer reads it: the async mesh builder (`collect_and_build_summary_mesh`), which branches cleanly — r=0 reads Map (full tile geometry), r>0 reads SummaryCache (one lookup per summary).
+One consumer reads it: the async mesh builder (`collect_and_build_summary_mesh`), which branches cleanly — r=0 reads Map (full tile geometry), r>0 calls `get_region()` (one DashMap shard lock, then 271 lock-free HashMap reads). Dispatch gates r>0 on `contains_region()` — mesh builds only dispatch when cache has complete data.
+
+### Mesh Eviction
+
+One rule for all r values: `dispatch_summary_tasks` evicts any mesh region not in the current `needed` set (computed from `compute_auto_mode_regions`). Mesh eviction is purely position-based — it does not depend on removal events from any producer.
+
+### Cache Warming
+
+SummaryCache entries persist when their mesh is evicted. Returning to a previously-visited area rebuilds instantly from cache hits rather than recomputing center_z. The server still sends removal `SummaryBatch` messages (tracking what each client has received via `VisibleSummaryCache`), but the client ignores them. Entries are only cleared on `clear()` (flyover toggle).
 
 ### Promotion and Demotion
 
@@ -165,8 +175,8 @@ Component tracking which summaries have been sent to each client. Recomputes the
 
 | Constant | Value | Derivation |
 |----------|-------|------------|
-| MIN_SCREEN_PX | 16 px | Minimum visual size for a summary hex |
-| THRESHOLD_FOV | 60° (π/3) | Worst-case vertical subtension |
+| MIN_SCREEN_PX | 12 px | Minimum visual size for a summary hex |
+| DEFAULT_VFOV | 60° (π/3) | Default vertical FOV for `summary_radius()` (gameplay). Callers of `compute_active_bands` pass FOV explicitly. |
 | FIXED_STREAM_RADIUS | 21 chunks / 599 WU | Full-detail streaming boundary |
 | HEX_OUTER_RADIUS | 1.0 WU | Single tile outer radius |
 | Z_SCALE / RISE | 0.8 WU/z-level | Existing constant |

@@ -1,6 +1,6 @@
 # Staff Engineer Memory
 
-Last updated: 2026-04-09
+Last updated: 2026-04-12
 
 ---
 
@@ -25,13 +25,28 @@ Last updated: 2026-04-09
 
 ### LoD Branch (single-hex-lod)
 
+**Completed this session (2026-04-09 → 2026-04-12):**
+- Flyover local summary server (691dd19→036e599) — additions+removals through apply_batch
+- FlyoverPlugin extraction (d0be542) — encapsulated with clear public API
+- Unified mesh eviction (5cc1be7) — `!needed.contains(k)` for all r, deleted removed_regions
+- Band overlap removed, r=2 gap fixed (cd71ab7)
+- Band distance: player-centric horizontal + CAMERA_DISTANCE offset (f5f0c3a), MIN_SCREEN_PX 16→12
+- FOV threaded through bands (927dd56) — gameplay 60°, flyover 90°
+- Component::insert_into simplifies do_incremental (4f2031c) — dropped from 39/25 to below threshold
+- Region-based flyover dispatch (88468e3) — one async task per mesh region, no partial builds
+- Read-only mesh builder — removed cache.insert from mesh build path, eliminates write lock contention
+- SummaryCache DashMap (7821f20) — per-region locking via DashMap<MeshRegionKey, Arc<RegionData>>, deleted global RwLock + dirty_regions + changed bookkeeping, completeness gate on dispatch
+
+**Remaining:**
+
 | Concern | Detail |
 |---|---|
 | Unbounded removal batch | Teleport dumps all removals in one SummaryBatch, no budget cap |
 | Client poll mesh budget | No per-frame cap on mesh builds in poll_summary_meshes |
-| SummaryCache eviction | ✅ FIXED (691dd19→d0be542). Flyover is now a local summary server — additions+removals through apply_batch. Extracted to FlyoverPlugin. Remaining: remove `.after()/.before()` ordering constraint (unnecessary, one-frame lag is fine). Progressive fill visual artifact on first activation (cosmetic, not blocking). |
 | Spec reconciliation | Architect role — flat-hex vs hex-native decimation from spec |
 | `mesh_region_lattice()` alloc | Creates new HexLattice on every call, should be OnceLock |
+| Cache miss speed | Flyover async center_z computation is slow on first activation at altitude — tens of thousands of elevation_at calls |
+| Ordered outward dispatch | Meshes pop in haphazardly — no distance ordering. Frontier-based dispatch proposed but deferred. |
 
 ### Scaling Risks (before 50+ players)
 

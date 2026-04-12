@@ -12,6 +12,7 @@ None pending.
 
 | Date | Summary | Specs Checked | Findings |
 |------|---------|---------------|----------|
+| 2026-04-09 | Unified mesh eviction + cache warming (5cc1be7) | lod.md | Added Mesh Eviction + Cache Warming sections. Unified !needed rule, removal no-ops, server still sends removal SummaryBatch but client ignores for cache. |
 | 2026-04-09 | Per-band stats + band overlap/boundary fix (2df9507, cd71ab7) | lod.md | Two Rendering Regimes rewritten: gated/ungated boundary is local_max (loaded extent), not FIXED_STREAM_RADIUS_WU constant. Overlap inflation removal aligns with spec. |
 | 2026-04-09 | Flyover summary eviction + FlyoverPlugin extraction (691dd19, 036e599, d0be542) | lod.md | Flyover producer description updated: elevation_fallback → FlyoverSummaryTracker dispatch/poll via apply_batch(). File moved systems/admin.rs → plugins/flyover.rs. Ordering drop noted (acceptable per anti-pattern #1). |
 | 2026-04-09 | Terrain/SpawnerCache/EventCache deletion + metrics overlay caching | terrain-generation.md, world-events.md | Public API rewritten (Terrain→Composite). Implementation Gaps updated in both specs. Spine Caching section corrected. Elevation pipeline tense fixed (migration complete). Metrics commit: pure perf, no doc impact. |
