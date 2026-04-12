@@ -122,10 +122,6 @@ pub fn compute_active_bands(max_distance_wu: f32, fov: f32) -> Vec<Band> {
 ///
 /// Inverts: `r_exact = (MIN_SCREEN_PX * d / (tile_diameter * pixel_scale) - 1) / 2`
 /// Setting `r_exact = r` (ceil boundary) → solve for d.
-fn band_outer_threshold(r: u32) -> f32 {
-    band_outer_threshold_with_ps(r, pixel_scale_for_fov(DEFAULT_VFOV))
-}
-
 fn band_outer_threshold_with_ps(r: u32, pixel_scale: f32) -> f32 {
     let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
     let r_exact = r as f32;

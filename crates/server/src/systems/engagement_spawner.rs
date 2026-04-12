@@ -11,7 +11,7 @@ use rand::Rng;
 use common_bevy::{
     components::{
         behaviour::{Behaviour, PlayerControlled},
-        engagement::{Engagement, EngagementMember, LastPlayerProximity, ZoneId},
+        engagement::{Engagement, EngagementMember, LastPlayerProximity},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
             EntityType,

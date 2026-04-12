@@ -199,15 +199,6 @@ impl SummaryCache {
         self.regions.contains_key(key)
     }
 
-    /// Look up a single cell's center_z (convenience for mesh builder).
-    pub fn get_cell(&self, r: u32, sq: i32, sr: i32) -> Option<i32> {
-        let region_lat = common_bevy::summary::mesh_region_lattice();
-        let (mn, mm) = region_lat.cell_id(sq, sr);
-        let key = MeshRegionKey { r, mn, mm };
-        self.regions.get(&key)
-            .and_then(|data| data.cells.get(&(sq, sr)).copied())
-    }
-
     /// Check and clear the new-data flag.
     pub fn take_new_data(&self) -> bool {
         self.new_data.swap(false, Ordering::Relaxed)

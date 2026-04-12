@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use qrz::Convert;
 
 use crate::{
-    components::{behaviour::*, heading::*, keybits::*, position::{Position, VisualPosition}, resources::*, *},
+    components::{behaviour::*, heading::*, position::{Position, VisualPosition}, *},
     message::{Component, Event, *},
     resources::map::*
 };

@@ -270,7 +270,7 @@ pub fn dispatch_summary_tasks(
 
     // Local regions: camera-dependent (bands within streaming radius).
     // Only computed when we have a camera position.
-    let mut needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
+    let needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
         match (camera_pos, forced_radius.0) {
             (_, Some(r)) => {
                 common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks)
