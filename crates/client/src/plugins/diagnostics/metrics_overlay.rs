@@ -13,8 +13,6 @@ use common_bevy::{
 };
 use qrz::Convert;
 
-use crate::components::ChunkMesh;
-use crate::resources::LoadedChunks;
 
 // ── Layout constants (match server console) ──
 
@@ -156,7 +154,6 @@ pub struct MetricsHistory {
     cached_frame: Vec<f32>,
     cached_bw: Vec<f32>,
     cached_msg: Vec<f32>,
-    cached_chunk_count: usize,
 }
 
 impl Default for MetricsHistory {
@@ -173,7 +170,6 @@ impl Default for MetricsHistory {
             cached_frame: Vec::new(),
             cached_bw: Vec::new(),
             cached_msg: Vec::new(),
-            cached_chunk_count: 0,
         }
     }
 }
@@ -186,7 +182,6 @@ pub fn sample_metrics(
     network: Res<NetworkMetrics>,
     mut history: ResMut<MetricsHistory>,
     client_timers: Res<crate::resources::ClientTimers>,
-    chunk_mesh_q: Query<&ChunkMesh>,
 ) {
     let _t = client_timers.0.scope("metrics");
     // Every frame: push raw frame time into the 2s p95 window
@@ -215,8 +210,6 @@ pub fn sample_metrics(
     history.cached_frame = history.frame_ms.as_f32();
     history.cached_bw = history.bw.as_f32();
     history.cached_msg = history.msg.as_f32();
-    history.cached_chunk_count = chunk_mesh_q.iter().count();
-
     // Drain system timers into per-system histories
     for (name, p95, _count) in client_timers.0.drain() {
         history.timings.entry(name)
@@ -469,7 +462,6 @@ pub fn update_metrics_overlay(
         (&Transform, Option<&Loc>),
         (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
     >,
-    loaded_chunks: Res<LoadedChunks>,
     tri_stats: Res<crate::resources::LodTriangleStats>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
@@ -557,16 +549,8 @@ pub fn update_metrics_overlay(
     });
 
 
-    let full_count = history.cached_chunk_count;
-    let pending_lod = 0;
-
     let total_tris = tri_stats.total_tris;
     let mesh_count = tri_stats.mesh_count;
-
-    #[cfg(feature = "admin")]
-    let admin_count = if flyover.active { flyover.generated_chunks.len() } else { 0 };
-    #[cfg(not(feature = "admin"))]
-    let admin_count = 0usize;
 
 
     let frame_p95 = history.frame_p95;
@@ -617,15 +601,13 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:<7}", COORD.fmt(wx)), COLOR_DIM);
                             s.half(&format!("{:<7}", COORD.fmt(wy)), COLOR_DIM);
                         });
-                        // mesh/load/pending
-                        const CHUNK_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
+                        // Async task counts
+                        const ASYNC_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "mesh"), COLOR_DIM);
-                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(full_count as f64)), COLOR_DIM);
-                            s.half(&format!("{:>7}", "load"), COLOR_DIM);
-                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(loaded_chunks.chunks.len() as f64)), COLOR_DIM);
-                            s.half(&format!("{:>7}", "pend"), COLOR_DIM);
-                            s.half(&format!("{:>5}  ", CHUNK_CT.fmt(pending_lod as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "async"), COLOR_DIM);
+                            s.half(&format!("{:>4}til", ASYNC_CT.fmt(tri_stats.async_tile as f64)), COLOR_DIM);
+                            s.half(&format!("{:>4}msh", ASYNC_CT.fmt(tri_stats.async_mesh as f64)), COLOR_DIM);
+                            s.half(&format!("{:>4}cz ", ASYNC_CT.fmt(tri_stats.async_cz as f64)), COLOR_DIM);
                         });
                         // Hex-native LoD stats: per-tier breakdown
                         const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -642,13 +624,6 @@ pub fn update_metrics_overlay(
                                 s.half(&format!("  r={:<3}", r), COLOR_DIM);
                                 s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(band_tris as f64)), COLOR_DIM);
                                 s.half(&format!("{:>4}chk", LOD_CT.fmt(band_count as f64)), COLOR_DIM);
-                            });
-                        }
-                        if admin_count > 0 {
-                            const ADMIN_CT: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
-                            seg_row(ui, cw, |s| {
-                                s.half(&format!("{:>7}", "gen"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ADMIN_CT.fmt(admin_count as f64)), COLOR_DIM);
                             });
                         }
                     });

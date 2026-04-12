@@ -87,6 +87,10 @@ pub struct LodTriangleStats {
     pub mesh_count: u32,
     /// Per-band breakdown: r → (tris, mesh_count).
     pub per_band: std::collections::BTreeMap<u32, (u64, u32)>,
+    /// In-flight async task counts.
+    pub async_cz: u32,
+    pub async_mesh: u32,
+    pub async_tile: u32,
 }
 
 /// Tracks which chunks have been received on the client

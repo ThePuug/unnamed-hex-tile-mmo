@@ -311,8 +311,11 @@ pub fn dispatch_summary_tasks(
 
     // Dispatch build tasks for needed regions
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
+    const MAX_MESH_TASKS: usize = 16;
+    let mut mesh_dispatched = 0;
 
     for region_key in &needed {
+        if mesh_dispatched >= MAX_MESH_TASKS { break; }
         if let Some(state) = summary_meshes.states.get(region_key) {
             if state.task.is_some() {
                 continue;
@@ -364,6 +367,7 @@ pub fn dispatch_summary_tasks(
                 },
             );
         }
+        mesh_dispatched += 1;
     }
 
 }
@@ -384,7 +388,7 @@ fn compute_auto_mode_regions(
     // camera_height = CAMERA_DISTANCE * tan(half_fov + margin) + player_z * RISE
     // far_ground = camera_height / tan(margin)
     // Approximate player_z from camera Y (camera Y ≈ player terrain Y + camera height offset)
-    let camera_height_offset = crate::systems::camera::gameplay_camera_height();
+    let camera_height_offset = crate::systems::camera::camera_height(fov);
     let player_approx_y = (camera_pos.y - camera_height_offset).max(0.0);
     let camera_total_height = camera_height_offset + player_approx_y;
     let margin_rad = crate::systems::camera::HORIZON_MARGIN_DEG.to_radians();
@@ -734,5 +738,6 @@ pub fn poll_summary_meshes(
     }
     tri_stats.total_tris = total_tris;
     tri_stats.mesh_count = mesh_count;
+    tri_stats.async_mesh = summary_meshes.states.values().filter(|s| s.task.is_some()).count() as u32;
 }
 

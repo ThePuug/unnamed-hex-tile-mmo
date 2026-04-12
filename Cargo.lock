@@ -2415,7 +2415,7 @@ dependencies = [
  "chrono",
  "common",
  "common-bevy",
- "parking_lot",
+ "dashmap",
  "qrz",
  "renet",
  "renet_netcode",

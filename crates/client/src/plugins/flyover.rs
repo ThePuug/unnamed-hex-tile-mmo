@@ -49,9 +49,7 @@ impl Plugin for FlyoverPlugin {
             poll_flyover_tile_tasks.run_if(flyover_active),
             flyover_poll_summary_tasks.run_if(flyover_active),
             flyover_summary_dispatch.run_if(flyover_active),
-            flyover_generate_chunks
-                .run_if(flyover_active)
-                .run_if(on_timer(Duration::from_millis(200))),
+            flyover_generate_chunks.run_if(flyover_active),
             flyover_evict_chunks
                 .run_if(flyover_active)
                 .run_if(on_timer(Duration::from_secs(1))),
@@ -112,8 +110,7 @@ struct AdminComposite(pub Arc<world::events::Composite>);
 impl Default for AdminComposite {
     fn default() -> Self {
         let seed = 0x9E3779B97F4A7C15;
-        let plate_cache = std::sync::Mutex::new(world::PlateCache::new(seed));
-        let plate_cache = std::sync::Arc::new(plate_cache);
+        let plate_cache = std::sync::Arc::new(world::PlateCache::new(seed));
         let mut composite = world::events::Composite::new(seed);
         composite.add_event(Box::new(world::events::plates::PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(world::events::spines::SpineEvent::with_cache(plate_cache, seed)));
@@ -129,7 +126,6 @@ struct FlyoverSummaryTracker {
     computed: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
     in_flight: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
     tasks: Vec<(common_bevy::summary_mesh::MeshRegionKey, Task<Vec<common_bevy::message::SummaryData>>)>,
-    last_pos: Vec3,
 }
 
 /// Pending async tile generation tasks.
@@ -156,7 +152,6 @@ const RAMP_SECONDS: f32 = 3.0;
 const MAX_SPEED_MULTIPLIER: f32 = 10.0;
 const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 
-const MIN_UPDATE_DISTANCE: f32 = 20.0;
 
 
 // ──── Systems ────
@@ -501,15 +496,20 @@ fn flyover_generate_chunks(
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
     let gen_radius = detail_radius + 3;
 
-    let candidates: Vec<ChunkId> = common_bevy::chunk::calculate_visible_chunks(center, gen_radius)
+    let mut candidates: Vec<ChunkId> = common_bevy::chunk::calculate_visible_chunks(center, gen_radius)
         .into_iter()
         .filter(|id| !flyover.generated_chunks.contains(id) && !loaded_chunks.chunks.contains(id))
         .filter(|id| !pending_tiles.tasks.contains_key(id))
         .collect();
 
+    candidates.sort_by_key(|id| chunk_hex_distance(center, *id));
+
+    const MAX_TILE_TASKS: usize = 16;
+    let budget = MAX_TILE_TASKS.saturating_sub(pending_tiles.tasks.len());
+
     let pool = AsyncComputeTaskPool::get();
 
-    for chunk_id in candidates {
+    for chunk_id in candidates.into_iter().take(budget) {
         flyover.generated_chunks.insert(chunk_id);
         skip_regen.chunks.insert(chunk_id);
 
@@ -681,16 +681,12 @@ fn report_terrain_at_cursor(
 fn flyover_summary_dispatch(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
+    summary_cache: Res<crate::resources::SummaryCache>,
     admin_composite: Res<AdminComposite>,
 ) {
     if !flyover.active { return; }
 
     let pos = flyover.world_position;
-    let horiz_dist = ((pos.x - tracker.last_pos.x).powi(2) + (pos.z - tracker.last_pos.z).powi(2)).sqrt();
-    if horiz_dist < MIN_UPDATE_DISTANCE && !tracker.computed.is_empty() {
-        return;
-    }
-    tracker.last_pos = pos;
 
     use common_bevy::message::SummaryData;
     use common_bevy::summary::{compute_active_bands, summary_lattice, mesh_region_lattice, select_center_z};
@@ -712,12 +708,41 @@ fn flyover_summary_dispatch(
         visible_regions.extend(regions);
     }
 
-    // Dispatch one async task per new mesh region
-    let pool = AsyncComputeTaskPool::get();
-    for &region_key in &visible_regions {
-        if tracker.computed.contains(&region_key) { continue; }
-        if tracker.in_flight.contains(&region_key) { continue; }
+    // Collect regions needing dispatch, sorted nearest-first
+    let mut to_dispatch: Vec<MeshRegionKey> = visible_regions.iter()
+        .filter(|k| {
+            if tracker.computed.contains(k) { return false; }
+            if tracker.in_flight.contains(k) { return false; }
+            if summary_cache.contains_region(k) {
+                // already drop mutability issue — handle below
+                return true; // will re-check
+            }
+            true
+        })
+        .copied()
+        .collect();
 
+    // Mark cache hits as computed (no async needed)
+    to_dispatch.retain(|k| {
+        if summary_cache.contains_region(k) {
+            tracker.computed.insert(*k);
+            false
+        } else {
+            true
+        }
+    });
+
+    to_dispatch.sort_by(|a, b| {
+        region_distance_sq(a, pos.x, pos.z)
+            .partial_cmp(&region_distance_sq(b, pos.x, pos.z))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    const MAX_CZ_TASKS: usize = 16;
+    let budget = MAX_CZ_TASKS.saturating_sub(tracker.in_flight.len());
+
+    let pool = AsyncComputeTaskPool::get();
+    for region_key in to_dispatch.into_iter().take(budget) {
         tracker.in_flight.insert(region_key);
 
         let composite = admin_composite.0.clone();
@@ -725,11 +750,12 @@ fn flyover_summary_dispatch(
         let task = pool.spawn(async move {
             let summary_lat = summary_lattice(rk.r);
             let region_lat = mesh_region_lattice();
+            let d = (2 * rk.r as i32 + 1) / 3;
             region_lat.tiles_in_cell((rk.mn, rk.mm))
                 .map(|(sn, sm)| {
-                    let tile_zs: Vec<i32> = summary_lat
-                        .tiles_in_cell((sn, sm))
-                        .map(|(tq, tr)| composite.elevation_at(tq, tr))
+                    let (cq, cr) = summary_lat.cell_center((sn, sm));
+                    let tile_zs: Vec<i32> = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)].iter()
+                        .map(|&(dq, dr)| composite.elevation_at(cq + dq, cr + dr))
                         .collect();
                     let center_z = select_center_z(&tile_zs);
                     SummaryData { r: rk.r, sq: sn, sr: sm, center_z }
@@ -747,6 +773,8 @@ fn flyover_poll_summary_tasks(
     flyover: Res<FlyoverState>,
     mut tracker: ResMut<FlyoverSummaryTracker>,
     summary_cache: Res<crate::resources::SummaryCache>,
+    pending_tiles: Res<PendingFlyoverTiles>,
+    mut tri_stats: ResMut<crate::resources::LodTriangleStats>,
 ) {
     if !flyover.active { return; }
 
@@ -766,4 +794,19 @@ fn flyover_poll_summary_tasks(
         }
     }
     tracker.tasks = pending;
+
+    tri_stats.async_cz = tracker.tasks.len() as u32;
+    tri_stats.async_tile = pending_tiles.tasks.len() as u32;
+}
+
+/// Squared horizontal distance from player to mesh region center.
+fn region_distance_sq(key: &common_bevy::summary_mesh::MeshRegionKey, px: f32, pz: f32) -> f32 {
+    let summary_lat = common_bevy::summary::summary_lattice(key.r);
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let region_center = region_lat.cell_center((key.mn, key.mm));
+    let (cq, cr) = summary_lat.cell_center(region_center);
+    let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
+    let dx = wx - px;
+    let dz = wz - pz;
+    dx * dx + dz * dz
 }
