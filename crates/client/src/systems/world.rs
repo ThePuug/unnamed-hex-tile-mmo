@@ -252,8 +252,8 @@ pub fn dispatch_summary_tasks(
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let map_changed = map.take_changed();
-    let summaries_changed = summary_cache.take_changed();
-    if !map_changed && !summaries_changed {
+    let cache_changed = summary_cache.take_new_data();
+    if !map_changed && !cache_changed {
         return;
     }
     let _t = client_timers.0.scope("sum_disp");
@@ -294,12 +294,6 @@ pub fn dispatch_summary_tasks(
             }
         };
 
-    // Server/flyover regions: add any mesh regions with new summary data.
-    // Only includes regions that changed since last dispatch — O(dirty), not O(cache).
-    if summaries_changed {
-        needed.extend(summary_cache.take_dirty_regions());
-    }
-
     // Evict any mesh region not in the current needed set.
     let stale: Vec<common_bevy::summary_mesh::MeshRegionKey> = summary_meshes
         .states
@@ -328,6 +322,10 @@ pub fn dispatch_summary_tasks(
             {
                 continue;
             }
+        }
+        // Only dispatch r>0 if cache has data for this region
+        if region_key.r > 0 && !summary_cache.contains_region(region_key) {
+            continue;
         }
 
         let radius = region_key.r;
@@ -471,9 +469,10 @@ fn collect_and_build_summary_mesh(
             .map_or(empty, smr_to_result);
     }
 
-    // r>0: cache-only (server or flyover local server populates SummaryCache).
+    // r>0: bulk region lookup — one DashMap access, then 271 lock-free reads.
+    let region_data = cache.get_region(&region_key);
     let summary_z_fn = |sq: i32, sr: i32| -> Option<i32> {
-        cache.get_by_lattice(radius, sq, sr)
+        region_data.as_ref().and_then(|d| d.cells.get(&(sq, sr)).copied())
     };
 
     common_bevy::summary_mesh::build_summary_mesh_region_from_summaries(

@@ -755,7 +755,10 @@ fn flyover_poll_summary_tasks(
 
     for (region_key, mut task) in current {
         if let Some(results) = block_on(future::poll_once(&mut task)) {
-            summary_cache.apply_batch(&results, &[]);
+            let cells: HashMap<(i32, i32), i32> = results.iter()
+                .map(|d| ((d.sq, d.sr), d.center_z))
+                .collect();
+            summary_cache.insert_region(region_key, crate::resources::RegionData { cells });
             tracker.in_flight.remove(&region_key);
             tracker.computed.insert(region_key);
         } else {

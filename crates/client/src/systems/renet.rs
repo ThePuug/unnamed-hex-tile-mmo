@@ -243,16 +243,21 @@ pub fn write_do(
             Do { event: Event::EvictChunks { ent: _, chunks } } => {
                 do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
             }
-            Do { event: Event::SummaryBatch { ent: _, additions, removals } } => {
-                if !additions.is_empty() || !removals.is_empty() {
-                    debug!(
-                        "[summary-client] batch: +{} -{} (cache total after: ~{})",
-                        additions.len(),
-                        removals.len(),
-                        additions.len(), // approximate; exact count not worth a read lock
-                    );
+            Do { event: Event::SummaryBatch { ent: _, additions, removals: _ } } => {
+                if !additions.is_empty() {
+                    debug!("[summary-client] batch: +{}", additions.len());
                 }
-                summary_cache.apply_batch(&additions, &removals);
+                // Group additions by mesh region
+                let region_lat = common_bevy::summary::mesh_region_lattice();
+                let mut by_region: std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, std::collections::HashMap<(i32,i32), i32>> = std::collections::HashMap::new();
+                for add in &additions {
+                    let (mn, mm) = region_lat.cell_id(add.sq, add.sr);
+                    let key = common_bevy::summary_mesh::MeshRegionKey { r: add.r, mn, mm };
+                    by_region.entry(key).or_default().insert((add.sq, add.sr), add.center_z);
+                }
+                for (key, cells) in by_region {
+                    summary_cache.insert_region(key, crate::resources::RegionData { cells });
+                }
             }
             _ => {
                 warn!("Unexpected message type on ReliableUnordered channel");

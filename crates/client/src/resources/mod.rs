@@ -8,10 +8,11 @@ use bimap::BiMap;
 use std::collections::{HashMap, HashSet};
 
 use std::sync::Arc;
-use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use dashmap::DashMap;
 
 use common_bevy::chunk::ChunkId;
-use common_bevy::message::{SummaryData, SummaryKey};
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// Custom terrain material extension that computes elevation color in the fragment shader.
@@ -165,98 +166,58 @@ pub struct SummaryMesh {
     pub region_key: MeshRegionKey,
 }
 
-/// Unified cache of summary center_z values for all r >= 1 bands.
+/// Per-region summary elevation cache.
 ///
-/// Producers:
-/// - **r=1–2 local:** computed from Map tile data via `select_center_z()`
-/// - **r=3+ server:** received via `SummaryBatch` from server
-/// - **r=3+ flyover:** computed from `AdminComposite.elevation_at()`
-///
-/// Consumer: `build_summary_mesh_region_from_summaries()` reads center_z
-/// for all r >= 1 mesh regions. r=0 still reads tiles from the Map directly.
-///
-/// Arc-wrapped so async mesh build tasks can read it.
-#[derive(Resource, Clone)]
+/// Each entry holds all ~271 center_z values for one mesh region.
+/// DashMap for per-region locking — async mesh build tasks get an Arc
+/// clone (one brief shard lock) then read 271 values lock-free.
+#[derive(Resource, Clone, Default)]
 pub struct SummaryCache {
-    inner: Arc<RwLock<SummaryCacheInner>>,
+    regions: Arc<DashMap<MeshRegionKey, Arc<RegionData>>>,
+    new_data: Arc<AtomicBool>,
 }
 
-struct SummaryCacheInner {
-    entries: HashMap<SummaryKey, i32>,
-    changed: bool,
-    /// Mesh region keys that have new/updated data since last take.
-    dirty_regions: HashSet<common_bevy::summary_mesh::MeshRegionKey>,
-}
-
-impl Default for SummaryCache {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(SummaryCacheInner {
-                entries: HashMap::new(),
-                changed: false,
-                dirty_regions: HashSet::new(),
-            })),
-        }
-    }
+/// Elevation data for one mesh region's summary cells.
+pub struct RegionData {
+    pub cells: HashMap<(i32, i32), i32>,
 }
 
 impl SummaryCache {
-    /// Insert a single summary (used by async tasks computing local r=1–2).
-    /// Does NOT set the changed flag — async-produced entries are consumed
-    /// by the task that produced them, not by a subsequent dispatch cycle.
-    pub fn insert(&self, key: SummaryKey, center_z: i32) {
-        self.inner.write().entries.insert(key, center_z);
+    /// Insert a complete region (all 271 cells computed atomically).
+    pub fn insert_region(&self, key: MeshRegionKey, data: RegionData) {
+        self.regions.insert(key, Arc::new(data));
+        self.new_data.store(true, Ordering::Relaxed);
     }
 
-    /// Apply a batch of additions and removals (server SummaryBatch or flyover).
-    /// Tracks affected mesh regions so dispatch can target just those.
-    pub fn apply_batch(&self, additions: &[SummaryData], _removals: &[SummaryKey]) {
-        let mut inner = self.inner.write();
+    /// Get a region's data. Returns Arc for lock-free reading.
+    pub fn get_region(&self, key: &MeshRegionKey) -> Option<Arc<RegionData>> {
+        self.regions.get(key).map(|r| r.value().clone())
+    }
+
+    /// Check if a region exists in the cache.
+    pub fn contains_region(&self, key: &MeshRegionKey) -> bool {
+        self.regions.contains_key(key)
+    }
+
+    /// Look up a single cell's center_z (convenience for mesh builder).
+    pub fn get_cell(&self, r: u32, sq: i32, sr: i32) -> Option<i32> {
         let region_lat = common_bevy::summary::mesh_region_lattice();
-        for add in additions {
-            let key = SummaryKey { r: add.r, sq: add.sq, sr: add.sr };
-            inner.entries.insert(key, add.center_z);
-            let (mn, mm) = region_lat.cell_id(add.sq, add.sr);
-            inner.dirty_regions.insert(common_bevy::summary_mesh::MeshRegionKey { r: add.r, mn, mm });
-        }
-        // Removals are no-ops: cache stays warm, mesh eviction is position-based.
-        if !additions.is_empty() {
-            inner.changed = true;
-        }
+        let (mn, mm) = region_lat.cell_id(sq, sr);
+        let key = MeshRegionKey { r, mn, mm };
+        self.regions.get(&key)
+            .and_then(|data| data.cells.get(&(sq, sr)).copied())
     }
 
-    /// Check and clear the changed flag.
-    pub fn take_changed(&self) -> bool {
-        let mut inner = self.inner.write();
-        let changed = inner.changed;
-        inner.changed = false;
-        changed
+    /// Check and clear the new-data flag.
+    pub fn take_new_data(&self) -> bool {
+        self.new_data.swap(false, Ordering::Relaxed)
     }
 
-    /// Clear all entries (used when switching between flyover and normal mode).
+    /// Clear all entries (flyover toggle-off).
     pub fn clear(&self) {
-        let mut inner = self.inner.write();
-        inner.entries.clear();
-        inner.dirty_regions.clear();
-        inner.changed = true;
+        self.regions.clear();
+        self.new_data.store(true, Ordering::Relaxed);
     }
-
-    /// Look up a summary's center_z by key.
-    pub fn get(&self, key: &SummaryKey) -> Option<i32> {
-        self.inner.read().entries.get(key).copied()
-    }
-
-    /// Look up by summary-lattice coordinates.
-    pub fn get_by_lattice(&self, r: u32, sq: i32, sr: i32) -> Option<i32> {
-        self.get(&SummaryKey { r, sq, sr })
-    }
-
-    /// Drain the set of mesh regions with new/updated data.
-    pub fn take_dirty_regions(&self) -> HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-        let mut inner = self.inner.write();
-        std::mem::take(&mut inner.dirty_regions)
-    }
-
 }
 
 /// Client-side system timers. Wraps `common::timers::SystemTimers`.
