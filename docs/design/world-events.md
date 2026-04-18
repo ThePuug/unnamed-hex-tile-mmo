@@ -434,7 +434,7 @@ Metrics reflect the two-cascade architecture. All counters are **lock-free** (`A
 - **indexed** — gauge. Warm cells in DashMap (`cache.cells.len()`).
 - **cell hit%** — atomic. `hits / (hits + misses)`.
 
-Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them.
+Gauges breathe with player movement — exploration grows them, LRU eviction shrinks them (currently disabled; see Implementation Gaps).
 
 ---
 
@@ -492,6 +492,8 @@ Where the current implementation intentionally differs from spec:
 **Resolved**: world-viewer — migrated from generate_region() to Composite. Same event stack as server.
 
 **Post-migration**: Campsite terrain output (flora clearing, entity placements) — SpawnerEvent Pass 2
+
+**Deferred — CellCache eviction**: `CellCache::evict_if_over_budget` is currently a no-op — per-layer cell caches grow unbounded for the duration of the process. `max_cells` / `last_accessed` / `access_counter` infrastructure is still wired up in anticipation of reinstating LRU. Memory risk accepted short-term (bounded by explored area × event count × per-cell tile count); STAFF_ENGINEER owns the follow-up. Framework contract still specifies `remove_cell` on every index for when eviction returns.
 
 ---
 

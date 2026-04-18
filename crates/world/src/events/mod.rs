@@ -232,14 +232,9 @@ impl CellCache {
     }
 
     fn evict_if_over_budget(&self) {
-        if self.cells.len() <= self.max_cells { return; }
-        let lru_key = self.cells.iter()
-            .min_by_key(|entry| entry.last_accessed.load(Relaxed))
-            .map(|entry| *entry.key());
-        if let Some(key) = lru_key {
-            self.cells.remove(&key);
-            self.deform_locks.remove(&key);
-        }
+        // Eviction intentionally disabled — caches grow unbounded.
+        // `max_cells` / `last_accessed` / `access_counter` are retained for when
+        // LRU is reinstated. See docs/design/world-events.md (Implementation Gaps).
     }
 }
 
