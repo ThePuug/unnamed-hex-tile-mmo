@@ -166,9 +166,6 @@ impl WorldEvent for SpineEvent {
         let lattice = HexLattice::new(self.scale());
         let nearby_cells = lattice.cells_within_distance(cell_id, 1);
         let instances = spine_index.instances_in(&nearby_cells);
-        if instances.len() > 50 {
-            log::warn!("spine query ({},{}) instances={} cells={}", q, r, instances.len(), nearby_cells.len());
-        }
 
         let mut max_elev = 0.0f64;
         let mut best_tag: Option<PlateTag> = None;
