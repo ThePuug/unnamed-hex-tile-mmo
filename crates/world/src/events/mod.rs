@@ -275,40 +275,49 @@ impl Composite {
     /// Get the final tile state at (q, r). Lazily triggers deform + query cascades.
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
+        let _span = tracing::info_span!("tile_at", q, r).entered();
+
         // Phase 1: Deform cascade — ensure all cells containing this tile are deformed
-        for layer in 0..self.events.len() {
-            let cell_id = self.lattices[layer].cell_id(q, r);
-            self.ensure_deformed(layer, cell_id);
+        {
+            let _s = tracing::debug_span!("deform").entered();
+            for layer in 0..self.events.len() {
+                let cell_id = self.lattices[layer].cell_id(q, r);
+                self.ensure_deformed(layer, cell_id);
+            }
         }
 
         // Phase 2: Query cascade — resolve tile bottom-up
         let (wx, wy) = hex_to_world(q, r);
         let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
 
-        for layer in 0..self.events.len() {
-            let cell_id = self.lattices[layer].cell_id(q, r);
-            self.cell_caches[layer].touch(cell_id);
+        {
+            let _s = tracing::debug_span!("query").entered();
+            for layer in 0..self.events.len() {
+                let cell_id = self.lattices[layer].cell_id(q, r);
+                self.cell_caches[layer].touch(cell_id);
 
-            let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
-            let tile_out = if let Some(to) = cached {
-                self.metrics.tile_counters.record(true);
-                to
-            } else {
-                self.metrics.tile_counters.record(false);
-                let below_fn = |bq: i32, br: i32| -> TileView {
-                    self.resolve_below(layer, bq, br)
+                let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
+                let tile_out = if let Some(to) = cached {
+                    self.metrics.tile_counters.record(true);
+                    to
+                } else {
+                    self.metrics.tile_counters.record(false);
+                    let below_fn = |bq: i32, br: i32| -> TileView {
+                        self.resolve_below(layer, bq, br)
+                    };
+                    let result = self.events[layer].query(q, r, cell_id, &self.indexes, &below_fn, self.seed);
+                    match result {
+                        Some(to) => { self.cell_caches[layer].insert_tile(cell_id, q, r, to); to }
+                        None => TileOutput::default(),
+                    }
                 };
-                let result = self.events[layer].query(q, r, cell_id, &self.indexes, &below_fn, self.seed);
-                match result {
-                    Some(to) => { self.cell_caches[layer].insert_tile(cell_id, q, r, to); to }
-                    None => TileOutput::default(),
-                }
-            };
 
-            for t in tile_out.tags_added.iter() { view.tags.add(t); }
-            for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
-            view.elevation += tile_out.elevation_delta;
+                for t in tile_out.tags_added.iter() { view.tags.add(t); }
+                for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
+                view.elevation += tile_out.elevation_delta;
+            }
         }
+
         view
     }
 

@@ -8086,6 +8086,7 @@ dependencies = [
  "common",
  "dashmap",
  "parking_lot",
+ "tracing",
 ]
 
 [[package]]

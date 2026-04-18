@@ -7,3 +7,4 @@ edition = "2021"
 common = { path = "../common" }
 dashmap = "6"
 parking_lot = "0.12"
+tracing = "0.1"
