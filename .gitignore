@@ -1,4 +1,3 @@
 target/
-.claude/settings.local.json
-.claude/prompts/
-Cargo.lockrustc-ice-*.txt
+.claude/
+rustc-ice-*.txt
