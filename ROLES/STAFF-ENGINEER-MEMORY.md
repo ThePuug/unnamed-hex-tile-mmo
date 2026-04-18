@@ -37,6 +37,20 @@ Last updated: 2026-04-12
 - Read-only mesh builder — removed cache.insert from mesh build path, eliminates write lock contention
 - SummaryCache DashMap (7821f20) — per-region locking via DashMap<MeshRegionKey, Arc<RegionData>>, deleted global RwLock + dirty_regions + changed bookkeeping, completeness gate on dispatch
 
+**Completed (2026-04-16):**
+- Unified center_z sampling — `sample_center_z` in common-bevy/summary.rs, 7-sample [i32;7] zero-alloc. Server and flyover both call it. Eliminates 13-39x overhead at outer bands.
+
+**Completed (2026-04-18, uncommitted):**
+- Server summary dispatch restructure — per-MeshRegionKey batching + nearest-first ordering + MAX_SUMMARY_TASKS=16 budget.
+- `Composite::tile_at` instrumentation swapped Instant::now() → tracing spans (`info_span!("tile_at")` + `debug_span!("deform"/"query")`). Visible in Tracy with `--features trace`. Dropped `tile_hit_miss()`.
+- `CellCache` eviction intentionally disabled while LoD bottleneck hunt is in progress. Documented in `docs/design/world-events.md:486-496` (Implementation Gaps) with STAFF_ENGINEER owning reinstatement. Not a silent regression.
+
+**Completed (2026-04-18, uncommitted):**
+- Server dispatch partition fusion — single-pass `any_new`/`all_cached`, `cells.collect()` removed, 2×271 → 271 `vis_cache.sent.contains` lookups per region. Build clean, no summary-specific tests exist. Runtime validation outstanding (user's step).
+
+**Reinstatement owed (tracked in world-events.md Implementation Gaps):**
+- CellCache LRU eviction — investigate why the previous `min_by_key` over DashMap was too aggressive before returning. Candidate fix: segmented reservoir / size-triggered batch eviction rather than per-insert probe.
+
 **Remaining:**
 
 | Concern | Detail |
@@ -46,7 +60,6 @@ Last updated: 2026-04-12
 | Spec reconciliation | Architect role — flat-hex vs hex-native decimation from spec |
 | `mesh_region_lattice()` alloc | Creates new HexLattice on every call, should be OnceLock |
 | Cache miss speed | Flyover async center_z computation is slow on first activation at altitude — tens of thousands of elevation_at calls |
-| Ordered outward dispatch | Meshes pop in haphazardly — no distance ordering. Frontier-based dispatch proposed but deferred. |
 
 ### Scaling Risks (before 50+ players)
 
