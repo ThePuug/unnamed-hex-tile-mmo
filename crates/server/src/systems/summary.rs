@@ -7,7 +7,8 @@ use common_bevy::{
     components::Loc,
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, select_center_z, summary_lattice, visible_summary_cells_in_band},
+    summary::{compute_active_bands, mesh_region_lattice, sample_center_z, summary_lattice},
+    summary_mesh::{MeshRegionKey, visible_mesh_regions_in_band_ungated},
 };
 
 use crate::resources::event_registry::EventRegistry;
@@ -31,22 +32,24 @@ impl Default for VisibleSummaryCache {
     }
 }
 
-/// In-flight async summary computation tasks.
+/// In-flight async summary computation tasks (one per mesh region).
 #[derive(Resource, Default)]
 pub struct SummaryTaskQueue {
-    tasks: Vec<(Entity, Vec<SummaryKey>, Task<Vec<SummaryData>>)>,
-    in_flight: HashSet<SummaryKey>,
+    tasks: Vec<(Entity, MeshRegionKey, Task<Vec<SummaryData>>)>,
+    in_flight: HashSet<MeshRegionKey>,
 }
 
 /// Minimum world-unit movement before recomputing the visible summary set.
 const MIN_UPDATE_DISTANCE: f32 = 20.0;
 /// Minimum z-level change before recomputing (handles vertical movement).
 const MIN_UPDATE_Z: i32 = 10;
+/// Maximum in-flight async region tasks across all players.
+const MAX_SUMMARY_TASKS: usize = 16;
 
 /// Compute visible summary sets per player, dispatch async tasks for cache misses.
 ///
-/// Cache hits are sent immediately. Cache misses are dispatched to the
-/// AsyncComputeTaskPool — no synchronous elevation queries on the main thread.
+/// Operates at MeshRegionKey granularity (271 summaries per region), matching
+/// the flyover dispatch pattern. Regions dispatch nearest-first.
 pub fn dispatch_summary_tasks(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &mut VisibleSummaryCache)>,
@@ -83,16 +86,25 @@ pub fn dispatch_summary_tasks(
 
         let bands = compute_active_bands(far_ground, common::camera::MAX_GAMEPLAY_FOV);
 
-        let mut visible_set: HashSet<SummaryKey> = HashSet::new();
-
+        // Build visible regions (MeshRegionKey granularity)
+        let mut visible_regions: HashSet<MeshRegionKey> = HashSet::new();
         for band in &bands {
             if band.outer_wu <= FIXED_STREAM_RADIUS_WU {
                 continue;
             }
             let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
-            let cells = visible_summary_cells_in_band(band.r, cam_wx, cam_wz, inner, band.outer_wu);
-            for (sq, sr) in cells {
-                visible_set.insert(SummaryKey { r: band.r, sq, sr });
+            let regions = visible_mesh_regions_in_band_ungated(
+                band.r, cam_wx, cam_wz, inner, band.outer_wu,
+            );
+            visible_regions.extend(regions);
+        }
+
+        // Expand regions → individual SummaryKeys for per-client tracking
+        let region_lat = mesh_region_lattice();
+        let mut visible_set: HashSet<SummaryKey> = HashSet::new();
+        for rk in &visible_regions {
+            for (sq, sr) in region_lat.tiles_in_cell((rk.mn, rk.mm)) {
+                visible_set.insert(SummaryKey { r: rk.r, sq, sr });
             }
         }
 
@@ -113,57 +125,68 @@ pub fn dispatch_summary_tasks(
             }
         }
 
-        // Partition additions: cache hits send now, cache misses go async
-        let mut cached = Vec::new();
-        let mut to_compute = Vec::new();
+        // Partition regions: fully sent, cache-hit, or needs async
+        let mut cached_additions = Vec::new();
+        let mut to_dispatch: Vec<MeshRegionKey> = Vec::new();
 
-        for key in &visible_set {
-            if vis_cache.sent.contains(key) {
-                continue;
+        for rk in &visible_regions {
+            let mut any_new = false;
+            let mut all_cached = true;
+            for (sq, sr) in region_lat.tiles_in_cell((rk.mn, rk.mm)) {
+                let key = SummaryKey { r: rk.r, sq, sr };
+                if vis_cache.sent.contains(&key) { continue; }
+                any_new = true;
+                if let Some(center_z) = summary_cache.get(&key) {
+                    cached_additions.push(SummaryData { r: rk.r, sq, sr, center_z });
+                    vis_cache.sent.insert(key);
+                } else {
+                    all_cached = false;
+                }
             }
-            if let Some(center_z) = summary_cache.get(key) {
-                cached.push(SummaryData { r: key.r, sq: key.sq, sr: key.sr, center_z });
-                vis_cache.sent.insert(*key);
-            } else if !task_queue.in_flight.contains(key) {
-                to_compute.push(*key);
+            if any_new && !all_cached && !task_queue.in_flight.contains(rk) {
+                to_dispatch.push(*rk);
             }
         }
 
-        if !cached.is_empty() {
+        if !cached_additions.is_empty() {
             writer.write(Do {
-                event: Event::SummaryBatch { ent, additions: cached, removals: Vec::new() },
+                event: Event::SummaryBatch { ent, additions: cached_additions, removals: Vec::new() },
             });
         }
 
-        if !to_compute.is_empty() {
+        // Sort nearest-first, apply task budget
+        to_dispatch.sort_by(|a, b| {
+            region_distance_sq(a, cam_wx, cam_wz)
+                .partial_cmp(&region_distance_sq(b, cam_wx, cam_wz))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let budget = MAX_SUMMARY_TASKS.saturating_sub(task_queue.in_flight.len());
+        let dispatched: Vec<MeshRegionKey> = to_dispatch.into_iter().take(budget).collect();
+
+        if !dispatched.is_empty() {
             info!(
-                "[summary-server] player ({},{}) z={}: dispatching {} async ({} cached, {} in-flight)",
-                q, r, z, to_compute.len(),
+                "[summary-server] player ({},{}) z={}: dispatching {} regions ({} cached, {} in-flight)",
+                q, r, z, dispatched.len(),
                 vis_cache.sent.len(),
                 task_queue.in_flight.len(),
             );
 
-            for key in &to_compute {
-                task_queue.in_flight.insert(*key);
+            let pool = AsyncComputeTaskPool::get();
+            for rk in dispatched {
+                task_queue.in_flight.insert(rk);
+                let reg = registry.clone();
+                let task = pool.spawn(async move {
+                    let rl = mesh_region_lattice();
+                    rl.tiles_in_cell((rk.mn, rk.mm))
+                        .map(|(sq, sr)| {
+                            let center_z = sample_center_z(rk.r, sq, sr, |q, r| reg.elevation_at(q, r));
+                            SummaryData { r: rk.r, sq, sr, center_z }
+                        })
+                        .collect()
+                });
+                task_queue.tasks.push((ent, rk, task));
             }
-
-            let reg = registry.clone();
-            let keys = to_compute.clone();
-            let task = AsyncComputeTaskPool::get().spawn(async move {
-                keys.iter()
-                    .map(|key| {
-                        let lat = summary_lattice(key.r);
-                        let tile_zs: Vec<i32> = lat
-                            .tiles_in_cell((key.sq, key.sr))
-                            .map(|(tq, tr)| reg.elevation_at(tq, tr))
-                            .collect();
-                        let center_z = select_center_z(&tile_zs);
-                        SummaryData { r: key.r, sq: key.sq, sr: key.sr, center_z }
-                    })
-                    .collect()
-            });
-
-            task_queue.tasks.push((ent, to_compute, task));
         }
     }
 }
@@ -178,22 +201,20 @@ pub fn poll_summary_tasks(
     let current = std::mem::take(&mut task_queue.tasks);
     let mut pending = Vec::new();
 
-    for (ent, keys, mut task) in current {
+    for (ent, region_key, mut task) in current {
         if let Some(results) = block_on(future::poll_once(&mut task)) {
-            // Insert into cache
+            // Insert into global cache
             for data in &results {
                 summary_cache.insert(
                     SummaryKey { r: data.r, sq: data.sq, sr: data.sr },
                     data.center_z,
                 );
             }
-            for key in &keys {
-                task_queue.in_flight.remove(key);
-            }
-            // Update sent tracking
+            task_queue.in_flight.remove(&region_key);
+            // Update per-client sent tracking
             if let Ok(mut vis_cache) = query.get_mut(ent) {
-                for key in &keys {
-                    vis_cache.sent.insert(*key);
+                for data in &results {
+                    vis_cache.sent.insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr });
                 }
             }
             // Send to client
@@ -203,9 +224,21 @@ pub fn poll_summary_tasks(
                 });
             }
         } else {
-            pending.push((ent, keys, task));
+            pending.push((ent, region_key, task));
         }
     }
 
     task_queue.tasks = pending;
+}
+
+/// Squared world-space distance from a mesh region's center to a point.
+fn region_distance_sq(key: &MeshRegionKey, px: f32, pz: f32) -> f32 {
+    let summary_lat = summary_lattice(key.r);
+    let region_lat = mesh_region_lattice();
+    let region_center = region_lat.cell_center((key.mn, key.mm));
+    let (cq, cr) = summary_lat.cell_center(region_center);
+    let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+    let dx = wx - px;
+    let dz = wz - pz;
+    dx * dx + dz * dz
 }

@@ -31,13 +31,20 @@ This produces 6 triangles per summary regardless of radius. Terrain detail withi
 
 ### Center Z Selection
 
-The center z is chosen to preserve the terrain's most visually prominent feature within the hexball:
+The center z is chosen to preserve the terrain's most visually prominent feature within the hexball. The selection rule is uniform across producers:
 
-1. Compute the mean z across all tiles in the hexball
-2. Select the tile with the greatest absolute deviation from the mean
+1. Compute the mean z of the sampled tiles
+2. Select the sample with the greatest absolute deviation from the mean
 3. Tiebreak: prefer higher z (peaks over valleys)
 
 This approximates "most extreme point" — summaries tend to show peaks and ridges rather than averaging them away. The center z is always a discrete integer.
+
+**Sampling strategy varies by producer**, because cost does:
+
+- **Local Map** (producer 1): reads every tile in the hexball — up to 271 at r=9. The tile data is already in the Map (loaded for gameplay), so full-hexball sampling is effectively free. Uses `select_center_z(&all_tile_zs)`.
+- **Server `EventRegistry`** (producer 2) and **flyover `AdminComposite`** (producer 3): sample **7 points** — the hexball center plus 6 axis-aligned offsets at distance `d = (2r+1)/3`. Full-hexball sampling is prohibitive here — each `elevation_at` is a procedural composite query. At r=9 this is 7 samples instead of 271, with no visible difference at LoD distance. Uses `sample_center_z(r, sq, sr, elevation_at)`.
+
+The two strategies produce different center_z values for the same hexball. This is a known, accepted divergence — producer 1 only runs inside the loaded extent (r≥1 gated), producers 2 and 3 only run beyond it. Boundary cases (gated/ungated transition, flyover→gameplay) may exhibit a minor LoD pop; deemed acceptable given the compute cost differential.
 
 ### Canonical Vertex IDs
 
@@ -147,9 +154,13 @@ Component tracking which summaries have been sent to each client. Recomputes the
 
 ### dispatch_summary_tasks + poll_summary_tasks Systems
 
-**dispatch_summary_tasks**: For each player, checks if movement threshold crossed. Computes active bands to visual horizon, enumerates summary cells via `visible_summary_cells_in_band()`, diffs against previously sent set. Cache misses are dispatched to `AsyncComputeTaskPool` — each task iterates the hexball's tiles, calls `EventRegistry::elevation_at()`, runs `select_center_z()`. `SummaryTaskQueue` tracks in-flight keys to prevent duplicates.
+**dispatch_summary_tasks**: For each player, checks if movement threshold crossed. Computes active bands to visual horizon, enumerates visible **mesh regions** via `visible_mesh_regions_in_band_ungated()` (same granularity the client uses), expands to per-`SummaryKey` for per-client tracking, diffs against previously sent set.
 
-**poll_summary_tasks**: Polls completed async tasks, inserts results into SummaryCache. Sends completed summaries to clients as `SummaryBatch` (additions + removals). No per-frame budget — async tasks don't block the tick.
+Dispatch operates at `MeshRegionKey` granularity — each async task computes all ~271 center_z values for one region atomically. Regions are sorted **nearest-first** (by squared world-space distance to the player) so near terrain resolves before far terrain, and dispatch is clamped by `MAX_SUMMARY_TASKS = 16` in-flight regions across all players. Before dispatching, each region tries to satisfy from `SummaryCache` — fully-cached regions emit an immediate `SummaryBatch`; partially-cached regions dispatch async for the remainder. `SummaryTaskQueue` tracks in-flight `MeshRegionKey`s to prevent duplicates.
+
+Each async task uses `sample_center_z()` (7 samples per summary — see Center Z Selection) over `EventRegistry::elevation_at()`.
+
+**poll_summary_tasks**: Polls completed async tasks, inserts results into `SummaryCache`, updates per-client `VisibleSummaryCache`, and sends a single `SummaryBatch` per completed region. Per-region granularity means mesh builds on the client can proceed as each region lands rather than waiting for a whole frame's worth of keys.
 
 ### Wire Format
 
