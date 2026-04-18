@@ -120,9 +120,9 @@ pub fn update_compass(
     camera_angle: Res<CameraOrbit>,
 ) {
     if let Ok(mut ui_transform) = compass_container.single_mut() {
-        // Rotate the entire compass based on camera angle
-        // Negative because we want it to counter-rotate (stay oriented to world)
-        ui_transform.rotation = Rot2::radians(-camera_angle.current);
+        // Rotate the entire compass to counter-rotate the camera orbit (stay oriented to world).
+        // Positive because Rot2 in UI (Y-down) is visually clockwise for positive angles.
+        ui_transform.rotation = Rot2::radians(camera_angle.current);
     }
 }
 
