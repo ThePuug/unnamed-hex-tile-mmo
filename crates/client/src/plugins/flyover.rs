@@ -689,7 +689,7 @@ fn flyover_summary_dispatch(
     let pos = flyover.world_position;
 
     use common_bevy::message::SummaryData;
-    use common_bevy::summary::{compute_active_bands, summary_lattice, mesh_region_lattice, select_center_z};
+    use common_bevy::summary::{compute_active_bands, mesh_region_lattice, sample_center_z};
     use common_bevy::summary_mesh::{MeshRegionKey, visible_mesh_regions_in_band_ungated};
     use crate::systems::camera::HORIZON_MARGIN_DEG;
 
@@ -748,16 +748,10 @@ fn flyover_summary_dispatch(
         let composite = admin_composite.0.clone();
         let rk = region_key;
         let task = pool.spawn(async move {
-            let summary_lat = summary_lattice(rk.r);
             let region_lat = mesh_region_lattice();
-            let d = (2 * rk.r as i32 + 1) / 3;
             region_lat.tiles_in_cell((rk.mn, rk.mm))
                 .map(|(sn, sm)| {
-                    let (cq, cr) = summary_lat.cell_center((sn, sm));
-                    let tile_zs: Vec<i32> = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)].iter()
-                        .map(|&(dq, dr)| composite.elevation_at(cq + dq, cr + dr))
-                        .collect();
-                    let center_z = select_center_z(&tile_zs);
+                    let center_z = sample_center_z(rk.r, sn, sm, |q, r| composite.elevation_at(q, r));
                     SummaryData { r: rk.r, sq: sn, sr: sm, center_z }
                 })
                 .collect()

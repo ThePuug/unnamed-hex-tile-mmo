@@ -296,6 +296,23 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
     )
 }
 
+// ── Center z sampling ──
+
+/// Sample 7 elevations (center + 6 hex-axis points) and select center_z.
+///
+/// Avoids enumerating every tile in the cell — at r=9 this is 7 samples
+/// instead of 271, with no visible difference at LoD distance.
+pub fn sample_center_z(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> i32) -> i32 {
+    let (cq, cr) = summary_lattice(r).cell_center((sq, sr));
+    let d = (2 * r as i32 + 1) / 3;
+    let offsets: [(i32, i32); 7] = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)];
+    let zs: [i32; 7] = std::array::from_fn(|i| {
+        let (dq, dr) = offsets[i];
+        elevation_at(cq + dq, cr + dr)
+    });
+    select_center_z(&zs)
+}
+
 // ── Center z selection ──
 
 /// Select center_z using extremal deviation from the mean.
