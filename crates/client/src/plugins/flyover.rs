@@ -78,6 +78,24 @@ pub struct FlyoverState {
     /// Stashed normal-play state, restored on flyover toggle-off.
     pub stashed_summary_meshes: Option<HashMap<common_bevy::summary_mesh::MeshRegionKey, crate::resources::SummaryMeshState>>,
     pub stashed_loaded: Option<HashSet<ChunkId>>,
+    /// Current detail-chunk radius (chunks), published by flyover_gen each
+    /// frame. This is the flyover's true local-data extent: the ownership
+    /// boundary between Map-built regions and producer-built regions. In
+    /// gameplay that boundary is FIXED_STREAM_RADIUS_WU; in flyover detail
+    /// chunks only exist out to this radius — using the gameplay constant
+    /// left an un-rendered ring between the two.
+    pub detail_radius_chunks: u8,
+}
+
+impl FlyoverState {
+    /// Local-data extent in world units (ownership boundary while active).
+    /// Inscribed radius of the detail-chunk hexagon — see
+    /// FIXED_STREAM_APOTHEM_WU for why the apothem, not the circumradius.
+    pub fn local_boundary_wu(&self) -> f32 {
+        self.detail_radius_chunks as f32
+            * common_bevy::chunk::CHUNK_EXTENT_WU
+            * common_bevy::chunk::APOTHEM_FACTOR
+    }
 }
 
 impl Default for FlyoverState {
@@ -90,6 +108,7 @@ impl Default for FlyoverState {
             generated_chunks: HashSet::new(),
             stashed_summary_meshes: None,
             stashed_loaded: None,
+            detail_radius_chunks: common_bevy::chunk::FOV_CHUNK_RADIUS,
         }
     }
 }
@@ -239,8 +258,10 @@ fn execute_admin_actions(
                 flyover.world_position = player_transform.translation;
             }
 
-            // Clear remote summaries (server-sent data won't match flyover terrain)
-            summary_cache.clear();
+            // Drop only flyover-sourced cache entries. Server data is durable
+            // (identical values — same seed, same 7-sample rule) and the
+            // server never resends what its sent-tracking already lists.
+            summary_cache.clear_flyover();
 
             // Stash existing mesh state so geometry can be restored on toggle-off.
             // Despawn the entities rather than hiding them — on toggle-off we rebuild
@@ -300,9 +321,10 @@ fn execute_admin_actions(
             if let Some(stashed) = flyover.stashed_loaded.take() {
                 loaded_chunks.chunks.extend(stashed);
             }
-            // Clear flyover summaries so they don't contaminate normal gameplay.
-            // Server will resend its summaries on the next movement update.
-            summary_cache.clear();
+            // Drop flyover-sourced summaries; server-sourced entries survive
+            // so the gameplay horizon restores instantly (the server's
+            // sent-tracking means it would never resend them).
+            summary_cache.clear_flyover();
 
             flyover_tracker.computed.clear();
             flyover_tracker.in_flight.clear();
@@ -495,6 +517,9 @@ fn flyover_generate_chunks(
 
     let detail_radius = common_bevy::chunk::detail_boundary_radius(player_z, fov);
     let gen_radius = detail_radius + 3;
+    // Publish the live detail radius — the summary dispatch/producer use it
+    // as the ownership boundary between Map-built and producer-built regions.
+    flyover.detail_radius_chunks = detail_radius;
 
     let mut candidates: Vec<ChunkId> = common_bevy::chunk::calculate_visible_chunks(center, gen_radius)
         .into_iter()
@@ -690,23 +715,20 @@ fn flyover_summary_dispatch(
 
     use common_bevy::message::SummaryData;
     use common_bevy::summary::{compute_active_bands, mesh_region_lattice, sample_center_z};
-    use common_bevy::summary_mesh::{MeshRegionKey, visible_mesh_regions_in_band_ungated};
+    use common_bevy::summary_mesh::{MeshRegionKey, visible_lod_regions};
     use crate::systems::camera::HORIZON_MARGIN_DEG;
 
+    // Same horizon formula as compute_auto_mode_regions (consumer side) so
+    // the flyover producer's region set matches what the consumer asks for.
     let camera_height_offset = camera_height(MAX_FLYOVER_FOV);
-    let player_approx_y = (pos.y - camera_height_offset).max(0.0);
-    let camera_total_height = camera_height_offset + player_approx_y;
+    let camera_total_height = camera_height_offset + pos.y.max(0.0);
     let far_ground = camera_total_height / HORIZON_MARGIN_DEG.to_radians().tan();
 
-    let bands = compute_active_bands(far_ground, MAX_FLYOVER_FOV);
-    let mut visible_regions: HashSet<MeshRegionKey> = HashSet::new();
-    for band in &bands {
-        if band.r == 0 { continue; }
-        let regions = visible_mesh_regions_in_band_ungated(
-            band.r, pos.x, pos.z, band.inner_wu, band.outer_wu,
-        );
-        visible_regions.extend(regions);
-    }
+    let bands = compute_active_bands(far_ground);
+    // Producer coverage starts where the flyover's detail chunks end — not
+    // at the gameplay stream radius (flyover chunks cover far less).
+    let visible_regions =
+        visible_lod_regions(&bands, pos.x, pos.z, flyover.local_boundary_wu());
 
     // Collect regions needing dispatch, sorted nearest-first
     let mut to_dispatch: Vec<MeshRegionKey> = visible_regions.iter()
@@ -780,7 +802,10 @@ fn flyover_poll_summary_tasks(
             let cells: HashMap<(i32, i32), i32> = results.iter()
                 .map(|d| ((d.sq, d.sr), d.center_z))
                 .collect();
-            summary_cache.insert_region(region_key, crate::resources::RegionData { cells });
+            summary_cache.insert_region(region_key, crate::resources::RegionData {
+                cells,
+                source: crate::resources::RegionSource::Flyover,
+            });
             tracker.in_flight.remove(&region_key);
             tracker.computed.insert(region_key);
         } else {

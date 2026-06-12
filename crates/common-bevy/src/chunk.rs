@@ -37,7 +37,23 @@ pub const MIN_SUMMARY_RING: u8 = 3;
 pub const FIXED_STREAM_RADIUS: u8 = 21;
 
 /// World-unit extent of the fixed streaming radius.
+///
+/// NOTE: this is the chunk hexball's CIRCUMRADIUS (corner-direction extent).
+/// A hex-distance-21 chunk set is a hexagon: it reaches this far only along
+/// the six corner directions; along edge directions it ends at the apothem
+/// (×√3/2). Use `FIXED_STREAM_APOTHEM_WU` for "Map data is guaranteed to
+/// exist within this circle" decisions.
 pub const FIXED_STREAM_RADIUS_WU: f32 = FIXED_STREAM_RADIUS as f32 * CHUNK_EXTENT_WU;
+
+/// Inscribed radius of the streamed-chunk hexagon — the largest circle
+/// fully inside guaranteed chunk coverage. Ownership decisions (Map-built
+/// vs producer-built summary regions) must use this, not the circumradius:
+/// using 598.5 over-claimed Map coverage by ~80 WU in six edge-direction
+/// lobes, leaving un-renderable gap crescents.
+pub const FIXED_STREAM_APOTHEM_WU: f32 = FIXED_STREAM_RADIUS_WU * APOTHEM_FACTOR;
+
+/// √3/2 — hexagon apothem / circumradius ratio.
+pub const APOTHEM_FACTOR: f32 = 0.866_025_4;
 
 /// Tile angular-size threshold in pixels. When a single tile subtends
 /// fewer than this many pixels on screen, it becomes indistinguishable

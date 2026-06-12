@@ -256,7 +256,10 @@ pub fn write_do(
                     by_region.entry(key).or_default().insert((add.sq, add.sr), add.center_z);
                 }
                 for (key, cells) in by_region {
-                    summary_cache.insert_region(key, crate::resources::RegionData { cells });
+                    summary_cache.insert_region(key, crate::resources::RegionData {
+                        cells,
+                        source: crate::resources::RegionSource::Server,
+                    });
                 }
             }
             _ => {

@@ -170,6 +170,16 @@ pub struct SummaryMesh {
     pub region_key: MeshRegionKey,
 }
 
+/// Where a cached region's values came from. Values are identical across
+/// producers (same 7-sample rule over the same elevation field) — provenance
+/// only governs lifecycle: server data is durable for the whole session,
+/// flyover data is discarded when flyover toggles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RegionSource {
+    Server,
+    Flyover,
+}
+
 /// Per-region summary elevation cache.
 ///
 /// Each entry holds all ~271 center_z values for one mesh region.
@@ -184,12 +194,31 @@ pub struct SummaryCache {
 /// Elevation data for one mesh region's summary cells.
 pub struct RegionData {
     pub cells: HashMap<(i32, i32), i32>,
+    pub source: RegionSource,
 }
 
 impl SummaryCache {
-    /// Insert a complete region (all 271 cells computed atomically).
+    /// Insert region data, merging into any existing entry. Merge keeps the
+    /// union of cells (a partial batch can never erase previously received
+    /// cells) and promotes provenance to Server if either side is Server.
     pub fn insert_region(&self, key: MeshRegionKey, data: RegionData) {
-        self.regions.insert(key, Arc::new(data));
+        match self.regions.get(&key).map(|r| r.value().clone()) {
+            Some(existing) => {
+                let mut cells = existing.cells.clone();
+                cells.extend(data.cells);
+                let source = if existing.source == RegionSource::Server
+                    || data.source == RegionSource::Server
+                {
+                    RegionSource::Server
+                } else {
+                    RegionSource::Flyover
+                };
+                self.regions.insert(key, Arc::new(RegionData { cells, source }));
+            }
+            None => {
+                self.regions.insert(key, Arc::new(data));
+            }
+        }
         self.new_data.store(true, Ordering::Relaxed);
     }
 
@@ -208,9 +237,12 @@ impl SummaryCache {
         self.new_data.swap(false, Ordering::Relaxed)
     }
 
-    /// Clear all entries (flyover toggle-off).
-    pub fn clear(&self) {
-        self.regions.clear();
+    /// Drop flyover-sourced regions (flyover toggle). Server-sourced data
+    /// is durable — the server tracks what it has sent per client and never
+    /// resends, so discarding it would blank the horizon until the player
+    /// walks regions out of and back into the server's visible set.
+    pub fn clear_flyover(&self) {
+        self.regions.retain(|_, v| v.source == RegionSource::Server);
         self.new_data.store(true, Ordering::Relaxed);
     }
 }

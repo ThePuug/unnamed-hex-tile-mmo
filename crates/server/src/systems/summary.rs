@@ -3,33 +3,21 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use common_bevy::{
-    chunk::FIXED_STREAM_RADIUS_WU,
     components::Loc,
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
     summary::{compute_active_bands, mesh_region_lattice, sample_center_z, summary_lattice},
-    summary_mesh::{MeshRegionKey, visible_mesh_regions_in_band_ungated},
+    summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
 use crate::resources::event_registry::EventRegistry;
 use crate::resources::summary_cache::SummaryCache;
 
 /// Per-client tracking of which summaries have been sent.
-#[derive(bevy::prelude::Component)]
+#[derive(bevy::prelude::Component, Default)]
 pub struct VisibleSummaryCache {
     /// All summary keys currently sent to this client.
     pub sent: HashSet<SummaryKey>,
-    /// Player position at last recomputation (for throttling).
-    pub last_pos: (i32, i32, i32),
-}
-
-impl Default for VisibleSummaryCache {
-    fn default() -> Self {
-        Self {
-            sent: HashSet::new(),
-            last_pos: (i32::MIN, i32::MIN, i32::MIN),
-        }
-    }
 }
 
 /// In-flight async summary computation tasks (one per mesh region).
@@ -39,10 +27,6 @@ pub struct SummaryTaskQueue {
     in_flight: HashSet<MeshRegionKey>,
 }
 
-/// Minimum world-unit movement before recomputing the visible summary set.
-const MIN_UPDATE_DISTANCE: f32 = 20.0;
-/// Minimum z-level change before recomputing (handles vertical movement).
-const MIN_UPDATE_Z: i32 = 10;
 /// Maximum in-flight async region tasks across all players.
 const MAX_SUMMARY_TASKS: usize = 16;
 
@@ -62,68 +46,27 @@ pub fn dispatch_summary_tasks(
         let r = loc.r;
         let z = loc.z;
 
-        // Throttle: skip if player hasn't moved enough
-        let (lq, lr, lz) = vis_cache.last_pos;
-        let needs_recompute = if lq == i32::MIN {
-            true
-        } else {
-            let (wx, wz) = flat_top_tile_center(q, r, 1.0);
-            let (lwx, lwz) = flat_top_tile_center(lq, lr, 1.0);
-            let horiz_dist = ((wx - lwx).powi(2) + (wz - lwz).powi(2)).sqrt();
-            horiz_dist >= MIN_UPDATE_DISTANCE || (z - lz).abs() >= MIN_UPDATE_Z
-        };
-
-        if !needs_recompute {
-            continue;
-        }
-        vis_cache.last_pos = (q, r, z);
-
         let (cam_wx, cam_wz) = flat_top_tile_center(q, r, 1.0);
 
         let cam_h = common::camera::camera_height(common::camera::MAX_GAMEPLAY_FOV)
             + z.max(0) as f32 * common::camera::RISE;
         let far_ground = cam_h / common::camera::HORIZON_MARGIN_DEG.to_radians().tan();
 
-        let bands = compute_active_bands(far_ground, common::camera::MAX_GAMEPLAY_FOV);
+        let bands = compute_active_bands(far_ground);
 
-        // Build visible regions (MeshRegionKey granularity)
-        let mut visible_regions: HashSet<MeshRegionKey> = HashSet::new();
-        for band in &bands {
-            if band.outer_wu <= FIXED_STREAM_RADIUS_WU {
-                continue;
-            }
-            let inner = band.inner_wu.max(FIXED_STREAM_RADIUS_WU);
-            let regions = visible_mesh_regions_in_band_ungated(
-                band.r, cam_wx, cam_wz, inner, band.outer_wu,
-            );
-            visible_regions.extend(regions);
-        }
+        let visible_regions = visible_lod_regions(
+            &bands,
+            cam_wx,
+            cam_wz,
+            common_bevy::chunk::FIXED_STREAM_APOTHEM_WU,
+        );
 
-        // Expand regions → individual SummaryKeys for per-client tracking
+        // No removals on the wire: the client treats summary data as durable
+        // (its mesh lifecycle is position-based, its cache is session-long),
+        // so `sent` tracks "ever sent" and removal batches would be ignored
+        // bandwidth. Memory grows with explored area on both sides — bounded
+        // by the world, revisit if it matters.
         let region_lat = mesh_region_lattice();
-        let mut visible_set: HashSet<SummaryKey> = HashSet::new();
-        for rk in &visible_regions {
-            for (sq, sr) in region_lat.tiles_in_cell((rk.mn, rk.mm)) {
-                visible_set.insert(SummaryKey { r: rk.r, sq, sr });
-            }
-        }
-
-        // Send removals immediately
-        let removals: Vec<SummaryKey> = vis_cache
-            .sent
-            .iter()
-            .filter(|k| !visible_set.contains(k))
-            .copied()
-            .collect();
-
-        if !removals.is_empty() {
-            writer.write(Do {
-                event: Event::SummaryBatch { ent, additions: Vec::new(), removals: removals.clone() },
-            });
-            for key in &removals {
-                vis_cache.sent.remove(key);
-            }
-        }
 
         // Partition regions: fully sent, cache-hit, or needs async
         let mut cached_additions = Vec::new();

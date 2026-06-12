@@ -240,6 +240,26 @@ pub fn update(
 ///
 /// **Forced mode** (`Some(r)`): single band at that radius, all visible regions.
 /// **Auto mode** (`None`): multiple bands from `compute_active_bands`, with overlap.
+/// Camera movement (WU) that forces a region re-evaluation even without new
+/// map or cache data. Band edges are player-centric — without this, bands
+/// only advance on chunk/summary arrival and then snap in bursts.
+const REEVAL_MOVE_WU: f32 = 16.0;
+
+/// Hysteresis margin on band edges: a region refines/coarsens only when it
+/// is clearly past the threshold. Existing meshes within the margin survive
+/// (keep set); new meshes only build inside the crisp band (needed set).
+/// Prevents threshold flapping as the player oscillates near a band edge.
+const BAND_HYSTERESIS_MARGIN: f32 = 0.08;
+
+/// World-space center of a mesh region.
+fn region_center_world(key: &common_bevy::summary_mesh::MeshRegionKey) -> (f32, f32) {
+    let summary_lat = common_bevy::summary::summary_lattice(key.r);
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let region_center = region_lat.cell_center((key.mn, key.mm));
+    let (cq, cr) = summary_lat.cell_center(region_center);
+    common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0)
+}
+
 pub fn dispatch_summary_tasks(
     mut commands: Commands,
     loaded_chunks: Res<LoadedChunks>,
@@ -249,15 +269,9 @@ pub fn dispatch_summary_tasks(
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
     player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
+    mut last_eval_pos: Local<Option<Vec3>>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
-    let map_changed = map.take_changed();
-    let cache_changed = summary_cache.take_new_data();
-    if !map_changed && !cache_changed {
-        return;
-    }
-    let _t = client_timers.0.scope("sum_disp");
-
     // Determine camera world position for local band computation
     #[cfg(feature = "admin")]
     let camera_pos = flyover
@@ -268,40 +282,111 @@ pub fn dispatch_summary_tasks(
     #[cfg(not(feature = "admin"))]
     let camera_pos = player_query.single().ok().map(|t| t.translation);
 
-    // Local regions: camera-dependent (bands within streaming radius).
-    // Only computed when we have a camera position.
-    let needed: std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> =
-        match (camera_pos, forced_radius.0) {
-            (_, Some(r)) => {
-                common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks)
-            }
-            (Some(pos), None) => {
-                #[cfg(feature = "admin")]
-                let max_fov = if flyover.as_ref().map_or(false, |f| f.active) {
-                    crate::systems::camera::MAX_FLYOVER_FOV
-                } else {
-                    crate::systems::camera::MAX_GAMEPLAY_FOV
-                };
-                #[cfg(not(feature = "admin"))]
-                let max_fov = crate::systems::camera::MAX_GAMEPLAY_FOV;
-                compute_auto_mode_regions(pos, &loaded_chunks.chunks, max_fov)
-            }
-            (None, None) => {
-                // No camera yet — can't compute local regions.
-                // Re-arm map changed so we retry once the player spawns.
-                if map_changed { map.force_changed(); }
-                std::collections::HashSet::new()
-            }
-        };
+    let map_changed = map.take_changed();
+    let cache_changed = summary_cache.take_new_data();
+    let moved = match (*last_eval_pos, camera_pos) {
+        (Some(prev), Some(pos)) => prev.distance_squared(pos) >= REEVAL_MOVE_WU * REEVAL_MOVE_WU,
+        (None, Some(_)) => true,
+        _ => false,
+    };
+    if !map_changed && !cache_changed && !moved {
+        return;
+    }
+    if let Some(pos) = camera_pos {
+        *last_eval_pos = Some(pos);
+    }
+    let _t = client_timers.0.scope("sum_disp");
 
-    // Evict any mesh region not in the current needed set.
+    // Local-data boundary: the largest circle inside guaranteed chunk
+    // coverage (the hexagonal chunk set's APOTHEM — the circumradius
+    // over-claims by ~80 WU in edge directions). In gameplay the server
+    // streams chunks to FIXED_STREAM_RADIUS; in flyover only the
+    // detail-chunk disc around the camera exists.
+    #[cfg(feature = "admin")]
+    let local_boundary = flyover
+        .as_ref()
+        .filter(|f| f.active)
+        .map(|f| f.local_boundary_wu())
+        .unwrap_or(common_bevy::chunk::FIXED_STREAM_APOTHEM_WU);
+    #[cfg(not(feature = "admin"))]
+    let local_boundary = common_bevy::chunk::FIXED_STREAM_APOTHEM_WU;
+
+    // Local regions: camera-dependent (bands within streaming radius).
+    // `needed` is the crisp band assignment (what to build); `keep` widens
+    // each band edge by the hysteresis margin (what may survive).
+    let (needed, keep): (
+        std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey>,
+        std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey>,
+    ) = match (camera_pos, forced_radius.0) {
+        (_, Some(r)) => {
+            let n = common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks);
+            let k = n.clone();
+            (n, k)
+        }
+        (Some(pos), None) => {
+            #[cfg(feature = "admin")]
+            let max_fov = if flyover.as_ref().map_or(false, |f| f.active) {
+                crate::systems::camera::MAX_FLYOVER_FOV
+            } else {
+                crate::systems::camera::MAX_GAMEPLAY_FOV
+            };
+            #[cfg(not(feature = "admin"))]
+            let max_fov = crate::systems::camera::MAX_GAMEPLAY_FOV;
+            let n = compute_auto_mode_regions(
+                pos,
+                &loaded_chunks.chunks,
+                max_fov,
+                0.0,
+                local_boundary,
+            );
+            let mut k = compute_auto_mode_regions(
+                pos,
+                &loaded_chunks.chunks,
+                max_fov,
+                BAND_HYSTERESIS_MARGIN,
+                local_boundary,
+            );
+            k.extend(n.iter().copied());
+            (n, k)
+        }
+        (None, None) => {
+            // No camera yet — can't compute local regions.
+            // Re-arm map changed so we retry once the player spawns.
+            if map_changed { map.force_changed(); }
+            (std::collections::HashSet::new(), std::collections::HashSet::new())
+        }
+    };
+
+    // Evict mesh regions outside the keep set — but only once every needed
+    // region overlapping the stale region's footprint has a live entity.
+    // Coverage never drops during a band transition (build-before-evict):
+    // the old level's plate stays until its replacement is on screen.
     let stale: Vec<common_bevy::summary_mesh::MeshRegionKey> = summary_meshes
         .states
         .keys()
-        .filter(|k| !needed.contains(k))
+        .filter(|k| !keep.contains(k))
         .copied()
         .collect();
     for key in stale {
+        let (kx, kz) = region_center_world(&key);
+        let k_half = 0.5 * common_bevy::summary::mesh_region_extent_wu(key.r);
+        let covered = needed.iter().all(|n| {
+            let (nx, nz) = region_center_world(n);
+            let n_half = 0.5 * common_bevy::summary::mesh_region_extent_wu(n.r);
+            let dx = nx - kx;
+            let dz = nz - kz;
+            let reach = k_half + n_half;
+            if dx * dx + dz * dz > reach * reach {
+                return true; // doesn't overlap the stale region
+            }
+            summary_meshes
+                .states
+                .get(n)
+                .map_or(false, |s| s.entity.is_some())
+        });
+        if !covered {
+            continue; // replacement not on screen yet — hold the old mesh
+        }
         if let Some(state) = summary_meshes.states.remove(&key) {
             if let Some(entity) = state.entity {
                 commands.entity(entity).despawn();
@@ -309,14 +394,34 @@ pub fn dispatch_summary_tasks(
         }
     }
 
-    // Dispatch build tasks for needed regions
+    // Dispatch build tasks for needed regions, nearest-first so the terrain
+    // in front of the camera fills before the horizon (matches server and
+    // flyover dispatch order).
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
     const MAX_MESH_TASKS: usize = 16;
     let mut mesh_dispatched = 0;
 
-    for region_key in &needed {
+    let mut ordered: Vec<(f32, common_bevy::summary_mesh::MeshRegionKey, Vec3)> = needed
+        .iter()
+        .map(|region_key| {
+            let summary_lat = common_bevy::summary::summary_lattice(region_key.r);
+            let region_lat = common_bevy::summary::mesh_region_lattice();
+            let region_center = region_lat.cell_center((region_key.mn, region_key.mm));
+            let (cq, cr) = summary_lat.cell_center(region_center);
+            let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
+            let d2 = camera_pos.map_or(0.0, |pos| {
+                let dx = wx - pos.x;
+                let dz = wz - pos.z;
+                dx * dx + dz * dz
+            });
+            (d2, *region_key, Vec3::new(wx, 0.0, wz))
+        })
+        .collect();
+    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    for (d2, region_key, mesh_origin) in ordered {
         if mesh_dispatched >= MAX_MESH_TASKS { break; }
-        if let Some(state) = summary_meshes.states.get(region_key) {
+        if let Some(state) = summary_meshes.states.get(&region_key) {
             if state.task.is_some() {
                 continue;
             }
@@ -326,13 +431,23 @@ pub fn dispatch_summary_tasks(
                 continue;
             }
         }
-        // Only dispatch r>0 if cache has data for this region
-        if region_key.r > 0 && !summary_cache.contains_region(region_key) {
-            continue;
-        }
 
         let radius = region_key.r;
-        let rk = *region_key;
+
+        // r>0 regions beyond the local-data boundary are server/flyover-owned:
+        // without cache data their build would produce nothing — wait for it.
+        // Regions within the boundary are Map-built and dispatch regardless
+        // of cache state.
+        if radius > 0 && !summary_cache.contains_region(&region_key) {
+            let reach = local_boundary
+                + 0.5 * common_bevy::summary::mesh_region_extent_wu(radius);
+            let is_local = camera_pos.is_none() || d2 <= reach * reach;
+            if !is_local {
+                continue;
+            }
+        }
+
+        let rk = region_key;
         let map_snap = map.clone();
         let cache_snap = summary_cache.clone();
 
@@ -340,18 +455,11 @@ pub fn dispatch_summary_tasks(
             collect_and_build_summary_mesh(radius, rk, &map_snap, &cache_snap)
         });
 
-        let summary_lat = common_bevy::summary::summary_lattice(radius);
-        let region_lat = common_bevy::summary::mesh_region_lattice();
-        let region_center = region_lat.cell_center((region_key.mn, region_key.mm));
-        let (cq, cr) = summary_lat.cell_center(region_center);
-        let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
-        let mesh_origin = Vec3::new(wx, 0.0, wz);
-
-        if let Some(state) = summary_meshes.states.get_mut(region_key) {
+        if let Some(state) = summary_meshes.states.get_mut(&region_key) {
             state.task = Some(task);
         } else {
             summary_meshes.states.insert(
-                *region_key,
+                region_key,
                 SummaryMeshState {
                     task: Some(task),
                     entity: None,
@@ -370,71 +478,87 @@ pub fn dispatch_summary_tasks(
         mesh_dispatched += 1;
     }
 
+    // Budget exhausted with regions possibly still undispatched — re-arm the
+    // changed flag so the remainder dispatches next frame instead of waiting
+    // for the next map/cache change.
+    if mesh_dispatched >= MAX_MESH_TASKS {
+        map.force_changed();
+    }
 }
 
 /// Compute visible mesh regions for auto mode (multi-band).
 ///
-/// Local bands (within streaming radius): gated on loaded chunks.
-/// Remote bands (beyond streaming radius): ungated — data from server summaries.
+/// Local bands (within `local_boundary_wu`): gated on loaded chunks.
+/// Remote bands (beyond it): ungated — data from server/flyover summaries.
+///
+/// `local_boundary_wu`: the extent the Map can serve — FIXED_STREAM_RADIUS_WU
+/// in gameplay, the flyover's detail-chunk radius while flyover is active.
+/// `margin`: hysteresis expansion of each band's annulus (0.0 = crisp band
+/// assignment for building; > 0.0 = widened keep set for eviction).
 fn compute_auto_mode_regions(
     camera_pos: Vec3,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
     fov: f32,
+    margin: f32,
+    local_boundary_wu: f32,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-    use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
+    use common_bevy::summary::compute_active_bands;
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
     // Max render distance = visual horizon from camera geometry.
-    // camera_height = CAMERA_DISTANCE * tan(half_fov + margin) + player_z * RISE
-    // far_ground = camera_height / tan(margin)
-    // Approximate player_z from camera Y (camera Y ≈ player terrain Y + camera height offset)
+    // camera_pos is the player's (or flyover's) ground/world position; the
+    // camera sits camera_height_offset above it. Matches the server formula
+    // (camera_height + z·RISE) so client and server horizons agree — the old
+    // code subtracted the offset from the player's ground y, freezing the
+    // horizon at its sea-level value until z ≈ 104.
     let camera_height_offset = crate::systems::camera::camera_height(fov);
-    let player_approx_y = (camera_pos.y - camera_height_offset).max(0.0);
-    let camera_total_height = camera_height_offset + player_approx_y;
+    let camera_total_height = camera_height_offset + camera_pos.y.max(0.0);
     let margin_rad = crate::systems::camera::HORIZON_MARGIN_DEG.to_radians();
     let far_ground = camera_total_height / margin_rad.tan();
 
-    // Also compute max loaded distance for local bands
-    let mut max_loaded = 0.0_f32;
-    for &chunk_id in loaded_chunks {
-        let center = chunk_id.center();
-        let (wx, wz) = common_bevy::geometry::flat_top_tile_center(center.q, center.r, 1.0);
-        let dx = wx - camera_pos.x;
-        let dz = wz - camera_pos.z;
-        max_loaded = max_loaded.max((dx * dx + dz * dz).sqrt());
-    }
-
-    // Cap local-only distance at loaded extent (minus margin for readiness)
-    let local_outer_r = common_bevy::summary::summary_radius(max_loaded);
-    let local_margin = mesh_region_extent_wu(local_outer_r);
-    let local_max = (max_loaded - local_margin).max(0.0);
-
-    let bands = compute_active_bands(far_ground, fov);
+    let bands = compute_active_bands(far_ground * (1.0 + margin));
     let mut all_regions = std::collections::HashSet::new();
 
+    // Bands are split at the stream-radius boundary, not assigned to one
+    // side: a band straddling it contributes a gated segment (client-owned,
+    // chunk-fed) AND an ungated segment (server/flyover-fed). Assigning the
+    // whole band to one side left its other segment with no regions at all.
     for band in &bands {
-        let outer = band.outer_wu;
+        // Footprint-overlap enumeration: a region belongs to a band if its
+        // FOOTPRINT overlaps the annulus, not just its center. Regions are
+        // up to mesh_region_extent_wu(r) across — center-only membership
+        // left crescents near every band boundary covered by neither level
+        // (a region centered just inside the boundary was excluded from the
+        // coarser band even though no finer region covered its outer half).
+        // Adjacent levels now overlap slightly at boundaries; the per-level
+        // depth bias keeps the finer plate on top without z-fighting.
+        let half_extent = 0.5 * common_bevy::summary::mesh_region_extent_wu(band.r);
+        let band_inner = (band.inner_wu * (1.0 - margin) - half_extent).max(0.0);
+        let band_outer = band.outer_wu * (1.0 + margin) + half_extent;
 
-        if outer <= local_max {
-            // Band within loaded extent: gate on loaded chunks.
+        if band_inner < local_boundary_wu {
+            // Segment within the local-data boundary: gate on loaded chunks
+            let gated_outer = band_outer.min(local_boundary_wu);
             let regions = visible_mesh_regions_in_band(
                 band.r,
                 camera_pos.x,
                 camera_pos.z,
-                band.inner_wu,
-                outer,
+                band_inner,
+                gated_outer,
                 loaded_chunks,
             );
             all_regions.extend(regions);
-        } else {
-            // Band beyond loaded extent: ungated (server or flyover local server provides data)
-            let inner = band.inner_wu.max(local_max);
+        }
+        if band_outer > local_boundary_wu {
+            // Segment beyond the boundary: ungated (SummaryCache-fed from
+            // server or flyover producer)
+            let inner = band_inner.max(local_boundary_wu);
             let regions = visible_mesh_regions_in_band_ungated(
                 band.r,
                 camera_pos.x,
                 camera_pos.z,
                 inner,
-                outer,
+                band_outer,
             );
             all_regions.extend(regions);
         }
@@ -446,8 +570,11 @@ fn compute_auto_mode_regions(
 /// Build a summary mesh region (runs off main thread).
 ///
 /// r=0: full tile geometry from Map (slope blending, cliff skirts).
-/// r>0: reads SummaryCache first, falls back to Map tile data.
-///      Writes computed values back to cache for future rebuilds.
+/// r>0: reads SummaryCache first (server/flyover-fed regions), then falls
+///      back to computing center_z from Map tiles for client-owned regions
+///      within the chunk-stream radius. Summaries whose tiles are not all
+///      loaded stay unresolved and fill in as chunks stream (the region is
+///      re-dispatched on map changes until complete).
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
@@ -474,9 +601,19 @@ fn collect_and_build_summary_mesh(
     }
 
     // r>0: bulk region lookup — one DashMap access, then 271 lock-free reads.
+    // Cache misses fall back to the Map with the same 7-sample rule every
+    // other producer uses — Map z and server elevation_at agree by
+    // construction (chunks are generated from elevation_at), so values are
+    // identical regardless of which side computed them. None until all 7
+    // samples' tiles are loaded; the region re-dispatches as chunks stream.
     let region_data = cache.get_region(&region_key);
     let summary_z_fn = |sq: i32, sr: i32| -> Option<i32> {
-        region_data.as_ref().and_then(|d| d.cells.get(&(sq, sr)).copied())
+        if let Some(z) = region_data.as_ref().and_then(|d| d.cells.get(&(sq, sr)).copied()) {
+            return Some(z);
+        }
+        common_bevy::summary::sample_center_z_opt(radius, sq, sr, |tq, tr| {
+            map.get_by_qr(tq, tr).map(|(qrz, _)| qrz.z)
+        })
     };
 
     common_bevy::summary_mesh::build_summary_mesh_region_from_summaries(
@@ -525,8 +662,22 @@ fn build_bevy_mesh(
     .with_inserted_indices(Indices::U32(indices.to_vec()))
 }
 
-/// Append cross-region skirt geometry owned by `my_key` to the given buffers.
-/// Only emits skirts for neighbors where `my_key < neighbor_key` (ownership).
+/// Downward curtain depth (WU) for unmatched frontier edges — band
+/// boundaries, the stream/horizon frontier, and edges facing unbuilt
+/// territory. Deep enough to cover typical inter-level relief; data-driven
+/// per-edge depth is a planned refinement (well-knit-world P4).
+const CURTAIN_DEPTH_WU: f32 = 24.0;
+
+/// Append cross-region skirt geometry owned by `my_key`, plus frontier
+/// curtains for perimeter edges with no same-band counterpart.
+///
+/// Skirt ownership: the lower region key emits the shared-edge skirt.
+/// Matching is still checked against ALL same-band neighbors so curtains
+/// are suppressed on edges a neighbor will skirt.
+///
+/// Curtains close the surface where no shared vertex IDs can ever exist —
+/// a different LoD level on the other side (hex lattices of different
+/// scales share no edges), or territory that has no mesh at all.
 fn append_cross_region_skirts(
     my_key: common_bevy::summary_mesh::MeshRegionKey,
     my_edges: &[common_bevy::summary_mesh::PerimeterEdge],
@@ -539,16 +690,31 @@ fn append_cross_region_skirts(
     use common_bevy::summary_mesh::{compute_cross_region_skirts, mesh_region_neighbors};
 
     let mut tris = 0u32;
+    let mut matched: std::collections::HashSet<[(i32, i32); 2]> = std::collections::HashSet::new();
+
     for neighbor_key in mesh_region_neighbors(my_key) {
-        // Ownership: lower key owns the skirt (same band only)
         if neighbor_key.r != my_key.r {
-            continue;
-        }
-        if (my_key.mn, my_key.mm) >= (neighbor_key.mn, neighbor_key.mm) {
             continue;
         }
         let Some(neighbor_state) = all_states.get(&neighbor_key) else { continue };
         if neighbor_state.perimeter_edges.is_empty() {
+            continue;
+        }
+
+        // Record matches against every neighbor (curtain suppression)…
+        let neighbor_ids: std::collections::HashSet<[(i32, i32); 2]> = neighbor_state
+            .perimeter_edges
+            .iter()
+            .map(|e| e.vertex_ids)
+            .collect();
+        for e in my_edges {
+            if neighbor_ids.contains(&e.vertex_ids) {
+                matched.insert(e.vertex_ids);
+            }
+        }
+
+        // …but only the lower key emits the shared-edge skirt geometry.
+        if (my_key.mn, my_key.mm) >= (neighbor_key.mn, neighbor_key.mm) {
             continue;
         }
 
@@ -566,6 +732,38 @@ fn append_cross_region_skirts(
             tris += 2;
         }
     }
+
+    // Frontier curtains for unmatched edges. Vertical, cliff-shaded by the
+    // terrain shader (horizontal normal), replaced by a proper skirt on
+    // rebuild once a same-band neighbor provides the matching edge.
+    for e in my_edges {
+        if matched.contains(&e.vertex_ids) {
+            continue;
+        }
+        let top0 = e.positions[0];
+        let top1 = e.positions[1];
+        let bot0 = top0 - Vec3::Y * CURTAIN_DEPTH_WU;
+        let bot1 = top1 - Vec3::Y * CURTAIN_DEPTH_WU;
+
+        let edge_dir = (top1 - top0).normalize_or_zero();
+        let outward = edge_dir.cross(Vec3::NEG_Y).normalize_or_zero();
+        let n: [f32; 3] = if outward.length_squared() > 0.5 {
+            outward.into()
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+
+        let base = positions.len() as u32;
+        for &p in &[top0, top1, bot1, bot0] {
+            let v = p - mesh_origin;
+            positions.push([v.x, v.y, v.z]);
+        }
+        normals.extend([n; 4]);
+        indices.extend([base, base + 1, base + 2]);
+        indices.extend([base, base + 2, base + 3]);
+        tris += 2;
+    }
+
     tris
 }
 
@@ -607,11 +805,11 @@ pub fn poll_summary_meshes(
     let mut needs_rebuild: Vec<common_bevy::summary_mesh::MeshRegionKey> = Vec::new();
 
     for &region_key in &just_completed {
-        // Check which already-complete neighbors with higher key need us
-        // to own their cross-region skirts. Those neighbors need to be
-        // rebuilt by THEIR lower-key neighbor (us). But also check if any
-        // neighbor with lower key now has new data (our perimeter edges)
-        // and needs to rebuild.
+        // Re-patch every completed same-band neighbor: lower-key neighbors
+        // own the shared-edge skirts against our new data, and higher-key
+        // neighbors must drop the frontier curtains they emitted while our
+        // edge data was missing (a stale curtain would be coplanar with the
+        // new skirt — z-fighting).
         for neighbor_key in common_bevy::summary_mesh::mesh_region_neighbors(region_key) {
             if just_completed.contains(&neighbor_key) {
                 continue; // Will be built fresh in this same pass
@@ -620,14 +818,8 @@ pub fn poll_summary_meshes(
             if neighbor_state.base_positions.is_empty() {
                 continue; // Not yet complete
             }
-            // If neighbor has lower key, it owns the cross-region skirts
-            // and needs to rebuild to include skirts against our new data.
-            if neighbor_key.r == region_key.r
-                && (neighbor_key.mn, neighbor_key.mm) < (region_key.mn, region_key.mm)
-            {
-                if !needs_rebuild.contains(&neighbor_key) {
-                    needs_rebuild.push(neighbor_key);
-                }
+            if neighbor_key.r == region_key.r && !needs_rebuild.contains(&neighbor_key) {
+                needs_rebuild.push(neighbor_key);
             }
         }
     }
@@ -741,3 +933,142 @@ pub fn poll_summary_meshes(
     tri_stats.async_mesh = summary_meshes.states.values().filter(|s| s.task.is_some()).count() as u32;
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Coverage invariant for the LoD band system: every ground point inside
+    /// the horizon (a) lies within at least one needed region at its band's
+    /// level, and (b) if that region's footprint extends past the local-data
+    /// boundary, the producer enumerates it (so its data will exist).
+    ///
+    /// Run for gameplay (boundary = FIXED_STREAM_RADIUS_WU) and flyover
+    /// (small detail-chunk boundary) — the flyover case caught the missing
+    /// ring between the flyover's chunks and the first produced band.
+    #[test]
+    fn lod_bands_cover_horizon_without_gaps() {
+        use common_bevy::chunk::{
+            calculate_visible_chunks, ChunkId, APOTHEM_FACTOR, CHUNK_EXTENT_WU,
+            FIXED_STREAM_APOTHEM_WU, FIXED_STREAM_RADIUS,
+        };
+        use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
+        use common_bevy::summary_mesh::visible_lod_regions;
+
+        let cases: &[(f32, f32, u8, f32)] = &[
+            // (fov, camera ground y, loaded chunk ring, local boundary)
+            (common::camera::MAX_GAMEPLAY_FOV, 0.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
+            (common::camera::MAX_GAMEPLAY_FOV, 80.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
+            (
+                crate::systems::camera::MAX_FLYOVER_FOV,
+                0.0,
+                6,
+                6.0 * CHUNK_EXTENT_WU * APOTHEM_FACTOR,
+            ),
+            (
+                crate::systems::camera::MAX_FLYOVER_FOV,
+                200.0,
+                9,
+                9.0 * CHUNK_EXTENT_WU * APOTHEM_FACTOR,
+            ),
+        ];
+
+        for &(fov, cam_y, chunk_ring, boundary) in cases {
+            // Chunks loaded exactly as the game does (hexagonal coverage —
+            // the boundary is its inscribed circle).
+            let loaded: std::collections::HashSet<ChunkId> =
+                calculate_visible_chunks(ChunkId(0, 0), chunk_ring).into_iter().collect();
+
+            let cam = Vec3::new(0.0, cam_y, 0.0);
+            let needed = compute_auto_mode_regions(cam, &loaded, fov, 0.0, boundary);
+
+            // Producer set, from the same horizon formula as the consumer.
+            let far_ground = (crate::systems::camera::camera_height(fov) + cam_y)
+                / crate::systems::camera::HORIZON_MARGIN_DEG.to_radians().tan();
+            let bands = compute_active_bands(far_ground);
+            let produced = visible_lod_regions(&bands, 0.0, 0.0, boundary);
+
+            // (b) Data coverage: needed r>0 regions reaching past the
+            // boundary must be produced.
+            for k in &needed {
+                if k.r == 0 {
+                    continue;
+                }
+                let (kx, kz) = region_center_world(k);
+                let reach = (kx * kx + kz * kz).sqrt() + 0.5 * mesh_region_extent_wu(k.r);
+                if reach > boundary {
+                    assert!(
+                        produced.contains(k),
+                        "[fov={fov:.2} y={cam_y} b={boundary}] needed region {k:?} \
+                         (reach {reach:.1}) is beyond the boundary but not produced"
+                    );
+                }
+            }
+
+            // (a) Geometric coverage: sweep ground points; each must lie
+            // within some needed region of its band's level (region
+            // circumradius = extent/sqrt(3)).
+            for az_deg in (0..360).step_by(5) {
+                let azr = (az_deg as f32).to_radians();
+                let mut d = 2.0_f32;
+                while d < far_ground - 1.0 {
+                    let px = d * azr.cos();
+                    let pz = d * azr.sin();
+                    let band = bands
+                        .iter()
+                        .find(|b| d >= b.inner_wu && d <= b.outer_wu)
+                        .unwrap_or_else(|| bands.last().expect("bands non-empty"));
+                    let circum = mesh_region_extent_wu(band.r) / 3.0_f32.sqrt();
+                    let covered = needed.iter().any(|k| {
+                        if k.r != band.r {
+                            return false;
+                        }
+                        let (kx, kz) = region_center_world(k);
+                        let dx = kx - px;
+                        let dz = kz - pz;
+                        dx * dx + dz * dz <= circum * circum
+                    });
+                    if !covered {
+                        // Owning region of this point at the band's level
+                        let tile_q = (px as f64 / 1.5).round() as i32;
+                        let tile_r = ((pz as f64 - (px as f64 / 1.5) * 3.0_f64.sqrt() / 2.0)
+                            / 3.0_f64.sqrt())
+                        .round() as i32;
+                        let slat = common_bevy::summary::summary_lattice(band.r);
+                        let (sq, sr) = slat.cell_id(tile_q, tile_r);
+                        let rlat = common_bevy::summary::mesh_region_lattice();
+                        let (mn, mm) = rlat.cell_id(sq, sr);
+                        let owner = common_bevy::summary_mesh::MeshRegionKey { r: band.r, mn, mm };
+                        let (ox, oz) = region_center_world(&owner);
+                        let owner_dist = (ox * ox + oz * oz).sqrt();
+                        // Probe the enumerators directly with the same args
+                        // compute_auto_mode_regions uses for this band.
+                        let h = 0.5 * mesh_region_extent_wu(band.r);
+                        let b_inner = (band.inner_wu - h).max(0.0);
+                        let b_outer = band.outer_wu + h;
+                        let gated = common_bevy::summary_mesh::visible_mesh_regions_in_band(
+                            band.r, 0.0, 0.0, b_inner, b_outer.min(boundary), &loaded,
+                        );
+                        let ungated = common_bevy::summary_mesh::visible_mesh_regions_in_band_ungated(
+                            band.r, 0.0, 0.0, b_inner.max(boundary), b_outer,
+                        );
+                        panic!(
+                            "[fov={fov:.2} y={cam_y} b={boundary}] uncovered ground at \
+                             d={d:.1} az={az_deg} (band r={}, circum={circum:.1}); \
+                             owner {owner:?} center_dist={owner_dist:.1} \
+                             in_needed={} in_produced={} in_gated={} in_ungated={} \
+                             gated_range=[{b_inner:.1},{:.1}] owner_summary=({sq},{sr})",
+                            band.r,
+                            needed.contains(&owner),
+                            produced.contains(&owner),
+                            gated.contains(&owner),
+                            ungated.contains(&owner),
+                            b_outer.min(boundary),
+                        );
+                    }
+                    d += 7.0;
+                }
+            }
+        }
+    }
+}

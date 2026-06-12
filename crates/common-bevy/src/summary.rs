@@ -12,17 +12,44 @@ use crate::geometry::flat_top_tile_center;
 
 // ── Constants ──
 
-/// Minimum rendered size in pixels for a summary hex.
-pub const MIN_SCREEN_PX: f32 = 12.0;
+/// Nested LoD levels: summary scales triple per level.
+///
+/// scale = 2r+1 ∈ {1, 3, 9, 27, 81, 243}. Tripling makes the levels nest:
+/// every coarse summary center is also a fine summary center, and
+/// `sample_center_z`'s 7 sample points at d = scale/3 land exactly on the
+/// child level's summary centers (INV-010). Arbitrary integer radii do not
+/// nest — adjacent-band lattices would share no structure at all.
+pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
 
-/// Default vertical FOV for radius calculation (60deg gameplay).
-const DEFAULT_VFOV: f32 = std::f32::consts::PI / 3.0;
-
-/// Default screen height for radius calculation.
-const DEFAULT_SCREEN_HEIGHT: f32 = 1080.0;
+/// Camera distance (WU) per tile of summary scale — the band quality knob.
+/// Band threshold: `threshold_horiz(r) = (2r+1)·2·K − CAMERA_DISTANCE`.
+///
+/// Anchored so the scale-3 band's outer edge lands exactly on
+/// FIXED_STREAM_RADIUS_WU (598.5): 3·2K − 120 = 598.5 → K = 119.75.
+/// The ownership boundary (client Map vs server summaries) then coincides
+/// with a band boundary — no band ever has mixed provenance.
+pub const BAND_QUALITY_K: f32 = 119.75;
 
 /// Hex outer radius (vertex-to-vertex half-diameter) in world units.
 const HEX_OUTER_RADIUS: f32 = 1.0;
+
+/// Render-only depth bias per LoD level (WU). Adjacent levels overlap near
+/// band boundaries (footprint-overlap enumeration); on flat terrain their
+/// plates would be exactly coplanar — nested sampling produces equal
+/// center_z — and z-fight. Coarser levels sink slightly so the finer plate
+/// always wins. A tenth of one z-step per level: invisible, but well
+/// outside depth-buffer noise.
+pub const LEVEL_DEPTH_BIAS_WU: f32 = 0.08;
+
+/// Depth bias for a summary radius: rank of the level in LOD_LEVELS.
+/// Radii not in the table (forced debug radii) use their would-be rank.
+pub fn level_depth_bias(r: u32) -> f32 {
+    let rank = LOD_LEVELS
+        .iter()
+        .position(|&l| l == r)
+        .unwrap_or_else(|| LOD_LEVELS.partition_point(|&l| l < r));
+    rank as f32 * LEVEL_DEPTH_BIAS_WU
+}
 
 use common::camera::RISE as Z_SCALE;
 
@@ -36,27 +63,16 @@ pub const MESH_REGION_RADIUS: u32 = 9;
 
 // ── Radius formula ──
 
-/// Compute the summary radius for a given camera distance in world units.
+/// Smallest LoD level whose band covers the given camera distance.
 ///
-/// Returns `r` such that a summary hex subtends at least `MIN_SCREEN_PX`
-/// pixels at the given distance. Uses max_vfov (60deg) for worst case.
-///
-/// r=0: single tile. r=1: 7 tiles. r=9: 271 tiles (one game chunk).
+/// r=0: single tile. r=1: 7 tiles. r=4: 61 tiles. r=13: 1,099 tiles.
 pub fn summary_radius(camera_distance_wu: f32) -> u32 {
-    summary_radius_with_screen(camera_distance_wu, DEFAULT_SCREEN_HEIGHT)
-}
-
-/// Like `summary_radius` but with an explicit screen height.
-pub fn summary_radius_with_screen(camera_distance_wu: f32, screen_height: f32) -> u32 {
-    let pixel_scale = screen_height / (2.0 * (DEFAULT_VFOV / 2.0).tan());
-    let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
-    let r_exact =
-        (MIN_SCREEN_PX * camera_distance_wu / (tile_diameter * pixel_scale) - 1.0) / 2.0;
-    r_exact.max(0.0).ceil() as u32
-}
-
-fn pixel_scale_for_fov(fov: f32) -> f32 {
-    DEFAULT_SCREEN_HEIGHT / (2.0 * (fov / 2.0).tan())
+    for &r in &LOD_LEVELS {
+        if camera_distance_wu <= (2 * r + 1) as f32 * 2.0 * BAND_QUALITY_K {
+            return r;
+        }
+    }
+    *LOD_LEVELS.last().expect("LOD_LEVELS is non-empty")
 }
 
 // ── Distance Bands ──
@@ -74,31 +90,26 @@ pub struct Band {
 
 /// Compute active distance bands from player to `max_distance_wu` (horizontal).
 ///
-/// Thresholds are derived from `band_outer_threshold(r) - CAMERA_DISTANCE`:
-/// at horizontal distance D from the player, the worst-case camera-to-ground
-/// distance is `D + CAMERA_DISTANCE` (point directly away from camera).
-/// Conservative — hexes on the camera side subtend more pixels than the threshold.
-pub fn compute_active_bands(max_distance_wu: f32, fov: f32) -> Vec<Band> {
+/// One band per nested LoD level (`LOD_LEVELS`): band r covers
+/// `[threshold(prev level), threshold(r)]` where
+/// `threshold_horiz(r) = (2r+1)·2·BAND_QUALITY_K − CAMERA_DISTANCE`
+/// (at horizontal distance D from the player, the worst-case
+/// camera-to-ground distance is D + CAMERA_DISTANCE). If the horizon
+/// extends past the coarsest level's threshold, the final band stretches
+/// to cover it.
+pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
     use common::camera::CAMERA_DISTANCE;
 
     if max_distance_wu <= 0.0 {
         return vec![Band { r: 0, inner_wu: 0.0, outer_wu: 0.0 }];
     }
 
-    let ps = pixel_scale_for_fov(fov);
-    let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
-
-    // Max r: at the horizon, worst-case camera distance
-    let max_camera_dist = max_distance_wu + CAMERA_DISTANCE;
-    let max_r = ((MIN_SCREEN_PX * max_camera_dist / (tile_diameter * ps) - 1.0) / 2.0)
-        .max(0.0).ceil() as u32;
-
     let mut bands = Vec::new();
     let mut prev = 0.0_f32;
 
-    for r in 0..=max_r {
-        let threshold_3d = band_outer_threshold_with_ps(r, ps);
-        let threshold_horiz = (threshold_3d - CAMERA_DISTANCE).max(0.0);
+    for &r in &LOD_LEVELS {
+        let scale = (2 * r + 1) as f32;
+        let threshold_horiz = (scale * 2.0 * BAND_QUALITY_K - CAMERA_DISTANCE).max(0.0);
         let outer = threshold_horiz.min(max_distance_wu);
         if outer <= prev && r > 0 {
             prev = threshold_horiz;
@@ -115,17 +126,14 @@ pub fn compute_active_bands(max_distance_wu: f32, fov: f32) -> Vec<Band> {
         }
     }
 
-    bands
-}
+    // Horizon beyond the coarsest level: stretch the final band to cover it.
+    if let Some(last) = bands.last_mut() {
+        if last.outer_wu < max_distance_wu && prev < max_distance_wu {
+            last.outer_wu = max_distance_wu;
+        }
+    }
 
-/// Distance (WU) at which `summary_radius` transitions from r to r+1.
-///
-/// Inverts: `r_exact = (MIN_SCREEN_PX * d / (tile_diameter * pixel_scale) - 1) / 2`
-/// Setting `r_exact = r` (ceil boundary) → solve for d.
-fn band_outer_threshold_with_ps(r: u32, pixel_scale: f32) -> f32 {
-    let tile_diameter = 2.0 * HEX_OUTER_RADIUS;
-    let r_exact = r as f32;
-    (2.0 * r_exact + 1.0) * tile_diameter * pixel_scale / MIN_SCREEN_PX
+    bands
 }
 
 /// Enumerate summary-lattice cells within a world-space annulus.
@@ -300,17 +308,34 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
 
 /// Sample 7 elevations (center + 6 hex-axis points) and select center_z.
 ///
-/// Avoids enumerating every tile in the cell — at r=9 this is 7 samples
-/// instead of 271, with no visible difference at LoD distance.
+/// The single center_z rule for every producer (Map, server EventRegistry,
+/// flyover AdminComposite). For nested LoD levels (scale divisible by 3),
+/// the sample distance d = scale/3 puts the 6 axis samples exactly on the
+/// child level's summary centers (INV-010) — coarse summaries are anchored
+/// to the same tiles that anchor their children, so refinement preserves
+/// the silhouette. At r=1 the 7 samples are the entire hexball (exact).
 pub fn sample_center_z(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> i32) -> i32 {
+    sample_center_z_opt(r, sq, sr, |q, rr| Some(elevation_at(q, rr)))
+        .expect("infallible elevation source")
+}
+
+/// Fallible variant of `sample_center_z` for tile sources with holes
+/// (the client Map while chunks stream in). Returns None unless all
+/// 7 samples are available.
+pub fn sample_center_z_opt(
+    r: u32,
+    sq: i32,
+    sr: i32,
+    mut elevation_at: impl FnMut(i32, i32) -> Option<i32>,
+) -> Option<i32> {
     let (cq, cr) = summary_lattice(r).cell_center((sq, sr));
     let d = (2 * r as i32 + 1) / 3;
     let offsets: [(i32, i32); 7] = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)];
-    let zs: [i32; 7] = std::array::from_fn(|i| {
-        let (dq, dr) = offsets[i];
-        elevation_at(cq + dq, cr + dr)
-    });
-    select_center_z(&zs)
+    let mut zs = [0i32; 7];
+    for (i, (dq, dr)) in offsets.into_iter().enumerate() {
+        zs[i] = elevation_at(cq + dq, cr + dr)?;
+    }
+    Some(select_center_z(&zs))
 }
 
 // ── Center z selection ──
@@ -378,7 +403,10 @@ impl SummarySurface {
         center_z: i32,
     ) -> Self {
         let (center_wx, center_wz) = flat_top_tile_center(center_q, center_r, HEX_OUTER_RADIUS);
-        let y = center_z as f32 * Z_SCALE + Z_SCALE;
+        // Uniform per-level depth bias: keeps overlapping plates from
+        // adjacent levels out of each other's depth range (finer on top).
+        // Uniform within a level, so intra-level skirt matching is unaffected.
+        let y = center_z as f32 * Z_SCALE + Z_SCALE - level_depth_bias(radius);
         let outer_radius = (2 * radius + 1) as f32 * HEX_OUTER_RADIUS;
 
         // Flat-top hex corner offsets at summary outer radius
@@ -567,6 +595,63 @@ mod tests {
         assert_eq!(select_center_z(&[0, 10]), 10);
     }
 
+    // ── Nested level tests ──
+
+    /// INV-010: each LoD level's 7 sample points land exactly on the child
+    /// level's summary centers — the sampling rule is hierarchical.
+    #[test]
+    fn lod_levels_sample_points_are_child_centers() {
+        for w in LOD_LEVELS.windows(2) {
+            let (child_r, parent_r) = (w[0], w[1]);
+            let child_scale = (2 * child_r + 1) as i32;
+            let parent_scale = (2 * parent_r + 1) as i32;
+            assert_eq!(parent_scale, 3 * child_scale, "levels must triple");
+
+            let d = (2 * parent_r as i32 + 1) / 3;
+            assert_eq!(d, child_scale, "sample distance must equal child scale");
+
+            // Every sample point of a parent summary is a child lattice center.
+            let parent_lat = SummaryLattice::new(parent_r);
+            for &(sq, sr) in &[(0, 0), (1, 0), (-2, 3), (5, -4)] {
+                let (cq, cr) = parent_lat.cell_center((sq, sr));
+                let offsets = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)];
+                for (dq, dr) in offsets {
+                    let (q, r) = (cq + dq, cr + dr);
+                    assert_eq!(q % child_scale, 0, "sample q={q} not a child center");
+                    assert_eq!(r % child_scale, 0, "sample r={r} not a child center");
+                }
+            }
+        }
+    }
+
+    /// The scale-3 band's outer edge is anchored to the chunk-stream radius:
+    /// ownership boundary == band boundary.
+    #[test]
+    fn scale3_band_anchored_to_stream_radius() {
+        let bands = compute_active_bands(10_000.0);
+        let scale3 = bands.iter().find(|b| b.r == 1).expect("scale-3 band exists");
+        assert!(
+            (scale3.outer_wu - crate::chunk::FIXED_STREAM_RADIUS_WU).abs() < 0.01,
+            "scale-3 outer {} != stream radius {}",
+            scale3.outer_wu,
+            crate::chunk::FIXED_STREAM_RADIUS_WU
+        );
+    }
+
+    /// Bands tile [0, horizon] contiguously with one band per active level.
+    #[test]
+    fn bands_are_contiguous_nested_levels() {
+        let bands = compute_active_bands(25_000.0);
+        let mut prev_outer = 0.0_f32;
+        for (i, band) in bands.iter().enumerate() {
+            assert!(LOD_LEVELS.contains(&band.r), "band r={} not a LoD level", band.r);
+            assert!((band.inner_wu - prev_outer).abs() < 0.01, "gap before band {i}");
+            assert!(band.outer_wu > band.inner_wu, "empty band {i}");
+            prev_outer = band.outer_wu;
+        }
+        assert!((prev_outer - 25_000.0).abs() < 0.01, "bands must reach the horizon");
+    }
+
     // ── summary_radius tests ──
 
     #[test]
@@ -643,7 +728,7 @@ mod tests {
     #[test]
     fn flat_surface_all_same_y() {
         let surface = SummarySurface::flat(0, 0, 3, 0, 0, 10);
-        let expected_y = 10.0 * Z_SCALE + Z_SCALE;
+        let expected_y = 10.0 * Z_SCALE + Z_SCALE - level_depth_bias(3);
         assert!((surface.center.y - expected_y).abs() < 1e-6);
         for corner in &surface.corners {
             assert!(

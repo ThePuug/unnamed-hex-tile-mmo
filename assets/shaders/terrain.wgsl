@@ -21,12 +21,17 @@
 const HORIZON_COLOR: vec3<f32> = vec3<f32>(0.72, 0.78, 0.85);
 
 // Camera geometry constants (must match camera.rs).
+// CAMERA_HEIGHT approximates camera_total_height at sea level
+// (camera_height(60°) = 84, floored at 90 for zoom independence).
 const CAMERA_HEIGHT: f32 = 90.0;
 
-// Fade tuning: loading radius ≈ camera_altitude / CAMERA_HEIGHT × BASE_RADIUS_WU.
-// Fade starts at 80% of loading radius. BASE_RADIUS_WU ≈ ground-level max-zoom radius.
-const BASE_RADIUS_WU: f32 = 627.0;  // ~22 chunks × 28.5 wu (MAX_FOV at sea level)
-const FADE_START_FRAC: f32 = 0.80;
+// Atmospheric fade tied to the LoD band horizon (same formula as the band
+// math: far_ground = camera_total_height / tan(HORIZON_MARGIN_DEG = 5°)).
+// Haze completes slightly inside the horizon so the geometry frontier pops
+// behind full haze; everything nearer renders visibly.
+const INV_TAN_HORIZON_MARGIN: f32 = 11.43;  // 1 / tan(5°)
+const FADE_END_FRAC: f32 = 0.92;            // full haze at 92% of horizon
+const FADE_START_FRAC: f32 = 0.80;          // fade begins at 80% of fade_end
 
 // Hex tile rise (vertical spacing per elevation unit).
 // Must match common::camera::RISE.
@@ -122,12 +127,11 @@ fn fragment(
         base = elevation_color(elevation);
     }
 
-    // Atmospheric fade: derive loading radius from camera altitude, then
-    // blend toward horizon haze in the outer ~20% of that radius.
-    // Camera Y ≈ CAMERA_HEIGHT + player_elevation × RISE, so the ratio
-    // camera_alt / CAMERA_HEIGHT gives the elevation scaling factor.
+    // Atmospheric fade: derive the visual horizon from camera altitude with
+    // the same formula the LoD band math uses, then blend toward haze in the
+    // outer portion so the geometry frontier is always behind full haze.
     let camera_alt = max(view.world_position.y, CAMERA_HEIGHT);
-    let fade_end = camera_alt / CAMERA_HEIGHT * BASE_RADIUS_WU;
+    let fade_end = camera_alt * INV_TAN_HORIZON_MARGIN * FADE_END_FRAC;
     let fade_start = fade_end * FADE_START_FRAC;
     let dist = length(in.world_position.xz - view.world_position.xz);
     let fade_t = smoothstep(fade_start, fade_end, dist);

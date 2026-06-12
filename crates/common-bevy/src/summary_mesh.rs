@@ -9,11 +9,11 @@ use std::collections::{HashMap, HashSet};
 use bevy::math::Vec3;
 
 use crate::{
-    chunk::{self, ChunkId, CHUNK_RADIUS},
+    chunk::{self, ChunkId, CHUNK_RADIUS, FIXED_STREAM_RADIUS_WU},
     geometry::{compute_tile_geometry, flat_top_tile_center},
     summary::{
-        SummaryLattice, SummarySurface,
-        mesh_region_lattice, select_center_z, summary_lattice,
+        Band, SummaryLattice, SummarySurface,
+        mesh_region_lattice, summary_lattice,
     },
 };
 
@@ -97,24 +97,12 @@ pub fn build_summary_mesh_region(
     for (sn, sm) in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
         let (cq, cr) = summary_lat.cell_center((sn, sm));
 
-        // Collect z values for all tiles in this summary's hex ball
-        let mut tile_zs: Vec<i32> = Vec::new();
-        let mut all_present = true;
-
-        for (tq, tr) in summary_lat.tiles_in_cell((sn, sm)) {
-            if let Some(z) = elevation_fn(tq, tr) {
-                tile_zs.push(z);
-            } else {
-                all_present = false;
-                break;
-            }
-        }
-
-        if !all_present || tile_zs.is_empty() {
+        // Same 7-sample rule as every other producer (INV-010).
+        let Some(center_z) = crate::summary::sample_center_z_opt(radius, sn, sm, |tq, tr| {
+            elevation_fn(tq, tr)
+        }) else {
             continue;
-        }
-
-        let center_z = select_center_z(&tile_zs);
+        };
         surfaces.push(SummarySurface::flat(sn, sm, radius, cq, cr, center_z));
     }
 
@@ -627,6 +615,45 @@ pub fn visible_mesh_regions_in_band_ungated(
     }
 
     regions
+}
+
+/// Collect visible mesh regions across all bands for the producers (server,
+/// flyover): everything beyond the local-data boundary, plus regions whose
+/// footprint straddles it.
+///
+/// `local_boundary_wu` is the extent the consumer's Map can serve:
+/// FIXED_STREAM_RADIUS_WU in gameplay, the flyover's detail-chunk radius in
+/// flyover (much smaller — using the gameplay constant there left an
+/// un-rendered ring between the flyover's chunks and the first produced band).
+///
+/// Straddling matters: a region centered just inside the boundary has
+/// summaries beyond it whose tiles the Map can never resolve — the producer
+/// covers those. Values agree with Map-computed ones because every producer
+/// uses the same 7-sample rule over the same elevation field.
+pub fn visible_lod_regions(
+    bands: &[Band],
+    cam_wx: f32,
+    cam_wz: f32,
+    local_boundary_wu: f32,
+) -> HashSet<MeshRegionKey> {
+    let mut out = HashSet::new();
+    for band in bands {
+        let half_extent = 0.5 * crate::summary::mesh_region_extent_wu(band.r);
+        // Footprint-overlap enumeration (matches the consumer): expand the
+        // band annulus by half the region extent on both ends so every
+        // region whose footprint touches the band is produced. Without
+        // this, regions centered just outside a band edge were produced by
+        // neither band — un-rendered crescents at every level boundary.
+        let outer = band.outer_wu + half_extent;
+        // Skip bands whose regions cannot reach past the local boundary —
+        // those are fully consumer-owned (Map-computed).
+        if outer <= local_boundary_wu { continue; }
+        let inner = band.inner_wu.max(local_boundary_wu) - half_extent;
+        out.extend(visible_mesh_regions_in_band_ungated(
+            band.r, cam_wx, cam_wz, inner.max(0.0), outer,
+        ));
+    }
+    out
 }
 
 /// Enumerate all mesh region keys that overlap a set of loaded chunks,

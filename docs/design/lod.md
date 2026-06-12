@@ -206,7 +206,25 @@ Each async task uses `sample_center_z()` (7 samples per summary — see Center Z
 
 ## Implementation Deviations
 
-(None — spec matches implementation)
+**Nested-level redesign in progress** (see `.claude/plans/well-knit-world.md`):
+
+- **Distance bands** are now one per nested LoD level (scales 1, 3, 9, 27,
+  81, 243 — `LOD_LEVELS` in summary.rs), not one per integer r. Thresholds
+  use a single FOV-independent quality constant `BAND_QUALITY_K = 119.75`,
+  anchored so the scale-3 band's outer edge equals FIXED_STREAM_RADIUS_WU
+  (ownership boundary == band boundary). The MIN_SCREEN_PX/pixel_scale
+  formula in this spec is superseded.
+- **Center Z Selection** is unified: `sample_center_z` (7 samples) is the
+  only rule, for all producers including the local Map. The "accepted
+  divergence" between full-hexball and 7-sample no longer exists. New
+  invariant INV-010: a level's 7 sample points are exactly the child
+  level's summary centers (tested: `lod_levels_sample_points_are_child_centers`).
+- Producers (`visible_lod_regions`) also cover regions whose footprint
+  straddles the stream radius, so boundary regions complete from server
+  data; values agree with Map-computed ones by construction.
+- Pending phases: cross-level frontier curtains (P2), hysteresis +
+  build-before-evict transition protocol (P3). This spec needs a full
+  ARCHITECT rewrite once those land.
 
 ## Implementation Gaps
 
