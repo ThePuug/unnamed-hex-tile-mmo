@@ -30,6 +30,12 @@ pub struct VisibleChunkCache {
     pub chunk_id: ChunkId,
 }
 
+/// Maximum concurrent async chunk-generation tasks. A spawn queues 1,387
+/// chunks at once; unbounded task spawning saturates the async compute pool
+/// in raster order, generating the radius-21 frontier before the chunks the
+/// player is standing on. Pending work drains nearest-first instead.
+const MAX_CHUNK_TASKS: usize = 16;
+
 /// In-flight async chunk generation tasks.
 /// Task returns (chunk, duration_ms) so we can report async metrics.
 #[derive(Resource, Default)]
@@ -37,6 +43,19 @@ pub struct ChunkTaskQueue {
     tasks: Vec<(Entity, ChunkId, Task<(TerrainChunk, f32)>)>,
     /// Chunks currently being generated (avoid duplicate tasks).
     pub in_flight: std::collections::HashSet<ChunkId>,
+    /// Cache-missed requests awaiting a task slot, drained nearest-first.
+    pending: Vec<(Entity, ChunkId)>,
+    /// Mirror of `pending` chunk ids for O(1) duplicate suppression.
+    pending_set: std::collections::HashSet<ChunkId>,
+}
+
+/// Hex distance between two chunks (in tiles, via their center tiles).
+fn chunk_hex_distance(a: ChunkId, b: ChunkId) -> i32 {
+    let ca = a.center();
+    let cb = b.center();
+    let dq = ca.q - cb.q;
+    let dr = ca.r - cb.r;
+    dq.abs().max(dr.abs()).max((dq + dr).abs())
 }
 
 /// Discover initial chunks when a player first spawns
@@ -161,18 +180,25 @@ pub fn do_incremental(
 /// Generate a chunk of terrain tiles (pure computation, no ECS access).
 fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]> = tinyvec::ArrayVec::new();
+    let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
 
-    for (q, r) in chunk::chunk_tiles(chunk_id) {
+    for &(q, r) in &coords {
         let z = registry.elevation_at(q, r);
         let qrz = Qrz { q, r, z };
         let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
         tiles.push((qrz, typ));
     }
 
+    // Spawner placements are index-only: tile materialization no longer
+    // deforms their cells. Warm them here, where every survey resolve is a
+    // cache hit on the tiles materialized above.
+    registry.warm_indexes(&coords);
+
     TerrainChunk::new(tiles)
 }
 
-/// Dispatch chunk generation: cache hits → immediate Do, cache misses → async task.
+/// Dispatch chunk generation: cache hits → immediate Do, cache misses →
+/// pending queue, drained nearest-first under MAX_CHUNK_TASKS async tasks.
 /// EvictChunks passthrough is handled here too.
 pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
@@ -181,6 +207,7 @@ pub fn try_discover_chunk(
     registry: Res<EventRegistry>,
     map: ResMut<Map>,
     mut task_queue: ResMut<ChunkTaskQueue>,
+    locs: Query<&Loc>,
 ) {
     for message in reader.read() {
         // Passthrough: EvictChunks Try → Do (server-authoritative eviction)
@@ -194,29 +221,39 @@ pub fn try_discover_chunk(
 
             // Cache hit → immediate send
             if world_cache.chunks.contains_key(&chunk_id) {
-                world_cache.access_order.get_or_insert(chunk_id, || ());
-                let chunk = Arc::clone(world_cache.chunks.get(&chunk_id).unwrap());
-
-                // Insert tiles into server Map for physics/collision/AI
-                for &(qrz, typ) in &chunk.tiles {
-                    if map.get(qrz).is_none() {
-                        map.insert(qrz, typ);
-                    }
-                }
-
-                let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
-                    .map(|&(qrz, typ)| (qrz.z, typ))
-                    .collect();
-                writer.write(Do {
-                    event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
-                });
+                send_cached_chunk(ent, chunk_id, &mut world_cache, &*map, &mut writer);
                 continue;
             }
 
-            // Already in flight → skip (result will be delivered when task completes)
+            // Already in flight or queued → skip (delivered on completion)
             if task_queue.in_flight.contains(&chunk_id) { continue; }
+            if !task_queue.pending_set.insert(chunk_id) { continue; }
+            task_queue.pending.push((ent, chunk_id));
+        }
+    }
 
-            // Cache miss → spawn async generation task
+    // Drain pending nearest-first under the task budget. Runs every frame so
+    // the backlog keeps flowing as tasks complete.
+    if !task_queue.pending.is_empty() && task_queue.in_flight.len() < MAX_CHUNK_TASKS {
+        // Farthest-first sort so we can pop the nearest from the back.
+        let mut pending = std::mem::take(&mut task_queue.pending);
+        pending.sort_by_key(|&(ent, chunk_id)| {
+            let dist = locs.get(ent)
+                .map(|loc| chunk_hex_distance(loc_to_chunk(**loc), chunk_id))
+                .unwrap_or(i32::MAX);
+            std::cmp::Reverse(dist)
+        });
+
+        while task_queue.in_flight.len() < MAX_CHUNK_TASKS {
+            let Some((ent, chunk_id)) = pending.pop() else { break };
+            task_queue.pending_set.remove(&chunk_id);
+
+            // Generated by another player's request while queued → send now.
+            if world_cache.chunks.contains_key(&chunk_id) {
+                send_cached_chunk(ent, chunk_id, &mut world_cache, &*map, &mut writer);
+                continue;
+            }
+
             task_queue.in_flight.insert(chunk_id);
             let reg = registry.clone();
             let task = AsyncComputeTaskPool::get().spawn(async move {
@@ -227,7 +264,35 @@ pub fn try_discover_chunk(
             });
             task_queue.tasks.push((ent, chunk_id, task));
         }
+
+        task_queue.pending = pending;
     }
+}
+
+/// Send a cached chunk to a client and merge its tiles into the server Map.
+fn send_cached_chunk(
+    ent: Entity,
+    chunk_id: ChunkId,
+    world_cache: &mut WorldDiscoveryCache,
+    map: &Map,
+    writer: &mut MessageWriter<Do>,
+) {
+    world_cache.access_order.get_or_insert(chunk_id, || ());
+    let chunk = Arc::clone(world_cache.chunks.get(&chunk_id).unwrap());
+
+    // Insert tiles into server Map for physics/collision/AI
+    for &(qrz, typ) in &chunk.tiles {
+        if map.get(qrz).is_none() {
+            map.insert(qrz, typ);
+        }
+    }
+
+    let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
+        .map(|&(qrz, typ)| (qrz.z, typ))
+        .collect();
+    writer.write(Do {
+        event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
+    });
 }
 
 /// Poll completed async chunk tasks. Inserts into Map + cache, sends ChunkData.
