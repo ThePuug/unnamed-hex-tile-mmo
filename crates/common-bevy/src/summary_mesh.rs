@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::math::Vec3;
 
 use crate::{
-    chunk::{self, ChunkId, CHUNK_RADIUS, FIXED_STREAM_RADIUS_WU},
+    chunk::{self, ChunkId, CHUNK_RADIUS},
     geometry::{compute_tile_geometry, flat_top_tile_center},
     summary::{
         Band, SummaryLattice, SummarySurface,

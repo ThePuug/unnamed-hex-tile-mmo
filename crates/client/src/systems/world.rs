@@ -505,16 +505,13 @@ fn compute_auto_mode_regions(
     use common_bevy::summary::compute_active_bands;
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
-    // Max render distance = visual horizon from camera geometry.
-    // camera_pos is the player's (or flyover's) ground/world position; the
-    // camera sits camera_height_offset above it. Matches the server formula
-    // (camera_height + z·RISE) so client and server horizons agree — the old
-    // code subtracted the offset from the player's ground y, freezing the
-    // horizon at its sea-level value until z ≈ 104.
+    // Max render distance = visual horizon from camera geometry (top-corner
+    // rays — see far_ground_wu). camera_pos is the player's (or flyover's)
+    // ground/world position; the camera sits camera_height_offset above it.
+    // Same formula as the server and flyover producers so the horizons agree.
     let camera_height_offset = crate::systems::camera::camera_height(fov);
     let camera_total_height = camera_height_offset + camera_pos.y.max(0.0);
-    let margin_rad = crate::systems::camera::HORIZON_MARGIN_DEG.to_radians();
-    let far_ground = camera_total_height / margin_rad.tan();
+    let far_ground = common::camera::far_ground_wu(camera_total_height, fov);
 
     let bands = compute_active_bands(far_ground * (1.0 + margin));
     let mut all_regions = std::collections::HashSet::new();
@@ -983,8 +980,10 @@ mod tests {
             let needed = compute_auto_mode_regions(cam, &loaded, fov, 0.0, boundary);
 
             // Producer set, from the same horizon formula as the consumer.
-            let far_ground = (crate::systems::camera::camera_height(fov) + cam_y)
-                / crate::systems::camera::HORIZON_MARGIN_DEG.to_radians().tan();
+            let far_ground = common::camera::far_ground_wu(
+                crate::systems::camera::camera_height(fov) + cam_y,
+                fov,
+            );
             let bands = compute_active_bands(far_ground);
             let produced = visible_lod_regions(&bands, 0.0, 0.0, boundary);
 

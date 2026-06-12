@@ -50,7 +50,7 @@ pub fn dispatch_summary_tasks(
 
         let cam_h = common::camera::camera_height(common::camera::MAX_GAMEPLAY_FOV)
             + z.max(0) as f32 * common::camera::RISE;
-        let far_ground = cam_h / common::camera::HORIZON_MARGIN_DEG.to_radians().tan();
+        let far_ground = common::camera::far_ground_wu(cam_h, common::camera::MAX_GAMEPLAY_FOV);
 
         let bands = compute_active_bands(far_ground);
 

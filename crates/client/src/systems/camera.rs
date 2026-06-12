@@ -17,7 +17,7 @@ const INTERPOLATION_SPEED: f32 = 12.0;
 const SNAP_THRESHOLD: f32 = 0.005;
 
 // Re-export canonical camera constants from common.
-pub use common::camera::{CAMERA_DISTANCE, HORIZON_MARGIN_DEG, MAX_GAMEPLAY_FOV, camera_height};
+pub use common::camera::{CAMERA_DISTANCE, MAX_GAMEPLAY_FOV, camera_height};
 
 /// Default vertical field of view (narrow telephoto for isometric feel).
 const DEFAULT_FOV: f32 = 15_f32.to_radians();
