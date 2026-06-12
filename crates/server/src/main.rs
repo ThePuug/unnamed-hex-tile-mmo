@@ -36,8 +36,10 @@ fn main() {
         MinimalPlugins,
         LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter:  "wgpu=error,bevy=info,renetcode=warn,renet=warn,".to_owned()
-                    +"server=trace,"
+            // world=warn keeps the terrain pipeline's per-tile tracing spans
+            // disabled — at debug they cost real time on the hot path.
+            filter:  "wgpu=error,bevy=warn,renetcode=warn,renet=warn,".to_owned()
+                    +"server=trace,world=warn,"
                     ,
             custom_layer: |_| None,
             ..default()

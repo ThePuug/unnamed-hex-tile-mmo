@@ -52,11 +52,11 @@ fn main() {
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
-            filter: format!(
+            // world=warn keeps the terrain pipeline's per-tile tracing spans
+            // disabled — at debug they cost real time on the hot path.
+            filter:
                 "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,\
-                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,client=trace,bevy={}",
-                if cfg!(feature = "trace") { "info" } else { "warn" },
-            ),
+                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,epaint=warn,client=trace,world=warn,bevy=warn".to_string(),
             custom_layer: |_| None,
             ..default()
         }),
