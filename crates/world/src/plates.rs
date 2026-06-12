@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use dashmap::DashMap;
 
 use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
@@ -234,6 +232,12 @@ pub fn warp_strength_at(wx: f64, wy: f64, seed: u64) -> f64 {
     WARP_STRENGTH_MIN + normalized * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN)
 }
 
+/// Conservative bound on |warp_noise| used for candidate pruning.
+/// simplex_2d is normalized to [-1, 1] (asserted by noise.rs tests); the 10%
+/// margin keeps the prune provably sound against any residual normalization
+/// slack — pruned candidates can never beat the geometric minimum.
+const WARP_NOISE_BOUND: f64 = 1.1;
+
 /// Per-candidate warp noise at a world position.
 /// Uses candidate ID as seed offset so each candidate has its own noise field.
 /// Returns a value in approximately [-1, 1].
@@ -258,14 +262,21 @@ struct AnisoContext {
 }
 
 impl AnisoContext {
-    /// Anisotropic distance. Compresses the along-coast axis
-    /// so macro plates stretch parallel to the shore.
-    fn dist(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
+    /// Squared anisotropic distance — cheap pruning form of `dist` (no sqrt).
+    /// Must stay the exact expression `dist` squares so sqrt(dist_sq) is
+    /// bit-identical to `dist`.
+    fn dist_sq(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
         let dx = px - cx;
         let dy = py - cy;
         let d_across = dx * self.across.0 + dy * self.across.1;
         let d_along = (dx * self.along.0 + dy * self.along.1) / self.elongation;
-        (d_across * d_across + d_along * d_along).sqrt()
+        d_across * d_across + d_along * d_along
+    }
+
+    /// Anisotropic distance. Compresses the along-coast axis
+    /// so macro plates stretch parallel to the shore.
+    fn dist(&self, px: f64, py: f64, cx: f64, cy: f64) -> f64 {
+        self.dist_sq(px, py, cx, cy).sqrt()
     }
 }
 
@@ -338,7 +349,14 @@ fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
 
 /// Populate a chunk by scanning macro grid cells near it.
 /// Each PlateCenter is owned by the chunk containing its world position.
-fn populate_chunk(cq: i32, cr: i32, seed: u64) -> PlateChunk {
+/// `regime_for_cell(cell_q, cell_r, wx, wy)` samples the regime field —
+/// PlateCache passes a per-cell memo since adjacent chunk scans overlap.
+fn populate_chunk(
+    cq: i32,
+    cr: i32,
+    seed: u64,
+    regime_for_cell: &dyn Fn(i32, i32, f64, f64) -> f64,
+) -> PlateChunk {
     let odd_shift = if cr & 1 != 0 { PLATE_CHUNK_SIZE * 0.5 } else { 0.0 };
     let chunk_wx = cq as f64 * PLATE_CHUNK_SIZE + odd_shift;
     let chunk_wy = cr as f64 * PLATE_CHUNK_SIZE * HEX_ROW_HEIGHT;
@@ -349,7 +367,11 @@ fn populate_chunk(cq: i32, cr: i32, seed: u64) -> PlateChunk {
     let mut centers = Vec::new();
     for dr in -scan..=scan {
         for dq in -scan..=scan {
-            if let Some(plate) = plate_center_for_cell(center_mcq + dq, center_mcr + dr, seed) {
+            let (mcq, mcr) = (center_mcq + dq, center_mcr + dr);
+            let plate = plate_center_for_cell_with(mcq, mcr, seed, |wx, wy| {
+                regime_for_cell(mcq, mcr, wx, wy)
+            });
+            if let Some(plate) = plate {
                 if plate_chunk_coord(plate.wx, plate.wy) == (cq, cr) {
                     centers.push(plate);
                 }
@@ -372,7 +394,22 @@ fn effective_distance(wx: f64, wy: f64, candidate: &PlateCenter, strength: f64, 
 
 /// Compute the plate center for a specific hex grid cell (odd-r offset).
 /// Returns None if the cell is suppressed.
+/// Production goes through `plate_center_for_cell_with` (memoized regime);
+/// this uncached form serves tests and standalone analysis.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Option<PlateCenter> {
+    plate_center_for_cell_with(cell_q, cell_r, seed, |wx, wy| regime_value_at(wx, wy, seed))
+}
+
+/// `plate_center_for_cell` with a caller-supplied regime sampler so chunk
+/// population can memoize the 6-simplex regime stack per macro cell
+/// (adjacent chunk scans overlap ~6.9×).
+fn plate_center_for_cell_with(
+    cell_q: i32,
+    cell_r: i32,
+    seed: u64,
+    regime_at: impl FnOnce(f64, f64) -> f64,
+) -> Option<PlateCenter> {
     let odd_shift = if cell_r & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
     let nominal_wx = cell_q as f64 * MACRO_CELL_SIZE + odd_shift;
     let nominal_wy = cell_r as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
@@ -380,19 +417,28 @@ pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Opti
     // Variable suppression: low at coastlines (many small plates),
     // high in deep water/land (fewer, larger plates).
     // Asymmetric: ocean side is boosted so deep ocean suppresses more than deep land.
+    //
+    // suppression ∈ [SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX] for every
+    // possible regime (regime is a sigmoid output in (0, 1), so depth ∈ [0, 1]).
+    // Outside that band the hash alone decides — skip the regime stack.
     let hash = hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED);
-    let regime = regime_value_at(nominal_wx, nominal_wy, seed);
-    let depth = if regime >= REGIME_LAND_THRESHOLD {
-        // Land side: 0.0 at coast, 1.0 at regime=1.0
-        (regime - REGIME_LAND_THRESHOLD) / (1.0 - REGIME_LAND_THRESHOLD)
-    } else {
-        // Ocean side: 0.0 at coast, 1.0+ at regime=0.0
-        let normalized = (REGIME_LAND_THRESHOLD - regime) / REGIME_LAND_THRESHOLD;
-        (normalized * OCEAN_SUPPRESSION_BOOST).min(1.0)
-    };
-    let suppression = SUPPRESSION_RATE_MIN + depth * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
-    if hash < suppression {
+    if hash < SUPPRESSION_RATE_MIN {
         return None;
+    }
+    if hash < SUPPRESSION_RATE_MAX {
+        let regime = regime_at(nominal_wx, nominal_wy);
+        let depth = if regime >= REGIME_LAND_THRESHOLD {
+            // Land side: 0.0 at coast, 1.0 at regime=1.0
+            (regime - REGIME_LAND_THRESHOLD) / (1.0 - REGIME_LAND_THRESHOLD)
+        } else {
+            // Ocean side: 0.0 at coast, 1.0+ at regime=0.0
+            let normalized = (REGIME_LAND_THRESHOLD - regime) / REGIME_LAND_THRESHOLD;
+            (normalized * OCEAN_SUPPRESSION_BOOST).min(1.0)
+        };
+        let suppression = SUPPRESSION_RATE_MIN + depth * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
+        if hash < suppression {
+            return None;
+        }
     }
 
     let jitter = jitter_at(nominal_wx, nominal_wy, seed);
@@ -464,32 +510,69 @@ const GRAD_CACHE_CELL: f64 = 32.0;
 pub struct PlateCache {
     chunks: DashMap<(i32, i32), PlateChunk>,
     gradients: DashMap<(i64, i64), RegimeGradient>,
+    /// Memoized classification per plate id. Classification depends only on
+    /// the plate's center position + seed, so it is a per-plate constant —
+    /// without this it was recomputed (6 simplex evals) for every tile.
+    tags: DashMap<u64, PlateTag>,
+    /// Memoized Voronoi neighbors per plate id. The neighbor set depends only
+    /// on the owner plate + seed; deform gathers overlap ~60% between
+    /// adjacent cells, so without this the midpoint plate_at probes were
+    /// recomputed dozens of times per plate.
+    neighbors: DashMap<u64, Vec<PlateCenter>>,
+    /// Memoized regime samples at macro-cell nominal centers. Chunk
+    /// population scans overlap ~6.9× between adjacent chunks; each cell's
+    /// 6-simplex regime stack is computed once.
+    cell_regimes: DashMap<(i32, i32), f64>,
     seed: u64,
 }
 
 impl PlateCache {
     pub fn new(seed: u64) -> Self {
-        Self { chunks: DashMap::new(), gradients: DashMap::new(), seed }
+        Self {
+            chunks: DashMap::new(),
+            gradients: DashMap::new(),
+            tags: DashMap::new(),
+            neighbors: DashMap::new(),
+            cell_regimes: DashMap::new(),
+            seed,
+        }
     }
 
     fn cached_gradient(&self, wx: f64, wy: f64) -> (f64, AnisoContext) {
         let cx = (wx / GRAD_CACHE_CELL).floor() as i64;
         let cy = (wy / GRAD_CACHE_CELL).floor() as i64;
-        let seed = self.seed;
-        let rg = self.gradients.entry((cx, cy)).or_insert_with(|| {
-            RegimeGradient::at(
-                (cx as f64 + 0.5) * GRAD_CACHE_CELL,
-                (cy as f64 + 0.5) * GRAD_CACHE_CELL,
-                seed,
-            )
-        });
+        // Read fast path — entry() takes the shard write lock even on hit.
+        if let Some(rg) = self.gradients.get(&(cx, cy)) {
+            return (rg.warp_strength, rg.ctx);
+        }
+        // Compute outside the write guard; the value is a deterministic pure
+        // function, so a racing duplicate computation is harmless.
+        let computed = RegimeGradient::at(
+            (cx as f64 + 0.5) * GRAD_CACHE_CELL,
+            (cy as f64 + 0.5) * GRAD_CACHE_CELL,
+            self.seed,
+        );
+        let rg = *self.gradients.entry((cx, cy)).or_insert(computed);
         (rg.warp_strength, rg.ctx)
     }
 
     fn ensure_chunk(&self, cq: i32, cr: i32) {
-        let seed = self.seed;
-        self.chunks.entry((cq, cr))
-            .or_insert_with(|| populate_chunk(cq, cr, seed));
+        // Read fast path — entry() takes the shard write lock even on hit.
+        if self.chunks.contains_key(&(cq, cr)) {
+            return;
+        }
+        // Compute outside the write guard (deterministic; race duplicates are
+        // discarded by or_insert keeping the first value).
+        let regime_for_cell = |cell_q: i32, cell_r: i32, wx: f64, wy: f64| -> f64 {
+            if let Some(v) = self.cell_regimes.get(&(cell_q, cell_r)) {
+                return *v;
+            }
+            let v = regime_value_at(wx, wy, self.seed);
+            self.cell_regimes.insert((cell_q, cell_r), v);
+            v
+        };
+        let chunk = populate_chunk(cq, cr, self.seed, &regime_for_cell);
+        self.chunks.entry((cq, cr)).or_insert(chunk);
     }
 
     pub fn plate_at(&self, wx: f64, wy: f64) -> PlateCenter {
@@ -542,6 +625,12 @@ impl PlateCache {
 
     pub fn plate_neighbors(&self, wx: f64, wy: f64) -> Vec<PlateCenter> {
         let owner = self.plate_at(wx, wy);
+        // The neighbor set is a deterministic function of the owner plate +
+        // seed — memoize per plate id (deform gathers re-request the same
+        // owners dozens of times from overlapping cells).
+        if let Some(cached) = self.neighbors.get(&owner.id) {
+            return cached.clone();
+        }
         let search_radius = MACRO_CELL_SIZE * 4.0;
         let candidates = self.plates_in_radius(owner.wx, owner.wy, search_radius);
         let mut neighbors = Vec::new();
@@ -554,20 +643,27 @@ impl PlateCache {
                 neighbors.push(candidate.clone());
             }
         }
+        self.neighbors.insert(owner.id, neighbors.clone());
         neighbors
     }
 
     pub fn classify_tags(&self, plates: &mut [PlateCenter]) {
         for plate in plates.iter_mut() {
-            let regime = self.regime_value_at(plate.wx, plate.wy);
-            let strength = self.warp_strength_at(plate.wx, plate.wy);
-            let is_coast = strength > COASTAL_WARP_THRESHOLD;
-            let tag = if is_coast {
-                PlateTag::Coast
-            } else if regime >= REGIME_LAND_THRESHOLD {
-                PlateTag::Inland
+            let tag = if let Some(cached) = self.tags.get(&plate.id) {
+                *cached
             } else {
-                PlateTag::Sea
+                let regime = self.regime_value_at(plate.wx, plate.wy);
+                let strength = self.warp_strength_at(plate.wx, plate.wy);
+                let is_coast = strength > COASTAL_WARP_THRESHOLD;
+                let tag = if is_coast {
+                    PlateTag::Coast
+                } else if regime >= REGIME_LAND_THRESHOLD {
+                    PlateTag::Inland
+                } else {
+                    PlateTag::Sea
+                };
+                self.tags.insert(plate.id, tag);
+                tag
             };
             plate.add_tag(tag);
         }
@@ -579,19 +675,42 @@ impl PlateCache {
         for (dq, dr) in chunk_1ring(cr) {
             self.ensure_chunk(cq + dq, cr + dr);
         }
-        let mut best: Option<PlateCenter> = None;
-        let mut best_eff_dist = f64::MAX;
-        for (dq, dr) in chunk_1ring(cr) {
-            let chunk = self.chunks.get(&(cq + dq, cr + dr)).unwrap();
+        let chunks: Vec<_> = chunk_1ring(cr).iter()
+            .map(|(dq, dr)| self.chunks.get(&(cq + dq, cr + dr)).unwrap())
+            .collect();
+
+        // Pass 1: geometric minimum (squared — no sqrt, no noise).
+        let mut min_d2 = f64::MAX;
+        for chunk in &chunks {
             for candidate in &chunk.centers {
+                let d2 = ctx.dist_sq(wx, wy, candidate.wx, candidate.wy);
+                if d2 < min_d2 { min_d2 = d2; }
+            }
+        }
+
+        // Pass 2: noise only for candidates that can possibly win.
+        // eff = geo + noise·strength with |noise| ≤ WARP_NOISE_BOUND, so any
+        // candidate with geo > min_geo + 2·strength·BOUND has eff strictly
+        // greater than the geometric minimum's eff and can never be selected.
+        // Iteration order matches the unpruned loop, so the winner — and the
+        // composite output — is bit-identical.
+        let cutoff = min_d2.sqrt() + 2.0 * strength * WARP_NOISE_BOUND;
+        let cutoff_sq = (cutoff * cutoff).max(min_d2);
+        let mut best: Option<&PlateCenter> = None;
+        let mut best_eff_dist = f64::MAX;
+        for chunk in &chunks {
+            for candidate in &chunk.centers {
+                if ctx.dist_sq(wx, wy, candidate.wx, candidate.wy) > cutoff_sq {
+                    continue;
+                }
                 let d = effective_distance(wx, wy, candidate, strength, &ctx, self.seed);
                 if d < best_eff_dist {
-                    best = Some(candidate.clone());
+                    best = Some(candidate);
                     best_eff_dist = d;
                 }
             }
         }
-        best.expect("no plate center found in chunk neighborhood")
+        best.cloned().expect("no plate center found in chunk neighborhood")
     }
 }
 
@@ -601,8 +720,44 @@ impl PlateCache {
 mod tests {
     use super::*;
     use common::{PlateTag, Tagged};
+    use std::collections::HashMap;
     #[allow(unused_imports)]
     use std::collections::HashSet;
+
+    /// The candidate-pruning fast path in warped_plate_at must select the
+    /// exact same winner as the unpruned scan — the prune bound is meant to
+    /// be conservative, never lossy.
+    #[test]
+    fn warped_plate_pruning_matches_brute_force() {
+        let cache = PlateCache::new(0x9E3779B97F4A7C15);
+        for i in 0..500i64 {
+            let wx = (hash_f64(i, 0, 7) - 0.5) * 40_000.0;
+            let wy = (hash_f64(0, i, 13) - 0.5) * 40_000.0;
+            let pruned = cache.warped_plate_at(wx, wy);
+
+            // Unpruned reference scan over the same candidate set.
+            let (cq, cr) = plate_chunk_coord(wx, wy);
+            let (strength, ctx) = cache.cached_gradient(wx, wy);
+            let mut best: Option<PlateCenter> = None;
+            let mut best_d = f64::MAX;
+            for (dq, dr) in chunk_1ring(cr) {
+                cache.ensure_chunk(cq + dq, cr + dr);
+                let chunk = cache.chunks.get(&(cq + dq, cr + dr)).unwrap();
+                for cand in &chunk.centers {
+                    let d = effective_distance(wx, wy, cand, strength, &ctx, cache.seed);
+                    if d < best_d {
+                        best_d = d;
+                        best = Some(cand.clone());
+                    }
+                }
+            }
+            let reference = best.expect("reference scan found no plate");
+            assert_eq!(
+                pruned.id, reference.id,
+                "pruning changed the Voronoi winner at ({wx:.1},{wy:.1})"
+            );
+        }
+    }
 
     #[test]
     fn deterministic_center_generation() {
@@ -1134,9 +1289,10 @@ mod tests {
         let seed = 42u64;
         let mut seen: HashMap<u64, (i32, i32)> = HashMap::new();
 
+        let regime_uncached = |_: i32, _: i32, wx: f64, wy: f64| regime_value_at(wx, wy, seed);
         for cq in -5..=5 {
             for cr in -5..=5 {
-                let chunk = populate_chunk(cq, cr, seed);
+                let chunk = populate_chunk(cq, cr, seed, &regime_uncached);
                 for center in &chunk.centers {
                     if let Some(&prev) = seen.get(&center.id) {
                         panic!("PlateCenter id={} in chunks ({}, {}) and ({}, {})",

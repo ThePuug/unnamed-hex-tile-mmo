@@ -342,7 +342,7 @@ pub fn macro_plate_for(micro: &MicroplateCenter, seed: u64) -> PlateCenter {
 /// UNCACHED — creates throwaway PlateCache per call.
 /// Use `MicroplateCache::plate_info_at` for repeated lookups.
 pub fn plate_info_at(wx: f64, wy: f64, seed: u64) -> (PlateCenter, MicroplateCenter) {
-    let mut cache = PlateCache::new(seed);
+    let cache = PlateCache::new(seed);
     let mut micro = micro_cell_at(wx, wy, seed);
     let macro_plate = cache.warped_plate_at(micro.wx, micro.wy);
     micro.parent_id = macro_plate.id;
