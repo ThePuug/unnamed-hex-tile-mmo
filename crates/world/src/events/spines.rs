@@ -77,6 +77,8 @@ impl EventIndex for SpineInstanceIndex {
 pub struct SpineEvent {
     plate_cache: Arc<PlateCache>,
     seed: u64,
+    /// Cell lattice at SPINE_CELL_SCALE — hoisted out of the per-tile query.
+    lattice: HexLattice,
 }
 
 impl SpineEvent {
@@ -85,7 +87,7 @@ impl SpineEvent {
     }
 
     pub fn with_cache(plate_cache: Arc<PlateCache>, seed: u64) -> Self {
-        Self { plate_cache, seed }
+        Self { plate_cache, seed, lattice: HexLattice::new(SPINE_CELL_SCALE) }
     }
 }
 
@@ -163,18 +165,18 @@ impl WorldEvent for SpineEvent {
         let (wx, wy) = hex_to_world(q, r);
 
         // Search this cell + 1 neighbor ring for instances
-        let lattice = HexLattice::new(self.scale());
-        let nearby_cells = lattice.cells_within_distance(cell_id, 1);
+        let nearby_cells = self.lattice.cells_within_distance(cell_id, 1);
         let instances = spine_index.instances_in(&nearby_cells);
 
         let mut max_elev = 0.0f64;
         let mut best_tag: Option<PlateTag> = None;
 
         for inst in &instances {
-            let e = inst.elevation_at(wx, wy);
+            // Single pass per instance: elevation + tag share one peak scan.
+            let (e, tag) = inst.sample_at(wx, wy);
             if e > max_elev { max_elev = e; }
 
-            if let Some(tag) = inst.tag_at(wx, wy) {
+            if let Some(tag) = tag {
                 let dominated = best_tag.as_ref()
                     .map_or(true, |b| spine_tag_priority(&tag) > spine_tag_priority(b));
                 if dominated { best_tag = Some(tag); }

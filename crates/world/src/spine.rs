@@ -713,6 +713,9 @@ fn blended_gradient_raw(
 }
 
 /// Normalized downhill direction, or (0, 0) on flat terrain.
+/// grow_stream inlines this against a shared raw-gradient evaluation;
+/// kept for tests and as the reference form of that inlining.
+#[cfg_attr(not(test), allow(dead_code))]
 fn blended_gradient(
     peaks: &[Peak],
     ridgelines: &[Ridgeline],
@@ -755,7 +758,23 @@ pub struct Ridgeline {
     pub height_b: f64,
     /// Saddle depth fraction at the midpoint. 0 = flat ridge, 1 = drops to zero.
     pub sag: f64,
+    /// Wobble noise seed — constant per ridgeline (hoisted out of the
+    /// per-query hash; see `wobble_seed_for`).
+    pub wobble_seed: u64,
 }
+
+impl Ridgeline {
+    /// Wobble noise seed for a peak pair. Stored on the struct so
+    /// `ridge_elevation_at` doesn't re-hash on every evaluation.
+    pub fn wobble_seed_for(peak_a: usize, peak_b: usize) -> u64 {
+        hash_u64(peak_a as i64, peak_b as i64, SEED_RIDGE_WOBBLE)
+    }
+}
+
+/// Conservative bound on the lateral centerline wobble. simplex_2d is
+/// normalized to [-1, 1]; the 10% margin keeps the pre-noise rejection in
+/// `ridge_elevation_at` provably sound.
+const RIDGE_WOBBLE_BOUND: f64 = RIDGE_LATERAL_WOBBLE * 1.1;
 
 /// Elevation contribution of a single ridgeline at (wx, wy).
 fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> f64 {
@@ -768,15 +787,26 @@ fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> f64 {
     // Project query point onto the straight segment to get t.
     let t = (((wx - ridge.ax) * abx + (wy - ridge.ay) * aby) / ab_len_sq).clamp(0.0, 1.0);
 
+    // Pre-noise rejection: the wobble shifts the centerline by at most
+    // RIDGE_WOBBLE_BOUND, so any point farther than HALF_WIDTH + BOUND from
+    // the straight projection ends up >= HALF_WIDTH from the wobbled
+    // centerline and contributes nothing. This skips the hash + simplex for
+    // the overwhelming majority of (point, ridgeline) pairs.
+    let raw_px = ridge.ax + t * abx;
+    let raw_py = ridge.ay + t * aby;
+    let raw_dx = wx - raw_px;
+    let raw_dy = wy - raw_py;
+    let reject = RIDGE_HALF_WIDTH + RIDGE_WOBBLE_BOUND;
+    if raw_dx * raw_dx + raw_dy * raw_dy >= reject * reject { return 0.0; }
+
     // Wobble the projected point perpendicular to the segment.
     // Attenuate at endpoints so ridge meets peaks exactly.
-    let ridge_seed = hash_u64(ridge.peak_a as i64, ridge.peak_b as i64, SEED_RIDGE_WOBBLE);
     let endpoint_fade = 4.0 * t * (1.0 - t); // 0 at ends, 1 at midpoint
-    let wobble = simplex_2d(t * RIDGE_WOBBLE_FREQ, 0.0, ridge_seed) * RIDGE_LATERAL_WOBBLE * endpoint_fade;
+    let wobble = simplex_2d(t * RIDGE_WOBBLE_FREQ, 0.0, ridge.wobble_seed) * RIDGE_LATERAL_WOBBLE * endpoint_fade;
     let perp_x = -aby / ab_len;
     let perp_y = abx / ab_len;
-    let proj_x = ridge.ax + t * abx + perp_x * wobble;
-    let proj_y = ridge.ay + t * aby + perp_y * wobble;
+    let proj_x = raw_px + perp_x * wobble;
+    let proj_y = raw_py + perp_y * wobble;
 
     // Perpendicular distance from query point to wobbled centerline.
     let dx = wx - proj_x;
@@ -850,6 +880,7 @@ fn build_ridgelines(peaks: &[Peak], spine_id: u64, seed: u64) -> Vec<Ridgeline> 
                 height_a: peaks[a_idx].height,
                 height_b: peaks[b_idx].height,
                 sag,
+                wobble_seed: Ridgeline::wobble_seed_for(a_idx, b_idx),
             });
             connected[i].push(j);
             connected[j].push(i);
@@ -954,6 +985,45 @@ impl SpineInstance {
 
         // Ravine carving
         self.ravine_network.carve(wx, wy, elev)
+    }
+
+    /// Elevation and cross-section tag in a single pass. Equivalent to
+    /// `(elevation_at(wx, wy), tag_at(wx, wy))` but shares the bounding
+    /// check and the per-peak distance scan between them — the per-tile
+    /// query path calls this once per instance instead of scanning twice.
+    pub fn sample_at(&self, wx: f64, wy: f64) -> (f64, Option<PlateTag>) {
+        let bx = wx - self.bounding_center.0;
+        let by = wy - self.bounding_center.1;
+        if bx * bx + by * by > self.bounding_radius * self.bounding_radius {
+            return (0.0, None);
+        }
+
+        // One peak scan yields both the max cone elevation (elevation_at's
+        // evaluate_peaks) and the closest distance fraction (tag_at's scan).
+        let mut peak_elev = 0.0f64;
+        let mut best_frac = f64::MAX;
+        for peak in &self.peaks {
+            let dx = wx - peak.wx;
+            let dy = wy - peak.wy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist >= peak.falloff_radius { continue; }
+            let frac = dist / peak.falloff_radius;
+            if frac < best_frac { best_frac = frac; }
+            let elev = cross_section_profile(frac) * peak.height;
+            if elev > peak_elev { peak_elev = elev; }
+        }
+        let tag = if best_frac < f64::MAX { Some(cross_section_tag(best_frac)) } else { None };
+
+        let ridge_elev = self.evaluate_ridgelines(wx, wy);
+        let mut elev = peak_elev.max(ridge_elev);
+        if elev <= 0.0 { return (0.0, tag); }
+
+        let noise = fbm_2d(wx, wy, RIDGE_NOISE_WAVELENGTH, self.id ^ RIDGE_NOISE_SEED);
+        let amplitude = elev * RIDGE_NOISE_STRENGTH;
+        elev = (elev + noise * amplitude).max(0.0);
+        if elev <= 0.0 { return (0.0, tag); }
+
+        (self.ravine_network.carve(wx, wy, elev), tag)
     }
 }
 
@@ -1271,6 +1341,12 @@ fn apply_peak_to_plates(
     plate_map: &HashMap<u64, usize>,
     plate_cache: &PlateCache,
 ) {
+    // The event path passes an empty plate_map (plate tagging is handled by
+    // the composite's query cascade) — skip the radius scan entirely; the
+    // loop below could never match a candidate.
+    if plate_map.is_empty() || plates.is_empty() {
+        return;
+    }
     let candidates = plate_cache.plates_in_radius(peak.wx, peak.wy, peak.falloff_radius);
     for candidate in candidates {
         let Some(&idx) = plate_map.get(&candidate.id) else { continue };
@@ -1394,8 +1470,12 @@ fn grow_stream(
             break;
         }
 
-        // Slope-based depth accumulation
-        let grad_mag = blended_gradient_magnitude(peaks, ridgelines, wx, wy);
+        // Slope-based depth accumulation. One raw-gradient field evaluation
+        // serves both the magnitude here and the step direction below —
+        // previously two full peak+ridgeline scans per step.
+        let (raw_gx, raw_gy) = blended_gradient_raw(peaks, ridgelines, wx, wy);
+        let raw_grad_len = (raw_gx * raw_gx + raw_gy * raw_gy).sqrt();
+        let grad_mag = raw_grad_len;
         cum_depth += depth_increment(grad_mag, 0);
 
         // Termination: depth stalled (terrain too flat to carve)
@@ -1415,8 +1495,14 @@ fn grow_stream(
             cum_depth, grad_mag, merge_count: 0, wall_exponent,
         });
 
-        // Blended gradient: smooth across cone boundaries
-        let (grad_dx, grad_dy) = blended_gradient(peaks, ridgelines, wx, wy);
+        // Blended gradient: smooth across cone boundaries (normalized form
+        // of the raw gradient computed above — same expressions as
+        // blended_gradient).
+        let (grad_dx, grad_dy) = if raw_grad_len > 1e-10 {
+            (raw_gx / raw_grad_len, raw_gy / raw_grad_len)
+        } else {
+            (0.0, 0.0)
+        };
         if grad_dx == 0.0 && grad_dy == 0.0 { break; }
         let blended_x = dir_x * STREAM_MOMENTUM + grad_dx * (1.0 - STREAM_MOMENTUM);
         let blended_y = dir_y * STREAM_MOMENTUM + grad_dy * (1.0 - STREAM_MOMENTUM);
@@ -1572,6 +1658,14 @@ fn generate_ridge_paths(
     seed: u64,
 ) -> Vec<Vec<PathStep>> {
     let mut paths = Vec::new();
+
+    // Paths are disabled at probability 0 — skip the O(streams²) pair scan
+    // (~180k hash evals per grow_spine) instead of hashing every pair to
+    // discover nothing qualifies. (Only a hash of exactly 0.0 — p = 2⁻⁵³ —
+    // would have passed the filter below.)
+    if PATH_PROBABILITY <= 0.0 {
+        return paths;
+    }
 
     for i in 0..streams.len() {
         if streams[i].steps.len() < 4 { continue; }
@@ -2543,7 +2637,8 @@ mod tests {
         let ridge = Ridgeline {
             peak_a: 0, peak_b: 1,
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
-            height_a: 1000.0, height_b: 800.0, sag: 0.3, };
+            height_a: 1000.0, height_b: 800.0, sag: 0.3,
+            wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
         let elev = ridge_elevation_at(&ridge, 0.0, 0.0);
         assert!((elev - 1000.0).abs() < 1e-10,
             "elevation at peak A should equal height_a, got {elev}");
@@ -2554,7 +2649,8 @@ mod tests {
         let ridge = Ridgeline {
             peak_a: 0, peak_b: 1,
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
-            height_a: 1000.0, height_b: 800.0, sag: 0.3, };
+            height_a: 1000.0, height_b: 800.0, sag: 0.3,
+            wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
         let elev = ridge_elevation_at(&ridge, 3000.0, 0.0);
         assert!((elev - 800.0).abs() < 1e-10,
             "elevation at peak B should equal height_b, got {elev}");
@@ -2565,7 +2661,8 @@ mod tests {
         let ridge = Ridgeline {
             peak_a: 0, peak_b: 1,
             ax: 0.0, ay: 0.0, bx: 4000.0, by: 0.0,
-            height_a: 1000.0, height_b: 1000.0, sag: 0.4, };
+            height_a: 1000.0, height_b: 1000.0, sag: 0.4,
+            wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
         let at_a = ridge_elevation_at(&ridge, 0.0, 0.0);
         let at_mid = ridge_elevation_at(&ridge, 2000.0, 0.0);
         assert!(at_mid > 0.0, "midpoint should have positive elevation");
@@ -2577,7 +2674,8 @@ mod tests {
         let ridge = Ridgeline {
             peak_a: 0, peak_b: 1,
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
-            height_a: 1000.0, height_b: 800.0, sag: 0.3, };
+            height_a: 1000.0, height_b: 800.0, sag: 0.3,
+            wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
         let elev = ridge_elevation_at(&ridge, 1500.0, RIDGE_HALF_WIDTH);
         assert_eq!(elev, 0.0, "elevation at half_width perpendicular should be zero");
     }
@@ -3302,6 +3400,7 @@ mod tests {
                 bx:  1000.0, by: 0.0,
                 height_a: 800.0, height_b: 800.0,
                 sag: 0.20,
+                wobble_seed: Ridgeline::wobble_seed_for(0, 1),
             },
         ];
         let seed = 12345u64;
