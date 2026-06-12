@@ -216,6 +216,13 @@ fn main() {
     log::info!("Materializing {} unique tiles (from {}x{} pixels)...", coords.len(), w, h);
 
     let views = composite.tiles_at(&coords);
+
+    // Spawner placements are index-only — tile materialization no longer
+    // deforms their cells, so warm them explicitly for the sampled tiles.
+    if needs_spawners {
+        composite.ensure_indexed(&coords);
+    }
+
     let tile_cache: HashMap<(i32, i32), (TagSet, f64)> = views
         .into_iter()
         .map(|((q, r), v)| ((q, r), (v.tags, v.elevation)))

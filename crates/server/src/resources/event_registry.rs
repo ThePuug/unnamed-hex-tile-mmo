@@ -38,12 +38,19 @@ impl EventRegistry {
         self.composite.tags_at(q, r)
     }
 
+    /// Warm index-only events (e.g. spawner placements) for the given tiles.
+    /// Chunk generation calls this after materializing tiles so the spawner
+    /// survey resolves against a warm cache.
+    pub fn warm_indexes(&self, coords: &[(i32, i32)]) {
+        self.composite.ensure_indexed(coords);
+    }
+
     /// Query spawner placements near a hex tile position.
-    /// Triggers deform cascade to populate SpawnerPlacementIndex, then
-    /// queries the index for placements within the search radius.
+    /// Ensures the player's own spawner cell is indexed, then queries the
+    /// index for placements within the search radius. Surrounding cells are
+    /// warmed by chunk generation as terrain streams in.
     pub fn spawners_near(&self, q: i32, r: i32) -> Vec<SpawnerPlacement> {
-        // Trigger deform cascade so spawner index is populated for this region
-        let _ = self.composite.tile_at(q, r);
+        self.composite.ensure_indexed(&[(q, r)]);
 
         // Query SpawnerPlacementIndex for nearby cells
         let spawner_lattice = HexLattice::new(9); // SPAWNER_CELL_SCALE

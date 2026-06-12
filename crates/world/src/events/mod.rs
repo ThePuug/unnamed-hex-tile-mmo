@@ -63,6 +63,14 @@ pub trait WorldEvent: Send + Sync {
     fn scale(&self) -> u32;
     fn survey(&self) -> Survey;
 
+    /// Whether this event's query can contribute a non-empty TileOutput.
+    ///
+    /// Index-only events (deform populates indexes; query never modifies the
+    /// tile) return false. The framework then skips their deform + query
+    /// during tile materialization entirely — their cells are deformed on
+    /// demand via `Composite::ensure_indexed` when their indexes are read.
+    fn contributes_tiles(&self) -> bool { true }
+
     /// Pre-register index types this event writes during deform.
     /// Called once during `Composite::add_event()`. Events call
     /// `registry.pre_register::<MyIndex>()` for each index they create.
@@ -275,12 +283,15 @@ impl Composite {
     /// Get the final tile state at (q, r). Lazily triggers deform + query cascades.
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
-        let _span = tracing::info_span!("tile_at", q, r).entered();
+        let _span = tracing::info_span!("tile_at").entered();
 
-        // Phase 1: Deform cascade — ensure all cells containing this tile are deformed
+        // Phase 1: Deform cascade — ensure all cells containing this tile are deformed.
+        // Index-only events (contributes_tiles() == false) are skipped: their
+        // deform cannot affect this tile's output.
         {
             let _s = tracing::debug_span!("deform").entered();
             for layer in 0..self.events.len() {
+                if !self.events[layer].contributes_tiles() { continue; }
                 let cell_id = self.lattices[layer].cell_id(q, r);
                 self.ensure_deformed(layer, cell_id);
             }
@@ -293,6 +304,7 @@ impl Composite {
         {
             let _s = tracing::debug_span!("query").entered();
             for layer in 0..self.events.len() {
+                if !self.events[layer].contributes_tiles() { continue; }
                 let cell_id = self.lattices[layer].cell_id(q, r);
                 self.cell_caches[layer].touch(cell_id);
 
@@ -305,11 +317,15 @@ impl Composite {
                     let below_fn = |bq: i32, br: i32| -> TileView {
                         self.resolve_below(layer, bq, br)
                     };
+                    let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
                     let result = self.events[layer].query(q, r, cell_id, &self.indexes, &below_fn, self.seed);
-                    match result {
-                        Some(to) => { self.cell_caches[layer].insert_tile(cell_id, q, r, to); to }
-                        None => TileOutput::default(),
-                    }
+                    // None is cached as an empty output: query is deterministic,
+                    // so "contributes nothing here" is as cacheable as a result.
+                    // Without this, sea/flat tiles re-run every layer's query on
+                    // every repeat access.
+                    let to = result.unwrap_or_default();
+                    self.cell_caches[layer].insert_tile(cell_id, q, r, to);
+                    to
                 };
 
                 for t in tile_out.tags_added.iter() { view.tags.add(t); }
@@ -337,6 +353,23 @@ impl Composite {
     /// Access the IndexRegistry directly (no lock needed — interior mutability).
     pub fn with_indexes<R>(&self, f: impl FnOnce(&IndexRegistry) -> R) -> R {
         f(&self.indexes)
+    }
+
+    /// Ensure index-only events (`contributes_tiles() == false`) have deformed
+    /// every cell containing one of `coords`. Tile materialization skips those
+    /// layers, so callers that read their indexes must declare the tiles they
+    /// are interested in first. Idempotent and cheap for already-warm cells.
+    pub fn ensure_indexed(&self, coords: &[(i32, i32)]) {
+        for layer in 0..self.events.len() {
+            if self.events[layer].contributes_tiles() { continue; }
+            let lattice = &self.lattices[layer];
+            let needed: HashSet<CellId> = coords.iter()
+                .map(|&(q, r)| lattice.cell_id(q, r))
+                .collect();
+            for cell in needed {
+                self.ensure_deformed(layer, cell);
+            }
+        }
     }
 
     /// Read gauges and drain interval counters. Returns a snapshot for external reporting.
@@ -414,9 +447,14 @@ impl Composite {
         let resolve_tile = |q: i32, r: i32| -> TileView {
             self.resolve_below(layer, q, r)
         };
-        let matched = survey::evaluate_survey(
-            &surv, cell_id, lattice, &self.indexes, Some(&resolve_tile), self.seed,
-        );
+
+        let _s = tracing::debug_span!("event_deform", event = self.events[layer].name()).entered();
+        let matched = {
+            let _ss = tracing::debug_span!("survey").entered();
+            survey::evaluate_survey(
+                &surv, cell_id, lattice, &self.indexes, Some(&resolve_tile), self.seed,
+            )
+        };
 
         // Deform: populate indexes only
         self.events[layer].deform(cell_id, &matched, &self.indexes, self.seed);
@@ -425,13 +463,16 @@ impl Composite {
         self.cell_caches[layer].insert_empty(cell_id);
     }
 
-    /// Resolve the composite TileView from layers 0..up_to (read-only cache access).
-    /// Used by the `below` closure passed to query. Does NOT cache intermediate results.
+    /// Resolve the composite TileView from layers 0..up_to.
+    /// Used by the `below` closure passed to query, and by survey evaluation.
+    /// Writes computed results through to the cell caches so survey/below work
+    /// is never recomputed (insert is a no-op for cells not yet deformed).
     fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
         let (wx, wy) = hex_to_world(q, r);
         let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
 
         for li in 0..up_to {
+            if !self.events[li].contributes_tiles() { continue; }
             let cell_id = self.lattices[li].cell_id(q, r);
             let tile_out = if let Some(cached) = self.cell_caches[li].get_tile(cell_id, q, r) {
                 cached
@@ -439,10 +480,12 @@ impl Composite {
                 let sub_below = |bq: i32, br: i32| -> TileView {
                     self.resolve_below(li, bq, br)
                 };
-                match self.events[li].query(q, r, cell_id, &self.indexes, &sub_below, self.seed) {
-                    Some(to) => to,
-                    None => TileOutput::default(),
-                }
+                let _s = tracing::debug_span!("event_query", event = self.events[li].name()).entered();
+                let to = self.events[li]
+                    .query(q, r, cell_id, &self.indexes, &sub_below, self.seed)
+                    .unwrap_or_default();
+                self.cell_caches[li].insert_tile(cell_id, q, r, to);
+                to
             };
 
             for t in tile_out.tags_added.iter() { view.tags.add(t); }

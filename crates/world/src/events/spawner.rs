@@ -113,6 +113,12 @@ impl SpawnerEvent {
 impl WorldEvent for SpawnerEvent {
     fn name(&self) -> &str { "spawner" }
     fn scale(&self) -> u32 { SPAWNER_CELL_SCALE }
+
+    /// Spawners never modify terrain — query output is always empty; the
+    /// placement index is the only product. Declaring this lets the framework
+    /// skip the 271-tile survey during tile materialization (it previously ran
+    /// for every cold spawner cell touched by chunk gen and LoD sampling).
+    fn contributes_tiles(&self) -> bool { false }
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<SpawnerPlacementIndex>();
     }
