@@ -1,6 +1,6 @@
-//! Determinism probe — ADR-001 requires the same seed to produce the same world.
+//! Determinism probe — requires the same seed to produce the same world.
 //! Checks that a tile's elevation does not depend on what was touched first.
-//!
+
 //! Run: cargo test -p world --release --test determinism_probe -- --ignored --nocapture
 
 use std::sync::Arc;
@@ -64,6 +64,12 @@ fn spine_cell_boundaries_agree() {
     println!("\n  {checked} probes across ~{} tiles", N * STEP);
     println!("  mismatches: {mismatches} ({:.2}%)", 100.0 * mismatches as f64 / checked as f64);
     println!("  largest disagreement: {worst} z");
+
+    assert_eq!(
+        mismatches, 0,
+        "terrain depends on access order — client and server will disagree \
+         for the same seed (largest gap {worst} z)"
+    );
 }
 
 /// Same tile, different access history. Any disagreement means client and

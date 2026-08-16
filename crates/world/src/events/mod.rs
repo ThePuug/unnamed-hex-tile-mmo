@@ -1,5 +1,5 @@
 //! # World Event System
-//!
+
 //! Two independent cascades:
 //! - **Deform cascade** (index → index): structural work. Survey evaluates against
 //!   indexes, deform populates indexes. Cheap — no tile materialization.
@@ -53,10 +53,10 @@ pub struct TileView {
 // ── WorldEvent trait ────────────────────────────────────────────────────────
 
 /// A world event with separate structural (deform) and tile (query) passes.
-///
+
 /// **Deform**: structural work. Reads indexes from below, runs survey, populates
 /// own indexes. Never materializes tiles. Cheap even for large cells.
-///
+
 /// **Query**: resolves a single tile on demand. Uses own indexes + composed tile
 /// from all layers below. Framework caches the result.
 pub trait WorldEvent: Send + Sync {
@@ -65,12 +65,23 @@ pub trait WorldEvent: Send + Sync {
     fn survey(&self) -> Survey;
 
     /// Whether this event's query can contribute a non-empty TileOutput.
-    ///
+
     /// Index-only events (deform populates indexes; query never modifies the
     /// tile) return false. The framework then skips their deform + query
     /// during tile materialization entirely — their cells are deformed on
     /// demand via `Composite::ensure_indexed` when their indexes are read.
     fn contributes_tiles(&self) -> bool { true }
+
+    /// How many rings of neighbouring cells this event's `query` reads from
+    /// its own indexes, beyond the cell containing the tile.
+
+    /// The framework deforms this whole neighbourhood before calling `query`.
+    /// An event whose features can reach past their own cell boundary MUST
+    /// declare it: `deform` only populates the index for cells it is called
+    /// on, so a query reading an undeformed neighbour silently sees nothing
+    /// there and caches the wrong answer permanently. Default 0 — query reads
+    /// only its own cell.
+    fn query_reach(&self) -> u32 { 0 }
 
     /// Pre-register index types this event writes during deform.
     /// Called once during `Composite::add_event()`. Events call
@@ -167,7 +178,7 @@ pub struct LayerMetricsSnapshot {
 const DEFAULT_MAX_CELLS: usize = 2000;
 
 /// Ceiling on the exact sub-cell footprint walk in [`Composite::ensure_deformed`].
-///
+
 /// Exact enumeration visits every tile in a cell to collect the sub-cells it
 /// overlaps, so its cost is O(cell area) — a radius-1800 cell is 9.7M tiles.
 /// Above this size the geometric bound is used instead: it can pull in one
@@ -195,6 +206,10 @@ struct CellCache {
     cells: DashMap<CellId, Arc<CellEntry>>,
     /// Per-cell deform serialization locks (double-checked locking).
     deform_locks: DashMap<CellId, Arc<Mutex<()>>>,
+    /// Cells whose full query neighbourhood has been deformed. Only used by
+    /// layers with `query_reach() > 0`; lets the hot path settle for a single
+    /// lookup instead of re-walking the ring on every tile in the cell.
+    neighbourhood_ready: DashMap<CellId, ()>,
     /// Monotonic counter for LRU ordering (lock-free touch).
     access_counter: AtomicU64,
     max_cells: usize,
@@ -206,6 +221,7 @@ impl CellCache {
         Self {
             cells: DashMap::new(),
             deform_locks: DashMap::new(),
+            neighbourhood_ready: DashMap::new(),
             access_counter: AtomicU64::new(0),
             max_cells,
             metrics: LayerMetrics::default(),
@@ -310,7 +326,7 @@ impl Composite {
             for layer in 0..self.events.len() {
                 if !self.events[layer].contributes_tiles() { continue; }
                 let cell_id = self.lattices[layer].cell_id(q, r);
-                self.ensure_deformed(layer, cell_id);
+                self.ensure_query_neighbourhood(layer, cell_id);
             }
         }
 
@@ -415,6 +431,33 @@ impl Composite {
 
     // ── Deform cascade (per-cell double-checked locking) ────────────────────
 
+    /// Deform every cell `layer`'s `query` is allowed to read for a tile in
+    /// `cell_id` — its own cell plus `query_reach()` rings around it.
+
+    /// Without this, a query reading a neighbouring cell's index sees whatever
+    /// happens to be warm. The result is cached, so a tile materialized while
+    /// a neighbour was cold stays wrong for the life of the composite, and two
+    /// processes that touched tiles in a different order disagree about the
+    /// terrain for the same seed.
+    fn ensure_query_neighbourhood(&self, layer: usize, cell_id: CellId) {
+        let reach = self.events[layer].query_reach();
+        if reach == 0 {
+            self.ensure_deformed(layer, cell_id);
+            return;
+        }
+        // Every tile in a cell shares one neighbourhood, and cells are never
+        // evicted, so walking the ring once per cell is enough. Without this
+        // gate the ring walk lands on the per-tile hot path and costs a Vec
+        // allocation plus `3·reach·(reach+1)+1` lookups on every query.
+        if self.cell_caches[layer].neighbourhood_ready.contains_key(&cell_id) {
+            return;
+        }
+        for cell in self.lattices[layer].cells_within_distance(cell_id, reach) {
+            self.ensure_deformed(layer, cell);
+        }
+        self.cell_caches[layer].neighbourhood_ready.insert(cell_id, ());
+    }
+
     fn ensure_deformed(&self, layer: usize, cell_id: CellId) {
         // Fast path: already deformed
         if self.cell_caches[layer].has(cell_id) {
@@ -501,6 +544,11 @@ impl Composite {
             let tile_out = if let Some(cached) = self.cell_caches[li].get_tile(cell_id, q, r) {
                 cached
             } else {
+                // Same guarantee tile_at makes: a query must not run against a
+                // half-deformed neighbourhood, or it caches a wrong tile. This
+                // path is reached from survey evaluation and `below` closures,
+                // which tile_at's phase 1 does not cover.
+                self.ensure_query_neighbourhood(li, cell_id);
                 let sub_below = |bq: i32, br: i32| -> TileView {
                     self.resolve_below(li, bq, br)
                 };
@@ -524,6 +572,74 @@ impl Composite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records which cells the framework deforms, so the `query_reach`
+    /// contract can be checked without paying for real terrain generation.
+    struct ReachProbe {
+        reach: u32,
+        deformed: Arc<parking_lot::Mutex<Vec<CellId>>>,
+    }
+
+    impl WorldEvent for ReachProbe {
+        fn name(&self) -> &str { "reach-probe" }
+        fn scale(&self) -> u32 { 32 }
+        fn survey(&self) -> Survey { Survey::none() }
+        fn query_reach(&self) -> u32 { self.reach }
+
+        fn deform(&self, cell_id: CellId, _m: &[(i32, i32)], _i: &IndexRegistry, _s: u64) {
+            self.deformed.lock().push(cell_id);
+        }
+
+        fn query(
+            &self, _q: i32, _r: i32, _c: CellId, _i: &IndexRegistry,
+            _b: &dyn Fn(i32, i32) -> TileView, _s: u64,
+        ) -> Option<TileOutput> { None }
+    }
+
+    /// An event that reads N rings of neighbours must have all of them
+    /// deformed before its query runs. A query that reads an undeformed
+    /// neighbour sees an empty index and caches the wrong tile forever —
+    /// that is how whole mountains went missing depending on access order.
+    #[test]
+    fn query_reach_deforms_the_whole_neighbourhood() {
+        for reach in 0..=2u32 {
+            let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let mut c = Composite::new(1);
+            c.add_event(Box::new(ReachProbe { reach, deformed: deformed.clone() }));
+            c.tile_at(0, 0);
+
+            let cells = deformed.lock();
+            assert_eq!(
+                cells.len(),
+                hex_ball_tiles(reach),
+                "reach {reach} should deform a hex ball of {} cells, got {}",
+                hex_ball_tiles(reach),
+                cells.len(),
+            );
+        }
+    }
+
+    /// The ring walk must not land on the per-tile hot path: every tile in a
+    /// cell shares one neighbourhood, so it is deformed once, not per tile.
+    #[test]
+    fn query_neighbourhood_is_walked_once_per_cell() {
+        let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let mut c = Composite::new(1);
+        c.add_event(Box::new(ReachProbe { reach: 1, deformed: deformed.clone() }));
+
+        // Many tiles inside one radius-32 cell.
+        for q in -5..=5 {
+            for r in -5..=5 {
+                c.tile_at(q, r);
+            }
+        }
+
+        assert_eq!(
+            deformed.lock().len(),
+            hex_ball_tiles(1),
+            "neighbourhood re-walked per tile instead of once per cell"
+        );
+    }
 
     #[test]
     fn hex_ball_tiles_matches_known_sizes() {

@@ -1,9 +1,9 @@
 //! SpineEvent — Event #1: continental spine elevation and tags.
-//!
+
 //! Scale = SPINE_INFLUENCE (15,225 tiles). Cells contain the full influence
 //! radius of any spine epicenter within them. Query checks the cell + 1 neighbor
 //! ring in the SpineInstanceIndex — no wider search needed.
-//!
+
 //! Deform: reads PlateCentroidIndex for qualifying epicenters (survey-driven,
 //! spaced by min_spacing), generates spine instances, registers SpineInstanceIndex.
 //! Query: evaluates a single tile's elevation + tag from indexed instances.
@@ -94,6 +94,12 @@ impl SpineEvent {
 impl WorldEvent for SpineEvent {
     fn name(&self) -> &str { "spines" }
     fn scale(&self) -> u32 { SPINE_CELL_SCALE }
+
+    /// A cell is one SPINE_INFLUENCE across, so an epicenter sitting near a
+    /// cell edge still reaches tiles in the adjacent cell. Query therefore
+    /// reads one ring out, and the framework must deform it first.
+    fn query_reach(&self) -> u32 { 1 }
+
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<SpineInstanceIndex>();
     }
@@ -164,8 +170,9 @@ impl WorldEvent for SpineEvent {
         let spine_index = indexes.get::<SpineInstanceIndex>()?;
         let (wx, wy) = hex_to_world(q, r);
 
-        // Search this cell + 1 neighbor ring for instances
-        let nearby_cells = self.lattice.cells_within_distance(cell_id, 1);
+        // Search this cell + query_reach() neighbor rings. Same value the
+        // framework deforms, so the two cannot drift apart.
+        let nearby_cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
         let instances = spine_index.instances_in(&nearby_cells);
 
         let mut max_elev = 0.0f64;
