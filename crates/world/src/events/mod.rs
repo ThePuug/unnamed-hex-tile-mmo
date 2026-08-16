@@ -165,6 +165,22 @@ pub struct LayerMetricsSnapshot {
 
 const DEFAULT_MAX_CELLS: usize = 2000;
 
+/// Ceiling on the exact sub-cell footprint walk in [`Composite::ensure_deformed`].
+///
+/// Exact enumeration visits every tile in a cell to collect the sub-cells it
+/// overlaps, so its cost is O(cell area) — a radius-1800 cell is 9.7M tiles.
+/// Above this size the geometric bound is used instead: it can pull in one
+/// extra ring of sub-cells, but its cost does not scale with cell area.
+/// Radius 9 (the spawner cell, 271 tiles) stays well inside the exact path,
+/// where it deforms the minimum set of plate cells.
+const MAX_EXACT_FOOTPRINT_TILES: usize = 4096;
+
+/// Tiles in a hex ball of the given radius.
+fn hex_ball_tiles(radius: u32) -> usize {
+    let r = radius as usize;
+    3 * r * r + 3 * r + 1
+}
+
 struct CellEntry {
     tiles: parking_lot::RwLock<HashMap<(i32, i32), TileOutput>>,
     last_accessed: AtomicU64,
@@ -423,7 +439,14 @@ impl Composite {
         for sub_layer in 0..layer {
             let sub_lat = &self.lattices[sub_layer];
 
-            let sub_cells: Vec<CellId> = if lattice.radius <= sub_lat.radius {
+            // Exact enumeration deforms the minimum set of sub-cells, but costs
+            // O(cell area). Only take it when this cell is both smaller than the
+            // sub-cell and small in absolute terms — at equal radii it degenerates
+            // to walking millions of tiles per deform.
+            let exact_affordable = lattice.radius <= sub_lat.radius
+                && hex_ball_tiles(lattice.radius) <= MAX_EXACT_FOOTPRINT_TILES;
+
+            let sub_cells: Vec<CellId> = if exact_affordable {
                 let mut needed: HashSet<CellId> = HashSet::new();
                 for (tq, tr) in lattice.tiles_in_cell(cell_id) {
                     needed.insert(sub_lat.cell_id(tq, tr));
@@ -494,5 +517,24 @@ impl Composite {
         }
 
         view
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_ball_tiles_matches_known_sizes() {
+        assert_eq!(hex_ball_tiles(0), 1);
+        assert_eq!(hex_ball_tiles(1), 7);
+        // Chunk radius 9 — must stay under the exact-footprint ceiling so the
+        // spawner layer keeps deforming the minimum set of plate cells.
+        assert_eq!(hex_ball_tiles(9), 271);
+        assert!(hex_ball_tiles(9) <= MAX_EXACT_FOOTPRINT_TILES);
+
+        // A radius-1800 cell is 9.7M tiles — the size at which the exact walk
+        // stops being affordable and the geometric bound must take over.
+        assert!(hex_ball_tiles(1800) > MAX_EXACT_FOOTPRINT_TILES);
     }
 }
