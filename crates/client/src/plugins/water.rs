@@ -11,7 +11,7 @@
 //! covers every case the terrain pipeline would otherwise have to special-case.
 
 use bevy::prelude::*;
-use bevy_camera::primitives::Aabb;
+use bevy_camera::visibility::NoFrustumCulling;
 use bevy_light::NotShadowCaster;
 
 use common::camera::RISE;
@@ -67,9 +67,14 @@ fn setup_water_surface(
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Transform::from_xyz(0.0, SEA_LEVEL_Y, 0.0),
-        // The plane is re-centred on the camera every frame, so the renderer
-        // must not cull it against a stale origin-centred bound.
-        Aabb::default(),
+        // The quad is re-centred on the camera every frame in PostUpdate,
+        // which races the visibility pass that would cull it against the
+        // previous frame's bounds. It is always directly beneath the viewer,
+        // so there is nothing to gain by culling it — skip the test entirely.
+        // (Never insert `Aabb::default()` here: Bevy only computes real mesh
+        // bounds `Without<Aabb>`, so supplying a zero-extent one makes the
+        // 30,000 WU quad a single point and it disappears.)
+        NoFrustumCulling,
         NotShadowCaster,
         WaterSurface,
     ));
