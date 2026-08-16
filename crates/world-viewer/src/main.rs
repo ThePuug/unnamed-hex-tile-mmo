@@ -188,6 +188,7 @@ fn main() {
     let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    composite.add_event(Box::new(world::events::sea::SeaEvent::new()));
     if needs_spines || needs_spawners {
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, cli.seed)));
     }

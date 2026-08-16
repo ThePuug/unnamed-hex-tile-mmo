@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use world::events::Composite;
 use world::events::plates::PlateEvent;
+use world::events::sea::SeaEvent;
 use world::events::spawner::SpawnerEvent;
 use world::events::spines::SpineEvent;
 use world::PlateCache;
@@ -21,6 +22,7 @@ fn composite_full() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(SpawnerEvent::new(SEED)));
     c
@@ -30,6 +32,7 @@ fn composite_no_spawner() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c
 }

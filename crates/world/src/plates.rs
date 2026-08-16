@@ -155,7 +155,7 @@ fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
 /// - `world_gate`: sigmoid(cellular F1 Voronoi with domain warp) — disconnected continental topology
 /// - `regional_mod`: low-frequency simplex in [REGIONAL_MOD_MIN, REGIONAL_MOD_MAX] — size variation between worlds
 /// - `local`: three-wavelength fBm in [0, 1] — coastal detail (bays, peninsulas, island chains)
-fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
+pub fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
     let raw_gate = cellular_world_gate(wx, wy, seed);
     let world_gate = sigmoid(raw_gate, WORLD_GATE_SIGMOID_MIDPOINT, WORLD_GATE_SIGMOID_STEEPNESS);
     let b = simplex_2d(wx / WARP_PRIME_B, wy / WARP_PRIME_B, seed ^ WARP_STRENGTH_SEED_B);
@@ -191,6 +191,14 @@ pub fn regime_value_at(wx: f64, wy: f64, seed: u64) -> f64 {
 /// with sharpness controlled by `steepness`.
 pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
     1.0 / (1.0 + (-steepness * (x - midpoint)).exp())
+}
+
+/// Inverse of [`sigmoid`]: the `x` that produces `y`. Lets callers recover a
+/// raw (pre-sigmoid) threshold from a sigmoidized one instead of hardcoding a
+/// number that silently rots when the sigmoid constants are retuned.
+/// `y` must be strictly within (0, 1).
+pub(crate) fn inverse_sigmoid(y: f64, midpoint: f64, steepness: f64) -> f64 {
+    midpoint - (1.0 / y - 1.0).ln() / steepness
 }
 
 /// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.

@@ -8,6 +8,7 @@
 
 pub mod index;
 pub mod plates;
+pub mod sea;
 pub mod spawner;
 pub mod spines;
 pub mod survey;
@@ -258,7 +259,7 @@ impl CellCache {
     fn evict_if_over_budget(&self) {
         // Eviction intentionally disabled — caches grow unbounded.
         // `max_cells` / `last_accessed` / `access_counter` are retained for when
-        // LRU is reinstated. See docs/design/world-events.md (Implementation Gaps).
+        // LRU is reinstated. See world-events.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/, Implementation Gaps).
     }
 }
 
@@ -532,9 +533,36 @@ mod tests {
         // spawner layer keeps deforming the minimum set of plate cells.
         assert_eq!(hex_ball_tiles(9), 271);
         assert!(hex_ball_tiles(9) <= MAX_EXACT_FOOTPRINT_TILES);
+    }
 
-        // A radius-1800 cell is 9.7M tiles — the size at which the exact walk
-        // stops being affordable and the geometric bound must take over.
-        assert!(hex_ball_tiles(1800) > MAX_EXACT_FOOTPRINT_TILES);
+    /// Two adjacent layers at the same cell scale must not send the deform
+    /// cascade down the exact-enumeration path — at radius 1800 that walks
+    /// 9.7M tiles per cell and turns a ~100ms first touch into minutes.
+    #[test]
+    fn equal_scale_layers_do_not_enumerate_whole_cells() {
+        use crate::plates::PlateCache;
+        use plates::PlateEvent;
+        use sea::SeaEvent;
+
+        assert!(
+            hex_ball_tiles(1800) > MAX_EXACT_FOOTPRINT_TILES,
+            "a radius-1800 cell must exceed the exact-footprint ceiling"
+        );
+
+        let seed = 0x9E3779B97F4A7C15;
+        let plate_cache = Arc::new(PlateCache::new(seed));
+        let mut c = Composite::new(seed);
+        c.add_event(Box::new(PlateEvent::with_cache(plate_cache)));
+        c.add_event(Box::new(SeaEvent::new()));
+
+        // Both layers are scale 1800. A cold first touch is dominated by the
+        // plate deform (~100ms in release); the bug this guards made it minutes.
+        let t = std::time::Instant::now();
+        c.tile_at(3000, 2000);
+        let dt = t.elapsed();
+        assert!(
+            dt < std::time::Duration::from_secs(20),
+            "same-scale deform cascade took {dt:?} — footprint walk regressed"
+        );
     }
 }

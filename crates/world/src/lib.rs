@@ -7,7 +7,7 @@ pub mod spine;
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
-                 regime_value_at, warp_strength_at};
+                 regime_value_at, raw_regime_noise, warp_strength_at};
 pub use microplates::{MicroCellGeometry, MicroplateCenter, MicroplateCache, PlateCentroid,
                       micro_cell_at, macro_plate_for, plate_info_at,
                       micro_cells_for_macro};

@@ -132,6 +132,7 @@ impl Default for AdminComposite {
         let plate_cache = std::sync::Arc::new(world::PlateCache::new(seed));
         let mut composite = world::events::Composite::new(seed);
         composite.add_event(Box::new(world::events::plates::PlateEvent::with_cache(plate_cache.clone())));
+        composite.add_event(Box::new(world::events::sea::SeaEvent::new()));
         composite.add_event(Box::new(world::events::spines::SpineEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(world::events::spawner::SpawnerEvent::new(seed)));
         Self(Arc::new(composite))
