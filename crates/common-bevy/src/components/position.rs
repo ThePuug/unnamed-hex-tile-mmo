@@ -1,10 +1,10 @@
 //! Unified Position and Visual Interpolation Components
-//!
-//! This module implements the Unified Interpolation Model (ADR-019) which separates
+
+//! This module implements the Unified Interpolation Model which separates
 //! authoritative position from visual interpolation.
-//!
+
 //! # Architecture
-//!
+
 //! ```text
 //! Authoritative Layer:          Visual Layer:
 //! ┌─────────────────────┐       ┌─────────────────────┐
@@ -14,9 +14,9 @@
 //! └─────────────────────┘       │  - progress: f32    │
 //!                               └─────────────────────┘
 //! ```
-//!
+
 //! # Key Insight
-//!
+
 //! When Position changes, VisualPosition starts interpolating from its current
 //! visual location toward the new Position. This means direction changes don't
 //! cause jitter - the visual smoothly continues from wherever it currently is.
@@ -26,17 +26,17 @@ use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
 /// Authoritative position in the game world.
-///
+
 /// Combines discrete tile location (Qrz hex coordinates) with continuous
 /// sub-tile offset (Vec3). This is "where physics says the entity is."
-///
+
 /// # Fields
-///
+
 /// - `tile`: The hex tile the entity occupies (discrete)
 /// - `offset`: Sub-tile offset from tile center (continuous, typically -0.5 to 0.5)
-///
+
 /// # Usage
-///
+
 /// - **Local player**: Updated by physics prediction, confirmed by server
 /// - **Remote entities**: Updated by server messages
 /// - **Both**: VisualPosition interpolates toward this
@@ -67,19 +67,19 @@ impl Position {
 }
 
 /// Visual interpolation state for smooth rendering.
-///
+
 /// This component handles all visual smoothing, completely separate from
 /// authoritative position. When Position changes, the rendering system
 /// updates VisualPosition to interpolate from current visual location
 /// toward the new authoritative position.
-///
+
 /// # Why This Fixes Jitter
-///
+
 /// Old system: physics updates `step`, then lerp from `prev_step` causes oscillation
 /// New system: interpolation always starts from current visual position, never jumps
-///
+
 /// # Fields
-///
+
 /// - `from`: World-space position where interpolation started
 /// - `to`: World-space position we're interpolating toward
 /// - `progress`: 0.0 = at `from`, 1.0 = at `to`
@@ -127,7 +127,7 @@ impl VisualPosition {
     }
 
     /// Start a new interpolation from current visual position toward target
-    ///
+
     /// This is the key method that prevents jitter: we always start from
     /// wherever we currently appear, not from a physics-calculated position.
     pub fn interpolate_toward(&mut self, target: Vec3, duration: f32) {

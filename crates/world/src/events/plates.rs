@@ -1,5 +1,5 @@
 //! PlateEvent — Event #0: macro plate classification + centroid index.
-//!
+
 //! Deform: discovers plate centroids at plate granularity (not per-tile),
 //! classifies them, registers in PlateCentroidIndex with tag metadata.
 //! Query: resolves a single tile's plate classification via warped Voronoi.

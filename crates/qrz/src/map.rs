@@ -1,37 +1,37 @@
 //! # Map: Hexagonal Tile Storage with World Space Conversion
-//!
+
 //! This module provides a `Map` type that stores tiles at hexagonal coordinates
 //! and handles conversion between hex coordinates (Qrz) and 3D world space (Vec3).
-//!
+
 //! ## Overview
-//!
+
 //! The Map supports both "pointy-top" and "flat-top" hex orientations. Conversion
 //! between hex and world coordinates uses an affine transformation based on the
 //! map's `radius` (hex size), `rise` (vertical scale), and `orientation`.
-//!
+
 //! ## Features
-//!
+
 //! - **Bidirectional conversion**: Qrz ↔ Vec3 with automatic rounding
 //! - **Tile storage**: HashMap and BTreeMap for fast lookup and iteration
 //! - **Vertical search**: Find nearest tile below/above a position
 //! - **Line tracing**: Get all tiles between two points
 //! - **Mesh generation**: Generate hexagon vertices for rendering
-//!
+
 //! ## Example
-//!
+
 //! ```rust
 //! use qrz::{Map, Qrz, Convert, HexOrientation};
 //! use glam::Vec3;
-//!
+
 //! let mut map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
-//!
+
 //! // Store a tile
 //! let coord = Qrz { q: 1, r: 2, z: 3 };
 //! map.insert(coord, 42);
-//!
+
 //! // Convert to world space
 //! let world_pos: Vec3 = map.convert(coord);
-//!
+
 //! // Convert back
 //! let recovered: Qrz = map.convert(world_pos);
 //! assert_eq!(coord, recovered);
@@ -82,16 +82,16 @@ pub trait Convert<T,U> {
 }
 
 /// A hexagonal tile map with world space conversion
-///
+
 /// Stores tiles at hexagonal coordinates and provides conversion between
 /// hex coordinates (Qrz) and 3D world space (Vec3).
-///
+
 /// # Type Parameters
-///
+
 /// - `T`: The type of data stored at each tile position (must implement `Copy`)
-///
+
 /// # Fields
-///
+
 /// - `radius`: Size of each hexagon in world units
 /// - `rise`: Vertical scale factor (Z coordinate → Y world space)
 /// - `orientation`: Hex grid orientation (pointy-top or flat-top)
@@ -161,11 +161,11 @@ pub fn get(&self, qrz: Qrz) -> Option<&T> {
     }
 
     /// Generate the 7 vertices of a hex tile: 6 outer (clockwise) + 1 center.
-    ///
+
     /// Vertex ordering is clockwise from the "top-right" vertex:
     /// - Pointy-top: [N, NE, SE, S, SW, NW, Center]
     /// - Flat-top:   [NE, E, SE, SW, W, NW, Center]
-    ///
+
     /// The edge-to-direction mapping is identical for both orientations:
     /// edge (i, i+1) faces DIRECTIONS[(i+4)%6].
     pub fn vertices(&self, qrz: Qrz) -> Vec<Vec3> {

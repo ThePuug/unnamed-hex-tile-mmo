@@ -1,5 +1,5 @@
 //! World Viewer — renders the world event composite to image.
-//!
+
 //! Instantiates the same Composite + event stack the server uses.
 //! Same seed = same output.
 
@@ -197,7 +197,7 @@ fn main() {
     }
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
-    //
+
     // Each pixel maps to a world coordinate → nearest hex tile. At scale=8,
     // ~8 pixels share one hex tile, so the unique tile count ≈ w*h/64.
     // We collect unique tiles by scanning pixel positions, not by iterating
@@ -218,8 +218,8 @@ fn main() {
 
     let views = composite.tiles_at(&coords);
 
-    // Spawner placements are index-only — tile materialization no longer
-    // deforms their cells, so warm them explicitly for the sampled tiles.
+    // Spawner placements are index-only, so tile materialization never
+    // deforms their cells. Warm them explicitly for the sampled tiles.
     if needs_spawners {
         composite.ensure_indexed(&coords);
     }

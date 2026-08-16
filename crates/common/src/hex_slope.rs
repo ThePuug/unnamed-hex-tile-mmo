@@ -1,5 +1,5 @@
 //! Hex tile slope blending — shared between mesh generation and decimation.
-//!
+
 //! Each outer vertex of a hex tile gets a Y adjustment based on elevation
 //! differences with neighboring tiles. Two neighbor edges touch each vertex;
 //! each contributes ±rise/2. When both contribute, max-absolute-value wins.
@@ -16,11 +16,11 @@ pub const DIRECTION_TO_VERTICES: [(usize, usize); 6] = [
 ];
 
 /// Compute slope Y-adjustments for each outer vertex of a hex tile.
-///
+
 /// Each vertex is on two edges. For each neighboring tile with a different z,
 /// the shared edge vertices get ±rise/2 adjustment. When a vertex gets multiple
 /// adjustments (from its two edges), the one with largest absolute value wins.
-///
+
 /// Returns 6 adjustments to add to the base vertex Y (= tile_z * rise + rise).
 pub fn slope_adjustments(
     tile_z: i32,

@@ -108,7 +108,7 @@ fn continent_seed_point(cq: i32, cr: i32, seed: u64) -> (f64, f64) {
 }
 
 /// Cellular (Worley) world gate: 1.0 at continent centers, 0.0 at ocean midpoints.
-///
+
 /// Inverted F1 Voronoi on a jittered hex lattice with domain warp.
 /// Domain warp displaces the query point before Voronoi lookup, creating irregular
 /// coastlines (peninsulas, bays) without distorting seed positions.
@@ -150,7 +150,7 @@ fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
 // ──── Regime noise ────
 
 /// Multiplicative cellular-gated regime noise, normalized to [0, 1].
-///
+
 /// Three factors compose the final value:
 /// - `world_gate`: sigmoid(cellular F1 Voronoi with domain warp) — disconnected continental topology
 /// - `regional_mod`: low-frequency simplex in [REGIONAL_MOD_MIN, REGIONAL_MOD_MAX] — size variation between worlds
@@ -179,7 +179,7 @@ pub fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
 
 /// UNCACHED — evaluates 4 simplex noise calls per invocation.
 /// Use `PlateCache::regime_value_at` for the cached API surface.
-///
+
 /// Sigmoidized regime field — flat plateaus with sharp transition at midpoint.
 /// Values cluster near 0 (water) and 1 (land). The sigmoid flattens deep
 /// water and deep land regions, concentrating all gradient at the coastline.
@@ -225,7 +225,7 @@ pub(crate) const GRAD_MAX_ESTIMATE: f64 = RAW_GRAD_MAX * REGIME_SIGMOID_STEEPNES
 
 /// UNCACHED — evaluates 12 simplex noise calls per invocation (4× regime_value_at).
 /// Use `PlateCache::warp_strength_at` for gradient-cached access.
-///
+
 /// Warp strength derived from gradient magnitude of the sigmoidized regime field.
 /// The pre-gradient sigmoid flattens deep water and deep land, so only the
 /// coastline transition band produces meaningful gradient.
@@ -425,7 +425,7 @@ fn plate_center_for_cell_with(
     // Variable suppression: low at coastlines (many small plates),
     // high in deep water/land (fewer, larger plates).
     // Asymmetric: ocean side is boosted so deep ocean suppresses more than deep land.
-    //
+
     // suppression ∈ [SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX] for every
     // possible regime (regime is a sigmoid output in (0, 1), so depth ∈ [0, 1]).
     // Outside that band the hash alone decides — skip the regime stack.

@@ -18,7 +18,7 @@ const MICRO_CHUNK_SIZE: f64 = MICRO_CELL_SIZE * 6.0;
 
 
 /// Spatial centroid of a macro plate derived from its corrected micro cells.
-///
+
 /// Computed by [`MicroplateCache::populate_region`] after orphan correction.
 /// Represents the plate's actual center of mass — more accurate than the hex
 /// lattice seed position, which is a generation artifact only used during
@@ -69,11 +69,11 @@ struct GeometryChunk {
 }
 
 /// Geometry-only layer for micro cell positions and suppression.
-///
+
 /// Owns cell positions and the chunk index. No plate data — no `warped_plate_at`,
 /// no macro assignments, no correction. `MicroplateCache` wraps this and adds
 /// the assignment + correction layer on top.
-///
+
 /// Hot-path pixel lookups call `micro_cell_at` here directly. Geometry chunks
 /// are cheap to populate (hash + noise per cell, no plate lookups), so cold
 /// per-thread caches in the viewer pay only that cost on first access.
@@ -92,7 +92,7 @@ impl MicroCellGeometry {
 
     /// Populate geometry for a chunk: enumerate sub-grid cells, apply jitter and
     /// flat suppression, then store surviving positions inline.  No plate assignment.
-    ///
+
     /// Idempotent: returns immediately if already populated.
     pub(crate) fn populate_chunk(&mut self, chunk_cq: i32, chunk_cr: i32) {
         if self.chunks.contains_key(&(chunk_cq, chunk_cr)) {
@@ -134,7 +134,7 @@ impl MicroCellGeometry {
 
     /// Read-only micro cell lookup. Assumes the center chunk and its 6 neighbors
     /// are already populated. Panics if any required chunk is missing.
-    ///
+
     /// Use `micro_cell_at` for lazy-populating lookup, or pre-populate with
     /// `populate_region` and share via `Arc<MicroCellGeometry>` for read-only
     /// parallel access with zero per-thread geometry rebuilding.
@@ -203,7 +203,7 @@ fn micro_jitter_at(wx: f64, wy: f64, seed: u64) -> f64 {
 }
 
 /// Whether a micro cell is suppressed (produces no microplate center).
-///
+
 /// Flat rate everywhere — micro cell character is independent of the coastline.
 fn micro_cell_is_suppressed(cq: i32, cr: i32, seed: u64) -> bool {
     hash_f64(cq as i64, cr as i64, seed ^ MICRO_SUPPRESS_SEED) < MICRO_SUPPRESSION_RATE
@@ -243,7 +243,7 @@ fn micro_world_to_cell(wx: f64, wy: f64) -> (i32, i32) {
 }
 
 /// Which micro chunk (hex odd-r lattice) contains a world position.
-///
+
 /// Uses proper cube-coordinate rounding: convert to fractional axial coords
 /// (both q and r derived continuously from wx/wy), compute all three cube
 /// components, round all three, then fix the component with the largest
@@ -399,9 +399,9 @@ fn generate_micro_cells_for_macro(
 // ──── Cached API ────
 
 /// Lazy cache for the bottom-up micro → macro lookup flow.
-///
+
 /// ### Correction model
-///
+
 /// For batch rendering (viewer, offline tools): call [`Self::populate_region`]
 /// once. It populates micro cells for the region of interest plus a
 /// Every `plate_info_at` call returns corrected, connectivity-verified data.
@@ -409,7 +409,7 @@ fn generate_micro_cells_for_macro(
 /// `ORPHAN_CORRECTION_MARGIN`-wide border around it, runs `fix_orphans`, and
 /// marks the queried chunk and its hex 1-ring as corrected. Subsequent calls
 /// to corrected chunks return immediately with no additional work.
-///
+
 /// `populate_region` is a batch performance hint: it warms a full viewport
 /// in one pass and marks core chunks corrected so individual `plate_info_at`
 /// calls within the warmed region skip the per-query correction overhead.
@@ -452,7 +452,7 @@ impl MicroplateCache {
 
     /// Populate a chunk: first populate geometry (positions only), then assign
     /// macro plates for any cells not yet assigned.
-    ///
+
     /// Geometry population is idempotent. Macro assignment only runs for cells
     /// newly discovered by geometry (those not yet in `macro_assignments`).
     fn populate_chunk(&mut self, chunk_cq: i32, chunk_cr: i32) {
@@ -475,7 +475,7 @@ impl MicroplateCache {
     /// Populate all chunks within `ORPHAN_CORRECTION_MARGIN` of the given chunk,
     /// run a global `fix_orphans` pass, then mark the queried chunk and its hex
     /// 1-ring as corrected.
-    ///
+
     /// Margin chunks (outside the 1-ring) are populated for context only and are
     /// left uncorrected. When a later query lands in one of those margin chunks,
     /// it triggers its own `ensure_corrected_region`, extending the corrected zone
@@ -514,13 +514,13 @@ impl MicroplateCache {
     }
 
     /// Performance hint: warm a full viewport before the query loop.
-    ///
+
     /// Populates all chunks within `half_width × half_height` plus
     /// `ORPHAN_CORRECTION_MARGIN`, runs a single global `fix_orphans` pass, then
     /// marks core chunks (those within the requested region) as corrected.
     /// Margin chunks are populated for context but left uncorrected, so any future
     /// query that lands in the margin triggers its own `ensure_corrected_region`.
-    ///
+
     /// The margin guarantees every macro plate seed that owns a cell inside the core
     /// region is visible, so `fix_orphans` resolves the full plate body for all
     /// core cells. Core cells are guaranteed orphan-free after this call.
@@ -575,7 +575,7 @@ impl MicroplateCache {
     }
 
     /// Assign Sea, Coast, or Inland to every live micro cell.
-    ///
+
     /// Uses regime values (no plate lookups) and the hex-neighbor cell grid
     /// to determine if any of the 6 adjacent micro cells have a different
     /// land/water status. Called at the end of [`Self::populate_region`].
@@ -620,7 +620,7 @@ impl MicroplateCache {
     }
 
     /// Cached lookup: micro cell + corrected macro assignment.
-    ///
+
     /// Guarantees a connectivity-verified assignment on every call. On first access
     /// to a chunk, triggers `ensure_corrected_region` which loads a
     /// `ORPHAN_CORRECTION_MARGIN`-wide context, runs `fix_orphans`, and marks the
@@ -653,7 +653,7 @@ impl MicroplateCache {
     }
 
     /// Consume this cache and return ownership of its geometry layer.
-    ///
+
     /// After calling `populate_region`, use this to extract the pre-warmed
     /// `MicroCellGeometry` for sharing across rayon threads via `Arc`.
     /// Save any needed data (e.g., `centroids()`, `all_macro_ids()`) before calling.
@@ -669,7 +669,7 @@ impl MicroplateCache {
     }
 
     /// Centroid of a macro plate, or `None` if the plate has no corrected cells.
-    ///
+
     /// Valid after [`Self::populate_region`]; returns `None` for plates entirely
     /// in the margin (uncorrected) or before `populate_region` is called.
     pub fn plate_centroid(&self, plate_id: u64) -> Option<&PlateCentroid> {
@@ -677,14 +677,14 @@ impl MicroplateCache {
     }
 
     /// Iterate all computed plate centroids.
-    ///
+
     /// Non-empty only after [`Self::populate_region`].
     pub fn centroids(&self) -> impl Iterator<Item = &PlateCentroid> {
         self.centroids.values()
     }
 
     /// Compute plate centroids from corrected micro cells.
-    ///
+
     /// Iterates `chunk.cells` (inline data) for corrected chunks only.
     /// No per-cell HashMap access — wx/wy/id are stored directly in the chunk.
     fn compute_centroids(&mut self) {
@@ -714,13 +714,13 @@ impl MicroplateCache {
     }
 
     /// Fix orphaned macro plate assignments across all cached cells.
-    ///
+
     /// Connected component analysis: for each macro plate, flood-fill its micro
     /// cells. Keep only the largest component (the main body); reassign all
     /// smaller fragments to the surrounding majority plate. Repeat until stable.
     /// Converges in a small number of rounds for typical plate configurations;
     /// the 10-round cap handles pathological cascade chains.
-    ///
+
     /// Returns the number of cells corrected.
     pub fn fix_orphans(&mut self) -> usize {
         // Build reverse map: micro_id → (cq, cr, wx, wy)
@@ -763,7 +763,7 @@ impl MicroplateCache {
         }
 
         // ── Final sweep: minority fragment suppression ──
-        //
+
         // After cc_round converges, minority fragments of multi-CC plates may still
         // remain if their surrounding cells are all suppressed (no neighbor vote was
         // possible in cc_round). This sweep finds those fragments and either:
@@ -878,13 +878,13 @@ impl MicroplateCache {
     }
 
     /// One round of connected component analysis + fragment reassignment (global).
-    ///
+
     /// Fragments are processed in ascending min-cell-ID order. Corrections are
     /// applied immediately (not batched), so each fragment sees the updated state
     /// from earlier fragments. This breaks oscillation: when two isolated cells
     /// mutually point at each other's plate, the lower-ID cell wins and the
     /// higher-ID cell sees the updated plate on its surrounding check.
-    ///
+
     /// Returns the number of cells actually reassigned (0 = stable).
     fn cc_round(&mut self, all_neighbors: &HashMap<u64, Vec<u64>>) -> usize {
         // Build same-plate adjacency from current assignments
@@ -1183,7 +1183,7 @@ mod tests {
         // cells at the same position. The micro-cell-must-match invariant no longer
         // holds. Determinism between independent caches is covered separately by
         // plate_info_at_is_deterministic.
-        //
+
         // This test verifies that both paths return without panicking across a
         // representative grid, confirming the 3-ring search radius is sufficient
         // even at high suppression rates combined with retroactive suppression.
@@ -1264,12 +1264,12 @@ mod tests {
 
     /// Count globally-disconnected macro plate fragments (across the full cache)
     /// that contain at least one cell in a corrected chunk.
-    ///
+
     /// "Core" is defined by chunk membership (corrected flag), not by raw world
     /// coordinates. This obeys the Chunk System Is The Spatial Authority invariant:
     /// `populate_region` marks only core chunks corrected; margin chunks are left
     /// uncorrected. So "has a cell in a corrected chunk" == "has a core cell."
-    ///
+
     /// Uses the same hex-adjacency graph as `fix_orphans`. After `fix_orphans`
     /// converges, all plates have exactly one global CC, so this returns 0.
     fn count_global_core_orphans(cache: &MicroplateCache) -> usize {

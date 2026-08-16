@@ -23,13 +23,13 @@ pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
 
 /// Hex direction indices ordered by visual angle (0°, 60°, 120°, 180°, 240°, 300°).
-///
+
 /// For **flat-top** the visual angles align with the 6 directions:
 ///   0°=N(0,-1), 60°=NE(1,-1), 120°=SE(1,0), 180°=S(0,1), 240°=SW(-1,1), 300°=NW(-1,0)
-///
+
 /// For **pointy-top** the visual angles are offset 30° but the 60° step spacing is the same:
 ///   0→NE(1,-1), 1→E(1,0), 2→SE(0,1), 3→SW(-1,1), 4→W(-1,0), 5→NW(0,-1)
-///
+
 /// In both cases, stepping +1 index = +60° clockwise rotation.
 const HEX_DIRECTIONS_FLAT: [Qrz; 6] = [
     Qrz { q: 0, r: -1, z: 0 },   // 0: N   (0°)
@@ -96,7 +96,7 @@ pub fn update_keybits(
         // Check GCD before allowing ability usage
         let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
 
-        // ADR-009 MVP Ability Set
+        // MVP Ability Set
 
         // Lunge ability (Q key) - Gap closer
         if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
@@ -108,7 +108,7 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
         }
 
-        // Counter ability (E key) - Reactive counter-attack (ADR-014)
+        // Counter ability (E key) - Reactive counter-attack
         if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
         }
@@ -118,12 +118,12 @@ pub fn update_keybits(
             writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
         }
 
-        // ADR-022: Dismiss front queue threat (no GCD check — independent of ability system)
+        // Dismiss front queue threat (no GCD check — independent of ability system)
         if keyboard.just_pressed(KeyCode::KeyD) {
             writer.write(Try { event: Event::Dismiss { ent }});
         }
 
-        // ADR-010 Phase 1: Tier Lock Targeting
+        // Tier Lock Targeting
 
         // 1 key: Lock to Close tier (1-2 hexes)
         if keyboard.just_pressed(KeyCode::Digit1) {
@@ -161,7 +161,7 @@ pub fn update_keybits(
             let right = keyboard.pressed(KEYCODE_RIGHT);
 
             // Determine visual direction and camera rotation side-effect.
-            //
+
             // Up/Up+Left/Up+Right: move forward (with optional diagonal).
             //   Up+Left also steps camera CCW. Up+Right also steps camera CW.
             // Down/Down+Left/Down+Right: move backward. No camera rotation.

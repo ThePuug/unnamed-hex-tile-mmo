@@ -57,7 +57,7 @@ pub fn process_expired_threats(
     }
 }
 
-/// Server system to process Dismiss events (ADR-022)
+/// Server system to process Dismiss events
 /// Pops the front threat from the queue and applies full unmitigated damage
 /// No GCD, no lockout, no resource cost
 pub fn process_dismiss(

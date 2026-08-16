@@ -1,12 +1,12 @@
 //! Target Detail Frame System
-//!
+
 //! Shows detailed information about the currently targeted enemy in top-right corner.
 //! This enables tactical decision-making by answering questions like:
 //! - "Can they dodge?" (see their stamina)
 //! - "Is their queue full?" (see threat indicators)
 //! - "How close to death?" (exact HP numbers)
-//!
-//! From ADR-008 Phase 5 requirements.
+
+
 
 use bevy::prelude::*;
 
@@ -68,7 +68,7 @@ pub struct TargetThreatAttackIcon {
 #[derive(Component)]
 pub struct TargetTriumvirateText;
 
-/// Marker component for the target's level hexagon indicator (ADR-014 Phase 4B)
+/// Marker component for the target's level hexagon indicator
 #[derive(Component)]
 pub struct TargetLevelHex;
 
@@ -108,7 +108,7 @@ pub struct AllyThreatIcon;
 #[derive(Component)]
 pub struct AllyCapacityDot;
 
-/// Marker component for the ally's level hexagon indicator (ADR-014 Phase 4B)
+/// Marker component for the ally's level hexagon indicator
 #[derive(Component)]
 pub struct AllyLevelHex;
 
@@ -140,7 +140,7 @@ pub fn setup(
         TargetFrame,
     ))
     .with_children(|parent| {
-        // Header row: Level hexagon + Entity name (ADR-014 Phase 4B)
+        // Header row: Level hexagon + Entity name
         parent.spawn((
             Node {
                 flex_direction: FlexDirection::Row,
@@ -312,7 +312,7 @@ pub fn setup(
         AllyFrame,
     ))
     .with_children(|parent| {
-        // Header row: Level hexagon + Ally name (ADR-014 Phase 4B)
+        // Header row: Level hexagon + Ally name
         parent.spawn((
             Node {
                 flex_direction: FlexDirection::Row,
@@ -503,12 +503,12 @@ pub fn update(
         }
 
         if let Ok((entity_type, target_health, _queue_opt, target_loc)) = target_query.get(target_ent) {
-            // Update entity name (ADR-014 Phase 4B)
+            // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
             }
 
-            // Update level hexagon (ADR-014 Phase 4B)
+            // Update level hexagon
             if let EntityType::Actor(actor_impl) = entity_type {
                 if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
                     // Player level is static at 10 for now
@@ -634,10 +634,10 @@ pub fn update_queue(
             // Target has a queue - show it
             *queue_visibility = Visibility::Visible;
 
-            // Get actual queue window size from the component (ADR-030)
+            // Get actual queue window size from the component
             let queue_capacity = queue.window_size;
             let filled_slots = queue.threats.len();
-            // ADR-030: Queue is unbounded, but window can be "full" if all visible slots have threats
+            // Queue is unbounded, but window can be "full" if all visible slots have threats
             let is_full = queue.threats.len() >= queue.window_size;
 
             // Check if we need to rebuild capacity dots (capacity changed)
@@ -937,12 +937,12 @@ pub fn update_ally_frame(
         }
 
         if let Ok((entity_type, ally_health, ally_loc)) = ally_query.get(ally_ent) {
-            // Update entity name (ADR-014 Phase 4B)
+            // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
             }
 
-            // Update level hexagon (ADR-014 Phase 4B)
+            // Update level hexagon
             if let EntityType::Actor(actor_impl) = entity_type {
                 if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
                     // Player level is static at 10 for now
@@ -1074,10 +1074,10 @@ pub fn update_ally_queue(
                 commands.entity(icon_ent).despawn();
             }
 
-            // Get actual queue window size from the component (ADR-030)
+            // Get actual queue window size from the component
             let queue_capacity = queue.window_size;
             let filled_slots = queue.threats.len();
-            // ADR-030: Queue is unbounded, but window can be "full" if all visible slots have threats
+            // Queue is unbounded, but window can be "full" if all visible slots have threats
             let is_full = queue.threats.len() >= queue.window_size;
 
             // Spawn capacity dots in the dots container

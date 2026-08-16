@@ -1,16 +1,16 @@
 //! Hexagonal Movement Direction Component
-//!
+
 //! This module defines the `Heading` component which represents movement direction
 //! in hexagonal coordinate space. Heading is used to determine which direction an
 //! entity is moving or facing.
-//!
+
 //! # Coordinate System
-//!
+
 //! Heading uses the same Qrz (axial hex coordinates) as the rest of the codebase,
 //! typically representing unit direction vectors in one of the six cardinal hex directions.
-//!
+
 //! # Conversions
-//!
+
 //! ## KeyBits → Heading
 //! Player input (KeyBits) is converted to Heading using a priority-based mapping:
 //! 1. Q+R+NEG → Northeast (1, -1, 0)
@@ -19,7 +19,7 @@
 //! 4. R+NEG → Northwest (0, -1, 0)
 //! 5. Q → East (1, 0, 0)
 //! 6. R → Southeast (0, 1, 0)
-//!
+
 //! ## Heading → Quat
 //! Heading is converted to a quaternion rotation for rendering (flat-top hex).
 //! Each of the six cardinal directions maps to a specific Y-axis rotation:
@@ -29,16 +29,16 @@
 //! - South: PI (180°)
 //! - Southwest: PI*4/6 (120°, i.e. 2π - 240°)
 //! - Northwest: PI*2/6 (60°, i.e. 2π - 300°)
-//!
+
 //! ## Heading → KeyBits
 //! Heading can be converted back to KeyBits for network transmission. This conversion
 //! analyzes the Qrz coordinates to determine which key combination represents that direction.
-//!
+
 //! # Distance Thresholds
-//!
+
 //! - `HERE` (0.33): Threshold for considering an entity at its current tile
 //! - `THERE` (1.33): Threshold for considering an entity at an adjacent tile
-//!
+
 //! These thresholds are used in movement and collision detection to determine when
 //! an entity has crossed tile boundaries.
 

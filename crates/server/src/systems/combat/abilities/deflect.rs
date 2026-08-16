@@ -45,7 +45,7 @@ pub fn handle_deflect(
             continue;
         };
 
-        // Fixed deflect cost (ADR-009)
+        // Fixed deflect cost
         let deflect_cost = 50.0;
 
         // Validate ability usage
@@ -101,7 +101,7 @@ pub fn handle_deflect(
             },
         });
 
-        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        // Broadcast ability success to clients (client will apply recovery/synergies)
         writer.write(Do {
             event: GameEvent::UseAbility {
                 ent: *ent,
@@ -115,7 +115,7 @@ pub fn handle_deflect(
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Deflect);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state, SOW-021 Phase 2)
+        // Apply synergies (server-side state,)
         // Self-cast: both attacker and defender are the same entity
         let Ok(attrs) = attrs_query.get(*ent) else {
             continue;

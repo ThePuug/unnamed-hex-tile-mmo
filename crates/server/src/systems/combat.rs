@@ -102,7 +102,7 @@ pub fn process_deal_damage(
             },
         });
 
-        // ADR-030: Queue is unbounded, no overflow handling needed
+        // Queue is unbounded, no overflow handling needed
     }
 }
 
@@ -201,12 +201,12 @@ pub fn validate_ability_prerequisites(
 // - abilities::overpower::handle_overpower
 // - abilities::lunge::handle_lunge
 // - abilities::knockback::handle_knockback
-// - abilities::counter::handle_counter (ADR-014)
+// - abilities::counter::handle_counter
 // - abilities::deflect::handle_deflect
 // - abilities::volley::handle_volley
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
-/// System to automatically trigger auto-attacks when adjacent to hostiles (ADR-009)
+/// System to automatically trigger auto-attacks when adjacent to hostiles
 /// Runs periodically to check if actors have adjacent hostiles and can auto-attack
 /// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)
 pub fn process_passive_auto_attack(
@@ -244,14 +244,14 @@ pub fn process_passive_auto_attack(
             }
         }
 
-        // SOW-018: Check NPC recovery timer (per-archetype cooldown between attacks)
+        // Check NPC recovery timer (per-archetype cooldown between attacks)
         if let Some(ref recovery) = npc_recovery_opt {
             if recovery.is_recovering(now) {
                 continue; // Still in recovery phase
             }
         }
 
-        // SOW-018: Check NPC is on assigned hex (if it has one)
+        // Check NPC is on assigned hex (if it has one)
         if let Some(assigned) = assigned_hex_opt {
             if loc.flat_distance(&common_bevy::components::Loc::new(assigned.0)) != 0 {
                 continue; // Not on assigned hex yet
@@ -265,7 +265,7 @@ pub fn process_passive_auto_attack(
             continue; // Still on cooldown
         }
 
-        // ADR-009: Check if NPC's target (from unified Target component) is adjacent
+        // Check if NPC's target (from unified Target component) is adjacent
         // Unwrap Target Option<Entity>
         let Some(target_ent) = target.entity else {
             continue; // No target set
@@ -297,7 +297,7 @@ pub fn process_passive_auto_attack(
             // Update last attack time
             last_auto_attack.last_attack_time = now;
 
-            // SOW-018: Start NPC recovery timer after attacking
+            // Start NPC recovery timer after attacking
             if let Some(mut recovery) = npc_recovery_opt {
                 recovery.start_recovery(now);
             }

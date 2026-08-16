@@ -195,7 +195,7 @@ pub fn handle_lunge(
             },
         );
 
-        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        // Broadcast ability success to clients (client will apply recovery/synergies)
         writer.write(Do {
             event: GameEvent::UseAbility {
                 ent: *ent,
@@ -215,7 +215,7 @@ pub fn handle_lunge(
             .with_target(target_impact, target_level);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state, SOW-021 Phase 2)
+        // Apply synergies (server-side state,)
         // Contest: player's finesse vs target's cunning
         let Ok(attacker_attrs) = attrs_query.get(*ent) else {
             continue;

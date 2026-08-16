@@ -24,7 +24,7 @@ pub fn handle_insert_threat(
                 let server_now_ms = server.current_time(client_now);
                 let server_now = std::time::Duration::from_millis(server_now_ms.min(u64::MAX as u128) as u64);
 
-                // ADR-030: Insert always succeeds (unbounded queue)
+                // Insert always succeeds (unbounded queue)
                 queue_utils::insert_threat(&mut queue, threat, server_now);
 
                 // Recovery pushback: mirror server's Impact vs Composure contest
@@ -47,7 +47,7 @@ pub fn handle_insert_threat(
 /// Client system to handle ApplyDamage events
 /// Removes the corresponding threat from the queue and spawns floating damage numbers
 /// NOTE: Does NOT update health - server sends authoritative health via Incremental{Health}
-/// ADR-025: Only spawns damage numbers over NPCs (outgoing damage), not over player (incoming damage shown in resolved threats)
+/// Only spawns damage numbers over NPCs (outgoing damage), not over player (incoming damage shown in resolved threats)
 pub fn handle_apply_damage(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
@@ -66,7 +66,7 @@ pub fn handle_apply_damage(
             // This was causing double-removal and queue desync
             // (ApplyDamage is for damage display only, not queue management)
 
-            // Skip player incoming damage - shown via resolved threats stack (ADR-025)
+            // Skip player incoming damage - shown via resolved threats stack
             let is_player_target = player_entity.map_or(false, |p| p == ent);
             if is_player_target {
                 continue;
@@ -155,7 +155,7 @@ pub fn apply_gcd(
 /// Client passive auto-attack system for players
 /// Automatically sends AutoAttack Try events when player has an adjacent target
 /// Runs periodically (every 500ms) to check for auto-attack opportunities
-///
+
 /// Auto-attack will only fire if:
 /// - Player has a Target set (via reactive targeting system)
 /// - Target is adjacent (distance == 1)

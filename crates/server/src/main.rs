@@ -66,14 +66,14 @@ fn main() {
     app.add_systems(FixedUpdate, (
         common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
         common_bevy::systems::combat::state::update_combat_state,
-        common_bevy::systems::combat::recovery::global_recovery_system, // ADR-012: Tick down recovery lockout
-        common_bevy::systems::combat::synergies::synergy_cleanup_system, // ADR-012: Clean up expired synergies
+        common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery lockout
+        common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
         reaction_queue::process_expired_threats,
     ));
 
     app.add_systems(FixedPostUpdate, (
-        input::broadcast_player_movement_intent, // ADR-011: Broadcast player movement intents AFTER physics has processed all inputs
-        actor::broadcast_heading_changes, // ADR-011: Broadcast heading changes to clients
+        input::broadcast_player_movement_intent, // Broadcast player movement intents AFTER physics has processed all inputs
+        actor::broadcast_heading_changes, // Broadcast heading changes to clients
     ));
 
     app.add_systems(PreUpdate, (
@@ -85,18 +85,18 @@ fn main() {
         actor::do_incremental,
         actor::update,
         targeting::update_targets, // Update targets every frame (detects when targets move)
-        combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // ADR-009: Auto-attack passive for NPCs only (check every 0.5s) - DIAGNOSTIC: runtime resource commented out
-        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // ADR-014 Phase 3B: NPCs use signature abilities (check every 0.5s for responsive Defender counters)
+        combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Auto-attack passive for NPCs only (check every 0.5s)
+        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // NPCs use signature abilities (check every 0.5s for responsive Defender counters)
         combat::validate_ability_prerequisites,
         combat::abilities::auto_attack::handle_auto_attack,
         combat::abilities::overpower::handle_overpower,
         combat::abilities::lunge::handle_lunge,
-        combat::abilities::counter::handle_counter,  // ADR-014: Counter ability
+        combat::abilities::counter::handle_counter,  // Counter ability
         combat::abilities::kick::handle_kick,        // Kick: reactive knockback
         combat::abilities::deflect::handle_deflect,
         combat::abilities::volley::handle_volley,
         // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
-        reaction_queue::process_dismiss, // ADR-022: Dismiss front queue threat (no GCD/lockout)
+        reaction_queue::process_dismiss, // Dismiss front queue threat (no GCD/lockout)
         common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 
@@ -106,17 +106,16 @@ fn main() {
         common_bevy::systems::world::do_incremental,
         input::send_input,
         input::try_input,
-        input::try_set_tier_lock, // ADR-010 Phase 1: Tier lock targeting
+        input::try_set_tier_lock, // Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
         common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
-        engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // ADR-014: Update proximity tracking
-        engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // ADR-014: Clean up dead/abandoned engagements
+        engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
+        engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
         world::do_spawn,
         world::try_spawn,
     ));
 
     app.add_systems(Update, (
-        engagement_spawner::activate_spawners,
         common_bevy::systems::combat::resources::process_respawn,
     ));
 

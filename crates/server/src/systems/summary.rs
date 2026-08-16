@@ -31,7 +31,7 @@ pub struct SummaryTaskQueue {
 const MAX_SUMMARY_TASKS: usize = 16;
 
 /// Compute visible summary sets per player, dispatch async tasks for cache misses.
-///
+
 /// Operates at MeshRegionKey granularity (271 summaries per region), matching
 /// the flyover dispatch pattern. Regions dispatch nearest-first.
 pub fn dispatch_summary_tasks(

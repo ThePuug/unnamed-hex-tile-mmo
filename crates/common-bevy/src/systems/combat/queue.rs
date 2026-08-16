@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::components::reaction_queue::DamageType;
 
 /// Reaction window base from level gap.
-///
+
 /// Pattern 2 (Baseline+Bonus): 3.0s × gap × (1.0 + 0.5 × contest_factor)
 /// This function computes the gap part only (3.0s × gap_factor).
 pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
@@ -17,15 +17,15 @@ pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
 }
 
 /// Create a threat with proper timer calculation (INVARIANT: INV-003)
-///
+
 /// **CRITICAL INVARIANT (INV-003):** All threats from the same source to the same target
 /// MUST have identical timer durations, regardless of which ability created them.
 /// This ensures consistent reaction windows and prevents ability-specific timing quirks.
-///
+
 /// Two-step timer calculation:
 /// 1. **Gap window**: Level difference sets the base window (3s at equal, ~1s at 10 gap, ~0 at 20)
 /// 2. **Reaction contest**: Cunning advantage extends window (up to +50% at max advantage)
-///
+
 /// # Arguments
 /// * `source` - Attacker entity (source of threat)
 /// * `target_attrs` - Defender's attributes (receives threat)
@@ -34,7 +34,7 @@ pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
 /// * `damage_type` - Physical or Magic
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
-///
+
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
 pub fn create_threat(
@@ -66,7 +66,7 @@ pub fn create_threat(
     }
 }
 
-/// Insert a threat into the queue (ADR-030: unbounded, no overflow eviction)
+/// Insert a threat into the queue (unbounded, no overflow eviction)
 /// Queue is unbounded — threats always insert. Window size controls visibility only.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
@@ -118,7 +118,7 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
 }
 
 /// Sync reaction queue window size when attributes change
-///
+
 /// This system ensures that ReactionQueue.window_size stays in sync with
 /// ActorAttributes.window_size() after attribute changes (respecs, level ups, etc).
 pub fn sync_queue_window_size(
@@ -151,7 +151,7 @@ mod tests {
 
         };
 
-        // Insert always succeeds, no overflow (ADR-030)
+        // Insert always succeeds, no overflow
         insert_threat(&mut queue, make_threat(10.0, 0), Duration::from_secs(0));
         assert_eq!(queue.threats.len(), 1);
 

@@ -1,17 +1,17 @@
-//! Movement Prediction and Visual Interpolation Systems (ADR-019)
-//!
+//! Movement Prediction and Visual Interpolation Systems
+
 //! This module manages Position and VisualPosition components for local player
 //! prediction and visual interpolation.
-//!
+
 //! # System Execution Order
-//!
+
 //! ```text
 //! FixedUpdate:
 //!   controlled::apply     → writes confirmed state to Position.offset
-//!
+
 //! FixedPostUpdate:
 //!   predict_local_player  → replays InputQueue from Position.offset → VisualPosition
-//!
+
 //! Update (every frame):
 //!   apply_movement_intent → VisualPosition.interpolate_toward(dest) (remote entities)
 //!   advance_interpolation → VisualPosition.advance(delta_secs) (ALL entities)
@@ -35,10 +35,10 @@ use common_bevy::{
 };
 
 /// Predict local player position by replaying the InputQueue from confirmed state.
-///
+
 /// Runs in FixedPostUpdate after controlled::apply has written confirmed state
 /// to Position.offset and do_input has popped confirmed inputs.
-///
+
 /// Replays the entire queue from Position.offset (confirmed) to produce a
 /// predicted world position, then writes that to VisualPosition for smooth rendering.
 /// Position.offset is NEVER overwritten — it stays authoritative/confirmed.
@@ -90,7 +90,7 @@ pub fn predict_local_player(
 }
 
 /// Advance VisualPosition interpolation each frame.
-///
+
 /// Runs in Update. Moves progress forward by frame delta time.
 /// This produces smooth movement at any frame rate.
 pub fn advance_interpolation(

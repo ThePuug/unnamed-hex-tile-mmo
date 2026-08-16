@@ -55,8 +55,8 @@ pub fn send_input(
     }
 }
 
-/// Handle tier lock requests from clients (ADR-010 Phase 1)
-///
+/// Handle tier lock requests from clients
+
 /// Clients send SetTierLock events when pressing 1/2/3 keys.
 /// Server updates the TierLock component to reflect the chosen tier.
 /// Abilities will validate the existing Target component is in the correct tier.
@@ -84,8 +84,8 @@ pub fn try_set_tier_lock(
     }
 }
 
-/// Broadcast movement intent for player inputs (ADR-011)
-///
+/// Broadcast movement intent for player inputs
+
 /// Runs in FixedPostUpdate after physics has processed all inputs.
 /// At this point Heading and offset.state are up-to-date, so we can accurately
 /// broadcast where players are heading, enabling client-side prediction of remote players.
@@ -175,7 +175,7 @@ pub fn broadcast_player_movement_intent(
 }
 
 /// Handle attribute respec requests from clients
-///
+
 /// Clients send RespecAttributes Try events when clicking Apply button.
 /// Server validates the respec (budget, ranges, not in combat) and broadcasts Do event.
 pub fn try_respec_attributes(

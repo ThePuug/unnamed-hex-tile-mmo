@@ -1,19 +1,19 @@
 //! Directional Targeting System
-//!
+
 //! This module implements heading-based targeting for abilities:
 //! - Converts 6-direction heading to 120° facing cone
 //! - Determines if targets are within facing direction
 //! - Automatic target selection based on proximity and facing
-//!
+
 //! # Design
-//!
+
 //! The system uses a directional targeting approach where:
 //! - Each heading (NE, E, SE, SW, W, NW) maps to a specific angle
 //! - A 120° facing cone extends ±60° from the heading angle (covers 3 forward hex faces)
 //! - Targets within the cone and nearest to the caster are selected
-//!
+
 //! # Heading Angles (flat-top hex)
-//!
+
 //! - N (North): 0°
 //! - NE (Northeast): 60°
 //! - SE (Southeast): 120°
@@ -31,7 +31,7 @@ use crate::{
 
 impl Heading {
     /// Convert heading to angle in degrees (flat-top hex)
-    ///
+
     /// Returns the angle in degrees (0-360) for the heading direction.
     /// Flat-top compass bearings:
     /// - 0° = North
@@ -40,9 +40,9 @@ impl Heading {
     /// - 180° = South
     /// - 240° = Southwest
     /// - 300° = Northwest
-    ///
+
     /// # Examples
-    ///
+
     /// ```ignore
     /// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Southeast
     /// assert_eq!(heading.to_angle(), 120.0);
@@ -61,27 +61,27 @@ impl Heading {
 }
 
 /// Check if a target location is within the caster's facing cone
-///
+
 /// The facing cone is 120° wide (±60° from the heading angle).
 /// This covers the three "forward" hex faces in the hex grid.
-///
+
 /// # Arguments
-///
+
 /// * `caster_heading` - The heading direction of the caster
 /// * `caster_loc` - The location of the caster
 /// * `target_loc` - The location of the target
-///
+
 /// # Returns
-///
+
 /// `true` if the target is within the 120° facing cone, `false` otherwise
-///
+
 /// # Examples
-///
+
 /// ```ignore
 /// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
 /// let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 /// let target = Loc::new(Qrz { q: 1, r: 0, z: 0 }); // Directly east
-///
+
 /// assert!(is_in_facing_cone(heading, caster, target));
 /// ```
 pub fn is_in_facing_cone(
@@ -112,7 +112,7 @@ pub fn is_in_facing_cone(
 }
 
 /// Calculate the angle in degrees from one location to another
-///
+
 /// Returns an angle in the range [0, 360) degrees.
 /// Uses flat-top hex compass bearings:
 /// - 0° = North
@@ -121,14 +121,14 @@ pub fn is_in_facing_cone(
 /// - 180° = South
 /// - 240° = Southwest
 /// - 300° = Northwest
-///
+
 /// # Arguments
-///
+
 /// * `from` - Starting location
 /// * `to` - Target location
-///
+
 /// # Returns
-///
+
 /// Angle in degrees from `from` to `to`
 fn angle_between_locs(from: Loc, to: Loc) -> f32 {
     // Calculate the difference vector in Qrz coordinates
@@ -163,9 +163,7 @@ fn angle_between_locs(from: Loc, to: Loc) -> f32 {
     angle_deg
 }
 
-/// Range tiers for distance-based targeting
-///
-/// Used to categorize targets by distance for tier lock system (Phase 2+)
+/// Categorizes targets by distance for the tier lock system.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum RangeTier {
     /// Close range: 1-2 hexes
@@ -177,13 +175,13 @@ pub enum RangeTier {
 }
 
 /// Get the range tier for a given distance
-///
+
 /// # Arguments
-///
+
 /// * `distance` - Distance in hexes (flat_distance)
-///
+
 /// # Returns
-///
+
 /// The range tier (Close, Mid, or Far)
 pub fn get_range_tier(distance: u32) -> RangeTier {
     match distance {
@@ -194,15 +192,15 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 }
 
 /// Select the best target based on heading, distance, and optional tier lock
-///
+
 /// This is the core targeting function called by:
 /// - Client target indicator (every frame)
 /// - Client ability usage (on key press)
 /// - Server ability validation (on Try::UseAbility)
 /// - AI targeting (for NPCs)
-///
+
 /// # Algorithm
-///
+
 /// 1. Query entities within max range (20 hexes) using spatial index
 /// 2. Filter to actors (NPCs and players only)
 /// 3. Filter out same-team entities (players can't target players, NPCs can't target NPCs)
@@ -210,16 +208,16 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 /// 5. Apply tier filter if locked (MVP passes None)
 /// 6. Select nearest by distance
 /// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
-///
+
 /// # Performance
-///
+
 /// Designed to run every frame for target indicator:
 /// - Uses spatial index (NNTree) for fast proximity queries
 /// - Angular checks are cheap (dot product comparisons)
 /// - No allocations in hot path
-///
+
 /// # Arguments
-///
+
 /// * `caster_ent` - Entity of the caster (to skip self)
 /// * `caster_loc` - Location of the caster
 /// * `caster_heading` - Heading direction of the caster
@@ -227,9 +225,9 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 /// * `nntree` - Spatial index for proximity queries
 /// * `get_entity_type` - Function to get EntityType for an entity
 /// * `is_player_controlled` - Function to check if entity is player-controlled
-///
+
 /// # Returns
-///
+
 /// `Some(Entity)` if a valid target is found, `None` otherwise
 pub fn select_target<F, G>(
     caster_ent: Entity,
@@ -344,12 +342,12 @@ where
 }
 
 /// Select the nearest ally based on heading and distance
-///
+
 /// Similar to select_target but filters for allies (PlayerControlled) instead of hostiles.
 /// Used for ally targeting and ally target frame display.
-///
+
 /// # Algorithm
-///
+
 /// 1. Query entities within max range (20 hexes) using spatial index
 /// 2. Filter to allies (PlayerControlled) only
 /// 3. Skip self (by entity)
@@ -357,18 +355,18 @@ where
 /// 5. Apply tier filter if locked (None for automatic targeting)
 /// 6. Select nearest by distance
 /// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
-///
+
 /// # Arguments
-///
+
 /// * `caster_ent` - Entity of the caster (to skip self)
 /// * `caster_loc` - Location of the caster
 /// * `caster_heading` - Heading direction of the caster
 /// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
 /// * `is_player_controlled` - Function to check if entity is player-controlled
-///
+
 /// # Returns
-///
+
 /// `Some(Entity)` if a valid ally target is found, `None` otherwise
 pub fn select_ally_target<F>(
     caster_ent: Entity,
@@ -467,13 +465,13 @@ where
 }
 
 /// Shared implementation for updating targets based on heading/location changes
-///
+
 /// This is the core logic called by both server and client versions of update_targets_on_change.
 /// The only difference between server and client is the Query filter, which is handled in their
 /// respective modules.
-///
+
 /// # Arguments
-///
+
 /// * `ent` - The entity being updated
 /// * `loc` - Current location of the entity
 /// * `heading` - Current heading direction
@@ -1092,10 +1090,10 @@ mod tests {
         );
     }
 
-    // ===== TIER LOCK INTEGRATION TESTS (ADR-010 Phase 5) =====
+    // ===== TIER LOCK INTEGRATION TESTS =====
 
-    /// Test that tier lock filters targets by distance range (ADR-010 Phase 5)
-    ///
+    /// Test that tier lock filters targets by distance range
+
     /// Validation Criteria:
     /// - Tier 1 (Close): 0-3 hexes
     /// - Tier 2 (Mid): 4-8 hexes
@@ -1172,8 +1170,8 @@ mod tests {
         assert_eq!(no_lock_result, Some(close_target), "Without tier lock should default to closest target");
     }
 
-    /// Test mixed encounter scenario (ADR-010 Phase 5 Validation Criteria)
-    ///
+    /// Test mixed encounter scenario ( Validation Criteria)
+
     /// Scenario: Mixed encounter with different range tiers
     /// - 1 Forest Sprite at 5 hexes (mid tier: 3-6)
     /// - 1 Wild Dog at 2 hexes (close tier: 1-2)

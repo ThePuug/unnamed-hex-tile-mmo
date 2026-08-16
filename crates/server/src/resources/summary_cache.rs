@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use common_bevy::message::SummaryKey;
 
 /// Global shared cache of computed summary center_z values.
-///
+
 /// Summaries are computed asynchronously from EventRegistry's procedural
 /// terrain. Since terrain is deterministic from the seed, cached values
 /// never change (no invalidation needed until runtime deformation).

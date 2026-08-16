@@ -44,12 +44,12 @@ impl Loc {
     }
 
     /// Check if two locations are adjacent for melee combat with sloping terrain
-    ///
+
     /// Two locations are considered adjacent if:
     /// - They are on the same tile (flat_distance == 0) - for multiple entities on same hex
     /// - OR they are 1 hex apart horizontally (flat_distance == 1) AND the vertical
     ///   difference is at most 1 tile (|z_diff| <= 1)
-    ///
+
     /// This allows melee attacks up/down slopes but prevents attacks
     /// against targets that are too high/low (e.g., 2+ tiles above/below)
     pub fn is_adjacent(&self, other: &Loc) -> bool {
@@ -192,38 +192,34 @@ pub struct AirTime {
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
-// === SCALING MODE INFRASTRUCTURE (ADR-026, RFC-020) ===
+// === SCALING MODE INFRASTRUCTURE (,) ===
 // Layer 2: Three scaling modes layered on top of existing A/S/S model.
 // These are pure abstractions that take derived attribute values as input.
 // - Absolute: derived_value × level_multiplier (methods already on ActorAttributes)
 // - Relative: attacker_derived - defender_derived (Phase 4, not yet implemented)
 // - Commitment: tier_from_percentage(derived_value / total_budget) (below)
 
-/// Discrete commitment tier based on percentage of total attribute budget.
+/// Discrete commitment tier: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%).
 ///
-/// Thresholds: T0 (<30%), T1 (≥30%), T2 (≥45%), T3 (≥60%).
-/// Budget math forces hard build choices:
-/// - Specialist: T3 (60%) + T1 (30%) = 90% → viable
-/// - Dual identity: T2 (45%) + T2 (45%) = 90% → viable
-/// - Generalist: T1 (30%) × 3 = 90% → viable
-/// - T3 + T2 = 105% → impossible
-///
-/// See ADR-027 for design rationale.
+/// The percentage is against `total_level × 10` — the most a single attribute
+/// could reach — not against the summed budget. A summed denominator inflates
+/// with spread, so a spectrum build would tier lower than an axis build holding
+/// identical points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommitmentTier {
     /// No commitment identity — baseline only
     T0,
-    /// Identity unlocked — noticeable specialization (≥30% of budget)
+    /// Identity unlocked — noticeable specialization (≥20%)
     T1,
-    /// Identity deepened — significant commitment (≥45% of budget)
+    /// Identity deepened — significant commitment (≥40%)
     T2,
-    /// Identity defining — dominant aspect of build (≥60% of budget)
+    /// Identity defining — dominant aspect of build (≥60%)
     T3,
 }
 
 impl CommitmentTier {
     /// Calculate commitment tier from a derived attribute value and total budget.
-    ///
+
     /// This is a pure function — it does not know which attribute produced the value
     /// or how it was derived from A/S/S. It only cares about the percentage.
     pub fn calculate(derived_value: u16, total_budget: u32) -> Self {
@@ -244,12 +240,12 @@ impl CommitmentTier {
 }
 
 /// Attributes for actor entities that affect gameplay mechanics
-///
+
 /// Fields store RAW INVESTMENT COUNTS (levels invested):
 /// - Axis: negative = left side, positive = right side (max ±127 levels)
 /// - Spectrum: flexibility range (max 255 levels)
 /// - Shift: tactical position within spectrum range (±spectrum)
-///
+
 /// Access scaled values via methods:
 /// - Axis: 1 level → 10 reach
 /// - Spectrum: 1 level → 7 reach (each direction)
@@ -276,7 +272,7 @@ pub struct ActorAttributes {
 
 impl ActorAttributes {
     /// Create new ActorAttributes with raw investment counts
-    ///
+
     /// # Arguments
     /// * axis: negative = left attribute, positive = right attribute (-127 to 127)
     /// * spectrum: flexibility investment (0 to 127)
@@ -661,7 +657,7 @@ impl ActorAttributes {
         mg_points + vf_points + ip_points
     }
 
-    // === LEVEL MULTIPLIER (ADR-020) ===
+    // === LEVEL MULTIPLIER ===
 
     /// Pure level multiplier for super-linear stat scaling
     /// Formula: (1 + level * k)^p
@@ -709,27 +705,27 @@ impl ActorAttributes {
     }
 
     // === LAYER 2: SCALING MODE HELPERS ===
-    //
+
     // The attribute system has three layers:
-    //
+
     // **Layer 1 — Bipolar Input (Axis/Spectrum/Shift):**
     //   9 i8 fields storing raw investment counts per pair
-    //
+
     // **Layer 2 — Derived Attribute Values:**
     //   Six pure values from A/S/S scaling: might(), grace(), vitality(),
     //   focus(), instinct(), presence()
-    //
+
     // **Layer 3 — Three Scaling Modes:**
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
     //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
     //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
     //   - COMMITMENT (build identity): window_size(), cadence_interval(),
     //     evasion_chance() — discrete tiers based on % of total budget
-    //
+
     // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
 
     /// Total attribute budget: sum of all six derived attribute values.
-    ///
+
     /// This is the denominator for commitment tier percentage calculations.
     /// Unlike total_level() which counts invested points (axis + spectrum),
     /// this sums the actual derived values after A/S/S scaling.
@@ -743,11 +739,11 @@ impl ActorAttributes {
     }
 
     /// Calculate the commitment tier for a specific derived attribute value.
-    ///
+
     /// Compares derived_value against the maximum possible for any single attribute
     /// given total investment (total_level × 10). This ensures spectrum builds aren't
     /// penalized compared to axis builds with the same point investment.
-    ///
+
     /// Example: `attrs.commitment_tier_for(attrs.focus())` → Focus commitment tier
     pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
         let max_possible = self.total_level() as u32 * 10;
@@ -755,10 +751,10 @@ impl ActorAttributes {
     }
 
     // === META-ATTRIBUTES (Layer 2) ===
-    //
+
     // Meta-attributes are derived from Layer 1 attributes and serve as inputs to Layer 3 game stats.
     // Three types: Absolute (scaled by level), Relative (used in contests), Commitment (tier-based).
-    //
+
     // Gear/weapons/buffs will eventually modify these meta-attributes directly.
 
     // --- ABSOLUTE META-ATTRIBUTES (scaled by level multiplier) ---
@@ -792,7 +788,7 @@ impl ActorAttributes {
 
     // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---
 
-    /// Finesse: Synergy chain compression from grace (SOW-021 Phase 2)
+    /// Finesse: Synergy chain compression from grace
     /// Used in contest vs Cunning (affects synergy recovery reduction)
     pub fn finesse(&self) -> u16 { self.grace() }
 
@@ -800,19 +796,19 @@ impl ActorAttributes {
     /// Used in contest vs Dominance (affects mitigation vs healing reduction)
     pub fn toughness(&self) -> u16 { self.vitality() }
 
-    /// Impact: Recovery pushback from might (SOW-021 Phase 1)
+    /// Impact: Recovery pushback from might
     /// Used in contest vs Composure (extends enemy recovery duration)
     pub fn impact(&self) -> u16 { self.might() }
 
-    /// Composure: Recovery reduction from focus (SOW-021 Phase 1)
+    /// Composure: Recovery reduction from focus
     /// Used in contest vs Impact (reduces own recovery duration passively)
     pub fn composure(&self) -> u16 { self.focus() }
 
-    /// Dominance: Healing reduction from presence (SOW-021 Phase 3)
+    /// Dominance: Healing reduction from presence
     /// Used in contest vs Toughness (reduces healing effectiveness via aura)
     pub fn dominance(&self) -> u16 { self.presence() }
 
-    /// Cunning: Reaction window extension from instinct (SOW-021 Phase 2)
+    /// Cunning: Reaction window extension from instinct
     /// Used in contest vs Finesse (extends time to react to threats)
     pub fn cunning(&self) -> u16 { self.instinct() }
 
@@ -839,7 +835,7 @@ impl ActorAttributes {
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
-    /// Reaction queue window size from Concentration meta-attribute (ADR-030)
+    /// Reaction queue window size from Concentration meta-attribute
     /// Higher Concentration tier → larger visibility window for reactive play
     /// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots
     pub fn window_size(&self) -> usize {
@@ -901,7 +897,7 @@ pub struct Sun();
 #[derive(Debug, Default, Component)]
 pub struct Moon();
 
-/// Tracks the last time an auto-attack was performed (ADR-009)
+/// Tracks the last time an auto-attack was performed
 /// Used to enforce 1.5s cooldown between passive auto-attacks
 #[derive(Clone, Component, Copy, Debug)]
 pub struct LastAutoAttack {
@@ -943,7 +939,7 @@ mod tests {
     // ===== MOVEMENT SPEED TESTS =====
     // TODO: Re-enable when movement speed is allocated to a meta-attribute
 
-    // ===== LEVEL MULTIPLIER TESTS (ADR-020) =====
+    // ===== LEVEL MULTIPLIER TESTS =====
     // Property tests only — no specific formula values, survives balance tuning
 
     #[test]
@@ -1042,7 +1038,7 @@ mod tests {
         assert_eq!(attrs.max_health(), 100.0, "Level 0 with no vitality should have base 100 HP");
     }
 
-    // ===== COMMITMENT TIER TESTS (ADR-027, Layer 2) =====
+    // ===== COMMITMENT TIER TESTS (, Layer 2) =====
 
     #[test]
     fn test_commitment_tier_thresholds() {
@@ -1170,7 +1166,7 @@ mod tests {
         // Dual T2 with axis×16 scaling:
         // axis=-3 on two pairs: total_level = 6, max_possible = 60
         // might = 3×16 = 48 → 48/60 = 80% → T3 (too high for single pair!)
-        //
+
         // Spread to three pairs for T2:
         // axis=-3 each → total_level = 9, max_possible = 90
         // might = 48 → 48/90 = 53.3% → T2 ✓

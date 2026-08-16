@@ -1,8 +1,11 @@
 //! # Engagement Activation System
 //!
-//! Activates terrain-derived spawners when players approach.
-//! Spawners are placed by SpawnerEvent in the world event composite.
-//! The activation system reads SpawnerPlacementIndex for nearby placements.
+//! Activates terrain-derived spawners when players approach. Spawners are
+//! placed by SpawnerEvent in the world event composite; activation reads
+//! SpawnerPlacementIndex for nearby placements.
+//!
+//! Dormant: `activate_spawners` is not registered in the server schedule, so
+//! no NPCs spawn.
 
 use bevy::prelude::*;
 use qrz::Qrz;

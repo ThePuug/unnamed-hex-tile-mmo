@@ -1,10 +1,10 @@
 //! Water surface — a single camera-following plane at sea level.
-//!
+
 //! `SeaEvent` gives every tile below the regime land threshold a negative
 //! elevation, so the seabed is already real terrain that the elevation ramp in
 //! `terrain.wgsl` shades blue. What was missing is the surface itself: without
 //! it the ocean reads as a flat blue plain rather than water.
-//!
+
 //! Deliberately independent of the chunk/LoD mesh pipeline. Water is a plane of
 //! constant height everywhere in the world, so it needs no per-chunk geometry,
 //! no decimation, and no streaming — one quad parented to the camera's XZ
@@ -17,7 +17,7 @@ use bevy_light::NotShadowCaster;
 use common::camera::RISE;
 
 /// World-space Y of the waterline.
-///
+
 /// A tile's rendered surface sits at `(z + 1) * RISE`: z=0 renders at `RISE`,
 /// z=-1 at 0. `discretize_elevation` rounds, so the z=0 band straddles true
 /// elevation 0 — the dry/wet boundary belongs between the two surfaces.

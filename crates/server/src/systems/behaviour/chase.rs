@@ -19,7 +19,7 @@ use crate::components::{
     target_lock::TargetLock,
 };
 
-/// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
+/// Helper: Broadcast movement intent when NPC decides to move
 fn broadcast_intent(
     commands: &mut Commands,
     writer: &mut MessageWriter<Do>,
@@ -81,7 +81,7 @@ fn broadcast_intent(
 }
 
 /// Chase behavior - unified hostile pursuit and engagement
-///
+
 /// Handles the complete chase loop in a single behavior:
 /// - Acquires hostile targets within range
 /// - Maintains sticky targeting via TargetLock
@@ -97,7 +97,7 @@ pub struct Chase {
 
 pub fn chase(
     mut commands: Commands,
-    mut writer: MessageWriter<Do>,  // ADR-011: Broadcast movement intents
+    mut writer: MessageWriter<Do>,  // Broadcast movement intents
     mut query: Query<(
         Entity,
         &Chase,
@@ -108,9 +108,9 @@ pub fn chase(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
-        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,  // ADR-011
+        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
         &EngagementMember,
-        Option<&AssignedHex>,  // SOW-018: Path to assigned hex
+        Option<&AssignedHex>,  // Path to assigned hex
         Option<&Stagger>,
     )>,
     q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
@@ -169,7 +169,7 @@ pub fn chase(
                 let dt_ms = dt.delta().as_millis() as i16;
                 let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                // ADR-011: Broadcast intent BEFORE physics computes movement
+                // Broadcast intent BEFORE physics computes movement
                 broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                 let (offset, airtime) = physics::apply(
@@ -265,7 +265,7 @@ pub fn chase(
                         let dt_ms = dt.delta().as_millis() as i16;
                         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                        // ADR-011: Broadcast intent BEFORE physics computes movement
+                        // Broadcast intent BEFORE physics computes movement
                         broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                         let (offset, airtime) = physics::apply(
@@ -328,7 +328,7 @@ pub fn chase(
             continue;
         };
 
-        // SOW-018: Determine movement destination — assigned hex if available, otherwise player tile
+        // Determine movement destination — assigned hex if available, otherwise player tile
         let move_target = assigned_hex_opt.map(|ah| ah.0).unwrap_or(**target_loc);
 
         // 3. CHECK RANGE — NPC must be on assigned hex AND adjacent to player to attack
@@ -346,7 +346,7 @@ pub fn chase(
             continue;
         }
 
-        // SOW-018: On assigned hex but not in attack range — hold position, face target.
+        // On assigned hex but not in attack range — hold position, face target.
         // Prevents oscillation when assigned hex is farther than attack range.
         if on_assigned_hex && assigned_hex_opt.is_some() {
             let direction = (**target_loc - **npc_loc).normalize();
@@ -390,7 +390,7 @@ pub fn chase(
             let dt_ms = dt.delta().as_millis() as i16;
             let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-            // ADR-011: Broadcast intent BEFORE physics computes movement
+            // Broadcast intent BEFORE physics computes movement
             broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
             let (offset, airtime) = physics::apply(

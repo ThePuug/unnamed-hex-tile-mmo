@@ -201,7 +201,7 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
             }
             Do { event: Event::UseAbility { ent, ability, target } } => {
-                // Map entity ID and forward to ability_prediction system (ADR-012)
+                // Map entity ID and forward to ability_prediction system
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
@@ -268,7 +268,7 @@ pub fn write_do(
         }
     }
 
-    // ADR-011: Listen for MovementIntent on Unreliable channel for bandwidth efficiency
+    // Listen for MovementIntent on Unreliable channel for bandwidth efficiency
     // Unreliable channel is used for frequent, self-correcting messages (latest wins)
     while let Some(serialized) = conn.receive_message(DefaultChannel::Unreliable) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();

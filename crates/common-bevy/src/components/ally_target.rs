@@ -3,7 +3,7 @@ use bevy::prelude::*;
 /// AllyTarget component for tracking which ally entity is currently targeted
 /// Used for friendly abilities and target frames
 /// Updated reactively when heading or location changes
-///
+
 /// Parallel to the Target component but for allies instead of hostiles
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct AllyTarget {

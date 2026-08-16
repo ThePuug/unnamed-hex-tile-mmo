@@ -355,7 +355,7 @@ pub fn write_try(
                 let ent = *ent;
                 let destination = *destination;
                 let duration_ms = *duration_ms;
-                // ADR-011: Movement intent via Unreliable channel for client-side prediction
+                // Movement intent via Unreliable channel for client-side prediction
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 let bytes = bincode::serde::encode_to_vec(
                     Do { event: Event::MovementIntent { ent, destination, duration_ms }},

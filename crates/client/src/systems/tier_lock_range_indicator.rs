@@ -1,9 +1,9 @@
 //! Tier Lock Range Indicator System
-//!
+
 //! Displays translucent yellow hexes showing targetable tiles when tier locked.
-//!
+
 //! # Design Requirements
-//!
+
 //! - Shows yellow translucent indicators for tiles in the locked tier range
 //! - Updates immediately when tier lock changes (zero lag)
 //! - Follows terrain elevation (terrain-following meshes)
@@ -12,9 +12,9 @@
 //!   - Tier 1 (Close): 1-2 hexes (melee range)
 //!   - Tier 2 (Mid): 3-6 hexes (mid range)
 //!   - Tier 3 (Far): 7-10 hexes (far range)
-//!
+
 //! # Implementation
-//!
+
 //! Uses a SINGLE entity with a combined mesh for all hex tiles to avoid entity churn.
 //! Only recreates the mesh when the tier actually changes.
 
@@ -61,7 +61,7 @@ pub fn setup(mut commands: Commands) {
 }
 
 /// Update tier lock range indicators based on player's targeting state
-///
+
 /// Only rebuilds the mesh when the tier actually changes.
 pub fn update(
     mut commands: Commands,

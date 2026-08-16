@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Plugin for terrain streaming and LoD mesh generation.
-///
+
 /// Owns chunk loading, eviction, and the summary mesh pipeline
 /// (dispatch → async build → poll → spawn/update entities).
 pub struct WorldStreamingPlugin;

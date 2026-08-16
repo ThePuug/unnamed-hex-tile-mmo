@@ -1,5 +1,5 @@
 //! Mesh region assembly for summary hexes.
-//!
+
 //! Groups summaries into mesh regions of ~271 summaries each (radius-9 in
 //! summary-lattice space). Handles mesh assembly, the generic intra-region
 //! skirt pass, and perimeter edge collection for cross-region exchange.
@@ -28,7 +28,7 @@ pub struct MeshRegionKey {
 }
 
 /// A perimeter edge at the boundary of a mesh region.
-///
+
 /// Represents one side of a shared summary edge whose other side
 /// is in an adjacent mesh region. Collected during the intra-region
 /// skirt pass and stored for cross-region exchange.
@@ -61,15 +61,15 @@ pub struct SummaryMeshResult {
 pub const MESH_REGION_SUMMARIES: u32 = 271;
 
 /// Build a summary mesh region for the given radius.
-///
+
 /// Collects all summaries in the mesh region, computes center_z for each
 /// from the tile elevation data, emits flat hex geometry, runs the
 /// intra-region skirt pass, and collects perimeter edges.
-///
+
 /// `radius`: summary radius (must be > 0).
 /// `region_key`: mesh region lattice coordinates.
 /// `elevation_fn`: returns z for tile (q, r), or None if not loaded.
-///
+
 /// Returns None if no summaries have data.
 pub fn build_summary_mesh_region(
     radius: u32,
@@ -142,11 +142,11 @@ pub fn build_summary_mesh_region(
 }
 
 /// Build a summary mesh region from pre-computed center_z values.
-///
+
 /// Like `build_summary_mesh_region` but skips per-tile iteration — the
 /// `summary_z_fn` provides center_z directly for each summary-lattice cell.
 /// Used for server-sent summaries beyond the streaming radius.
-///
+
 /// `summary_z_fn(sq, sr)` returns the center_z for summary at lattice coords,
 /// or None if not available.
 pub fn build_summary_mesh_region_from_summaries(
@@ -209,11 +209,11 @@ pub fn build_summary_mesh_region_from_summaries(
 }
 
 /// Build an r=0 mesh region: 271 tiles = one game chunk, via compute_tile_geometry.
-///
+
 /// At r=0, summary lattice scale=1 (every tile is its own summary).
 /// Mesh region = radius-9 in summary-lattice space = radius-9 in tile space = 271 tiles.
 /// This produces byte-identical output to the old per-chunk tile pipeline.
-///
+
 /// Requires all 6 neighbor chunks to have tiles (for slope blending at edges).
 /// Returns None if center tile or any neighbor chunk center is missing.
 fn build_r0_mesh_region(
@@ -287,7 +287,7 @@ fn build_r0_mesh_region(
 }
 
 /// Emit intra-region skirt quads and collect perimeter edges.
-///
+
 /// Edges with 2 sides (both summaries in this region) get skirt quads.
 /// Edges with 1 side (boundary of region) become perimeter edges for
 /// cross-region exchange.
@@ -406,7 +406,7 @@ fn emit_skirt_quad(
 }
 
 /// Compute cross-region skirt geometry between two regions' perimeter edges.
-///
+
 /// Matches edges by canonical vertex ID pairs. For each match where Y
 /// values differ, emits a skirt quad. Returns the raw quad geometry
 /// (world-space positions and normals, not yet mesh-origin-relative).
@@ -492,7 +492,7 @@ pub fn contributing_chunks(
 }
 
 /// Enumerate mesh regions within a distance band that overlap loaded chunks.
-///
+
 /// `camera_wx/wz`: camera world position (XZ plane).
 /// `inner_wu/outer_wu`: extended band range (natural + overlap).
 /// Only includes regions whose world-space centers fall within range
@@ -620,12 +620,12 @@ pub fn visible_mesh_regions_in_band_ungated(
 /// Collect visible mesh regions across all bands for the producers (server,
 /// flyover): everything beyond the local-data boundary, plus regions whose
 /// footprint straddles it.
-///
+
 /// `local_boundary_wu` is the extent the consumer's Map can serve:
 /// FIXED_STREAM_RADIUS_WU in gameplay, the flyover's detail-chunk radius in
 /// flyover (much smaller — using the gameplay constant there left an
 /// un-rendered ring between the flyover's chunks and the first produced band).
-///
+
 /// Straddling matters: a region centered just inside the boundary has
 /// summaries beyond it whose tiles the Map can never resolve — the producer
 /// covers those. Values agree with Map-computed ones because every producer

@@ -12,19 +12,19 @@ pub use state::DevConsole;
 pub use actions::DevConsoleAction;
 
 /// Plugin that provides a hierarchical, numpad-navigable developer console
-///
+
 /// This plugin consolidates all debug capabilities into a contextual menu system:
 /// - Performance monitoring (FPS, stats, profiling)
 /// - Terrain debugging (grid, slopes, lighting)
 /// - Combat testing (resource drains, reaction queue)
 /// - Visualization toggles (spawner markers, future debug viz)
 /// - Developer tools (future: teleport, spawn NPCs)
-///
+
 /// Navigation:
 /// - **NumpadDivide (/)**: Open/close console
 /// - **Numpad 0-9**: Select menu options
 /// - **Numpad 0**: Back to previous menu / Close from root
-///
+
 /// The console provides an alternative to scattered keybindings (J/H/G/V/F3/Digit1-3),
 /// making debug features discoverable and organized.
 pub struct DevConsolePlugin;

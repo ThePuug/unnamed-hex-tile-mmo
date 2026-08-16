@@ -295,7 +295,7 @@ pub fn setup_health_bars(mut commands: Commands) {
 
 /// System to update health bar positions and widths
 /// Updates 2 persistent health bars (hostile and ally) based on current targets
-/// Smoothly interpolates width changes over 0.2s per ADR-008
+/// Smoothly interpolates width changes over 0.2s
 pub fn update_health_bars(
     mut hostile_query: Query<
         (&mut crate::components::WorldHealthBar, &Children, &mut Node, &mut Visibility),

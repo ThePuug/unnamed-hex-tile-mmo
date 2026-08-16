@@ -18,7 +18,7 @@ use crate::components::{
     target_lock::TargetLock,
 };
 
-/// Helper: Broadcast movement intent when NPC decides to move (ADR-011)
+/// Helper: Broadcast movement intent when NPC decides to move
 fn broadcast_intent(
     commands: &mut Commands,
     writer: &mut MessageWriter<Do>,
@@ -104,8 +104,8 @@ fn score_neighbor(
     range_score + leash_score
 }
 
-/// Kite behavior - ranged hostile that maintains optimal distance (ADR-010 Phase 4)
-///
+/// Kite behavior - ranged hostile that maintains optimal distance
+
 /// Implements distance-based state machine for ranged kiting enemies:
 /// - Acquires hostile targets within aggro range
 /// - Maintains sticky targeting via TargetLock
@@ -114,7 +114,7 @@ fn score_neighbor(
 /// - **Attacks** when target is in optimal_distance range (5-8 hexes) - instant hit every attack_interval seconds
 /// - **Advances** when target is beyond optimal range (> 8 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
-///
+
 /// # Design Pattern
 /// Inverse pathfinding: Kiter moves AWAY from player to maintain distance.
 /// Attack timer independent of movement: Continues firing while repositioning.
@@ -128,7 +128,7 @@ pub struct Kite {
 }
 
 impl Kite {
-    /// Create a new Kite behavior with Forest Sprite stats (ADR-010 Phase 4)
+    /// Create a new Kite behavior with Forest Sprite stats
     pub fn forest_sprite() -> Self {
         Self {
             acquisition_range: 15,        // 15 hexes aggro range
@@ -175,7 +175,7 @@ pub fn kite(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
-        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,  // ADR-011
+        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
         &EngagementMember,
         Option<&Stagger>,
     )>,
@@ -236,7 +236,7 @@ pub fn kite(
                 let dt_ms = dt.delta().as_millis() as i16;
                 let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                // ADR-011: Broadcast intent BEFORE physics computes movement
+                // Broadcast intent BEFORE physics computes movement
                 broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                 let (offset, airtime) = physics::apply(
@@ -330,7 +330,7 @@ pub fn kite(
                         let dt_ms = dt.delta().as_millis() as i16;
                         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                        // ADR-011: Broadcast intent BEFORE physics computes movement
+                        // Broadcast intent BEFORE physics computes movement
                         broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                         let (offset, airtime) = physics::apply(
@@ -435,7 +435,7 @@ pub fn kite(
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                    // ADR-011: Broadcast intent BEFORE physics computes movement
+                    // Broadcast intent BEFORE physics computes movement
                     broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                     let (offset, airtime) = physics::apply(
@@ -483,7 +483,7 @@ pub fn kite(
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
 
-                    // ADR-011: Broadcast intent BEFORE physics computes movement
+                    // Broadcast intent BEFORE physics computes movement
                     broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
 
                     let (offset, airtime) = physics::apply(
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(kite.determine_action(2), KiteAction::Flee);
 
         // Distance exactly at disengage threshold (3) - NOT flee (>= 3 is safe)
-        // NOTE: ADR-010 says "< 3 hexes" so 3 is safe
+        // NOTE: says "< 3 hexes" so 3 is safe
         assert_ne!(kite.determine_action(3), KiteAction::Flee);
     }
 
@@ -600,8 +600,8 @@ mod tests {
         assert_eq!(kite.determine_action(9), KiteAction::Advance);
     }
 
-    /// Test that Kite behavior handles distance transitions correctly (ADR-010 Phase 5)
-    ///
+    /// Test that Kite behavior handles distance transitions correctly
+
     /// Validates that the state machine transitions appropriately as distance changes
     #[test]
     fn test_forest_sprite_distance_based_states() {

@@ -1,15 +1,15 @@
 //! Hex ball tessellation lattice at arbitrary radius.
-//!
+
 //! Hex balls of radius R tile the plane on the lattice with basis:
 //!   v1 = (R+1, R),  v2 = (-R, 2R+1)
 //! The determinant equals the hex ball tile count (3R²+3R+1), guaranteeing
 //! exactly one tile per cell with no gaps or overlaps.
-//!
+
 //! This generalizes the game chunk system (radius 9, v1=(10,9), v2=(-9,19))
 //! to arbitrary radii for the event framework.
 
 /// Hex ball tessellation lattice for a given radius.
-///
+
 /// Provides O(1) cell ID from tile coordinates, tile enumeration within cells,
 /// and neighbor/overlap computation.
 #[derive(Clone)]

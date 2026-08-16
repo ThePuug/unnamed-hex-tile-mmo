@@ -37,7 +37,7 @@ const POP_TRAVEL_DURATION: f32 = 0.4;
 const RESOLVED_VERTICAL_OFFSET: f32 = -70.0; // Must match resolved_threats::VERTICAL_OFFSET
 
 /// Map severity (estimated_damage / max_health) to an RGB color.
-///
+
 /// - 0–10%: Muted yellow-green → yellow
 /// - 10–30%: Yellow → orange
 /// - 30%+: Orange → intense red

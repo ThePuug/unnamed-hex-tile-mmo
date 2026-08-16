@@ -1,8 +1,8 @@
 //! Relief probe — quantifies how much terrain variation a player actually sees.
-//!
+
 //! Not a pass/fail test. Answers: what fraction of the world is flat, how far
 //! apart are features, and what is the elevation range inside one screen?
-//!
+
 //! Run: cargo test -p world --release --test relief_probe -- --ignored --nocapture
 
 use std::sync::Arc;

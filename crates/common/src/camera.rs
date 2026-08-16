@@ -20,7 +20,7 @@ pub const ASSUMED_MAX_ASPECT: f32 = 2.0;
 
 /// Horizontal ground distance the camera frustum can see — measured for the
 /// TOP-CORNER rays, which see farthest.
-///
+
 /// The top-center ray dips `HORIZON_MARGIN_DEG` below horizontal by
 /// construction (`camera_height`), striking ground at h/tan(margin). A
 /// top-corner ray is additionally rotated sideways by the half-horizontal

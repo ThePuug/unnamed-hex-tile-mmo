@@ -1,5 +1,5 @@
-//! # Engagement System Components (ADR-014)
-//!
+//! # Engagement System Components
+
 //! Dynamic enemy encounters that spawn when players explore new chunks.
 //! Replaces static spawners with exploration-driven content discovery.
 
@@ -27,7 +27,7 @@ impl ZoneId {
 }
 
 /// Engagement parent entity - manages a group of NPCs spawned together
-///
+
 /// Lifecycle:
 /// 1. Spawn engagement entity when chunk received (if validation passes)
 /// 2. Spawn 1-3 NPC entities as children

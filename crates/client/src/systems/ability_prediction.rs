@@ -6,7 +6,7 @@ use common_bevy::{
     systems::combat::synergies::apply_synergies,
 };
 
-/// Client-side handler for Do UseAbility (ADR-012)
+/// Client-side handler for Do UseAbility
 /// Server broadcasts when ability succeeds, client applies recovery/synergies locally
 pub fn handle_ability_used(
     mut commands: Commands,
@@ -31,7 +31,7 @@ pub fn handle_ability_used(
         if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
             entity_cmd.insert(recovery);
 
-            // Apply synergies (optimistic client-side, SOW-021 Phase 2)
+            // Apply synergies (optimistic client-side,)
             // Contest: player's finesse vs target's cunning
             if let Ok(attacker_attrs) = attrs_query.get(*ent) {
                 let target_result = target_query.get(*ent);

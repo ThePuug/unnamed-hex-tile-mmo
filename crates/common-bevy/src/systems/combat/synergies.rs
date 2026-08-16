@@ -12,7 +12,7 @@ pub enum SynergyTrigger {
     GapCloser,   // Lunge
     HeavyStrike, // Overpower
     Push,        // Knockback
-    Mitigate,    // Counter (ADR-014)
+    Mitigate,    // Counter
     Defensive,   // Deflect
     Kick,        // Kick (self-synergy)
 }
@@ -33,7 +33,7 @@ pub const MVP_SYNERGIES: &[SynergyRule] = &[
         target: AbilityType::Overpower,
         unlock_reduction: 0.5, // Overpower available at 0.5s instead of 1.0s
     },
-    // Heavy Strike → Mitigate: Counter unlocks 1.0s early during Overpower recovery (ADR-014)
+    // Heavy Strike → Mitigate: Counter unlocks 1.0s early during Overpower recovery
     SynergyRule {
         trigger: SynergyTrigger::HeavyStrike,
         target: AbilityType::Counter,
@@ -52,7 +52,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
     match ability {
         AbilityType::Lunge => Some(SynergyTrigger::GapCloser),
         AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
-        AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // ADR-014: Mitigate type
+        AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
         AbilityType::Kick => Some(SynergyTrigger::Kick),        // Kick: self-synergy
         AbilityType::AutoAttack | AbilityType::Volley => None, // No synergies
@@ -60,12 +60,12 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
 }
 
 /// Apply synergies when an ability is used.
-///
+
 /// Pattern 1 (Nullifying): 66% × gap × contest_factor
 /// - Calculates percentage reduction of effective_recovery_base
 /// - Creates early unlock window for synergized abilities
 /// - Stacks multiplicatively with composure reduction
-///
+
 /// This should be called immediately after creating GlobalRecovery.
 /// Both server and client run this function locally (no network broadcast needed).
 pub fn apply_synergies(
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(lunge_synergy.target, AbilityType::Overpower);
         assert_eq!(lunge_synergy.unlock_reduction, 0.5);
 
-        // Overpower → Counter (ADR-014: replaces Knockback)
+        // Overpower → Counter (replaces Knockback)
         let overpower_synergy = &MVP_SYNERGIES[1];
         assert_eq!(overpower_synergy.trigger, SynergyTrigger::HeavyStrike);
         assert_eq!(overpower_synergy.target, AbilityType::Counter);
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_overpower_synergy_timing() {
-        // Test Overpower → Counter synergy timing (ADR-014: replaces Knockback)
+        // Test Overpower → Counter synergy timing (replaces Knockback)
         let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
         let synergy = SynergyUnlock::new(AbilityType::Counter, 1.0, AbilityType::Overpower);
 

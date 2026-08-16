@@ -180,7 +180,7 @@ impl Alarm {
 const COLOR_WARN: Color32 = Color32::from_rgb(255, 200, 60);
 
 // ── Tile-width segment primitives ──
-//
+
 // Each function takes a pre-built string and asserts its display width matches the slot.
 // Callers use standard format!() for layout. Nerd Font glyphs use {:<2} for 2-cell width.
 

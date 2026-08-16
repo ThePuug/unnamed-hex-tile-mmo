@@ -56,7 +56,7 @@ pub fn update(
 ) {
     for (&loc, &heading, mut transform0, vis_pos) in &mut query {
         let final_pos = if let Some(vis) = vis_pos {
-            // ADR-019: Use VisualPosition for smooth, jitter-free rendering
+            // Use VisualPosition for smooth, jitter-free rendering
             vis.current()
         } else {
             // Fallback: tile center for entities without VisualPosition
@@ -121,7 +121,7 @@ pub fn do_spawn(
                         KeyBits::default(),
                         Visibility::default(),
                         Physics::default(),
-                        // ADR-019: New position and visual interpolation components
+                        // New position and visual interpolation components
                         Position::at_tile(qrz),
                         VisualPosition::at(spawn_world),
                     ))
@@ -132,7 +132,7 @@ pub fn do_spawn(
                         common_bevy::components::target::Target::default(), // For targeting system
                         common_bevy::components::LastAutoAttack::default(), // For auto-attack cooldown
                         common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
-                        common_bevy::components::tier_lock::TierLock::new(), // ADR-010 Phase 1: Tier lock targeting
+                        common_bevy::components::tier_lock::TierLock::new(), // Tier lock targeting
                     ))
                     .observe(ready);
 
@@ -180,8 +180,8 @@ fn get_asset(typ: EntityType) -> String {
     }
 }
 
-/// Apply movement intent to predict remote entity movement (ADR-011 + ADR-019)
-///
+/// Apply movement intent to predict remote entity movement ( +)
+
 /// When a MovementIntent arrives, start interpolating toward the predicted destination.
 /// Local player is skipped (already predicted via Input system).
 pub fn apply_movement_intent(

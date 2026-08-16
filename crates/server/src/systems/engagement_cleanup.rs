@@ -1,5 +1,5 @@
 //! # Engagement Cleanup System
-//!
+
 //! Removes completed or abandoned engagements.
 //! Runs periodically to keep world state clean.
 
@@ -25,11 +25,11 @@ const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
 const PROXIMITY_RANGE: i32 = 150;
 
 /// System that cleans up completed or abandoned engagements
-///
+
 /// Cleanup triggers:
 /// 1. All NPCs dead (all child entities despawned)
 /// 2. Abandoned (no players within 60 tiles for 30 seconds)
-///
+
 /// Actions on cleanup:
 /// - Despawn engagement entity
 pub fn cleanup_engagements(
@@ -91,7 +91,7 @@ pub fn cleanup_engagements(
 }
 
 /// System that updates player proximity tracking for engagements
-///
+
 /// Run frequently to keep proximity timestamps fresh
 pub fn update_engagement_proximity(
     mut engagement_query: Query<(&Loc, &mut LastPlayerProximity), With<Engagement>>,
@@ -121,19 +121,19 @@ mod tests {
         components::Loc,
     };
 
-    /// CRITICAL INVARIANT TEST (ADR-014)
-    ///
+    /// CRITICAL INVARIANT TEST
+
     /// Validates that PROXIMITY_RANGE is large enough to guarantee clients have evicted
     /// chunks before engagement abandonment triggers.
-    ///
+
     /// Architecture:
     /// - Clients evict chunks outside hex distance FOV_CHUNK_RADIUS + 1
     /// - Server abandons engagements when no players within PROXIMITY_RANGE for 30s
     /// - Engagements spawn at chunk centers
-    ///
+
     /// For this to work correctly:
     /// PROXIMITY_RANGE must be > minimum distance at which clients evict chunks
-    ///
+
     /// This test calculates the minimum eviction distance and ensures PROXIMITY_RANGE
     /// provides a safety buffer.
     #[test]

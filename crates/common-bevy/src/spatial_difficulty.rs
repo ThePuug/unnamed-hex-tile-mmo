@@ -1,5 +1,5 @@
-//! # Spatial Difficulty System (ADR-014)
-//!
+//! # Spatial Difficulty System
+
 //! Level-based enemy system with:
 //! - Distance-based difficulty scaling (base 10, +1 per 100 tiles, max 20)
 //! - Directional enemy archetypes (Berserker/Juggernaut/Kiter/Defender)
@@ -13,9 +13,9 @@ use crate::{components::ActorAttributes, message::AbilityType};
 pub const HAVEN_LOCATION: Qrz = Qrz { q: 3423, r: 1155, z: 0 };
 
 /// Calculate enemy level based on distance from haven
-///
+
 /// Base level 10 near haven, +1 per 100 tiles, capped at 20.
-///
+
 pub fn calculate_enemy_level(spawn_location: Qrz, haven_location: Qrz) -> u8 {
     let distance = haven_location.flat_distance(&spawn_location) as f32;
 
@@ -33,7 +33,7 @@ pub enum DirectionalZone {
 }
 
 /// Get directional zone based on angle from haven to spawn point
-///
+
 pub fn get_directional_zone(spawn_location: Qrz, haven_location: Qrz) -> DirectionalZone {
     let delta = spawn_location - haven_location;
 
@@ -93,7 +93,7 @@ impl EnemyArchetype {
     }
 
     /// Get the positioning strategy for this archetype.
-    ///
+
     /// All melee archetypes (Chase behavior) use adjacent strategies.
     /// Perimeter/Orbital are reserved for future ranged archetypes.
     pub fn positioning_strategy(&self) -> PositioningStrategy {
@@ -115,7 +115,7 @@ impl EnemyArchetype {
         }
     }
 
-    /// Get NPC model type for this archetype (ADR-014)
+    /// Get NPC model type for this archetype
     pub fn npc_type(&self) -> crate::components::entity_type::actor::NpcType {
         use crate::components::entity_type::actor::NpcType;
         match self {
@@ -126,7 +126,7 @@ impl EnemyArchetype {
         }
     }
 
-    /// Get Approach for this archetype (ADR-014)
+    /// Get Approach for this archetype
     pub fn approach(&self) -> crate::components::entity_type::actor::Approach {
         use crate::components::entity_type::actor::Approach;
         match self {
@@ -137,7 +137,7 @@ impl EnemyArchetype {
         }
     }
 
-    /// Get Resilience for this archetype (ADR-014)
+    /// Get Resilience for this archetype
     pub fn resilience(&self) -> crate::components::entity_type::actor::Resilience {
         use crate::components::entity_type::actor::Resilience;
         match self {
@@ -225,7 +225,7 @@ impl EnemyArchetype {
 }
 
 /// Distribute `level` points across allocations using largest-remainder method.
-///
+
 /// Stack-only: uses fixed-size arrays (max 6 investable fields).
 fn distribute_points(level: u8, allocations: &[Allocation]) -> [u8; 6] {
     let mut result = [0u8; 6];
@@ -271,11 +271,11 @@ fn distribute_points(level: u8, allocations: &[Allocation]) -> [u8; 6] {
 }
 
 /// Calculate ActorAttributes for an enemy based on level and archetype
-///
+
 /// Points are distributed proportionally across the archetype's build allocations
 /// using largest-remainder allocation. Direction is applied to axis fields;
 /// spectrum fields are always positive. Fixed shift values come from the build.
-///
+
 /// # Examples
 /// ```
 /// # use common_bevy::spatial_difficulty::*;

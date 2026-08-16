@@ -133,7 +133,7 @@ pub fn do_incremental(
                         Vec2::ZERO
                     };
 
-                    // ADR-011: Only clear prediction when arriving at predicted destination.
+                    // Only clear prediction when arriving at predicted destination.
                     // Intermediate Loc updates (e.g. during knockback) keep prediction alive
                     // so the visual interpolation from MovementIntent continues smoothly.
                     let had_prediction = o_prediction.is_some();
@@ -199,7 +199,7 @@ mod tests {
     }
 
     // ===== INVARIANT TESTS =====
-    // These tests verify critical architectural invariants (ADR-015)
+    // These tests verify critical architectural invariants
 
     /// INV-003: World-Space Preservation During Loc Updates
     /// When entity crosses tile boundary (adjacent hex, distance < 2),

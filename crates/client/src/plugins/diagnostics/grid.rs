@@ -26,7 +26,7 @@ pub struct PendingGridMesh {
 // ============================================================================
 
 /// Marker component for the hex grid overlay mesh entity
-///
+
 /// The grid visualizes all loaded hex tiles as wireframe outlines,
 /// with lines connecting vertices and radiating from the center.
 #[derive(Component)]
@@ -41,7 +41,7 @@ pub struct HexGridOverlay {
 // ============================================================================
 
 /// Creates the hex grid overlay entity on startup
-///
+
 /// The grid starts hidden and uses a minimal dummy mesh to prevent rendering errors.
 /// The actual grid mesh is generated later when the grid is toggled on and map data is available.
 pub fn setup_grid_overlay(
@@ -89,7 +89,7 @@ struct ChunkMeshSnapshot {
 }
 
 /// Spawns async grid mesh generation task when needed.
-///
+
 /// Extracts triangle edges from the actually-displayed chunk meshes so the grid
 /// outlines the decimated geometry (inner hex fans, partial residuals, etc.)
 /// rather than the full-detail tile hexagons.
@@ -222,7 +222,7 @@ pub fn poll_grid_mesh_task(
 // ============================================================================
 
 /// Helper struct for building hex grid line meshes
-///
+
 /// Accumulates line segments and tracks spatial bounds while building the mesh.
 /// Each line is represented by two vertices in the positions array.
 struct HexGridBuilder {
@@ -265,7 +265,7 @@ impl HexGridBuilder {
 }
 
 /// Builds grid lines from triangle edges of the actually-displayed meshes.
-///
+
 /// Extracts every triangle edge and draws it as a line. Edges shared by
 /// two triangles appear twice but overlap perfectly — no visual artifact.
 /// A small Y offset prevents z-fighting with the terrain surface.

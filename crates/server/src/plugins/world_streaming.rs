@@ -7,7 +7,7 @@ use common_bevy::chunk::WorldDiscoveryCache;
 use crate::systems::{actor, summary, world};
 
 /// Plugin for server-side terrain streaming.
-///
+
 /// Owns chunk discovery, async generation, polling, and summary computation.
 pub struct WorldStreamingPlugin;
 

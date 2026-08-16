@@ -44,26 +44,26 @@ pub enum Event {
     ApplyDamage { ent: Entity, damage: f32, source: Entity },
     /// Server-internal: Resolve a threat (apply damage with modifiers)
     ResolveThreat { ent: Entity, threat: QueuedThreat },
-    /// Client → Server (Try): Request to use an ability (ADR-012)
+    /// Client → Server (Try): Request to use an ability
     /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
     /// target: Optional target entity (player's intended target, server validates)
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
-    /// Server → Client: Ability usage failed (ADR-012)
+    /// Server → Client: Ability usage failed
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
-    /// Server → Client: Healing was applied to entity (SOW-021 Phase 3)
+    /// Server → Client: Healing was applied to entity
     Heal { target: Entity, amount: f32 },
     /// Client → Server: Measure network latency (client timestamp)
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
-    /// Client → Server: Dismiss front queue threat at full unmitigated damage (ADR-022)
+    /// Client → Server: Dismiss front queue threat at full unmitigated damage
     /// No GCD, no lockout, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },
-    /// Client → Server: Set tier lock for targeting (ADR-010 Phase 1)
+    /// Client → Server: Set tier lock for targeting
     SetTierLock { ent: Entity, tier: RangeTier },
-    /// Server → Client: Entity intends to move to destination (ADR-011)
+    /// Server → Client: Entity intends to move to destination
     /// Sent when movement starts (before completion) to enable client-side prediction
     MovementIntent {
         ent: Entity,
@@ -96,7 +96,7 @@ pub enum Event {
     },
 }
 
-/// Types of abilities that can be used (ADR-009 MVP ability set + ADR-014 Counter)
+/// Types of abilities that can be used ( MVP ability set + Counter)
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityType {
     /// Q: Gap closer - teleport adjacent to target (4 hex range, 20 stam, 40 dmg)
@@ -109,7 +109,7 @@ pub enum AbilityType {
     AutoAttack,
     /// NPC: Ranged attack with telegraph (20 dmg, 3s CD, 5-8 hex range)
     Volley,
-    /// ADR-014: Counter - Negate front threat and reflect 50% damage back (30 stam, 1.2s recovery)
+    /// Counter - Clear every visible threat, reflecting damage to adjacent sources
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
     Kick,

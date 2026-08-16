@@ -1,10 +1,10 @@
 /// Configurable number formatter for fixed-width character budgets.
-///
+
 /// Formats `f64` values into compact strings using the notation appropriate for
 /// the configured width budget. The `width` field drives formatting decisions
 /// (when to suffix, how many decimal places) but does NOT pad the output —
 /// callers handle alignment via `format!("{:>w$}", ...)`.
-///
+
 /// Three orthogonal axes:
 /// - **width**: character budget driving notation decisions (typically 3, 5, or 7)
 /// - **precision**: how fractional digits are handled
@@ -37,7 +37,7 @@ pub enum Overflow {
 }
 
 /// Fixed-width number formatter.
-///
+
 /// Use the provided presets or construct directly for custom widths.
 #[derive(Debug, Clone, Copy)]
 pub struct NumFmt {
@@ -50,7 +50,7 @@ pub struct NumFmt {
 
 impl NumFmt {
     /// Construct with validation. Panics if width is too narrow for the precision/overflow combo.
-    ///
+
     /// Minimum width per precision: Integer=1, Collapsing=2 (digit+point), Fixed(n)=n+2.
     /// Suffix adds 1 to the minimum (the suffix character itself).
     pub fn new(width: usize, precision: Precision, overflow: Overflow) -> Self {
@@ -109,7 +109,7 @@ impl NumFmt {
     }
 
     /// Try to format the value without a suffix (raw range).
-    ///
+
     /// Raw range caps at `width-1` digits to ensure suffix tiers handle larger values
     /// (e.g. width=5: raw up to 9999, 10000+ goes to suffix as "10.0K").
     fn try_raw(&self, v: f64) -> Option<String> {

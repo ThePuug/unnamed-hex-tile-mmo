@@ -280,7 +280,7 @@ enum SparkScale {
 // ── Display width ──
 
 // ── Tile-width segment primitives ──
-//
+
 // Each function takes a pre-built string and asserts its char count matches the slot.
 // Nerd Font glyphs use {:<2} for 2-cell width.
 

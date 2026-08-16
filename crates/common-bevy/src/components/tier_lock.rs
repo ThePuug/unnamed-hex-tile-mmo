@@ -1,8 +1,8 @@
 //! Tier Lock Component
-//!
+
 //! Tracks tier lock state for players, allowing them to lock targeting to a specific range tier.
-//! Part of ADR-010 Phase 1: Combat Variety.
-//!
+//! Part of Combat Variety.
+
 //! This component is REPLICATED - it represents server-authoritative targeting constraints.
 //! UI state (last_target) belongs in the Target component, not here.
 

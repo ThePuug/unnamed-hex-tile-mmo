@@ -22,8 +22,8 @@ pub const CHUNK_SPACING: i32 = 2 * CHUNK_RADIUS + 1; // 19
 /// returns less than this, guaranteeing a gameplay-ready area around the player.
 pub const FOV_CHUNK_RADIUS: u8 = 5;
 
-/// Legacy alias — no longer caps; kept for API compatibility.
-/// Use `terrain_chunk_radius()` which now returns the uncapped frustum radius.
+/// Saturates `u8` so it imposes no ceiling. `terrain_chunk_radius()` returns
+/// the uncapped frustum radius.
 pub const MAX_TERRAIN_CHUNK_RADIUS: u8 = 255;
 
 /// Minimum number of summary-ring chunks beyond the detail boundary.
@@ -37,7 +37,7 @@ pub const MIN_SUMMARY_RING: u8 = 3;
 pub const FIXED_STREAM_RADIUS: u8 = 21;
 
 /// World-unit extent of the fixed streaming radius.
-///
+
 /// NOTE: this is the chunk hexball's CIRCUMRADIUS (corner-direction extent).
 /// A hex-distance-21 chunk set is a hexagon: it reaches this far only along
 /// the six corner directions; along edge directions it ends at the apothem
@@ -71,7 +71,7 @@ pub const DEFAULT_FOV: f32 = std::f32::consts::PI / 12.0;
 pub const MAX_FOV: f32 = std::f32::consts::PI / 3.0;
 
 // ── Lattice constants for hex-ball tiling ──
-//
+
 // Hex balls of radius R tile the plane on the lattice with basis:
 //   v1 = (R+1, R),  v2 = (-R, 2R+1)
 // The determinant equals CHUNK_TILES, guaranteeing exactly one tile per chunk.
@@ -86,12 +86,12 @@ pub const CHUNK_EXTENT_WU: f32 = 28.5; // √813 ≈ 28.513
 
 /// Compute the chunk-loading radius for a player at `player_z` looking at
 /// ground at `ground_z`, using the camera's perspective frustum.
-///
+
 /// Computes the farthest visible ground point from the camera's actual
 /// world-space height (CAMERA_HEIGHT above the player), then converts to
 /// chunk count. The player can orbit the camera 360°, so the visible
 /// radius is the max ground distance in any direction.
-///
+
 /// Returns at least `FOV_CHUNK_RADIUS + MIN_SUMMARY_RING` to guarantee
 /// a summary LoD ring always exists.
 pub fn visibility_radius(player_z: i32, ground_z: i32, fov: f32) -> u8 {
@@ -127,12 +127,12 @@ pub fn visibility_radius(player_z: i32, ground_z: i32, fov: f32) -> u8 {
 /// Compute the LoD boundary: the chunk radius at which individual tiles
 /// become indistinguishable on screen (subtend fewer than `TILE_PIXEL_THRESHOLD`
 /// pixels). Beyond this radius, summary meshes are used instead of full detail.
-///
+
 /// Same frustum geometry as `visibility_radius`, but solves for the distance
 /// where a single tile's angular size drops below the pixel threshold.
 /// Higher elevation pushes the boundary further (camera sees further).
 /// Narrower FOV (zoomed in) pushes it further (more pixels per tile).
-///
+
 /// Returns at least `FOV_CHUNK_RADIUS` — there's always a guaranteed
 /// gameplay-ready area of full detail around the player.
 pub fn detail_boundary_radius(player_z: i32, fov: f32) -> u8 {
@@ -157,7 +157,7 @@ pub fn detail_boundary_radius(player_z: i32, fov: f32) -> u8 {
 }
 
 /// Chunk radius needed at a given terrain height at max zoom-out.
-///
+
 /// Uses `MAX_FOV` (60°, widest zoom) and `ground_z = 0` (sea level) for
 /// worst-case visibility — ensures enough chunks to fill the screen
 /// regardless of player's current zoom level.
@@ -166,7 +166,7 @@ pub fn elevation_chunk_radius_raw(player_z: i32) -> u8 {
 }
 
 /// Base symmetric chunk loading radius (assumes nearby terrain is at player height).
-///
+
 /// Used as the always-loaded inner radius in adaptive chunk loading.
 /// Returns the floor (`FOV_CHUNK_RADIUS + MIN_SUMMARY_RING`), since when
 /// ground is at the player's elevation, the frustum sees nearby terrain only.
@@ -176,7 +176,7 @@ pub fn terrain_chunk_radius(player_z: i32) -> u8 {
 }
 
 /// Chunk identifier in chunk-coordinate space (lattice coordinates).
-///
+
 /// `ChunkId(n, m)` maps to a center tile at `n * v1 + m * v2` where
 /// v1 and v2 are the hex-ball tiling lattice basis vectors.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -248,7 +248,7 @@ impl Default for WorldDiscoveryCache {
 }
 
 /// Hex distance between two chunks in axial coordinates.
-///
+
 /// Same formula as `Qrz::flat_distance`: max(|dq|, |dr|, |dq + dr|).
 /// This produces a regular hexagonal region in world space, unlike
 /// Chebyshev distance which produces a skewed parallelogram.
@@ -259,7 +259,7 @@ pub fn chunk_hex_distance(a: ChunkId, b: ChunkId) -> i32 {
 }
 
 /// Convert a Loc (Qrz) to its containing chunk ID.
-///
+
 /// Uses the hex-ball tiling lattice: computes fractional lattice coordinates
 /// via the inverse basis matrix, then checks the 4 nearest lattice points
 /// to find the one whose center is closest in hex distance.
@@ -302,7 +302,7 @@ pub fn loc_to_chunk(loc: Qrz) -> ChunkId {
 
 /// Iterate all tiles in a hex chunk (hex ball of radius CHUNK_RADIUS around center).
 /// Yields exactly CHUNK_TILES `(q, r)` pairs.
-///
+
 /// **Protocol-critical**: ChunkData omits (q, r) on the wire — the receiver
 /// reconstructs coordinates by zipping with this iterator. Changing the
 /// iteration order is a breaking network protocol change.
@@ -345,16 +345,16 @@ pub fn calculate_visible_chunks(center: ChunkId, radius: u8) -> Vec<ChunkId> {
 }
 
 /// Calculate visible chunks using per-chunk elevation-aware filtering.
-///
+
 /// Returns `(inner, outer)` where:
 /// - `inner`: chunks within `detail_radius` (full tile detail)
 /// - `outer`: chunks beyond `detail_radius` that pass visibility (summary LoD)
-///
+
 /// `detail_radius` is the LoD boundary — typically from `detail_boundary_radius()`.
 /// Chunks within `base_radius` are always included (skip height query).
 /// Outer chunks beyond `base_radius` are included only if their ground
 /// elevation puts them within the camera's visible range from `player_z`.
-///
+
 /// `height_fn(q, r)` returns terrain height at tile (q, r).
 pub fn calculate_visible_chunks_adaptive(
     center: ChunkId,
@@ -403,7 +403,7 @@ pub fn calculate_visible_chunks_adaptive(
 }
 
 /// Returns the maximum elevation across all tiles in a chunk.
-///
+
 /// Used to compute worst-case visibility: any position within this chunk
 /// can see at most what `visibility_radius(max_z, ...)` would return.
 pub fn chunk_max_z(chunk_id: ChunkId, height_fn: impl Fn(i32, i32) -> i32) -> i32 {

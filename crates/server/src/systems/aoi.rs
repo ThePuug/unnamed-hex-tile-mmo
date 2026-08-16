@@ -1,5 +1,5 @@
 //! # Area of Interest (AOI) System
-//!
+
 //! Manages entity visibility for networked clients. Each entity has a `LoadedBy`
 //! component tracking which players can see it. When entities move, this system
 //! updates membership and sends Spawn/Despawn events directly.
@@ -38,7 +38,7 @@ const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SPACING as i32;
 const EXIT_RADIUS_SQ: i64 = EXIT_RADIUS as i64 * EXIT_RADIUS as i64;
 
 /// Updates LoadedBy membership when entities move.
-///
+
 /// When entity E's Loc changes:
 /// 1. Query NNTree for nearby entities within AOI_RADIUS
 /// 2. For each nearby entity X:

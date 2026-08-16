@@ -4,10 +4,10 @@ use crate::components::recovery::GlobalRecovery;
 use crate::components::ActorAttributes;
 
 /// Calculate Composure-based recovery time reduction percentage.
-///
+
 /// Pattern 1 (Nullifying): base × gap × contest_factor
 /// Base: 33%, Cap: 33%
-///
+
 /// Returns reduction percentage (0.0 to 0.33).
 /// Caller converts to speed multiplier: 1.0 / (1.0 - reduction)
 pub fn calculate_composure_reduction(

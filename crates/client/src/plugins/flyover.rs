@@ -60,11 +60,11 @@ impl Plugin for FlyoverPlugin {
 // ──── Resources ────
 
 /// Flyover camera state.
-///
+
 /// The flyover overrides two things in the normal pipeline:
 /// 1. Position — threshold calculations use flyover position instead of player position
 /// 2. Tile source — tiles come from a local composite instead of the server
-///
+
 /// `generated_chunks` tracks which chunks the flyover generated tiles for,
 /// so they can be cleaned up when flyover toggles off or threshold changes.
 #[derive(Resource)]

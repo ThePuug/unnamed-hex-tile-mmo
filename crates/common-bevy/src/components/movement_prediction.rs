@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use qrz::Qrz;
 use std::time::Duration;
 
-/// Client-side component for tracking predicted movement (ADR-011)
-///
+/// Client-side component for tracking predicted movement
+
 /// When a MovementIntent arrives, the client predicts where the entity will move
 /// and stores prediction metadata here for later validation against Loc confirmations.
 #[derive(Component, Debug)]

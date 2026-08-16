@@ -1,5 +1,5 @@
 //! Pure tile geometry computation — no Bevy dependency.
-//!
+
 //! Extracted from `Map::generate_chunk_mesh()`. Produces identical geometry
 //! for both client mesh rendering and server QEM decimation input.
 
@@ -47,7 +47,7 @@ pub fn flat_top_tile_center(q: i32, r: i32, radius: f32) -> (f32, f32) {
 }
 
 /// Compute per-vertex normal for a hex tile from its actual geometry.
-///
+
 /// verts: 7 vertices [v0..v5 outer, v6 center].
 /// vertex_idx: 0-6.
 pub fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {
@@ -89,11 +89,11 @@ pub struct TileGeometry {
 }
 
 /// Compute full-detail hex mesh geometry from tile data.
-///
+
 /// `chunk_tiles`: tile positions (q, r, z) within the chunk.
 /// `elevations`: (q, r) → z lookup covering chunk + 1-ring neighbors.
 /// `radius`, `rise`: hex geometry constants.
-///
+
 /// Produces center + 6 outer vertices per tile (7 × N), plus cliff skirt
 /// vertices for downward elevation changes. Same geometry the client renders.
 pub fn compute_tile_geometry(

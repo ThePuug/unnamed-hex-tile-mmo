@@ -3,8 +3,8 @@ use qrz::Qrz;
 
 use crate::components::heading::Heading;
 
-/// Server-side component for tracking movement intent broadcast state (ADR-011)
-///
+/// Server-side component for tracking movement intent broadcast state
+
 /// Tracks the last destination and heading broadcast for an entity.
 /// Used to prevent re-sending intents when neither has changed.
 #[derive(Component, Debug)]

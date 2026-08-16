@@ -1,9 +1,9 @@
 //! Performance probe for the Composite terrain pipeline.
-//!
+
 //! Not a pass/fail test — prints timing data for the production 3-event stack
 //! under realistic access patterns (chunk materialization, sparse LoD sampling,
 //! dense flyover regions).
-//!
+
 //! Run: cargo test -p world --release --test perf_probe -- --ignored --nocapture
 
 use std::sync::Arc;

@@ -1,5 +1,5 @@
-/// # NPC Ability Usage System (ADR-014 Phase 3B)
-///
+/// # NPC Ability Usage System
+
 /// NPCs with Chase or Kite behaviors will use their signature abilities
 /// based on archetype when appropriate conditions are met.
 
@@ -15,15 +15,15 @@ use common_bevy::{
 };
 use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
-/// System to trigger NPC signature abilities (ADR-014 Phase 3B)
+/// System to trigger NPC signature abilities
 /// Runs periodically to check if NPCs should use their archetype abilities
-///
+
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is 2-4 hexes away (gap closer)
 /// - Juggernaut (Overpower): Use when adjacent to target (heavy strike)
 /// - Kiter: No signature ability — relies on kite behavior + ranged auto-attack
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
-///
+
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior

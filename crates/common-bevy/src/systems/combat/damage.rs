@@ -1,22 +1,22 @@
 //! Damage calculation functions for combat system
-//!
+
 //! Two contest patterns:
 //! - Pattern 1 (Nullifying): base × gap × contest_factor → nullifies at equal investment
 //! - Pattern 2 (Baseline+Bonus): base × gap × (1.0 + k × contest_factor) → preserves baseline
-//!
-//! See ADR-005 for architectural details.
+
+
 
 use bevy::prelude::Entity;
 use crate::components::reaction_queue::DamageType;
 use crate::components::ActorAttributes;
 
 /// Level gap scaling factor.
-///
+
 /// Gaussian decay: e^(-gap² × ln(3) / 100)
 /// - Equal levels → 1.0
 /// - 10 level gap → 0.333
 /// - 20 level gap → ~0.012 (near zero)
-///
+
 /// The beneficiary's effect is reduced when the opponent outlevels them.
 /// When beneficiary is equal or higher level, returns 1.0.
 pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
@@ -26,12 +26,12 @@ pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
 }
 
 /// Contest factor (Pattern 1: Nullifying).
-///
+
 /// Returns 0 to 1.0:
 /// - Equal/losing → 0 (effect nullified)
 /// - Max advantage (300 delta) → 1.0 (full effect)
 /// - Half advantage (150 delta) → 0.707 (~71% benefit)
-///
+
 /// Used by: mitigation, pushback, healing reduction, synergy, recovery speed.
 pub fn contest_factor(advantage_stat: u16, counter_stat: u16) -> f32 {
     let delta = advantage_stat as i32 - counter_stat as i32;
@@ -44,11 +44,11 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16) -> f32 {
 }
 
 /// Reaction window contest (Pattern 2: Baseline+Bonus).
-///
+
 /// Returns 1.0 to 1.5:
 /// - Equal/losing → 1.0 (baseline window preserved)
 /// - Max advantage → 1.5 (50% improvement)
-///
+
 /// Used ONLY by reaction window to ensure playable baseline.
 pub fn reaction_contest_factor(cunning: u16, finesse: u16) -> f32 {
     let delta = cunning as i32 - finesse as i32;
@@ -70,10 +70,10 @@ pub fn calculate_outgoing_damage(
 }
 
 /// Calculate recovery pushback percentage.
-///
+
 /// Pattern 1 (Nullifying): base × gap × contest_factor
 /// Base: 50%, Cap: 50%
-///
+
 /// Applied to effective_recovery_base (after composure, before synergy).
 pub fn calculate_recovery_pushback(
     attacker_impact: u16,
@@ -122,7 +122,7 @@ pub fn find_max_dominance_in_range(
 }
 
 /// Apply passive mitigation to damage (unified for all damage types).
-///
+
 /// Pattern 1 (Nullifying): base × gap × contest_factor
 /// Base: 75%, Cap: 75%
 pub fn apply_passive_modifiers(

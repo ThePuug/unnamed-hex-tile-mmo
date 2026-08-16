@@ -1,17 +1,17 @@
 //! Target Indicator System
-//!
+
 //! Shows visual indicators on entities that will be targeted by abilities.
-//! This is THE MOST CRITICAL system for player feedback (per ADR-004-player-feedback.md).
-//!
+//! This is THE MOST CRITICAL system for player feedback.
+
 //! # Design Requirements (from player feedback)
-//!
+
 //! - Updates EVERY FRAME (zero lag, instant feedback)
 //! - Position matches target exactly
 //! - No flickering or ghost indicators
 //! - Clear visual distinction (red = hostile, green = ally)
-//!
+
 //! # How it works
-//!
+
 //! 1. Read hostile/ally targets from Target and AllyTarget components
 //! 2. Target components are updated every frame by targeting system
 //! 3. Update indicator position to match target's location
@@ -60,7 +60,7 @@ pub fn setup(
         },
     ));
 
-    // TODO: Spawn tier badge as child of hostile indicator (ADR-010 Phase 5)
+    // TODO: Spawn tier badge as child of hostile indicator
     // Tier badge requires proper 3D text setup with Bevy 0.16 API
     // For now, tier lock functionality works without visual badge (tested in Phase 1)
 
@@ -86,13 +86,13 @@ pub fn setup(
         },
     ));
 
-    // TODO: Spawn tier badge as child of ally indicator (ADR-010 Phase 5)
+    // TODO: Spawn tier badge as child of ally indicator
     // Tier badge requires proper 3D text setup with Bevy 0.16 API
     // For now, tier lock functionality works without visual badge (tested in Phase 1)
 }
 
 /// Update target indicator position every frame
-///
+
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
@@ -283,7 +283,7 @@ pub fn update(
         }
     }
 
-    // TODO: Update tier badges (ADR-010 Phase 5: Tier lock UI feedback)
+    // TODO: Update tier badges (Tier lock UI feedback)
     // Tier badge UI deferred - requires proper 3D text component setup
     // Tier lock functionality is working (tested in Phase 1), just missing visual indicator
 }

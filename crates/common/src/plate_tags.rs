@@ -12,7 +12,7 @@ pub const MAX_PLATE_TAGS: usize = 64;
 /// Metadata tags assigned to macro and micro plates by the event system.
 /// Events read, write, and erase tags. Tags accumulate over the world's
 /// generated history — later events compose on what earlier events left.
-///
+
 /// Variants carry data when classification alone isn't sufficient.
 /// Pattern match on the variant to check presence, destructure to read data.
 /// All payloads must be Copy-compatible (u8, u16, etc.) — no heap allocation.
@@ -49,7 +49,7 @@ const _: () = {
 };
 
 /// Methods for reading and mutating tag collections on plate structs.
-///
+
 /// Implement by providing `tags` and `tags_mut` accessors; `has_tag`,
 /// `add_tag`, and `erase_tag` are derived from them.
 pub trait Tagged {
@@ -214,7 +214,7 @@ mod tests {
         // PlateTag::Coast is a unit variant — test that has_tag matches it
         // by discriminant, not value equality. Once data-carrying variants exist
         // (e.g. Elevated(u16)), this test should be updated to use them.
-        //
+
         // For now: two identical unit variants are trivially equal by both
         // discriminant and value. The trait's use of mem::discriminant is correct
         // and will handle data variants properly when they are introduced.

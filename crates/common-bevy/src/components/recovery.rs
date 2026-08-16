@@ -42,7 +42,7 @@ impl GlobalRecovery {
         self.remaining = (self.remaining - delta).max(0.0);
     }
 
-    /// Apply recovery pushback based on Impact vs Composure contest (SOW-021 Phase 1)
+    /// Apply recovery pushback based on Impact vs Composure contest
     /// Extends recovery timer by percentage of max duration
     /// Capped at 2x original duration to prevent infinite lockout
     pub fn apply_pushback(&mut self, pushback_amount: f32) {
@@ -76,7 +76,7 @@ impl SynergyUnlock {
 }
 
 /// Get the recovery duration for an ability (universal lockout time)
-/// These are MVP values from ADR-012
+/// These are MVP values
 pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
     match ability {
         AbilityType::Lunge => 2.0,      // Gap closer: 2s lockout
@@ -84,7 +84,7 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
         AbilityType::Volley => 4.0,     // NPC ranged: 4s lockout
-        AbilityType::Counter => 4.0,    // ADR-014: Counter-attack: 4s lockout (long window for attacks to land)
+        AbilityType::Counter => 4.0,    // Counter-attack: 4s lockout (long window for attacks to land)
         AbilityType::Kick => 4.0,       // Kick: 4s lockout (rewards chaining via self-synergy)
     }
 }
@@ -319,7 +319,7 @@ mod tests {
         assert!(synergy2.is_unlocked(0.5));
     }
 
-    // ===== RECOVERY PUSHBACK TESTS (SOW-021 Phase 1) =====
+    // ===== RECOVERY PUSHBACK TESTS =====
 
     #[test]
     fn test_pushback_extends_recovery() {

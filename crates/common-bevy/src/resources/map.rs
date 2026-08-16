@@ -25,11 +25,11 @@ pub struct TileRecord {
 }
 
 /// Map resource with chunk-sharded storage and flat elevation index.
-///
+
 /// Two indexes, each optimized for its access pattern:
 /// - `flat`: single DashMap shard probe for elevation lookups (hot path — physics)
 /// - `chunks`: O(1) chunk lookup for mesh generation and bulk eviction
-///
+
 /// Clone is O(1) — clones the Arc handles.
 #[derive(Clone, Resource)]
 pub struct Map {

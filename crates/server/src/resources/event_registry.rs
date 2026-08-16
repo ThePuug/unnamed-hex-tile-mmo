@@ -8,7 +8,7 @@ use world::events::spines::SpineEvent;
 use world::TagSet;
 
 /// Server-side registry of world events.
-///
+
 /// Owns the Composite with PlateEvent + SeaEvent + SpineEvent + SpawnerEvent.
 /// All terrain queries and spawner placement queries route through here.
 /// Arc-wrapped so async chunk generation tasks can share it.

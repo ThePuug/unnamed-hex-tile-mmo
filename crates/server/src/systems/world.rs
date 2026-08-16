@@ -23,7 +23,7 @@ use crate::resources::*;
 /// - Initial player connection (via do_manage_connections)
 /// - Remote player discovery (via try_spawn)
 /// - Respawning (future use)
-///
+
 /// Returns a Vec of Do events with Spawn first, followed by Incremental events for all available components.
 /// This ordering is critical - the entity must be spawned before components can be attached.
 pub fn generate_actor_spawn_events(
@@ -156,7 +156,7 @@ pub fn do_spawn(
                             KeyBits::default(),
                             Heading::default(),
                             Position::at_tile(qrz),
-                            LastAutoAttack::default(), // ADR-009: Track auto-attack cooldown
+                            LastAutoAttack::default(), // Track auto-attack cooldown
                             Transform {
                                 translation: map.convert(qrz),
                                 ..default()},

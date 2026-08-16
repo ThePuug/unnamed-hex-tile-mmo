@@ -1,9 +1,9 @@
 //! Index registry — typed, cross-event spatial indexes.
-//!
+
 //! Events register index entries during deform. Other events query them during
 //! survey evaluation. The framework manages lifecycle (LRU eviction calls
 //! `remove_cell` on all indexes).
-//!
+
 //! The HashMap is immutable after initialization — all index types are
 //! pre-registered during `Composite::add_event()`. Each index has its own
 //! `RwLock` so independent indexes don't contend. No outer lock needed.
@@ -67,7 +67,7 @@ impl<T: EventIndex + 'static> AnyIndex for T {
 // ── IndexRegistry ───────────────────────────────────────────────────────────
 
 /// Shared across all events. Keyed by TypeId. Accumulates across cell evaluations.
-///
+
 /// The HashMap is immutable after initialization. Each index has its own
 /// `RwLock` — independent indexes don't contend. Deform writes to one index
 /// while concurrent queries read from another without blocking.

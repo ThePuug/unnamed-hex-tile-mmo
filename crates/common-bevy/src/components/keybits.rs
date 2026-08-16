@@ -1,19 +1,19 @@
 //! Bitpacked Input State Management
-//!
+
 //! This module provides an efficient representation of player input state using bitpacked flags.
 //! The `KeyBits` component stores all relevant input state in a single u8 byte, allowing for
 //! efficient network transmission and storage.
-//!
+
 //! # Input Encoding
-//!
+
 //! Player inputs are encoded using individual bits:
 //! - Bit 0 (KB_HEADING_Q): Movement along the Q axis in hex coordinates
 //! - Bit 1 (KB_HEADING_R): Movement along the R axis in hex coordinates
 //! - Bit 2 (KB_HEADING_NEG): Negative movement flag
 //! - Bit 3 (KB_JUMP): Jump input
-//!
+
 //! # Hex Direction Mapping
-//!
+
 //! The six hexagonal directions are represented by combinations of Q, R, and NEG bits:
 //! - East (Q+):       KB_HEADING_Q
 //! - Southeast (R+):  KB_HEADING_R
@@ -21,28 +21,28 @@
 //! - West (Q-):       KB_HEADING_Q | KB_HEADING_NEG
 //! - Northwest (R-):  KB_HEADING_R | KB_HEADING_NEG
 //! - Northeast (Q+R-): KB_HEADING_Q | KB_HEADING_R | KB_HEADING_NEG
-//!
+
 //! This encoding allows us to represent any of the 6 cardinal hexagonal directions
 //! plus jump state in just 4 bits, leaving room for future input expansion.
-//!
+
 //! # Network Protocol
-//!
+
 //! KeyBits is serialized with serde for network transmission. The `accumulator` field
 //! is marked with `#[serde(skip)]` as it's only used for client-side timing and shouldn't
 //! be transmitted over the network.
-//!
+
 //! # Usage
-//!
+
 //! ```
 //! # use common_bevy::components::keybits::*;
 //! let mut input = KeyBits::default();
-//!
+
 //! // Set multiple keys pressed
 //! input.set_pressed([KB_HEADING_Q, KB_JUMP], true);
-//!
+
 //! // Check individual keys
 //! assert!(input.is_pressed(KB_JUMP));
-//!
+
 //! // Check if all specified keys are pressed
 //! assert!(input.all_pressed([KB_HEADING_Q, KB_JUMP]));
 //! ```

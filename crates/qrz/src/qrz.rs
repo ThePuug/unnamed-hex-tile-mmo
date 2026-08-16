@@ -1,40 +1,40 @@
 //! # Qrz: Hex Coordinate System
-//!
+
 //! This module implements a 3D hexagonal coordinate system using axial coordinates.
-//!
+
 //! ## Overview
-//!
+
 //! Hexagonal grids can be represented using **axial coordinates** (q, r) which satisfy
 //! the constraint `q + r + s = 0` where `s = -q - r`. This library extends this to 3D
 //! by adding a vertical `z` component for elevation.
-//!
+
 //! ## Coordinate System
-//!
+
 //! - **q**: Axis aligned with "east-west"
 //! - **r**: Axis aligned with "northeast-southwest"
 //! - **s**: Derived axis (s = -q - r), aligned with "southeast-northwest"
 //! - **z**: Vertical elevation
-//!
+
 //! ## Key Features
-//!
+
 //! - **Axial invariant**: `q + r + s = 0` is always maintained
 //! - **Distance metrics**: Manhattan distance on hex grid (`flat_distance`) and 3D distance
 //! - **Neighbor finding**: Get all 6 adjacent hexagonal tiles
 //! - **Field of view**: Calculate visible tiles in a cone
 //! - **Arithmetic**: Add, subtract, and scalar multiply coordinates
-//!
+
 //! ## Usage
-//!
+
 //! ```rust
 //! use qrz::Qrz;
-//!
+
 //! // Create a coordinate
 //! let origin = Qrz { q: 0, r: 0, z: 0 };
 //! let east = Qrz { q: 1, r: 0, z: 0 };
-//!
+
 //! // Calculate distance
 //! assert_eq!(origin.flat_distance(&east), 1);
-//!
+
 //! // Get neighbors
 //! let neighbors = origin.neighbors();
 //! assert_eq!(neighbors.len(), 6);
@@ -55,20 +55,20 @@ pub const DIRECTIONS: [Qrz; 6] = [
 ];
 
 /// A 3D hexagonal coordinate using axial representation
-///
+
 /// # Invariant
-///
+
 /// Qrz coordinates must satisfy `q + r + s = 0` where `s = -q - r`.
 /// This is automatically maintained by all operations.
-///
+
 /// # Fields
-///
+
 /// - `q`: Horizontal axis (east-west)
 /// - `r`: Diagonal axis (northeast-southwest)
 /// - `z`: Vertical axis (elevation)
-///
+
 /// # Example
-///
+
 /// ```
 /// # use qrz::Qrz;
 /// let coord = Qrz { q: 1, r: -1, z: 0 };

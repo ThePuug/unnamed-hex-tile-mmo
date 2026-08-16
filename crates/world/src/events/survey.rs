@@ -1,5 +1,5 @@
 //! Survey — declarative tile selection for world events.
-//!
+
 //! Survey evaluation uses index metadata (tile_view_at) for index-scoped predicates.
 //! For `Survey::all()` with filter, the framework provides a `resolve_tile` callback
 //! that triggers the query cascade for layers below — acceptable for small-scale events.
@@ -110,7 +110,7 @@ impl Survey {
 // ── Survey evaluation ───────────────────────────────────────────────────────
 
 /// Evaluate a survey against the IndexRegistry.
-///
+
 /// `resolve_tile`: optional callback that resolves a TileView from layers below
 /// via the query cascade. Required for `Survey::all()` with filter (small-scale
 /// events where materializing the full cell is acceptable). For index-scoped

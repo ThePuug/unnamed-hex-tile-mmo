@@ -1,5 +1,5 @@
 //! Server-specific targeting systems
-//!
+
 //! This module contains targeting system implementations that are specific to the server,
 //! primarily distinguished by the use of TargetLock component filtering.
 
@@ -13,20 +13,20 @@ use common_bevy::{
 use crate::components::target_lock::TargetLock as NpcTargetLock;
 
 /// Update hostile targets every frame for responsive targeting (SERVER VERSION)
-///
+
 /// Runs unconditionally to detect when target entities move out of range/cone.
 /// Excludes NPCs with NpcTargetLock - behavior tree targeting is their source of truth.
-///
+
 /// # Server-Specific Behavior
-///
+
 /// The server version excludes entities with NpcTargetLock component from reactive targeting.
 /// This is critical for AI behavior - NPCs with NpcTargetLock use behavior tree targeting
 /// (FindOrKeepTarget) as their source of truth.
-///
+
 /// Players have TierLock (for tier lock targeting), which is different from NpcTargetLock.
-///
+
 /// # Performance
-///
+
 /// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps.
 /// If performance becomes an issue, can be changed to run on a timer (e.g., every 100ms).
 pub fn update_targets(

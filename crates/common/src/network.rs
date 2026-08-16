@@ -1,5 +1,5 @@
 /// Shared network constants for client and server.
-///
+
 /// Buffer sizing is derived from flow control parameters so the reliable channel
 /// can hold `budget_per_tick * send_rate * timeout * safety_margin` bytes.
 
@@ -36,12 +36,12 @@ pub const CONNECTION_TIMEOUT: f32 = 15.0;
 pub const BUFFER_SAFETY_MARGIN: f32 = 2.0;
 
 /// Derived: reliable ordered channel max memory per client.
-/// `budget * send_rate * timeout * safety_margin` = 12500 * 8 * 15 * 2 = 3MB
+/// `budget * send_rate * timeout * safety_margin`
 pub const RELIABLE_ORDERED_MAX_MEMORY: usize =
     (BUDGET_ORDERED as f32 * SEND_RATE * CONNECTION_TIMEOUT * BUFFER_SAFETY_MARGIN) as usize;
 
 /// Derived: reliable unordered channel max memory per client.
-/// `budget * send_rate * timeout * safety_margin` = 125000 * 8 * 15 * 2 = 30MB
+/// `budget * send_rate * timeout * safety_margin`
 pub const RELIABLE_UNORDERED_MAX_MEMORY: usize =
     (BUDGET_UNORDERED as f32 * SEND_RATE * CONNECTION_TIMEOUT * BUFFER_SAFETY_MARGIN) as usize;
 

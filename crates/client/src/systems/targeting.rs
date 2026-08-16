@@ -1,5 +1,5 @@
 //! Client-specific targeting systems
-//!
+
 //! This module contains targeting system implementations that are specific to the client.
 //! TierLock is replicated from server, so both client and server have it.
 
@@ -19,13 +19,13 @@ use common_bevy::{
 };
 
 /// Update hostile targets every frame for responsive targeting (CLIENT VERSION)
-///
+
 /// Runs unconditionally to detect when target entities move out of range/cone.
 /// This ensures targets update immediately when NPCs/players move, not just when
 /// the local player changes heading/location.
-///
+
 /// # Performance
-///
+
 /// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).
@@ -50,19 +50,19 @@ pub fn update_targets(
 }
 
 /// Update ally targets every frame for responsive targeting (CLIENT VERSION)
-///
+
 /// Runs unconditionally to detect when ally entities move out of range/cone.
 /// This ensures targets update immediately when allies move, not just when
 /// the local player changes heading/location.
-///
+
 /// # Architecture
-///
+
 /// This system mirrors update_targets() but for ally targeting.
 /// Only the targeting system calls select_ally_target() - UI systems should
 /// read from the AllyTarget component, not call selection functions directly.
-///
+
 /// # Performance
-///
+
 /// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).

@@ -7,12 +7,10 @@ use common_bevy::{
 };
 use crate::resources::RunTime;
 
-/// Handle Counter ability (ADR-014) - REACTIVE COUNTER-ATTACK
-/// - 30 stamina cost
-/// - 1 hex range (melee)
-/// - Counters ALL visible threats in your reaction window (ADR-030)
-/// - Reflects damage back for each countered threat
-/// - Reflected damage per threat: base (20% technique) + bonus (30% threat damage), capped at 2× technique
+/// Reactive counter-attack. Costs 30 stamina and clears every visible threat in
+/// the reaction window. Reflection is gated on adjacency — only sources exactly
+/// 1 hex away take damage — at (20% technique) + (30% threat damage) per threat,
+/// capped at 2× technique.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -213,7 +211,7 @@ pub fn handle_counter(
             });
         }
 
-        // Broadcast ability success to clients (ADR-012: client will apply recovery/synergies)
+        // Broadcast ability success to clients (client will apply recovery/synergies)
         writer.write(Do {
             event: GameEvent::UseAbility {
                 ent: *ent,
@@ -227,7 +225,7 @@ pub fn handle_counter(
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Counter);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (server-side state, SOW-021 Phase 2)
+        // Apply synergies (server-side state,)
         // Note: Counter uses same ability type as Knockback for Overpower synergy
         // Self-cast: both attacker and defender are the same entity
         let Ok(attrs) = attrs_query.get(*ent) else {

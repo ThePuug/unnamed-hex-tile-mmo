@@ -149,7 +149,7 @@ pub const REGIONAL_MOD_MAX: f64 = 1.15;
 pub const MICRO_CELL_SIZE: f64 = 225.0;
 
 /// Margin to populate beyond the region of interest before running fix_orphans.
-///
+
 /// A micro cell is assigned to the macro plate whose seed wins the warped
 /// Voronoi contest. The worst-case distance from a micro cell to its winning
 /// seed is `MACRO_CELL_SIZE × MAX_ELONGATION + WARP_STRENGTH_MAX`. Populating

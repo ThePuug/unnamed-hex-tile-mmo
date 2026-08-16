@@ -114,7 +114,7 @@ impl LoadedChunks {
 }
 
 /// Forced summary radius for flyover inspection.
-///
+
 /// `None` = auto (use r(d) formula; currently falls back to tile meshes).
 /// `Some(0)` = individual tiles everywhere (existing pipeline, parity test).
 /// `Some(r)` = all terrain at summary radius r.
@@ -181,7 +181,7 @@ pub enum RegionSource {
 }
 
 /// Per-region summary elevation cache.
-///
+
 /// Each entry holds all ~271 center_z values for one mesh region.
 /// DashMap for per-region locking — async mesh build tasks get an Arc
 /// clone (one brief shard lock) then read 271 values lock-free.

@@ -1,15 +1,15 @@
 //! Pure Movement Calculation Functions
-//!
+
 //! This module contains the canonical physics implementation as pure functions.
 //! `physics::apply` delegates to `calculate_movement` in this module.
-//!
-//! # Architecture (ADR-019)
-//!
+
+//! # Architecture
+
 //! Movement calculation is separated into pure functions that:
 //! 1. Take explicit inputs (no hidden state)
 //! 2. Return explicit outputs (no side effects)
 //! 3. Are easily unit tested
-//!
+
 //! Standalone helpers (`apply_horizontal_movement`, `apply_vertical_movement`, etc.)
 //! are decomposed building blocks used in tests and available for future callers.
 
@@ -71,7 +71,7 @@ pub fn terrain_y_at(floor_qrz: Qrz, entity_tile: Qrz, map: &Map) -> f32 {
 /// Compute terrain height blended between the current tile and the nearest neighbor.
 /// Produces a smoothly-varying height as the entity moves between tiles, preventing
 /// discrete "stepping" at tile boundaries.
-///
+
 /// Blends toward a fixed offset (±0.5 × rise) based on whether the neighbor is higher
 /// or lower, matching the visual terrain mesh slopes. The neighbor's actual elevation
 /// difference doesn't affect the slope amount - only the direction (up/down).
@@ -166,7 +166,7 @@ pub struct MovementOutput {
 // ===== Pure Calculation Functions =====
 
 /// Calculate horizontal movement target based on heading and destination.
-///
+
 /// # Returns
 /// Target offset relative to current tile center.
 pub fn calculate_movement_target(
@@ -193,15 +193,15 @@ pub fn calculate_movement_target(
 }
 
 /// Calculate new offset position after horizontal movement.
-///
+
 /// Uses lerp-based movement toward target at given speed.
-///
+
 /// # Arguments
 /// * `current_offset` - Current sub-tile offset
 /// * `target_offset` - Target offset (relative to current tile)
 /// * `speed` - Movement speed in world units per millisecond
 /// * `dt` - Delta time in milliseconds
-///
+
 /// # Returns
 /// New offset position (XZ only, Y unchanged)
 pub fn apply_horizontal_movement(
@@ -222,12 +222,12 @@ pub fn apply_horizontal_movement(
 }
 
 /// Calculate vertical movement (jumping/falling).
-///
+
 /// # Arguments
 /// * `current_y` - Current Y offset
 /// * `airtime` - Current air time state
 /// * `dt` - Delta time in milliseconds
-///
+
 /// # Returns
 /// (new_y, new_airtime)
 pub fn apply_vertical_movement(
@@ -256,10 +256,10 @@ pub fn apply_vertical_movement(
 }
 
 /// Clamp Y position to terrain floor with slope following.
-///
+
 /// - Grounded: blends terrain height with nearest non-cliff neighbor for smooth slopes
 /// - Airborne: hard clamps against actual floor height
-///
+
 /// # Returns
 /// (clamped_y, should_land) where should_land is true if entity landed
 pub fn clamp_to_floor(
@@ -291,10 +291,10 @@ pub fn clamp_to_floor(
 }
 
 /// Check if the next tile toward a destination is blocked.
-///
+
 /// Computes `step_hx` from the entity's world position (not just tile), then
 /// `next_hx = step_hx + move_heading` to find the immediate next tile.
-///
+
 /// Returns true if the tile is blocked by:
 /// - Cliff transition (elevation diff > 1 going upward, unless jumping high enough)
 /// - Solid decorator with no valid floor nearby
@@ -354,16 +354,16 @@ pub fn is_tile_blocked(
 }
 
 /// Process multiple physics timesteps.
-///
+
 /// Breaks total_dt into PHYSICS_TIMESTEP_MS chunks and processes each.
 /// Uses `while dt0 >= 0` with jump apex splitting to match physics.rs exactly.
-///
+
 /// # Arguments
 /// * `input` - Initial movement input state
 /// * `total_dt` - Total delta time in milliseconds
 /// * `map` - Game map for terrain queries
 /// * `nntree` - Nearest neighbor tree for entity stacking checks
-///
+
 /// # Returns
 /// Final MovementOutput after all timesteps
 pub fn calculate_movement(

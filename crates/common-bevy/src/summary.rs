@@ -1,5 +1,5 @@
 //! Summary hex rendering for distant terrain.
-//!
+
 //! A summary is a single flat-top hex representing a group of tiles.
 //! At radius r, each summary covers tiles within hex distance r of its
 //! center on an axis-aligned scaled lattice: center(sq,sr) = (sq*s, sr*s)
@@ -13,7 +13,7 @@ use crate::geometry::flat_top_tile_center;
 // ── Constants ──
 
 /// Nested LoD levels: summary scales triple per level.
-///
+
 /// scale = 2r+1 ∈ {1, 3, 9, 27, 81, 243}. Tripling makes the levels nest:
 /// every coarse summary center is also a fine summary center, and
 /// `sample_center_z`'s 7 sample points at d = scale/3 land exactly on the
@@ -23,7 +23,7 @@ pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
 
 /// Camera distance (WU) per tile of summary scale — the band quality knob.
 /// Band threshold: `threshold_horiz(r) = (2r+1)·2·K − CAMERA_DISTANCE`.
-///
+
 /// Anchored so the scale-3 band's outer edge lands exactly on
 /// FIXED_STREAM_RADIUS_WU (598.5): 3·2K − 120 = 598.5 → K = 119.75.
 /// The ownership boundary (client Map vs server summaries) then coincides
@@ -64,7 +64,7 @@ pub const MESH_REGION_RADIUS: u32 = 9;
 // ── Radius formula ──
 
 /// Smallest LoD level whose band covers the given camera distance.
-///
+
 /// r=0: single tile. r=1: 7 tiles. r=4: 61 tiles. r=13: 1,099 tiles.
 pub fn summary_radius(camera_distance_wu: f32) -> u32 {
     for &r in &LOD_LEVELS {
@@ -89,7 +89,7 @@ pub struct Band {
 }
 
 /// Compute active distance bands from player to `max_distance_wu` (horizontal).
-///
+
 /// One band per nested LoD level (`LOD_LEVELS`): band r covers
 /// `[threshold(prev level), threshold(r)]` where
 /// `threshold_horiz(r) = (2r+1)·2·BAND_QUALITY_K − CAMERA_DISTANCE`
@@ -137,7 +137,7 @@ pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
 }
 
 /// Enumerate summary-lattice cells within a world-space annulus.
-///
+
 /// Returns `(sq, sr)` lattice coordinates for summaries whose world-space
 /// centers fall within `[inner_wu, outer_wu]` of the given point.
 /// Used by the server to determine which summaries to send per band.
@@ -196,7 +196,7 @@ pub fn mesh_region_extent_wu(r: u32) -> f32 {
 /// Axis-aligned summary lattice. Centers are placed at integer multiples
 /// of `scale = 2r+1` along both axial axes. The rendered flat-top hex at
 /// `outer_radius = scale * HEX_OUTER_RADIUS` tiles perfectly on this grid.
-///
+
 /// Each summary collects tiles within hex distance `r` of its center for
 /// z-selection. The rendered hex covers slightly more area at the corners
 /// (the hex-ball has 3r²+3r+1 tiles; the rendered hex footprint spans
@@ -275,7 +275,7 @@ pub fn summary_lattice(radius: u32) -> SummaryLattice {
 }
 
 /// Create the mesh region lattice (groups summaries into mesh regions).
-///
+
 /// Uses HexLattice::new(9) over summary-lattice coordinates.
 /// Summary-lattice coords form a regular hex grid, so HexLattice
 /// tiles them correctly into groups of 271 summaries.
@@ -291,11 +291,11 @@ pub fn summary_tile_count(radius: u32) -> u32 {
 // ── Canonical vertex IDs ──
 
 /// Canonical vertex ID for a summary at lattice coordinates (sq, sr).
-///
+
 /// Produces doubled-integer coordinates that uniquely identify each
 /// corner vertex. Adjacent summaries sharing an edge produce matching
 /// IDs at their shared corners.
-///
+
 /// Scoped per distance band — not globally unique across bands.
 pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) {
     (
@@ -307,7 +307,7 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
 // ── Center z sampling ──
 
 /// Sample 7 elevations (center + 6 hex-axis points) and select center_z.
-///
+
 /// The single center_z rule for every producer (Map, server EventRegistry,
 /// flyover AdminComposite). For nested LoD levels (scale divisible by 3),
 /// the sample distance d = scale/3 puts the 6 axis samples exactly on the
@@ -341,11 +341,11 @@ pub fn sample_center_z_opt(
 // ── Center z selection ──
 
 /// Select center_z using extremal deviation from the mean.
-///
+
 /// 1. Compute mean z of all tiles
 /// 2. Select the tile with greatest |tile_z - mean|
 /// 3. Tie-break: prefer higher z (peaks over valleys)
-///
+
 /// Returns the z value of the most extreme tile. If empty, returns 0.
 pub fn select_center_z(tile_zs: &[i32]) -> i32 {
     if tile_zs.is_empty() {
@@ -390,7 +390,7 @@ pub struct SummarySurface {
 
 impl SummarySurface {
     /// Compute the surface for a flat summary hex at radius r > 0.
-    ///
+
     /// All 7 vertices (center + 6 corners) are at center_z elevation (flat).
     /// The outer radius is (2r+1) * HEX_OUTER_RADIUS, matching the lattice
     /// spacing so adjacent summaries tile with zero gaps or overlaps.
@@ -435,7 +435,7 @@ impl SummarySurface {
     }
 
     /// Emit flat hex geometry into mesh buffers.
-    ///
+
     /// Positions are relative to `mesh_origin` for f32 precision.
     /// Returns the number of triangles emitted (always 6).
     pub fn emit_geometry(

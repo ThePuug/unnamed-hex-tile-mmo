@@ -1,9 +1,9 @@
 //! SpawnerEvent — Event #2: NPC camp placement.
-//!
+
 //! Evaluates per-tile: noise-gated eligibility + tag-based archetype matching.
 //! Records qualifying positions in SpawnerPlacementIndex for the activation
 //! system to query directly.
-//!
+
 //! Scale = 9 (271 tiles per cell, same as game chunks). Survey::all() with
 //! filter triggers query cascade for ~271 tiles × 2 layers below. Trivial cost.
 
@@ -115,9 +115,10 @@ impl WorldEvent for SpawnerEvent {
     fn scale(&self) -> u32 { SPAWNER_CELL_SCALE }
 
     /// Spawners never modify terrain — query output is always empty; the
-    /// placement index is the only product. Declaring this lets the framework
-    /// skip the 271-tile survey during tile materialization (it previously ran
-    /// for every cold spawner cell touched by chunk gen and LoD sampling).
+    /// placement index is the only product. Declaring this keeps the framework
+    /// from running the 271-tile survey during tile materialization, which
+    /// would otherwise fire for every cold spawner cell touched by chunk
+    /// generation and LoD sampling.
     fn contributes_tiles(&self) -> bool { false }
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<SpawnerPlacementIndex>();
@@ -153,12 +154,12 @@ impl WorldEvent for SpawnerEvent {
         // Determine archetype for each matched tile from the composite tags.
         // We don't have CellView, but the survey filter already verified
         // archetype_for_tagset().is_some(). We need the specific archetype.
-        //
+
         // Deviation: we re-evaluate the tile below during deform to get tags.
         // This is redundant with the survey filter but necessary since survey
         // doesn't pass TileView data to deform. The cost is negligible at
         // 271 tiles per cell.
-        //
+
         // For now, store placements without archetype — query resolves it.
         // Actually, we can use the fact that survey already filtered. The tags
         // determine archetype deterministically. We just need to know WHICH

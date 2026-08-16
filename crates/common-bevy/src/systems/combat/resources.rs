@@ -187,52 +187,6 @@ pub fn process_respawn(
     }
 }
 
-/// DEPRECATED: Death handling is now done directly in check_death to avoid 1-frame delay
-/// This observer is no longer registered or used
-#[allow(dead_code)]
-fn handle_death(
-    trigger: On<Try>,
-    mut commands: Commands,
-    mut writer: MessageWriter<Do>,
-    time: Res<Time>,
-    mut query: Query<(Option<&crate::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana)>,
-) {
-    let event = &trigger.event().event;
-    if let Event::Death { ent } = event {
-        // Check if this is a player or NPC and set resources to 0
-        let is_player = if let Ok((behaviour, mut health, mut stamina, mut mana)) = query.get_mut(*ent) {
-            // Set resources to 0 to prevent "zombie" state
-            health.state = 0.0;
-            health.step = 0.0;
-            stamina.state = 0.0;
-            stamina.step = 0.0;
-            mana.state = 0.0;
-            mana.step = 0.0;
-
-            behaviour
-                .map(|b| matches!(b, crate::components::behaviour::Behaviour::Controlled))
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        if is_player {
-            // Player death: add respawn timer (5 seconds) and despawn from client view
-            commands.entity(*ent).insert(RespawnTimer::new(time.elapsed()));
-
-            // Send Despawn to client so player disappears visually
-            writer.write(Do {
-                event: Event::Despawn { ent: *ent },
-            });
-        } else {
-            // NPC death: emit Despawn event (actual despawn happens in PostUpdate)
-            writer.write(Do {
-                event: Event::Despawn { ent: *ent },
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,7 +205,7 @@ mod tests {
     }
 
     // ===== INVARIANT TESTS =====
-    // These tests verify critical architectural invariants (ADR-015)
+    // These tests verify critical architectural invariants
 
     /// INV-008: Resource Regeneration During Combat
     /// Stamina and mana MUST regenerate during combat.

@@ -96,7 +96,7 @@ fn main() {
         common_bevy::systems::combat::resources::regenerate_resources,
     ));
 
-    // ADR-019: Predict local player position by replaying InputQueue from confirmed state
+    // Predict local player position by replaying InputQueue from confirmed state
     app.add_systems(FixedPostUpdate, (
         prediction::predict_local_player,
     ));
@@ -107,9 +107,9 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn,
-        actor::apply_movement_intent, // ADR-011: Apply movement intent predictions
+        actor::apply_movement_intent, // Apply movement intent predictions
         actor::try_gcd,
-        prediction::advance_interpolation.before(actor::update), // ADR-019: Advance VisualPosition before rendering
+        prediction::advance_interpolation.before(actor::update), // Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
@@ -128,7 +128,7 @@ fn main() {
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
 
-    // ADR-012: Client-side recovery (authoritative server, no prediction)
+    // Client-side recovery (authoritative server, no prediction)
     app.add_systems(Update, (
         ability_prediction::handle_ability_used, // Apply recovery/synergies when server confirms ability use
         common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery timer

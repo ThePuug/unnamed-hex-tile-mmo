@@ -1,7 +1,7 @@
 //! Targeting State Component
-//!
+
 //! Tracks the targeting mode for entities, allowing tier lock functionality.
-//! Part of ADR-010 Phase 1: Combat Variety.
+//! Part of Combat Variety.
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};

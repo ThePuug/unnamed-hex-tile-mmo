@@ -1,6 +1,6 @@
 //! Regime field probe — characterises the land/water field so a bathymetry
 //! curve can be designed against real data rather than guessed.
-//!
+
 //! Run: cargo test -p world --release --test regime_probe -- --ignored --nocapture
 
 use std::sync::Arc;

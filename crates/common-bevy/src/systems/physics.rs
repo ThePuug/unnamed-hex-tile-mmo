@@ -50,7 +50,7 @@ mod tests {
     }
 
     // ===== INVARIANT TESTS =====
-    // These tests verify critical architectural invariants (ADR-015)
+    // These tests verify critical architectural invariants
 
     /// INV-001: Client-Side Prediction Correctness (Determinism)
     /// Physics apply() MUST produce identical results for identical inputs.

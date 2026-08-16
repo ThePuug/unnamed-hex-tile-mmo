@@ -38,7 +38,7 @@ pub fn setup(
             Info::Time,
         ));
 
-        // Distance indicator (ADR-014 Phase 4) - shows below time display
+        // Distance indicator - shows below time display
         parent.spawn((
             Text::new(""),
             Node {

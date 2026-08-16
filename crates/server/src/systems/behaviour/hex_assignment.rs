@@ -1,5 +1,5 @@
-//! # Hex Assignment System (SOW-018 Phase 2 & 3)
-//!
+//! # Hex Assignment System ( & 3)
+
 //! Assigns unique approach hexes to melee NPCs in an engagement.
 //! Recalculates on player tile change or NPC death.
 
@@ -39,9 +39,9 @@ fn direction_index(center: Qrz, neighbor: Qrz) -> Option<usize> {
 }
 
 /// Assign hexes to NPCs based on engagement archetype strategy.
-///
+
 /// Returns a map of NPC entity → assigned hex.
-///
+
 /// Strategy priority (for mixed groups): Cluster → Surround → Perimeter/Orbital.
 pub fn calculate_assignments(
     player_tile: Qrz,
@@ -168,7 +168,7 @@ fn pick_secondary(
 }
 
 /// System: Assign hexes to melee NPCs in each engagement.
-///
+
 /// Runs in FixedUpdate. Triggers reassignment when:
 /// - Player tile changes (detected via last_player_tile)
 /// - NPC dies (freed hex)

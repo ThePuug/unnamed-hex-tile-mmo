@@ -29,7 +29,7 @@ pub struct SlotKeybind;
 #[derive(Component)]
 pub struct SlotCost;
 
-/// Marker for ability slot synergy glow overlay (ADR-012)
+/// Marker for ability slot synergy glow overlay
 #[derive(Component)]
 pub struct SynergyGlow;
 
@@ -70,7 +70,7 @@ pub fn setup(
             },
         ))
         .with_children(|parent| {
-            // Define ability slots: Q, W, E, R (ADR-014: Counter replaces Knockback)
+            // Define ability slots: Q, W, E, R (Counter replaces Knockback)
             let slots = vec![
                 (0, KeyCode::KeyQ, Some(AbilityType::Lunge)),      // Q = Lunge (gap closer)
                 (1, KeyCode::KeyW, Some(AbilityType::Overpower)),  // W = Overpower (heavy strike)
@@ -182,7 +182,7 @@ pub fn setup(
             CooldownOverlay,
         ));
 
-        // Synergy glow overlay (ADR-012: BRIGHT gold glow when synergy unlocked)
+        // Synergy glow overlay (BRIGHT gold glow when synergy unlocked)
         // Positioned absolutely to cover the entire slot, hidden by default
         // INTENTIONALLY VERY BRIGHT for testing - will tone down once confirmed working
         parent.spawn((
@@ -310,7 +310,7 @@ pub fn update(
 enum AbilityState {
     Ready,
     OnCooldown,
-    SynergyUnlocked,  // ADR-012: Ability unlocked early via synergy (gold glow)
+    SynergyUnlocked,  // Ability unlocked early via synergy (gold glow)
     InsufficientResources,
     OutOfRange,
 }
@@ -331,7 +331,7 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
 ) -> AbilityState {
-    // Check recovery lockout (ADR-012: Universal lockout, can be synergy-unlocked)
+    // Check recovery lockout (Universal lockout, can be synergy-unlocked)
     if recovery_active {
         // Check if this ability has a synergy active (show glow immediately)
         if let Some(synergy) = synergy_opt {
@@ -344,7 +344,6 @@ fn get_ability_state(
         return AbilityState::OnCooldown;
     }
 
-    // Also check legacy GCD (will be removed in Phase 1 cleanup)
     if gcd_active {
         return AbilityState::OnCooldown;
     }

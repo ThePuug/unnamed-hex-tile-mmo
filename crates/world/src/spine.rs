@@ -1,5 +1,5 @@
 //! Continental spine generation.
-//!
+
 //! Generates mountain ranges that span multiple macro plates. Each spine
 //! grows in two opposing directions from an inland epicenter, driven by three
 //! independent noise channels (lateral curvature, cross-section width, peak
@@ -9,13 +9,13 @@
 //! saddles where they don't. A **ravine network** carves drainage channels
 //! into the cone surface, producing valleys, ridges, and passes as emergent
 //! structure.
-//!
+
 //! Spine placement is **locally deterministic**: epicenters are selected and
 //! conflict-resolved within fixed-size evaluation chunks. Each chunk decides
 //! independently using only its own candidates plus a 1-ring neighborhood for
 //! conflict resolution. The chunk size is ≥ 2× the exclusion distance, so a
 //! candidate can only conflict with candidates in immediately adjacent chunks.
-//!
+
 //! Entry point: [`generate_spines`].
 
 use std::collections::HashMap;
@@ -1471,8 +1471,8 @@ fn grow_stream(
         }
 
         // Slope-based depth accumulation. One raw-gradient field evaluation
-        // serves both the magnitude here and the step direction below —
-        // previously two full peak+ridgeline scans per step.
+        // serves both the magnitude here and the step direction below, so a
+        // step costs one peak+ridgeline scan rather than two.
         let (raw_gx, raw_gy) = blended_gradient_raw(peaks, ridgelines, wx, wy);
         let raw_grad_len = (raw_gx * raw_gx + raw_gy * raw_gy).sqrt();
         let grad_mag = raw_grad_len;
@@ -1706,12 +1706,12 @@ fn generate_ridge_paths(
 }
 
 // ── Catmull-Rom spline carving ──────────────────────────────────────────────
-//
+
 // The carve and probe functions use distance-to-spline instead of
 // distance-to-polyline. A Catmull-Rom spline is C1 through the control
 // points, eliminating gradient discontinuities at vertices that produce
 // visible creases at wide carve widths.
-//
+
 // Under `min` compositing (carving), Newton convergence failures are benign:
 // a wrong projection overestimates distance → shallower carve → the correct
 // deeper carve from another evaluation wins. Medial axis discontinuities at
@@ -2244,14 +2244,14 @@ pub fn discretize_elevation(elevation: f64) -> i32 {
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 /// Generate continental spines on a classified macro plate set.
-///
+
 /// Mutates `elevation` and spine tags (`Ridge`, `Highland`, `Foothills`) on
 /// plates in the slice. Caller must have already called
 /// [`PlateCache::classify_tags`] so Sea/Coast/Inland tags are present.
-///
+
 /// Returns `SpineInstance`s with retained peak geometry for continuous
 /// elevation evaluation via [`SpineInstance::elevation_at`].
-///
+
 /// Spine placement is locally deterministic: each fixed-size evaluation chunk
 /// selects epicenters using only its own candidates plus a 1-ring neighborhood
 /// for conflict resolution.
@@ -2295,7 +2295,7 @@ pub fn generate_spines(
 // ── Micro elevation offset ───────────────────────────────────────────────────
 
 /// Compute elevation noise for a micro cell relative to its parent macro plate's elevation.
-///
+
 /// Returns a value in [0.9 * macro_elev, 1.1 * macro_elev] — ±10% variation.
 pub fn micro_elevation_offset(micro_id: u64, macro_elevation: f64, seed: u64) -> f64 {
     let micro_hash = hash_f64(
@@ -3609,7 +3609,7 @@ mod tests {
     /// Diagnostic test for the ravine anomaly near world position (4700, 5700).
     /// Outputs per-stream step data for all spine instances covering the area
     /// so the anomaly can be traced through the pipeline.
-    ///
+
     /// Run with: cargo test -p terrain ravine_diagnostic_4700_5700 -- --nocapture
     #[test]
     fn ravine_diagnostic_4700_5700() {

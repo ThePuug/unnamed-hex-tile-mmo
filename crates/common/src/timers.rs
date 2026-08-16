@@ -1,12 +1,12 @@
 //! Generic system timing — transport-agnostic accumulator + RAII scope guard.
-//!
+
 //! Usage:
 //! ```ignore
 //! let timers = SystemTimers::new();
 //! let _t = timers.scope("my_system");
 //! // ... work ...
 //! // _t drops, records elapsed ms
-//!
+
 //! // Periodically drain:
 //! for (name, p95, count) in timers.drain() { ... }
 //! ```

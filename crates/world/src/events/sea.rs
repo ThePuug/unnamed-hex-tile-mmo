@@ -1,15 +1,15 @@
 //! SeaEvent — Event #1: ocean bathymetry below sea level.
-//!
+
 //! Everything the regime field puts below the land threshold gets a depth, so
 //! water is terrain rather than an untextured extension of the z=0 plane.
-//!
+
 //! Depth is driven by the **pre-sigmoid** regime field. `regime_value_at`
 //! applies a steepness-40 sigmoid that deliberately flattens deep water, and it
 //! does its job too well to reuse here: 93.7% of water tiles land within 17% of
 //! the sigmoid floor, and the median water tile reads 0.0000. `raw_regime_noise`
 //! still grades smoothly — measured continental shelf is ~230 tiles from shore
 //! to a quarter of the raw range, which is a wide beach at player scale.
-//!
+
 //! No indexes and no survey: depth is a pure per-tile function of
 //! (position, seed), so `deform` is a no-op and the layer contributes only
 //! through `query`.

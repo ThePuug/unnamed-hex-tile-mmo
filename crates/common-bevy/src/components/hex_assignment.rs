@@ -1,5 +1,5 @@
-//! # Hex Assignment Components (SOW-018 Phase 2)
-//!
+//! # Hex Assignment Components
+
 //! Coordinates NPC positioning around player targets by assigning unique
 //! approach hexes to each melee NPC in an engagement.
 
@@ -8,7 +8,7 @@ use bevy::platform::collections::HashMap;
 use qrz::Qrz;
 
 /// Engagement-level hex assignment map.
-///
+
 /// Tracks which hex each NPC is assigned to approach, and the last known
 /// player tile for change detection (reassignment triggers on tile change).
 #[derive(Component, Debug, Clone)]
@@ -44,7 +44,7 @@ impl HexAssignment {
 }
 
 /// Marker component on individual NPCs indicating their assigned approach hex.
-///
+
 /// Written by the assignment system, read by chase to determine pathfinding target.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct AssignedHex(pub Qrz);

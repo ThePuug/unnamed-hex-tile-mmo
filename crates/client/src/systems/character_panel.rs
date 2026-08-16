@@ -72,7 +72,7 @@ pub enum AbsoluteMetaAttributeStat {
     Gravitas,
 }
 
-/// Marker component for relative meta-attribute stat display (SOW-021)
+/// Marker component for relative meta-attribute stat display
 #[derive(Component, Clone)]
 pub enum MetaAttributeStat {
     Impact,
@@ -1127,7 +1127,7 @@ pub fn update_attributes(
         }
     }
 
-    // Update meta-attribute raw values and calculated effects (SOW-021)
+    // Update meta-attribute raw values and calculated effects
     for (meta_stat, entity) in &meta_query {
         if let Ok(mut text) = text_query.get_mut(entity) {
             // Check if this is a raw value display (starts with '(')
@@ -1276,15 +1276,15 @@ fn attr_to_percent(value: i16, max_attr_scaled: i16) -> f32 {
 fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_attr_scaled: i16) {
     // The reach values represent the maximum value achievable in each direction
     // They are scaled attribute values (axis×10 + spectrum×7)
-    //
+
     // For might_grace with axis=-2, spectrum=3:
     //   might_reach=41 (20+21) at position -41 on the scale
     //   grace_reach=21 at position +21 on the scale
-    //
+
     // For instinct_presence with axis=0, spectrum=3:
     //   instinct_reach=21 at position -21
     //   presence_reach=21 at position +21
-    //
+
     // The bar should show from the leftmost reach to the rightmost reach
 
     // Left reach is on the negative side (might, vitality, instinct)

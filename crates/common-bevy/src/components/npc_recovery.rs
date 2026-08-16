@@ -1,5 +1,5 @@
-//! # NPC Recovery Timer (SOW-018 Phase 1)
-//!
+//! # NPC Recovery Timer
+
 //! Per-NPC recovery timer that gates attack initiation, creating natural
 //! gaps between threats from each NPC. Independent of player GlobalRecovery.
 
@@ -19,7 +19,7 @@ const DEFENDER_RECOVERY_MIN_MS: u64 = 4000;
 const DEFENDER_RECOVERY_MAX_MS: u64 = 6000;
 
 /// NPC-side recovery timer that prevents attacks during cooldown.
-///
+
 /// After each attack, `recovery_until` is set to `now + random(min..=max)`.
 /// The NPC cannot initiate new attacks while `now < recovery_until`.
 #[derive(Clone, Component, Copy, Debug)]

@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 
 /// Plugin that manages server-only behaviour systems
-///
+
 /// This plugin provides:
 /// - Chase: Unified hostile pursuit and engagement behavior
 /// - Kite: Flee behavior when player gets too close
-///
+
 /// Only used by the server.
 pub struct BehaviourPlugin;
 

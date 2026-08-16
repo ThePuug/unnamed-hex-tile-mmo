@@ -189,9 +189,9 @@ fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
         tiles.push((qrz, typ));
     }
 
-    // Spawner placements are index-only: tile materialization no longer
-    // deforms their cells. Warm them here, where every survey resolve is a
-    // cache hit on the tiles materialized above.
+    // Spawner placements are index-only, so tile materialization never deforms
+    // their cells. Warm them here, where every survey resolve is a cache hit on
+    // the tiles materialized above.
     registry.warm_indexes(&coords);
 
     TerrainChunk::new(tiles)
@@ -374,8 +374,8 @@ pub fn update(
     }
 }
 
-/// Broadcast heading changes to clients (ADR-011)
-///
+/// Broadcast heading changes to clients
+
 /// Detects when Heading components change and broadcasts them as Incremental events.
 /// This ensures clients see NPCs facing the correct direction and can calculate proper
 /// interpolation targets for remote players.

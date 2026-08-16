@@ -237,7 +237,7 @@ pub fn update(
 // this unified pipeline. No separate chunk mesh path.
 
 /// Dispatch async tasks to build summary mesh regions.
-///
+
 /// **Forced mode** (`Some(r)`): single band at that radius, all visible regions.
 /// **Auto mode** (`None`): multiple bands from `compute_active_bands`, with overlap.
 /// Camera movement (WU) that forces a region re-evaluation even without new
@@ -487,10 +487,10 @@ pub fn dispatch_summary_tasks(
 }
 
 /// Compute visible mesh regions for auto mode (multi-band).
-///
+
 /// Local bands (within `local_boundary_wu`): gated on loaded chunks.
 /// Remote bands (beyond it): ungated — data from server/flyover summaries.
-///
+
 /// `local_boundary_wu`: the extent the Map can serve — FIXED_STREAM_RADIUS_WU
 /// in gameplay, the flyover's detail-chunk radius while flyover is active.
 /// `margin`: hysteresis expansion of each band's annulus (0.0 = crisp band
@@ -565,7 +565,7 @@ fn compute_auto_mode_regions(
 }
 
 /// Build a summary mesh region (runs off main thread).
-///
+
 /// r=0: full tile geometry from Map (slope blending, cliff skirts).
 /// r>0: reads SummaryCache first (server/flyover-fed regions), then falls
 ///      back to computing center_z from Map tiles for client-owned regions
@@ -667,11 +667,11 @@ const CURTAIN_DEPTH_WU: f32 = 24.0;
 
 /// Append cross-region skirt geometry owned by `my_key`, plus frontier
 /// curtains for perimeter edges with no same-band counterpart.
-///
+
 /// Skirt ownership: the lower region key emits the shared-edge skirt.
 /// Matching is still checked against ALL same-band neighbors so curtains
 /// are suppressed on edges a neighbor will skirt.
-///
+
 /// Curtains close the surface where no shared vertex IDs can ever exist —
 /// a different LoD level on the other side (hex lattices of different
 /// scales share no edges), or territory that has no mesh at all.
@@ -939,7 +939,7 @@ mod tests {
     /// the horizon (a) lies within at least one needed region at its band's
     /// level, and (b) if that region's footprint extends past the local-data
     /// boundary, the producer enumerates it (so its data will exist).
-    ///
+
     /// Run for gameplay (boundary = FIXED_STREAM_RADIUS_WU) and flyover
     /// (small detail-chunk boundary) — the flyover case caught the missing
     /// ring between the flyover's chunks and the first produced band.

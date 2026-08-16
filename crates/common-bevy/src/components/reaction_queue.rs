@@ -12,12 +12,12 @@ pub enum DamageType {
 
 /// A single threat in the reaction queue
 /// Represents incoming damage that has not yet been applied
-///
+
 /// # CRITICAL INVARIANT (INV-003)
 /// **DO NOT MANUALLY CONSTRUCT** this struct. ALWAYS use `queue::create_threat()`.
 /// Manual construction bypasses threat timer consistency checks and will break
 /// reaction window predictability.
-///
+
 /// Reading fields is fine. Construction must go through the helper.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueuedThreat {
@@ -38,8 +38,8 @@ pub struct QueuedThreat {
 /// Reaction queue component that holds incoming threats
 /// - threats: Unbounded queue of incoming damage (oldest at front, newest at back)
 /// - window_size: How many threats the player can see and interact with (derived from Focus)
-///
-/// ADR-030: Queue is unbounded. Window determines visibility, not capacity.
+
+/// Queue is unbounded. Window determines visibility, not capacity.
 /// Threats behind the window still tick and resolve normally.
 #[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
 pub struct ReactionQueue {

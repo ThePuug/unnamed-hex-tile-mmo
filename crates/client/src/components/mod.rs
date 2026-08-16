@@ -14,10 +14,10 @@ pub struct AnimatedBy(Entity);
 #[derive(Component)]
 pub enum Info {
     Time,
-    DistanceIndicator,  // ADR-014 Phase 4: Shows distance from haven, zone, and expected enemy level
+    DistanceIndicator,  // Shows distance from haven, zone, and expected enemy level
 }
 
-/// Component linking mesh entities to their chunk (legacy — used by diagnostics).
+/// Links a mesh entity to its chunk. Read by diagnostics only.
 #[derive(Component)]
 #[allow(dead_code)]
 pub struct ChunkMesh {
@@ -34,7 +34,7 @@ pub struct TargetIndicator {
     pub indicator_type: crate::systems::target_indicator::IndicatorType,
 }
 
-// TODO: TierBadge component - deferred until proper 3D text setup (ADR-010 Phase 5)
+// TODO: TierBadge component - deferred until proper 3D text setup
 
 /// Floating text component for damage numbers and other temporary text
 /// Used with UI Node entities that follow world-space positions
@@ -83,7 +83,7 @@ pub struct ThreatCapacityDot {
     pub index: usize,
 }
 
-/// Resolved threat entry - fades out after showing damage resolution (ADR-025)
+/// Resolved threat entry - fades out after showing damage resolution
 #[derive(Component)]
 pub struct ResolvedThreatEntry {
     pub spawn_time: std::time::Duration,
@@ -101,15 +101,15 @@ pub struct PoppingThreatIcon {
     pub target_margin_top: f32,  // resolved stack y position
 }
 
-/// Marker for resolved threats container (ADR-025)
+/// Marker for resolved threats container
 #[derive(Component)]
 pub struct ResolvedThreatsContainer;
 
-/// Marker for combat log panel (ADR-025)
+/// Marker for combat log panel
 #[derive(Component)]
 pub struct CombatLogPanel;
 
-/// Marker for combat log content (scrollable) (ADR-025)
+/// Marker for combat log content (scrollable)
 #[derive(Component)]
 pub struct CombatLogContent;
 
@@ -128,7 +128,7 @@ pub struct HostileRecoveryBar;
 #[derive(Component)]
 pub struct AllyRecoveryBar;
 
-/// Combat log entry with metadata for color coding (ADR-025)
+/// Combat log entry with metadata for color coding
 #[derive(Component)]
 pub struct CombatLogEntry;
 

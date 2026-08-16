@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::systems::{action_bar, character_panel, character_panel_respec, combat_log, combat_ui, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
-///
+
 /// This plugin provides:
 /// - Character panel (C key) for viewing and adjusting attributes
 /// - HUD elements (time display, etc.)
@@ -30,8 +30,8 @@ impl Plugin for UiPlugin {
                 target_indicator::setup,
                 tier_lock_range_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::systems::camera::setup),
-                resolved_threats::setup.after(crate::systems::camera::setup), // ADR-025
-                combat_log::setup.after(crate::systems::camera::setup), // ADR-025
+                resolved_threats::setup.after(crate::systems::camera::setup),
+                combat_log::setup.after(crate::systems::camera::setup),
             ),
         );
 
@@ -84,7 +84,7 @@ impl Plugin for UiPlugin {
             ),
         );
 
-        // ADR-025: Combat feedback enhancements (resolved threats + combat log)
+        // Combat feedback enhancements (resolved threats + combat log)
         app.add_systems(
             Update,
             (
