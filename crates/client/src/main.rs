@@ -28,6 +28,7 @@ use crate::{
         diagnostics::DiagnosticsPlugin,
         ui::UiPlugin,
         vignette::VignettePlugin,
+        water::WaterPlugin,
     },
     resources::*,
     systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
@@ -69,6 +70,7 @@ fn main() {
         crate::plugins::world_streaming::WorldStreamingPlugin,
         UiPlugin,
         VignettePlugin,
+        WaterPlugin,
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
     ));
 
