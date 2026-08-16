@@ -2,19 +2,6 @@
 
 Instructions for Claude Code sessions in this repository.
 
-## Role Adoption
-
-**Adopt a role each session.** Default: **DEVELOPER** (`ROLES/DEVELOPER.md`).
-
-Available roles: **DEVELOPER**, **DEBUGGER**, **ARCHITECT**, **STAFF_ENGINEER**, **PLAYER** — see `ROLES/` for details.
-
-- User can switch roles at any time
-- Periodically re-read your role document during long sessions
-- Default to DEVELOPER only if no role has been assigned yet — don't override an active role
-- Only switch roles when the user explicitly requests it
-- Read your role's `*-MEMORY.md` at session start for cross-session continuity
-- Update your role's `*-MEMORY.md` incrementally at milestones during the session (not just at the end)
-
 ## Commands
 
 ```bash
@@ -28,23 +15,31 @@ cargo test -p server actor
 
 ## Documentation
 
+This repo is code-only. Design specs, ADRs, and architectural guidance live in the
+`unnamed-indie-studio-internal` repo (sibling checkout, `../unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/`):
+
+| Location (in that repo) | Purpose |
+|----------|---------|
+| `GUIDANCE.md` | Architectural patterns, invariants, pitfalls. Read before coding. |
+| `qrz-guidance.md` | Hex coordinate system reference. |
+| `networking.md` | Transport, movement sync, visual interpolation. |
+| `design.md` | Game pitch / north-star. |
+| `design/` | Technical specs, one per system. |
+
+In this repo:
+
 | Location | Purpose |
 |----------|---------|
-| `GUIDANCE.md` | **Read before coding.** Architectural patterns, invariants, pitfalls. |
-| `docs/design/` | Design specs — what systems should be. Each has Implementation Deviations/Gaps sections. |
-| `docs/adr/` | Architecture Decision Records — non-obvious "why" behind implementation choices. |
-| `ROLES/` | Role definitions for Claude sessions. |
-| `ROLES/*-MEMORY.md` | Per-role session memory — current concerns, pending items, train of thought. |
-| `crates/qrz/GUIDANCE.md` | Hex coordinate system reference. |
 | `README.md` | User-facing overview, controls, features. |
 | `CONTRIBUTING.md` | Build prerequisites, platform setup. |
 
 ## Workflow
 
-1. Read role document + `GUIDANCE.md` before making changes
-2. Check relevant design spec (including deviations/gaps at bottom)
-3. After completing work: update design spec deviations/gaps if implementation differs
-3b. If significant implementation: request ARCHITECT session to reconcile docs
-3c. If performance-sensitive: request STAFF_ENGINEER review
-4. If architectural decision made: create ADR via ARCHITECT role (only if non-obvious "why")
-5. If new pitfall discovered: add to `GUIDANCE.md`
+1. Check the relevant spec in the internal-studio repo before making changes
+2. After completing work: update the spec there if behavior changed
+3. If a new pitfall is discovered: add it to `GUIDANCE.md` there
+
+**Docs describe what the code does.** Don't add Implementation Deviations / Gaps tables,
+status checklists, phase plans, or roadmap sections — that scaffolding was deliberately
+removed. If something is unbuilt, state it in one line inline. Verify claims against the
+code before writing them; these docs drifted badly once already.

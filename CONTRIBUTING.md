@@ -1,6 +1,6 @@
 # Contributing
 
-How to build and run the project. Not architecture or design — see `GUIDANCE.md` and `docs/design/`.
+How to build and run the project. Not architecture or design — see `GUIDANCE.md` and `design/` in the `unnamed-indie-studio-internal` repo (sibling checkout, `projects/unnamed-hex-tile-mmo/`).
 
 ## Prerequisites
 
@@ -72,7 +72,3 @@ cargo run -p console
 ## Project Structure
 
 See [CLAUDE.md](CLAUDE.md) for code organization, documentation map, and development workflow.
-
-## Roles and Workflow
-
-This project uses a role-based development process documented in the `ROLES/` directory. See [CLAUDE.md](CLAUDE.md) for details.

@@ -726,7 +726,7 @@ impl ActorAttributes {
     //   - COMMITMENT (build identity): window_size(), cadence_interval(),
     //     evasion_chance() — discrete tiers based on % of total budget
     //
-    // See docs/design/attributes.md for full design.
+    // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
 
     /// Total attribute budget: sum of all six derived attribute values.
     ///
