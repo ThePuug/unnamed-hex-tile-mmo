@@ -1,6 +1,6 @@
 # Contributing
 
-How to build and run the project. Not architecture or design — see `GUIDANCE.md` and `design/` in the `unnamed-indie-studio-internal` repo (sibling checkout, `projects/unnamed-hex-tile-mmo/`).
+How to build and run the project. Not architecture or design — see `AGENTS.md` for codebase constraints and conventions, and `design/` in the `unnamed-indie-studio-internal` repo (sibling checkout, `projects/unnamed-hex-tile-mmo/`) for system specs.
 
 ## Prerequisites
 
@@ -71,4 +71,4 @@ cargo run -p console
 
 ## Project Structure
 
-See [CLAUDE.md](CLAUDE.md) for code organization, documentation map, and development workflow.
+See [AGENTS.md](AGENTS.md) for code organization, invariants, anti-patterns, and comment style.
