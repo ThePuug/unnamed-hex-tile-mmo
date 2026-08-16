@@ -371,3 +371,53 @@ fn feature_spacing() {
         minutes(runs[n - 1] as f64),
     );
 }
+
+/// The server's hardcoded spawn point (server/src/main.rs) must be dry land.
+/// SeaEvent submerges everything below the regime land threshold, and a spawn
+/// under the waterline puts the camera beneath the water plane.
+#[test]
+#[ignore]
+fn spawn_point_is_above_water() {
+    let c = composite();
+    for &(q, r, label) in &[(3423, 1155, "server spawn")] {
+        let view = c.tile_at(q, r);
+        let tags: Vec<_> = view.tags.iter().collect();
+        println!("  {label} ({q},{r}): z={} tags={tags:?}", c.elevation_at(q, r));
+        assert!(
+            view.elevation >= 0.0,
+            "{label} ({q},{r}) is underwater at elevation {:.1} — the camera \
+             would start beneath the water plane",
+            view.elevation
+        );
+    }
+}
+
+/// How far is the nearest water from the spawn point? Determines whether the
+/// ocean is even in frame when the client starts.
+#[test]
+#[ignore]
+fn distance_to_water_from_spawn() {
+    let c = composite();
+    let (sq, sr) = (3423, 1155);
+    let mut nearest = i32::MAX;
+    let mut dir = (0, 0);
+    for spoke in 0..24 {
+        let a = spoke as f64 * std::f64::consts::TAU / 24.0;
+        for d in (1..1200).step_by(3) {
+            let q = sq + (d as f64 * a.cos()) as i32;
+            let r = sr + (d as f64 * a.sin()) as i32;
+            if c.elevation_at(q, r) < 0 {
+                if d < nearest { nearest = d; dir = (q - sq, r - sr); }
+                break;
+            }
+        }
+    }
+    if nearest == i32::MAX {
+        println!("  no water within 1200 tiles of spawn ({sq},{sr})");
+    } else {
+        println!(
+            "  nearest water: {nearest} tiles from spawn, offset {:?} ({:.0} WU, horizon fade starts ~757 WU)",
+            dir, nearest as f64 * 1.732
+        );
+    }
+}
