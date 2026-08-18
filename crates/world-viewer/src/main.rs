@@ -17,7 +17,7 @@ use world::events::spawner::{
     SpawnerArchetype, SpawnerEvent, SpawnerPlacementIndex, archetype_for_tagset,
 };
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
-use world::RIDGE_PEAK_ELEVATION;
+use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
@@ -33,6 +33,8 @@ enum Layer {
     Spawners,
     /// Spine epicenter markers (yellow dots).
     SpinePeaks,
+    /// Glacial bowls, drawn as floor / headwall / lip / outlet.
+    Cirques,
 }
 
 fn parse_layers(s: &str) -> Vec<Layer> {
@@ -44,10 +46,11 @@ fn parse_layers(s: &str) -> Vec<Layer> {
             "centroids" => Layer::Centroids,
             "spawners" => Layer::Spawners,
             "spine-peaks" => Layer::SpinePeaks,
+            "cirques" => Layer::Cirques,
             other => {
                 eprintln!(
                     "Unknown layer: {other:?}. Valid: plates, elevation, spines, \
-                     centroids, spawners, spine-peaks"
+                     centroids, spawners, spine-peaks, cirques"
                 );
                 std::process::exit(1);
             }
@@ -85,7 +88,7 @@ struct Cli {
     seed: u64,
 
     /// Comma-separated layer stack drawn bottom to top.
-    /// Available: plates, elevation, spines, centroids, spawners, spine-peaks
+    /// Available: plates, elevation, spines, centroids, spawners, spine-peaks, cirques
     #[arg(long, default_value = "plates,elevation")]
     layers: String,
 }
@@ -141,6 +144,21 @@ fn spawner_marker_color(arch: SpawnerArchetype) -> [u8; 3] {
     }
 }
 
+/// Outlets read by what leaves them, so a glance separates a closed tarn from
+/// one that falls away and one that drains down a valley.
+fn cirque_color(part: CirqueProbe, outflow: Outflow) -> [u8; 3] {
+    match part {
+        CirqueProbe::Floor => [200, 228, 240],   // pale ice
+        CirqueProbe::Headwall => [55, 55, 75],   // dark slate
+        CirqueProbe::Lip => [190, 165, 120],     // tan bar
+        CirqueProbe::Outlet => match outflow {
+            Outflow::Impounded => [90, 60, 160],  // violet — nothing leaves
+            Outflow::Fall => [255, 40, 200],      // magenta — leaves over a wall
+            Outflow::Ravine => [255, 210, 40],    // amber — leaves down a valley
+        },
+    }
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
@@ -164,6 +182,7 @@ fn main() {
             Layer::Centroids => "centroids",
             Layer::Spawners => "spawners",
             Layer::SpinePeaks => "spine-peaks",
+            Layer::Cirques => "cirques",
         })
         .collect();
 
@@ -181,7 +200,7 @@ fn main() {
 
     // Only add events needed for the requested layers
     let needs_spines = layers.iter().any(|l| {
-        matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks)
+        matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks | Layer::Cirques)
     });
     let needs_spawners = layers.contains(&Layer::Spawners);
 
@@ -272,6 +291,23 @@ fn main() {
                             let (wx, wy) = world::hex_to_world(p.q, p.r);
                             (wx, wy, arch)
                         })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        vec![]
+    };
+
+    let cirques: Vec<Cirque> = if layers.contains(&Layer::Cirques) {
+        composite.with_indexes(|indexes| {
+            indexes
+                .get::<SpineInstanceIndex>()
+                .map(|idx| {
+                    idx.cells
+                        .values()
+                        .flat_map(|v| v.iter())
+                        .flat_map(|inst| inst.cirques.iter().cloned())
                         .collect()
                 })
                 .unwrap_or_default()
@@ -413,6 +449,33 @@ fn main() {
             draw_dot(&mut buf, pwx, pwy, dot_r, [255, 220, 50]);
         }
         log::info!("Spine epicenters: {} markers", spine_epicenters.len());
+    }
+
+    if layers.contains(&Layer::Cirques) {
+        // Rasterize each footprint rather than probing every pixel: bowls cover
+        // a small share of a viewport, so the cost tracks their area, not the
+        // image's.
+        for c in &cirques {
+            let px0 = ((c.cx - c.radius - origin_x) / scale).floor() as i32;
+            let px1 = ((c.cx + c.radius - origin_x) / scale).ceil() as i32;
+            let py0 = ((c.cy - c.radius - origin_y) / scale).floor() as i32;
+            let py1 = ((c.cy + c.radius - origin_y) / scale).ceil() as i32;
+            for py in py0..=py1 {
+                for px in px0..=px1 {
+                    let wx = origin_x + px as f64 * scale;
+                    let wy = origin_y + py as f64 * scale;
+                    if let Some(part) = c.probe(wx, wy) {
+                        set_pixel(&mut buf, px, py, cirque_color(part, c.outflow));
+                    }
+                }
+            }
+        }
+        let tally = |o: Outflow| cirques.iter().filter(|c| c.outflow == o).count();
+        log::info!(
+            "Cirques: {} bowls ({} impounded, {} falls, {} ravines)",
+            cirques.len(),
+            tally(Outflow::Impounded), tally(Outflow::Fall), tally(Outflow::Ravine),
+        );
     }
 
     // ── Phase 5: Encode ──

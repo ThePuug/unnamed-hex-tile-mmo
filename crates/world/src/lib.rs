@@ -2,9 +2,12 @@ pub(crate) mod noise;
 mod plates;
 mod microplates;
 pub mod events;
+pub mod glacial;
+pub(crate) mod lithology;
 pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
+pub use glacial::{Cirque, CirqueProbe, Outflow, GLACIATION_LINE};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  regime_value_at, raw_regime_noise, warp_strength_at};
@@ -177,6 +180,10 @@ pub const MICRO_JITTER_MAX: f64 = 0.0;
 
 const SQRT_3: f64 = 1.7320508075688772;
 
+/// World-unit distance between neighbouring tiles, held by `hex_to_world` for
+/// all six directions. Anything reasoning about rise per tile reads it.
+pub const TILE_SPACING: f64 = 1.0;
+
 /// Convert hex tile coordinates to world (cartesian) coordinates.
 /// Hex q,r axes are 60° apart; this produces isotropic x,y.
 pub fn hex_to_world(q: i32, r: i32) -> (f64, f64) {
@@ -329,6 +336,21 @@ mod tests {
     use super::*;
 
     const DEFAULT_SEED: u64 = 0x9E3779B97F4A7C15;
+
+    /// TILE_SPACING is a claim about `hex_to_world`, so it is checked against
+    /// it: all six neighbours sit exactly that far away.
+    #[test]
+    fn neighbours_sit_one_tile_spacing_apart() {
+        let (ox, oy) = hex_to_world(0, 0);
+        for (q, r) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
+            let (wx, wy) = hex_to_world(q, r);
+            let d = (wx - ox).hypot(wy - oy);
+            assert!(
+                (d - TILE_SPACING).abs() < 1e-12,
+                "neighbour ({q}, {r}) sits {d} away, not {TILE_SPACING}"
+            );
+        }
+    }
 
     fn tags_at(q: i32, r: i32, plate_cache: &PlateCache, spine_cache: &mut SpineCache) -> ArrayVec<[PlateTag; 2]> {
         let (wx, wy) = hex_to_world(q, r);

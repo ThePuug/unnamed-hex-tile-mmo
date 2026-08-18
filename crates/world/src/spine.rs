@@ -22,6 +22,8 @@ use std::collections::HashMap;
 
 use common::{HexSpatialGrid, PlateTag, Tagged};
 
+use crate::glacial::{self, Cirque, CirqueProbe, GLACIATION_LINE, Outflow};
+use crate::lithology::resistance_at;
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::plates::{PlateCache, PlateCenter};
 use crate::MACRO_CELL_SIZE;
@@ -328,6 +330,18 @@ const RIDGE_STREAM_JITTER: f64 = 0.4;
 /// Noise seed for ridge stream jitter.
 const SEED_RIDGE_STREAM_JITTER: u64 = 0xAAAA_BBBB_0035;
 
+/// Marks a stream's meander hash as belonging to a cirque outlet. Peak origins
+/// use the bare peak index and ridge origins set the high bit, so outlets take
+/// a third disjoint range and no two origins share a meander channel.
+const CIRQUE_ORIGIN_TAG: u64 = 0x4000_0000;
+
+/// Merge count an outlet stream starts with. A basin's outflow has already
+/// gathered a whole catchment before it cuts anything, so it is not a fresh
+/// rill: it begins with the width, the depth rate and the open wall profile of
+/// a stream that has absorbed tributaries. Half of the merges that define full
+/// maturity puts it between a rill and a trunk.
+const CIRQUE_OUTFLOW_MERGES: u32 = (WALL_EXPONENT_MATURITY_MERGES / 2.0) as u32;
+
 
 
 /// Width of carved ridge paths (world units).
@@ -356,6 +370,9 @@ struct StreamStep {
     wy: f64,
     surface_elev: f64,
     floor_elev: f64,
+    /// Local base level here — a cirque floor, or the sea. The floor never cuts
+    /// below it.
+    base_level: f64,
     width: f64,
     /// Cumulative arc-length distance from stream origin.
     cum_dist: f64,
@@ -902,6 +919,8 @@ pub struct SpineInstance {
     pub peaks: Vec<Peak>,
     /// Explicit ridgeline segments connecting nearby peak pairs.
     pub ridgelines: Vec<Ridgeline>,
+    /// Glacial bowls bitten into peak flanks above the glaciation line.
+    pub cirques: Vec<Cirque>,
     /// Carved drainage network (valleys, ridges, paths).
     pub ravine_network: RavineNetwork,
     /// Center of the bounding circle enclosing all peaks + falloff extents.
@@ -974,17 +993,23 @@ impl SpineInstance {
 
         let peak_elev = self.evaluate_peaks(wx, wy);
         let ridge_elev = self.evaluate_ridgelines(wx, wy);
-        let mut elev = peak_elev.max(ridge_elev);
+        let elev = apply_ridge_noise(peak_elev.max(ridge_elev), wx, wy, self.id);
         if elev <= 0.0 { return 0.0; }
 
-        // Ridge noise
-        let noise = fbm_2d(wx, wy, RIDGE_NOISE_WAVELENGTH, self.id ^ RIDGE_NOISE_SEED);
-        let amplitude = elev * RIDGE_NOISE_STRENGTH;
-        elev = (elev + noise * amplitude).max(0.0);
-        if elev <= 0.0 { return 0.0; }
+        self.erode(wx, wy, elev)
+    }
 
-        // Ravine carving
-        self.ravine_network.carve(wx, wy, elev)
+    /// The erosional stack, applied to a tectonic surface in order: ice cuts
+    /// the relief the plates raised, water cuts what ice left. Reversing the
+    /// two would have streams incise bowls that had not been excavated yet.
+    fn erode(&self, wx: f64, wy: f64, tectonic: f64) -> f64 {
+        let (glacial, impound) = glacial::carve_and_limit(&self.cirques, wx, wy, tectonic);
+        self.ravine_network.carve(wx, wy, glacial).max(impound)
+    }
+
+    /// Which part of a bowl (wx, wy) falls in, if any. Diagnostic only.
+    pub fn cirque_probe(&self, wx: f64, wy: f64) -> Option<CirqueProbe> {
+        glacial::probe_all(&self.cirques, wx, wy)
     }
 
     /// Elevation and cross-section tag in a single pass. Equivalent to
@@ -1015,16 +1040,21 @@ impl SpineInstance {
         let tag = if best_frac < f64::MAX { Some(cross_section_tag(best_frac)) } else { None };
 
         let ridge_elev = self.evaluate_ridgelines(wx, wy);
-        let mut elev = peak_elev.max(ridge_elev);
+        let elev = apply_ridge_noise(peak_elev.max(ridge_elev), wx, wy, self.id);
         if elev <= 0.0 { return (0.0, tag); }
 
-        let noise = fbm_2d(wx, wy, RIDGE_NOISE_WAVELENGTH, self.id ^ RIDGE_NOISE_SEED);
-        let amplitude = elev * RIDGE_NOISE_STRENGTH;
-        elev = (elev + noise * amplitude).max(0.0);
-        if elev <= 0.0 { return (0.0, tag); }
-
-        (self.ravine_network.carve(wx, wy, elev), tag)
+        (self.erode(wx, wy, elev), tag)
     }
+}
+
+/// Ridge noise on a tectonic elevation. Shared so the surface a cirque rim is
+/// fitted to at build time is the surface the query path produces — the bowl's
+/// floor is set from the rim's altitude, so the two drifting apart would open
+/// a basin that no longer holds.
+fn apply_ridge_noise(elev: f64, wx: f64, wy: f64, spine_id: u64) -> f64 {
+    if elev <= 0.0 { return 0.0; }
+    let noise = fbm_2d(wx, wy, RIDGE_NOISE_WAVELENGTH, spine_id ^ RIDGE_NOISE_SEED);
+    (elev + noise * elev * RIDGE_NOISE_STRENGTH).max(0.0)
 }
 
 // ── Spine chunk grid ─────────────────────────────────────────────────────────
@@ -1405,11 +1435,13 @@ fn stream_width(merge_count: u32, cum_dist: f64) -> f64 {
         + cum_dist * STREAM_WIDTH_PER_DIST
 }
 
-/// Slope-modulated depth increment for a single step.
-fn depth_increment(grad_mag: f64, merge_count: u32) -> f64 {
+/// Slope-modulated depth increment for a single step, against the resistance of
+/// the material being cut.
+fn depth_increment(grad_mag: f64, merge_count: u32, wx: f64, wy: f64) -> f64 {
     let slope_factor = (grad_mag / TAPER_SLOPE_REFERENCE).clamp(0.0, 1.0);
     let merge_boost = 1.0 + merge_count as f64 * DEPTH_MERGE_BOOST;
     DEPTH_PER_DISTANCE_BASE * slope_factor * merge_boost * STREAM_STEP_SIZE
+        / resistance_at(wx, wy)
 }
 
 fn stream_wall_exponent(merge_count: u32) -> f64 {
@@ -1419,22 +1451,39 @@ fn stream_wall_exponent(merge_count: u32) -> f64 {
 
 // ── Stream generation ───────────────────────────────────────────────────────
 
-/// Combined surface elevation from peaks and ridgelines.
-fn evaluate_surface(peaks: &[Peak], ridgelines: &[Ridgeline], wx: f64, wy: f64) -> f64 {
+/// The surface streams run over: peaks and ridgelines with the glacial layer
+/// already cut into them. Streams are the water layer, so they see the relief
+/// ice left behind, not the tectonic surface underneath it.
+fn evaluate_surface(
+    peaks: &[Peak],
+    ridgelines: &[Ridgeline],
+    cirques: &[Cirque],
+    wx: f64,
+    wy: f64,
+) -> f64 {
     let mut max_elev = evaluate_all_peaks(peaks, wx, wy);
     for ridge in ridgelines {
         let e = ridge_elevation_at(ridge, wx, wy);
         if e > max_elev { max_elev = e; }
     }
-    max_elev
+    glacial::carve_all(cirques, wx, wy, max_elev)
 }
 
+/// Grow one stream downhill from its origin until it reaches a base level, a
+/// stall, or the edge of spine territory.
+
+/// `initial_merges` is the catchment the stream already carries at its head, as
+/// a merge count: zero for an origin seeded on bare relief, non-zero where a
+/// basin drains into it. It sets the head's width, depth rate and wall profile,
+/// so a stream can begin as an established channel rather than a rill.
 fn grow_stream(
     start_wx: f64,
     start_wy: f64,
     initial_angle: f64,
     peaks: &[Peak],
     ridgelines: &[Ridgeline],
+    cirques: &[Cirque],
+    initial_merges: u32,
     branch_depth_offset: f64,
     epi_wx: f64,
     epi_wy: f64,
@@ -1452,10 +1501,14 @@ fn grow_stream(
     let mut dir_y = initial_angle.sin();
 
     loop {
-        let surface_elev = evaluate_surface(peaks, ridgelines, wx, wy);
+        let surface_elev = evaluate_surface(peaks, ridgelines, cirques, wx, wy);
+        let base_level = glacial::base_level_at(cirques, wx, wy);
 
-        // Termination: reached sea level
-        if surface_elev <= 0.0 { break; }
+        // Termination: ran into standing water — a tarn, or the sea. The rim a
+        // stream crosses on its way out of a basin impounds it below without
+        // ending it, so termination reads the pool while the floor clamp below
+        // reads the rim.
+        if surface_elev <= glacial::pool_level_at(cirques, wx, wy) { break; }
 
         // Termination: no longer descending
         if steps.len() >= 2 {
@@ -1473,12 +1526,20 @@ fn grow_stream(
         // Slope-based depth accumulation. One raw-gradient field evaluation
         // serves both the magnitude here and the step direction below, so a
         // step costs one peak+ridgeline scan rather than two.
+
+        // Direction follows the tectonic gradient, not the glaciated surface: a
+        // bowl's steepest descent points down its own headwall, which would
+        // pull every passing stream into it. Streams that do reach a bowl stop
+        // on its base level above instead.
         let (raw_gx, raw_gy) = blended_gradient_raw(peaks, ridgelines, wx, wy);
         let raw_grad_len = (raw_gx * raw_gx + raw_gy * raw_gy).sqrt();
         let grad_mag = raw_grad_len;
-        cum_depth += depth_increment(grad_mag, 0);
+        cum_depth += depth_increment(grad_mag, initial_merges, wx, wy);
 
-        // Termination: depth stalled (terrain too flat to carve)
+        // Termination: depth stalled (terrain too flat to carve). Measured
+        // against the surface, not against the base level: a stream approaching
+        // its base level is cutting its deepest, and stopping it there ends the
+        // channel in a wall instead of letting it run out to the shoreline.
         if steps.len() >= STALL_WINDOW {
             let recent_growth = cum_depth - steps[steps.len() - STALL_WINDOW].cum_depth;
             if recent_growth < MIN_DEPTH_GROWTH {
@@ -1486,13 +1547,13 @@ fn grow_stream(
             }
         }
 
-        let width = stream_width(0, distance);
-        let floor_elev = (surface_elev - cum_depth + branch_depth_offset).max(0.0);
-        let wall_exponent = stream_wall_exponent(0);
+        let width = stream_width(initial_merges, distance);
+        let floor_elev = (surface_elev - cum_depth + branch_depth_offset).max(base_level);
+        let wall_exponent = stream_wall_exponent(initial_merges);
 
         steps.push(StreamStep {
-            wx, wy, surface_elev, floor_elev, width, cum_dist: distance,
-            cum_depth, grad_mag, merge_count: 0, wall_exponent,
+            wx, wy, surface_elev, floor_elev, base_level, width, cum_dist: distance,
+            cum_depth, grad_mag, merge_count: initial_merges, wall_exponent,
         });
 
         // Blended gradient: smooth across cone boundaries (normalized form
@@ -1547,6 +1608,9 @@ fn grow_stream(
         distance += STREAM_STEP_SIZE;
     }
 
+    // Stream-level merge_count counts tributaries this stream absorbs, which is
+    // none yet. `initial_merges` is inherited catchment, not an absorbed
+    // tributary, so it lives on the steps and does not seed the accumulator.
     Stream { steps, merge_count: 0, merged_into: None }
 }
 
@@ -1640,10 +1704,11 @@ fn propagate_merge_counts(streams: &mut [Stream]) {
                 if j == 0 {
                     step.cum_depth = running_depth;
                 } else {
-                    running_depth += depth_increment(step.grad_mag, step.merge_count);
+                    running_depth +=
+                        depth_increment(step.grad_mag, step.merge_count, step.wx, step.wy);
                     step.cum_depth = running_depth;
                 }
-                step.floor_elev = (step.surface_elev - step.cum_depth).max(0.0);
+                step.floor_elev = (step.surface_elev - step.cum_depth).max(step.base_level);
                 step.wall_exponent = stream_wall_exponent(step.merge_count);
             }
         }
@@ -1654,6 +1719,7 @@ fn generate_ridge_paths(
     streams: &[Stream],
     peaks: &[Peak],
     ridgelines: &[Ridgeline],
+    cirques: &[Cirque],
     spine_id: u64,
     seed: u64,
 ) -> Vec<Vec<PathStep>> {
@@ -1691,11 +1757,12 @@ fn generate_ridge_paths(
                 let t = k as f64 / n as f64;
                 let px = si.wx + t * (sj.wx - si.wx);
                 let py = si.wy + t * (sj.wy - si.wy);
-                let surface = evaluate_surface(peaks, ridgelines, px, py);
+                let surface = evaluate_surface(peaks, ridgelines, cirques, px, py);
                 points.push(PathStep {
                     wx: px,
                     wy: py,
-                    floor_elev: (surface - PATH_CARVE_DEPTH).max(0.0),
+                    floor_elev: (surface - PATH_CARVE_DEPTH)
+                        .max(glacial::base_level_at(cirques, px, py)),
                 });
             }
             paths.push(points);
@@ -1748,6 +1815,7 @@ fn mirror_step(endpoint: &StreamStep, neighbor: &StreamStep) -> StreamStep {
         wy: 2.0 * endpoint.wy - neighbor.wy,
         surface_elev: endpoint.surface_elev,
         floor_elev: endpoint.floor_elev,
+        base_level: endpoint.base_level,
         width: endpoint.width,
         cum_dist: endpoint.cum_dist,
         cum_depth: endpoint.cum_depth,
@@ -1980,7 +2048,15 @@ fn interpolate_spline_step(steps: &[StreamStep], seg_idx: usize, seg_t: f64) -> 
     )
 }
 
-fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, epi_wy: f64, spine_id: u64, seed: u64) -> RavineNetwork {
+fn build_ravine_network(
+    peaks: &[Peak],
+    ridgelines: &[Ridgeline],
+    cirques: &[Cirque],
+    epi_wx: f64,
+    epi_wy: f64,
+    spine_id: u64,
+    seed: u64,
+) -> RavineNetwork {
     if peaks.is_empty() {
         return RavineNetwork::empty();
     }
@@ -1991,6 +2067,8 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
         start_wx: f64,
         start_wy: f64,
         angle: f64,
+        /// Catchment the stream carries at its head, as a merge count.
+        initial_merges: u32,
         branch_offset: f64,
         hash_a: u64,
         hash_b: u64,
@@ -1999,6 +2077,27 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
 
     let mut origins = Vec::new();
     let mut hanging_count = 0usize;
+
+    // Cirque outlets. A stream starts where a basin overflows, so above the
+    // glaciation line every origin is an outlet and nothing is seeded on the
+    // relief itself. It starts on the sill rather than clear of it, so the
+    // channel is continuous with the notch it drains; the rim's base level
+    // holds those first steps at spill altitude, which is what stops an outflow
+    // cutting its own sill down and draining the tarn behind it.
+    for (ci, cirque) in cirques.iter().enumerate() {
+        if cirque.outflow == Outflow::Impounded { continue; }
+        let (start_wx, start_wy) = (cirque.outlet_wx, cirque.outlet_wy);
+        let start_elevation = evaluate_surface(peaks, ridgelines, cirques, start_wx, start_wy);
+        origins.push(StreamOrigin {
+            start_wx, start_wy,
+            angle: cirque.outlet_bearing,
+            initial_merges: CIRQUE_OUTFLOW_MERGES,
+            branch_offset: 0.0,
+            hash_a: ci as u64 | CIRQUE_ORIGIN_TAG,
+            hash_b: 0,
+            start_elevation,
+        });
+    }
 
     // Peak streams
     for (pi, peak) in peaks.iter().enumerate() {
@@ -2024,15 +2123,18 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
                 0.0
             };
 
-            let start_elevation = evaluate_surface(peaks, ridgelines, start_wx, start_wy);
+            let start_elevation =
+                evaluate_surface(peaks, ridgelines, cirques, start_wx, start_wy);
+            if start_elevation >= GLACIATION_LINE { continue; }
             origins.push(StreamOrigin {
-                start_wx, start_wy, angle: base_angle, branch_offset,
+                start_wx, start_wy, angle: base_angle, initial_merges: 0, branch_offset,
                 hash_a: pi as u64, hash_b: si as u64, start_elevation,
             });
         }
     }
 
-    // Ridge streams — distributed along ridgelines with jitter
+    // Ridge streams — distributed along ridgelines with jitter. Retained below
+    // the glaciation line, where no basin can form upstream to seed drainage.
     for (ri, ridge) in ridgelines.iter().enumerate() {
         let rdx = ridge.bx - ridge.ax;
         let rdy = ridge.by - ridge.ay;
@@ -2059,9 +2161,11 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
                 let angle = dy.atan2(dx);
                 let start_wx = ox + dx * STREAM_ORIGIN_OFFSET;
                 let start_wy = oy + dy * STREAM_ORIGIN_OFFSET;
-                let start_elevation = evaluate_surface(peaks, ridgelines, start_wx, start_wy);
+                let start_elevation =
+                    evaluate_surface(peaks, ridgelines, cirques, start_wx, start_wy);
+                if start_elevation >= GLACIATION_LINE { continue; }
                 origins.push(StreamOrigin {
-                    start_wx, start_wy, angle, branch_offset: 0.0,
+                    start_wx, start_wy, angle, initial_merges: 0, branch_offset: 0.0,
                     hash_a: ri as u64 | 0x8000_0000, hash_b: (i as u64) << 1 | side,
                     start_elevation,
                 });
@@ -2081,7 +2185,7 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
     for origin in &origins {
         let mut stream = grow_stream(
             origin.start_wx, origin.start_wy, origin.angle,
-            peaks, ridgelines, origin.branch_offset,
+            peaks, ridgelines, cirques, origin.initial_merges, origin.branch_offset,
             epi_wx, epi_wy,
             origin.hash_a, origin.hash_b, spine_id, seed,
         );
@@ -2114,18 +2218,20 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
             // Add a final step onto the existing stream's centerline
             let last = stream.steps.last().unwrap();
             let snap_dist = ((twx - last.wx).powi(2) + (twy - last.wy).powi(2)).sqrt();
-            let surface = evaluate_surface(peaks, ridgelines, twx, twy);
+            let surface = evaluate_surface(peaks, ridgelines, cirques, twx, twy);
             let width = last.width;
             let cum_dist = last.cum_dist + snap_dist;
             let grad_mag = blended_gradient_magnitude(peaks, ridgelines, twx, twy);
-            let cum_depth = last.cum_depth + depth_increment(grad_mag, 0);
             let merge_count = last.merge_count;
+            let cum_depth = last.cum_depth + depth_increment(grad_mag, merge_count, twx, twy);
             let wall_exponent = last.wall_exponent;
-            let floor = (surface - cum_depth + origin.branch_offset).max(0.0);
+            let base_level = glacial::base_level_at(cirques, twx, twy);
+            let floor = (surface - cum_depth + origin.branch_offset).max(base_level);
             stream.steps.push(StreamStep {
                 wx: twx, wy: twy,
                 surface_elev: surface,
                 floor_elev: floor,
+                base_level,
                 width, cum_dist, cum_depth, grad_mag, merge_count, wall_exponent,
             });
             stream.merged_into = Some(target_idx);
@@ -2141,7 +2247,7 @@ fn build_ravine_network(peaks: &[Peak], ridgelines: &[Ridgeline], epi_wx: f64, e
 
     // ── Phase 5: Build carve order and spatial index ─────────────────────────
 
-    let paths = generate_ridge_paths(&streams, peaks, ridgelines, spine_id, seed);
+    let paths = generate_ridge_paths(&streams, peaks, ridgelines, cirques, spine_id, seed);
     let stream_grid = build_stream_grid(&streams);
 
     RavineNetwork { streams, paths, stream_grid, hanging_count }
@@ -2199,8 +2305,17 @@ pub(crate) fn grow_spine(
     // Build ridgeline connections between peaks.
     let ridgelines = build_ridgelines(&peaks, spine_id, seed);
 
-    // Build ravine network from peaks and ridgelines.
-    let ravine_network = build_ravine_network(&peaks, &ridgelines, epi_wx, epi_wy, spine_id, seed);
+    // Erosional stack over the tectonic relief: ice first, then water. Bowls
+    // are fitted to the surface the query path produces, noise included, so the
+    // rim altitude their floors are set from is the rim players stand on.
+    let cirques = {
+        let noised = |wx: f64, wy: f64| {
+            apply_ridge_noise(evaluate_surface(&peaks, &ridgelines, &[], wx, wy), wx, wy, spine_id)
+        };
+        glacial::site_cirques(&peaks, spine_id, seed, &noised)
+    };
+    let ravine_network =
+        build_ravine_network(&peaks, &ridgelines, &cirques, epi_wx, epi_wy, spine_id, seed);
 
     // Write plate tags.
     for peak in &peaks {
@@ -2221,7 +2336,10 @@ pub(crate) fn grow_spine(
         }
     }
 
-    SpineInstance { id: spine_id, peaks, ridgelines, ravine_network, bounding_center, bounding_radius }
+    SpineInstance {
+        id: spine_id, peaks, ridgelines, cirques, ravine_network,
+        bounding_center, bounding_radius,
+    }
 }
 
 // ── Composite elevation ──────────────────────────────────────────────────────
@@ -2720,6 +2838,7 @@ mod tests {
             id: 42,
             peaks: vec![test_peak(peak_height, falloff_radius)],
             ridgelines: Vec::new(),
+            cirques: Vec::new(),
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: falloff_radius + RIDGE_HALF_WIDTH + 500.0,
@@ -2778,6 +2897,7 @@ mod tests {
             id: 42,
             peaks: Vec::new(),
             ridgelines: Vec::new(),
+            cirques: Vec::new(),
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: 1000.0,
@@ -2791,6 +2911,7 @@ mod tests {
             id,
             peaks: vec![Peak { wx: 0.0, wy: 0.0, height, falloff_radius: 3000.0 }],
             ridgelines: Vec::new(),
+            cirques: Vec::new(),
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: 3000.0 + RIDGE_HALF_WIDTH + 500.0,
@@ -3103,7 +3224,7 @@ mod tests {
     #[test]
     fn stream_steps_flow_downhill() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], &[], 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345);
         assert!(stream.steps.len() >= 2, "stream should have multiple steps");
         let first = stream.steps.first().unwrap().surface_elev;
         let last = stream.steps.last().unwrap().surface_elev;
@@ -3113,7 +3234,7 @@ mod tests {
     #[test]
     fn carved_elevation_leq_peak_elevation() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let network = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
         for y in (-30..=30).map(|i| i as f64 * 100.0) {
             for x in (-30..=30).map(|i| i as f64 * 100.0) {
                 let surface = evaluate_all_peaks(&peaks, x, y);
@@ -3132,8 +3253,8 @@ mod tests {
         let w1 = stream_width(0, 150.0);
         let mut s = Stream {
             steps: vec![
-                StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 470.0, width: w0, cum_dist: 0.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
-                StreamStep { wx: 150.0, wy: 0.0, surface_elev: 450.0, floor_elev: 420.0, width: w1, cum_dist: 150.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+                StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 470.0, base_level: 0.0, width: w0, cum_dist: 0.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+                StreamStep { wx: 150.0, wy: 0.0, surface_elev: 450.0, floor_elev: 420.0, base_level: 0.0, width: w1, cum_dist: 150.0, cum_depth: 30.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
             ],
             merge_count: 0,
             merged_into: None,
@@ -3150,8 +3271,8 @@ mod tests {
     #[test]
     fn hanging_valley_floor_above_parent() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let normal = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
-        let hanging = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 200.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let normal = grow_stream(100.0, 0.0, 0.0, &peaks, &[], &[], 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let hanging = grow_stream(100.0, 0.0, 0.0, &peaks, &[], &[], 0, 200.0, 0.0, 0.0, 0, 0, 42, 12345);
         assert!(!normal.steps.is_empty());
         assert!(!hanging.steps.is_empty());
         assert!(
@@ -3165,8 +3286,8 @@ mod tests {
     #[test]
     fn ravine_network_deterministic() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let a = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
-        let b = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let a = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
+        let b = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
         assert_eq!(a.streams.len(), b.streams.len());
         for (sa, sb) in a.streams.iter().zip(b.streams.iter()) {
             assert_eq!(sa.steps.len(), sb.steps.len());
@@ -3190,8 +3311,8 @@ mod tests {
     fn v_profile_centerline_equals_floor() {
         // A simple two-step stream along the x-axis.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, base_level: 0.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, base_level: 0.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3204,8 +3325,8 @@ mod tests {
     fn v_profile_edge_equals_surface() {
         // Stream along x-axis, width=100 → half_width=50.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 480.0, base_level: 0.0, width: 100.0, cum_dist: 0.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 200.0, wy: 0.0, surface_elev: 490.0, floor_elev: 470.0, base_level: 0.0, width: 100.0, cum_dist: 200.0, cum_depth: 20.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3218,8 +3339,8 @@ mod tests {
     #[test]
     fn v_profile_monotonically_increasing_from_center() {
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 0.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
-            StreamStep { wx: 300.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, width: 200.0, cum_dist: 300.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, base_level: 0.0, width: 200.0, cum_dist: 0.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
+            StreamStep { wx: 300.0, wy: 0.0, surface_elev: 500.0, floor_elev: 450.0, base_level: 0.0, width: 200.0, cum_dist: 300.0, cum_depth: 50.0, grad_mag: 2.0, merge_count: 0, wall_exponent: 1.0 },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3264,8 +3385,8 @@ mod tests {
     fn v_profile_origin_step_barely_carves() {
         // At origin: width=1, depth=0 → carved ≈ surface everywhere.
         let steps = vec![
-            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 500.0, width: STREAM_START_WIDTH, cum_dist: 0.0, cum_depth: 0.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
-            StreamStep { wx: 150.0, wy: 0.0, surface_elev: 498.0, floor_elev: 496.5, width: stream_width(0, 150.0), cum_dist: 150.0, cum_depth: 1.5, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+            StreamStep { wx: 0.0, wy: 0.0, surface_elev: 500.0, floor_elev: 500.0, base_level: 0.0, width: STREAM_START_WIDTH, cum_dist: 0.0, cum_depth: 0.0, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
+            StreamStep { wx: 150.0, wy: 0.0, surface_elev: 498.0, floor_elev: 496.5, base_level: 0.0, width: stream_width(0, 150.0), cum_dist: 150.0, cum_depth: 1.5, grad_mag: 2.0, merge_count: 0, wall_exponent: stream_wall_exponent(0) },
         ];
         let stream = Stream { steps, merge_count: 0, merged_into: None };
         let network = test_network(vec![stream]);
@@ -3321,7 +3442,7 @@ mod tests {
             "clmpd");
 
         for i in 0..30 {
-            let surface_elev = evaluate_surface(&peaks, &ridgelines, wx, wy);
+            let surface_elev = evaluate_surface(&peaks, &ridgelines, &[], wx, wy);
             if surface_elev <= 0.0 { println!("  step {i}: surface_elev <= 0, stopping"); break; }
 
             let (grad_dx, grad_dy) = blended_gradient(&peaks, &ridgelines, wx, wy);
@@ -3431,7 +3552,7 @@ mod tests {
             "clmpd");
 
         for i in 0..40 {
-            let surface_elev = evaluate_surface(&peaks, &ridgelines, wx, wy);
+            let surface_elev = evaluate_surface(&peaks, &ridgelines, &[], wx, wy);
             if surface_elev <= 0.0 { println!("  step {i}: surface_elev <= 0, stopping"); break; }
 
             let (grad_dx, grad_dy) = blended_gradient(&peaks, &ridgelines, wx, wy);
@@ -3496,6 +3617,7 @@ mod tests {
             wx, wy,
             surface_elev: 500.0,
             floor_elev: 480.0,
+            base_level: 0.0,
             width: 20.0,
             cum_dist: 0.0,
             cum_depth: 20.0,
@@ -3531,6 +3653,7 @@ mod tests {
             wx, wy,
             surface_elev: 500.0,
             floor_elev: 480.0,
+            base_level: 0.0,
             width: 20.0,
             cum_dist: 0.0,
             cum_depth: 20.0,
@@ -3570,7 +3693,7 @@ mod tests {
         // Build a real ravine network and verify the grid lookup returns the
         // same streams that a full linear scan would find for sample points.
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let network = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
         assert!(network.stream_grid.cell_size() > 0.0, "grid should be built");
 
         let mut grid_misses = 0;
@@ -3750,7 +3873,7 @@ mod tests {
     fn slope_based_depth_grows_on_steep_terrain() {
         // On steep slope (grad_mag >= TAPER_SLOPE_REFERENCE), depth should grow at full rate.
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], &[], 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345);
         assert!(stream.steps.len() >= 3, "stream should have multiple steps");
         // cum_depth should be monotonically non-decreasing
         for pair in stream.steps.windows(2) {
@@ -3768,7 +3891,7 @@ mod tests {
         // A flat peak (very large falloff, low height) should produce near-zero gradient.
         let flat_peak = Peak { wx: 0.0, wy: 0.0, height: 10.0, falloff_radius: 50000.0 };
         let grad_mag = blended_gradient_magnitude(&[flat_peak], &[], 100.0, 0.0);
-        let inc = depth_increment(grad_mag, 0);
+        let inc = depth_increment(grad_mag, 0, 0.0, 0.0);
         // Gradient should be tiny → depth increment should be near zero
         assert!(inc < 0.01, "depth increment on flat terrain should be near zero, got {inc:.6}");
     }
@@ -3777,18 +3900,447 @@ mod tests {
     fn merge_boost_increases_depth_rate() {
         // Depth increment with merges should be > without
         let grad_mag = 2.0; // full rate
-        let inc_no_merge = depth_increment(grad_mag, 0);
-        let inc_3_merges = depth_increment(grad_mag, 3);
+        let inc_no_merge = depth_increment(grad_mag, 0, 0.0, 0.0);
+        let inc_3_merges = depth_increment(grad_mag, 3, 0.0, 0.0);
         let expected_ratio = 1.0 + 3.0 * DEPTH_MERGE_BOOST; // 1.9
         let actual_ratio = inc_3_merges / inc_no_merge;
         assert!((actual_ratio - expected_ratio).abs() < 1e-6,
             "3-merge boost should be {expected_ratio:.1}×, got {actual_ratio:.4}×");
     }
 
+    // ── Glacial integration ─────────────────────────────────────────────────
+
+    /// A cone tall enough to glaciate, with the bowls the layer sites on it.
+    fn glaciated_peak() -> (Vec<Peak>, Vec<Cirque>) {
+        let peaks = vec![test_peak(RIDGE_PEAK_ELEVATION, 3000.0)];
+        let cirques = {
+            let surface = |wx: f64, wy: f64| {
+                apply_ridge_noise(evaluate_surface(&peaks, &[], &[], wx, wy), wx, wy, 42)
+            };
+            glacial::site_cirques(&peaks, 42, 12345, &surface)
+        };
+        assert!(!cirques.is_empty(), "a full-height cone should host bowls");
+        (peaks, cirques)
+    }
+
+    /// No channel may open a basin. A stream is carved across its whole width,
+    /// so one running past a bowl reaches inside without ever stepping there —
+    /// the elevation path holds the water layer to the impounding level rather
+    /// than trusting each step's own clamp.
+    #[test]
+    fn no_channel_cuts_a_rim_below_the_level_that_impounds_it() {
+        let (peaks, cirques) = glaciated_peak();
+        let ravine_network =
+            build_ravine_network(&peaks, &[], &cirques, 0.0, 0.0, 42, 12345);
+        assert!(!ravine_network.streams.is_empty(), "no streams to cut anything");
+
+        let inst = SpineInstance {
+            id: 42,
+            peaks,
+            ridgelines: Vec::new(),
+            cirques,
+            ravine_network,
+            bounding_center: (0.0, 0.0),
+            bounding_radius: 20_000.0,
+        };
+
+        for c in &inst.cirques {
+            for s in 0..360 {
+                let theta = std::f64::consts::TAU * s as f64 / 360.0;
+                // Inside the footprint: the impounding level holds over the
+                // open disc, so its boundary circle is not part of the claim.
+                let r = c.radius_at(theta) * 0.99;
+                let (wx, wy) = (c.cx + theta.cos() * r, c.cy + theta.sin() * r);
+                let Some(level) = c.base_level(wx, wy) else { continue };
+                let tectonic = apply_ridge_noise(
+                    evaluate_surface(&inst.peaks, &inst.ridgelines, &[], wx, wy),
+                    wx, wy, inst.id,
+                );
+                let ice = glacial::carve_all(&inst.cirques, wx, wy, tectonic);
+                let ground = inst.elevation_at(wx, wy);
+                assert!(
+                    ground >= level.min(ice) - 1e-6,
+                    "at {:.0}° the ground sits at {ground:.2}, below the {:.2} that \
+                     impounds the basin",
+                    theta.to_degrees(), level.min(ice)
+                );
+            }
+        }
+    }
+
+    /// Base levels are plural now: a stream stops at a cirque floor the same
+    /// way it stops at the sea, and never incises below the level it drains to.
+    #[test]
+    fn streams_stop_at_a_cirque_floor() {
+        let (peaks, cirques) = glaciated_peak();
+        let bowl = &cirques[0];
+
+        // Start upslope of the bowl, aimed at its centre.
+        let inward = (bowl.cy - 0.0).atan2(bowl.cx - 0.0) + std::f64::consts::PI;
+        let (sx, sy) = (
+            bowl.cx - inward.cos() * bowl.radius * 2.0,
+            bowl.cy - inward.sin() * bowl.radius * 2.0,
+        );
+        let angle = (bowl.cy - sy).atan2(bowl.cx - sx);
+        let stream = grow_stream(
+            sx, sy, angle, &peaks, &[], &cirques, 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345,
+        );
+
+        for step in &stream.steps {
+            assert!(
+                step.floor_elev >= step.base_level - 1e-9,
+                "stream cut to {:.2}, below its base level {:.2}",
+                step.floor_elev, step.base_level
+            );
+        }
+        if let Some(last) = stream.steps.last() {
+            assert!(
+                !bowl.floor_contains(last.wx, last.wy) || last.floor_elev >= bowl.floor - 1e-9,
+                "stream ran on past the floor it drains to"
+            );
+        }
+    }
+
+    /// Above the glaciation line drainage begins where a basin overflows, so
+    /// every origin up there is an outlet. Below it, ridgeline seeding stands.
+    #[test]
+    fn origins_above_the_snowline_are_cirque_outlets() {
+        let (peaks, cirques) = glaciated_peak();
+        let network = build_ravine_network(&peaks, &[], &cirques, 0.0, 0.0, 42, 12345);
+
+        let mut high_origins = 0;
+        for stream in &network.streams {
+            let origin = &stream.steps[0];
+            if origin.surface_elev < GLACIATION_LINE { continue; }
+            high_origins += 1;
+            let from_outlet = cirques.iter().any(|c| {
+                let (ox, oy) = (c.outlet_wx, c.outlet_wy);
+                (origin.wx - ox).hypot(origin.wy - oy) < STREAM_STEP_SIZE
+            });
+            assert!(
+                from_outlet,
+                "stream above the snowline starts at ({:.0}, {:.0}), not at an outlet",
+                origin.wx, origin.wy
+            );
+        }
+        assert!(high_origins > 0, "no streams started above the snowline to check");
+    }
+
+    /// A basin's outflow arrives with a catchment, so its head is already a
+    /// channel: wider, deeper-cutting and more open-walled than a rill seeded
+    /// on bare relief. Without this the first strides out of an outlet are
+    /// narrower than a tile and the ravine appears to start nowhere.
+    #[test]
+    fn a_basin_outflow_starts_as_an_established_channel() {
+        let (peaks, cirques) = glaciated_peak();
+        let bowl = &cirques[0];
+        let (hx, hy) = (bowl.outlet_wx, bowl.outlet_wy);
+
+        let rill = grow_stream(
+            hx, hy, bowl.outlet_bearing, &peaks, &[], &cirques,
+            0, 0.0, 0.0, 0.0, 0, 0, 42, 12345,
+        );
+        let outflow = grow_stream(
+            hx, hy, bowl.outlet_bearing, &peaks, &[], &cirques,
+            CIRQUE_OUTFLOW_MERGES, 0.0, 0.0, 0.0, 0, 0, 42, 12345,
+        );
+        assert!(!rill.steps.is_empty() && !outflow.steps.is_empty());
+
+        let (r0, o0) = (&rill.steps[0], &outflow.steps[0]);
+        assert!(
+            o0.width > r0.width,
+            "outflow head width {:.1} should exceed a rill's {:.1}", o0.width, r0.width
+        );
+        assert!(
+            o0.surface_elev - o0.floor_elev > r0.surface_elev - r0.floor_elev,
+            "outflow head should cut deeper than a rill"
+        );
+        assert!(
+            o0.wall_exponent > r0.wall_exponent,
+            "outflow head should have the more open wall of a matured stream"
+        );
+    }
+
+    /// A stream running out to the sea must reach it. Stalling it while relief
+    /// still surrounds the channel ends the cut in a wall, which reads as a
+    /// sharp-bottomed pit inland of the coast instead of a valley opening onto
+    /// it — the floor is at its base level exactly where the stall would fire.
+    #[test]
+    fn a_stream_reaching_the_sea_runs_out_to_it() {
+        // A low cone: the flank falls to sea level well inside the falloff
+        // radius, so the stream meets its base level with terrain still high
+        // around it.
+        let peaks = vec![test_peak(120.0, 3000.0)];
+        let stream = grow_stream(
+            200.0, 0.0, 0.0, &peaks, &[], &[], 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345,
+        );
+        let last = stream.steps.last().expect("stream should grow");
+        let surface_left = last.surface_elev - last.base_level;
+        assert!(
+            surface_left < last.surface_elev * 0.5 + 1.0,
+            "stream stopped {surface_left:.1} above its base level with the surface at \
+             {:.1} — it ended in a wall rather than running out",
+            last.surface_elev
+        );
+    }
+
+    /// The glacial layer has to reach the elevation path, and it has to cut:
+    /// a bowl centre stands no higher than its floor, and below the tectonic
+    /// surface it was bitten into. It can stand lower — a deeper bowl
+    /// overlapping this one wins the min-composite.
+    #[test]
+    fn the_glacial_layer_cuts_the_elevation_path() {
+        let (peaks, cirques) = glaciated_peak();
+        let bowl = cirques[0].clone();
+        let inst = SpineInstance {
+            id: 42,
+            peaks,
+            ridgelines: Vec::new(),
+            cirques,
+            ravine_network: RavineNetwork::empty(),
+            bounding_center: (0.0, 0.0),
+            bounding_radius: 3000.0 + RIDGE_HALF_WIDTH + 500.0,
+        };
+
+        let tectonic = apply_ridge_noise(
+            evaluate_surface(&inst.peaks, &[], &[], bowl.cx, bowl.cy),
+            bowl.cx, bowl.cy, inst.id,
+        );
+        let carved = inst.elevation_at(bowl.cx, bowl.cy);
+        assert!(
+            carved <= bowl.floor + 1e-6,
+            "bowl centre reads {carved:.2}, above its floor {:.2}", bowl.floor
+        );
+        assert!(
+            carved < tectonic,
+            "bowl centre reads {carved:.2}, no lower than the tectonic surface {tectonic:.2}"
+        );
+    }
+
+    /// How streams end. A stream that stops with relief still standing around
+    /// its channel leaves a wall across the cut — a sharp-bottomed pit rather
+    /// than a valley opening onto whatever it drains to.
+    ///
+    /// Run: cargo test -p world --release --lib stream_ending_diagnostic -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn stream_ending_diagnostic() {
+        let seed = 0x9E3779B97F4A7C15u64;
+        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let instances = generate_spines(&mut plates, &cache, seed);
+
+        // Relief left standing above the base level where each stream stops.
+        let mut left_low: Vec<f64> = Vec::new();   // ends near its base level
+        let mut left_all: Vec<f64> = Vec::new();
+        let mut merged = 0usize;
+        let mut walled = 0usize;
+
+        for inst in &instances {
+            for s in &inst.ravine_network.streams {
+                let Some(last) = s.steps.last() else { continue };
+                if s.merged_into.is_some() { merged += 1; continue; }
+                let left = last.surface_elev - last.base_level;
+                left_all.push(left);
+                if last.surface_elev < 200.0 { left_low.push(left); }
+                // A cut this deep still open at the last step ends in a wall.
+                if last.surface_elev - last.floor_elev > 20.0 { walled += 1; }
+            }
+        }
+
+        let pct = |v: &mut Vec<f64>, p: f64| -> f64 {
+            if v.is_empty() { return 0.0; }
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[((v.len() - 1) as f64 * p).round() as usize]
+        };
+
+        println!("\n=== stream endings ===\n");
+        println!("unmerged endings   {}", left_all.len());
+        println!("merged into another {merged}");
+        println!(
+            "relief left above base level at the last step:\n  \
+             all      p50 {:.1} / p90 {:.1} z\n  \
+             low-lying p50 {:.1} / p90 {:.1} z   (n={})",
+            pct(&mut left_all, 0.5), pct(&mut left_all, 0.9),
+            pct(&mut left_low, 0.5), pct(&mut left_low, 0.9), left_low.len(),
+        );
+        println!(
+            "ending with a cut still >20 z open: {walled} ({:.1}%)",
+            100.0 * walled as f64 / left_all.len().max(1) as f64
+        );
+    }
+
+    /// What the outflow of a basin actually carves. Reports whether each bowl
+    /// got a stream at all, how that stream's cut develops over its first
+    /// steps, and how deep a channel a player would see crossing it.
+    ///
+    /// Run: cargo test -p world --release --lib outlet_carve_diagnostic -- --ignored --nocapture
+
+    /// Where a rim gets opened. Walks each bowl's rim on the surface each layer
+    /// hands to the next, so a breach is attributed to the layer that made it.
+    #[test]
+    #[ignore]
+    fn rim_breach_diagnostic() {
+        let seed = 0x9E3779B97F4A7C15u64;
+        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let instances = generate_spines(&mut plates, &cache, seed);
+
+        let (mut bowls, mut tectonic_low, mut glacial_low, mut water_low, mut held) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut worst_tect = 0.0f64;
+
+        for inst in &instances {
+            for c in &inst.cirques {
+                bowls += 1;
+                let (mut lo_t, mut lo_g, mut lo_w) = (f64::MAX, f64::MAX, f64::MAX);
+                for s in 0..1440 {
+                    let theta = std::f64::consts::TAU * s as f64 / 1440.0;
+                    // Just inside the rim: the impounding level holds over the
+                    // open footprint, so its boundary circle is the one place
+                    // the clamp does not apply.
+                    let r = c.radius_at(theta) * 0.995;
+                    let (wx, wy) = (c.cx + theta.cos() * r, c.cy + theta.sin() * r);
+                    let t = apply_ridge_noise(
+                        evaluate_surface(&inst.peaks, &inst.ridgelines, &[], wx, wy),
+                        wx, wy, inst.id,
+                    );
+                    let g = glacial::carve_all(&inst.cirques, wx, wy, t);
+                    let w = inst.elevation_at(wx, wy);
+                    lo_t = lo_t.min(t);
+                    lo_g = lo_g.min(g);
+                    lo_w = lo_w.min(w);
+                }
+                if lo_t <= c.floor {
+                    tectonic_low += 1;
+                    worst_tect = worst_tect.min(lo_t - c.floor);
+                } else if lo_g <= c.floor {
+                    glacial_low += 1;
+                } else if lo_w <= c.floor {
+                    water_low += 1;
+                } else {
+                    held += 1;
+                }
+            }
+        }
+
+        println!("\n=== rim breach attribution ===\n");
+        println!("bowls                 {bowls}");
+        println!("  held                {held} ({:.1}%)", 100.0 * held as f64 / bowls as f64);
+        println!(
+            "  open before ice     {tectonic_low} ({:.1}%)  worst {worst_tect:.1}",
+            100.0 * tectonic_low as f64 / bowls as f64
+        );
+        println!(
+            "  opened by ice       {glacial_low} ({:.1}%)",
+            100.0 * glacial_low as f64 / bowls as f64
+        );
+        println!(
+            "  opened by water     {water_low} ({:.1}%)",
+            100.0 * water_low as f64 / bowls as f64
+        );
+    }
+    #[test]
+    #[ignore]
+    fn outlet_carve_diagnostic() {
+        let seed = 0x9E3779B97F4A7C15u64;
+        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let instances = generate_spines(&mut plates, &cache, seed);
+
+        let mut bowls = 0usize;
+        let mut without_stream = 0usize;
+        let mut step_counts: Vec<usize> = Vec::new();
+        // Cut depth (surface - floor) at the head and a few steps down.
+        let mut cut_at: [Vec<f64>; 4] = Default::default();
+        let mut width_at: [Vec<f64>; 4] = Default::default();
+        let mut channel_depth: Vec<f64> = Vec::new();
+
+        for inst in &instances {
+            for c in &inst.cirques {
+                bowls += 1;
+                let (hx, hy) = (c.outlet_wx, c.outlet_wy);
+
+                // The stream this bowl seeded, if it survived generation.
+                let found = inst.ravine_network.streams.iter()
+                    .filter(|s| !s.steps.is_empty())
+                    .min_by(|a, b| {
+                        let da = (a.steps[0].wx - hx).hypot(a.steps[0].wy - hy);
+                        let db = (b.steps[0].wx - hx).hypot(b.steps[0].wy - hy);
+                        da.partial_cmp(&db).unwrap()
+                    })
+                    .filter(|s| (s.steps[0].wx - hx).hypot(s.steps[0].wy - hy) < STREAM_STEP_SIZE);
+
+                let Some(stream) = found else { without_stream += 1; continue };
+                step_counts.push(stream.steps.len());
+
+                for (i, idx) in [0usize, 1, 3, 5].into_iter().enumerate() {
+                    if let Some(step) = stream.steps.get(idx) {
+                        cut_at[i].push(step.surface_elev - step.floor_elev);
+                        width_at[i].push(step.width);
+                    }
+                }
+
+                // Cross the stream a few steps below the outlet and measure the
+                // channel against the surface the water layer cut into: the
+                // glacial surface, noise included.
+                if let Some(step) = stream.steps.get(3) {
+                    let prev = &stream.steps[2];
+                    let (tx, ty) = (step.wx - prev.wx, step.wy - prev.wy);
+                    let len = tx.hypot(ty).max(1e-9);
+                    let (px, py) = (-ty / len, tx / len);
+                    let mut deepest = 0.0f64;
+                    for k in -20..=20 {
+                        let d = k as f64 * (step.width / 10.0).max(2.0);
+                        let (wx, wy) = (step.wx + px * d, step.wy + py * d);
+                        let tectonic = apply_ridge_noise(
+                            evaluate_all_peaks(&inst.peaks, wx, wy)
+                                .max(inst.evaluate_ridgelines(wx, wy)),
+                            wx, wy, inst.id,
+                        );
+                        let glacial = glacial::carve_all(&inst.cirques, wx, wy, tectonic);
+                        let full = inst.elevation_at(wx, wy);
+                        deepest = deepest.max(glacial - full);
+                    }
+                    channel_depth.push(deepest);
+                }
+            }
+        }
+
+        let pct = |v: &mut Vec<f64>, p: f64| -> f64 {
+            if v.is_empty() { return 0.0; }
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[((v.len() - 1) as f64 * p).round() as usize]
+        };
+
+        println!("\n=== outlet carve ===\n");
+        println!("bowls                 {bowls}");
+        println!(
+            "  with no stream      {without_stream} ({:.1}%)",
+            100.0 * without_stream as f64 / bowls.max(1) as f64
+        );
+        step_counts.sort_unstable();
+        println!(
+            "  stream steps        min {} / med {} / max {}",
+            step_counts.first().copied().unwrap_or(0),
+            step_counts.get(step_counts.len() / 2).copied().unwrap_or(0),
+            step_counts.last().copied().unwrap_or(0),
+        );
+        for (i, idx) in [0usize, 1, 3, 5].into_iter().enumerate() {
+            println!(
+                "  step {idx}: cut med {:.1} z   width med {:.1} WU   (n={})",
+                pct(&mut cut_at[i], 0.5), pct(&mut width_at[i], 0.5), cut_at[i].len()
+            );
+        }
+        println!(
+            "\nchannel below the glacial surface, 3 steps down the outflow:\n  \
+             p10 {:.1} / med {:.1} / p90 {:.1} z   (n={})",
+            pct(&mut channel_depth, 0.1), pct(&mut channel_depth, 0.5),
+            pct(&mut channel_depth, 0.9), channel_depth.len()
+        );
+    }
+
     #[test]
     fn stream_terminates_before_spine_max_radius() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], 0.0, 0.0, 0.0, 0, 0, 42, 12345);
+        let stream = grow_stream(100.0, 0.0, 0.0, &peaks, &[], &[], 0, 0.0, 0.0, 0.0, 0, 0, 42, 12345);
         if let Some(last) = stream.steps.last() {
             let dist = (last.wx * last.wx + last.wy * last.wy).sqrt();
             assert!(dist < SPINE_MAX_STREAM_RADIUS,
@@ -3800,7 +4352,7 @@ mod tests {
     #[test]
     fn cum_depth_monotonically_nondecreasing() {
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let network = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
         for (si, stream) in network.streams.iter().enumerate() {
             for pair in stream.steps.windows(2) {
                 assert!(pair[1].cum_depth >= pair[0].cum_depth - 1e-10,
@@ -3815,7 +4367,7 @@ mod tests {
         // Verify the grid-accelerated carve produces identical results to
         // what the old linear scan would produce.
         let peaks = vec![test_peak(1000.0, 3000.0)];
-        let network = build_ravine_network(&peaks, &[], 0.0, 0.0, 42, 12345);
+        let network = build_ravine_network(&peaks, &[], &[], 0.0, 0.0, 42, 12345);
 
         for y in (-30..=30).map(|i| i as f64 * 100.0) {
             for x in (-30..=30).map(|i| i as f64 * 100.0) {
