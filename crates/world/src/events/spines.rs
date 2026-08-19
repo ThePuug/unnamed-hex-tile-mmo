@@ -11,6 +11,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dashmap::DashMap;
+
 use common::{HexLattice, PlateTag};
 
 use crate::hex_to_world;
@@ -25,7 +27,7 @@ use super::{Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell radius in tiles = SPINE_INFLUENCE. A cell contains the full influence
 /// extent of any epicenter within it. Query searches cell + 1 neighbor.
-const SPINE_CELL_SCALE: u32 = SPINE_INFLUENCE as u32;
+pub const SPINE_CELL_SCALE: u32 = SPINE_INFLUENCE as u32;
 
 /// Minimum hex distance between spine epicenters.
 /// SPINE_EXCLUSION_DIST (10,000 world units) ≈ 10,000 hex tiles (1 tile ≈ 1 world unit).
@@ -36,7 +38,9 @@ const SPINE_EXCLUSION_TILES: u32 = 10_000;
 /// Index of generated spine instances, keyed by framework cell ID.
 /// Populated by SpineEvent::deform, read by SpineEvent::query.
 pub struct SpineInstanceIndex {
-    pub cells: HashMap<CellId, Vec<SpineInstance>>,
+    /// Instances are `Arc`d so a reader can take the set it needs and drop the
+    /// index lock, instead of holding it for the length of a query.
+    pub cells: HashMap<CellId, Vec<Arc<SpineInstance>>>,
 }
 
 impl Default for SpineInstanceIndex {
@@ -44,10 +48,10 @@ impl Default for SpineInstanceIndex {
 }
 
 impl SpineInstanceIndex {
-    pub fn instances_in(&self, cell_ids: &[CellId]) -> Vec<&SpineInstance> {
+    pub fn instances_in(&self, cell_ids: &[CellId]) -> Vec<Arc<SpineInstance>> {
         cell_ids.iter()
             .filter_map(|id| self.cells.get(id))
-            .flat_map(|v| v.iter())
+            .flat_map(|v| v.iter().cloned())
             .collect()
     }
 }
@@ -79,6 +83,15 @@ pub struct SpineEvent {
     seed: u64,
     /// Cell lattice at SPINE_CELL_SCALE — hoisted out of the per-tile query.
     lattice: HexLattice,
+    /// The instances reachable from a cell, resolved once for the cell.
+    ///
+    /// Every tile in a cell shares one cell-plus-ring neighbourhood, and the
+    /// framework deforms that whole neighbourhood before any tile in the cell
+    /// is queried — so the set is complete on first use and, with no eviction,
+    /// never changes. Re-deriving it per tile costs an index read lock and two
+    /// allocations on the hot path, which is the same reason the deform side
+    /// gates its ring walk on `neighbourhood_ready`.
+    reach: DashMap<CellId, Arc<Vec<Arc<SpineInstance>>>>,
 }
 
 impl SpineEvent {
@@ -87,7 +100,25 @@ impl SpineEvent {
     }
 
     pub fn with_cache(plate_cache: Arc<PlateCache>, seed: u64) -> Self {
-        Self { plate_cache, seed, lattice: HexLattice::new(SPINE_CELL_SCALE) }
+        Self {
+            plate_cache,
+            seed,
+            lattice: HexLattice::new(SPINE_CELL_SCALE),
+            reach: DashMap::new(),
+        }
+    }
+
+    /// Instances any tile in `cell_id` can be reached by. Takes the index lock
+    /// only on the first tile of a cell.
+    fn reachable(&self, cell_id: CellId, indexes: &IndexRegistry) -> Arc<Vec<Arc<SpineInstance>>> {
+        if let Some(v) = self.reach.get(&cell_id) { return v.clone(); }
+        let cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
+        let found = match indexes.get::<SpineInstanceIndex>() {
+            Some(idx) => Arc::new(idx.instances_in(&cells)),
+            None => Arc::new(Vec::new()),
+        };
+        self.reach.insert(cell_id, found.clone());
+        found
     }
 }
 
@@ -142,7 +173,7 @@ impl WorldEvent for SpineEvent {
         let empty_plates: Vec<crate::PlateCenter> = Vec::new();
         let empty_map: HashMap<u64, usize> = HashMap::new();
 
-        let mut instances: Vec<SpineInstance> = Vec::new();
+        let mut instances: Vec<Arc<SpineInstance>> = Vec::new();
         for (wx, wy, plate_id) in centroid_data {
             let inst = grow_spine(
                 wx, wy, plate_id,
@@ -150,7 +181,7 @@ impl WorldEvent for SpineEvent {
                 &self.plate_cache, self.seed,
             );
             if !inst.peaks.is_empty() {
-                instances.push(inst);
+                instances.push(Arc::new(inst));
             }
         }
 
@@ -167,18 +198,16 @@ impl WorldEvent for SpineEvent {
         _below: &dyn Fn(i32, i32) -> TileView,
         _seed: u64,
     ) -> Option<TileOutput> {
-        let spine_index = indexes.get::<SpineInstanceIndex>()?;
         let (wx, wy) = hex_to_world(q, r);
 
-        // Search this cell + query_reach() neighbor rings. Same value the
-        // framework deforms, so the two cannot drift apart.
-        let nearby_cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
-        let instances = spine_index.instances_in(&nearby_cells);
+        // This cell + query_reach() neighbour rings, resolved once for the cell.
+        // Same value the framework deforms, so the two cannot drift apart.
+        let instances = self.reachable(cell_id, indexes);
 
         let mut max_elev = 0.0f64;
         let mut best_tag: Option<PlateTag> = None;
 
-        for inst in &instances {
+        for inst in instances.iter() {
             // Single pass per instance: elevation + tag share one peak scan.
             let (e, tag) = inst.sample_at(wx, wy);
             if e > max_elev { max_elev = e; }
