@@ -20,12 +20,12 @@
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
+
 
 use common::HexLattice;
 
-use crate::hex_to_world;
-use crate::slope_form::{Neighbourhood, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH};
+
+use crate::slope_form::{critical_slope, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH};
 use super::index::{CellId, IndexRegistry};
 
 use super::faces::{BasinIndex, ErosionalFaceIndex};
@@ -49,34 +49,23 @@ const SLOPE_FORM_CELL_SCALE: u32 = 9;
 
 const _: () = assert!(SLOPE_FORM_REACH <= SLOPE_FORM_CELL_SCALE as f64);
 
+/// What a tile in a cell reads: the published geometry standing over it,
+/// taken once for the cell.
+struct SlopeFormCell {
+    faces: Vec<Arc<crate::faces::FaceIndex>>,
+    basins: Vec<Arc<common::HexSpatialGrid<crate::Cirque>>>,
+}
+
 pub struct SlopeFormEvent {
-    /// Spine lattice, hoisted out of the per-tile query. The impounding level
-    /// lives on the spine instances, and they have to be looked up in the same
-    /// cells the spine layer's own query uses or a bowl resolves against a
-    /// different mountain than its elevation came from.
+    /// This layer's own cell lattice, for turning a cell id back into the tile
+    /// coordinates every other lattice is addressed by.
+    lattice: HexLattice,
+    /// The lattice the published geometry is keyed by. A face has to be looked
+    /// up in the same cells the layer that published it resolves against, or a
+    /// bowl answers against a different mountain than the elevation under it.
     spine_lattice: HexLattice,
-    /// The surface below at a tile centre.
-    ///
-    /// A kernel takes O(radius²) taps per tile and adjacent tiles' kernels
-    /// overlap almost entirely, so every tap is shared work. `below()` resolves
-    /// a tile through every layer under this one and rebuilds its tag set on
-    /// the way; this holds the one number the kernel wants.
-    ///
-    /// Event-private and invisible to `Composite`, which caches whole tiles
-    /// above it. Entries are a pure function of position and the layers below,
-    /// which are immutable once deformed, so this changes how fast a tile
-    /// resolves and never what it resolves to.
-    below_memo: TileMap,
-    /// Publishing-layer cells whose geometry can act on a tile, once per cell.
-    reach: DashMap<CellId, Arc<Vec<CellId>>>,
 }
 
-type TileMap = DashMap<i64, f64, std::hash::BuildHasherDefault<TileHasher>>;
-
-/// Pack a tile into one key. Two i32s side by side hash in a single multiply.
-fn tile_key(q: i32, r: i32) -> i64 {
-    ((q as i64) << 32) | (r as u32 as i64)
-}
 
 /// Multiply-shift hasher for packed tile keys. The kernel takes tens of lookups
 /// per tile and a general-purpose hash is most of their cost — a packed key is
@@ -102,36 +91,11 @@ impl std::hash::Hasher for TileHasher {
 impl SlopeFormEvent {
     pub fn new() -> Self {
         Self {
+            lattice: HexLattice::new(SLOPE_FORM_CELL_SCALE),
             spine_lattice: HexLattice::new(SPINE_CELL_SCALE),
-            below_memo: TileMap::default(),
-            reach: DashMap::new(),
         }
     }
 
-    /// The surface below at a tile centre, through the memo.
-    fn below_at(&self, q: i32, r: i32, below: &dyn Fn(i32, i32) -> TileView) -> f64 {
-        if let Some(v) = self.below_memo.get(&tile_key(q, r)) { return *v; }
-        let v = below(q, r).elevation;
-        self.below_memo.insert(tile_key(q, r), v);
-        v
-    }
-
-    /// The cells whose published geometry can act on a tile — its own cell in
-    /// the publishing layer's lattice plus the ring, the same envelope that
-    /// layer's own query resolves against, so a face is never read against a
-    /// different mountain than the elevation under it came from.
-    ///
-    /// Resolved once per cell. Every tile in a cell shares the answer, and
-    /// rebuilding it per tile costs a ring walk and an allocation on the hot
-    /// path — which is the whole of what made the first version of this layer
-    /// expensive.
-    fn cells_for(&self, q: i32, r: i32) -> Arc<Vec<CellId>> {
-        let cell = self.spine_lattice.cell_id(q, r);
-        if let Some(v) = self.reach.get(&cell) { return v.clone(); }
-        let cells = Arc::new(self.spine_lattice.cells_within_distance(cell, 1));
-        self.reach.insert(cell, cells.clone());
-        cells
-    }
 }
 
 impl Default for SlopeFormEvent {
@@ -157,46 +121,85 @@ impl WorldEvent for SlopeFormEvent {
         // Nothing to build. The stage is a pure function of the surface below.
     }
 
+    /// The faces and basins standing over this cell, taken once for it.
+    fn prepare(
+        &self,
+        cell_id: CellId,
+        indexes: &IndexRegistry,
+        _seed: u64,
+    ) -> Box<dyn std::any::Any + Send + Sync> {
+        // A slope-form cell is far smaller than a spine cell, so every tile in
+        // it shares one spine cell — and the ring, since a spine reaches past
+        // its own cell edge.
+        //
+        // A cell id means nothing outside the lattice that issued it, so the
+        // hop between them goes through tile coordinates: this cell's centre,
+        // then the spine cell that contains it.
+        let (cq, cr) = self.lattice.cell_center(cell_id);
+        let spine_cell = self.spine_lattice.cell_id(cq, cr);
+        let cells = self.spine_lattice.cells_within_distance(spine_cell, 1);
+        Box::new(SlopeFormCell {
+            faces: indexes.get::<ErosionalFaceIndex>().map(|ix| {
+                cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
+            }).unwrap_or_default(),
+            basins: indexes.get::<BasinIndex>().map(|ix| {
+                cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
+            }).unwrap_or_default(),
+        })
+    }
+
     fn query(
         &self,
         q: i32, r: i32,
-        _cell_id: CellId,
-        indexes: &IndexRegistry,
-        below: &dyn Fn(i32, i32) -> TileView,
+        below: &TileView,
+        cell: &(dyn std::any::Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
-        let (wx, wy) = hex_to_world(q, r);
-        let cells = self.cells_for(q, r);
+        let cell = cell.downcast_ref::<SlopeFormCell>()?;
+        let (wx, wy) = (below.wx, below.wy);
+        let base = below.elevation;
+        let _ = (q, r);
 
-        let hood = Neighbourhood::gather(q, r, wx, wy, &|tq, tr| self.below_at(tq, tr, below));
-        let base = hood.centre();
-
-        // Deposition reads the faces the layers below published. Creep and
-        // failure still read the neighbourhood.
+        // Failure and deposition both read the published faces: the only ground
+        // within reach that can sit far below a tile is ground a carve took
+        // away, and every carve published its floor.
         //
-        // The limiter cannot use those faces yet, and the reason is not a
-        // publishing detail: a carve is only real if it survives compositing,
-        // and a spine that cuts a channel cannot see the neighbouring spine
-        // whose mountain buries it. Folding over the ring at deform time would
-        // answer that, and would make the published floor depend on the order
-        // cells were deformed in. Until a face is published somewhere that
-        // ordering is settled, capping heights against one cuts rims toward
-        // ground the composite never took away — 42 basins in 1281.
-        let delta = (hood.creep() - base)
-            + (hood.failure() - base)
-            + indexes.get::<ErosionalFaceIndex>().map_or(0.0, |ix| {
-                let repose = repose_slope();
-                ix.apron_in(&cells, wx, wy, repose, repose * MASS_WASTING_REACH)
-            });
+        // Creep is absent. It is an average over a neighbourhood, which is the
+        // one thing this contract does not hand out, and its replacement is the
+        // composition itself — a crest is sharp because the surface is a hard
+        // max over cones, and softening that seam is what rounds it. Until then
+        // crests keep the curvature the tectonic layer gave them.
+        let repose = repose_slope();
+        let critical = critical_slope(wx, wy);
+        let cap = repose * MASS_WASTING_REACH;
+
+        let mut limited = base;
+        let mut apron = 0.0f64;
+        for faces in &cell.faces {
+            if let Some(l) = faces.limit_at(wx, wy, critical) {
+                limited = limited.min(l);
+            }
+            let a = faces.apron_at(wx, wy, repose, cap);
+            if a > apron { apron = a; }
+        }
+
+        let delta = (limited - base) + apron;
         if delta == 0.0 { return None; }
+
         // Slope form may not cut below the level that impounds a basin — the
         // same rule the water layer obeys. Without it a smoothed rim drops
         // under its own spill altitude and drains the tarn behind it. Held
         // under the surface below as well, so the clamp can only stop a cut,
         // never raise ground the layers below deliberately took away.
-        let floor = indexes
-            .get::<BasinIndex>()
-            .and_then(|ix| ix.impound_in(&cells, wx, wy))
+        let floor = cell
+            .basins
+            .iter()
+            .filter_map(|g| {
+                g.query(wx, wy)
+                    .filter_map(|c| c.base_level(wx, wy))
+                    .fold(None, |acc: Option<f64>, l| Some(acc.map_or(l, |a: f64| a.min(l))))
+            })
+            .fold(None, |acc: Option<f64>, l| Some(acc.map_or(l, |a: f64| a.max(l))))
             .map_or(f64::MIN, |f| f.min(base));
 
         let mut out = TileOutput::default();

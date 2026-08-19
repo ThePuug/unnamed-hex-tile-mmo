@@ -182,19 +182,26 @@ Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
 summary samples. Everything below is a way of putting work there that does not
 belong there, and every one of them has shipped at least once.
 
-**Read the composite only at your own tile.** `below` hands you a closure over
-the plane; asking it for a neighbour resolves that neighbour through the whole
-stack beneath you. A layer needing a neighbourhood costs N tiles per answer,
-which a dense reader amortises and a sparse one — an LoD summary reads 7 tiles
-per hexagon — pays in full. If you need to know what is around a tile, the
-layer that put it there publishes an index; read that.
+The first two are enforced by the signature rather than by discipline — `query`
+takes `below: &TileView` and no `IndexRegistry`, so neither is expressible.
+They are stated anyway, because the reasons are what generalise.
 
-**Resolve per-cell work once per cell.** Every tile in a cell shares its cell,
-its ring, and the set of features reaching it. Walking the ring, taking an
-index read lock, or building a `Vec` of candidates inside `query` multiplies
-all of it by the tiles in a cell. Cache it on the event, keyed by cell: the
-neighbourhood is deformed before any tile in the cell resolves and is never
-evicted, so it is complete on first use and never changes.
+**Read the composite only at your own tile.** Resolving a neighbour costs the
+whole stack beneath you, per tile. A layer needing a neighbourhood costs N
+tiles per answer, which a dense reader amortises and a sparse one — an LoD
+summary reads 7 tiles per hexagon — pays in full. If you need to know what is
+around a tile, the layer that put it there publishes an index; read that.
+
+**Resolve per-cell work once per cell**, in `prepare`. Every tile in a cell
+shares its cell, its ring, and the set of features reaching it. Walking the
+ring, taking an index read lock, or building a `Vec` of candidates per tile
+multiplies all of it by the tiles in a cell.
+
+`prepare` is also the earliest point at which a fold over the cell-plus-ring is
+**correct**: the framework has deformed that whole neighbourhood by then, so
+the answer does not depend on the order cells were visited in. The same fold at
+deform time sees whatever happens to be warm. Anything that must see its
+neighbours settled belongs here, not in `deform`.
 
 **Publish what you know; never make a consumer infer it.** A headwall, a
 channel wall, a closed basin — the layer that cut it knows where it is, and a

@@ -15,6 +15,7 @@ pub mod spawner;
 pub mod spines;
 pub mod survey;
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -100,15 +101,43 @@ pub trait WorldEvent: Send + Sync {
         seed: u64,
     );
 
-    /// Resolve a single tile on demand. `below` lazily resolves the composite
-    /// tile from all layers below at any (q, r). Returns None if this event
-    /// contributes nothing at this position.
+    /// Everything a query may read beyond its own tile, resolved once for the
+    /// cell that contains it.
+
+    /// Run on the first query into a cell, after the framework has deformed the
+    /// whole neighbourhood this layer is scoped to — so an index read here sees
+    /// the complete cell-plus-ring set whatever order cells were visited in,
+    /// which is the only place a fold over that neighbourhood is both complete
+    /// and order-independent.
+
+    /// Nothing resolved here may be resolved per tile instead. Every tile in
+    /// the cell shares it, so a ring walk, an index read lock or an allocation
+    /// left in `query` is multiplied by the tiles in a cell.
+    fn prepare(
+        &self,
+        _cell_id: CellId,
+        _indexes: &IndexRegistry,
+        _seed: u64,
+    ) -> Box<dyn Any + Send + Sync> {
+        Box::new(())
+    }
+
+    /// Resolve a single tile. Returns None if this event contributes nothing
+    /// at this position.
+
+    /// `below` is the composed tile **at this position and nowhere else**. A
+    /// layer that needs to know what surrounds a tile reads it from an index
+    /// the layer that put it there published: resolving a neighbour through
+    /// the composite costs the whole stack beneath, per tile, and a consumer
+    /// that samples sparsely pays it in full.
+
+    /// `cell` is what [`WorldEvent::prepare`] built, downcast to the event's
+    /// own type.
     fn query(
         &self,
         q: i32, r: i32,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        below: &dyn Fn(i32, i32) -> TileView,
+        below: &TileView,
+        cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput>;
 }
@@ -208,6 +237,8 @@ struct CellCache {
     cells: DashMap<CellId, Arc<CellEntry>>,
     /// Per-cell deform serialization locks (double-checked locking).
     deform_locks: DashMap<CellId, Arc<Mutex<()>>>,
+    /// What `prepare` built for a cell, kept for every tile in it.
+    contexts: DashMap<CellId, Arc<dyn Any + Send + Sync>>,
     /// Cells whose full query neighbourhood has been deformed. Only used by
     /// layers with `query_reach() > 0`; lets the hot path settle for a single
     /// lookup instead of re-walking the ring on every tile in the cell.
@@ -222,6 +253,7 @@ impl CellCache {
     fn new(max_cells: usize) -> Self {
         Self {
             cells: DashMap::new(),
+            contexts: DashMap::new(),
             deform_locks: DashMap::new(),
             neighbourhood_ready: DashMap::new(),
             access_counter: AtomicU64::new(0),
@@ -349,11 +381,12 @@ impl Composite {
                     to
                 } else {
                     self.metrics.tile_counters.record(false);
-                    let below_fn = |bq: i32, br: i32| -> TileView {
-                        self.resolve_below(layer, bq, br)
-                    };
+                    // `view` already holds the composite of every layer below,
+                    // which is the whole of what a query may read besides its
+                    // own cell context.
+                    let ctx = self.cell_context(layer, cell_id);
                     let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
-                    let result = self.events[layer].query(q, r, cell_id, &self.indexes, &below_fn, self.seed);
+                    let result = self.events[layer].query(q, r, &view, &*ctx, self.seed);
                     // None is cached as an empty output: query is deterministic,
                     // so "contributes nothing here" is as cacheable as a result.
                     // Without this, sea/flat tiles re-run every layer's query on
@@ -460,6 +493,23 @@ impl Composite {
         self.cell_caches[layer].neighbourhood_ready.insert(cell_id, ());
     }
 
+    /// What this layer resolved once for the cell, building it if this is the
+    /// first tile to ask.
+    ///
+    /// Only ever called after [`Composite::ensure_query_neighbourhood`], which
+    /// is what lets `prepare` fold over the whole cell-plus-ring set: at deform
+    /// time the ring may be cold, so a fold there would depend on the order
+    /// cells were visited in.
+    fn cell_context(&self, layer: usize, cell_id: CellId) -> Arc<dyn Any + Send + Sync> {
+        if let Some(c) = self.cell_caches[layer].contexts.get(&cell_id) {
+            return c.clone();
+        }
+        let built: Arc<dyn Any + Send + Sync> =
+            Arc::from(self.events[layer].prepare(cell_id, &self.indexes, self.seed));
+        self.cell_caches[layer].contexts.insert(cell_id, built.clone());
+        built
+    }
+
     fn ensure_deformed(&self, layer: usize, cell_id: CellId) {
         // Fast path: already deformed
         if self.cell_caches[layer].has(cell_id) {
@@ -551,12 +601,10 @@ impl Composite {
                 // path is reached from survey evaluation and `below` closures,
                 // which tile_at's phase 1 does not cover.
                 self.ensure_query_neighbourhood(li, cell_id);
-                let sub_below = |bq: i32, br: i32| -> TileView {
-                    self.resolve_below(li, bq, br)
-                };
+                let ctx = self.cell_context(li, cell_id);
                 let _s = tracing::debug_span!("event_query", event = self.events[li].name()).entered();
                 let to = self.events[li]
-                    .query(q, r, cell_id, &self.indexes, &sub_below, self.seed)
+                    .query(q, r, &view, &*ctx, self.seed)
                     .unwrap_or_default();
                 self.cell_caches[li].insert_tile(cell_id, q, r, to);
                 to
@@ -593,8 +641,8 @@ mod tests {
         }
 
         fn query(
-            &self, _q: i32, _r: i32, _c: CellId, _i: &IndexRegistry,
-            _b: &dyn Fn(i32, i32) -> TileView, _s: u64,
+            &self, _q: i32, _r: i32, _b: &TileView,
+            _c: &(dyn Any + Send + Sync), _s: u64,
         ) -> Option<TileOutput> { None }
     }
 

@@ -14,7 +14,7 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::sea::SeaEvent;
 use world::events::slope_form::SlopeFormEvent;
-use world::slope_form::Neighbourhood;
+
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
 use world::PlateCache;
 use common::HexLattice;
@@ -181,51 +181,46 @@ fn crest_curvature() {
     println!("  base third   mean curvature {:+.4}  (concave wants > 0)", mean(2 * seg, n));
 }
 
-/// What each sub-primitive does to real ground: how much creep moves it, how
-/// much fails, and where talus comes to rest. Read against the surface the
-/// layers below hand up, which is the same composite without the stage on top.
+/// What the stage does to real ground, read as the difference between the
+/// composite with it and the same composite without — which is what ships,
+/// rather than what a sub-primitive would do in isolation.
 #[test]
 #[ignore]
 fn slope_form_census() {
     println!("\n=== slope form census ===\n");
-    let base = composite_below_slope_form();
-    let surface = |q: i32, r: i32| base.tile_at(q, r).elevation;
+    let below = composite_below_slope_form();
+    let full = composite();
 
     const N: i32 = SAMPLE_SPAN;
-    let mut creep: Vec<f64> = Vec::new();
-    let mut failure: Vec<f64> = Vec::new();
-    let mut apron: Vec<f64> = Vec::new();
+    let mut cut: Vec<f64> = Vec::new();
+    let mut fill: Vec<f64> = Vec::new();
     let mut land = 0u32;
 
     for i in 0..N {
         for j in 0..N {
             let (q, r) = (SAMPLE.0 - N / 2 + i, SAMPLE.1 - N / 2 + j);
-            let (wx, wy) = world::hex_to_world(q, r);
-            let hood = Neighbourhood::gather(q, r, wx, wy, &surface);
-            let z0 = hood.centre();
-            if z0 <= 0.0 { continue; }
+            let b = below.tile_at(q, r).elevation;
+            if b <= 0.0 { continue; }
             land += 1;
-            let (c, f, a) = (hood.creep() - z0, hood.failure() - z0, hood.apron());
-            if c.abs() > 1e-9 { creep.push(c); }
-            if f < -1e-9 { failure.push(f); }
-            if a > 1e-9 { apron.push(a); }
+            let d = full.tile_at(q, r).elevation - b;
+            if d < -1e-9 { cut.push(d); }
+            if d > 1e-9 { fill.push(d); }
         }
     }
     if land == 0 { println!("  no relief in the sample block"); return; }
 
-    for v in [&mut creep, &mut failure, &mut apron] {
+    for v in [&mut cut, &mut fill] {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     }
-    let pct = |n: usize| 100.0 * n as f64 / land as f64;
     println!("land samples with relief: {land}");
-    for (name, v) in [("creep", &creep), ("failure", &failure), ("apron", &apron)] {
+    for (name, v) in [("failure", &cut), ("talus", &fill)] {
         if v.is_empty() {
             println!("  {name:<8} never fires");
             continue;
         }
         println!(
             "  {name:<8} {:.1}% of tiles   p10 {:+.2} / med {:+.2} / p90 {:+.2} / max |{:.2}| z",
-            pct(v.len()),
+            100.0 * v.len() as f64 / land as f64,
             percentile(v, 0.1), percentile(v, 0.5), percentile(v, 0.9),
             v.iter().fold(0.0f64, |a, &b| a.max(b.abs())),
         );

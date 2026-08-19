@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dashmap::DashMap;
+
 
 use common::{HexLattice, PlateTag};
 
@@ -85,15 +85,7 @@ pub struct SpineEvent {
     seed: u64,
     /// Cell lattice at SPINE_CELL_SCALE — hoisted out of the per-tile query.
     lattice: HexLattice,
-    /// The instances reachable from a cell, resolved once for the cell.
-    ///
-    /// Every tile in a cell shares one cell-plus-ring neighbourhood, and the
-    /// framework deforms that whole neighbourhood before any tile in the cell
-    /// is queried — so the set is complete on first use and, with no eviction,
-    /// never changes. Re-deriving it per tile costs an index read lock and two
-    /// allocations on the hot path, which is the same reason the deform side
-    /// gates its ring walk on `neighbourhood_ready`.
-    reach: DashMap<CellId, Arc<Vec<Arc<SpineInstance>>>>,
+
 }
 
 impl SpineEvent {
@@ -106,22 +98,9 @@ impl SpineEvent {
             plate_cache,
             seed,
             lattice: HexLattice::new(SPINE_CELL_SCALE),
-            reach: DashMap::new(),
         }
     }
 
-    /// Instances any tile in `cell_id` can be reached by. Takes the index lock
-    /// only on the first tile of a cell.
-    fn reachable(&self, cell_id: CellId, indexes: &IndexRegistry) -> Arc<Vec<Arc<SpineInstance>>> {
-        if let Some(v) = self.reach.get(&cell_id) { return v.clone(); }
-        let cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
-        let found = match indexes.get::<SpineInstanceIndex>() {
-            Some(idx) => Arc::new(idx.instances_in(&cells)),
-            None => Arc::new(Vec::new()),
-        };
-        self.reach.insert(cell_id, found.clone());
-        found
-    }
 }
 
 impl WorldEvent for SpineEvent {
@@ -198,27 +177,14 @@ impl WorldEvent for SpineEvent {
             for inst in &instances {
                 inst.faces.extend_into(&mut merged);
             }
-            // Each producer set its faces against its own chain, but the ground
-            // is the maximum over every spine standing on it — the same fold
-            // this layer's query does. Read once here rather than leaving a
-            // consumer to discover that a floor it was handed is above the
-            // rock it was told had been taken away.
-            //
-            // This fold covers the cell, not the ring a query resolves against,
-            // so a carve buried by a spine from a neighbouring cell still
-            // publishes a floor the composite does not have. Widening it here
-            // is not available: the ring may be undeformed when this runs, and
-            // a published floor that depends on deform order is worse than one
-            // that is merely incomplete.
-            let composed = |wx: f64, wy: f64| {
-                instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
-            };
-            let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING
-                * slope_form::MASS_WASTING_REACH;
+            // Floors here are each producer's own view of the ground it cut.
+            // `prepare` settles them against the whole ring, once that ring is
+            // complete — which is the earliest moment the answer does not
+            // depend on the order cells were deformed in.
             indexes
                 .get_or_create::<ErosionalFaceIndex>()
                 .cells
-                .insert(cell_id, merged.recomposed(&composed, min_height));
+                .insert(cell_id, Arc::new(merged));
         }
         {
             let mut basins = indexes.get_or_create::<BasinIndex>();
@@ -232,19 +198,57 @@ impl WorldEvent for SpineEvent {
             .cells.insert(cell_id, instances);
     }
 
+    /// The instances any tile in this cell can be reached by: its own cell plus
+    /// the rings `query_reach` declares, which is the set the framework has
+    /// deformed by the time this runs.
+    ///
+    /// This is also the first moment the published faces can be made true. A
+    /// carve is only real if it survives compositing, and the spine that cut it
+    /// cannot see the neighbouring spine whose mountain buries it — that is a
+    /// fold over the ring, and folding it at deform time would make the answer
+    /// depend on the order cells were visited in. Here the ring is complete by
+    /// contract, so the floors are recomposed against every instance that
+    /// stands on the same ground.
+    fn prepare(
+        &self,
+        cell_id: CellId,
+        indexes: &IndexRegistry,
+        _seed: u64,
+    ) -> Box<dyn std::any::Any + Send + Sync> {
+        let cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
+        let instances = match indexes.get::<SpineInstanceIndex>() {
+            Some(idx) => idx.instances_in(&cells),
+            None => Vec::new(),
+        };
+
+        let raw = indexes
+            .get::<ErosionalFaceIndex>()
+            .and_then(|ix| ix.cells.get(&cell_id).cloned());
+        if let Some(raw) = raw {
+            let composed = |wx: f64, wy: f64| {
+                instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
+            };
+            let min_height =
+                crate::ELEVATION_PER_Z / crate::TILE_SPACING * slope_form::MASS_WASTING_REACH;
+            let settled = Arc::new(raw.recomposed(&composed, min_height));
+            indexes
+                .get_or_create::<ErosionalFaceIndex>()
+                .cells
+                .insert(cell_id, settled);
+        }
+
+        Box::new(instances)
+    }
+
     fn query(
         &self,
         q: i32, r: i32,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        _below: &dyn Fn(i32, i32) -> TileView,
+        _below: &TileView,
+        cell: &(dyn std::any::Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
         let (wx, wy) = hex_to_world(q, r);
-
-        // This cell + query_reach() neighbour rings, resolved once for the cell.
-        // Same value the framework deforms, so the two cannot drift apart.
-        let instances = self.reachable(cell_id, indexes);
+        let instances = cell.downcast_ref::<Vec<Arc<SpineInstance>>>()?;
 
         let mut max_elev = 0.0f64;
         let mut best_tag: Option<PlateTag> = None;

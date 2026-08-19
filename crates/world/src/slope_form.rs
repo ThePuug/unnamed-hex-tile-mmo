@@ -69,6 +69,13 @@ static CRITICAL_SLOPE: LazyLock<f64> = LazyLock::new(|| slope_for_angle(CRITICAL
 /// layer that lays aprons against published faces.
 pub fn repose_slope() -> f64 { *REPOSE_SLOPE }
 
+/// The gradient the ground at (wx, wy) holds before it fails. Reads the same
+/// resistance every carve depth is divided by, so weak material fails closer to
+/// the repose angle and resistant material holds a cliff.
+pub fn critical_slope(wx: f64, wy: f64) -> f64 {
+    *CRITICAL_SLOPE * resistance_at(wx, wy)
+}
+
 /// How far failure and deposition act from a face, in world units.
 ///
 /// Shorter than [`SLOPE_FORM_REACH`]: that carries an extra ring so every tile

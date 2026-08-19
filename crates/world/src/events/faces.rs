@@ -11,6 +11,7 @@
 //! ring, the same envelope every other layer is scoped by.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use common::HexSpatialGrid;
 
@@ -24,7 +25,7 @@ use super::spines::SPINE_CELL_SCALE;
 /// Faces the erosional layers leave standing, by the cell that cut them.
 #[derive(Default)]
 pub struct ErosionalFaceIndex {
-    pub cells: HashMap<CellId, FaceIndex>,
+    pub cells: HashMap<CellId, Arc<FaceIndex>>,
 }
 
 impl ErosionalFaceIndex {
@@ -73,7 +74,7 @@ const BASIN_CELL_SIZE: f64 = 512.0;
 /// that footprint and one lookup returns whichever bowls stand over a tile.
 #[derive(Default)]
 pub struct BasinIndex {
-    pub cells: HashMap<CellId, HexSpatialGrid<Cirque>>,
+    pub cells: HashMap<CellId, Arc<HexSpatialGrid<Cirque>>>,
 }
 
 impl BasinIndex {
@@ -83,7 +84,7 @@ impl BasinIndex {
         for c in cirques {
             grid.insert_radius(c.cx, c.cy, c.radius, c.clone());
         }
-        self.cells.insert(cell_id, grid);
+        self.cells.insert(cell_id, Arc::new(grid));
     }
 
     /// The level nothing may cut below at (wx, wy), or `None` where no basin

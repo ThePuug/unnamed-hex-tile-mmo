@@ -175,25 +175,38 @@ impl WorldEvent for SpawnerEvent {
         placement_index.cells.insert(cell_id, placements);
     }
 
+    /// This cell's placements, read once for it. Looking them up per tile
+    /// would take the index read lock on every tile in the cell for a list
+    /// that does not change.
+    fn prepare(
+        &self,
+        cell_id: CellId,
+        indexes: &IndexRegistry,
+        _seed: u64,
+    ) -> Box<dyn std::any::Any + Send + Sync> {
+        let placements = indexes
+            .get::<SpawnerPlacementIndex>()
+            .and_then(|ix| ix.cells.get(&cell_id).cloned())
+            .unwrap_or_default();
+        Box::new(placements)
+    }
+
     fn query(
         &self,
         q: i32, r: i32,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        below: &dyn Fn(i32, i32) -> TileView,
+        below: &TileView,
+        cell: &(dyn std::any::Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
-        let placement_index = indexes.get::<SpawnerPlacementIndex>()?;
-        let cell_placements = placement_index.cells.get(&cell_id)?;
+        let placements = cell.downcast_ref::<Vec<SpawnerPlacement>>()?;
 
         // Check if this tile has a spawner placement
-        if !cell_placements.iter().any(|p| p.q == q && p.r == r) {
+        if !placements.iter().any(|p| p.q == q && p.r == r) {
             return None;
         }
 
         // Resolve archetype from tags below
-        let tile_below = below(q, r);
-        let _archetype = archetype_for_tagset(&tile_below.tags);
+        let _archetype = archetype_for_tagset(&below.tags);
 
         // Pass 1: spawners don't modify terrain. Return empty output.
         // The placement exists in the index — the activation system reads

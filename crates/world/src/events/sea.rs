@@ -95,9 +95,8 @@ impl WorldEvent for SeaEvent {
     fn query(
         &self,
         q: i32, r: i32,
-        _cell_id: CellId,
-        _indexes: &IndexRegistry,
-        _below: &dyn Fn(i32, i32) -> TileView,
+        _below: &TileView,
+        _cell: &(dyn std::any::Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
         let (wx, wy) = hex_to_world(q, r);
