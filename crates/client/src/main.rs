@@ -172,7 +172,11 @@ fn main() {
     ));
 
     app.insert_resource(common_bevy::resources::map::Map::new(
-        qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop),
+        qrz::Map::<EntityType>::new(
+            common::camera::HEX_RADIUS,
+            common::camera::RISE,
+            qrz::HexOrientation::FlatTop,
+        ),
     ));
 
     app.init_resource::<InputQueues>();

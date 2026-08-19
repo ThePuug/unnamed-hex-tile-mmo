@@ -127,7 +127,11 @@ fn main() {
 
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
-    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(1., 0.8, qrz::HexOrientation::FlatTop)));
+    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(
+        common::camera::HEX_RADIUS,
+        common::camera::RISE,
+        qrz::HexOrientation::FlatTop,
+    )));
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();

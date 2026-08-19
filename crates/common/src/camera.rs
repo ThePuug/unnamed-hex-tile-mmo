@@ -7,6 +7,12 @@ pub const MAX_GAMEPLAY_FOV: f32 = 60_f32.to_radians();
 /// World-space height per z-level.
 pub const RISE: f32 = 0.8;
 
+/// World-space size of one hexagon — centre to vertex. Neighbouring tile
+/// centres sit `HEX_RADIUS * sqrt(3)` apart, so together with [`RISE`] this
+/// fixes the ratio between a z-level and a tile step, and with it the angle
+/// any given gradient reads as on screen.
+pub const HEX_RADIUS: f32 = 1.0;
+
 /// Camera height that keeps the horizon `HORIZON_MARGIN_DEG` below the
 /// frustum top at the given max vertical FOV.
 pub fn camera_height(max_fov: f32) -> f32 {
