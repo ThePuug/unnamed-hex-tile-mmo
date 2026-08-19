@@ -359,14 +359,23 @@ pub fn carve_and_limit(cirques: &[Cirque], wx: f64, wy: f64, base: f64) -> (f64,
 /// which is the ground the composite actually shows — a bowl whose floor cuts
 /// through a neighbour's rim drains it, the way stacked cirques really do.
 pub fn base_level_at(cirques: &[Cirque], wx: f64, wy: f64) -> f64 {
+    impound_at(cirques, wx, wy).unwrap_or(0.0)
+}
+
+/// The impounding level at (wx, wy), or `None` where no bowl claims the point.
+///
+/// Distinct from [`base_level_at`], which answers sea level there. A caller
+/// composing the clamp across several spines has to tell "no bowl here" from
+/// "the sea", or one instance without a bowl cancels every other instance's
+/// clamp and every basin in the overlap opens.
+pub fn impound_at(cirques: &[Cirque], wx: f64, wy: f64) -> Option<f64> {
     let mut level = f64::MAX;
     for c in cirques {
         if let Some(l) = c.base_level(wx, wy) {
             if l < level { level = l; }
         }
     }
-    // No bowl here — the sea is the base level, as it is everywhere else.
-    if level == f64::MAX { 0.0 } else { level }
+    (level != f64::MAX).then_some(level)
 }
 
 /// The level of standing water at (wx, wy): a tarn on a bowl floor, or the sea.
@@ -381,6 +390,40 @@ pub fn pool_level_at(cirques: &[Cirque], wx: f64, wy: f64) -> f64 {
         if c.floor_contains(wx, wy) && c.floor > level { level = c.floor; }
     }
     level
+}
+
+/// Publish the faces these bowls leave standing.
+///
+/// A headwall's foot is the floor edge, and it stands as far above the ground
+/// as the ground it was cut into. Both are read off the same surface the rim
+/// was fitted to, so the face a consumer sees is the face the query path
+/// produces. Sampled by bearing, at the spacing the rim itself was fitted at,
+/// because a rim varies with bearing and one face per bowl would place the
+/// whole wall at its centre.
+pub fn publish_faces(
+    cirques: &[Cirque],
+    surface: &dyn Fn(f64, f64) -> f64,
+    out: &mut crate::faces::FaceIndex,
+    min_height: f64,
+) {
+    for c in cirques {
+        let samples = RIM_SAMPLES_MIN.max((TAU * c.radius / RIM_SAMPLE_SPACING) as usize);
+        for s in 0..samples {
+            let theta = TAU * s as f64 / samples as f64;
+            let rim = c.radius_at(theta);
+            let (dx, dy) = (theta.cos(), theta.sin());
+            // The foot sits at the floor's edge; the wall rises from there to
+            // the surrounding ground the bowl was bitten out of.
+            let foot = rim * FLOOR_FRAC;
+            let (fx, fy) = (c.cx + dx * foot, c.cy + dy * foot);
+            let floor = surface(fx, fy);
+            let above = surface(c.cx + dx * rim, c.cy + dy * rim);
+            out.insert(
+                crate::faces::ErosionalFace { wx: fx, wy: fy, floor, height: above - floor },
+                min_height,
+            );
+        }
+    }
 }
 
 /// Whichever bowl claims (wx, wy), preferring the floor over walls so an

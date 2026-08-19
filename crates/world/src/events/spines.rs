@@ -22,7 +22,9 @@ use crate::spine::{
     grow_spine, spine_tag_priority,
 };
 use super::index::{CellId, EventIndex, IndexRegistry};
+use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::plates::PlateCentroidIndex;
+use crate::slope_form;
 use super::{Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell radius in tiles = SPINE_INFLUENCE. A cell contains the full influence
@@ -133,6 +135,8 @@ impl WorldEvent for SpineEvent {
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<SpineInstanceIndex>();
+        registry.pre_register::<ErosionalFaceIndex>();
+        registry.pre_register::<BasinIndex>();
     }
 
     fn survey(&self) -> Survey {
@@ -183,6 +187,25 @@ impl WorldEvent for SpineEvent {
             if !inst.peaks.is_empty() {
                 instances.push(Arc::new(inst));
             }
+        }
+
+        // Publish the geometry the layers above read: the faces these carves
+        // leave standing, and the basins they close. Both are theirs to state,
+        // and a consumer that had to infer them would be reading the surface
+        // around a tile to recover what was known when it was cut.
+        {
+            let mut faces = indexes.get_or_create::<ErosionalFaceIndex>();
+            let mut merged = crate::faces::FaceIndex::new(slope_form::MASS_WASTING_REACH);
+            for inst in &instances {
+                inst.faces.extend_into(&mut merged);
+            }
+            faces.cells.insert(cell_id, merged);
+        }
+        {
+            let mut basins = indexes.get_or_create::<BasinIndex>();
+            let all: Vec<crate::Cirque> =
+                instances.iter().flat_map(|i| i.cirques.iter().cloned()).collect();
+            basins.set_cell(cell_id, &all);
         }
 
         // Brief write lock for the insert
