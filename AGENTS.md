@@ -15,7 +15,16 @@ cargo run -p client
 cargo test                         # all tests
 cargo test -p common physics       # specific module
 cargo test -p server actor
+
+cargo build --release --no-default-features -p server -p client   # optimized
 ```
+
+Bevy links as a dylib by default (`dynamic` feature) so an edit rebuilds one
+crate instead of the engine. That dylib carries no bitcode, so it cannot be
+linked under the release profile's LTO — every static it owns comes out
+undefined. `--no-default-features` drops it; the client also loses `admin`,
+which is what a shipping build wants. `-p world` has no Bevy dependency, so its
+release builds keep LTO either way.
 
 ## Crates
 

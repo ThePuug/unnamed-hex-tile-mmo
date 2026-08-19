@@ -3,9 +3,16 @@ name = "common-bevy"
 version = "0.1.0"
 edition = "2021"
 
+# Bevy's dynamic_linking speeds up iteration builds and cannot be linked under
+# the release profile's LTO: the dylib carries no bitcode, so every static it
+# owns comes out undefined. Off here, switched on by the binaries that want it.
+[features]
+default = []
+dynamic = ["bevy/dynamic_linking"]
+
 [dependencies]
 common = { path = "../common" }
-bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy = "0.18"
 bevy_camera = "0.18"
 bevy_mesh = "0.18"
 dashmap = "6"

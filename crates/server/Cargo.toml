@@ -4,13 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["dynamic"]
+# Bevy links as a dylib so an edit rebuilds this crate instead of the engine.
+# Incompatible with the release profile's LTO, which needs bitcode the dylib
+# does not carry — drop it with `--no-default-features` for an optimized build.
+dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
 trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 
 [dependencies]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy = "0.18"
 bevy_easings = "0.18"
 renet_netcode = "2"
 bimap = "0"

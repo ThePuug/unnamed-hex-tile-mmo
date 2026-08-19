@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["admin"]
+default = ["admin", "dynamic"]
 admin = ["dep:world"]
+# Bevy links as a dylib for fast iteration builds. Incompatible with the
+# release profile's LTO, which needs bitcode the dylib does not carry — drop it
+# with `--no-default-features` for an optimized build.
+dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
 trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 
 [dependencies]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy = "0.18"
 bevy_asset = "0.18"
 bevy_camera = "0.18"
 bevy_easings = "0.18"
