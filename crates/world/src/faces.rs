@@ -73,6 +73,68 @@ impl FaceIndex {
         }
     }
 
+    /// These faces with their floors read off `surface` — the ground the whole
+    /// cell composes, rather than the one feature that cut the face.
+    ///
+    /// A producer only knows its own chain, and the composed surface is the
+    /// maximum over every feature standing on the same ground, so a floor taken
+    /// from one of them is never above the truth and is often below it. A face
+    /// that understates its floor claims ground was taken that is still there,
+    /// and a consumer capping heights against it cuts down to reach it.
+    pub fn recomposed(&self, surface: &dyn Fn(f64, f64) -> f64, min_height: f64) -> FaceIndex {
+        let mut out = FaceIndex::new(self.reach);
+        for face in &self.faces {
+            let top = face.floor + face.height;
+            let floor = surface(face.wx, face.wy);
+            out.insert(
+                ErosionalFace { wx: face.wx, wy: face.wy, floor, height: top - floor },
+                min_height,
+            );
+        }
+        out
+    }
+
+    /// The lowest altitude reachable from (wx, wy) at `critical`, over the faces
+    /// that can act here — the cap on how high this ground may stand, or `None`
+    /// where no face is in range.
+    ///
+    /// The threshold limiter without a neighbourhood: the only ground within
+    /// reach that can sit far below a tile is ground a carve took away, and
+    /// every carve published its floor.
+    ///
+    /// **Only as good as the floors it is given.** A face published against one
+    /// producer's chain claims ground that compositing may have buried, and
+    /// capping against that cuts real rims toward a floor the world does not
+    /// have. Correct once [`FaceIndex::recomposed`] has been folded over the
+    /// whole envelope a query resolves against, and not before.
+    pub fn limit_at(&self, wx: f64, wy: f64, critical: f64) -> Option<f64> {
+        let mut limit = f64::MAX;
+        for f in self.grid.query(wx, wy) {
+            let d = (wx - f.wx).hypot(wy - f.wy);
+            if d > self.reach {
+                continue;
+            }
+            let allowed = f.floor + critical * d;
+            if allowed < limit {
+                limit = allowed;
+            }
+        }
+        (limit != f64::MAX).then_some(limit)
+    }
+
+    /// Visit the faces that can act at (wx, wy). Every query here folds as it
+    /// walks rather than gathering first, so nothing on this path allocates —
+    /// a reader that wants the set itself can build one, but the index will not
+    /// hand it a reason to.
+    pub fn for_each_near(&self, wx: f64, wy: f64, mut visit: impl FnMut(&ErosionalFace, f64)) {
+        for f in self.grid.query(wx, wy) {
+            let d = (wx - f.wx).hypot(wy - f.wy);
+            if d <= self.reach {
+                visit(f, d);
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.faces.len()
     }

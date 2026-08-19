@@ -39,6 +39,19 @@ impl ErosionalFaceIndex {
         }
         apron
     }
+
+    /// The cap on how high ground at (wx, wy) may stand, over the faces in the
+    /// given cells, or `None` where none are in range.
+    pub fn limit_in(&self, cells: &[CellId], wx: f64, wy: f64, critical: f64) -> Option<f64> {
+        let mut limit: Option<f64> = None;
+        for id in cells {
+            let Some(faces) = self.cells.get(id) else { continue };
+            if let Some(l) = faces.limit_at(wx, wy, critical) {
+                limit = Some(limit.map_or(l, |a: f64| a.min(l)));
+            }
+        }
+        limit
+    }
 }
 
 impl EventIndex for ErosionalFaceIndex {

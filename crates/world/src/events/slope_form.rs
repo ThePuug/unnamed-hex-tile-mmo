@@ -172,10 +172,16 @@ impl WorldEvent for SlopeFormEvent {
         let base = hood.centre();
 
         // Deposition reads the faces the layers below published. Creep and
-        // failure still read the neighbourhood: creep is an average over one,
-        // and the published faces do not yet reproduce what the limiter cuts —
-        // driving it from them opens 42 basins in 1281, so it stays on the
-        // surface until the faces answer as the composite does.
+        // failure still read the neighbourhood.
+        //
+        // The limiter cannot use those faces yet, and the reason is not a
+        // publishing detail: a carve is only real if it survives compositing,
+        // and a spine that cuts a channel cannot see the neighbouring spine
+        // whose mountain buries it. Folding over the ring at deform time would
+        // answer that, and would make the published floor depend on the order
+        // cells were deformed in. Until a face is published somewhere that
+        // ordering is settled, capping heights against one cuts rims toward
+        // ground the composite never took away — 42 basins in 1281.
         let delta = (hood.creep() - base)
             + (hood.failure() - base)
             + indexes.get::<ErosionalFaceIndex>().map_or(0.0, |ix| {

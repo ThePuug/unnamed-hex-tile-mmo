@@ -440,3 +440,72 @@ fn elevation_cost() {
         println!("  {evals} SpineInstance::elevation_at: {dt:?} ({:?}/eval)", dt / evals);
     }
 }
+
+/// Where the threshold limiter cuts a rim the composite does not, and which
+/// published face told it to. Bisecting by hand costs a rebuild per guess;
+/// this prints the binding face and what the ground under it actually is.
+#[test]
+#[ignore]
+fn limiter_overcut_diagnostic() {
+    use common::HexLattice;
+    use world::events::faces::ErosionalFaceIndex;
+    use world::events::spines::SPINE_CELL_SCALE;
+
+    println!("\n=== limiter overcut ===\n");
+    let below = composite_below_slope_form();
+    let full = composite();
+    const N: i32 = 7;
+    const STEP: i32 = 4_000;
+    let origin = -(N / 2) * STEP;
+    for i in 0..N {
+        for j in 0..N {
+            below.tile_at(origin + i * STEP, origin + j * STEP);
+            full.tile_at(origin + i * STEP, origin + j * STEP);
+        }
+    }
+
+    // Worst rim tile: where the finished surface sits furthest under the one
+    // the layers below left.
+    let bowls: Vec<(f64, f64, f64, f64)> = full.with_indexes(|ix| {
+        let Some(idx) = ix.get::<SpineInstanceIndex>() else { return Vec::new() };
+        idx.cells.values().flat_map(|v| v.iter())
+            .flat_map(|inst| inst.cirques.iter())
+            .map(|c| (c.cx, c.cy, c.radius, c.floor))
+            .collect()
+    });
+
+    let mut worst = (0.0f64, (0i32, 0i32), 0.0, 0.0);
+    for (cx, cy, radius, _floor) in &bowls {
+        for s in 0..360 {
+            let theta = std::f64::consts::TAU * s as f64 / 360.0;
+            let (wx, wy) = (cx + theta.cos() * radius * 0.9, cy + theta.sin() * radius * 0.9);
+            let (q, r) = world::world_to_hex(wx, wy);
+            let b = below.tile_at(q, r).elevation;
+            let f = full.tile_at(q, r).elevation;
+            if b - f > worst.0 { worst = (b - f, (q, r), b, f); }
+        }
+    }
+
+    let (cut, (q, r), b, f) = worst;
+    if cut <= 0.0 { println!("  the stage never cuts a rim"); return; }
+    let (wx, wy) = world::hex_to_world(q, r);
+    println!("worst cut {cut:.1} z at ({q}, {r}): below {b:.1} -> finished {f:.1}");
+
+    let lattice = HexLattice::new(SPINE_CELL_SCALE);
+    let cells = lattice.cells_within_distance(lattice.cell_id(q, r), 1);
+    full.with_indexes(|ix| {
+        let Some(idx) = ix.get::<ErosionalFaceIndex>() else { return };
+        for id in &cells {
+            let Some(faces) = idx.cells.get(id) else { continue };
+            let mut lowest: Option<(f64, f64, f64)> = None;
+            faces.for_each_near(wx, wy, |face, d| {
+                if lowest.map_or(true, |(f, _, _)| face.floor < f) {
+                    lowest = Some((face.floor, face.height, d));
+                }
+            });
+            if let Some((floor, height, d)) = lowest {
+                println!("  lowest face floor {floor:.1} h {height:.1} at d {d:.2}");
+            }
+        }
+    });
+}

@@ -194,12 +194,31 @@ impl WorldEvent for SpineEvent {
         // and a consumer that had to infer them would be reading the surface
         // around a tile to recover what was known when it was cut.
         {
-            let mut faces = indexes.get_or_create::<ErosionalFaceIndex>();
             let mut merged = crate::faces::FaceIndex::new(slope_form::MASS_WASTING_REACH);
             for inst in &instances {
                 inst.faces.extend_into(&mut merged);
             }
-            faces.cells.insert(cell_id, merged);
+            // Each producer set its faces against its own chain, but the ground
+            // is the maximum over every spine standing on it — the same fold
+            // this layer's query does. Read once here rather than leaving a
+            // consumer to discover that a floor it was handed is above the
+            // rock it was told had been taken away.
+            //
+            // This fold covers the cell, not the ring a query resolves against,
+            // so a carve buried by a spine from a neighbouring cell still
+            // publishes a floor the composite does not have. Widening it here
+            // is not available: the ring may be undeformed when this runs, and
+            // a published floor that depends on deform order is worse than one
+            // that is merely incomplete.
+            let composed = |wx: f64, wy: f64| {
+                instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
+            };
+            let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING
+                * slope_form::MASS_WASTING_REACH;
+            indexes
+                .get_or_create::<ErosionalFaceIndex>()
+                .cells
+                .insert(cell_id, merged.recomposed(&composed, min_height));
         }
         {
             let mut basins = indexes.get_or_create::<BasinIndex>();
