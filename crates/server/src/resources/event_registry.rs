@@ -4,6 +4,7 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::sea::SeaEvent;
 use world::events::spawner::{SpawnerEvent, SpawnerPlacementIndex, SpawnerPlacement};
+use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::TagSet;
 
@@ -24,6 +25,7 @@ impl EventRegistry {
         composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(SeaEvent::new()));
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, seed)));
+        composite.add_event(Box::new(SlopeFormEvent::new()));
         composite.add_event(Box::new(SpawnerEvent::new(seed)));
 
         Self { composite: std::sync::Arc::new(composite) }

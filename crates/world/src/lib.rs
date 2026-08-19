@@ -3,10 +3,13 @@ mod plates;
 mod microplates;
 pub mod events;
 pub mod glacial;
+pub mod faces;
 pub(crate) mod lithology;
+pub mod slope_form;
 pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
+pub use faces::{ErosionalFace, FaceIndex};
 pub use glacial::{Cirque, CirqueProbe, Outflow, GLACIATION_LINE};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
@@ -178,7 +181,7 @@ pub const MICRO_JITTER_MAX: f64 = 0.0;
 
 // ──── Coordinate Conversion ────
 
-const SQRT_3: f64 = 1.7320508075688772;
+pub(crate) const SQRT_3: f64 = 1.7320508075688772;
 
 /// World-unit distance between neighbouring tiles, held by `hex_to_world` for
 /// all six directions. Anything reasoning about rise per tile reads it.
@@ -417,6 +420,7 @@ mod tests {
         let mut composite = events::Composite::new(seed);
         composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(events::spines::SpineEvent::with_cache(plate_cache, seed)));
+        composite.add_event(Box::new(events::slope_form::SlopeFormEvent::new()));
         composite
     }
 

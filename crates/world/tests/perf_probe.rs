@@ -13,6 +13,7 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::sea::SeaEvent;
 use world::events::spawner::SpawnerEvent;
+use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::PlateCache;
 
@@ -24,6 +25,7 @@ fn composite_full() -> Composite {
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
+    c.add_event(Box::new(SlopeFormEvent::new()));
     c.add_event(Box::new(SpawnerEvent::new(SEED)));
     c
 }
@@ -34,6 +36,7 @@ fn composite_no_spawner() -> Composite {
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
+    c.add_event(Box::new(SlopeFormEvent::new()));
     c
 }
 

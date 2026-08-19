@@ -8,6 +8,7 @@ use std::sync::Arc;
 use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::sea::SeaEvent;
+use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::PlateCache;
 
@@ -19,6 +20,7 @@ fn composite() -> Composite {
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
+    c.add_event(Box::new(SlopeFormEvent::new()));
     c
 }
 

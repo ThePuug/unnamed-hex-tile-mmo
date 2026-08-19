@@ -176,6 +176,48 @@ Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
 9. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never
    momentarily empty (INV-002).
 
+## Writing a world event
+
+`query` runs per tile, on every tile the server streams and every tile a
+summary samples. Everything below is a way of putting work there that does not
+belong there, and every one of them has shipped at least once.
+
+**Read the composite only at your own tile.** `below` hands you a closure over
+the plane; asking it for a neighbour resolves that neighbour through the whole
+stack beneath you. A layer needing a neighbourhood costs N tiles per answer,
+which a dense reader amortises and a sparse one — an LoD summary reads 7 tiles
+per hexagon — pays in full. If you need to know what is around a tile, the
+layer that put it there publishes an index; read that.
+
+**Resolve per-cell work once per cell.** Every tile in a cell shares its cell,
+its ring, and the set of features reaching it. Walking the ring, taking an
+index read lock, or building a `Vec` of candidates inside `query` multiplies
+all of it by the tiles in a cell. Cache it on the event, keyed by cell: the
+neighbourhood is deformed before any tile in the cell resolves and is never
+evicted, so it is complete on first use and never changes.
+
+**Publish what you know; never make a consumer infer it.** A headwall, a
+channel wall, a closed basin — the layer that cut it knows where it is, and a
+consumer that has to recover it by reading elevations around a tile is doing
+far more work to get a worse answer. Publish an `EventIndex` and let the
+framework own its lifecycle. Do not hang it off your own instance type and make
+consumers reach through you for it.
+
+**Publish what the stack leaves, not what you aimed for.** A carve's intended
+floor and the ground it actually leaves part company wherever a clamp or an
+overlapping feature got there first. A face that overstates its depth tells the
+layer above to cut down to reach ground that was never taken.
+
+**Index published geometry spatially; never scan it.** A linear walk over one
+instance's bowls or steps is fine at build time and is a per-tile cost when a
+consumer does it. `HexSpatialGrid` with `insert_radius` over the reach a
+consumer may ask about turns it into one lookup.
+
+**Measure before and after, against the same stack without your layer.**
+`crates/world/tests/slope_probe.rs` shows the shape: contiguous chunk, sparse
+sample, summary region, each read either side of the layer. A ratio that only
+looks reasonable on the dense pattern is not a result.
+
 ## Renet event checklist
 
 Adding an Event or Component that needs network sync:

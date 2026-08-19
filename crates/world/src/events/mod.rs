@@ -6,9 +6,11 @@
 //! - **Query cascade** (tile → tile): single (q, r) resolves vertically through the
 //!   stack. Each layer's `query()` computes one tile on demand. Framework caches result.
 
+pub mod faces;
 pub mod index;
 pub mod plates;
 pub mod sea;
+pub mod slope_form;
 pub mod spawner;
 pub mod spines;
 pub mod survey;

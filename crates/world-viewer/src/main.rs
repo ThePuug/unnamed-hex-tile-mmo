@@ -210,6 +210,7 @@ fn main() {
     composite.add_event(Box::new(world::events::sea::SeaEvent::new()));
     if needs_spines || needs_spawners {
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, cli.seed)));
+        composite.add_event(Box::new(world::events::slope_form::SlopeFormEvent::new()));
     }
     if needs_spawners {
         composite.add_event(Box::new(SpawnerEvent::new(cli.seed)));
