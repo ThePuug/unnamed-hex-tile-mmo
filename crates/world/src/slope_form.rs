@@ -109,11 +109,25 @@ pub const CREEP_SIGMA: f64 = HILLSLOPE_LENGTH / 4.0;
 /// Backstop on what one interval of creep may move.
 ///
 /// Not the working bound — a producer regularises its own singularities at
-/// this same interval, which limits the tip of a cone to exactly the mean
-/// distance a Gaussian samples it from, and that is the physical answer. This
-/// only catches a curvature that could not have come from a shape: no interval
-/// of creep flattens more than a critical-angle step.
+/// this same interval, which pins a cone tip to the closed-form diffused
+/// height, and that is the physical answer. This only catches a curvature that
+/// could not have come from a shape: no interval of creep flattens more than a
+/// critical-angle step.
 static MAX_CREEP_STEP: LazyLock<f64> = LazyLock::new(|| *CRITICAL_SLOPE * CREEP_SIGMA);
+
+/// Below half a z-level, a displacement is smaller than the output can
+/// represent, and whether it shows up at all depends on where the tile happened
+/// to sit against a rounding boundary. That is dither, not form: it moved 6.5%
+/// of land tiles by a full z-level while contributing no profile anywhere
+/// except a summit cap three tiles across.
+///
+/// **A stopgap, not a property of the operator.** Creep integrates over
+/// [`CREEP_SIGMA`], which derives from channel width rather than from any
+/// hillslope scale and lands three orders of magnitude under the cones it acts
+/// on. Everything it produces off a cone tip falls under this floor. Give the
+/// stage a scale matched to the landform and the floor stops binding on its
+/// own; it is not the thing to reach for when that happens.
+const CREEP_DITHER_FLOOR: f64 = ELEVATION_PER_Z / 2.0;
 
 /// The change one interval of hillslope creep leaves at a tile.
 ///
@@ -130,7 +144,11 @@ pub fn creep_delta(curvature: f64, wx: f64, wy: f64) -> f64 {
     }
     let mobility = (1.0 / resistance_at(wx, wy)).min(1.0);
     let step = *MAX_CREEP_STEP;
-    (0.5 * CREEP_SIGMA * CREEP_SIGMA * curvature * mobility).clamp(-step, step)
+    let delta = (0.5 * CREEP_SIGMA * CREEP_SIGMA * curvature * mobility).clamp(-step, step);
+    if delta.abs() < CREEP_DITHER_FLOOR {
+        return 0.0;
+    }
+    delta
 }
 
 /// Rings failure and deposition reach over. The same hillslope: a face fails

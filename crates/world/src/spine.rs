@@ -200,9 +200,14 @@ pub fn cross_section_curvature(dist_frac: f64, smoothing_frac: f64) -> f64 {
     p * curve * ((p - 1.0) - flank * radial)
 }
 
-/// Mean distance from the origin at which a 2-D Gaussian of unit width samples,
-/// as a fraction of its width: `1 / sqrt(2 pi)`. Sets where a regularised
-/// singularity tops out.
+/// What makes the regularised radial term land on the closed-form answer at a
+/// cone tip: `1 / sqrt(2 pi)`.
+///
+/// Smoothing a cone `z = -a d` with a Gaussian of width `s` gives `-a E|X|` at
+/// the apex, for `X ~ N(0, s^2 I)` in two dimensions, and `E|X| = s sqrt(pi/2)`.
+/// Substituting `1 / sqrt(t^2 + GAUSS_TIP^2 s^2)` for the divergent `1/t` makes
+/// the apex evaluate to `-a s / (2 GAUSS_TIP)`, so the constant is `s / (2 E|X|)`
+/// — half the reciprocal of the mean sampling distance, not the distance itself.
 const GAUSS_TIP: f64 = 0.398_942_280_401_432_7;
 
 /// Laplacian of a ridgeline cross-section at `perp_frac`, per unit height, per
@@ -211,6 +216,14 @@ const GAUSS_TIP: f64 = 0.398_942_280_401_432_7;
 /// A ridge is a line, not a point, so it has no radial term — only the profile
 /// curving across it. With an exponent above one that curvature is positive,
 /// and creep fills a ridge's flanks rather than shaving them.
+///
+/// **The crest comes out half as deep as it should.** Smoothing a kink exactly
+/// drops it by `0.798 a s`; the second-order expansion the whole stage rests on
+/// gives `0.399 a s`, because an expansion in the second derivative cannot
+/// represent a discontinuity in the first. The gap widens with `s`, so raising
+/// the interval to make creep visible makes it less correct at the same time,
+/// and there is no interval at which it is both. Matching authored hillslope
+/// form belongs to the orogen swath cross-section, not to a constant here.
 pub fn ridge_cross_curvature(perp_frac: f64, smoothing_frac: f64) -> f64 {
     let u = perp_frac.clamp(0.0, 1.0);
     let s = smoothing_frac.max(f64::EPSILON);
