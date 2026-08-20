@@ -197,11 +197,17 @@ shares its cell, its ring, and the set of features reaching it. Walking the
 ring, taking an index read lock, or building a `Vec` of candidates per tile
 multiplies all of it by the tiles in a cell.
 
-`prepare` is also the earliest point at which a fold over the cell-plus-ring is
-**correct**: the framework has deformed that whole neighbourhood by then, so
-the answer does not depend on the order cells were visited in. The same fold at
-deform time sees whatever happens to be warm. Anything that must see its
-neighbours settled belongs here, not in `deform`.
+**Deform writes your cell; prepare reads your ring.** `deform(L, C)` builds L's
+indexes for C from layers below L, cascading them over C and its ring, and
+writes entries lying in C alone — `CellScope::publish` takes no cell id, so
+that half is enforced. It cannot see its own layer's ring: the cells there may
+not be deformed yet, and folding whatever happens to be warm makes the answer
+depend on visit order.
+
+`prepare(L, C)` reads L's own indexes over C plus the rings `query_reach`
+declares, which the framework guarantees are deformed by then. It cascades
+nothing and writes nothing. Anything that must see its own layer's neighbours
+settled belongs here — that is the whole reason the two phases are separate.
 
 **Publish what you know; never make a consumer infer it.** A headwall, a
 channel wall, a closed basin — the layer that cut it knows where it is, and a
@@ -210,10 +216,12 @@ far more work to get a worse answer. Publish an `EventIndex` and let the
 framework own its lifecycle. Do not hang it off your own instance type and make
 consumers reach through you for it.
 
-**Publish what the stack leaves, not what you aimed for.** A carve's intended
+**Publish what you leave, and let a reader settle it.** A carve's intended
 floor and the ground it actually leaves part company wherever a clamp or an
-overlapping feature got there first. A face that overstates its depth tells the
-layer above to cut down to reach ground that was never taken.
+overlapping feature got there first, and a face that overstates its depth tells
+the layer above to cut down to reach ground that was never taken. Your `deform`
+can only know your own chain, so publish that and let whoever reads the index
+composite it against the ring — the phase that is allowed to see one.
 
 **Index published geometry spatially; never scan it.** A linear walk over one
 instance's bowls or steps is fine at build time and is a per-tile cost when a
