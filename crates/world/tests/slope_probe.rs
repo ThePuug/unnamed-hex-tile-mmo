@@ -192,6 +192,7 @@ fn slope_form_census() {
     let full = composite();
 
     const N: i32 = SAMPLE_SPAN;
+    let mut creep: Vec<f64> = Vec::new();
     let mut cut: Vec<f64> = Vec::new();
     let mut fill: Vec<f64> = Vec::new();
     let mut land = 0u32;
@@ -199,21 +200,27 @@ fn slope_form_census() {
     for i in 0..N {
         for j in 0..N {
             let (q, r) = (SAMPLE.0 - N / 2 + i, SAMPLE.1 - N / 2 + j);
-            let b = below.tile_at(q, r).elevation;
-            if b <= 0.0 { continue; }
+            let bv = below.tile_at(q, r);
+            if bv.elevation <= 0.0 { continue; }
             land += 1;
-            let d = full.tile_at(q, r).elevation - b;
+            // Creep is the one sub-primitive an outside reader can reproduce:
+            // it is a closed-form function of the curvature the layers below
+            // state. Subtracting it leaves failure and deposition, which
+            // otherwise vanish under a delta that moves every tile.
+            let c = world::slope_form::creep_delta(bv.curvature, bv.wx, bv.wy);
+            let d = full.tile_at(q, r).elevation - bv.elevation - c;
+            if c.abs() > 1e-9 { creep.push(c); }
             if d < -1e-9 { cut.push(d); }
             if d > 1e-9 { fill.push(d); }
         }
     }
     if land == 0 { println!("  no relief in the sample block"); return; }
 
-    for v in [&mut cut, &mut fill] {
+    for v in [&mut creep, &mut cut, &mut fill] {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     }
     println!("land samples with relief: {land}");
-    for (name, v) in [("failure", &cut), ("talus", &fill)] {
+    for (name, v) in [("creep", &creep), ("failure", &cut), ("talus", &fill)] {
         if v.is_empty() {
             println!("  {name:<8} never fires");
             continue;
@@ -604,5 +611,85 @@ fn critical_ground_reach() {
     }
     if buckets[0] > 0 {
         println!("\nsteepest tile the limiter could reach: {worst_in_reach:.1}deg");
+    }
+}
+
+/// The analytic creep against the kernel it replaces.
+///
+/// Both are the same physics — diffusion over one interval — reached two ways:
+/// the kernel averages a gathered ball, this stage reads the curvature the
+/// layers below state in closed form. The kernel is the reference because it
+/// is the thing that cannot ship: it costs a neighbourhood per tile.
+#[test]
+#[ignore]
+fn creep_reference() {
+    use world::slope_form::Neighbourhood;
+
+    println!("
+=== creep: analytic against kernel ===
+");
+    let below = composite_below_slope_form();
+    let shipped = composite();
+    let raw = |q: i32, r: i32| below.tile_at(q, r).elevation;
+    let kernel = |q: i32, r: i32| {
+        let (wx, wy) = world::hex_to_world(q, r);
+        Neighbourhood::gather(q, r, wx, wy, &raw).creep()
+    };
+    let full = |q: i32, r: i32| shipped.tile_at(q, r).elevation;
+
+    // The transect runs downhill from the summit of the surface below, so all
+    // three profiles are read along the same ground.
+    let mut best = (0i32, 0i32, f64::MIN);
+    for i in 0..SAMPLE_SPAN {
+        for j in 0..SAMPLE_SPAN {
+            let (q, r) = (SAMPLE.0 - SAMPLE_SPAN / 2 + i, SAMPLE.1 - SAMPLE_SPAN / 2 + j);
+            let e = raw(q, r);
+            if e > best.2 { best = (q, r, e); }
+        }
+    }
+    println!("summit at ({}, {}) elev {:.1}", best.0, best.1, best.2);
+
+    let mut path = vec![(best.0, best.1)];
+    let (mut q, mut r) = (best.0, best.1);
+    for _ in 0..200 {
+        let mut step = None;
+        let mut lowest = raw(q, r);
+        for &(dq, dr) in &NEIGHBOURS {
+            let e = raw(q + dq, r + dr);
+            if e < lowest { lowest = e; step = Some((dq, dr)); }
+        }
+        let Some((dq, dr)) = step else { break };
+        q += dq;
+        r += dr;
+        path.push((q, r));
+    }
+    println!("transect {} tiles", path.len());
+    if path.len() < 12 { return; }
+
+    println!("
+  distance   below      + kernel    shipped");
+    for (i, &(q, r)) in path.iter().enumerate() {
+        if !matches!(i, 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128) { continue; }
+        println!("    d={i:<4} {:9.2}  {:+8.3}  {:+8.3}",
+            raw(q, r), kernel(q, r) - raw(q, r), full(q, r) - raw(q, r));
+    }
+
+    println!("
+  profile          crest     middle    base");
+    for (label, z) in [
+        ("below", &raw as &dyn Fn(i32, i32) -> f64),
+        ("kernel", &kernel),
+        ("shipped", &full),
+    ] {
+        let profile: Vec<f64> = path.iter().map(|&(q, r)| z(q, r)).collect();
+        let n = profile.len();
+        let curv = |i: usize| profile[i - 1] - 2.0 * profile[i] + profile[i + 1];
+        let seg = n / 3;
+        let mean = |lo: usize, hi: usize| {
+            let (lo, hi) = (lo.max(1), hi.min(n - 1));
+            (lo..hi).map(curv).sum::<f64>() / (hi - lo).max(1) as f64
+        };
+        println!("  {label:<14} {:+.4}   {:+.4}   {:+.4}",
+            mean(0, seg), mean(seg, 2 * seg), mean(2 * seg, n));
     }
 }
