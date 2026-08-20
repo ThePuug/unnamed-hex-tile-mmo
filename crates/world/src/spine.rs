@@ -171,6 +171,64 @@ pub fn cross_section_profile(dist_frac: f64) -> f64 {
     (1.0 - t).powf(FALLOFF_EXPONENT)
 }
 
+/// Laplacian of a peak cone at `dist_frac`, per unit height, per unit falloff
+/// radius squared. Multiply by `height / falloff_radius.powi(2)`.
+///
+/// For `z(d) = h (1 - d/R)^p` the radial Laplacian is `z'' + z'/d`, and the
+/// second term is what makes a cone curve at all — a straight-sided cone is
+/// flat in profile yet still sheds material, because the ground available at
+/// radius `d` grows with `d`. It dominates near the apex, which is why creep
+/// rounds summits, and reverses near the foot, which is why cone feet are
+/// concave.
+///
+/// Both ends are singular and the diffusion they stand in only holds where the
+/// surface varies slowly, so the caller bounds the result rather than trusting
+/// it there.
+pub fn cross_section_curvature(dist_frac: f64, smoothing_frac: f64) -> f64 {
+    let t = dist_frac.clamp(0.0, 1.0);
+    let s = smoothing_frac.max(f64::EPSILON);
+    let p = FALLOFF_EXPONENT;
+    // The radial term diverges at the tip, where a cone is a point and its
+    // curvature is a concentration rather than a value. Regularised, the two
+    // ends of the same curve are: a Gaussian of width `s` samples a cone tip
+    // at mean distance `s / sqrt(2 pi)`, and far from the tip the term is
+    // `1/t` again. Without this the tip reads as the flattest ground on the
+    // cone when it is the sharpest.
+    let radial = (t * t + GAUSS_TIP * GAUSS_TIP * s * s).sqrt().recip();
+    let flank = (1.0 - t).max(s);
+    let curve = flank.powf(p - 2.0);
+    p * curve * ((p - 1.0) - flank * radial)
+}
+
+/// Mean distance from the origin at which a 2-D Gaussian of unit width samples,
+/// as a fraction of its width: `1 / sqrt(2 pi)`. Sets where a regularised
+/// singularity tops out.
+const GAUSS_TIP: f64 = 0.398_942_280_401_432_7;
+
+/// Laplacian of a ridgeline cross-section at `perp_frac`, per unit height, per
+/// unit half-width squared.
+///
+/// A ridge is a line, not a point, so it has no radial term — only the profile
+/// curving across it. With an exponent above one that curvature is positive,
+/// and creep fills a ridge's flanks rather than shaving them.
+pub fn ridge_cross_curvature(perp_frac: f64, smoothing_frac: f64) -> f64 {
+    let u = perp_frac.clamp(0.0, 1.0);
+    let s = smoothing_frac.max(f64::EPSILON);
+    let q = RIDGE_FALLOFF_EXPONENT;
+
+    // The flanks curve away from the crest, and with an exponent above one that
+    // curvature is positive: creep fills a ridge's flanks.
+    let flank = q * (q - 1.0) * (1.0 - u).max(s).powf(q - 2.0);
+
+    // The crest itself is a crease — the profile turns over in a single point,
+    // and its slope jumps by twice the flank gradient there. That is a negative
+    // concentration, and smoothing it is what rounds a ridge. Omit it and creep
+    // reads a crest as flank and raises the one line it should be lowering.
+    let crease = 2.0 * q / s * GAUSS_TIP * (-0.5 * (u / s).powi(2)).exp();
+
+    flank - crease
+}
+
 /// Spine tag for a plate at `dist_frac` from the peak center.
 pub fn cross_section_tag(dist_frac: f64) -> PlateTag {
     if dist_frac <= RIDGE_FRAC {
@@ -737,10 +795,10 @@ fn blended_gradient_raw(
     }
 
     for ridge in ridgelines {
-        let here = ridge_elevation_at(ridge, wx, wy);
+        let here = ridge_elevation_at(ridge, wx, wy).0;
         if here <= 0.0 { continue; }
-        let ex = ridge_elevation_at(ridge, wx + BLEND_GRAD_EPSILON, wy);
-        let ey = ridge_elevation_at(ridge, wx, wy + BLEND_GRAD_EPSILON);
+        let ex = ridge_elevation_at(ridge, wx + BLEND_GRAD_EPSILON, wy).0;
+        let ey = ridge_elevation_at(ridge, wx, wy + BLEND_GRAD_EPSILON).0;
         let weight = here * here;
         grad_x += weight * (here - ex) / BLEND_GRAD_EPSILON;
         grad_y += weight * (here - ey) / BLEND_GRAD_EPSILON;
@@ -821,11 +879,14 @@ impl Ridgeline {
 const RIDGE_WOBBLE_BOUND: f64 = RIDGE_LATERAL_WOBBLE * 1.1;
 
 /// Elevation contribution of a single ridgeline at (wx, wy).
-fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> f64 {
+/// Elevation of one ridgeline at a point, with the two terms its curvature is
+/// built from. Curvature costs a power and an exponential, and only the tallest
+/// ridgeline over a point contributes any, so the caller decides when to pay.
+fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> (f64, f64, f64) {
     let abx = ridge.bx - ridge.ax;
     let aby = ridge.by - ridge.ay;
     let ab_len_sq = abx * abx + aby * aby;
-    if ab_len_sq < 1e-10 { return 0.0; }
+    if ab_len_sq < 1e-10 { return (0.0, 0.0, 0.0); }
     let ab_len = ab_len_sq.sqrt();
 
     // Project query point onto the straight segment to get t.
@@ -841,7 +902,7 @@ fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> f64 {
     let raw_dx = wx - raw_px;
     let raw_dy = wy - raw_py;
     let reject = RIDGE_HALF_WIDTH + RIDGE_WOBBLE_BOUND;
-    if raw_dx * raw_dx + raw_dy * raw_dy >= reject * reject { return 0.0; }
+    if raw_dx * raw_dx + raw_dy * raw_dy >= reject * reject { return (0.0, 0.0, 0.0); }
 
     // Wobble the projected point perpendicular to the segment.
     // Attenuate at endpoints so ridge meets peaks exactly.
@@ -856,19 +917,19 @@ fn ridge_elevation_at(ridge: &Ridgeline, wx: f64, wy: f64) -> f64 {
     let dx = wx - proj_x;
     let dy = wy - proj_y;
     let perp_dist = (dx * dx + dy * dy).sqrt();
-    if perp_dist >= RIDGE_HALF_WIDTH { return 0.0; }
+    if perp_dist >= RIDGE_HALF_WIDTH { return (0.0, 0.0, 0.0); }
 
     // Height along the ridge: interpolate between peaks with sag at midpoint.
     let peak_height_at_t = ridge.height_a + (ridge.height_b - ridge.height_a) * t;
     let sag_factor = 1.0 - ridge.sag * 4.0 * t * (1.0 - t);
     let ridge_height = peak_height_at_t * sag_factor;
-    if ridge_height <= 0.0 { return 0.0; }
+    if ridge_height <= 0.0 { return (0.0, 0.0, 0.0); }
 
     // Perpendicular falloff.
     let perp_t = perp_dist / RIDGE_HALF_WIDTH;
     let profile = (1.0 - perp_t).powf(RIDGE_FALLOFF_EXPONENT);
 
-    ridge_height * profile
+    (ridge_height * profile, perp_t, ridge_height)
 }
 
 /// Build ridgeline connections between nearby peaks.
@@ -958,13 +1019,22 @@ pub struct SpineInstance {
 
 impl SpineInstance {
     /// Max ridgeline elevation at (wx, wy).
-    fn evaluate_ridgelines(&self, wx: f64, wy: f64) -> f64 {
-        let mut max_elev = 0.0f64;
+    /// The tallest ridgeline standing over a point, with its curvature.
+    /// The tallest ridgeline standing over a point, with its curvature.
+    fn evaluate_ridgelines(&self, wx: f64, wy: f64) -> (f64, f64) {
+        let mut best = (0.0f64, 0.0f64, 0.0f64);
         for ridge in &self.ridgelines {
-            let e = ridge_elevation_at(ridge, wx, wy);
-            if e > max_elev { max_elev = e; }
+            let sample = ridge_elevation_at(ridge, wx, wy);
+            if sample.0 > best.0 { best = sample; }
         }
-        max_elev
+        if best.0 <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let (_, perp_t, height) = best;
+        let curvature = height
+            * ridge_cross_curvature(perp_t, crate::slope_form::CREEP_SIGMA / RIDGE_HALF_WIDTH)
+            / (RIDGE_HALF_WIDTH * RIDGE_HALF_WIDTH);
+        (best.0, curvature)
     }
 
     /// Query the ravine relationship at (wx, wy).
@@ -1006,7 +1076,7 @@ impl SpineInstance {
     }
 
     pub fn elevation_at(&self, wx: f64, wy: f64) -> f64 {
-        self.sample_at(wx, wy).0
+        self.sample_at(wx, wy).elevation
     }
 
     /// The erosional stack, applied to a tectonic surface in order: ice cuts
@@ -1042,21 +1112,22 @@ impl SpineInstance {
         self.ravine_network.each_face(&realised, emit);
     }
 
-    /// Elevation and cross-section tag in a single pass. Equivalent to
+    /// Elevation, cross-section tag and curvature in a single pass. Equivalent to
     /// `(elevation_at(wx, wy), tag_at(wx, wy))` but shares the bounding
     /// check and the per-peak distance scan between them — the per-tile
     /// query path calls this once per instance instead of scanning twice.
-    pub fn sample_at(&self, wx: f64, wy: f64) -> (f64, Option<PlateTag>) {
+    pub fn sample_at(&self, wx: f64, wy: f64) -> SpineSample {
         let bx = wx - self.bounding_center.0;
         let by = wy - self.bounding_center.1;
         if bx * bx + by * by > self.bounding_radius * self.bounding_radius {
-            return (0.0, None);
+            return SpineSample::default();
         }
 
-        // One peak scan yields both the max cone elevation and the closest
-        // distance fraction the tag comes from.
+        // One peak scan yields the max cone elevation, its curvature, and the
+        // closest distance fraction the tag comes from.
         let mut peak_elev = 0.0f64;
         let mut best_frac = f64::MAX;
+        let mut winner: Option<(&Peak, f64)> = None;
         for peak in &self.peaks {
             let dx = wx - peak.wx;
             let dy = wy - peak.wy;
@@ -1065,17 +1136,61 @@ impl SpineInstance {
             let frac = dist / peak.falloff_radius;
             if frac < best_frac { best_frac = frac; }
             let elev = cross_section_profile(frac) * peak.height;
-            if elev > peak_elev { peak_elev = elev; }
+            if elev > peak_elev {
+                peak_elev = elev;
+                winner = Some((peak, frac));
+            }
         }
+        let peak_curv = winner.map_or(0.0, |(peak, frac)| {
+            cross_section_curvature(frac, crate::slope_form::CREEP_SIGMA / peak.falloff_radius)
+                * peak.height
+                / (peak.falloff_radius * peak.falloff_radius)
+        });
         let tag = if best_frac < f64::MAX { Some(cross_section_tag(best_frac)) } else { None };
 
-        let ridge_elev = self.evaluate_ridgelines(wx, wy);
-        let elev = apply_ridge_noise(peak_elev.max(ridge_elev), wx, wy, self.id);
-        if elev <= 0.0 { return (0.0, tag); }
+        let (ridge_elev, ridge_curv) = self.evaluate_ridgelines(wx, wy);
+        let (tectonic, curvature) = if ridge_elev > peak_elev {
+            (ridge_elev, ridge_curv)
+        } else {
+            (peak_elev, peak_curv)
+        };
 
-        (self.erode(wx, wy, elev), tag)
+        let elev = apply_ridge_noise(tectonic, wx, wy, self.id);
+        if elev <= 0.0 { return SpineSample { elevation: 0.0, tag, curvature: 0.0 }; }
+
+        // Ridge noise scales the whole cone, so it scales its curvature with
+        // it. Its own curvature is not in here: the shortest octave runs half a
+        // spine arm across, which is orders of magnitude longer than the
+        // interval creep integrates over.
+        let curvature = curvature * elev / tectonic;
+
+        // Carved ground publishes nothing. A floor or a wall is not a cone
+        // flank, its curvature is not the one computed here, and mass wasting
+        // rather than creep is what governs it.
+        let eroded = self.erode(wx, wy, elev);
+        let carved = (eroded - elev).abs() > CARVE_EPSILON;
+        SpineSample {
+            elevation: eroded,
+            tag,
+            curvature: if carved { 0.0 } else { curvature },
+        }
     }
 }
+
+/// What one spine leaves at a point.
+#[derive(Default, Clone, Copy)]
+pub struct SpineSample {
+    pub elevation: f64,
+    pub tag: Option<PlateTag>,
+    /// Laplacian of the tectonic surface here, in z per world unit squared.
+    /// Zero wherever a carve took the ground, because a carve is not the
+    /// primitive this was computed from.
+    pub curvature: f64,
+}
+
+/// How far a carve has to move the ground before it counts as carved rather
+/// than as the rounding error of two floating-point paths to the same number.
+const CARVE_EPSILON: f64 = 1e-6;
 
 /// Ridge noise on a tectonic elevation. Shared so the surface a cirque rim is
 /// fitted to at build time is the surface the query path produces — the bowl's
@@ -1493,7 +1608,7 @@ fn evaluate_surface(
 ) -> f64 {
     let mut max_elev = evaluate_all_peaks(peaks, wx, wy);
     for ridge in ridgelines {
-        let e = ridge_elevation_at(ridge, wx, wy);
+        let e = ridge_elevation_at(ridge, wx, wy).0;
         if e > max_elev { max_elev = e; }
     }
     glacial::carve_all(cirques, wx, wy, max_elev)
@@ -2670,6 +2785,57 @@ mod tests {
     }
 
     #[test]
+    fn cone_curvature_is_finite_and_turns_over() {
+        // A cone sheds material at its tip and gathers it at its foot, so the
+        // sign has to reverse somewhere in between. Both ends are singular in
+        // closed form and must still come back finite.
+        let s = 1.5 / 2000.0;
+        let tip = cross_section_curvature(0.0, s);
+        let foot = cross_section_curvature(1.0, s);
+        assert!(tip.is_finite() && foot.is_finite(), "tip {tip}, foot {foot}");
+        assert!(tip < 0.0, "a cone tip is convex, got {tip}");
+        assert!(foot > 0.0, "a cone foot is concave, got {foot}");
+
+        let mut turned = false;
+        let mut prev = tip;
+        for i in 1..=100 {
+            let c = cross_section_curvature(i as f64 / 100.0, s);
+            if prev < 0.0 && c >= 0.0 { turned = true; }
+            prev = c;
+        }
+        assert!(turned, "curvature never changed sign along the profile");
+    }
+
+    #[test]
+    fn cone_tip_curvature_scales_with_the_interval() {
+        // The tip is regularised at the interval creep integrates over, so a
+        // longer interval reads a blunter tip. Nothing else about the cone
+        // changes, so the ordering is the whole claim.
+        let sharp = cross_section_curvature(0.0, 1.5 / 2000.0);
+        let blunt = cross_section_curvature(0.0, 15.0 / 2000.0);
+        assert!(
+            sharp < blunt,
+            "a wider interval should read a blunter tip: {sharp} vs {blunt}"
+        );
+    }
+
+    #[test]
+    fn ridge_crest_is_convex_and_flanks_are_not() {
+        // A ridge crest is a crease: the profile turns over in one point, and
+        // that is the line creep lowers. Away from it the flanks curve the
+        // other way and creep fills them.
+        let s = 1.5 / RIDGE_HALF_WIDTH;
+        let crest = ridge_cross_curvature(0.0, s);
+        let flank = ridge_cross_curvature(0.5, s);
+        assert!(crest < 0.0, "a ridge crest is convex, got {crest}");
+        assert!(flank > 0.0, "a ridge flank is concave, got {flank}");
+        assert!(
+            ridge_cross_curvature(1.0, s).is_finite(),
+            "the ridge edge must come back finite"
+        );
+    }
+
+    #[test]
     fn cross_section_tag_assigns_zones_correctly() {
         assert_eq!(cross_section_tag(0.0),  PlateTag::Ridge);
         assert_eq!(cross_section_tag(0.10), PlateTag::Ridge);
@@ -2787,7 +2953,7 @@ mod tests {
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
             height_a: 1000.0, height_b: 800.0, sag: 0.3,
             wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
-        let elev = ridge_elevation_at(&ridge, 0.0, 0.0);
+        let elev = ridge_elevation_at(&ridge, 0.0, 0.0).0;
         assert!((elev - 1000.0).abs() < 1e-10,
             "elevation at peak A should equal height_a, got {elev}");
     }
@@ -2799,7 +2965,7 @@ mod tests {
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
             height_a: 1000.0, height_b: 800.0, sag: 0.3,
             wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
-        let elev = ridge_elevation_at(&ridge, 3000.0, 0.0);
+        let elev = ridge_elevation_at(&ridge, 3000.0, 0.0).0;
         assert!((elev - 800.0).abs() < 1e-10,
             "elevation at peak B should equal height_b, got {elev}");
     }
@@ -2811,8 +2977,8 @@ mod tests {
             ax: 0.0, ay: 0.0, bx: 4000.0, by: 0.0,
             height_a: 1000.0, height_b: 1000.0, sag: 0.4,
             wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
-        let at_a = ridge_elevation_at(&ridge, 0.0, 0.0);
-        let at_mid = ridge_elevation_at(&ridge, 2000.0, 0.0);
+        let at_a = ridge_elevation_at(&ridge, 0.0, 0.0).0;
+        let at_mid = ridge_elevation_at(&ridge, 2000.0, 0.0).0;
         assert!(at_mid > 0.0, "midpoint should have positive elevation");
         assert!(at_mid < at_a, "midpoint ({at_mid:.1}) should be lower than peak ({at_a:.1}) due to sag");
     }
@@ -2824,7 +2990,7 @@ mod tests {
             ax: 0.0, ay: 0.0, bx: 3000.0, by: 0.0,
             height_a: 1000.0, height_b: 800.0, sag: 0.3,
             wobble_seed: Ridgeline::wobble_seed_for(0, 1), };
-        let elev = ridge_elevation_at(&ridge, 1500.0, RIDGE_HALF_WIDTH);
+        let elev = ridge_elevation_at(&ridge, 1500.0, RIDGE_HALF_WIDTH).0;
         assert_eq!(elev, 0.0, "elevation at half_width perpendicular should be zero");
     }
 
@@ -3843,7 +4009,7 @@ mod tests {
                     let wx = cx - radius + step * (col as f64 + 0.5);
 
                     let peak_elev = evaluate_all_peaks(&inst.peaks, wx, wy);
-                    let ridge_elev = inst.evaluate_ridgelines(wx, wy);
+                    let ridge_elev = inst.evaluate_ridgelines(wx, wy).0;
                     let surface = peak_elev.max(ridge_elev);
                     let final_elev = inst.elevation_at(wx, wy);
                     let carve = surface - final_elev;
@@ -4327,7 +4493,7 @@ mod tests {
                         let (wx, wy) = (step.wx + px * d, step.wy + py * d);
                         let tectonic = apply_ridge_noise(
                             evaluate_all_peaks(&inst.peaks, wx, wy)
-                                .max(inst.evaluate_ridgelines(wx, wy)),
+                                .max(inst.evaluate_ridgelines(wx, wy).0),
                             wx, wy, inst.id,
                         );
                         let glacial = glacial::carve_all(&inst.cirques, wx, wy, tectonic);

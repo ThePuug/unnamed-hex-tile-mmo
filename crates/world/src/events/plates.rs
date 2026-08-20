@@ -86,7 +86,7 @@ impl EventIndex for PlateCentroidIndex {
     fn tile_view_at(&self, q: i32, r: i32) -> Option<TileView> {
         self.tags_at.get(&(q, r)).map(|&tags| {
             let (wx, wy) = hex_to_world(q, r);
-            TileView { q, r, wx, wy, tags, elevation: 0.0 }
+            TileView { q, r, wx, wy, tags, elevation: 0.0, curvature: 0.0 }
         })
     }
 

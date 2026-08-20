@@ -220,12 +220,14 @@ impl WorldEvent for SpineEvent {
         let instances = cell.downcast_ref::<Vec<Arc<SpineInstance>>>()?;
 
         let mut max_elev = 0.0f64;
+        let mut curvature = 0.0f64;
         let mut best_tag: Option<PlateTag> = None;
 
         for inst in instances.iter() {
             // Single pass per instance: elevation + tag share one peak scan.
-            let (e, tag) = inst.sample_at(wx, wy);
-            if e > max_elev { max_elev = e; }
+            let s = inst.sample_at(wx, wy);
+            let (e, tag) = (s.elevation, s.tag);
+            if e > max_elev { max_elev = e; curvature = s.curvature; }
 
             if let Some(tag) = tag {
                 let dominated = best_tag.as_ref()
@@ -238,6 +240,7 @@ impl WorldEvent for SpineEvent {
 
         let mut out = TileOutput::default();
         out.elevation_delta = max_elev;
+        out.curvature = curvature;
         if let Some(t) = best_tag {
             out.tags_added.add(t);
         }

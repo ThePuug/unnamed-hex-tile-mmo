@@ -25,7 +25,9 @@ use std::sync::Arc;
 use common::HexLattice;
 
 
-use crate::slope_form::{critical_slope, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH};
+use crate::slope_form::{
+    creep_delta, critical_slope, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH,
+};
 
 use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::spines::{SpineInstanceIndex, SPINE_CELL_SCALE};
@@ -152,7 +154,7 @@ impl WorldEvent for SlopeFormEvent {
                 let top = face.floor + face.height;
                 let floor = instances
                     .iter()
-                    .fold(0.0f64, |acc, i| acc.max(i.sample_at(face.wx, face.wy).0));
+                    .fold(0.0f64, |acc, i| acc.max(i.sample_at(face.wx, face.wy).elevation));
                 faces.insert(
                     crate::ErosionalFace { floor, height: top - floor, ..face },
                     min_height,
@@ -176,20 +178,17 @@ impl WorldEvent for SlopeFormEvent {
 
         // Failure and deposition both read the published faces: the only ground
         // within reach that can sit far below a tile is ground a carve took
-        // away, and every carve published its floor.
-        //
-        // Creep is absent. It is an average over a neighbourhood, which is the
-        // one thing this contract does not hand out, and its replacement is the
-        // composition itself — a crest is sharp because the surface is a hard
-        // max over cones, and softening that seam is what rounds it. Until then
-        // crests keep the curvature the tectonic layer gave them.
+        // away, and every carve published its floor. Creep reads the curvature
+        // the layers below state at this tile. None of the three reads a
+        // neighbour.
         let repose = repose_slope();
         let critical = critical_slope(wx, wy);
         let cap = repose * MASS_WASTING_REACH;
 
         let limited = cell.faces.limit_at(wx, wy, critical).map_or(base, |l| base.min(l));
         let apron = cell.faces.apron_at(wx, wy, repose, cap);
-        let delta = (limited - base) + apron;
+        let creep = creep_delta(below.curvature, wx, wy);
+        let delta = (limited - base) + apron + creep;
         if delta == 0.0 { return None; }
 
         // Slope form may not cut below the level that impounds a basin — the

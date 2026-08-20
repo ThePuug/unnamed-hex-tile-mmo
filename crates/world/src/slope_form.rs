@@ -104,7 +104,34 @@ const CREEP_RINGS: i32 = (HILLSLOPE_LENGTH / (2.0 * TILE_SPACING)) as i32;
 
 /// Truncating a Gaussian at twice its standard deviation keeps 95% of its mass,
 /// so the kernel radius is 2 sigma.
-const CREEP_SIGMA: f64 = HILLSLOPE_LENGTH / 4.0;
+pub const CREEP_SIGMA: f64 = HILLSLOPE_LENGTH / 4.0;
+
+/// Backstop on what one interval of creep may move.
+///
+/// Not the working bound — a producer regularises its own singularities at
+/// this same interval, which limits the tip of a cone to exactly the mean
+/// distance a Gaussian samples it from, and that is the physical answer. This
+/// only catches a curvature that could not have come from a shape: no interval
+/// of creep flattens more than a critical-angle step.
+static MAX_CREEP_STEP: LazyLock<f64> = LazyLock::new(|| *CRITICAL_SLOPE * CREEP_SIGMA);
+
+/// The change one interval of hillslope creep leaves at a tile.
+///
+/// Diffusion over an interval whose kernel has standard deviation `sigma` is
+/// `z + (sigma^2 / 2) * laplacian(z)` to second order, so a layer that states
+/// its own curvature has already done the hard half. Nothing here reads a
+/// neighbouring tile: the curvature arrives with the composite, in closed form
+/// from whichever layer emitted the shape.
+///
+/// Soft rock creeps more readily, as it carves more readily everywhere else.
+pub fn creep_delta(curvature: f64, wx: f64, wy: f64) -> f64 {
+    if curvature == 0.0 {
+        return 0.0;
+    }
+    let mobility = (1.0 / resistance_at(wx, wy)).min(1.0);
+    let step = *MAX_CREEP_STEP;
+    (0.5 * CREEP_SIGMA * CREEP_SIGMA * curvature * mobility).clamp(-step, step)
+}
 
 /// Rings failure and deposition reach over. The same hillslope: a face fails
 /// onto the ground below it, and that ground is the hillslope's own.
@@ -215,6 +242,14 @@ fn smoothstep(x: f64) -> f64 {
 
 /// One tile's slope-form neighbourhood: the surface below, gathered once, and
 /// the material properties read at the tile.
+///
+/// **Not what ships.** A gather costs a neighbourhood per tile, which a dense
+/// reader amortises and a sparse one pays in full. Every sub-primitive here has
+/// a shipping counterpart that reads only its own tile — creep from published
+/// curvature, failure and deposition from published faces — and this is the
+/// reference they are measured against, in `crates/world/tests/slope_probe.rs`.
+/// Two ways to the same physics is the only check on whether the cheap one is
+/// right.
 ///
 /// The gather is the whole cost of the stage — every sub-primitive works from
 /// this buffer, and none of them reads another's output.
