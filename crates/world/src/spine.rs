@@ -27,9 +27,8 @@ use crate::glacial::{self, Cirque, CirqueProbe, GLACIATION_LINE, Outflow};
 use crate::lithology::resistance_at;
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::plates::{PlateCache, PlateCenter};
-use crate::slope_form;
 
-use crate::{MACRO_CELL_SIZE, TILE_SPACING};
+use crate::MACRO_CELL_SIZE;
 
 // ── Generation constants ────────────────────────────────────────────────────
 

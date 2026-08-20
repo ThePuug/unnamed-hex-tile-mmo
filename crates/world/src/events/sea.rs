@@ -19,7 +19,6 @@ use common::PlateTag;
 use crate::hex_to_world;
 use crate::plates::{inverse_sigmoid, raw_regime_noise};
 use crate::{REGIME_LAND_THRESHOLD, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS};
-use super::index::{CellId, IndexRegistry};
 use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell scale in tiles. Bathymetry has no cross-tile structure, so this sets

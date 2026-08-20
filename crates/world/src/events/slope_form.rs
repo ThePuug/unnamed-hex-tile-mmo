@@ -7,17 +7,17 @@
 //! sub-primitives live in [`crate::slope_form`]; this is the layer that feeds
 //! them the surface.
 
-//! **Horizontal, in a cascade that is vertical.** Every other event resolves a
-//! tile from its own position. A diffusion kernel reads a neighbourhood, so
-//! this query calls `below()` across a bounded hex ball. That is only affordable
-//! because the framework deforms the cell a `below()` call lands in before
-//! querying it, so a tap on the far side of a cell boundary caches like any
-//! other tap instead of recomputing the whole cascade on every access.
+//! **A tile resolves from its own position.** The layers below publish the
+//! geometry they cut — every face steep enough to fail, every bowl deep enough
+//! to hold water — so this stage never reads a neighbouring tile. It reads
+//! what stands over the one it is given.
 
-//! **Order-independent.** No index, no survey, no deform. The output at a tile
-//! is a pure function of the surface below over a bounded ball, so it does not
-//! matter which tiles were visited first or in what order.
+//! **Order-independent.** It builds no index and runs no survey; `prepare`
+//! reads what the layers below published over a neighbourhood the framework
+//! guarantees is deformed, so the answer at a tile does not depend on which
+//! tiles were visited first.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 
@@ -26,33 +26,38 @@ use common::HexLattice;
 
 
 use crate::slope_form::{critical_slope, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH};
-use super::index::CellId;
 
 use super::faces::{BasinIndex, ErosionalFaceIndex};
-use super::spines::SPINE_CELL_SCALE;
+use super::spines::{SpineInstanceIndex, SPINE_CELL_SCALE};
 use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell scale in tiles.
 ///
-/// Every layer here is scoped so a tile resolves from its own cell plus one
-/// ring, and this one holds to that too: the kernel reaches
-/// [`SLOPE_FORM_REACH`] tiles, well inside a cell of this size, so no tap can
-/// leave the envelope the framework has already deformed around the tile.
+/// Sets what one `prepare` covers, and with it where the cost of settling
+/// lands. Too small and a lone summary sample pays for a cell it uses one tile
+/// of; too large and the settle sweeps ground no tile of the cell can reach.
+/// Matched to the chunk the server streams, so a chunk's tiles share one cell
+/// and the whole settle is charged once across all 271 of them.
 ///
-/// Slope form does not strictly need it — it reads no index of its own, and
-/// `below()` deforms the cell each tap lands in. Sizing it to the convention
-/// anyway is what keeps the envelope derivable from cell scales rather than
-/// from predicate reach, and leaves the layer correctly scoped if it ever
-/// gains an index. Matched to the chunk the server streams, which clears the
-/// floor comfortably and lets a chunk's tiles share one cell.
+/// It also clears [`SLOPE_FORM_REACH`] comfortably, which keeps the layer
+/// correctly scoped against the convention every other event here follows.
 const SLOPE_FORM_CELL_SCALE: u32 = 9;
 
 const _: () = assert!(SLOPE_FORM_REACH <= SLOPE_FORM_CELL_SCALE as f64);
 
+/// World-unit radius of the ground a cell settles geometry for: its own
+/// footprint plus everything close enough to act on a tile inside it.
+///
+/// A hex ball of N tiles has circumradius N — its six corners sit exactly N
+/// tile spacings out — so the cell scale is the footprint radius directly.
+const CELL_FOOTPRINT_RADIUS: f64 =
+    (SLOPE_FORM_CELL_SCALE as f64) * crate::TILE_SPACING + MASS_WASTING_REACH;
+
 /// What a tile in a cell reads: the published geometry standing over it,
 /// taken once for the cell.
 struct SlopeFormCell {
-    faces: Vec<Arc<crate::faces::FaceIndex>>,
+    /// Settled against every spine that reaches each foot.
+    faces: crate::faces::FaceIndex,
     basins: Vec<Arc<common::HexSpatialGrid<crate::Cirque>>>,
 }
 
@@ -66,27 +71,6 @@ pub struct SlopeFormEvent {
     spine_lattice: HexLattice,
 }
 
-
-/// Multiply-shift hasher for packed tile keys. The kernel takes tens of lookups
-/// per tile and a general-purpose hash is most of their cost — a packed key is
-/// already well spread by one multiply against a 64-bit odd constant, with the
-/// fold putting entropy in the low bits the table indexes on.
-#[derive(Default)]
-pub struct TileHasher(u64);
-
-impl std::hash::Hasher for TileHasher {
-    fn finish(&self) -> u64 {
-        self.0 ^ (self.0 >> 32)
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = (self.0 ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        }
-    }
-    fn write_i64(&mut self, v: i64) {
-        self.0 = (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    }
-}
 
 impl SlopeFormEvent {
     pub fn new() -> Self {
@@ -115,32 +99,73 @@ impl WorldEvent for SlopeFormEvent {
         // Nothing to build. The stage is a pure function of the surface below.
     }
 
-    /// The faces and basins standing over this cell, taken once for it.
+    /// The geometry standing over this cell, settled once for it.
+    ///
+    /// A producer publishes a face with the floor its own carve leaves, because
+    /// `deform` sees the layers below over its footprint and never its own ring
+    /// — it cannot know that a neighbouring spine buries the channel it just
+    /// cut. Compositing that is a fold over the ring, which is precisely what
+    /// this phase is allowed to read: `query_reach` guarantees the ring is
+    /// deformed before any tile here resolves.
+    ///
+    /// So the reader settles. Every face that can act on a tile of this cell is
+    /// re-floored against every spine reaching its foot, once, and the result
+    /// is what the per-tile query reads.
     fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
-        let (cell_id, indexes) = (scope.cell(), scope);
-        // A slope-form cell is far smaller than a spine cell, so every tile in
-        // it shares one spine cell — and the ring, since a spine reaches past
-        // its own cell edge.
-        //
         // A cell id means nothing outside the lattice that issued it, so the
-        // hop between them goes through tile coordinates: this cell's centre,
-        // then the spine cell that contains it.
-        let (cq, cr) = self.lattice.cell_center(cell_id);
+        // hop between them goes through tile coordinates.
+        let (cq, cr) = self.lattice.cell_center(scope.cell());
         let spine_cell = self.spine_lattice.cell_id(cq, cr);
         let cells = self.spine_lattice.cells_within_distance(spine_cell, 1);
-        Box::new(SlopeFormCell {
-            faces: indexes.read::<ErosionalFaceIndex>().map(|ix| {
-                cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
-            }).unwrap_or_default(),
-            basins: indexes.read::<BasinIndex>().map(|ix| {
-                cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
-            }).unwrap_or_default(),
-        })
+        let raw: Vec<Arc<crate::faces::FaceIndex>> = scope
+            .read::<ErosionalFaceIndex>()
+            .map(|ix| cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect())
+            .unwrap_or_default();
+        let basins = scope
+            .read::<BasinIndex>()
+            .map(|ix| cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect())
+            .unwrap_or_default();
+
+        // Gather before settling. Most ground carries no carve at all, and the
+        // instances exist here only to re-floor one — reading them first would
+        // charge every empty cell for a fold it never performs.
+        let (cx, cy) = crate::hex_to_world(cq, cr);
+        let mut gathered: Vec<crate::ErosionalFace> = Vec::new();
+        let mut seen: HashSet<(u64, u64)> = HashSet::new();
+        for producer in &raw {
+            producer.for_each_in(cx, cy, CELL_FOOTPRINT_RADIUS, |face| {
+                if seen.insert((face.wx.to_bits(), face.wy.to_bits())) {
+                    gathered.push(*face);
+                }
+            });
+        }
+
+        let reach = MASS_WASTING_REACH;
+        let mut faces = crate::faces::FaceIndex::new(reach);
+        if !gathered.is_empty() {
+            let instances = scope
+                .read::<SpineInstanceIndex>()
+                .map(|ix| ix.instances_in(&cells))
+                .unwrap_or_default();
+            let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING * reach;
+            for face in gathered {
+                let top = face.floor + face.height;
+                let floor = instances
+                    .iter()
+                    .fold(0.0f64, |acc, i| acc.max(i.sample_at(face.wx, face.wy).0));
+                faces.insert(
+                    crate::ErosionalFace { floor, height: top - floor, ..face },
+                    min_height,
+                );
+            }
+        }
+
+        Box::new(SlopeFormCell { faces, basins })
     }
 
     fn query(
         &self,
-        q: i32, r: i32,
+        _q: i32, _r: i32,
         below: &TileView,
         cell: &(dyn std::any::Any + Send + Sync),
         _seed: u64,
@@ -148,7 +173,6 @@ impl WorldEvent for SlopeFormEvent {
         let cell = cell.downcast_ref::<SlopeFormCell>()?;
         let (wx, wy) = (below.wx, below.wy);
         let base = below.elevation;
-        let _ = (q, r);
 
         // Failure and deposition both read the published faces: the only ground
         // within reach that can sit far below a tile is ground a carve took
@@ -163,16 +187,8 @@ impl WorldEvent for SlopeFormEvent {
         let critical = critical_slope(wx, wy);
         let cap = repose * MASS_WASTING_REACH;
 
-        let mut limited = base;
-        let mut apron = 0.0f64;
-        for faces in &cell.faces {
-            if let Some(l) = faces.limit_at(wx, wy, critical) {
-                limited = limited.min(l);
-            }
-            let a = faces.apron_at(wx, wy, repose, cap);
-            if a > apron { apron = a; }
-        }
-
+        let limited = cell.faces.limit_at(wx, wy, critical).map_or(base, |l| base.min(l));
+        let apron = cell.faces.apron_at(wx, wy, repose, cap);
         let delta = (limited - base) + apron;
         if delta == 0.0 { return None; }
 

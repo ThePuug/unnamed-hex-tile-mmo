@@ -92,29 +92,6 @@ impl<'a> CellScope<'a> {
     pub fn publish<T: CellIndex>(&self, entry: T::Cell) {
         self.indexes.get_or_create::<T>().set(self.cell, entry);
     }
-
-    /// Whether a world position lies on this cell's ground.
-    pub fn contains(&self, wx: f64, wy: f64) -> bool {
-        let (q, r) = crate::world_to_hex(wx, wy);
-        self.lattice.cell_id(q, r) == self.cell
-    }
-
-    /// Whether this cell's ground is within `reach` world units of a position —
-    /// the test for an entry that lies just outside the cell but still acts on
-    /// tiles inside it.
-    ///
-    /// Probes the six axes at `reach` rather than measuring to the cell
-    /// boundary: at the scales in play a cell is thousands of tiles across and
-    /// a reach is a handful, so a hex-axis probe and an exact distance disagree
-    /// only on a sliver, and always by including a face that acts on nothing.
-    pub fn within_reach(&self, wx: f64, wy: f64, reach: f64) -> bool {
-        if self.contains(wx, wy) {
-            return true;
-        }
-        [(1.0, 0.0), (-1.0, 0.0), (0.5, 0.866), (-0.5, 0.866), (0.5, -0.866), (-0.5, -0.866)]
-            .iter()
-            .any(|(dx, dy)| self.contains(wx + dx * reach, wy + dy * reach))
-    }
 }
 
 // ── WorldEvent trait ────────────────────────────────────────────────────────

@@ -109,6 +109,48 @@ impl<T> HexSpatialGrid<T> {
         }
     }
 
+    /// Visit every item within `radius` of a point, plus whatever else shares
+    /// the overlapping cells. Sweeping the cell range once is what a caller
+    /// covering a whole region wants — `query` per point revisits the same
+    /// cells as many times as there are points in them.
+    pub fn for_each_within(&self, wx: f64, wy: f64, radius: f64, mut visit: impl FnMut(&T)) {
+        let bound = radius + self.cell_size;
+        let bound_sq = bound * bound;
+        let near = |cq: i32, cr: i32| {
+            let (ccx, ccy) = self.cell_center(cq, cr);
+            (wx - ccx).powi(2) + (wy - ccy).powi(2) <= bound_sq
+        };
+
+        let row_height = self.cell_size * HEX_ROW_HEIGHT;
+        let min_cq = ((wx - radius) / self.cell_size).floor() as i32 - 1;
+        let max_cq = ((wx + radius) / self.cell_size).ceil() as i32 + 1;
+        let min_cr = ((wy - radius) / row_height).floor() as i32 - 1;
+        let max_cr = ((wy + radius) / row_height).ceil() as i32 + 1;
+        let span = (max_cq - min_cq + 1) as usize * (max_cr - min_cr + 1) as usize;
+
+        // A sparse grid holds fewer cells than the region spans, and probing
+        // for cells that were never filled is the whole cost of the sweep.
+        if self.cells.len() <= span {
+            for (&(cq, cr), items) in &self.cells {
+                if near(cq, cr) {
+                    items.iter().for_each(&mut visit);
+                }
+            }
+            return;
+        }
+
+        for cr in min_cr..=max_cr {
+            for cq in min_cq..=max_cq {
+                if !near(cq, cr) {
+                    continue;
+                }
+                if let Some(cell) = self.cells.get(&(cq, cr)) {
+                    cell.iter().for_each(&mut visit);
+                }
+            }
+        }
+    }
+
     /// Get all items in a specific cell.
     pub fn cell_contents(&self, cell: (i32, i32)) -> Option<&Vec<T>> {
         self.cells.get(&cell)

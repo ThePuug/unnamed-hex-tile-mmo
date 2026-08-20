@@ -135,6 +135,16 @@ impl FaceIndex {
         }
     }
 
+    /// Visit every face lying within `radius` of a point — the bulk form of
+    /// [`Self::for_each_near`], for a reader settling a whole cell at once.
+    /// Faces just outside are included: the caller is gathering, not deciding.
+    pub fn for_each_in(&self, wx: f64, wy: f64, radius: f64, visit: impl FnMut(&ErosionalFace)) {
+        if self.faces.is_empty() {
+            return;
+        }
+        self.grid.for_each_within(wx, wy, radius, visit);
+    }
+
     pub fn len(&self) -> usize {
         self.faces.len()
     }

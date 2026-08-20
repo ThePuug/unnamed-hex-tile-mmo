@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 
 
-use common::{HexLattice, PlateTag};
+use common::PlateTag;
 
 use crate::hex_to_world;
 use crate::plates::PlateCache;
@@ -91,9 +91,6 @@ impl EventIndex for SpineInstanceIndex {
 pub struct SpineEvent {
     plate_cache: Arc<PlateCache>,
     seed: u64,
-    /// Cell lattice at SPINE_CELL_SCALE — hoisted out of the per-tile query.
-    lattice: HexLattice,
-
 }
 
 impl SpineEvent {
@@ -105,7 +102,6 @@ impl SpineEvent {
         Self {
             plate_cache,
             seed,
-            lattice: HexLattice::new(SPINE_CELL_SCALE),
         }
     }
 
@@ -169,14 +165,26 @@ impl WorldEvent for SpineEvent {
             }
         }
 
-        // Instances are keyed by where they were seeded, not by the ground they
-        // cover — a spine reaches a full SPINE_INFLUENCE past its own cell,
+        // Everything here is keyed by where it was seeded, not by the ground it
+        // covers — a spine reaches a full SPINE_INFLUENCE past its own cell,
         // which is what `query_reach` declares so readers gather cell plus ring.
         //
-        // The geometry those instances leave — faces, basins — is published in
-        // `prepare` instead, keyed by the ground it lies on. Here the ring is
-        // not yet guaranteed, so this cell can neither see every spine that
-        // reaches its own ground nor settle what it laid on someone else's.
+        // Floors are this cell's own view: deform sees the layers below over its
+        // footprint, never its own ring, so it cannot know which of these carves
+        // a neighbouring spine buries. A reader composites them against the ring
+        // it can see, which is what `prepare` is for.
+        let reach = slope_form::MASS_WASTING_REACH;
+        let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING * reach;
+        let mut faces = crate::faces::FaceIndex::new(reach);
+        for inst in &instances {
+            inst.each_face(&mut |face| faces.insert(face, min_height));
+        }
+        scope.publish::<ErosionalFaceIndex>(Arc::new(faces));
+
+        scope.publish::<BasinIndex>(BasinIndex::grid_of(
+            instances.iter().flat_map(|i| i.cirques.iter()).cloned(),
+        ));
+
         scope.publish::<SpineInstanceIndex>(instances);
     }
 
@@ -197,49 +205,6 @@ impl WorldEvent for SpineEvent {
             Some(idx) => idx.instances_in(&cells),
             None => Vec::new(),
         };
-
-        // Everything below is laid on *this cell's* ground, from every spine
-        // that reaches it — including spines seeded in the ring, which is why
-        // it cannot happen until here. A neighbouring cell lays the geometry
-        // these same spines leave on its own ground, from its own ring, so
-        // every feature is published exactly once by whoever owns the ground
-        // under it and settled against exactly what acts on it.
-        let composed = |wx: f64, wy: f64| {
-            instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
-        };
-        let reach = slope_form::MASS_WASTING_REACH;
-        let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING * reach;
-
-        let mut faces = crate::faces::FaceIndex::new(reach);
-        for inst in &instances {
-            inst.each_face(&mut |face: crate::ErosionalFace| {
-                // A face just outside the cell still acts on tiles inside it,
-                // so the cell keeps anything within reach of its own ground.
-                // That is still this cell's entry — the halo describes where a
-                // face lies, not which cell may record it.
-                if !scope.within_reach(face.wx, face.wy, reach) {
-                    return;
-                }
-                let floor = composed(face.wx, face.wy);
-                let top = face.floor + face.height;
-                faces.insert(
-                    crate::ErosionalFace { floor, height: top - floor, ..face },
-                    min_height,
-                );
-            });
-        }
-        scope.publish::<ErosionalFaceIndex>(Arc::new(faces));
-
-        // A bowl is an extent, not a point, so it belongs to every cell its
-        // footprint touches — at a few hundred tiles against a cell thousands
-        // across, that is one cell or two.
-        scope.publish::<BasinIndex>(BasinIndex::grid_of(
-            instances
-                .iter()
-                .flat_map(|i| i.cirques.iter())
-                .filter(|c| scope.within_reach(c.cx, c.cy, c.radius))
-                .cloned(),
-        ));
 
         Box::new(instances)
     }
