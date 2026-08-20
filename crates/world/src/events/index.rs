@@ -22,6 +22,21 @@ pub type CellId = (i32, i32);
 
 // ── EventIndex trait ────────────────────────────────────────────────────────
 
+/// An index holding exactly one entry per cell of the layer that fills it.
+///
+/// Implementing this is what lets a layer publish through [`CellScope`], which
+/// never lets it name a cell other than the one being evaluated. An index whose
+/// entries belong to the ground they describe wants this; one that is keyed by
+/// which feature produced an entry, and declares a `query_reach` for readers to
+/// gather over instead, does not.
+pub trait CellIndex: EventIndex {
+    /// What one cell contributes.
+    type Cell: Send + Sync;
+
+    /// Record a cell's entry, replacing whatever it held.
+    fn set(&mut self, cell: CellId, entry: Self::Cell);
+}
+
 /// Spatial index populated by one event, queryable by others.
 /// Entries are partitioned by source cell ID for LRU cleanup.
 pub trait EventIndex: Send + Sync + Default + 'static {

@@ -26,11 +26,11 @@ use common::HexLattice;
 
 
 use crate::slope_form::{critical_slope, repose_slope, MASS_WASTING_REACH, SLOPE_FORM_REACH};
-use super::index::{CellId, IndexRegistry};
+use super::index::CellId;
 
 use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::spines::SPINE_CELL_SCALE;
-use super::{Survey, TileOutput, TileView, WorldEvent};
+use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell scale in tiles.
 ///
@@ -111,23 +111,13 @@ impl WorldEvent for SlopeFormEvent {
     /// below, which `below()` resolves and the framework deforms for it.
     fn query_reach(&self) -> u32 { 0 }
 
-    fn deform(
-        &self,
-        _cell_id: CellId,
-        _matched: &[(i32, i32)],
-        _indexes: &IndexRegistry,
-        _seed: u64,
-    ) {
+    fn deform(&self, _scope: &CellScope, _matched: &[(i32, i32)]) {
         // Nothing to build. The stage is a pure function of the surface below.
     }
 
     /// The faces and basins standing over this cell, taken once for it.
-    fn prepare(
-        &self,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) -> Box<dyn std::any::Any + Send + Sync> {
+    fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
+        let (cell_id, indexes) = (scope.cell(), scope);
         // A slope-form cell is far smaller than a spine cell, so every tile in
         // it shares one spine cell — and the ring, since a spine reaches past
         // its own cell edge.
@@ -139,10 +129,10 @@ impl WorldEvent for SlopeFormEvent {
         let spine_cell = self.spine_lattice.cell_id(cq, cr);
         let cells = self.spine_lattice.cells_within_distance(spine_cell, 1);
         Box::new(SlopeFormCell {
-            faces: indexes.get::<ErosionalFaceIndex>().map(|ix| {
+            faces: indexes.read::<ErosionalFaceIndex>().map(|ix| {
                 cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
             }).unwrap_or_default(),
-            basins: indexes.get::<BasinIndex>().map(|ix| {
+            basins: indexes.read::<BasinIndex>().map(|ix| {
                 cells.iter().filter_map(|id| ix.cells.get(id).cloned()).collect()
             }).unwrap_or_default(),
         })

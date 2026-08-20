@@ -21,11 +21,11 @@ use crate::spine::{
     SpineInstance, SPINE_INFLUENCE,
     grow_spine, spine_tag_priority,
 };
-use super::index::{CellId, EventIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::plates::PlateCentroidIndex;
 use crate::slope_form;
-use super::{Survey, TileOutput, TileView, WorldEvent};
+use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell radius in tiles = SPINE_INFLUENCE. A cell contains the full influence
 /// extent of any epicenter within it. Query searches cell + 1 neighbor.
@@ -55,6 +55,14 @@ impl SpineInstanceIndex {
             .filter_map(|id| self.cells.get(id))
             .flat_map(|v| v.iter().cloned())
             .collect()
+    }
+}
+
+impl CellIndex for SpineInstanceIndex {
+    type Cell = Vec<Arc<SpineInstance>>;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry);
     }
 }
 
@@ -128,20 +136,13 @@ impl WorldEvent for SpineEvent {
             .min_spacing(SPINE_EXCLUSION_TILES)
     }
 
-    fn deform(
-        &self,
-        cell_id: CellId,
-        matched: &[(i32, i32)],
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) {
+    fn deform(&self, scope: &CellScope, matched: &[(i32, i32)]) {
         // Collect centroid data under read lock, then drop it before write lock.
         let centroid_data: Vec<(f64, f64, u64)> = {
-            let centroid_index = match indexes.get::<PlateCentroidIndex>() {
+            let centroid_index = match scope.read::<PlateCentroidIndex>() {
                 Some(idx) => idx,
                 None => {
-                    indexes.get_or_create::<SpineInstanceIndex>()
-                        .cells.insert(cell_id, Vec::new());
+                    scope.publish::<SpineInstanceIndex>(Vec::new());
                     return;
                 }
             };
@@ -168,34 +169,15 @@ impl WorldEvent for SpineEvent {
             }
         }
 
-        // Publish the geometry the layers above read: the faces these carves
-        // leave standing, and the basins they close. Both are theirs to state,
-        // and a consumer that had to infer them would be reading the surface
-        // around a tile to recover what was known when it was cut.
-        {
-            let mut merged = crate::faces::FaceIndex::new(slope_form::MASS_WASTING_REACH);
-            for inst in &instances {
-                inst.faces.extend_into(&mut merged);
-            }
-            // Floors here are each producer's own view of the ground it cut.
-            // `prepare` settles them against the whole ring, once that ring is
-            // complete — which is the earliest moment the answer does not
-            // depend on the order cells were deformed in.
-            indexes
-                .get_or_create::<ErosionalFaceIndex>()
-                .cells
-                .insert(cell_id, Arc::new(merged));
-        }
-        {
-            let mut basins = indexes.get_or_create::<BasinIndex>();
-            let all: Vec<crate::Cirque> =
-                instances.iter().flat_map(|i| i.cirques.iter().cloned()).collect();
-            basins.set_cell(cell_id, &all);
-        }
-
-        // Brief write lock for the insert
-        indexes.get_or_create::<SpineInstanceIndex>()
-            .cells.insert(cell_id, instances);
+        // Instances are keyed by where they were seeded, not by the ground they
+        // cover — a spine reaches a full SPINE_INFLUENCE past its own cell,
+        // which is what `query_reach` declares so readers gather cell plus ring.
+        //
+        // The geometry those instances leave — faces, basins — is published in
+        // `prepare` instead, keyed by the ground it lies on. Here the ring is
+        // not yet guaranteed, so this cell can neither see every spine that
+        // reaches its own ground nor settle what it laid on someone else's.
+        scope.publish::<SpineInstanceIndex>(instances);
     }
 
     /// The instances any tile in this cell can be reached by: its own cell plus
@@ -209,33 +191,55 @@ impl WorldEvent for SpineEvent {
     /// depend on the order cells were visited in. Here the ring is complete by
     /// contract, so the floors are recomposed against every instance that
     /// stands on the same ground.
-    fn prepare(
-        &self,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) -> Box<dyn std::any::Any + Send + Sync> {
-        let cells = self.lattice.cells_within_distance(cell_id, self.query_reach());
-        let instances = match indexes.get::<SpineInstanceIndex>() {
+    fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
+        let cells = scope.lattice().cells_within_distance(scope.cell(), self.query_reach());
+        let instances = match scope.read::<SpineInstanceIndex>() {
             Some(idx) => idx.instances_in(&cells),
             None => Vec::new(),
         };
 
-        let raw = indexes
-            .get::<ErosionalFaceIndex>()
-            .and_then(|ix| ix.cells.get(&cell_id).cloned());
-        if let Some(raw) = raw {
-            let composed = |wx: f64, wy: f64| {
-                instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
-            };
-            let min_height =
-                crate::ELEVATION_PER_Z / crate::TILE_SPACING * slope_form::MASS_WASTING_REACH;
-            let settled = Arc::new(raw.recomposed(&composed, min_height));
-            indexes
-                .get_or_create::<ErosionalFaceIndex>()
-                .cells
-                .insert(cell_id, settled);
+        // Everything below is laid on *this cell's* ground, from every spine
+        // that reaches it — including spines seeded in the ring, which is why
+        // it cannot happen until here. A neighbouring cell lays the geometry
+        // these same spines leave on its own ground, from its own ring, so
+        // every feature is published exactly once by whoever owns the ground
+        // under it and settled against exactly what acts on it.
+        let composed = |wx: f64, wy: f64| {
+            instances.iter().fold(0.0f64, |acc, i| acc.max(i.sample_at(wx, wy).0))
+        };
+        let reach = slope_form::MASS_WASTING_REACH;
+        let min_height = crate::ELEVATION_PER_Z / crate::TILE_SPACING * reach;
+
+        let mut faces = crate::faces::FaceIndex::new(reach);
+        for inst in &instances {
+            inst.each_face(&mut |face: crate::ErosionalFace| {
+                // A face just outside the cell still acts on tiles inside it,
+                // so the cell keeps anything within reach of its own ground.
+                // That is still this cell's entry — the halo describes where a
+                // face lies, not which cell may record it.
+                if !scope.within_reach(face.wx, face.wy, reach) {
+                    return;
+                }
+                let floor = composed(face.wx, face.wy);
+                let top = face.floor + face.height;
+                faces.insert(
+                    crate::ErosionalFace { floor, height: top - floor, ..face },
+                    min_height,
+                );
+            });
         }
+        scope.publish::<ErosionalFaceIndex>(Arc::new(faces));
+
+        // A bowl is an extent, not a point, so it belongs to every cell its
+        // footprint touches — at a few hundred tiles against a cell thousands
+        // across, that is one cell or two.
+        scope.publish::<BasinIndex>(BasinIndex::grid_of(
+            instances
+                .iter()
+                .flat_map(|i| i.cirques.iter())
+                .filter(|c| scope.within_reach(c.cx, c.cy, c.radius))
+                .cloned(),
+        ));
 
         Box::new(instances)
     }

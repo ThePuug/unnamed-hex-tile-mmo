@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use common::{PlateTag, TagSet};
 
 use crate::noise::simplex_2d;
-use super::index::{CellId, EventIndex, IndexRegistry};
-use super::{Survey, TileOutput, TileView, WorldEvent};
+use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Noise wavelength for spawner density field (world units).
 const SPAWNER_NOISE_WAVELENGTH: f64 = 800.0;
@@ -81,6 +81,14 @@ impl SpawnerPlacementIndex {
     }
 }
 
+impl CellIndex for SpawnerPlacementIndex {
+    type Cell = Vec<SpawnerPlacement>;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry);
+    }
+}
+
 impl EventIndex for SpawnerPlacementIndex {
     fn source_scale(&self) -> u32 { SPAWNER_CELL_SCALE }
 
@@ -142,13 +150,7 @@ impl WorldEvent for SpawnerEvent {
             .min_spacing(MIN_PLACEMENT_SPACING)
     }
 
-    fn deform(
-        &self,
-        cell_id: CellId,
-        matched: &[(i32, i32)],
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) {
+    fn deform(&self, scope: &CellScope, matched: &[(i32, i32)]) {
         if matched.is_empty() { return; }
 
         // Determine archetype for each matched tile from the composite tags.
@@ -165,28 +167,22 @@ impl WorldEvent for SpawnerEvent {
         // determine archetype deterministically. We just need to know WHICH
         // tags. Since we can't access below here, defer archetype to query.
 
-        let mut placement_index = indexes.get_or_create::<SpawnerPlacementIndex>();
         let mut placements = Vec::new();
         for &(q, r) in matched {
             // We don't know the archetype yet — store as Kiter placeholder.
             // Query resolves the real archetype from below(q, r).
             placements.push(SpawnerPlacement { q, r, archetype: SpawnerArchetype::Kiter });
         }
-        placement_index.cells.insert(cell_id, placements);
+        scope.publish::<SpawnerPlacementIndex>(placements);
     }
 
     /// This cell's placements, read once for it. Looking them up per tile
     /// would take the index read lock on every tile in the cell for a list
     /// that does not change.
-    fn prepare(
-        &self,
-        cell_id: CellId,
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) -> Box<dyn std::any::Any + Send + Sync> {
-        let placements = indexes
-            .get::<SpawnerPlacementIndex>()
-            .and_then(|ix| ix.cells.get(&cell_id).cloned())
+    fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
+        let placements = scope
+            .read::<SpawnerPlacementIndex>()
+            .and_then(|ix| ix.cells.get(&scope.cell()).cloned())
             .unwrap_or_default();
         Box::new(placements)
     }

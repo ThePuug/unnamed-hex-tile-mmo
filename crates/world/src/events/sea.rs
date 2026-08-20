@@ -20,7 +20,7 @@ use crate::hex_to_world;
 use crate::plates::{inverse_sigmoid, raw_regime_noise};
 use crate::{REGIME_LAND_THRESHOLD, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS};
 use super::index::{CellId, IndexRegistry};
-use super::{Survey, TileOutput, TileView, WorldEvent};
+use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 /// Cell scale in tiles. Bathymetry has no cross-tile structure, so this sets
 /// only tile-cache granularity — matched to `PLATE_CELL_SCALE` so the two
@@ -82,13 +82,7 @@ impl WorldEvent for SeaEvent {
     fn scale(&self) -> u32 { SEA_CELL_SCALE }
     fn survey(&self) -> Survey { Survey::none() }
 
-    fn deform(
-        &self,
-        _cell_id: CellId,
-        _matched: &[(i32, i32)],
-        _indexes: &IndexRegistry,
-        _seed: u64,
-    ) {
+    fn deform(&self, _scope: &CellScope, _matched: &[(i32, i32)]) {
         // Pure per-tile function — no structural work to do.
     }
 

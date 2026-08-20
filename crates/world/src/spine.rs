@@ -495,24 +495,20 @@ impl RavineNetwork {
     /// stream is the steep case: its wall exponent front-loads the rise, so a
     /// narrow rill holds a wall far steeper than the wide mature valley
     /// downstream of it.
-    fn publish_faces(
+    fn each_face(
         &self,
         realised: &dyn Fn(f64, f64) -> f64,
-        out: &mut crate::faces::FaceIndex,
-        min_height: f64,
+        emit: &mut dyn FnMut(crate::faces::ErosionalFace),
     ) {
         for stream in &self.streams {
             for step in &stream.steps {
                 let floor = realised(step.wx, step.wy);
-                out.insert(
-                    crate::faces::ErosionalFace {
-                        wx: step.wx,
-                        wy: step.wy,
-                        floor,
-                        height: step.surface_elev - floor,
-                    },
-                    min_height,
-                );
+                emit(crate::faces::ErosionalFace {
+                    wx: step.wx,
+                    wy: step.wy,
+                    floor,
+                    height: step.surface_elev - floor,
+                });
             }
         }
     }
@@ -959,8 +955,6 @@ pub struct SpineInstance {
     pub bounding_center: (f64, f64),
     /// Radius of the bounding circle.
     pub bounding_radius: f64,
-    /// The faces this spine leaves standing, for the layers above.
-    pub faces: crate::faces::FaceIndex,
 }
 
 impl SpineInstance {
@@ -1027,6 +1021,26 @@ impl SpineInstance {
     /// Which part of a bowl (wx, wy) falls in, if any. Diagnostic only.
     pub fn cirque_probe(&self, wx: f64, wy: f64) -> Option<CirqueProbe> {
         glacial::probe_all(&self.cirques, wx, wy)
+    }
+
+    /// Every face this spine's carves leave standing, with the floor this
+    /// instance alone leaves at each foot.
+    ///
+    /// The caller owns the ground: it decides which of these lie on its own
+    /// cell, and re-reads each floor against every spine that reaches there.
+    /// One instance cannot do either — it cannot see its neighbours, and the
+    /// composite may bury the channel it just cut.
+    pub fn each_face(&self, emit: &mut dyn FnMut(crate::faces::ErosionalFace)) {
+        let realised = |wx: f64, wy: f64| {
+            let tectonic = apply_ridge_noise(
+                evaluate_surface(&self.peaks, &self.ridgelines, &[], wx, wy),
+                wx, wy, self.id,
+            );
+            let (glacial, impound) = glacial::carve_and_limit(&self.cirques, wx, wy, tectonic);
+            self.ravine_network.carve(wx, wy, glacial).max(impound)
+        };
+        glacial::each_face(&self.cirques, &realised, emit);
+        self.ravine_network.each_face(&realised, emit);
     }
 
     /// Elevation and cross-section tag in a single pass. Equivalent to
@@ -2339,29 +2353,6 @@ pub(crate) fn grow_spine(
         apply_peak_to_plates(peak, plates, plate_map, plate_cache);
     }
 
-    // Publish the faces both erosional layers left, so the stage above reads
-    // them instead of sampling the surface around every tile to find them.
-    // Anything a walker could climb is not a face and is left out.
-    let faces = {
-        let mut idx = crate::faces::FaceIndex::new(slope_form::MASS_WASTING_REACH);
-        let min_height = ELEVATION_PER_Z / TILE_SPACING * slope_form::MASS_WASTING_REACH;
-        // A face's foot is the ground the stack actually leaves there, not the
-        // depth the layer that cut it aimed for. The two part company wherever
-        // a later clamp or an overlapping carve got there first, and a face
-        // that claims ground was taken when it was not tells the layer above
-        // to cut down to reach it.
-        let realised = |wx: f64, wy: f64| {
-            let tectonic = apply_ridge_noise(
-                evaluate_surface(&peaks, &ridgelines, &[], wx, wy), wx, wy, spine_id,
-            );
-            let (glacial, impound) = glacial::carve_and_limit(&cirques, wx, wy, tectonic);
-            ravine_network.carve(wx, wy, glacial).max(impound)
-        };
-        glacial::publish_faces(&cirques, &realised, &mut idx, min_height);
-        ravine_network.publish_faces(&realised, &mut idx, min_height);
-        idx
-    };
-
     let (bounding_center, mut bounding_radius) = bounding_circle(&peaks);
 
     // Expand bounding circle to include all stream steps (streams flow
@@ -2378,7 +2369,7 @@ pub(crate) fn grow_spine(
 
     SpineInstance {
         id: spine_id, peaks, ridgelines, cirques, ravine_network,
-        bounding_center, bounding_radius, faces,
+        bounding_center, bounding_radius,
     }
 }
 
@@ -2882,7 +2873,6 @@ mod tests {
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: falloff_radius + RIDGE_HALF_WIDTH + 500.0,
-            faces: crate::faces::FaceIndex::default(),
         }
     }
 
@@ -2942,7 +2932,6 @@ mod tests {
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: 1000.0,
-            faces: crate::faces::FaceIndex::default(),
         };
         assert_eq!(inst.elevation_at(0.0, 0.0), 0.0);
     }
@@ -2957,7 +2946,6 @@ mod tests {
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: 3000.0 + RIDGE_HALF_WIDTH + 500.0,
-            faces: crate::faces::FaceIndex::default(),
         };
         let low = mk(1, 400.0);
         let high = mk(2, 800.0);
@@ -3990,7 +3978,6 @@ mod tests {
             ravine_network,
             bounding_center: (0.0, 0.0),
             bounding_radius: 20_000.0,
-            faces: crate::faces::FaceIndex::default(),
         };
 
         for c in &inst.cirques {
@@ -4149,7 +4136,6 @@ mod tests {
             ravine_network: RavineNetwork::empty(),
             bounding_center: (0.0, 0.0),
             bounding_radius: 3000.0 + RIDGE_HALF_WIDTH + 500.0,
-            faces: crate::faces::FaceIndex::default(),
         };
 
         let tectonic = apply_ridge_noise(

@@ -21,13 +21,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use dashmap::DashMap;
-use parking_lot::Mutex;
+use parking_lot::{MappedRwLockReadGuard, Mutex};
 
 use common::{HexLattice, TagSet};
 
 use crate::hex_to_world;
 
-pub use index::{CellId, EventIndex, IndexRegistry};
+pub use index::{CellId, CellIndex, EventIndex, IndexRegistry};
 pub use survey::Survey;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -51,6 +51,70 @@ pub struct TileView {
     pub wy: f64,
     pub tags: TagSet,
     pub elevation: f64,
+}
+
+// ── CellScope ───────────────────────────────────────────────────────────────
+
+/// The cell a layer is being evaluated for, and the only cell it may write.
+///
+/// Reads are unrestricted — seeing a neighbour is how a layer composites the
+/// features reaching into its own ground. Writes are not: [`CellScope::publish`]
+/// takes no cell id, so a layer physically cannot record an entry against
+/// another cell. It has no way to name one.
+///
+/// That matters because an index keyed by which feature *produced* an entry,
+/// rather than which ground it lies on, cannot be settled by anyone: the cell
+/// that produced it may not be able to see everything that acts on it, and the
+/// cell that owns the ground never knew it existed. Keeping writes inside the
+/// footprint keeps those two the same cell.
+pub struct CellScope<'a> {
+    cell: CellId,
+    lattice: &'a HexLattice,
+    indexes: &'a IndexRegistry,
+    seed: u64,
+}
+
+impl<'a> CellScope<'a> {
+    pub fn cell(&self) -> CellId { self.cell }
+    pub fn seed(&self) -> u64 { self.seed }
+
+    /// This layer's cell lattice, for reaching a neighbourhood of cells.
+    pub fn lattice(&self) -> &HexLattice { self.lattice }
+
+    /// Read any index. A layer settles its own ground against everything that
+    /// reaches it, which means reading past its own cell.
+    pub fn read<T: EventIndex>(&self) -> Option<MappedRwLockReadGuard<'_, T>> {
+        self.indexes.get::<T>()
+    }
+
+    /// Record this cell's entry. There is deliberately no way to say which
+    /// cell: it is always the one being evaluated.
+    pub fn publish<T: CellIndex>(&self, entry: T::Cell) {
+        self.indexes.get_or_create::<T>().set(self.cell, entry);
+    }
+
+    /// Whether a world position lies on this cell's ground.
+    pub fn contains(&self, wx: f64, wy: f64) -> bool {
+        let (q, r) = crate::world_to_hex(wx, wy);
+        self.lattice.cell_id(q, r) == self.cell
+    }
+
+    /// Whether this cell's ground is within `reach` world units of a position —
+    /// the test for an entry that lies just outside the cell but still acts on
+    /// tiles inside it.
+    ///
+    /// Probes the six axes at `reach` rather than measuring to the cell
+    /// boundary: at the scales in play a cell is thousands of tiles across and
+    /// a reach is a handful, so a hex-axis probe and an exact distance disagree
+    /// only on a sliver, and always by including a face that acts on nothing.
+    pub fn within_reach(&self, wx: f64, wy: f64, reach: f64) -> bool {
+        if self.contains(wx, wy) {
+            return true;
+        }
+        [(1.0, 0.0), (-1.0, 0.0), (0.5, 0.866), (-0.5, 0.866), (0.5, -0.866), (-0.5, -0.866)]
+            .iter()
+            .any(|(dx, dy)| self.contains(wx + dx * reach, wy + dy * reach))
+    }
 }
 
 // ── WorldEvent trait ────────────────────────────────────────────────────────
@@ -93,13 +157,10 @@ pub trait WorldEvent: Send + Sync {
 
     /// Structural work. Build indexes from survey results.
     /// No tile materialization — indexes only.
-    fn deform(
-        &self,
-        cell_id: CellId,
-        matched: &[(i32, i32)],
-        indexes: &IndexRegistry,
-        seed: u64,
-    );
+
+    /// Runs before this cell's neighbours are guaranteed to exist, so anything
+    /// needing to see them belongs in [`WorldEvent::prepare`], not here.
+    fn deform(&self, scope: &CellScope, matched: &[(i32, i32)]);
 
     /// Everything a query may read beyond its own tile, resolved once for the
     /// cell that contains it.
@@ -113,12 +174,7 @@ pub trait WorldEvent: Send + Sync {
     /// Nothing resolved here may be resolved per tile instead. Every tile in
     /// the cell shares it, so a ring walk, an index read lock or an allocation
     /// left in `query` is multiplied by the tiles in a cell.
-    fn prepare(
-        &self,
-        _cell_id: CellId,
-        _indexes: &IndexRegistry,
-        _seed: u64,
-    ) -> Box<dyn Any + Send + Sync> {
+    fn prepare(&self, _scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         Box::new(())
     }
 
@@ -504,8 +560,13 @@ impl Composite {
         if let Some(c) = self.cell_caches[layer].contexts.get(&cell_id) {
             return c.clone();
         }
-        let built: Arc<dyn Any + Send + Sync> =
-            Arc::from(self.events[layer].prepare(cell_id, &self.indexes, self.seed));
+        let scope = CellScope {
+            cell: cell_id,
+            lattice: &self.lattices[layer],
+            indexes: &self.indexes,
+            seed: self.seed,
+        };
+        let built: Arc<dyn Any + Send + Sync> = Arc::from(self.events[layer].prepare(&scope));
         self.cell_caches[layer].contexts.insert(cell_id, built.clone());
         built
     }
@@ -576,7 +637,13 @@ impl Composite {
         };
 
         // Deform: populate indexes only
-        self.events[layer].deform(cell_id, &matched, &self.indexes, self.seed);
+        let scope = CellScope {
+            cell: cell_id,
+            lattice: &self.lattices[layer],
+            indexes: &self.indexes,
+            seed: self.seed,
+        };
+        self.events[layer].deform(&scope, &matched);
 
         // Mark cell as deformed
         self.cell_caches[layer].insert_empty(cell_id);
@@ -636,7 +703,8 @@ mod tests {
         fn survey(&self) -> Survey { Survey::none() }
         fn query_reach(&self) -> u32 { self.reach }
 
-        fn deform(&self, cell_id: CellId, _m: &[(i32, i32)], _i: &IndexRegistry, _s: u64) {
+        fn deform(&self, scope: &CellScope, _m: &[(i32, i32)]) {
+            let cell_id = scope.cell();
             self.deformed.lock().push(cell_id);
         }
 

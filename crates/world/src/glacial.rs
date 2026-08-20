@@ -400,11 +400,10 @@ pub fn pool_level_at(cirques: &[Cirque], wx: f64, wy: f64) -> f64 {
 /// produces. Sampled by bearing, at the spacing the rim itself was fitted at,
 /// because a rim varies with bearing and one face per bowl would place the
 /// whole wall at its centre.
-pub fn publish_faces(
+pub fn each_face(
     cirques: &[Cirque],
     surface: &dyn Fn(f64, f64) -> f64,
-    out: &mut crate::faces::FaceIndex,
-    min_height: f64,
+    emit: &mut dyn FnMut(crate::faces::ErosionalFace),
 ) {
     for c in cirques {
         let samples = RIM_SAMPLES_MIN.max((TAU * c.radius / RIM_SAMPLE_SPACING) as usize);
@@ -418,10 +417,7 @@ pub fn publish_faces(
             let (fx, fy) = (c.cx + dx * foot, c.cy + dy * foot);
             let floor = surface(fx, fy);
             let above = surface(c.cx + dx * rim, c.cy + dy * rim);
-            out.insert(
-                crate::faces::ErosionalFace { wx: fx, wy: fy, floor, height: above - floor },
-                min_height,
-            );
+            emit(crate::faces::ErosionalFace { wx: fx, wy: fy, floor, height: above - floor });
         }
     }
 }

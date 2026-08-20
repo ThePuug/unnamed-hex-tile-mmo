@@ -12,8 +12,8 @@ use common::{HexLattice, PlateTag, TagSet};
 use crate::hex_to_world;
 use crate::plates::PlateCache;
 use crate::world_to_hex;
-use super::index::{CellId, EventIndex, IndexRegistry};
-use super::{Survey, TileOutput, TileView, WorldEvent};
+use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
 
 const PLATE_CELL_SCALE: u32 = 1800;
 
@@ -43,6 +43,29 @@ pub struct PlateCentroidIndex {
 impl Default for PlateCentroidIndex {
     fn default() -> Self {
         Self { cells: HashMap::new(), neighbor_graph: HashMap::new(), tags_at: HashMap::new() }
+    }
+}
+
+/// What one cell contributes: its own centroids, and the graph and tag entries
+/// for those centroids. All three are keyed to ground inside the cell, so they
+/// travel together and are written together.
+pub struct PlateCentroidCell {
+    pub centroids: Vec<CentroidEntry>,
+    pub neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)>,
+    pub tags_at: Vec<((i32, i32), TagSet)>,
+}
+
+impl CellIndex for PlateCentroidIndex {
+    type Cell = PlateCentroidCell;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry.centroids);
+        for (at, nbrs) in entry.neighbor_edges {
+            self.neighbor_graph.insert(at, nbrs);
+        }
+        for (at, tags) in entry.tags_at {
+            self.tags_at.insert(at, tags);
+        }
     }
 }
 
@@ -101,13 +124,8 @@ impl WorldEvent for PlateEvent {
         registry.pre_register::<PlateCentroidIndex>();
     }
 
-    fn deform(
-        &self,
-        cell_id: CellId,
-        _matched: &[(i32, i32)],
-        indexes: &IndexRegistry,
-        _seed: u64,
-    ) {
+    fn deform(&self, scope: &CellScope, _matched: &[(i32, i32)]) {
+        let cell_id = scope.cell();
         let lattice = HexLattice::new(self.scale());
         let (center_q, center_r) = lattice.cell_center(cell_id);
         let (center_wx, center_wy) = hex_to_world(center_q, center_r);
@@ -143,14 +161,11 @@ impl WorldEvent for PlateEvent {
             tags_at_entries.push(((pq, pr), tag_set));
         }
 
-        let mut centroid_index = indexes.get_or_create::<PlateCentroidIndex>();
-        centroid_index.cells.insert(cell_id, centroids);
-        for ((cq, cr), nbrs) in neighbor_edges {
-            centroid_index.neighbor_graph.insert((cq, cr), nbrs);
-        }
-        for ((q, r), tags) in tags_at_entries {
-            centroid_index.tags_at.insert((q, r), tags);
-        }
+        scope.publish::<PlateCentroidIndex>(PlateCentroidCell {
+            centroids,
+            neighbor_edges,
+            tags_at: tags_at_entries,
+        });
     }
 
     fn query(

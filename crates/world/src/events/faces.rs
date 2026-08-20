@@ -17,7 +17,7 @@ use common::HexSpatialGrid;
 
 use crate::faces::FaceIndex;
 use crate::glacial::Cirque;
-use super::index::{CellId, EventIndex};
+use super::index::{CellId, CellIndex, EventIndex};
 use super::spines::SPINE_CELL_SCALE;
 
 // ── Faces ───────────────────────────────────────────────────────────────────
@@ -55,6 +55,14 @@ impl ErosionalFaceIndex {
     }
 }
 
+impl CellIndex for ErosionalFaceIndex {
+    type Cell = Arc<FaceIndex>;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry);
+    }
+}
+
 impl EventIndex for ErosionalFaceIndex {
     fn source_scale(&self) -> u32 { SPINE_CELL_SCALE }
     fn tiles(&self, _cell_ids: &[CellId]) -> Vec<(i32, i32)> { Vec::new() }
@@ -77,14 +85,22 @@ pub struct BasinIndex {
     pub cells: HashMap<CellId, Arc<HexSpatialGrid<Cirque>>>,
 }
 
+impl CellIndex for BasinIndex {
+    type Cell = Arc<HexSpatialGrid<Cirque>>;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry);
+    }
+}
+
 impl BasinIndex {
-    /// Record a cell's bowls, replacing whatever it held.
-    pub fn set_cell(&mut self, cell_id: CellId, cirques: &[Cirque]) {
+    /// Index a cell's bowls for lookup by point.
+    pub fn grid_of(cirques: impl IntoIterator<Item = Cirque>) -> Arc<HexSpatialGrid<Cirque>> {
         let mut grid = HexSpatialGrid::new(BASIN_CELL_SIZE);
         for c in cirques {
             grid.insert_radius(c.cx, c.cy, c.radius, c.clone());
         }
-        self.cells.insert(cell_id, Arc::new(grid));
+        Arc::new(grid)
     }
 
     /// The level nothing may cut below at (wx, wy), or `None` where no basin
