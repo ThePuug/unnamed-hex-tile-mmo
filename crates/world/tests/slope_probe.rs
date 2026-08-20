@@ -504,3 +504,105 @@ fn limiter_overcut_diagnostic() {
         }
     });
 }
+
+/// Where the ground past the critical angle sits relative to the geometry the
+/// limiter can act on.
+///
+/// The limiter only ever caps ground against a published face. Anything above
+/// critical is therefore one of two things: ground a face could reach and did
+/// not, or ground no layer publishes a face for at all. Those want opposite
+/// fixes — more reach against the first, a different treatment entirely
+/// against the second — and only the distance to the nearest face separates
+/// them.
+#[test]
+#[ignore]
+fn critical_ground_reach() {
+    use std::collections::HashSet;
+    use world::events::faces::ErosionalFaceIndex;
+    use world::events::spines::SPINE_CELL_SCALE;
+    use world::slope_form::{critical_slope, MASS_WASTING_REACH};
+
+    println!("\n=== ground past critical, by distance to a face ===\n");
+    let c = composite();
+    let z = |q: i32, r: i32| c.tile_at(q, r).elevation;
+    let dirs = neighbour_dirs();
+
+    let mut steep: Vec<(f64, f64, f64)> = Vec::new();
+    let mut land = 0u32;
+    for i in 0..SAMPLE_SPAN {
+        for j in 0..SAMPLE_SPAN {
+            let (q, r) = (SAMPLE.0 - SAMPLE_SPAN / 2 + i, SAMPLE.1 - SAMPLE_SPAN / 2 + j);
+            if z(q, r) <= 0.0 { continue; }
+            land += 1;
+            let (wx, wy) = world::hex_to_world(q, r);
+            let g = gradient(&z, q, r, &dirs);
+            if g > critical_slope(wx, wy) {
+                steep.push((wx, wy, degrees(g)));
+            }
+        }
+    }
+    println!("land samples {land}, past critical {} ({:.2}%)",
+        steep.len(), 100.0 * steep.len() as f64 / land.max(1) as f64);
+    if steep.is_empty() { return; }
+
+    // Every face published over the sampled block. The block is warm by now,
+    // so its spine cell and ring hold whatever reaches it.
+    let (sx, sy) = world::hex_to_world(SAMPLE.0, SAMPLE.1);
+    let lattice = HexLattice::new(SPINE_CELL_SCALE);
+    let cells = lattice.cells_within_distance(lattice.cell_id(SAMPLE.0, SAMPLE.1), 1);
+    let mut feet: Vec<(f64, f64)> = Vec::new();
+    c.with_indexes(|ix| {
+        let Some(idx) = ix.get::<ErosionalFaceIndex>() else { return };
+        let mut seen: HashSet<(u64, u64)> = HashSet::new();
+        for id in &cells {
+            let Some(faces) = idx.cells.get(id) else { continue };
+            faces.for_each_in(sx, sy, SAMPLE_SPAN as f64, |f| {
+                if seen.insert((f.wx.to_bits(), f.wy.to_bits())) {
+                    feet.push((f.wx, f.wy));
+                }
+            });
+        }
+    });
+    println!("faces published over the block: {}", feet.len());
+
+    // Indexed at the widest bucket, so one 7-cell query covers every distance
+    // the buckets distinguish.
+    let far = 4.0 * MASS_WASTING_REACH;
+    let mut grid: common::HexSpatialGrid<(f64, f64)> = common::HexSpatialGrid::new(far);
+    for &(fx, fy) in &feet {
+        grid.insert(fx, fy, (fx, fy));
+    }
+
+    let bounds = [MASS_WASTING_REACH, 2.0 * MASS_WASTING_REACH, far];
+    let mut buckets = [0u32; 4];
+    let mut worst_in_reach = 0.0f64;
+    for &(wx, wy, angle) in &steep {
+        let mut nearest = f64::MAX;
+        for &(fx, fy) in grid.query(wx, wy) {
+            let d = (wx - fx).hypot(wy - fy);
+            if d < nearest { nearest = d; }
+        }
+        match bounds.iter().position(|&b| nearest <= b) {
+            Some(i) => buckets[i] += 1,
+            None => buckets[3] += 1,
+        }
+        if nearest <= MASS_WASTING_REACH && angle > worst_in_reach {
+            worst_in_reach = angle;
+        }
+    }
+
+    let labels = [
+        format!("within reach (<={:.0} wu)", bounds[0]),
+        format!("{:.0}-{:.0} wu", bounds[0], bounds[1]),
+        format!("{:.0}-{:.0} wu", bounds[1], bounds[2]),
+        format!("beyond {:.0} wu or no face", bounds[2]),
+    ];
+    println!("\n  distance to nearest face foot      share of steep ground");
+    for (label, n) in labels.iter().zip(buckets) {
+        let pct = 100.0 * n as f64 / steep.len() as f64;
+        println!("  {label:<32}  {pct:>6.2}%  {}", "#".repeat((pct * 0.4) as usize));
+    }
+    if buckets[0] > 0 {
+        println!("\nsteepest tile the limiter could reach: {worst_in_reach:.1}deg");
+    }
+}
