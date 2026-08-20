@@ -1,4 +1,33 @@
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// Multiply-shift hasher for hex cell keys. A grid lookup is a handful of
+/// arithmetic ops around the hash, so a general-purpose hash is most of its
+/// cost — a pair of small integers is already well spread by one multiply
+/// against a 64-bit odd constant, with the fold putting entropy in the low
+/// bits the table indexes on.
+#[derive(Default)]
+pub struct HexHasher(u64);
+
+const HEX_HASH_K: u64 = 0x9E37_79B9_7F4A_7C15;
+
+impl Hasher for HexHasher {
+    fn finish(&self) -> u64 {
+        self.0 ^ (self.0 >> 32)
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(HEX_HASH_K);
+        }
+    }
+    fn write_i32(&mut self, v: i32) {
+        self.0 = (self.0 ^ v as u32 as u64).wrapping_mul(HEX_HASH_K);
+    }
+}
+
+/// Cell buckets. Keys are small integer pairs, so the hasher above beats the
+/// default on every lookup, and the grid is looked up a great deal.
+type CellMap<T> = HashMap<(i32, i32), Vec<T>, BuildHasherDefault<HexHasher>>;
 
 /// √3/2 — row height factor for hex grids with flat-top orientation.
 const HEX_ROW_HEIGHT: f64 = 0.8660254037844386;
@@ -7,7 +36,7 @@ const HEX_ROW_HEIGHT: f64 = 0.8660254037844386;
 /// sized to a query radius. Queries return items from the target cell + 6
 /// hex neighbors, guaranteeing coverage within one cell_size of any point.
 pub struct HexSpatialGrid<T> {
-    cells: HashMap<(i32, i32), Vec<T>>,
+    cells: CellMap<T>,
     cell_size: f64,
 }
 
@@ -15,7 +44,7 @@ impl<T> HexSpatialGrid<T> {
     /// Create a new grid with the given cell size.
     pub fn new(cell_size: f64) -> Self {
         Self {
-            cells: HashMap::new(),
+            cells: CellMap::default(),
             cell_size,
         }
     }
