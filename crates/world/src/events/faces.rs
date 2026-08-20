@@ -28,33 +28,6 @@ pub struct ErosionalFaceIndex {
     pub cells: HashMap<CellId, Arc<FaceIndex>>,
 }
 
-impl ErosionalFaceIndex {
-    /// Debris standing at (wx, wy), over the faces in the given cells.
-    pub fn apron_in(&self, cells: &[CellId], wx: f64, wy: f64, repose: f64, cap: f64) -> f64 {
-        let mut apron = 0.0f64;
-        for id in cells {
-            if let Some(faces) = self.cells.get(id) {
-                let a = faces.apron_at(wx, wy, repose, cap);
-                if a > apron { apron = a; }
-            }
-        }
-        apron
-    }
-
-    /// The cap on how high ground at (wx, wy) may stand, over the faces in the
-    /// given cells, or `None` where none are in range.
-    pub fn limit_in(&self, cells: &[CellId], wx: f64, wy: f64, critical: f64) -> Option<f64> {
-        let mut limit: Option<f64> = None;
-        for id in cells {
-            let Some(faces) = self.cells.get(id) else { continue };
-            if let Some(l) = faces.limit_at(wx, wy, critical) {
-                limit = Some(limit.map_or(l, |a: f64| a.min(l)));
-            }
-        }
-        limit
-    }
-}
-
 impl CellIndex for ErosionalFaceIndex {
     type Cell = Arc<FaceIndex>;
 
@@ -101,31 +74,6 @@ impl BasinIndex {
             grid.insert_radius(c.cx, c.cy, c.radius, c.clone());
         }
         Arc::new(grid)
-    }
-
-    /// The level nothing may cut below at (wx, wy), or `None` where no basin
-    /// claims the point.
-    ///
-    /// Bowls within one cell resolve to the lowest claim — stacked cirques
-    /// really do drain each other, and the layer that cut them already applied
-    /// that. Across cells the highest claim binds: a cut below one basin's
-    /// spill altitude opens that basin whatever a neighbour has under the same
-    /// ground.
-    pub fn impound_in(&self, cells: &[CellId], wx: f64, wy: f64) -> Option<f64> {
-        let mut bound: Option<f64> = None;
-        for id in cells {
-            let Some(grid) = self.cells.get(id) else { continue };
-            let mut lowest: Option<f64> = None;
-            for c in grid.query(wx, wy) {
-                if let Some(l) = c.base_level(wx, wy) {
-                    lowest = Some(lowest.map_or(l, |a: f64| a.min(l)));
-                }
-            }
-            if let Some(l) = lowest {
-                bound = Some(bound.map_or(l, |a: f64| a.max(l)));
-            }
-        }
-        bound
     }
 }
 
