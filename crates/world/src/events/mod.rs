@@ -70,6 +70,7 @@
 pub mod faces;
 pub mod index;
 pub mod motion;
+pub mod orogen;
 pub mod plates;
 pub mod slope_form;
 pub mod spines;

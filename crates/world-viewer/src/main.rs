@@ -15,6 +15,7 @@ use world::events::Composite;
 use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
+use world::events::orogen::{OrogenEvent, OrogenSwathIndex, Swath};
 use world::events::plates::{PlateEvent, PlateCentroidIndex};
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
 use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
@@ -35,6 +36,8 @@ enum Layer {
     Cirques,
     /// Plate boundaries, drawn by what the motion resolves them to.
     Boundaries,
+    /// Orogen crest lines, with the steep flank shaded so vergence reads.
+    OrogenCrests,
 }
 
 fn parse_layers(s: &str) -> Vec<Layer> {
@@ -47,10 +50,11 @@ fn parse_layers(s: &str) -> Vec<Layer> {
             "spine-peaks" => Layer::SpinePeaks,
             "cirques" => Layer::Cirques,
             "boundaries" => Layer::Boundaries,
+            "orogen-crests" => Layer::OrogenCrests,
             other => {
                 eprintln!(
                     "Unknown layer: {other:?}. Valid: plates, elevation, spines, \
-                     centroids, spine-peaks, cirques, boundaries"
+                     centroids, spine-peaks, cirques, boundaries, orogen-crests"
                 );
                 std::process::exit(1);
             }
@@ -89,7 +93,7 @@ struct Cli {
 
     /// Comma-separated layer stack drawn bottom to top.
     /// Available: plates, elevation, spines, centroids, spine-peaks, cirques,
-    /// boundaries
+    /// boundaries, orogen-crests
     #[arg(long, default_value = "plates,elevation")]
     layers: String,
 }
@@ -204,6 +208,7 @@ fn main() {
             Layer::SpinePeaks => "spine-peaks",
             Layer::Cirques => "cirques",
             Layer::Boundaries => "boundaries",
+            Layer::OrogenCrests => "orogen-crests",
         })
         .collect();
 
@@ -224,12 +229,16 @@ fn main() {
         matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks | Layer::Cirques)
     });
     let needs_boundaries = layers.contains(&Layer::Boundaries);
+    let needs_orogen = layers.contains(&Layer::OrogenCrests);
 
     let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
-    if needs_boundaries {
+    if needs_boundaries || needs_orogen {
         composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), cli.seed)));
+    }
+    if needs_orogen {
+        composite.add_event(Box::new(OrogenEvent::new()));
     }
     if needs_spines {
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, cli.seed)));
@@ -300,6 +309,21 @@ fn main() {
                         .values()
                         .flat_map(|v| v.iter())
                         .flat_map(|inst| inst.cirques.iter().cloned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        vec![]
+    };
+
+    let swaths: Vec<Swath> = if needs_orogen {
+        composite.with_indexes(|indexes| {
+            indexes
+                .get::<OrogenSwathIndex>()
+                .map(|idx| {
+                    idx.cells.values()
+                        .flat_map(|v| v.iter().map(|s| (**s).clone()))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -504,6 +528,56 @@ fn main() {
             "  legend: red=convergent, blue=divergent (width and saturation by magnitude), \
              orange=active margin, violet=passive margin; dashed=transform-dominant; \
              white tick=vergence, on the steep flank"
+        );
+    }
+
+    if needs_orogen {
+        // Vergence is shaded rather than ticked. A belt that holds its polarity
+        // shows the dark flank on one side for its whole length and a flip
+        // shows it jumping across the crest, which a per-segment tick cannot
+        // convey at continental zoom.
+        for s in &swaths {
+            let (a, b) = s.crest_ends();
+            let bands = ((s.steep_width / scale) as i32).clamp(1, 48);
+            for i in 1..=bands {
+                let off = s.steep_width * i as f64 / bands as f64;
+                let t = 1.0 - i as f64 / bands as f64;
+                let shade = (25.0 + 50.0 * t) as u8;
+                draw_line(
+                    &mut buf,
+                    a.0 + s.vergence_x * off, a.1 + s.vergence_y * off,
+                    b.0 + s.vergence_x * off, b.1 + s.vergence_y * off,
+                    0, 0, [shade + 25, shade, shade + 35],
+                );
+            }
+            // Toe of the graded flank, so the long side reads against the short.
+            draw_line(
+                &mut buf,
+                a.0 - s.vergence_x * s.graded_width, a.1 - s.vergence_y * s.graded_width,
+                b.0 - s.vergence_x * s.graded_width, b.1 - s.vergence_y * s.graded_width,
+                0, (6.0 / scale).max(2.0) as i32, [95, 85, 70],
+            );
+        }
+        // Crests last, over every flank, so a crossing never hides one.
+        for s in &swaths {
+            let (a, b) = s.crest_ends();
+            let c = lerp_rgb((0.55, 0.24, 0.16), (1.0, 0.95, 0.72), s.drive);
+            let hw = (s.drive * 2.0).round() as i32;
+            draw_line(
+                &mut buf, a.0, a.1, b.0, b.1, hw, 0,
+                [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8],
+            );
+        }
+        let active = swaths.iter().filter(|s| s.margin == MarginClass::Active).count();
+        let mean_drive = swaths.iter().map(|s| s.drive).sum::<f64>()
+            / swaths.len().max(1) as f64;
+        log::info!(
+            "Orogen: {} swaths ({} on active margins), mean drive {mean_drive:.3}",
+            swaths.len(), active,
+        );
+        log::info!(
+            "  legend: crest brightens with drive; dark band = steep flank (vergence side); \
+             dashed line = graded flank toe"
         );
     }
 

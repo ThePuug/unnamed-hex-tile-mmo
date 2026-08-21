@@ -639,6 +639,11 @@ impl PlateCache {
         if let Some(cached) = self.neighbors.get(&owner.id) {
             return cached.clone();
         }
+        // Load-bearing beyond this function: it bounds the centroid separation
+        // of every boundary segment, and orogen sizes a swath's along-strike
+        // half-length from that separation. Widening it widens orogen's
+        // influence past the cell scale derived from it, which reads as an
+        // empty index rather than as an error.
         let search_radius = MACRO_CELL_SIZE * 4.0;
         let candidates = self.plates_in_radius(owner.wx, owner.wy, search_radius);
         let mut neighbors = Vec::new();
