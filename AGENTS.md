@@ -6,6 +6,16 @@ style for comments.
 Design specs live in the `unnamed-indie-studio-internal` repo, sibling checkout,
 `projects/unnamed-hex-tile-mmo/`. This repo carries only what binds the code.
 
+| Location | Purpose |
+|----------|---------|
+| `design.md` | Game pitch / north-star |
+| `design/` | Technical specs, one per system |
+| `networking.md` | Transport, movement sync, visual interpolation |
+
+Check the relevant spec before changing a system, and update it there when
+behavior changes. Per-crate guidance sits alongside the crate it governs —
+`crates/qrz/AGENTS.md` for the hex coordinate system.
+
 ## Commands
 
 ```bash
@@ -13,8 +23,8 @@ cargo build
 cargo run -p server                # separate processes
 cargo run -p client
 cargo test                         # all tests
-cargo test -p common physics       # specific module
-cargo test -p server actor
+cargo test -p common-bevy physics  # specific module
+cargo test -p server reaction_queue
 
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
@@ -62,14 +72,13 @@ narrating how the code got here.
 
 Rules:
 
-- No dates, ticket numbers, ADR/SOW references, phase numbers, or author names.
-- No "previously", "used to", "now", "was", "currently". Present tense only.
-- Never leave commented-out code as a record. Git holds history.
-- Do not restate what the code already shows.
-- Inline rationale caps at ~3 lines. Longer means it belongs in the crate or
-  module doc, or the code needs restructuring.
+- No history: no dates, tickets, ADR/SOW references, phase numbers, author
+  names, or narration of what the code used to be. Git holds that, and holds
+  deleted code — never leave a commented-out block as a record.
 - Rustdoc states the contract — what it does, what breaks it. Inline comments
   state the non-obvious constraint. Nothing else gets a comment.
+- Inline rationale caps at ~3 lines. Longer means it belongs in the crate or
+  module doc, or the code needs restructuring.
 - A comment that contradicts the code is worse than no comment. Update it in
   the same commit as the code, or delete it.
 
@@ -78,6 +87,9 @@ checklists, phase plans, or roadmaps. If something is unbuilt, say so in one
 line inline.
 
 ## Invariants
+
+INV numbers are allocated here and nowhere else. Code cites one to say which
+rule it upholds; a doc comment that mints its own number collides silently.
 
 **INV-001 — Summary separation.** Summary caches are rendering-only:
 `client::resources::SummaryCache`, `server::resources::summary_cache::SummaryCache`,
@@ -102,6 +114,12 @@ data on its own. `server::systems::actor::do_incremental` diffs
 `VisibleChunkCache.sent`; `client::systems::world::evict_data` consumes it. One
 authority prevents drift over which chunks are loaded.
 
+**INV-006 — LoD levels nest.** Summary scales triple (`LOD_LEVELS`), so every
+coarse summary center is also a fine summary center, and `sample_center_z`'s 7
+sample points at `d = scale/3` land exactly on the child level's centers. All
+three producers — local `Map`, server `EventRegistry`, flyover
+`AdminComposite` — use that one rule, or refinement changes the silhouette.
+
 ## Patterns
 
 **Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is server
@@ -120,25 +138,30 @@ pops back, the client dequeues by `seq`.
 **Async mesh pipeline.** All mesh generation runs off the main thread via
 `AsyncComputeTaskPool`. The old entity stays visible until its task completes.
 
-**World event system.** Events implement `WorldEvent` (name, scale, survey,
-deform, query). Two independent cascades: deform (index→index, structural) and
-query (tile→tile, vertical). Deform never materializes tiles; query never
-triggers deform. Events evaluate in dependency order — event N reads the
-composite of 0..N-1. Each event owns a cell grid at its own scale, matched to
-feature size. Indexes are TypeId-keyed in a shared `IndexRegistry`,
-cell-partitioned for spatial scoping.
+**World event system.** Events implement `WorldEvent` — required `name`,
+`scale`, `deform`, `query`; optional `max_influence`, `register_indexes`,
+`prepare`. A cell reads itself and one ring, never more: an event needing
+wider reach needs a larger `scale`, which `max_influence` asserts at setup.
+Deform places its own features from the indexes below — there is no predicate
+or survey framework. Two independent cascades: deform (index→index,
+structural) and query (tile→tile, vertical). Deform never materializes tiles;
+query never triggers deform. Events evaluate in dependency order — event N
+reads the composite of 0..N-1. Each event owns a cell grid at its own scale,
+matched to feature size. Indexes are TypeId-keyed in a shared
+`IndexRegistry`, cell-partitioned for spatial scoping.
 
 **NNTree.** `common-bevy/plugins/nntree.rs` wraps `RTree<NearestNeighbor>` keyed
 on `Loc`. Membership is automatic — `on_add`/`on_remove` hooks plus re-insert on
 `Changed<Loc>`. Metric is Hexhattan: `max(|Δq|, |Δr|, |Δs|) + |Δz|` where
 `s = -q - r`, and `distance_2` returns it squared. Queries therefore take
 squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
-100. `Point::Scalar` is `i64` because rstar multiplies dimension spans when
-computing AABB area, which overflows `i32` on large maps.
+100.
 
 ## Pinned system ordering
 
-Only three orderings are pinned, each because breaking it produces a bug:
+Ordering appears in about twenty places, most of it UI setup chaining off
+`camera::setup` and sequencing internal to one plugin. These three are the ones
+that produce gameplay bugs when broken:
 
 - `input::do_input.after(controlled::tick)` — dt must accumulate before inputs
   are consumed.
@@ -153,92 +176,43 @@ Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
 
 ## Anti-patterns
 
-1. **Manual system ordering.** `.after()` has never fixed a bug here. Use
-   `commands.get_entity()`, `Option<&Component>`, or review the Try/Do flow.
+1. **Reaching for `.after()` first.** An apparent ordering bug is usually a
+   missing entity or a misread Try/Do flow. Try `commands.get_entity()`,
+   `Option<&Component>`, or tracing the Try/Do path before pinning an order —
+   the orderings that genuinely earn one are listed above.
 2. **Forgetting renet updates.** Adding an Event or Component means updating
    both `server/systems/renet.rs` and `client/systems/renet.rs`.
 3. **Spatial search for hex neighbors.** Neighbors are coordinate offsets, not
    searches: `(±1, 0), (0, ±1), (+1, -1), (-1, +1)`. Look up by key. Never scan
    rings or compute distances — banned at every scale, from macro plates to
    chunks.
-4. **Testing trivial code.** Test invariants and edge cases, not accessors. For
-   tunable systems test shape, not magnitude — ordering, monotonicity,
-   determinism, never exact values.
-5. **Confusing `Position` with `VisualPosition`.** Authority versus render.
-6. **Dropping world-space during `Loc` updates.** Causes teleporting and falling.
-7. **Blending toward a neighbor's raw height.** `blended_terrain_y` blends
+4. **Testing magnitude on a tunable system.** Test shape — ordering,
+   monotonicity, determinism — never exact values.
+5. **Dropping world-space during `Loc` updates.** Causes teleporting and falling.
+6. **Blending toward a neighbor's raw height.** `blended_terrain_y` blends
    toward exactly ±1 `rise` using only the direction of the difference, never
    its magnitude — a 5-tile drop next door must not yank the entity down.
    Upward `elevation_diff > 1` is a separate concern, handled in
    `calculate_movement` as blocking or air-time.
-8. **Mixing schedules.** `controlled::apply` and `controlled::tick` belong to
+7. **Mixing schedules.** `controlled::apply` and `controlled::tick` belong to
    FixedUpdate; anything touching `Transform` belongs to Update.
-9. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never
+8. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never
    momentarily empty (INV-002).
 
 ## Writing a world event
 
-`query` runs per tile, on every tile the server streams and every tile a
-summary samples. Everything below is a way of putting work there that does not
-belong there, and every one of them has shipped at least once.
-
-The first two are enforced by the signature rather than by discipline — `query`
-takes `below: &TileView` and no `IndexRegistry`, so neither is expressible.
-They are stated anyway, because the reasons are what generalise.
-
-**Read the composite only at your own tile.** Resolving a neighbour costs the
-whole stack beneath you, per tile. A layer needing a neighbourhood costs N
-tiles per answer, which a dense reader amortises and a sparse one — an LoD
-summary reads 7 tiles per hexagon — pays in full. If you need to know what is
-around a tile, the layer that put it there publishes an index; read that.
-
-**Resolve per-cell work once per cell**, in `prepare`. Every tile in a cell
-shares its cell, its ring, and the set of features reaching it. Walking the
-ring, taking an index read lock, or building a `Vec` of candidates per tile
-multiplies all of it by the tiles in a cell.
-
-**Deform writes your cell; prepare reads your ring.** `deform(L, C)` builds L's
-indexes for C from layers below L, cascading them over C and its ring, and
-writes entries lying in C alone — `CellScope::publish` takes no cell id, so
-that half is enforced. It cannot see its own layer's ring: the cells there may
-not be deformed yet, and folding whatever happens to be warm makes the answer
-depend on visit order.
-
-`prepare(L, C)` reads L's own indexes over C plus the rings `query_reach`
-declares, which the framework guarantees are deformed by then. It cascades
-nothing and writes nothing. Anything that must see its own layer's neighbours
-settled belongs here — that is the whole reason the two phases are separate.
-
-**Publish what you know; never make a consumer infer it.** A headwall, a
-channel wall, a closed basin — the layer that cut it knows where it is, and a
-consumer that has to recover it by reading elevations around a tile is doing
-far more work to get a worse answer. Publish an `EventIndex` and let the
-framework own its lifecycle. Do not hang it off your own instance type and make
-consumers reach through you for it.
-
-**Publish what you leave, and let a reader settle it.** A carve's intended
-floor and the ground it actually leaves part company wherever a clamp or an
-overlapping feature got there first, and a face that overstates its depth tells
-the layer above to cut down to reach ground that was never taken. Your `deform`
-can only know your own chain, so publish that and let whoever reads the index
-composite it against the ring — the phase that is allowed to see one.
-
-**Index published geometry spatially; never scan it.** A linear walk over one
-instance's bowls or steps is fine at build time and is a per-tile cost when a
-consumer does it. `HexSpatialGrid` with `insert_radius` over the reach a
-consumer may ask about turns it into one lookup.
-
-**Measure before and after, against the same stack without your layer.**
-`crates/world/tests/slope_probe.rs` shows the shape: contiguous chunk, sparse
-sample, summary region, each read either side of the layer. A ratio that only
-looks reasonable on the dense pattern is not a result.
+The rules for `query`, `prepare`, and `deform` — what may read what, and what
+each phase must publish — are the module doc on `crates/world/src/events/mod.rs`,
+next to the trait they constrain. Read it before adding a layer.
 
 ## Renet event checklist
 
 Adding an Event or Component that needs network sync:
 
 1. Define `Event` in `common-bevy/message.rs`
-2. `server/systems/renet.rs`: `on_event()` + `send_do()`
-3. `client/systems/renet.rs`: `on_event()`
+2. `server/systems/renet.rs`: match arm in `write_try` for inbound, serialize
+   arm in `send_do` for outbound
+3. `client/systems/renet.rs`: match arm in `write_do`, plus the label in
+   `get_message_type_name`
 4. Component sync also needs the `Component` enum plus both
    `Event::Incremental` handlers

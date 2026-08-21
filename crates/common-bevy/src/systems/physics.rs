@@ -52,7 +52,7 @@ mod tests {
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants
 
-    /// INV-001: Client-Side Prediction Correctness (Determinism)
+    /// Client-Side Prediction Correctness (Determinism)
     /// Physics apply() MUST produce identical results for identical inputs.
     /// This ensures client prediction matches server simulation exactly.
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(airtime1, airtime2, "Physics apply not deterministic: airtime differs");
     }
 
-    /// INV-001: Client-Side Prediction Correctness (Movement Prediction)
+    /// Client-Side Prediction Correctness (Movement Prediction)
     /// Client and server MUST calculate identical offsets for movement inputs.
     #[test]
     fn test_movement_prediction_matches_server() {
@@ -110,7 +110,7 @@ mod tests {
         );
     }
 
-    /// INV-009: Heading-Based Position Offset Magnitude
+    /// Heading-Based Position Offset Magnitude
     /// Entities with non-default heading offset by HERE (0.33) units towards heading-specified neighbor.
     /// This ensures consistent positioning for stationary entities facing a direction.
     #[test]

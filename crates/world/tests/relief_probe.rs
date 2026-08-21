@@ -11,7 +11,6 @@ use std::time::Instant;
 use common::PlateTag;
 use world::events::Composite;
 use world::events::plates::PlateEvent;
-use world::events::sea::SeaEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::{hex_to_world, regime_value_at, PlateCache, REGIME_LAND_THRESHOLD};
@@ -26,7 +25,6 @@ fn composite() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
-    c.add_event(Box::new(SeaEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(SlopeFormEvent::new()));
     c
@@ -375,7 +373,7 @@ fn feature_spacing() {
 }
 
 /// The server's hardcoded spawn point (server/src/main.rs) must be dry land.
-/// SeaEvent submerges everything below the regime land threshold, and a spawn
+/// PlateEvent submerges everything below the regime land threshold, and a spawn
 /// under the waterline puts the camera beneath the water plane.
 #[test]
 #[ignore]

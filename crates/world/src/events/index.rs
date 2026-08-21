@@ -1,7 +1,7 @@
 //! Index registry — typed, cross-event spatial indexes.
 
 //! Events register index entries during deform. Other events query them during
-//! survey evaluation. The framework manages lifecycle (LRU eviction calls
+//! deform. The framework manages lifecycle (LRU eviction calls
 //! `remove_cell` on all indexes).
 
 //! The HashMap is immutable after initialization — all index types are
@@ -27,8 +27,8 @@ pub type CellId = (i32, i32);
 /// Implementing this is what lets a layer publish through [`CellScope`], which
 /// never lets it name a cell other than the one being evaluated. An index whose
 /// entries belong to the ground they describe wants this; one that is keyed by
-/// which feature produced an entry, and declares a `query_reach` for readers to
-/// gather over instead, does not.
+/// which feature produced an entry, and expects readers to gather over the ring
+/// instead, does not.
 pub trait CellIndex: EventIndex {
     /// What one cell contributes.
     type Cell: Send + Sync;
@@ -50,7 +50,7 @@ pub trait EventIndex: Send + Sync + Default + 'static {
     fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)>;
 
     /// Build a TileView from this index's metadata at the given position.
-    /// Used by survey evaluation to check predicates without tile materialization.
+    /// Lets a reader check an entry without materializing the tile under it.
     fn tile_view_at(&self, _q: i32, _r: i32) -> Option<super::TileView> { None }
 
     /// Remove all entries for a cell. Called on LRU eviction.
@@ -125,7 +125,7 @@ impl IndexRegistry {
         })
     }
 
-    // ── Type-erased access (used by survey evaluation) ──
+    // ── Type-erased access ──
 
     pub fn source_scale_of(&self, type_id: TypeId) -> Option<u32> {
         self.entries.get(&type_id).map(|arc| arc.read().source_scale())

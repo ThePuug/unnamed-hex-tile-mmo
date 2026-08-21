@@ -207,7 +207,7 @@ mod tests {
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants
 
-    /// INV-008: Resource Regeneration During Combat
+    /// Resource Regeneration During Combat
     /// Stamina and mana MUST regenerate during combat.
     #[test]
     fn test_stamina_regenerates_in_combat() {

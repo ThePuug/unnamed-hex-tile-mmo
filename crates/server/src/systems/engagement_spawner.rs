@@ -1,11 +1,10 @@
 //! # Engagement Activation System
 //!
-//! Activates terrain-derived spawners when players approach. Spawners are
-//! placed by SpawnerEvent in the world event composite; activation reads
-//! SpawnerPlacementIndex for nearby placements.
+//! Builds an engagement — a group of NPCs at a location, sized and levelled
+//! from that location — and tracks which sites already have one.
 //!
-//! Dormant: `activate_spawners` is not registered in the server schedule, so
-//! no NPCs spawn.
+//! Dormant: nothing selects sites. `spawn_engagement` has no caller, and
+//! `ActiveSpawners` is only ever cleared.
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -13,7 +12,7 @@ use rand::Rng;
 
 use common_bevy::{
     components::{
-        behaviour::{Behaviour, PlayerControlled},
+        behaviour::Behaviour,
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
@@ -36,61 +35,12 @@ use common_bevy::{
     systems::combat::resources as resource_calcs,
 };
 
-/// Minimum distance from player to activate a spawner (tiles)
-const MIN_ACTIVATION_DISTANCE: i32 = 30;
-
-/// Maximum distance from player to activate a spawner (tiles).
-/// Must be within AOI_RADIUS (123) so the player can see the NPCs.
-const MAX_ACTIVATION_DISTANCE: i32 = 100;
-
-
-
-/// Tracks which spawner tiles have active engagements.
+/// Tracks which sites have active engagements.
 /// Cleared when engagement is cleaned up (allows re-activation).
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// Activate spawners near players. Spacing enforced at survey time (min_spacing).
-pub fn activate_spawners(
-    mut commands: Commands,
-    mut active: ResMut<ActiveSpawners>,
-    registry: Res<crate::resources::event_registry::EventRegistry>,
-    time: Res<Time>,
-    timings: Res<crate::plugins::metrics::SystemTimings>,
-    player_query: Query<&Loc, (With<PlayerControlled>, Changed<Loc>)>,
-) {
-    if player_query.is_empty() { return; }
-    let _t = timings.scope("spawner");
-
-    for player_loc in &player_query {
-        let spawners = registry.spawners_near(player_loc.q, player_loc.r);
-
-        for placement in &spawners {
-            let (q, r) = (placement.q, placement.r);
-            let dist = player_loc.flat_distance(&Loc::from_qrz(q, r, 0));
-
-            if dist < MIN_ACTIVATION_DISTANCE || dist > MAX_ACTIVATION_DISTANCE { continue; }
-            if active.0.contains(&(q, r)) { continue; }
-
-            let archetype = match placement.archetype {
-                world::events::spawner::SpawnerArchetype::Berserker => EnemyArchetype::Berserker,
-                world::events::spawner::SpawnerArchetype::Juggernaut => EnemyArchetype::Juggernaut,
-                world::events::spawner::SpawnerArchetype::Kiter => EnemyArchetype::Kiter,
-                world::events::spawner::SpawnerArchetype::Defender => EnemyArchetype::Defender,
-            };
-
-            active.0.insert((q, r));
-            let spawn_z = registry.elevation_at(q, r);
-            spawn_engagement(
-                Qrz { q, r, z: spawn_z + 1 },
-                archetype,
-                &mut commands, &time, &registry,
-            );
-        }
-    }
-}
-
-/// Spawn an engagement at a spawner location with the given archetype.
+/// Spawn an engagement at a location with the given archetype.
 fn spawn_engagement(
     location: Qrz,
     archetype: EnemyArchetype,

@@ -201,7 +201,7 @@ mod tests {
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants
 
-    /// INV-003: World-Space Preservation During Loc Updates
+    /// World-Space Preservation During Loc Updates
     /// When entity crosses tile boundary (adjacent hex, distance < 2),
     /// world-space position MUST be preserved for visual continuity.
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         );
     }
 
-    /// INV-003: Teleport Clears Offset
+    /// Teleport Clears Offset
     /// When entity jumps ≥2 hexes (teleport), offset MUST be cleared to zero.
     /// This prevents visual artifacts from client-side prediction conflicts.
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(new_offset, Vec3::ZERO, "Teleport did not clear offset");
     }
 
-    /// INV-003: Adjacent Tile Crossing Detection
+    /// Adjacent Tile Crossing Detection
     /// Verify that distance calculation correctly identifies adjacent tiles (distance=1).
     #[test]
     fn test_adjacent_tile_has_distance_one() {
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(distance, 1, "Adjacent tile should have distance 1");
     }
 
-    /// INV-003: Teleport Detection Boundary
+    /// Teleport Detection Boundary
     /// Verify that distance=2 triggers teleport behavior.
     #[test]
     fn test_teleport_threshold_is_two_hexes() {

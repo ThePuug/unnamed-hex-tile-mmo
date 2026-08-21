@@ -1,6 +1,6 @@
 //! Performance probe for the Composite terrain pipeline.
 
-//! Not a pass/fail test — prints timing data for the production 3-event stack
+//! Not a pass/fail test — prints timing data for the production event stack
 //! under realistic access patterns (chunk materialization, sparse LoD sampling,
 //! dense flyover regions).
 
@@ -10,9 +10,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use world::events::Composite;
+use world::events::motion::MotionEvent;
 use world::events::plates::PlateEvent;
-use world::events::sea::SeaEvent;
-use world::events::spawner::SpawnerEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::PlateCache;
@@ -23,18 +22,7 @@ fn composite_full() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
-    c.add_event(Box::new(SeaEvent::new()));
-    c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(SlopeFormEvent::new()));
-    c.add_event(Box::new(SpawnerEvent::new(SEED)));
-    c
-}
-
-fn composite_no_spawner() -> Composite {
-    let plate_cache = Arc::new(PlateCache::new(SEED));
-    let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
-    c.add_event(Box::new(SeaEvent::new()));
+    c.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), SEED)));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(SlopeFormEvent::new()));
     c
@@ -68,7 +56,8 @@ fn report_metrics(c: &Composite, label: &str) {
 }
 
 /// Breakdown of the one-time deform cascade: plate-only composite first touch
-/// (1 plate cell) vs full-stack first touch (169 plate cells + grow_spine).
+/// (1 plate cell) vs full-stack first touch, where the spine layer's cell scale
+/// dilates the 1800-scale layers below it into the thousands.
 #[test]
 #[ignore]
 fn perf_probe_cascade_breakdown() {
@@ -84,7 +73,7 @@ fn perf_probe_cascade_breakdown() {
     let c = composite_full();
     let t = Instant::now();
     c.tile_at(3000, 2000);
-    println!("full-stack first_touch (169 plate cells + grow_spine): {:?}", t.elapsed());
+    println!("full-stack first_touch: {:?}", t.elapsed());
 
     // Second spine cell, far away: plate chunks partially warm
     let t = Instant::now();
@@ -136,7 +125,7 @@ fn perf_probe() {
 
     // ── 4. Sparse sampling, 200-tile spacing (LoD mid-band pattern) ────────
     // 100 samples in a 10x10 grid, 200 tiles apart: every sample is in a
-    // distinct spawner cell; spine/plate cells are shared by several samples.
+    // distinct slope-form cell; spine/plate cells are shared by several samples.
     {
         let c = composite_full();
         let t = Instant::now();
@@ -147,27 +136,10 @@ fn perf_probe() {
         }
         let dt = t.elapsed();
         println!(
-            "sparse_100 @ spacing 200 (full stack): {dt:?} ({:?}/sample)",
+            "sparse_100 @ spacing 200: {dt:?} ({:?}/sample)",
             dt / 100
         );
         report_metrics(&c, "sparse200");
-    }
-
-    // Same pattern, no spawner event — isolates spawner-cell survey cost.
-    {
-        let c = composite_no_spawner();
-        let t = Instant::now();
-        for i in 0..100 {
-            let q = (i % 10) * 200;
-            let r = (i / 10) * 200;
-            c.elevation_at(q, r);
-        }
-        let dt = t.elapsed();
-        println!(
-            "sparse_100 @ spacing 200 (no spawner):  {dt:?} ({:?}/sample)",
-            dt / 100
-        );
-        report_metrics(&c, "sparse200-nospawn");
     }
     println!();
 

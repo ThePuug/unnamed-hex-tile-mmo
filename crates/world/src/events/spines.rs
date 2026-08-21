@@ -4,8 +4,8 @@
 //! radius of any spine epicenter within them. Query checks the cell + 1 neighbor
 //! ring in the SpineInstanceIndex — no wider search needed.
 
-//! Deform: reads PlateCentroidIndex for qualifying epicenters (survey-driven,
-//! spaced by min_spacing), generates spine instances, registers SpineInstanceIndex.
+//! Deform: reads PlateCentroidIndex for qualifying epicentres, thins them to a
+//! minimum spacing, grows a spine at each, registers SpineInstanceIndex.
 //! Query: evaluates a single tile's elevation + tag from indexed instances.
 
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::plates::PlateCentroidIndex;
 use crate::slope_form;
-use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
+use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 /// Cell radius in tiles = SPINE_INFLUENCE. A cell contains the full influence
 /// extent of any epicenter within it. Query searches cell + 1 neighbor.
@@ -111,10 +111,11 @@ impl WorldEvent for SpineEvent {
     fn name(&self) -> &str { "spines" }
     fn scale(&self) -> u32 { SPINE_CELL_SCALE }
 
-    /// A cell is one SPINE_INFLUENCE across, so an epicenter sitting near a
-    /// cell edge still reaches tiles in the adjacent cell. Query therefore
-    /// reads one ring out, and the framework must deform it first.
-    fn query_reach(&self) -> u32 { 1 }
+    /// An epicentre reaches SPINE_INFLUENCE from wherever it sits, which is why
+    /// the cell is scaled to it: one ring of cells this size clears 1.268x the
+    /// radius, so a spine near a cell edge is still folded by every cell it
+    /// touches.
+    fn max_influence(&self) -> u32 { SPINE_INFLUENCE as u32 }
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<SpineInstanceIndex>();
@@ -122,17 +123,8 @@ impl WorldEvent for SpineEvent {
         registry.pre_register::<BasinIndex>();
     }
 
-    fn survey(&self) -> Survey {
-        Survey::from_index::<PlateCentroidIndex>()
-            .all_neighbors_in::<PlateCentroidIndex>(
-                |tile| tile.tags.has(PlateTag::Inland),
-                1,
-            )
-            .filter(|tile, _seed| tile.tags.has(PlateTag::Inland))
-            .min_spacing(SPINE_EXCLUSION_TILES)
-    }
 
-    fn deform(&self, scope: &CellScope, matched: &[(i32, i32)]) {
+    fn deform(&self, scope: &CellScope) {
         // Collect centroid data under read lock, then drop it before write lock.
         let centroid_data: Vec<(f64, f64, u64)> = {
             let centroid_index = match scope.read::<PlateCentroidIndex>() {
@@ -142,6 +134,27 @@ impl WorldEvent for SpineEvent {
                     return;
                 }
             };
+
+            // Epicentre candidates: every plate centroid in the plate cells this
+            // cell may read. A spine sits deep inside a landmass, so a candidate
+            // qualifies only if it *and* every one of its Voronoi neighbours is
+            // Inland — a centroid whose neighbour is missing from the index
+            // fails, because a neighbour that cannot be seen cannot be vouched
+            // for.
+            let cells = scope.source_cells::<PlateCentroidIndex>();
+            let mut candidates = centroid_index.tiles(&cells);
+            candidates.retain(|&(q, r)| {
+                centroid_index.neighbors(q, r).iter().all(|&(nq, nr)| {
+                    centroid_index.tile_view_at(nq, nr)
+                        .map_or(false, |tv| tv.tags.has(PlateTag::Inland))
+                })
+            });
+            candidates.retain(|&(q, r)| {
+                centroid_index.tile_view_at(q, r)
+                    .map_or(false, |tv| tv.tags.has(PlateTag::Inland))
+            });
+            let matched = thin_by_spacing(&candidates, SPINE_EXCLUSION_TILES, scope.seed());
+
             matched.iter().filter_map(|&(q, r)| {
                 centroid_index.cells.values()
                     .flat_map(|entries| entries.iter())
@@ -167,7 +180,7 @@ impl WorldEvent for SpineEvent {
 
         // Everything here is keyed by where it was seeded, not by the ground it
         // covers — a spine reaches a full SPINE_INFLUENCE past its own cell,
-        // which is what `query_reach` declares so readers gather cell plus ring.
+        // so readers gather cell plus ring.
         //
         // Floors are this cell's own view: deform sees the layers below over its
         // footprint, never its own ring, so it cannot know which of these carves
@@ -189,7 +202,7 @@ impl WorldEvent for SpineEvent {
     }
 
     /// The instances any tile in this cell can be reached by: its own cell plus
-    /// the rings `query_reach` declares, which is the set the framework has
+    /// its one ring, which is the set the framework has
     /// deformed by the time this runs.
     ///
     /// This is also the first moment the published faces can be made true. A
@@ -200,7 +213,7 @@ impl WorldEvent for SpineEvent {
     /// contract, so the floors are recomposed against every instance that
     /// stands on the same ground.
     fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
-        let cells = scope.lattice().cells_within_distance(scope.cell(), self.query_reach());
+        let cells = scope.lattice().cells_within_distance(scope.cell(), 1);
         let instances = match scope.read::<SpineInstanceIndex>() {
             Some(idx) => idx.instances_in(&cells),
             None => Vec::new(),
@@ -248,3 +261,93 @@ impl WorldEvent for SpineEvent {
     }
 }
 
+
+/// Deterministic priority-ordered greedy exclusion.
+///
+/// Each candidate takes a priority from `hash(q, r, seed)`; highest first, and
+/// a candidate is kept only if it clears every already-kept one by `distance`.
+/// Priority comes from the candidate rather than its position in the list, so
+/// the result does not depend on the order the index yielded them.
+///
+/// Private, and not a shared helper: one caller does not justify one.
+fn thin_by_spacing(candidates: &[(i32, i32)], distance: u32, seed: u64) -> Vec<(i32, i32)> {
+    fn hex_distance(q1: i32, r1: i32, q2: i32, r2: i32) -> i32 {
+        let dq = q1 - q2;
+        let dr = r1 - r2;
+        dq.abs().max(dr.abs()).max((dq + dr).abs())
+    }
+
+    let dist = distance as i32;
+    let mut prioritized: Vec<((i32, i32), u64)> = candidates.iter()
+        .map(|&(q, r)| ((q, r), crate::noise::hash_u64(q as i64, r as i64, seed)))
+        .collect();
+    prioritized.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+    let mut selected: Vec<(i32, i32)> = Vec::new();
+    for ((q, r), _) in prioritized {
+        let too_close = selected.iter()
+            .any(|&(sq, sr)| hex_distance(q, r, sq, sr) < dist);
+        if !too_close {
+            selected.push((q, r));
+        }
+    }
+    selected
+}
+
+#[cfg(test)]
+mod spacing_tests {
+    use super::thin_by_spacing;
+
+    #[test]
+    fn spacing_is_deterministic() {
+        let candidates: Vec<(i32, i32)> = (0..50).map(|i| (i % 10, i / 10)).collect();
+        assert_eq!(
+            thin_by_spacing(&candidates, 10, 42),
+            thin_by_spacing(&candidates, 10, 42),
+        );
+    }
+
+    /// Priority comes from the candidate, so shuffling the input cannot move a
+    /// spine. The index yields cells in HashMap order, which is not stable.
+    #[test]
+    fn spacing_is_order_independent() {
+        let candidates: Vec<(i32, i32)> = (0..40).map(|i| (i * 3 % 37, i * 7 % 41)).collect();
+        let mut reversed = candidates.clone();
+        reversed.reverse();
+
+        let mut a = thin_by_spacing(&candidates, 5, 42);
+        let mut b = thin_by_spacing(&reversed, 5, 42);
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn spacing_enforces_distance() {
+        let candidates: Vec<(i32, i32)> = (0..50).map(|i| (i % 10, i / 10)).collect();
+        let selected = thin_by_spacing(&candidates, 10, 42);
+        for (i, &(q1, r1)) in selected.iter().enumerate() {
+            for &(q2, r2) in &selected[i + 1..] {
+                let (dq, dr) = (q1 - q2, r1 - r2);
+                let d = dq.abs().max(dr.abs()).max((dq + dr).abs());
+                assert!(d >= 10, "({q1},{r1}) and ({q2},{r2}) are {d} apart");
+            }
+        }
+    }
+
+    /// Priority is seeded, so two worlds thin the same candidates differently.
+    #[test]
+    fn spacing_varies_with_seed() {
+        let candidates: Vec<(i32, i32)> = (0..50).map(|i| (i % 10, i / 10)).collect();
+        assert_ne!(
+            thin_by_spacing(&candidates, 10, 42),
+            thin_by_spacing(&candidates, 10, 99),
+        );
+    }
+
+    #[test]
+    fn spacing_handles_empty_and_single() {
+        assert!(thin_by_spacing(&[], 10, 42).is_empty());
+        assert_eq!(thin_by_spacing(&[(5, 3)], 10, 42), vec![(5, 3)]);
+    }
+}

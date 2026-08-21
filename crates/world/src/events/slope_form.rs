@@ -12,7 +12,7 @@
 //! to hold water — so this stage never reads a neighbouring tile. It reads
 //! what stands over the one it is given.
 
-//! **Order-independent.** It builds no index and runs no survey; `prepare`
+//! **Order-independent.** It builds no index; `prepare`
 //! reads what the layers below published over a neighbourhood the framework
 //! guarantees is deformed, so the answer at a tile does not depend on which
 //! tiles were visited first.
@@ -31,7 +31,7 @@ use crate::slope_form::{
 
 use super::faces::{BasinIndex, ErosionalFaceIndex};
 use super::spines::{SpineInstanceIndex, SPINE_CELL_SCALE};
-use super::{CellScope, Survey, TileOutput, TileView, WorldEvent};
+use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 /// Cell scale in tiles.
 ///
@@ -91,13 +91,8 @@ impl Default for SlopeFormEvent {
 impl WorldEvent for SlopeFormEvent {
     fn name(&self) -> &str { "slope-form" }
     fn scale(&self) -> u32 { SLOPE_FORM_CELL_SCALE }
-    fn survey(&self) -> Survey { Survey::none() }
 
-    /// Reads no index of its own — the neighbourhood it gathers is the surface
-    /// below, which `below()` resolves and the framework deforms for it.
-    fn query_reach(&self) -> u32 { 0 }
-
-    fn deform(&self, _scope: &CellScope, _matched: &[(i32, i32)]) {
+    fn deform(&self, _scope: &CellScope) {
         // Nothing to build. The stage is a pure function of the surface below.
     }
 
@@ -107,7 +102,7 @@ impl WorldEvent for SlopeFormEvent {
     /// `deform` sees the layers below over its footprint and never its own ring
     /// — it cannot know that a neighbouring spine buries the channel it just
     /// cut. Compositing that is a fold over the ring, which is precisely what
-    /// this phase is allowed to read: `query_reach` guarantees the ring is
+    /// this phase is allowed to read: the framework guarantees the ring is
     /// deformed before any tile here resolves.
     ///
     /// So the reader settles. Every face that can act on a tile of this cell is

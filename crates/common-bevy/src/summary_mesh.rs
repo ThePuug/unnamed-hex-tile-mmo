@@ -97,7 +97,7 @@ pub fn build_summary_mesh_region(
     for (sn, sm) in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
         let (cq, cr) = summary_lat.cell_center((sn, sm));
 
-        // Same 7-sample rule as every other producer (INV-010).
+        // Same 7-sample rule as every other producer (INV-006).
         let Some(center_z) = crate::summary::sample_center_z_opt(radius, sn, sm, |tq, tr| {
             elevation_fn(tq, tr)
         }) else {

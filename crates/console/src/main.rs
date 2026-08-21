@@ -759,7 +759,7 @@ impl eframe::App for ConsoleApp {
                         });
 
                         // Per-event rows: index + cell hit%
-                        for name in &["plates", "spines", "spawner"] {
+                        for name in &["plates", "motion", "spines"] {
                             let index = self.field(&format!("evt.{name}.index"));
                             let c_hits = self.field(&format!("evt.{name}.cell_hits"));
                             let c_misses = self.field(&format!("evt.{name}.cell_misses"));

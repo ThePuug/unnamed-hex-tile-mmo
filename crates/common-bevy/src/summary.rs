@@ -17,7 +17,7 @@ use crate::geometry::flat_top_tile_center;
 /// scale = 2r+1 ∈ {1, 3, 9, 27, 81, 243}. Tripling makes the levels nest:
 /// every coarse summary center is also a fine summary center, and
 /// `sample_center_z`'s 7 sample points at d = scale/3 land exactly on the
-/// child level's summary centers (INV-010). Arbitrary integer radii do not
+/// child level's summary centers (INV-006). Arbitrary integer radii do not
 /// nest — adjacent-band lattices would share no structure at all.
 pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
 
@@ -311,7 +311,7 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
 /// The single center_z rule for every producer (Map, server EventRegistry,
 /// flyover AdminComposite). For nested LoD levels (scale divisible by 3),
 /// the sample distance d = scale/3 puts the 6 axis samples exactly on the
-/// child level's summary centers (INV-010) — coarse summaries are anchored
+/// child level's summary centers (INV-006) — coarse summaries are anchored
 /// to the same tiles that anchor their children, so refinement preserves
 /// the silhouette. At r=1 the 7 samples are the entire hexball (exact).
 pub fn sample_center_z(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> i32) -> i32 {
@@ -597,7 +597,7 @@ mod tests {
 
     // ── Nested level tests ──
 
-    /// INV-010: each LoD level's 7 sample points land exactly on the child
+    /// INV-006: each LoD level's 7 sample points land exactly on the child
     /// level's summary centers — the sampling rule is hierarchical.
     #[test]
     fn lod_levels_sample_points_are_child_centers() {

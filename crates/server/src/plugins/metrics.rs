@@ -239,9 +239,9 @@ impl Plugin for MetricsPlugin {
         snapshot.register("evt.spines.index", Aggregator::Last);
         snapshot.register("evt.spines.cell_hits", Aggregator::Last);
         snapshot.register("evt.spines.cell_misses", Aggregator::Last);
-        snapshot.register("evt.spawner.index", Aggregator::Last);
-        snapshot.register("evt.spawner.cell_hits", Aggregator::Last);
-        snapshot.register("evt.spawner.cell_misses", Aggregator::Last);
+        snapshot.register("evt.motion.index", Aggregator::Last);
+        snapshot.register("evt.motion.cell_hits", Aggregator::Last);
+        snapshot.register("evt.motion.cell_misses", Aggregator::Last);
         // Async chunk generation metrics
         snapshot.register("async.task_duration_ms", Aggregator::Peak);
         snapshot.register("async.tasks_in_flight", Aggregator::Last);
@@ -271,12 +271,12 @@ fn drain_event_metrics(
         ("evt.tile_misses", m.tile_misses as f32),
         ("evt.active", active.0.len() as f32),
     ]);
-    // Layer names are static ("plates", "spines", "spawner") — map to pre-registered keys
+    // Layer names are static ("plates", "motion", "spines") — map to pre-registered keys
     for layer in &m.layers {
         let (k_index, k_hits, k_misses) = match layer.name.as_str() {
             "plates" => ("evt.plates.index", "evt.plates.cell_hits", "evt.plates.cell_misses"),
             "spines" => ("evt.spines.index", "evt.spines.cell_hits", "evt.spines.cell_misses"),
-            "spawner" => ("evt.spawner.index", "evt.spawner.cell_hits", "evt.spawner.cell_misses"),
+            "motion" => ("evt.motion.index", "evt.motion.cell_hits", "evt.motion.cell_misses"),
             _ => continue,
         };
         snapshot.record(&[

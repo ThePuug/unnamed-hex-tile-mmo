@@ -12,10 +12,10 @@ use rayon::prelude::*;
 
 use common::{PlateTag, TagSet};
 use world::events::Composite;
-use world::events::plates::{PlateEvent, PlateCentroidIndex};
-use world::events::spawner::{
-    SpawnerArchetype, SpawnerEvent, SpawnerPlacementIndex, archetype_for_tagset,
+use world::events::motion::{
+    BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
+use world::events::plates::{PlateEvent, PlateCentroidIndex};
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
 use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
 
@@ -29,12 +29,12 @@ enum Layer {
     Spines,
     /// Macro plate centroid markers (red dots).
     Centroids,
-    /// Spawner placement markers, colored by archetype.
-    Spawners,
     /// Spine epicenter markers (yellow dots).
     SpinePeaks,
     /// Glacial bowls, drawn as floor / headwall / lip / outlet.
     Cirques,
+    /// Plate boundaries, drawn by what the motion resolves them to.
+    Boundaries,
 }
 
 fn parse_layers(s: &str) -> Vec<Layer> {
@@ -44,13 +44,13 @@ fn parse_layers(s: &str) -> Vec<Layer> {
             "elevation" => Layer::Elevation,
             "spines" => Layer::Spines,
             "centroids" => Layer::Centroids,
-            "spawners" => Layer::Spawners,
             "spine-peaks" => Layer::SpinePeaks,
             "cirques" => Layer::Cirques,
+            "boundaries" => Layer::Boundaries,
             other => {
                 eprintln!(
                     "Unknown layer: {other:?}. Valid: plates, elevation, spines, \
-                     centroids, spawners, spine-peaks, cirques"
+                     centroids, spine-peaks, cirques, boundaries"
                 );
                 std::process::exit(1);
             }
@@ -88,7 +88,8 @@ struct Cli {
     seed: u64,
 
     /// Comma-separated layer stack drawn bottom to top.
-    /// Available: plates, elevation, spines, centroids, spawners, spine-peaks, cirques
+    /// Available: plates, elevation, spines, centroids, spine-peaks, cirques,
+    /// boundaries
     #[arg(long, default_value = "plates,elevation")]
     layers: String,
 }
@@ -135,12 +136,32 @@ fn elevation_overlay(base: (f64, f64, f64), elev: f64, slope: f64) -> (f64, f64,
     lerp_rgb(height_color, (0.30, 0.25, 0.20), cliff_t)
 }
 
-fn spawner_marker_color(arch: SpawnerArchetype) -> [u8; 3] {
-    match arch {
-        SpawnerArchetype::Berserker => [255, 50, 50],  // red
-        SpawnerArchetype::Juggernaut => [50, 50, 255], // blue
-        SpawnerArchetype::Kiter => [50, 255, 50],      // green
-        SpawnerArchetype::Defender => [255, 165, 50],   // orange
+/// Convergence magnitude that saturates a boundary's colour and width. Above
+/// the bulk of the distribution, so ordinary boundaries stay legible against
+/// each other instead of all clipping to full intensity.
+const BOUNDARY_FULL_SCALE: f64 = 0.25;
+
+/// Boundaries read by what the motion resolves them to.
+///
+/// Hue carries the one thing the layer is being judged on — whether a chain of
+/// boundaries holds one sign along its length — so the sign owns it outright
+/// and transform-dominance is drawn as a dash instead of a colour. Margins take
+/// their own two hues, because whether a coast carries a range or a plain is
+/// the other question being validated.
+fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
+    match seg.margin {
+        MarginClass::Active => [255, 130, 20],  // orange — arc margin
+        // Violet: a passive margin has to be visibly absent, which means a hue
+        // no other class uses and one that reads on both the sea and the land.
+        MarginClass::Passive => [175, 140, 210],
+        MarginClass::Interior => {
+            let t = (seg.convergence.abs() / BOUNDARY_FULL_SCALE).clamp(0.0, 1.0);
+            if seg.convergence > 0.0 {
+                [255, (110.0 - 70.0 * t) as u8, (110.0 - 90.0 * t) as u8]
+            } else {
+                [(110.0 - 90.0 * t) as u8, (150.0 - 30.0 * t) as u8, 255]
+            }
+        }
     }
 }
 
@@ -180,9 +201,9 @@ fn main() {
             Layer::Elevation => "elevation",
             Layer::Spines => "spines",
             Layer::Centroids => "centroids",
-            Layer::Spawners => "spawners",
             Layer::SpinePeaks => "spine-peaks",
             Layer::Cirques => "cirques",
+            Layer::Boundaries => "boundaries",
         })
         .collect();
 
@@ -202,18 +223,17 @@ fn main() {
     let needs_spines = layers.iter().any(|l| {
         matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks | Layer::Cirques)
     });
-    let needs_spawners = layers.contains(&Layer::Spawners);
+    let needs_boundaries = layers.contains(&Layer::Boundaries);
 
     let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
-    composite.add_event(Box::new(world::events::sea::SeaEvent::new()));
-    if needs_spines || needs_spawners {
+    if needs_boundaries {
+        composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), cli.seed)));
+    }
+    if needs_spines {
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, cli.seed)));
         composite.add_event(Box::new(world::events::slope_form::SlopeFormEvent::new()));
-    }
-    if needs_spawners {
-        composite.add_event(Box::new(SpawnerEvent::new(cli.seed)));
     }
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
@@ -236,13 +256,9 @@ fn main() {
     let coords: Vec<(i32, i32)> = tile_set.into_iter().collect();
     log::info!("Materializing {} unique tiles (from {}x{} pixels)...", coords.len(), w, h);
 
+    // Materializing the tiles deforms every layer under them, which is what
+    // fills the indexes the marker layers below read.
     let views = composite.tiles_at(&coords);
-
-    // Spawner placements are index-only, so tile materialization never
-    // deforms their cells. Warm them explicitly for the sampled tiles.
-    if needs_spawners {
-        composite.ensure_indexed(&coords);
-    }
 
     let tile_cache: HashMap<(i32, i32), (TagSet, f64)> = views
         .into_iter()
@@ -275,31 +291,6 @@ fn main() {
         vec![]
     };
 
-    let spawner_markers: Vec<(f64, f64, SpawnerArchetype)> = if layers.contains(&Layer::Spawners) {
-        composite.with_indexes(|indexes| {
-            indexes
-                .get::<SpawnerPlacementIndex>()
-                .map(|idx| {
-                    idx.cells
-                        .values()
-                        .flat_map(|v| v.iter())
-                        .map(|p| {
-                            // Resolve real archetype from composite tags
-                            let arch = tile_cache
-                                .get(&(p.q, p.r))
-                                .and_then(|(t, _)| archetype_for_tagset(t))
-                                .unwrap_or(p.archetype);
-                            let (wx, wy) = world::hex_to_world(p.q, p.r);
-                            (wx, wy, arch)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        vec![]
-    };
-
     let cirques: Vec<Cirque> = if layers.contains(&Layer::Cirques) {
         composite.with_indexes(|indexes| {
             indexes
@@ -311,6 +302,17 @@ fn main() {
                         .flat_map(|inst| inst.cirques.iter().cloned())
                         .collect()
                 })
+                .unwrap_or_default()
+        })
+    } else {
+        vec![]
+    };
+
+    let boundaries: Vec<BoundarySegment> = if needs_boundaries {
+        composite.with_indexes(|indexes| {
+            indexes
+                .get::<PlateBoundaryIndex>()
+                .map(|idx| idx.cells.values().flat_map(|v| v.iter().cloned()).collect())
                 .unwrap_or_default()
         })
     } else {
@@ -428,20 +430,89 @@ fn main() {
         }
     };
 
+    // `dash` of 0 draws solid; anything else leaves every other run of that many
+    // pixels blank.
+    let draw_line = |buf: &mut Vec<u8>,
+                     x0: f64, y0: f64, x1: f64, y1: f64,
+                     half_width: i32, dash: i32, rgb: [u8; 3]| {
+        let px0 = (x0 - origin_x) / scale;
+        let py0 = (y0 - origin_y) / scale;
+        let px1 = (x1 - origin_x) / scale;
+        let py1 = (y1 - origin_y) / scale;
+        let steps = (px1 - px0).abs().max((py1 - py0).abs()).ceil().max(1.0) as i32;
+        for i in 0..=steps {
+            if dash > 0 && (i / dash) % 2 == 1 { continue; }
+            let t = i as f64 / steps as f64;
+            let x = (px0 + (px1 - px0) * t).round() as i32;
+            let y = (py0 + (py1 - py0) * t).round() as i32;
+            for dy in -half_width..=half_width {
+                for dx in -half_width..=half_width {
+                    set_pixel(buf, x + dx, y + dy, rgb);
+                }
+            }
+        }
+    };
+
+    if needs_boundaries {
+        // Each segment is drawn as the Voronoi edge it stands for: through the
+        // midpoint, along strike. The edge of a hexagonal cell is the spacing
+        // over sqrt(3), so drawing the full separation overshoots by 70% and
+        // buries the network under its own overdraw.
+        const EDGE_OF_SPACING: f64 = 0.577;
+        for seg in &boundaries {
+            let half = seg.separation() * EDGE_OF_SPACING * 0.5;
+            let rgb = boundary_color(seg);
+            let strong = (seg.convergence.abs() / BOUNDARY_FULL_SCALE).clamp(0.0, 1.0);
+            let hw = (strong * 2.0).round() as i32;
+            let dash = if seg.regime() == BoundaryRegime::Transform {
+                (3.0 / scale).max(2.0) as i32
+            } else {
+                0
+            };
+            draw_line(
+                &mut buf,
+                seg.mx - seg.strike_x * half, seg.my - seg.strike_y * half,
+                seg.mx + seg.strike_x * half, seg.my + seg.strike_y * half,
+                hw, dash, rgb,
+            );
+            // Vergence tick on the steep flank. White so the side reads
+            // independently of whatever the segment itself is coloured.
+            if seg.vergence_x != 0.0 || seg.vergence_y != 0.0 {
+                let tick = seg.separation() * 0.22;
+                draw_line(
+                    &mut buf,
+                    seg.mx, seg.my,
+                    seg.mx + seg.vergence_x * tick, seg.my + seg.vergence_y * tick,
+                    0, 0, [255, 255, 255],
+                );
+            }
+        }
+        let tally = |f: &dyn Fn(&BoundarySegment) -> bool| {
+            boundaries.iter().filter(|s| f(s)).count()
+        };
+        log::info!(
+            "Boundaries: {} segments — {} convergent, {} divergent, {} transform-dominant; \
+             margins {} active / {} passive",
+            boundaries.len(),
+            tally(&|s| s.regime() == BoundaryRegime::Convergent),
+            tally(&|s| s.regime() == BoundaryRegime::Divergent),
+            tally(&|s| s.regime() == BoundaryRegime::Transform),
+            tally(&|s| s.margin == MarginClass::Active),
+            tally(&|s| s.margin == MarginClass::Passive),
+        );
+        log::info!(
+            "  legend: red=convergent, blue=divergent (width and saturation by magnitude), \
+             orange=active margin, violet=passive margin; dashed=transform-dominant; \
+             white tick=vergence, on the steep flank"
+        );
+    }
+
     if layers.contains(&Layer::Centroids) {
         let dot_r = (4.0 / scale).max(2.0) as i32;
         for &(cwx, cwy) in &centroids {
             draw_dot(&mut buf, cwx, cwy, dot_r, [255, 50, 50]);
         }
         log::info!("Centroids: {} markers", centroids.len());
-    }
-
-    if layers.contains(&Layer::Spawners) {
-        let dot_r = (3.0 / scale).max(2.0) as i32;
-        for &(swx, swy, arch) in &spawner_markers {
-            draw_dot(&mut buf, swx, swy, dot_r, spawner_marker_color(arch));
-        }
-        log::info!("Spawners: {} placements", spawner_markers.len());
     }
 
     if layers.contains(&Layer::SpinePeaks) {

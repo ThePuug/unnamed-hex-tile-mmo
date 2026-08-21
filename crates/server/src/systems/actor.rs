@@ -189,11 +189,6 @@ fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
         tiles.push((qrz, typ));
     }
 
-    // Spawner placements are index-only, so tile materialization never deforms
-    // their cells. Warm them here, where every survey resolve is a cache hit on
-    // the tiles materialized above.
-    registry.warm_indexes(&coords);
-
     TerrainChunk::new(tiles)
 }
 
