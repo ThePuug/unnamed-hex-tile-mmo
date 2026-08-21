@@ -4,10 +4,12 @@ use common::{ArrayVec, PlateTag, Tagged, MAX_PLATE_TAGS};
 use crate::noise::{hash_u64, hash_f64, simplex_2d};
 use crate::{MACRO_CELL_SIZE, JITTER_NOISE_WAVELENGTH, JITTER_MIN, JITTER_MAX,
             SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX, OCEAN_SUPPRESSION_BOOST,
-            REGIME_LAND_THRESHOLD,
+            SUPPRESSION_DEPTH_EXPONENT,
+            SHORE_RAW, SEA_MAX_DEPTH, SHELF_EXPONENT,
+            CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT,
             WARP_NOISE_WAVELENGTH, WARP_PRIME_B, WARP_PRIME_C, WARP_PRIME_D,
             WARP_STRENGTH_MIN, WARP_STRENGTH_MAX,
-            GRAD_STEP, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS, MAX_ELONGATION,
+            GRAD_STEP, ELONGATION_GRAD_NORM, MAX_ELONGATION,
             COASTAL_WARP_THRESHOLD,
             WORLD_GATE_SIGMOID_MIDPOINT, WORLD_GATE_SIGMOID_STEEPNESS,
             CONTINENT_CELL_SIZE, CONTINENT_JITTER,
@@ -28,8 +30,9 @@ pub struct PlateCenter {
     pub cell_q: i32,
     pub cell_r: i32,
     pub id: u64,
-    /// Tags assigned by generation and the event system. Starts empty;
-    /// populated by [`PlateCache::classify_tags`].
+    /// Spine tags written by the event system — `Ridge`, `Highland`,
+    /// `Foothills`. Starts empty. There is no base classification: which side
+    /// of sea level a plate sits on is `PlateCache::plate_elevation`, not a tag.
     pub tags: ArrayVec<[PlateTag; MAX_PLATE_TAGS]>,
     /// Ground-level elevation in world units. Starts at 0.0;
     /// written by terrain events (e.g. continental spine generation).
@@ -107,13 +110,50 @@ fn continent_seed_point(cq: i32, cr: i32, seed: u64) -> (f64, f64) {
     (cx + jx, cy + jy)
 }
 
+/// Which continental cell a position belongs to: the winner of the F1 contest
+/// the regime field already runs, kept instead of discarded.
+///
+/// Deterministic, free at the point of use, and stable under everything above
+/// it. Two positions share an id exactly when the same continental seed point
+/// wins for both.
+///
+/// **It is a Voronoi cell, not a landmass.** A landmass can bridge two adjacent
+/// cells wherever their gates overlap enough to hold the substrate above the
+/// datum, so an id does not partition land into continents and a consumer must
+/// not assume it does. Nor is a crossing always to a lattice neighbour — the
+/// domain warp displaces the query point before the contest, so a step near a
+/// triple point can skip a cell.
+///
+/// What it does guarantee is a spatial bound: every position carrying an id
+/// lies within `CONTINENT_CELL_SIZE × (1 + CONTINENT_JITTER) +
+/// CONTINENT_WARP_AMPLITUDE` of that cell's seed point, so scoping work to a
+/// cell bounds the ground that work covers. That is the property to build on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ContinentCell {
+    pub cq: i32,
+    pub cr: i32,
+}
+
 /// Cellular (Worley) world gate: 1.0 at continent centers, 0.0 at ocean midpoints.
 
 /// Inverted F1 Voronoi on a jittered hex lattice with domain warp.
 /// Domain warp displaces the query point before Voronoi lookup, creating irregular
 /// coastlines (peninsulas, bays) without distorting seed positions.
 /// The 7-cell check (self + 6 hex neighbors) finds the nearest feature point.
+///
+/// Returns the gate value alongside the cell that won it, so a caller wanting
+/// continent identity does not repeat the contest.
+pub fn continent_at(wx: f64, wy: f64, seed: u64) -> (ContinentCell, f64) {
+    let (cell, f1) = continent_contest(wx, wy, seed);
+    (cell, (1.0 - f1 / (CONTINENT_CELL_SIZE * 0.5)).clamp(0.0, 1.0))
+}
+
 fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
+    continent_at(wx, wy, seed).1
+}
+
+/// The F1 contest itself: which continental seed point is nearest, and how far.
+fn continent_contest(wx: f64, wy: f64, seed: u64) -> (ContinentCell, f64) {
     // Domain warp: displace query point for irregular coastline shapes.
     let warp_x = simplex_2d(wx / CONTINENT_WARP_WAVELENGTH, wy / CONTINENT_WARP_WAVELENGTH,
                             seed ^ CONTINENT_WARP_SEED_X) * CONTINENT_WARP_AMPLITUDE;
@@ -132,6 +172,7 @@ fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
         [(cq-1, cr), (cq+1, cr), (cq,   cr-1), (cq+1, cr-1), (cq, cr+1), (cq+1, cr+1)]
     };
 
+    let (mut best_q, mut best_r) = (cq, cr);
     let mut min_dist_sq = {
         let (fx, fy) = continent_seed_point(cq, cr, seed);
         let dx = qx - fx; let dy = qy - fy;
@@ -140,11 +181,15 @@ fn cellular_world_gate(wx: f64, wy: f64, seed: u64) -> f64 {
     for &(nq, nr) in &neighbors {
         let (fx, fy) = continent_seed_point(nq, nr, seed);
         let dx = qx - fx; let dy = qy - fy;
-        min_dist_sq = min_dist_sq.min(dx * dx + dy * dy);
+        let d2 = dx * dx + dy * dy;
+        if d2 < min_dist_sq {
+            min_dist_sq = d2;
+            best_q = nq;
+            best_r = nr;
+        }
     }
 
-    let f1 = min_dist_sq.sqrt();
-    (1.0 - f1 / (CONTINENT_CELL_SIZE * 0.5)).clamp(0.0, 1.0)
+    (ContinentCell { cq: best_q, cr: best_r }, min_dist_sq.sqrt())
 }
 
 // ──── Regime noise ────
@@ -177,31 +222,60 @@ pub fn raw_regime_noise(wx: f64, wy: f64, seed: u64) -> f64 {
     effective_local * world_gate * regional_mod
 }
 
-/// UNCACHED — evaluates 4 simplex noise calls per invocation.
-/// Use `PlateCache::regime_value_at` for the cached API surface.
-
-/// Sigmoidized regime field — flat plateaus with sharp transition at midpoint.
-/// Values cluster near 0 (water) and 1 (land). The sigmoid flattens deep
-/// water and deep land regions, concentrating all gradient at the coastline.
-pub fn regime_value_at(wx: f64, wy: f64, seed: u64) -> f64 {
-    sigmoid(raw_regime_noise(wx, wy, seed), REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS)
-}
-
 /// Sigmoid contrast filter. Maps x through a smooth step centered at `midpoint`
 /// with sharpness controlled by `steepness`.
 pub(crate) fn sigmoid(x: f64, midpoint: f64, steepness: f64) -> f64 {
     1.0 / (1.0 + (-steepness * (x - midpoint)).exp())
 }
 
-/// Inverse of [`sigmoid`]: the `x` that produces `y`. Lets callers recover a
-/// raw (pre-sigmoid) threshold from a sigmoidized one instead of hardcoding a
-/// number that silently rots when the sigmoid constants are retuned.
-/// `y` must be strictly within (0, 1).
-pub(crate) fn inverse_sigmoid(y: f64, midpoint: f64, steepness: f64) -> f64 {
-    midpoint - (1.0 / y - 1.0).ln() / steepness
+// ──── Crustal substrate ────
+
+/// Substrate elevation in z-levels at a world position: thick crust floats
+/// high, thin crust floats low, and sea level is the constant 0 between them.
+///
+/// This is the whole of what the regime field means. There is no land mask and
+/// no layer above may reintroduce one — a caller asking whether a position is
+/// land compares this against 0.0. The two branches are one continuous curve
+/// through the datum, so nothing changes character at the shoreline; it is
+/// simply where the curve crosses zero.
+///
+/// A pure function of (position, seed): no features, no origins, nothing to
+/// index. UNCACHED — evaluates the full regime noise stack per call.
+pub fn substrate_elevation_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    substrate_from_raw(raw_regime_noise(wx, wy, seed))
 }
 
-/// Estimated max gradient of the raw (pre-sigmoid) regime noise per world unit.
+/// Substrate elevation from an already-evaluated raw regime value, so a caller
+/// holding one does not evaluate the noise field twice for the same position.
+pub fn substrate_from_raw(raw: f64) -> f64 {
+    if raw >= SHORE_RAW {
+        // 0 at the shoreline, 1 where the field saturates inland. The divisor
+        // is provable: raw is local × gate × regional, the first two at most 1.
+        let frac = ((raw - SHORE_RAW) / (REGIONAL_MOD_MAX - SHORE_RAW)).clamp(0.0, 1.0);
+        CONTINENT_MAX_RISE * frac.powf(CONTINENT_RISE_EXPONENT)
+    } else {
+        // 0 at the shoreline, approaching 1 in open ocean.
+        let frac = (1.0 - raw / SHORE_RAW).clamp(0.0, 1.0);
+        -SEA_MAX_DEPTH * frac.powf(SHELF_EXPONENT)
+    }
+}
+
+/// How far a position sits from the shoreline as a fraction of its own side's
+/// full range — 0 at the coast, 1 at the abyssal plain or the deepest interior.
+///
+/// Plate suppression is the only caller: it wants "how far from a coast is
+/// this", which the substrate answers directly, and it needs the two sides
+/// scaled independently because [`OCEAN_SUPPRESSION_BOOST`] deliberately
+/// treats them asymmetrically.
+fn datum_distance(elevation: f64) -> f64 {
+    if elevation >= 0.0 {
+        (elevation / CONTINENT_MAX_RISE).clamp(0.0, 1.0)
+    } else {
+        ((-elevation / SEA_MAX_DEPTH) * OCEAN_SUPPRESSION_BOOST).clamp(0.0, 1.0)
+    }
+}
+
+/// Estimated max gradient of the raw regime noise per world unit.
 /// Product-rule bound over local × world_gate × regional_mod:
 ///   - local: simplex sum, max gradient ≈ weight/wavelength per octave, /2 for [0,1] remap.
 ///     Scaled by REGIONAL_MOD_MAX since regional_mod multiplies local.
@@ -211,32 +285,34 @@ pub(crate) fn inverse_sigmoid(y: f64, midpoint: f64, steepness: f64) -> f64 {
 ///     Max dist from displaced query to nearest seed is CONTINENT_CELL_SIZE*0.5.
 ///     Scaled by REGIONAL_MOD_MAX since regional_mod multiplies world_gate.
 ///   - regional_mod: low-frequency simplex in [MIN, MAX]; max gradient ≈ (MAX-MIN)/(2*λ).
-const RAW_GRAD_MAX: f64 =
+///
+/// Not sound as written: measured gradients exceed it by 1.30×, so the sum of
+/// per-factor maxima is not in fact an upper bound on the product's gradient.
+/// Nothing depends on it — anisotropy normalizes against the measured
+/// [`ELONGATION_GRAD_NORM`] instead — and it is kept only because the bound the
+/// derivation was reaching for is still worth deriving correctly.
+pub const RAW_GRAD_MAX: f64 =
     (LOCAL_WEIGHT_B / WARP_PRIME_B + LOCAL_WEIGHT_C / WARP_PRIME_C + LOCAL_WEIGHT_D / WARP_PRIME_D)
         / LOCAL_DIVISOR / 2.0 * REGIONAL_MOD_MAX
     + WORLD_GATE_SIGMOID_STEEPNESS / (4.0 * CONTINENT_CELL_SIZE * 0.5)
         * (1.0 + CONTINENT_WARP_AMPLITUDE / CONTINENT_WARP_WAVELENGTH) * REGIONAL_MOD_MAX
     + (REGIONAL_MOD_MAX - REGIONAL_MOD_MIN) / (REGIONAL_CHARACTER_WAVELENGTH * 2.0);
 
-/// Estimated max gradient of the sigmoidized regime field per world unit.
-/// The sigmoid's peak derivative is steepness/4 (at the midpoint), so
-/// the contrasted field's max gradient is the raw max scaled by that factor.
-pub(crate) const GRAD_MAX_ESTIMATE: f64 = RAW_GRAD_MAX * REGIME_SIGMOID_STEEPNESS / 4.0;
-
-/// UNCACHED — evaluates 12 simplex noise calls per invocation (4× regime_value_at).
+/// UNCACHED — evaluates 4 regime noise stacks per invocation.
 /// Use `PlateCache::warp_strength_at` for gradient-cached access.
 
-/// Warp strength derived from gradient magnitude of the sigmoidized regime field.
-/// The pre-gradient sigmoid flattens deep water and deep land, so only the
-/// coastline transition band produces meaningful gradient.
+/// Warp strength derived from gradient magnitude of the regime field. The
+/// field grades everywhere, so unlike the sigmoidized field this replaced,
+/// gradient alone no longer says "coastline" — [`ELONGATION_GRAD_NORM`] is what
+/// concentrates the response back onto coasts.
 /// Returns a value in [WARP_STRENGTH_MIN, WARP_STRENGTH_MAX].
 pub fn warp_strength_at(wx: f64, wy: f64, seed: u64) -> f64 {
-    let dx = regime_value_at(wx + GRAD_STEP, wy, seed)
-           - regime_value_at(wx - GRAD_STEP, wy, seed);
-    let dy = regime_value_at(wx, wy + GRAD_STEP, seed)
-           - regime_value_at(wx, wy - GRAD_STEP, seed);
+    let dx = raw_regime_noise(wx + GRAD_STEP, wy, seed)
+           - raw_regime_noise(wx - GRAD_STEP, wy, seed);
+    let dy = raw_regime_noise(wx, wy + GRAD_STEP, seed)
+           - raw_regime_noise(wx, wy - GRAD_STEP, seed);
     let gradient_mag = (dx * dx + dy * dy).sqrt() / (2.0 * GRAD_STEP);
-    let normalized = (gradient_mag / GRAD_MAX_ESTIMATE).clamp(0.0, 1.0);
+    let normalized = (gradient_mag / ELONGATION_GRAD_NORM).clamp(0.0, 1.0);
     WARP_STRENGTH_MIN + normalized * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN)
 }
 
@@ -289,7 +365,7 @@ impl AnisoContext {
 }
 
 /// Merged regime gradient — computes warp strength and aniso context from
-/// a single 4-point stencil (4 regime_value_at calls instead of 8).
+/// a single 4-point stencil (4 noise evaluations instead of 8).
 #[derive(Clone, Copy)]
 struct RegimeGradient {
     warp_strength: f64,
@@ -298,10 +374,10 @@ struct RegimeGradient {
 
 impl RegimeGradient {
     fn at(wx: f64, wy: f64, seed: u64) -> Self {
-        let gx = regime_value_at(wx + GRAD_STEP, wy, seed)
-               - regime_value_at(wx - GRAD_STEP, wy, seed);
-        let gy = regime_value_at(wx, wy + GRAD_STEP, seed)
-               - regime_value_at(wx, wy - GRAD_STEP, seed);
+        let gx = raw_regime_noise(wx + GRAD_STEP, wy, seed)
+               - raw_regime_noise(wx - GRAD_STEP, wy, seed);
+        let gy = raw_regime_noise(wx, wy + GRAD_STEP, seed)
+               - raw_regime_noise(wx, wy - GRAD_STEP, seed);
         let raw_mag = (gx * gx + gy * gy).sqrt();
 
         let (across, along) = if raw_mag > 1e-12 {
@@ -313,7 +389,7 @@ impl RegimeGradient {
         };
 
         let grad_mag = raw_mag / (2.0 * GRAD_STEP);
-        let normalized = (grad_mag / GRAD_MAX_ESTIMATE).clamp(0.0, 1.0);
+        let normalized = (grad_mag / ELONGATION_GRAD_NORM).clamp(0.0, 1.0);
 
         let warp_strength = WARP_STRENGTH_MIN + normalized * (WARP_STRENGTH_MAX - WARP_STRENGTH_MIN);
         let elongation = 1.0 + (MAX_ELONGATION - 1.0) * normalized;
@@ -357,13 +433,13 @@ fn chunk_1ring(cr: i32) -> [(i32, i32); 7] {
 
 /// Populate a chunk by scanning macro grid cells near it.
 /// Each PlateCenter is owned by the chunk containing its world position.
-/// `regime_for_cell(cell_q, cell_r, wx, wy)` samples the regime field —
+/// `substrate_for_cell(cell_q, cell_r, wx, wy)` samples the substrate —
 /// PlateCache passes a per-cell memo since adjacent chunk scans overlap.
 fn populate_chunk(
     cq: i32,
     cr: i32,
     seed: u64,
-    regime_for_cell: &dyn Fn(i32, i32, f64, f64) -> f64,
+    substrate_for_cell: &dyn Fn(i32, i32, f64, f64) -> f64,
 ) -> PlateChunk {
     let odd_shift = if cr & 1 != 0 { PLATE_CHUNK_SIZE * 0.5 } else { 0.0 };
     let chunk_wx = cq as f64 * PLATE_CHUNK_SIZE + odd_shift;
@@ -377,7 +453,7 @@ fn populate_chunk(
         for dq in -scan..=scan {
             let (mcq, mcr) = (center_mcq + dq, center_mcr + dr);
             let plate = plate_center_for_cell_with(mcq, mcr, seed, |wx, wy| {
-                regime_for_cell(mcq, mcr, wx, wy)
+                substrate_for_cell(mcq, mcr, wx, wy)
             });
             if let Some(plate) = plate {
                 if plate_chunk_coord(plate.wx, plate.wy) == (cq, cr) {
@@ -406,17 +482,17 @@ fn effective_distance(wx: f64, wy: f64, candidate: &PlateCenter, strength: f64, 
 /// this uncached form serves tests and standalone analysis.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn plate_center_for_cell(cell_q: i32, cell_r: i32, seed: u64) -> Option<PlateCenter> {
-    plate_center_for_cell_with(cell_q, cell_r, seed, |wx, wy| regime_value_at(wx, wy, seed))
+    plate_center_for_cell_with(cell_q, cell_r, seed, |wx, wy| substrate_elevation_at(wx, wy, seed))
 }
 
-/// `plate_center_for_cell` with a caller-supplied regime sampler so chunk
-/// population can memoize the 6-simplex regime stack per macro cell
+/// `plate_center_for_cell` with a caller-supplied substrate sampler so chunk
+/// population can memoize the 6-simplex noise stack per macro cell
 /// (adjacent chunk scans overlap ~6.9×).
 fn plate_center_for_cell_with(
     cell_q: i32,
     cell_r: i32,
     seed: u64,
-    regime_at: impl FnOnce(f64, f64) -> f64,
+    substrate_at: impl FnOnce(f64, f64) -> f64,
 ) -> Option<PlateCenter> {
     let odd_shift = if cell_r & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
     let nominal_wx = cell_q as f64 * MACRO_CELL_SIZE + odd_shift;
@@ -427,23 +503,16 @@ fn plate_center_for_cell_with(
     // Asymmetric: ocean side is boosted so deep ocean suppresses more than deep land.
 
     // suppression ∈ [SUPPRESSION_RATE_MIN, SUPPRESSION_RATE_MAX] for every
-    // possible regime (regime is a sigmoid output in (0, 1), so depth ∈ [0, 1]).
+    // possible substrate elevation (datum_distance clamps to [0, 1]).
     // Outside that band the hash alone decides — skip the regime stack.
     let hash = hash_f64(cell_q as i64, cell_r as i64, seed ^ SUPPRESS_SEED);
     if hash < SUPPRESSION_RATE_MIN {
         return None;
     }
     if hash < SUPPRESSION_RATE_MAX {
-        let regime = regime_at(nominal_wx, nominal_wy);
-        let depth = if regime >= REGIME_LAND_THRESHOLD {
-            // Land side: 0.0 at coast, 1.0 at regime=1.0
-            (regime - REGIME_LAND_THRESHOLD) / (1.0 - REGIME_LAND_THRESHOLD)
-        } else {
-            // Ocean side: 0.0 at coast, 1.0+ at regime=0.0
-            let normalized = (REGIME_LAND_THRESHOLD - regime) / REGIME_LAND_THRESHOLD;
-            (normalized * OCEAN_SUPPRESSION_BOOST).min(1.0)
-        };
-        let suppression = SUPPRESSION_RATE_MIN + depth * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
+        let depth = datum_distance(substrate_at(nominal_wx, nominal_wy));
+        let suppression = SUPPRESSION_RATE_MIN + depth.powf(SUPPRESSION_DEPTH_EXPONENT)
+            * (SUPPRESSION_RATE_MAX - SUPPRESSION_RATE_MIN);
         if hash < suppression {
             return None;
         }
@@ -518,19 +587,19 @@ const GRAD_CACHE_CELL: f64 = 32.0;
 pub struct PlateCache {
     chunks: DashMap<(i32, i32), PlateChunk>,
     gradients: DashMap<(i64, i64), RegimeGradient>,
-    /// Memoized classification per plate id. Classification depends only on
-    /// the plate's center position + seed, so it is a per-plate constant —
-    /// without this it was recomputed (6 simplex evals) for every tile.
-    tags: DashMap<u64, PlateTag>,
+    /// Memoized substrate elevation per plate id. A centroid is a fixed
+    /// position, so its elevation is a per-plate constant — without this it
+    /// was recomputed (6 simplex evals) for every tile.
+    plate_elevations: DashMap<u64, f64>,
     /// Memoized Voronoi neighbors per plate id. The neighbor set depends only
     /// on the owner plate + seed; deform gathers overlap ~60% between
     /// adjacent cells, so without this the midpoint plate_at probes were
     /// recomputed dozens of times per plate.
     neighbors: DashMap<u64, Vec<PlateCenter>>,
-    /// Memoized regime samples at macro-cell nominal centers. Chunk
+    /// Memoized substrate elevation at macro-cell nominal centers. Chunk
     /// population scans overlap ~6.9× between adjacent chunks; each cell's
-    /// 6-simplex regime stack is computed once.
-    cell_regimes: DashMap<(i32, i32), f64>,
+    /// noise stack is computed once.
+    cell_substrate: DashMap<(i32, i32), f64>,
     seed: u64,
 }
 
@@ -539,9 +608,9 @@ impl PlateCache {
         Self {
             chunks: DashMap::new(),
             gradients: DashMap::new(),
-            tags: DashMap::new(),
+            plate_elevations: DashMap::new(),
             neighbors: DashMap::new(),
-            cell_regimes: DashMap::new(),
+            cell_substrate: DashMap::new(),
             seed,
         }
     }
@@ -571,15 +640,15 @@ impl PlateCache {
         }
         // Compute outside the write guard (deterministic; race duplicates are
         // discarded by or_insert keeping the first value).
-        let regime_for_cell = |cell_q: i32, cell_r: i32, wx: f64, wy: f64| -> f64 {
-            if let Some(v) = self.cell_regimes.get(&(cell_q, cell_r)) {
+        let substrate_for_cell = |cell_q: i32, cell_r: i32, wx: f64, wy: f64| -> f64 {
+            if let Some(v) = self.cell_substrate.get(&(cell_q, cell_r)) {
                 return *v;
             }
-            let v = regime_value_at(wx, wy, self.seed);
-            self.cell_regimes.insert((cell_q, cell_r), v);
+            let v = substrate_elevation_at(wx, wy, self.seed);
+            self.cell_substrate.insert((cell_q, cell_r), v);
             v
         };
-        let chunk = populate_chunk(cq, cr, self.seed, &regime_for_cell);
+        let chunk = populate_chunk(cq, cr, self.seed, &substrate_for_cell);
         self.chunks.entry((cq, cr)).or_insert(chunk);
     }
 
@@ -603,8 +672,15 @@ impl PlateCache {
         best.expect("no plate center found in chunk neighborhood")
     }
 
-    pub fn regime_value_at(&self, wx: f64, wy: f64) -> f64 {
-        regime_value_at(wx, wy, self.seed)
+    pub fn substrate_elevation_at(&self, wx: f64, wy: f64) -> f64 {
+        substrate_elevation_at(wx, wy, self.seed)
+    }
+
+    /// Whether a position is above sea level. The only land test there is —
+    /// there is no land mask and no tag to consult, just the substrate against
+    /// its datum.
+    pub fn is_land(&self, wx: f64, wy: f64) -> bool {
+        self.substrate_elevation_at(wx, wy) >= 0.0
     }
 
     pub fn warp_strength_at(&self, wx: f64, wy: f64) -> f64 {
@@ -660,26 +736,34 @@ impl PlateCache {
         neighbors
     }
 
-    pub fn classify_tags(&self, plates: &mut [PlateCenter]) {
-        for plate in plates.iter_mut() {
-            let tag = if let Some(cached) = self.tags.get(&plate.id) {
-                *cached
-            } else {
-                let regime = self.regime_value_at(plate.wx, plate.wy);
-                let strength = self.warp_strength_at(plate.wx, plate.wy);
-                let is_coast = strength > COASTAL_WARP_THRESHOLD;
-                let tag = if is_coast {
-                    PlateTag::Coast
-                } else if regime >= REGIME_LAND_THRESHOLD {
-                    PlateTag::Inland
-                } else {
-                    PlateTag::Sea
-                };
-                self.tags.insert(plate.id, tag);
-                tag
-            };
-            plate.add_tag(tag);
+    /// Substrate elevation at a plate's centroid, memoized per plate id.
+    ///
+    /// A plate's centroid is a fixed position, so this is a per-plate constant.
+    /// Without the memo it is a full noise stack per tile for callers that ask
+    /// which side of sea level a plate sits on.
+    pub fn plate_elevation(&self, plate: &PlateCenter) -> f64 {
+        if let Some(cached) = self.plate_elevations.get(&plate.id) {
+            return *cached;
         }
+        let e = self.substrate_elevation_at(plate.wx, plate.wy);
+        self.plate_elevations.insert(plate.id, e);
+        e
+    }
+
+    /// Whether a plate's centroid stands on continental crust.
+    pub fn plate_is_continental(&self, plate: &PlateCenter) -> bool {
+        self.plate_elevation(plate) >= 0.0
+    }
+
+    /// Whether a plate sits in a steep stretch of the regime field.
+    ///
+    /// Not a land test and not a survivor of the deleted `Coast` tag's job:
+    /// this asks about the field's gradient, which is what
+    /// [`COASTAL_WARP_THRESHOLD`] has always thresholded. A plate can be
+    /// steep-sited on either side of sea level, and both are the transition
+    /// zone this identifies.
+    pub fn plate_in_transition(&self, plate: &PlateCenter) -> bool {
+        self.warp_strength_at(plate.wx, plate.wy) > COASTAL_WARP_THRESHOLD
     }
 
     pub fn warped_plate_at(&self, wx: f64, wy: f64) -> PlateCenter {
@@ -728,11 +812,9 @@ impl PlateCache {
 }
 
 // ──── Tests ────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{PlateTag, Tagged};
     use std::collections::HashMap;
     #[allow(unused_imports)]
     use std::collections::HashSet;
@@ -1093,25 +1175,25 @@ mod tests {
     }
 
     #[test]
-    fn regime_value_is_deterministic() {
+    fn substrate_is_deterministic() {
         let seed = 42u64;
         for x in (-30000..30000).step_by(3000) {
             for y in (-30000..30000).step_by(3000) {
-                let a = regime_value_at(x as f64, y as f64, seed);
-                let b = regime_value_at(x as f64, y as f64, seed);
-                assert_eq!(a, b, "regime_value_at({x}, {y}) not deterministic");
+                let a = substrate_elevation_at(x as f64, y as f64, seed);
+                let b = substrate_elevation_at(x as f64, y as f64, seed);
+                assert_eq!(a, b, "substrate_elevation_at({x}, {y}) not deterministic");
             }
         }
     }
 
     #[test]
-    fn regime_value_stays_in_unit_range() {
+    fn substrate_stays_between_its_anchors() {
         let seed = 42u64;
         for x in (-50000..50000).step_by(500) {
             for y in (-50000..50000).step_by(500) {
-                let v = regime_value_at(x as f64, y as f64, seed);
-                assert!(v >= 0.0 && v <= 1.0,
-                    "regime_value_at({x}, {y}) = {v}, outside [0, 1]");
+                let v = substrate_elevation_at(x as f64, y as f64, seed);
+                assert!(v >= -SEA_MAX_DEPTH && v <= CONTINENT_MAX_RISE,
+                    "substrate_elevation_at({x}, {y}) = {v}, outside its anchors");
             }
         }
     }
@@ -1242,30 +1324,28 @@ mod tests {
     }
 
     #[test]
-    fn regime_values_are_bimodal() {
-        // After sigmoid, values should cluster near 0 and 1.
-        // Count how many fall in the "flat" zones vs the transition band.
+    fn substrate_is_graded_not_bimodal() {
+        // The field this replaced was deliberately bimodal — a steepness-40
+        // sigmoid pinned it near 0 or 1 and the land mask read the split. A
+        // substrate has to grade instead, or the world is a plateau at two
+        // heights with a cliff between them.
         let seed = 42u64;
-        let mut near_zero = 0;
-        let mut near_one = 0;
-        let mut in_transition = 0;
+        let mut buckets = [0u32; 10];
+        let mut total = 0u32;
         for x in (-50000..50000).step_by(500) {
             for y in (-50000..50000).step_by(500) {
-                let v = regime_value_at(x as f64, y as f64, seed);
-                if v < 0.1 {
-                    near_zero += 1;
-                } else if v > 0.9 {
-                    near_one += 1;
-                } else {
-                    in_transition += 1;
-                }
+                let e = substrate_elevation_at(x as f64, y as f64, seed);
+                // Map [-SEA_MAX_DEPTH, CONTINENT_MAX_RISE] onto 10 buckets.
+                let t = (e + SEA_MAX_DEPTH) / (SEA_MAX_DEPTH + CONTINENT_MAX_RISE);
+                buckets[((t * 10.0) as usize).min(9)] += 1;
+                total += 1;
             }
         }
-        let total = near_zero + near_one + in_transition;
-        let plateau_pct = (near_zero + near_one) as f64 / total as f64 * 100.0;
-        assert!(plateau_pct > 50.0,
-            "Sigmoid should push most values to plateaus: {plateau_pct:.1}% in plateaus \
-             ({near_zero} near 0, {near_one} near 1, {in_transition} in transition)");
+        let occupied = buckets.iter().filter(|&&c| c as f64 / total as f64 > 0.01).count();
+        assert!(
+            occupied >= 5,
+            "substrate occupies only {occupied}/10 bands — that is a mask, not a grade: {buckets:?}"
+        );
     }
 
     #[test]
@@ -1279,9 +1359,9 @@ mod tests {
             for y in (-50000..50000).step_by(1000) {
                 let wx = x as f64;
                 let wy = y as f64;
-                let regime = regime_value_at(wx, wy, seed);
+                let e = substrate_elevation_at(wx, wy, seed);
                 // Only check points clearly in deep water or deep land
-                if regime < 0.05 || regime > 0.95 {
+                if e < -SEA_MAX_DEPTH * 0.5 || e > CONTINENT_MAX_RISE * 0.75 {
                     total_deep += 1;
                     let strength = warp_strength_at(wx, wy, seed);
                     if strength < threshold {
@@ -1302,10 +1382,10 @@ mod tests {
         let seed = 42u64;
         let mut seen: HashMap<u64, (i32, i32)> = HashMap::new();
 
-        let regime_uncached = |_: i32, _: i32, wx: f64, wy: f64| regime_value_at(wx, wy, seed);
+        let substrate_uncached = |_: i32, _: i32, wx: f64, wy: f64| substrate_elevation_at(wx, wy, seed);
         for cq in -5..=5 {
             for cr in -5..=5 {
-                let chunk = populate_chunk(cq, cr, seed, &regime_uncached);
+                let chunk = populate_chunk(cq, cr, seed, &substrate_uncached);
                 for center in &chunk.centers {
                     if let Some(&prev) = seen.get(&center.id) {
                         panic!("PlateCenter id={} in chunks ({}, {}) and ({}, {})",
@@ -1356,11 +1436,11 @@ mod tests {
             for y in (-50000..50000).step_by(500) {
                 let wx = x as f64;
                 let wy = y as f64;
-                let regime = regime_value_at(wx, wy, seed);
-                if regime < 0.02 || regime > 0.98 {
+                let e = substrate_elevation_at(wx, wy, seed);
+                if e < -SEA_MAX_DEPTH * 0.7 || e > CONTINENT_MAX_RISE * 0.85 {
                     let strength = warp_strength_at(wx, wy, seed);
                     assert!(strength < high_threshold,
-                        "Deep point at ({wx}, {wy}) regime={regime:.4} has high warp={strength:.1} \
+                        "Deep point at ({wx}, {wy}) elevation={e:.2} has high warp={strength:.1} \
                          (threshold={high_threshold:.1})");
                 }
             }
@@ -1368,8 +1448,8 @@ mod tests {
     }
 
     #[test]
-    fn suppression_varies_with_regime_depth() {
-        // Cells near the regime transition should have lower suppression
+    fn suppression_varies_with_distance_from_the_datum() {
+        // Cells near sea level should have lower suppression
         // than cells deep inland or deep in water.
         let seed = 42u64;
         let mut coastal_suppressed = 0u32;
@@ -1382,13 +1462,13 @@ mod tests {
                 let odd_shift = if cr & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
                 let wx = cq as f64 * MACRO_CELL_SIZE + odd_shift;
                 let wy = cr as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
-                let regime = regime_value_at(wx, wy, seed);
+                let e = substrate_elevation_at(wx, wy, seed);
                 let is_suppressed = plate_center_for_cell(cq, cr, seed).is_none();
 
-                if (regime - REGIME_LAND_THRESHOLD).abs() < 0.15 {
+                if e.abs() < 5.0 {
                     coastal_total += 1;
                     if is_suppressed { coastal_suppressed += 1; }
-                } else if regime < 0.1 || regime > 0.9 {
+                } else if e < -SEA_MAX_DEPTH * 0.5 || e > CONTINENT_MAX_RISE * 0.6 {
                     deep_total += 1;
                     if is_suppressed { deep_suppressed += 1; }
                 }
@@ -1418,14 +1498,14 @@ mod tests {
                 let odd_shift = if cr & 1 != 0 { MACRO_CELL_SIZE * 0.5 } else { 0.0 };
                 let wx = cq as f64 * MACRO_CELL_SIZE + odd_shift;
                 let wy = cr as f64 * MACRO_CELL_SIZE * HEX_ROW_HEIGHT;
-                let regime = regime_value_at(wx, wy, seed);
+                let e = substrate_elevation_at(wx, wy, seed);
 
                 let survived = plate_center_for_cell(cq, cr, seed).is_some();
 
-                if regime > 0.9 || regime < 0.1 {
+                if e < -SEA_MAX_DEPTH * 0.5 || e > CONTINENT_MAX_RISE * 0.6 {
                     deep_total += 1;
                     if survived { deep_survived += 1; }
-                } else if (regime - REGIME_LAND_THRESHOLD).abs() < 0.15 {
+                } else if e.abs() < 5.0 {
                     coastal_total += 1;
                     if survived { coastal_survived += 1; }
                 }
@@ -1442,28 +1522,92 @@ mod tests {
             "Coastal survival rate ({coast_rate:.3}) should exceed deep ({deep_rate:.3})");
     }
 
-    // ──── classify_tags tests ────
 
+    // ──── Continent identity ────
+
+    /// `continent_at` is the F1 contest the regime field already runs, with the
+    /// winner kept instead of discarded. The gate value it returns has to be the
+    /// one the field actually used, or the id belongs to a different world than
+    /// the elevation does.
     #[test]
-    fn every_macro_plate_has_exactly_one_base_tag() {
+    fn continent_gate_matches_the_field() {
         let seed = 0x9E3779B97F4A7C15;
-        let mut cache = PlateCache::new(seed);
-        let mut plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
-        assert!(!plates.is_empty(), "Should have plates in radius");
-        cache.classify_tags(&mut plates);
-
-        for plate in &plates {
-            let count = [PlateTag::Sea, PlateTag::Coast, PlateTag::Inland]
-                .iter()
-                .filter(|t| plate.has_tag(t))
-                .count();
-            assert_eq!(
-                count, 1,
-                "plate {} should have exactly one base tag, got {}",
-                plate.id, count
-            );
+        for x in (-40000..40000).step_by(700) {
+            for y in (-40000..40000).step_by(700) {
+                let (wx, wy) = (x as f64, y as f64);
+                assert_eq!(continent_at(wx, wy, seed).1, cellular_world_gate(wx, wy, seed),
+                    "gate disagreement at ({wx}, {wy})");
+            }
         }
     }
 
 
+
+    /// A continent id bounds ground, which is what a consumer scoping work to
+    /// one landmass actually needs. Every position carrying an id lies within a
+    /// derivable radius of that cell's seed point: the domain warp displaces the
+    /// query by at most `CONTINENT_WARP_AMPLITUDE`, and the winner of the
+    /// 7-candidate contest sits at most a jittered cell away from the warped
+    /// point.
+    #[test]
+    fn continent_id_bounds_its_ground() {
+        let seed = 0x9E3779B97F4A7C15;
+        let bound = CONTINENT_CELL_SIZE * (1.0 + CONTINENT_JITTER) + CONTINENT_WARP_AMPLITUDE;
+        let mut worst: f64 = 0.0;
+        for x in (-60000..60000).step_by(500) {
+            for y in (-60000..60000).step_by(500) {
+                let (wx, wy) = (x as f64, y as f64);
+                let cell = continent_at(wx, wy, seed).0;
+                let (sx, sy) = continent_seed_point(cell.cq, cell.cr, seed);
+                let d = (wx - sx).hypot(wy - sy);
+                assert!(d <= bound,
+                    "position ({wx}, {wy}) carries {cell:?} whose seed is {d:.0} WU away, \
+                     past the {bound:.0} WU bound");
+                worst = worst.max(d);
+            }
+        }
+        // The bound has to be reachable, or it is not describing this lattice.
+        assert!(worst > bound * 0.5,
+            "furthest observed was {worst:.0} WU against a {bound:.0} WU bound — \
+             the bound is describing something other than this lattice");
+    }
+
+    #[test]
+    fn continent_id_is_deterministic() {
+        let seed = 0x9E3779B97F4A7C15;
+        for x in (-20000..20000).step_by(1300) {
+            for y in (-20000..20000).step_by(1300) {
+                let (wx, wy) = (x as f64, y as f64);
+                assert_eq!(continent_at(wx, wy, seed).0, continent_at(wx, wy, seed).0);
+                // A different seed must move the lattice, not just relabel it.
+                let _ = continent_at(wx, wy, seed ^ 0xFFFF).0;
+            }
+        }
+    }
+    // ──── Substrate at plate centroids ────
+
+    /// Every plate carries a substrate elevation and it agrees with the field
+    /// at its centroid. The memo is the only thing between them, and a memo
+    /// that disagreed with what it caches would put a plate on the wrong side
+    /// of sea level.
+    #[test]
+    fn plate_elevation_matches_the_field_at_the_centroid() {
+        let seed = 0x9E3779B97F4A7C15;
+        let cache = PlateCache::new(seed);
+        let plates = cache.plates_in_radius(0.0, 0.0, 5000.0);
+        assert!(!plates.is_empty(), "Should have plates in radius");
+
+        let mut continental = 0;
+        let mut oceanic = 0;
+        for plate in &plates {
+            let direct = substrate_elevation_at(plate.wx, plate.wy, seed);
+            assert_eq!(cache.plate_elevation(plate), direct,
+                "memo disagrees with the field for plate {}", plate.id);
+            // Second call must hit the memo and still agree.
+            assert_eq!(cache.plate_elevation(plate), direct);
+            if cache.plate_is_continental(plate) { continental += 1 } else { oceanic += 1 }
+        }
+        assert!(continental > 0 && oceanic > 0,
+            "expected both crust types near the origin: {continental} continental, {oceanic} oceanic");
+    }
 }

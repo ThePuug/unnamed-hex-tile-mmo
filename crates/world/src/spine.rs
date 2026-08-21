@@ -253,6 +253,18 @@ pub fn cross_section_tag(dist_frac: f64) -> PlateTag {
     }
 }
 
+// ── Interim spine placement ──────────────────────────────────────────────────
+
+/// Substrate elevation a plate centroid must clear for a spine to start on it —
+/// the terrain shader's beach stop, so a spine starts where the beach ends.
+///
+/// INTERIM. Spine placement used to filter on the `Inland` tag — land, and not
+/// in the coastal warp band — and that tag no longer exists. Orogen replaces
+/// this filter entirely; until it does, a threshold on the substrate keeps
+/// roughly the plates the tag kept, so the world still has mountains. It holds
+/// the spine count to within 5% of what the tag produced. Do not build on it.
+pub(crate) const SPINE_INTERIM_ELEVATION: f64 = 10.0;
+
 // ── Coastal attenuation ──────────────────────────────────────────────────────
 
 fn coastal_attenuation(coast_count: usize) -> f64 {
@@ -271,7 +283,6 @@ pub(crate) fn spine_tag_priority(tag: &PlateTag) -> u8 {
         PlateTag::Ridge     => 3,
         PlateTag::Highland  => 2,
         PlateTag::Foothills => 1,
-        _ => 0,
     }
 }
 
@@ -1273,18 +1284,19 @@ fn compute_spine_candidates(
     seed: u64,
 ) -> Vec<SpineCandidate> {
     let (cx, cy) = spine_chunk_center(cq, cr);
-    let mut nearby = plate_cache.plates_in_radius(cx, cy, SPINE_GATHER_RADIUS);
-    plate_cache.classify_tags(&mut nearby);
+    let nearby = plate_cache.plates_in_radius(cx, cy, SPINE_GATHER_RADIUS);
 
     let mut candidates = Vec::new();
     for plate in &nearby {
         let (pcq, pcr) = spine_chunk_coord(plate.wx, plate.wy);
         if pcq != cq || pcr != cr { continue; }
-        if !plate.has_tag(&PlateTag::Inland) { continue; }
+        // INTERIM — see SPINE_INTERIM_ELEVATION. A spine sits deep inside a
+        // landmass, so the plate and every Voronoi neighbour must stand well
+        // above the datum.
+        if plate_cache.plate_elevation(plate) < SPINE_INTERIM_ELEVATION { continue; }
 
-        let mut nbrs = plate_cache.plate_neighbors(plate.wx, plate.wy);
-        plate_cache.classify_tags(&mut nbrs);
-        if !nbrs.iter().all(|n| n.has_tag(&PlateTag::Inland)) { continue; }
+        let nbrs = plate_cache.plate_neighbors(plate.wx, plate.wy);
+        if !nbrs.iter().all(|n| plate_cache.plate_elevation(n) >= SPINE_INTERIM_ELEVATION) { continue; }
 
         let priority = hash_u64(plate.cell_q as i64, plate.cell_r as i64, seed ^ SEED_PRIORITY);
         candidates.push(SpineCandidate {
@@ -1424,7 +1436,7 @@ fn grow_arm_steps(
         let cx = epi_wx + dir_sign * spine_dx * t + (-spine_dy) * lateral;
         let cy = epi_wy + dir_sign * spine_dy * t +   spine_dx  * lateral;
 
-        if plate_cache.regime_value_at(cx, cy) < crate::REGIME_LAND_THRESHOLD {
+        if !plate_cache.is_land(cx, cy) {
             break;
         }
 
@@ -1435,9 +1447,10 @@ fn grow_arm_steps(
         let peak_frac = peak_at(t * dir_sign, spine_id, seed);
 
         let attenuation = {
-            let mut nbrs = plate_cache.plates_in_radius(cx, cy, MACRO_CELL_SIZE * 2.0);
-            plate_cache.classify_tags(&mut nbrs);
-            let coast_count = nbrs.iter().filter(|n| n.has_tag(&PlateTag::Coast)).count();
+            let nbrs = plate_cache.plates_in_radius(cx, cy, MACRO_CELL_SIZE * 2.0);
+            let coast_count = nbrs.iter()
+                .filter(|n| plate_cache.plate_in_transition(n))
+                .count();
             coastal_attenuation(coast_count)
         };
 
@@ -1538,7 +1551,7 @@ fn apply_peak_to_plates(
     let candidates = plate_cache.plates_in_radius(peak.wx, peak.wy, peak.falloff_radius);
     for candidate in candidates {
         let Some(&idx) = plate_map.get(&candidate.id) else { continue };
-        if plates[idx].has_tag(&PlateTag::Sea) { continue; }
+        if !plate_cache.plate_is_continental(&candidate) { continue; }
 
         let dx = candidate.wx - peak.wx;
         let dy = candidate.wy - peak.wy;
@@ -2519,11 +2532,11 @@ pub fn discretize_elevation(elevation: f64) -> i32 {
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
-/// Generate continental spines on a classified macro plate set.
+/// Generate continental spines on a macro plate set.
 
 /// Mutates `elevation` and spine tags (`Ridge`, `Highland`, `Foothills`) on
-/// plates in the slice. Caller must have already called
-/// [`PlateCache::classify_tags`] so Sea/Coast/Inland tags are present.
+/// plates in the slice. Which plates qualify is decided from the substrate at
+/// each centroid, so no prior classification pass is needed.
 
 /// Returns `SpineInstance`s with retained peak geometry for continuous
 /// elevation evaluation via [`SpineInstance::elevation_at`].
@@ -2884,7 +2897,6 @@ mod tests {
     fn spine_tag_priority_ordered_correctly() {
         assert!(spine_tag_priority(&PlateTag::Ridge) > spine_tag_priority(&PlateTag::Highland));
         assert!(spine_tag_priority(&PlateTag::Highland) > spine_tag_priority(&PlateTag::Foothills));
-        assert!(spine_tag_priority(&PlateTag::Foothills) > spine_tag_priority(&PlateTag::Sea));
     }
 
     #[test]
@@ -3149,38 +3161,42 @@ mod tests {
 
     // ── Integration tests ────────────────────────────────────────────────────
 
-    fn collect_classified_plates(
+    fn collect_plates(
         center_wx: f64,
         center_wy: f64,
         radius: f64,
         seed: u64,
     ) -> (Vec<PlateCenter>, PlateCache) {
-        let mut cache = PlateCache::new(seed);
-        let mut plates = cache.plates_in_radius(center_wx, center_wy, radius);
-        cache.classify_tags(&mut plates);
+        let cache = PlateCache::new(seed);
+        let plates = cache.plates_in_radius(center_wx, center_wy, radius);
         (plates, cache)
     }
 
+    /// Spines never stand on submerged crust. The test that stated this used to
+    /// read a `Sea` tag; it now reads the substrate, which is the same question
+    /// asked of the thing that actually decides it.
     #[test]
-    fn no_spine_tags_on_sea_plates() {
+    fn no_spine_tags_below_sea_level() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, mut cache) = collect_classified_plates(0.0, 0.0, 80_000.0, seed);
-        generate_spines(&mut plates, &mut cache, seed);
+        let (mut plates, cache) = collect_plates(0.0, 0.0, 80_000.0, seed);
+        generate_spines(&mut plates, &cache, seed);
 
+        let mut checked = 0;
         for plate in &plates {
-            if plate.has_tag(&PlateTag::Sea) {
-                assert!(!plate.has_tag(&PlateTag::Ridge),    "Sea plate id={} got Ridge",    plate.id);
-                assert!(!plate.has_tag(&PlateTag::Highland), "Sea plate id={} got Highland", plate.id);
-                assert!(!plate.has_tag(&PlateTag::Foothills),"Sea plate id={} got Foothills",plate.id);
-                assert_eq!(plate.elevation, 0.0, "Sea plate id={} has non-zero elevation", plate.id);
-            }
+            if cache.plate_is_continental(plate) { continue; }
+            assert!(!plate.has_tag(&PlateTag::Ridge),    "submerged plate id={} got Ridge",    plate.id);
+            assert!(!plate.has_tag(&PlateTag::Highland), "submerged plate id={} got Highland", plate.id);
+            assert!(!plate.has_tag(&PlateTag::Foothills),"submerged plate id={} got Foothills",plate.id);
+            assert_eq!(plate.elevation, 0.0, "submerged plate id={} has spine elevation", plate.id);
+            checked += 1;
         }
+        assert!(checked > 0, "no submerged plates in the sample");
     }
 
     #[test]
     fn ridge_elevation_exceeds_highland_exceeds_foothills() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, mut cache) = collect_classified_plates(0.0, 0.0, 80_000.0, seed);
+        let (mut plates, mut cache) = collect_plates(0.0, 0.0, 80_000.0, seed);
         generate_spines(&mut plates, &mut cache, seed);
 
         let avg = |tag: &PlateTag| -> Option<f64> {
@@ -3208,8 +3224,8 @@ mod tests {
     #[test]
     fn spine_is_deterministic() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates_a, mut cache_a) = collect_classified_plates(0.0, 0.0, 50_000.0, seed);
-        let (mut plates_b, mut cache_b) = collect_classified_plates(0.0, 0.0, 50_000.0, seed);
+        let (mut plates_a, mut cache_a) = collect_plates(0.0, 0.0, 50_000.0, seed);
+        let (mut plates_b, mut cache_b) = collect_plates(0.0, 0.0, 50_000.0, seed);
 
         generate_spines(&mut plates_a, &mut cache_a, seed);
         generate_spines(&mut plates_b, &mut cache_b, seed);
@@ -3224,7 +3240,7 @@ mod tests {
     #[test]
     fn exclusion_distance_prevents_nearby_epicenters() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, mut cache) = collect_classified_plates(0.0, 0.0, 80_000.0, seed);
+        let (mut plates, mut cache) = collect_plates(0.0, 0.0, 80_000.0, seed);
         generate_spines(&mut plates, &mut cache, seed);
         // Verify no panic — the conflict resolution invariant is tested implicitly.
     }
@@ -3232,7 +3248,7 @@ mod tests {
     #[test]
     fn spine_elevation_is_positive_on_tagged_plates() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, mut cache) = collect_classified_plates(0.0, 0.0, 80_000.0, seed);
+        let (mut plates, mut cache) = collect_plates(0.0, 0.0, 80_000.0, seed);
         generate_spines(&mut plates, &mut cache, seed);
 
         for plate in &plates {
@@ -3247,8 +3263,8 @@ mod tests {
 
     #[test]
     fn different_seeds_produce_different_spines() {
-        let (mut plates_a, mut cache_a) = collect_classified_plates(0.0, 0.0, 80_000.0, 42);
-        let (mut plates_b, mut cache_b) = collect_classified_plates(0.0, 0.0, 80_000.0, 99999);
+        let (mut plates_a, mut cache_a) = collect_plates(0.0, 0.0, 80_000.0, 42);
+        let (mut plates_b, mut cache_b) = collect_plates(0.0, 0.0, 80_000.0, 99999);
 
         generate_spines(&mut plates_a, &mut cache_a, 42);
         generate_spines(&mut plates_b, &mut cache_b, 99999);
@@ -3266,14 +3282,14 @@ mod tests {
         let center = (0.0, 0.0);
 
         let (mut small_plates, mut small_cache) =
-            collect_classified_plates(center.0, center.1, 40_000.0, seed);
+            collect_plates(center.0, center.1, 40_000.0, seed);
         generate_spines(&mut small_plates, &mut small_cache, seed);
         let small_map: HashMap<u64, f64> = small_plates.iter()
             .map(|p| (p.id, p.elevation))
             .collect();
 
         let (mut large_plates, mut large_cache) =
-            collect_classified_plates(center.0, center.1, 120_000.0, seed);
+            collect_plates(center.0, center.1, 120_000.0, seed);
         generate_spines(&mut large_plates, &mut large_cache, seed);
 
         let mut checked = 0;
@@ -3294,7 +3310,7 @@ mod tests {
     #[test]
     fn generate_spines_returns_instances() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, mut cache) = collect_classified_plates(0.0, 0.0, 80_000.0, seed);
+        let (mut plates, mut cache) = collect_plates(0.0, 0.0, 80_000.0, seed);
         let instances = generate_spines(&mut plates, &mut cache, seed);
 
         let has_spines = plates.iter().any(|p| p.has_tag(&PlateTag::Ridge));
@@ -3333,7 +3349,7 @@ mod tests {
 
         let plate_cache = PlateCache::new(seed);
         let mut plates = plate_cache.plates_in_radius(0.0, 0.0, 80_000.0);
-        plate_cache.classify_tags(&mut plates);
+
         let instances = generate_spines(&mut plates, &plate_cache, seed);
 
         let test_point = instances.iter().find_map(|inst| {
@@ -4340,7 +4356,7 @@ mod tests {
     #[ignore]
     fn stream_ending_diagnostic() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let (mut plates, cache) = collect_plates(0.0, 0.0, 30_000.0, seed);
         let instances = generate_spines(&mut plates, &cache, seed);
 
         // Relief left standing above the base level where each stream stops.
@@ -4395,7 +4411,7 @@ mod tests {
     #[ignore]
     fn rim_breach_diagnostic() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let (mut plates, cache) = collect_plates(0.0, 0.0, 30_000.0, seed);
         let instances = generate_spines(&mut plates, &cache, seed);
 
         let (mut bowls, mut tectonic_low, mut glacial_low, mut water_low, mut held) =
@@ -4456,7 +4472,7 @@ mod tests {
     #[ignore]
     fn outlet_carve_diagnostic() {
         let seed = 0x9E3779B97F4A7C15u64;
-        let (mut plates, cache) = collect_classified_plates(0.0, 0.0, 30_000.0, seed);
+        let (mut plates, cache) = collect_plates(0.0, 0.0, 30_000.0, seed);
         let instances = generate_spines(&mut plates, &cache, seed);
 
         let mut bowls = 0usize;

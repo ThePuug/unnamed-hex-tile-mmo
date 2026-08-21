@@ -13,8 +13,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::PlateTag;
-
 use crate::noise::simplex_2d;
 use crate::plates::PlateCache;
 use crate::{MACRO_CELL_SIZE, PlateCenter, hex_to_world, world_to_hex};
@@ -72,7 +70,8 @@ const MARGIN_MOTION_SHARE: f64 = 0.5;
 /// Positive values make passive margins more common.
 const MARGIN_PASSIVE_BIAS: f64 = 0.10;
 
-/// Additive nudge toward convergence on any boundary touching a Coast plate.
+/// Additive nudge toward convergence on any boundary touching a plate sited in
+/// the coastal transition band.
 ///
 /// A deliberate cheat. Real ranges run parallel to coasts because subduction
 /// does, but the regime field decides where the water goes independently of
@@ -132,9 +131,11 @@ pub struct BoundarySegment {
     /// side and appears once however the pair was discovered.
     pub plate_a: u64,
     pub plate_b: u64,
-    /// Tag of each plate, in the same order.
-    pub tag_a: PlateTag,
-    pub tag_b: PlateTag,
+    /// Substrate elevation at each plate's centroid, in the same order.
+    /// Positive is continental crust; a consumer asking which side of a margin
+    /// is the continent compares these against 0.
+    pub elev_a: f64,
+    pub elev_b: f64,
     /// Centroid of plate `a`, world units.
     pub ax: f64,
     pub ay: f64,
@@ -260,20 +261,35 @@ pub fn plate_velocity(wx: f64, wy: f64, seed: u64) -> (f64, f64) {
     )
 }
 
-/// Whether a plate's tag puts it on the continental side of a margin.
-fn is_continental(tag: PlateTag) -> bool {
-    matches!(tag, PlateTag::Coast | PlateTag::Inland)
+/// One end of a boundary: which plate, where its centroid is, and what the
+/// substrate does there.
+#[derive(Clone, Copy)]
+pub struct PlateSite {
+    pub id: u64,
+    pub wx: f64,
+    pub wy: f64,
+    /// Substrate elevation at the centroid. Above 0 is continental crust —
+    /// this is the whole of the land test, and the only one.
+    pub elevation: f64,
+    /// Whether the centroid sits in a steep stretch of the regime field.
+    /// A gradient property, not a land one: either side of the datum can be
+    /// steep, and both are the transition zone.
+    pub in_transition: bool,
 }
 
-/// Resolve one plate pair. `a` and `b` are `(id, wx, wy, tag)`, already ordered
-/// by id.
+impl PlateSite {
+    /// Whether this end stands on continental crust.
+    pub fn is_continental(&self) -> bool { self.elevation >= 0.0 }
+}
+
+/// Resolve one plate pair, already ordered by id.
 fn resolve_segment(
-    a: (u64, f64, f64, PlateTag),
-    b: (u64, f64, f64, PlateTag),
+    a: PlateSite,
+    b: PlateSite,
     seed: u64,
 ) -> Option<BoundarySegment> {
-    let (a_id, ax, ay, tag_a) = a;
-    let (b_id, bx, by, tag_b) = b;
+    let PlateSite { id: a_id, wx: ax, wy: ay, .. } = a;
+    let PlateSite { id: b_id, wx: bx, wy: by, .. } = b;
 
     let dx = bx - ax;
     let dy = by - ay;
@@ -296,7 +312,7 @@ fn resolve_segment(
     let along = (rel_x * sx + rel_y * sy).abs();
     let transform = if along < TRANSFORM_EPSILON { 0.0 } else { along };
 
-    if tag_a == PlateTag::Coast || tag_b == PlateTag::Coast {
+    if a.in_transition || b.in_transition {
         convergence += COASTAL_CONVERGENCE_BIAS;
     }
 
@@ -305,7 +321,7 @@ fn resolve_segment(
 
     // A continent–ocean margin takes its convergence from the margin field, so
     // the classification below and the number here cannot disagree.
-    let ocean_side = match (is_continental(tag_a), is_continental(tag_b)) {
+    let ocean_side = match (a.is_continental(), b.is_continental()) {
         (true, false) => Some(1.0),  // ocean lies toward +n
         (false, true) => Some(-1.0), // ocean lies toward -n
         _ => None,
@@ -363,7 +379,7 @@ fn resolve_segment(
 
     Some(BoundarySegment {
         plate_a: a_id, plate_b: b_id,
-        tag_a, tag_b,
+        elev_a: a.elevation, elev_b: b.elevation,
         ax, ay, bx, by, mx, my,
         strike_x: sx, strike_y: sy,
         convergence, transform,
@@ -414,13 +430,12 @@ impl WorldEvent for MotionEvent {
         // is what makes the `nbr.id > plate.id` dedup below complete: each pair
         // is reached from both ends, and exactly one ordering is kept.
         let gather_radius = cell_world_radius + NEIGHBOR_SEARCH_RADIUS * 0.5;
-        let mut plates = self.plate_cache.plates_in_radius(center_wx, center_wy, gather_radius);
-        self.plate_cache.classify_tags(&mut plates);
+        let plates = self.plate_cache.plates_in_radius(center_wx, center_wy, gather_radius);
 
         let mut segments: Vec<BoundarySegment> = Vec::new();
         for plate in &plates {
-            let a = (plate.id, plate.wx, plate.wy, tag_of(plate));
-            for mut nbr in self.plate_cache.plate_neighbors(plate.wx, plate.wy) {
+            let a = self.site(plate);
+            for nbr in self.plate_cache.plate_neighbors(plate.wx, plate.wy) {
                 if nbr.id <= plate.id { continue; }
 
                 let mx = (plate.wx + nbr.wx) * 0.5;
@@ -428,8 +443,7 @@ impl WorldEvent for MotionEvent {
                 let (mq, mr) = world_to_hex(mx, my);
                 if lattice.cell_id(mq, mr) != cell_id { continue; }
 
-                self.plate_cache.classify_tags(std::slice::from_mut(&mut nbr));
-                let b = (nbr.id, nbr.wx, nbr.wy, tag_of(&nbr));
+                let b = self.site(&nbr);
 
                 if let Some(seg) = resolve_segment(a, b, self.seed) {
                     segments.push(seg);
@@ -456,8 +470,16 @@ impl WorldEvent for MotionEvent {
     }
 }
 
-fn tag_of(plate: &PlateCenter) -> PlateTag {
-    plate.tags.first().copied().unwrap_or(PlateTag::Sea)
+impl MotionEvent {
+    fn site(&self, plate: &PlateCenter) -> PlateSite {
+        PlateSite {
+            id: plate.id,
+            wx: plate.wx,
+            wy: plate.wy,
+            elevation: self.plate_cache.plate_elevation(plate),
+            in_transition: self.plate_cache.plate_in_transition(plate),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -577,7 +599,7 @@ mod tests {
         let mut checked = 0;
         for s in segments_around(&c, &block(600, 3000)) {
             if s.margin != MarginClass::Active { continue; }
-            let (ox, oy) = if is_continental(s.tag_a) {
+            let (ox, oy) = if s.elev_a >= 0.0 {
                 (s.bx - s.mx, s.by - s.my)
             } else {
                 (s.ax - s.mx, s.ay - s.my)

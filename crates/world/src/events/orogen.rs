@@ -19,7 +19,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::PlateTag;
 
 use crate::slope_form::MASS_WASTING_REACH;
 use crate::{MACRO_CELL_SIZE, world_to_hex};
@@ -80,11 +79,6 @@ const CONVERGENCE_FLOOR: f64 = 0.10;
 /// instead of all clipping to the same wedge.
 const CONVERGENCE_FULL: f64 = 0.75;
 
-/// Whether a plate's tag puts it on the continental side of a margin.
-fn is_continental(tag: PlateTag) -> bool {
-    matches!(tag, PlateTag::Coast | PlateTag::Inland)
-}
-
 // ── Swath ───────────────────────────────────────────────────────────────────
 
 /// One convergent boundary's belt.
@@ -136,7 +130,7 @@ impl Swath {
             MarginClass::Active => {}
             // Convergence alone would raise ranges out of open ocean.
             MarginClass::Interior => {
-                if !is_continental(seg.tag_a) || !is_continental(seg.tag_b) {
+                if seg.elev_a < 0.0 || seg.elev_b < 0.0 {
                     return None;
                 }
             }

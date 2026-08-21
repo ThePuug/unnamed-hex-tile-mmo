@@ -13,7 +13,7 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
-use world::{hex_to_world, regime_value_at, PlateCache, REGIME_LAND_THRESHOLD};
+use world::{hex_to_world, substrate_elevation_at, PlateCache};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
@@ -50,7 +50,7 @@ fn relief_census() {
     let mut z_hist: Vec<u32> = vec![0; 13];
     let mut zero = 0u32;
     let mut land = 0u32;
-    let mut tag_counts = [0u32; 6];
+    let mut tag_counts = [0u32; 3];
     let mut max_z = 0i32;
     let mut min_z = 0i32;
     let total = (N * N) as u32;
@@ -85,13 +85,10 @@ fn relief_census() {
             z_hist[bucket] += 1;
 
             let (wx, wy) = hex_to_world(q, r);
-            if regime_value_at(wx, wy, SEED) >= REGIME_LAND_THRESHOLD {
+            if substrate_elevation_at(wx, wy, SEED) >= 0.0 {
                 land += 1;
             }
             for (k, tag) in [
-                PlateTag::Sea,
-                PlateTag::Coast,
-                PlateTag::Inland,
                 PlateTag::Ridge,
                 PlateTag::Highland,
                 PlateTag::Foothills,
@@ -111,7 +108,7 @@ fn relief_census() {
 
     let pct = |n: u32| 100.0 * n as f64 / total as f64;
     println!("\nsamples: {total} over {}x{} tiles in {:?}", N * STEP, N * STEP, t.elapsed());
-    println!("  land (regime >= threshold): {:.1}%", pct(land));
+    println!("  land (substrate >= sea level): {:.1}%", pct(land));
     println!("  elevation == 0 (dead flat): {:.1}%", pct(zero));
     println!("  elevation range: z={min_z} .. z={max_z}");
     let labels = [
@@ -123,7 +120,7 @@ fn relief_census() {
         println!("    {l:>8}: {:5.1}%  ({n})", pct(*n));
     }
     println!("\n  tag coverage:");
-    for (l, n) in ["Sea", "Coast", "Inland", "Ridge", "Highland", "Foothills"]
+    for (l, n) in ["Ridge", "Highland", "Foothills"]
         .iter()
         .zip(&tag_counts)
     {

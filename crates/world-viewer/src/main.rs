@@ -22,7 +22,7 @@ use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
-    /// Base Sea/Coast/Inland tag colors.
+    /// Crustal substrate, coloured by elevation against sea level.
     Plates,
     /// Height tinting with slope shading.
     Elevation,
@@ -109,13 +109,19 @@ fn lerp_rgb(a: (f64, f64, f64), b: (f64, f64, f64), t: f64) -> (f64, f64, f64) {
     )
 }
 
-fn plate_color(tags: &TagSet) -> (f64, f64, f64) {
-    if tags.has(PlateTag::Inland) {
-        (0.30, 0.50, 0.30) // green
-    } else if tags.has(PlateTag::Coast) {
-        (0.70, 0.65, 0.50) // sandy
+/// Substrate colour: the crust, graded, with sea level as the only edge in it.
+/// Land and water are the same field either side of zero, so the ramp is
+/// continuous through the datum and the coastline is where it crosses.
+fn substrate_color(elevation: f64) -> (f64, f64, f64) {
+    const DEEP: (f64, f64, f64) = (0.20, 0.25, 0.45);
+    const SHALLOW: (f64, f64, f64) = (0.35, 0.48, 0.62);
+    const SHORE: (f64, f64, f64) = (0.70, 0.65, 0.50);
+    const INTERIOR: (f64, f64, f64) = (0.30, 0.50, 0.30);
+
+    if elevation < 0.0 {
+        lerp_rgb(SHALLOW, DEEP, -elevation / world::SEA_MAX_DEPTH)
     } else {
-        (0.20, 0.25, 0.45) // deep blue
+        lerp_rgb(SHORE, INTERIOR, elevation / world::CONTINENT_MAX_RISE)
     }
 }
 
@@ -384,7 +390,7 @@ fn main() {
                     for &layer in layer_slice {
                         match layer {
                             Layer::Plates => {
-                                color = plate_color(&tags);
+                                color = substrate_color(elevation);
                             }
                             Layer::Elevation => {
                                 if elevation > 0.0 {

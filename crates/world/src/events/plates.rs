@@ -1,34 +1,24 @@
-//! PlateEvent — Event #0: macro plate classification, centroid index, and the
-//! depth of everything the regime field puts below sea level.
+//! PlateEvent — Event #0: macro plate centroids, and the crustal substrate
+//! every layer above stands on.
 
-//! Deform: discovers plate centroids at plate granularity (not per-tile),
-//! classifies them, registers in PlateCentroidIndex with tag metadata.
-//! Query: resolves a single tile's plate classification via warped Voronoi, and
-//! its depth if it is under water.
+//! Deform: discovers plate centroids at plate granularity (not per-tile) and
+//! registers them in PlateCentroidIndex with the substrate elevation each one
+//! stands at.
+//! Query: places the substrate — the elevation the regime field gives this
+//! position, above or below the sea-level datum.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::{HexLattice, PlateTag, TagSet};
+use common::{HexLattice, TagSet};
 
 use crate::hex_to_world;
-use crate::plates::{PlateCache, inverse_sigmoid, raw_regime_noise};
+use crate::plates::{PlateCache, substrate_from_raw, raw_regime_noise};
 use crate::world_to_hex;
-use crate::{REGIME_LAND_THRESHOLD, REGIME_SIGMOID_MIDPOINT, REGIME_SIGMOID_STEEPNESS};
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const PLATE_CELL_SCALE: u32 = 1800;
-
-/// Depth in z-levels at the abyssal plain (raw regime ≈ 0). At `RISE` 0.8 this
-/// is 160 world units below sea level, matching the deepest stop on the
-/// terrain shader's elevation ramp.
-pub const SEA_MAX_DEPTH: f64 = 200.0;
-
-/// Shelf profile exponent, applied to the normalised shore→abyss fraction.
-/// Greater than 1 holds the near-shore band shallow so the coastline is a
-/// wadeable beach instead of a drop-off.
-const SHELF_EXPONENT: f64 = 2.0;
 
 // ── PlateCentroidIndex ──────────────────────────────────────────────────────
 
@@ -41,7 +31,8 @@ pub struct CentroidEntry {
     pub plate_id: u64,
     pub cell_q: i32,
     pub cell_r: i32,
-    pub tags: TagSet,
+    /// Substrate elevation at the centroid. Above 0 is continental crust.
+    pub elevation: f64,
 }
 
 /// Index of macro plate centroids and their Voronoi neighbor graph.
@@ -49,23 +40,23 @@ pub struct CentroidEntry {
 pub struct PlateCentroidIndex {
     pub cells: HashMap<CellId, Vec<CentroidEntry>>,
     pub neighbor_graph: HashMap<(i32, i32), Vec<(i32, i32)>>,
-    /// Fast (q, r) → TagSet lookup for tile_view_at.
-    tags_at: HashMap<(i32, i32), TagSet>,
+    /// Fast (q, r) → substrate elevation lookup for tile_view_at.
+    elevation_at: HashMap<(i32, i32), f64>,
 }
 
 impl Default for PlateCentroidIndex {
     fn default() -> Self {
-        Self { cells: HashMap::new(), neighbor_graph: HashMap::new(), tags_at: HashMap::new() }
+        Self { cells: HashMap::new(), neighbor_graph: HashMap::new(), elevation_at: HashMap::new() }
     }
 }
 
-/// What one cell contributes: its own centroids, and the graph and tag entries
-/// for those centroids. All three are keyed to ground inside the cell, so they
+/// What one cell contributes: its own centroids, and the graph and elevation
+/// entries for those centroids. All three are keyed to ground inside the cell, so they
 /// travel together and are written together.
 pub struct PlateCentroidCell {
     pub centroids: Vec<CentroidEntry>,
     pub neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)>,
-    pub tags_at: Vec<((i32, i32), TagSet)>,
+    pub elevation_at: Vec<((i32, i32), f64)>,
 }
 
 impl CellIndex for PlateCentroidIndex {
@@ -76,8 +67,8 @@ impl CellIndex for PlateCentroidIndex {
         for (at, nbrs) in entry.neighbor_edges {
             self.neighbor_graph.insert(at, nbrs);
         }
-        for (at, tags) in entry.tags_at {
-            self.tags_at.insert(at, tags);
+        for (at, elevation) in entry.elevation_at {
+            self.elevation_at.insert(at, elevation);
         }
     }
 }
@@ -97,9 +88,9 @@ impl EventIndex for PlateCentroidIndex {
     }
 
     fn tile_view_at(&self, q: i32, r: i32) -> Option<TileView> {
-        self.tags_at.get(&(q, r)).map(|&tags| {
+        self.elevation_at.get(&(q, r)).map(|&elevation| {
             let (wx, wy) = hex_to_world(q, r);
-            TileView { q, r, wx, wy, tags, elevation: 0.0, curvature: 0.0 }
+            TileView { q, r, wx, wy, tags: TagSet::new(), elevation, curvature: 0.0 }
         })
     }
 
@@ -107,7 +98,7 @@ impl EventIndex for PlateCentroidIndex {
         if let Some(entries) = self.cells.remove(&cell_id) {
             for entry in &entries {
                 self.neighbor_graph.remove(&(entry.q, entry.r));
-                self.tags_at.remove(&(entry.q, entry.r));
+                self.elevation_at.remove(&(entry.q, entry.r));
             }
         }
     }
@@ -117,11 +108,6 @@ impl EventIndex for PlateCentroidIndex {
 
 pub struct PlateEvent {
     plate_cache: Arc<PlateCache>,
-    /// Raw (pre-sigmoid) regime value at the shoreline — the `x` where
-    /// `sigmoid(x) == REGIME_LAND_THRESHOLD`. Derived from the sigmoid
-    /// constants rather than tuned, so retuning the regime field moves the
-    /// shoreline here automatically.
-    shore_raw: f64,
 }
 
 impl PlateEvent {
@@ -130,41 +116,7 @@ impl PlateEvent {
     }
 
     pub fn with_cache(plate_cache: Arc<PlateCache>) -> Self {
-        Self {
-            plate_cache,
-            shore_raw: inverse_sigmoid(
-                REGIME_LAND_THRESHOLD,
-                REGIME_SIGMOID_MIDPOINT,
-                REGIME_SIGMOID_STEEPNESS,
-            ),
-        }
-    }
-
-    /// Raw regime value at the shoreline. Exposed for probes and tests.
-    pub fn shore_raw(&self) -> f64 { self.shore_raw }
-
-    /// Depth in z-levels below sea level at a world position. Zero on land.
-
-    /// Driven by the **pre-sigmoid** regime field. `regime_value_at` applies a
-    /// steepness-40 sigmoid that deliberately flattens deep water, and it does
-    /// its job too well to reuse here: 93.7% of water tiles land within 17% of
-    /// the sigmoid floor, and the median water tile reads 0.0000.
-    /// `raw_regime_noise` still grades smoothly — measured continental shelf is
-    /// ~230 tiles from shore to a quarter of the raw range, which is a wide
-    /// beach at player scale.
-    pub fn depth_at(&self, wx: f64, wy: f64, seed: u64) -> f64 {
-        Self::depth_from_raw(raw_regime_noise(wx, wy, seed), self.shore_raw)
-    }
-
-    /// Depth from an already-evaluated raw regime value, so a caller holding
-    /// one does not evaluate the noise field twice for the same tile.
-    fn depth_from_raw(raw: f64, shore_raw: f64) -> f64 {
-        if raw >= shore_raw {
-            return 0.0;
-        }
-        // 0 at the shoreline, approaching 1 in open ocean.
-        let frac = (1.0 - raw / shore_raw).clamp(0.0, 1.0);
-        SEA_MAX_DEPTH * frac.powf(SHELF_EXPONENT)
+        Self { plate_cache }
     }
 }
 
@@ -182,26 +134,24 @@ impl WorldEvent for PlateEvent {
         let (center_wx, center_wy) = hex_to_world(center_q, center_r);
 
         let cell_world_radius = self.scale() as f64 * 1.5 + crate::MACRO_CELL_SIZE;
-        let mut plates = self.plate_cache.plates_in_radius(center_wx, center_wy, cell_world_radius);
-        self.plate_cache.classify_tags(&mut plates);
+        let plates = self.plate_cache.plates_in_radius(center_wx, center_wy, cell_world_radius);
 
         let mut centroids: Vec<CentroidEntry> = Vec::new();
         let mut neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)> = Vec::new();
-        let mut tags_at_entries: Vec<((i32, i32), TagSet)> = Vec::new();
+        let mut elevation_at_entries: Vec<((i32, i32), f64)> = Vec::new();
 
         for plate in &plates {
             let (pq, pr) = world_to_hex(plate.wx, plate.wy);
             // Only register centroids whose position falls in this cell
             if lattice.cell_id(pq, pr) != cell_id { continue; }
 
-            let tag = plate.tags.first().copied().unwrap_or(PlateTag::Sea);
-            let tag_set = TagSet::from(tag);
+            let elevation = self.plate_cache.plate_elevation(plate);
             centroids.push(CentroidEntry {
                 q: pq, r: pr,
                 wx: plate.wx, wy: plate.wy,
                 plate_id: plate.id,
                 cell_q: plate.cell_q, cell_r: plate.cell_r,
-                tags: tag_set,
+                elevation,
             });
 
             let nbrs = self.plate_cache.plate_neighbors(plate.wx, plate.wy);
@@ -209,13 +159,13 @@ impl WorldEvent for PlateEvent {
                 .map(|n| world_to_hex(n.wx, n.wy))
                 .collect();
             neighbor_edges.push(((pq, pr), nbr_coords));
-            tags_at_entries.push(((pq, pr), tag_set));
+            elevation_at_entries.push(((pq, pr), elevation));
         }
 
         scope.publish::<PlateCentroidIndex>(PlateCentroidCell {
             centroids,
             neighbor_edges,
-            tags_at: tags_at_entries,
+            elevation_at: elevation_at_entries,
         });
     }
 
@@ -227,13 +177,8 @@ impl WorldEvent for PlateEvent {
         seed: u64,
     ) -> Option<TileOutput> {
         let (wx, wy) = hex_to_world(q, r);
-        let mut plate = self.plate_cache.warped_plate_at(wx, wy);
-        self.plate_cache.classify_tags(std::slice::from_mut(&mut plate));
-        let tag = plate.tags.first().copied().unwrap_or(PlateTag::Sea);
 
-        let mut out = TileOutput::default();
-
-        // Bathymetry lives here because sea level has no structure: depth is a
+        // The substrate lives here because sea level has no structure: it is a
         // pure function of (position, seed), so the layer that would carry it
         // could never read another cell and its correct margin is zero. The
         // framework derives margin from cell scales, not from what a layer
@@ -241,30 +186,22 @@ impl WorldEvent for PlateEvent {
         // call. If sea level ever becomes dynamic — glacial eustasy, or a base
         // level driven by drainage — it has real structure and earns its layer
         // back.
-        let depth = Self::depth_from_raw(raw_regime_noise(wx, wy, seed), self.shore_raw);
-        if depth > 0.0 {
-            out.elevation_delta = -depth;
-            out.tags_added.add(PlateTag::Sea);
-            // `Inland` is a verdict about a whole plate, taken at its centroid,
-            // and it disagrees with the tile's own regime value ~4% of the
-            // time. A submerged tile is not interior land whatever its plate
-            // says — so the tag is never emitted, rather than emitted and
-            // taken back by a layer above. `Coast` still stands: a submerged
-            // tile on a coastal plate is beach, not open ocean.
-            if tag != PlateTag::Inland {
-                out.tags_added.add(tag);
-            }
-        } else {
-            out.tags_added.add(tag);
-        }
-        Some(out)
+        //
+        // No tag accompanies it. Whether this tile is land is not a
+        // classification any layer stores; it is `elevation >= 0.0`, read off
+        // the composite by whoever needs to know.
+        Some(TileOutput {
+            elevation_delta: substrate_from_raw(raw_regime_noise(wx, wy, seed)),
+            ..TileOutput::default()
+        })
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regime_value_at;
+    use crate::{CONTINENT_MAX_RISE, SEA_MAX_DEPTH, SHORE_RAW};
 
     const SEED: u64 = 0x9E3779B97F4A7C15;
 
@@ -272,88 +209,118 @@ mod tests {
         PlateEvent::new(SEED)
     }
 
-    #[test]
-    fn shore_raw_matches_land_threshold() {
-        let e = event();
-        let back = crate::plates::sigmoid(
-            e.shore_raw(),
-            REGIME_SIGMOID_MIDPOINT,
-            REGIME_SIGMOID_STEEPNESS,
-        );
-        assert!(
-            (back - REGIME_LAND_THRESHOLD).abs() < 1e-9,
-            "inverse_sigmoid round-trip failed: {back} != {REGIME_LAND_THRESHOLD}"
-        );
-    }
-
-    #[test]
-    fn land_is_never_submerged() {
-        let e = event();
-        let mut checked = 0;
-        for i in 0..200 {
-            for j in 0..200 {
-                let (wx, wy) = hex_to_world(i * 150 - 15000, j * 150 - 15000);
-                if regime_value_at(wx, wy, SEED) >= REGIME_LAND_THRESHOLD {
-                    assert_eq!(
-                        e.depth_at(wx, wy, SEED), 0.0,
-                        "land tile at ({wx}, {wy}) was given depth"
-                    );
-                    checked += 1;
-                }
-            }
-        }
-        assert!(checked > 1000, "expected a meaningful land sample, got {checked}");
-    }
-
-    #[test]
-    fn depth_is_bounded_and_deepens_offshore() {
-        let e = event();
-        let mut deepest: f64 = 0.0;
-        for i in 0..200 {
-            for j in 0..200 {
-                let (wx, wy) = hex_to_world(i * 150 - 15000, j * 150 - 15000);
-                let d = e.depth_at(wx, wy, SEED);
-                assert!(
-                    (0.0..=SEA_MAX_DEPTH).contains(&d),
-                    "depth {d} out of range at ({wx}, {wy})"
-                );
-                deepest = deepest.max(d);
-            }
-        }
-        assert!(
-            deepest > SEA_MAX_DEPTH * 0.9,
-            "open ocean never approached max depth: {deepest}"
-        );
-    }
-
-    /// A submerged tile on a plate its centroid called `Inland` reads as `Sea`
-    /// and nothing else. The correction used to be an add-then-remove across
-    /// two layers; in one layer the tag is simply never emitted, and this is
-    /// the case that proves the two are equivalent.
-    #[test]
-    fn submerged_inland_plate_tile_reads_as_sea() {
-        let e = event();
-        let mut checked = 0;
+    fn sample(mut f: impl FnMut(i32, i32, f64, f64)) {
         for i in 0..200 {
             for j in 0..200 {
                 let (q, r) = (i * 150 - 15000, j * 150 - 15000);
                 let (wx, wy) = hex_to_world(q, r);
-                if e.depth_at(wx, wy, SEED) <= 0.0 { continue; }
-                let mut plate = e.plate_cache.warped_plate_at(wx, wy);
-                e.plate_cache.classify_tags(std::slice::from_mut(&mut plate));
-                if plate.tags.first().copied() != Some(PlateTag::Inland) { continue; }
-
-                let view = TileView {
-                    q, r, wx, wy,
-                    tags: TagSet::new(), elevation: 0.0, curvature: 0.0,
-                };
-                let out = e.query(q, r, &view, &(), SEED).unwrap();
-                assert!(out.tags_added.has(PlateTag::Sea));
-                assert!(!out.tags_added.has(PlateTag::Inland));
-                assert!(out.tags_removed.is_empty(), "tag correction should not be needed");
-                checked += 1;
+                f(q, r, wx, wy);
             }
         }
-        assert!(checked > 0, "no submerged Inland-plate tiles in the sample");
+    }
+
+    /// The datum is the only thing that decides land, and the curve agrees
+    /// with it on both sides. Nothing else may.
+    #[test]
+    fn substrate_sign_follows_the_datum() {
+        let mut land = 0;
+        let mut sea = 0;
+        sample(|_, _, wx, wy| {
+            let raw = raw_regime_noise(wx, wy, SEED);
+            let e = crate::substrate_elevation_at(wx, wy, SEED);
+            if raw >= SHORE_RAW {
+                assert!(e >= 0.0, "raw {raw} above the datum gave elevation {e}");
+                land += 1;
+            } else {
+                assert!(e < 0.0, "raw {raw} below the datum gave elevation {e}");
+                sea += 1;
+            }
+        });
+        assert!(land > 1000 && sea > 1000, "unbalanced sample: {land} land, {sea} sea");
+    }
+
+    /// Both branches stay inside the range their constants declare, and both
+    /// actually reach for it — a branch that never approaches its extreme is a
+    /// branch whose scale constant is not doing anything.
+    #[test]
+    fn substrate_is_bounded_and_uses_its_range() {
+        let mut deepest: f64 = 0.0;
+        let mut highest: f64 = 0.0;
+        sample(|_, _, wx, wy| {
+            let e = crate::substrate_elevation_at(wx, wy, SEED);
+            assert!(
+                (-SEA_MAX_DEPTH..=CONTINENT_MAX_RISE).contains(&e),
+                "elevation {e} out of range at ({wx}, {wy})"
+            );
+            deepest = deepest.min(e);
+            highest = highest.max(e);
+        });
+        assert!(deepest < -SEA_MAX_DEPTH * 0.9, "open ocean stayed shallow: {deepest}");
+        assert!(highest > CONTINENT_MAX_RISE * 0.7, "interiors stayed low: {highest}");
+    }
+
+    /// The two branches are one curve, and what that has to buy is a coastline
+    /// a player can walk off. Continuity in the abstract is not the claim — the
+    /// claim is that adjacent tiles across a shoreline sit a step apart rather
+    /// than a ledge, and that neither side is a flat band, which would be the
+    /// land mask rebuilt out of the curve.
+    #[test]
+    fn shoreline_is_a_step_not_a_ledge() {
+        let mut steps: Vec<f64> = Vec::new();
+        for r in (-6000..6000).step_by(37) {
+            let mut prev: Option<f64> = None;
+            for q in -400..400 {
+                let (wx, wy) = hex_to_world(q, r);
+                let e = crate::substrate_elevation_at(wx, wy, SEED);
+                if let Some(p) = prev {
+                    // Only the band either side of the datum is under test.
+                    if p.abs() < 8.0 || e.abs() < 8.0 {
+                        steps.push((e - p).abs());
+                    }
+                }
+                prev = Some(e);
+            }
+        }
+        assert!(steps.len() > 1000, "too few near-shore tiles sampled: {}", steps.len());
+        steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = steps[steps.len() / 2];
+        let p999 = steps[steps.len() * 999 / 1000];
+        let max = steps[steps.len() - 1];
+        assert!(median < 1.0, "median coastal step {median} z — that is a staircase");
+        assert!(p999 < 4.0, "p99.9 coastal step {p999} z reads as a ledge");
+        assert!(max < 8.0, "worst coastal step {max} z is a cliff");
+        // Not flat either: the shore band has to actually climb.
+        assert!(steps.iter().any(|&s| s > 0.1),
+            "no tile pair near the shore moved — that band is a mask");
+    }
+
+    /// The substrate is monotone in the field it reads: a position with more
+    /// crust under it is never lower than one with less.
+    #[test]
+    fn substrate_is_monotone_in_raw() {
+        let mut prev = f64::NEG_INFINITY;
+        for i in 0..=1000 {
+            let raw = i as f64 / 1000.0 * 1.15;
+            let e = substrate_from_raw(raw);
+            assert!(e >= prev, "substrate fell from {prev} to {e} at raw {raw}");
+            prev = e;
+        }
+    }
+
+    /// PlateEvent emits elevation and nothing else. A tag here would be a land
+    /// mask by another name.
+    #[test]
+    fn query_emits_no_tags() {
+        let e = event();
+        let mut checked = 0;
+        sample(|q, r, wx, wy| {
+            let view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, curvature: 0.0 };
+            let out = e.query(q, r, &view, &(), SEED).unwrap();
+            assert!(out.tags_added.is_empty(), "plates emitted tag(s) at ({q}, {r})");
+            assert!(out.tags_removed.is_empty(), "plates removed tag(s) at ({q}, {r})");
+            assert_eq!(out.elevation_delta, crate::substrate_elevation_at(wx, wy, SEED));
+            checked += 1;
+        });
+        assert!(checked > 1000);
     }
 }

@@ -19,7 +19,7 @@ use crate::hex_to_world;
 use crate::plates::PlateCache;
 use crate::spine::{
     SpineInstance, SPINE_INFLUENCE,
-    grow_spine, spine_tag_priority,
+    grow_spine, spine_tag_priority, SPINE_INTERIM_ELEVATION,
 };
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::faces::{BasinIndex, ErosionalFaceIndex};
@@ -137,21 +137,24 @@ impl WorldEvent for SpineEvent {
 
             // Epicentre candidates: every plate centroid in the plate cells this
             // cell may read. A spine sits deep inside a landmass, so a candidate
-            // qualifies only if it *and* every one of its Voronoi neighbours is
-            // Inland — a centroid whose neighbour is missing from the index
-            // fails, because a neighbour that cannot be seen cannot be vouched
-            // for.
+            // qualifies only if it *and* every one of its Voronoi neighbours
+            // stand well above the datum — a centroid whose neighbour is
+            // missing from the index fails, because a neighbour that cannot be
+            // seen cannot be vouched for.
+            //
+            // INTERIM, matching `spine::SPINE_INTERIM_ELEVATION`: orogen
+            // replaces this placement rule, and the threshold only stands in
+            // for the `Inland` tag until it does.
+            let inland_enough = |tv: TileView| tv.elevation >= SPINE_INTERIM_ELEVATION;
             let cells = scope.source_cells::<PlateCentroidIndex>();
             let mut candidates = centroid_index.tiles(&cells);
             candidates.retain(|&(q, r)| {
                 centroid_index.neighbors(q, r).iter().all(|&(nq, nr)| {
-                    centroid_index.tile_view_at(nq, nr)
-                        .map_or(false, |tv| tv.tags.has(PlateTag::Inland))
+                    centroid_index.tile_view_at(nq, nr).map_or(false, inland_enough)
                 })
             });
             candidates.retain(|&(q, r)| {
-                centroid_index.tile_view_at(q, r)
-                    .map_or(false, |tv| tv.tags.has(PlateTag::Inland))
+                centroid_index.tile_view_at(q, r).map_or(false, inland_enough)
             });
             let matched = thin_by_spacing(&candidates, SPINE_EXCLUSION_TILES, scope.seed());
 

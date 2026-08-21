@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::PlateTag;
+
 use world::PlateCache;
 use world::events::Composite;
 use world::events::motion::{
@@ -82,7 +82,7 @@ fn strike_dot(a: &BoundarySegment, b: &BoundarySegment) -> f64 {
 /// `None` for a boundary that is not a continent–ocean margin, which is what
 /// separates the two frames the vergence rules are coherent in.
 fn seaward(s: &BoundarySegment) -> Option<bool> {
-    let ocean = match (s.tag_a == PlateTag::Sea, s.tag_b == PlateTag::Sea) {
+    let ocean = match (s.elev_a < 0.0, s.elev_b < 0.0) {
         (false, true) => (s.bx - s.mx, s.by - s.my),
         (true, false) => (s.ax - s.mx, s.ay - s.my),
         _ => return None,
@@ -299,15 +299,15 @@ fn boundary_field_report() {
     // ── Coast-parallel check ──
     // The claim is that AnisoContext elongates coastal plates along the shore,
     // so margin boundaries inherit coast-parallel strike without this layer
-    // producing it. Measured against the regime gradient, which points straight
+    // producing it. Measured against the substrate gradient, which points straight
     // out to sea: a coast-parallel boundary has its normal along that gradient.
     let cache = PlateCache::new(SEED);
     let h = 64.0;
     let mut margin_align = Vec::new();
     let mut interior_align = Vec::new();
     for s in &segs {
-        let gx = cache.regime_value_at(s.mx + h, s.my) - cache.regime_value_at(s.mx - h, s.my);
-        let gy = cache.regime_value_at(s.mx, s.my + h) - cache.regime_value_at(s.mx, s.my - h);
+        let gx = cache.substrate_elevation_at(s.mx + h, s.my) - cache.substrate_elevation_at(s.mx - h, s.my);
+        let gy = cache.substrate_elevation_at(s.mx, s.my + h) - cache.substrate_elevation_at(s.mx, s.my - h);
         let g = gx.hypot(gy);
         if g <= 0.0 { continue; }
         let sep = s.separation();

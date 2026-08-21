@@ -19,12 +19,6 @@ pub const MAX_PLATE_TAGS: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum PlateTag {
-    /// Base classification — assigned during plate generation.
-    Sea,
-    /// Base classification — assigned during plate generation.
-    Coast,
-    /// Base classification — assigned during plate generation.
-    Inland,
     /// Spine crest — the highest line of the range.
     Ridge,
     /// Flanks of a spine — transitional elevated terrain.
@@ -34,9 +28,11 @@ pub enum PlateTag {
 }
 
 // tinyvec::ArrayVec requires T: Default to satisfy the Array trait bound.
-// Sea is the zero-value slot filler; unused ArrayVec slots are never observed.
+// Foothills is the zero-value slot filler; unused ArrayVec slots are never
+// observed, and every variant is a real tag now that the base classifications
+// are gone — the substrate says what a tile is, so no tag has to.
 impl Default for PlateTag {
-    fn default() -> Self { PlateTag::Sea }
+    fn default() -> Self { PlateTag::Foothills }
 }
 
 // Compile-time assertion: PlateTag must be Copy so it can live in ArrayVec
@@ -79,7 +75,6 @@ pub trait Tagged {
 
 /// All PlateTag variants, for iteration.
 const ALL_TAGS: &[PlateTag] = &[
-    PlateTag::Sea, PlateTag::Coast, PlateTag::Inland,
     PlateTag::Ridge, PlateTag::Foothills, PlateTag::Highland,
 ];
 
@@ -159,68 +154,68 @@ mod tests {
 
     #[test]
     fn has_tag_present() {
-        let p = plate(vec![PlateTag::Sea]);
-        assert!(p.has_tag(&PlateTag::Sea));
+        let p = plate(vec![PlateTag::Ridge]);
+        assert!(p.has_tag(&PlateTag::Ridge));
     }
 
     #[test]
     fn has_tag_absent_empty() {
         let p = plate(vec![]);
-        assert!(!p.has_tag(&PlateTag::Sea));
+        assert!(!p.has_tag(&PlateTag::Ridge));
     }
 
     #[test]
     fn has_tag_wrong_variant() {
-        let p = plate(vec![PlateTag::Inland]);
-        assert!(!p.has_tag(&PlateTag::Sea));
+        let p = plate(vec![PlateTag::Highland]);
+        assert!(!p.has_tag(&PlateTag::Ridge));
     }
 
     #[test]
     fn add_tag_appends() {
         let mut p = plate(vec![]);
-        p.add_tag(PlateTag::Sea);
+        p.add_tag(PlateTag::Ridge);
         assert_eq!(p.tags().len(), 1);
-        assert!(p.has_tag(&PlateTag::Sea));
+        assert!(p.has_tag(&PlateTag::Ridge));
     }
 
     #[test]
     fn erase_tag_removes_matching() {
-        let mut p = plate(vec![PlateTag::Sea, PlateTag::Inland]);
-        p.erase_tag(&PlateTag::Sea);
-        assert!(!p.has_tag(&PlateTag::Sea));
-        assert!(p.has_tag(&PlateTag::Inland));
+        let mut p = plate(vec![PlateTag::Ridge, PlateTag::Highland]);
+        p.erase_tag(&PlateTag::Ridge);
+        assert!(!p.has_tag(&PlateTag::Ridge));
+        assert!(p.has_tag(&PlateTag::Highland));
     }
 
     #[test]
     fn erase_tag_removes_all_matching() {
-        let mut p = plate(vec![PlateTag::Sea, PlateTag::Inland, PlateTag::Sea]);
-        p.erase_tag(&PlateTag::Sea);
+        let mut p = plate(vec![PlateTag::Ridge, PlateTag::Highland, PlateTag::Ridge]);
+        p.erase_tag(&PlateTag::Ridge);
         assert_eq!(p.tags().len(), 1);
-        assert!(p.has_tag(&PlateTag::Inland));
+        assert!(p.has_tag(&PlateTag::Highland));
     }
 
     #[test]
     fn erase_tag_noop_when_absent() {
-        let mut p = plate(vec![PlateTag::Inland]);
-        p.erase_tag(&PlateTag::Sea);
+        let mut p = plate(vec![PlateTag::Highland]);
+        p.erase_tag(&PlateTag::Ridge);
         assert_eq!(p.tags().len(), 1);
-        assert!(p.has_tag(&PlateTag::Inland));
+        assert!(p.has_tag(&PlateTag::Highland));
     }
 
     /// Discriminant matching ignores data carried by variants.
     /// Add a temporary data-carrying variant to verify the contract.
     #[test]
     fn discriminant_matching_ignores_data() {
-        // PlateTag::Coast is a unit variant — test that has_tag matches it
+        // PlateTag::Foothills is a unit variant — test that has_tag matches it
         // by discriminant, not value equality. Once data-carrying variants exist
         // (e.g. Elevated(u16)), this test should be updated to use them.
 
         // For now: two identical unit variants are trivially equal by both
         // discriminant and value. The trait's use of mem::discriminant is correct
         // and will handle data variants properly when they are introduced.
-        let p = plate(vec![PlateTag::Coast]);
-        assert!(p.has_tag(&PlateTag::Coast));
-        assert!(!p.has_tag(&PlateTag::Sea));
+        let p = plate(vec![PlateTag::Foothills]);
+        assert!(p.has_tag(&PlateTag::Foothills));
+        assert!(!p.has_tag(&PlateTag::Ridge));
     }
 
     // ── TagSet tests ──
@@ -228,53 +223,53 @@ mod tests {
     #[test]
     fn tagset_add_and_has() {
         let mut s = TagSet::new();
-        assert!(!s.has(PlateTag::Inland));
-        s.add(PlateTag::Inland);
-        assert!(s.has(PlateTag::Inland));
-        assert!(!s.has(PlateTag::Sea));
+        assert!(!s.has(PlateTag::Highland));
+        s.add(PlateTag::Highland);
+        assert!(s.has(PlateTag::Highland));
+        assert!(!s.has(PlateTag::Ridge));
     }
 
     #[test]
     fn tagset_remove() {
         let mut s = TagSet::new();
-        s.add(PlateTag::Sea);
-        s.add(PlateTag::Inland);
-        s.remove(PlateTag::Sea);
-        assert!(!s.has(PlateTag::Sea));
-        assert!(s.has(PlateTag::Inland));
+        s.add(PlateTag::Ridge);
+        s.add(PlateTag::Highland);
+        s.remove(PlateTag::Ridge);
+        assert!(!s.has(PlateTag::Ridge));
+        assert!(s.has(PlateTag::Highland));
     }
 
     #[test]
     fn tagset_has_any() {
         let mut s = TagSet::new();
         s.add(PlateTag::Ridge);
-        assert!(s.has_any(&[PlateTag::Sea, PlateTag::Ridge]));
-        assert!(!s.has_any(&[PlateTag::Sea, PlateTag::Coast]));
+        assert!(s.has_any(&[PlateTag::Highland, PlateTag::Ridge]));
+        assert!(!s.has_any(&[PlateTag::Highland, PlateTag::Foothills]));
     }
 
     #[test]
     fn tagset_from_tag() {
         let s = TagSet::from(PlateTag::Highland);
         assert!(s.has(PlateTag::Highland));
-        assert!(!s.has(PlateTag::Sea));
+        assert!(!s.has(PlateTag::Ridge));
     }
 
     #[test]
     fn tagset_iter() {
         let mut s = TagSet::new();
-        s.add(PlateTag::Sea);
+        s.add(PlateTag::Highland);
         s.add(PlateTag::Ridge);
         let collected: Vec<_> = s.iter().collect();
         assert_eq!(collected.len(), 2);
-        assert!(collected.contains(&PlateTag::Sea));
+        assert!(collected.contains(&PlateTag::Highland));
         assert!(collected.contains(&PlateTag::Ridge));
     }
 
     #[test]
     fn tagset_from_iter() {
-        let s: TagSet = [PlateTag::Coast, PlateTag::Foothills].iter().copied().collect();
-        assert!(s.has(PlateTag::Coast));
+        let s: TagSet = [PlateTag::Highland, PlateTag::Foothills].iter().copied().collect();
+        assert!(s.has(PlateTag::Highland));
         assert!(s.has(PlateTag::Foothills));
-        assert!(!s.has(PlateTag::Sea));
+        assert!(!s.has(PlateTag::Ridge));
     }
 }
