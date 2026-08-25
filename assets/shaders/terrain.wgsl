@@ -38,25 +38,42 @@ const FADE_START_FRAC: f32 = 0.80;          // fade begins at 80% of fade_end
 const RISE: f32 = 0.8;
 
 // Number of elevation ramp stops.
-const RAMP_LEN: i32 = 16;
+const RAMP_LEN: i32 = 14;
 
 // Elevation ramp: (elevation, R, G, B) normalized to [0,1].
 // Ordered low to high. Shader interpolates between adjacent stops.
-const RAMP_E: array<f32, 16> = array<f32, 16>(
-    -200.0, -50.0, 0.0, 10.0, 30.0, 150.0, 400.0, 700.0,
-    1200.0, 1600.0, 2000.0, 2500.0, 3000.0, 3400.0, 3700.0, 4000.0
+//
+// Anchored to the substrate and orogen scales, not to spine cones:
+//   -200  SEA_MAX_DEPTH, the abyssal plain
+//    -50  shelf break, a quarter of that depth
+//      0  sea level, the substrate's datum
+//      5  beach — the substrate's land p10 is 8.7, so the sand band is thin
+//     20  substrate land p50: the median land tile is green plain
+//     45  CONTINENT_MAX_RISE — the top of land the substrate makes alone, so
+//         everything above this stop is orogen and everything below is plain
+//    120  10% of OROGEN_MAX_RISE, where belt relief starts to read as upland
+//    300  25% — dry olive
+//    600  50% — brown mountain flank
+//    800  grey begins; below the 75% stop so rock precedes the last quarter
+//    950  75% of ceiling, rock
+//   1050  bare pale rock
+//   1150  snowline: the top 4% of the ceiling only
+//   1200  OROGEN_MAX_RISE, snow
+const RAMP_E: array<f32, 14> = array<f32, 14>(
+    -200.0, -50.0, 0.0, 5.0, 20.0, 45.0, 120.0, 300.0,
+    600.0, 800.0, 950.0, 1050.0, 1150.0, 1200.0
 );
-const RAMP_R: array<f32, 16> = array<f32, 16>(
-    0.039, 0.118, 0.275, 0.824, 0.314, 0.392, 0.510, 0.549,
-    0.471, 0.412, 0.510, 0.627, 0.745, 0.863, 0.961, 1.000
+const RAMP_R: array<f32, 14> = array<f32, 14>(
+    0.039, 0.118, 0.275, 0.824, 0.314, 0.290, 0.353, 0.510,
+    0.549, 0.471, 0.510, 0.647, 0.863, 1.000
 );
-const RAMP_G: array<f32, 16> = array<f32, 16>(
-    0.078, 0.235, 0.588, 0.784, 0.627, 0.569, 0.510, 0.431,
-    0.392, 0.373, 0.490, 0.608, 0.725, 0.863, 0.961, 1.000
+const RAMP_G: array<f32, 14> = array<f32, 14>(
+    0.078, 0.235, 0.588, 0.784, 0.627, 0.580, 0.569, 0.510,
+    0.431, 0.392, 0.490, 0.635, 0.863, 1.000
 );
-const RAMP_B: array<f32, 16> = array<f32, 16>(
-    0.314, 0.627, 0.627, 0.588, 0.314, 0.235, 0.196, 0.216,
-    0.275, 0.333, 0.471, 0.588, 0.706, 0.863, 0.961, 1.000
+const RAMP_B: array<f32, 14> = array<f32, 14>(
+    0.314, 0.627, 0.627, 0.588, 0.314, 0.290, 0.267, 0.196,
+    0.216, 0.275, 0.471, 0.620, 0.863, 1.000
 );
 
 // Per-tile brightness noise strength (±10%).

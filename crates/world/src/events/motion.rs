@@ -31,7 +31,7 @@ pub const MOTION_CELL_SCALE: u32 = 1800;
 /// a broad sense of direction, while the gradient across that span is still
 /// large enough that convergent and divergent boundaries both occur. This
 /// octave is what a boundary's convergence is a difference of.
-const STRAIN_WAVELENGTH: f64 = 8000.0;
+pub const STRAIN_WAVELENGTH: f64 = 8000.0;
 
 /// Wavelength of the drift octave of the motion field, in world units.
 ///
@@ -89,8 +89,8 @@ const TRANSFORM_EPSILON: f64 = 1e-9;
 /// that decides which cell owns the segment.
 const NEIGHBOR_SEARCH_RADIUS: f64 = MACRO_CELL_SIZE * 4.0;
 
-const STRAIN_SEED_X: u64 = 0x4D6F_7469_6F6E_5F58; // "Motion_X"
-const STRAIN_SEED_Y: u64 = 0x4D6F_7469_6F6E_5F59; // "Motion_Y"
+pub(crate) const STRAIN_SEED_X: u64 = 0x4D6F_7469_6F6E_5F58; // "Motion_X"
+pub(crate) const STRAIN_SEED_Y: u64 = 0x4D6F_7469_6F6E_5F59; // "Motion_Y"
 const DRIFT_SEED_X: u64 = 0x4472_6966_745F_5F58; // "Drift__X"
 const DRIFT_SEED_Y: u64 = 0x4472_6966_745F_5F59; // "Drift__Y"
 const MARGIN_SEED: u64 = 0x4D61_7267_696E_5F5F; // "Margin__"
@@ -487,6 +487,7 @@ mod tests {
     use super::*;
     use crate::events::Composite;
     use crate::events::plates::PlateEvent;
+    use crate::events::tilt::TiltEvent;
 
     const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
@@ -494,6 +495,7 @@ mod tests {
         let cache = Arc::new(PlateCache::new(SEED));
         let mut c = Composite::new(SEED);
         c.add_event(Box::new(PlateEvent::with_cache(cache.clone())));
+        c.add_event(Box::new(TiltEvent::new()));
         c.add_event(Box::new(MotionEvent::with_cache(cache, SEED)));
         c
     }

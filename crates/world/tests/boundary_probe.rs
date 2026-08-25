@@ -24,6 +24,7 @@ use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
@@ -48,6 +49,7 @@ fn sampled_block_for(seed: u64) -> Vec<BoundarySegment> {
     let cache = Arc::new(PlateCache::new(seed));
     let mut c = Composite::new(seed);
     c.add_event(Box::new(PlateEvent::with_cache(cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::with_cache(cache, seed)));
 
     let mut coords = Vec::new();

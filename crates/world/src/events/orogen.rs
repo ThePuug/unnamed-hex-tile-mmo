@@ -327,6 +327,7 @@ mod tests {
     use crate::events::Composite;
     use crate::events::motion::MotionEvent;
     use crate::events::plates::PlateEvent;
+    use crate::events::tilt::TiltEvent;
     use crate::plates::PlateCache;
 
     const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -335,6 +336,7 @@ mod tests {
         let cache = Arc::new(PlateCache::new(SEED));
         let mut c = Composite::new(SEED);
         c.add_event(Box::new(PlateEvent::with_cache(cache.clone())));
+        c.add_event(Box::new(TiltEvent::new()));
         c.add_event(Box::new(MotionEvent::with_cache(cache, SEED)));
         c.add_event(Box::new(OrogenEvent::new()));
         c

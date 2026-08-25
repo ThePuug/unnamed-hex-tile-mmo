@@ -74,6 +74,7 @@ pub mod orogen;
 pub mod plates;
 pub mod slope_form;
 pub mod spines;
+pub mod tilt;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -868,11 +869,13 @@ mod tests {
         use crate::plates::PlateCache;
         use motion::MotionEvent;
         use plates::PlateEvent;
+        use tilt::TiltEvent;
 
         let seed = 0x9E3779B97F4A7C15;
         let plate_cache = Arc::new(PlateCache::new(seed));
         let mut c = Composite::new(seed);
         c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+        c.add_event(Box::new(TiltEvent::new()));
         c.add_event(Box::new(MotionEvent::with_cache(plate_cache, seed)));
 
         // Both layers are scale 1800. A cold first touch is dominated by the

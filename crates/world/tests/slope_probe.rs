@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use world::events::Composite;
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 use world::events::slope_form::SlopeFormEvent;
 
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
@@ -35,6 +36,7 @@ fn composite_below_slope_form() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c
 }
@@ -43,6 +45,7 @@ fn composite() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(SlopeFormEvent::new()));
     c

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use world::events::Composite;
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
@@ -21,6 +22,7 @@ impl EventRegistry {
         let plate_cache = std::sync::Arc::new(world::PlateCache::new(seed));
         let mut composite = Composite::new(seed);
         composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+        composite.add_event(Box::new(TiltEvent::new()));
         composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), seed)));
         composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(SlopeFormEvent::new()));

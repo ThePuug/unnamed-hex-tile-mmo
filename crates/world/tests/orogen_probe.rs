@@ -18,6 +18,7 @@ use world::events::Composite;
 use world::events::motion::{BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex};
 use world::events::orogen::{OrogenEvent, OrogenSwathIndex, Swath};
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 const BLOCK: i32 = 30_000;
@@ -45,6 +46,7 @@ fn sampled(coords: &[(i32, i32)]) -> (Vec<BoundarySegment>, Vec<Swath>) {
     let cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::with_cache(cache, SEED)));
     c.add_event(Box::new(OrogenEvent::new()));
     c.tiles_at(coords);

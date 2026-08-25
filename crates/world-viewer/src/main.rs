@@ -17,6 +17,7 @@ use world::events::motion::{
 };
 use world::events::orogen::{OrogenEvent, OrogenSwathIndex, Swath};
 use world::events::plates::{PlateEvent, PlateCentroidIndex};
+use world::events::tilt::TiltEvent;
 use world::events::spines::{SpineEvent, SpineInstanceIndex};
 use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
 
@@ -38,6 +39,14 @@ enum Layer {
     Boundaries,
     /// Orogen crest lines, with the steep flank shaded so vergence reads.
     OrogenCrests,
+    /// PROTOTYPE: orogen as a field — hillshaded surface, composite bypassed.
+    OrogenField,
+    /// Regional continental tilt as a diverging ramp, with lean arrows.
+    Tilt,
+    /// PROTOTYPE: belt mask over the substrate coastline — belt shape alone.
+    OrogenBelts,
+    /// PROTOTYPE: cross-section through the orogen field along the midline.
+    OrogenSection,
 }
 
 fn parse_layers(s: &str) -> Vec<Layer> {
@@ -51,10 +60,14 @@ fn parse_layers(s: &str) -> Vec<Layer> {
             "cirques" => Layer::Cirques,
             "boundaries" => Layer::Boundaries,
             "orogen-crests" => Layer::OrogenCrests,
+            "orogen-field" => Layer::OrogenField,
+            "orogen-section" => Layer::OrogenSection,
+            "orogen-belts" => Layer::OrogenBelts,
+            "tilt" => Layer::Tilt,
             other => {
                 eprintln!(
                     "Unknown layer: {other:?}. Valid: plates, elevation, spines, \
-                     centroids, spine-peaks, cirques, boundaries, orogen-crests"
+                     centroids, spine-peaks, cirques, boundaries, orogen-crests, \n                     orogen-field, orogen-section"
                 );
                 std::process::exit(1);
             }
@@ -96,6 +109,7 @@ struct Cli {
     /// boundaries, orogen-crests
     #[arg(long, default_value = "plates,elevation")]
     layers: String,
+
 }
 
 // ── Color helpers ──
@@ -215,6 +229,10 @@ fn main() {
             Layer::Cirques => "cirques",
             Layer::Boundaries => "boundaries",
             Layer::OrogenCrests => "orogen-crests",
+            Layer::OrogenField => "orogen-field",
+            Layer::OrogenSection => "orogen-section",
+            Layer::OrogenBelts => "orogen-belts",
+            Layer::Tilt => "tilt",
         })
         .collect();
 
@@ -230,6 +248,28 @@ fn main() {
         height
     );
 
+
+    // PROTOTYPE: the orogen field is point-evaluable, so these modes render
+    // straight from the field and never touch the composite.
+    if layers.contains(&Layer::OrogenField) || layers.contains(&Layer::OrogenSection)
+        || layers.contains(&Layer::OrogenBelts) || layers.contains(&Layer::Tilt) {
+        let t = Instant::now();
+        let buf = if layers.contains(&Layer::Tilt) {
+            render_tilt(&cli, w, h, scale)
+        } else if layers.contains(&Layer::OrogenBelts) {
+            render_orogen_belts(&cli, w, h, scale)
+        } else if layers.contains(&Layer::OrogenSection) {
+            render_orogen_section(&cli, w, h, scale)
+        } else {
+            render_orogen_field(&cli, w, h, scale)
+        };
+        log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
+        let output = cli.output.clone().unwrap_or_else(|| "orogen.png".into());
+        image::save_buffer(&output, &buf, width, height, image::ColorType::Rgb8)
+            .expect("Failed to write PNG");
+        log::info!("Saved {output}");
+        return;
+    }
     // Only add events needed for the requested layers
     let needs_spines = layers.iter().any(|l| {
         matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks | Layer::Cirques)
@@ -240,6 +280,7 @@ fn main() {
     let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    composite.add_event(Box::new(TiltEvent::new()));
     if needs_boundaries || needs_orogen {
         composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), cli.seed)));
     }
@@ -656,4 +697,258 @@ fn main() {
     }
     log::info!("Encode: {:.2}s", lap.elapsed().as_secs_f64());
     log::info!("Saved {output}");
+}
+
+// ── Orogen field prototype ──────────────────────────────────────────────────
+//
+// PROTOTYPE ONLY. The orogen field is point-evaluable, so these two modes
+// bypass the composite entirely rather than materialising tiles. Nothing here
+// is part of the event stack and nothing else in the viewer depends on it.
+
+/// Mirrors the terrain shader's elevation ramp, so a viewer render and the game
+/// read the same heights the same way. See `assets/shaders/terrain.wgsl` for
+/// what each stop is anchored to.
+fn orogen_ramp(z: f64) -> (f64, f64, f64) {
+    const STOPS: [(f64, (f64, f64, f64)); 14] = [
+        (-200.0, (0.039, 0.078, 0.314)),
+        (-50.0, (0.118, 0.235, 0.627)),
+        (0.0, (0.275, 0.588, 0.627)),
+        (5.0, (0.824, 0.784, 0.588)),
+        (20.0, (0.314, 0.627, 0.314)),
+        (45.0, (0.290, 0.580, 0.290)),
+        (120.0, (0.353, 0.569, 0.267)),
+        (300.0, (0.510, 0.510, 0.196)),
+        (600.0, (0.549, 0.431, 0.216)),
+        (800.0, (0.471, 0.392, 0.275)),
+        (950.0, (0.510, 0.490, 0.471)),
+        (1050.0, (0.647, 0.635, 0.620)),
+        (1150.0, (0.863, 0.863, 0.863)),
+        (1200.0, (1.0, 1.0, 1.0)),
+    ];
+    if z <= STOPS[0].0 { return STOPS[0].1 }
+    for i in 0..STOPS.len() - 1 {
+        let (a, ca) = STOPS[i];
+        let (b, cb) = STOPS[i + 1];
+        if z >= a && z < b { return lerp_rgb(ca, cb, (z - a) / (b - a)) }
+    }
+    STOPS[STOPS.len() - 1].1
+}
+
+/// Hillshaded surface, so the fold texture reads independently of how the
+/// absolute vertical scale happens to be calibrated.
+fn render_orogen_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    // Light from the north-west, low, so ridge lines throw shadow across strike.
+    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
+    let d = scale.max(1.0);
+
+    (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let z = world::orogen_field::surface(wx, wy, seed);
+            let zx = world::orogen_field::surface(wx + d, wy, seed);
+            let zy = world::orogen_field::surface(wx, wy + d, seed);
+
+            // Sea covers anything below the datum; the seafloor still shades.
+            let base = orogen_ramp(z);
+            // RISE converts a z-level to world units of height.
+            let (gx, gy) = ((zx - z) * 0.8 / d, (zy - z) * 0.8 / d);
+            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
+            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
+            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
+            let shade = 0.35 + 0.85 * lambert;
+            let c = (
+                (base.0 * shade).clamp(0.0, 1.0),
+                (base.1 * shade).clamp(0.0, 1.0),
+                (base.2 * shade).clamp(0.0, 1.0),
+            );
+            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect()
+}
+
+/// Cross-section along the viewport's horizontal midline: substrate, surface,
+/// sea level, and which way the wedge leans.
+fn render_orogen_section(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let seed = cli.seed;
+    // Cut ACROSS the local fold axis, not along the image. A section taken
+    // along the axis runs down a ridge and shows no ridge-and-valley at all.
+    let (ux, uy) = world::orogen_field::project_to_crest(cli.center_x, cli.center_y, seed)
+        .map(|c| c.axis)
+        .unwrap_or((1.0, 0.0));
+    let (ax, ay) = (-uy, ux);
+    let at = |px: usize| {
+        let t = (px as f64 - w as f64 * 0.5) * scale;
+        (cli.center_x + ax * t, cli.center_y + ay * t)
+    };
+    let surf: Vec<f64> = (0..w)
+        .map(|px| { let (x, y) = at(px); world::orogen_field::surface(x, y, seed) })
+        .collect();
+    let subs: Vec<f64> = (0..w)
+        .map(|px| { let (x, y) = at(px); world::substrate_elevation_at(x, y, seed) })
+        .collect();
+
+    let hi = surf.iter().cloned().fold(f64::MIN, f64::max).max(50.0);
+    let lo = subs.iter().cloned().fold(f64::MAX, f64::min).min(-50.0);
+    let span = (hi - lo) * 1.08;
+    let to_py = |z: f64| {
+        let t = (hi + span * 0.04 - z) / span;
+        ((t * h as f64) as i64).clamp(0, h as i64 - 1) as usize
+    };
+
+    let mut buf = vec![18u8; w * h * 3];
+    let put = |buf: &mut Vec<u8>, px: usize, py: usize, c: [u8; 3]| {
+        let k = (py * w + px) * 3;
+        buf[k] = c[0]; buf[k + 1] = c[1]; buf[k + 2] = c[2];
+    };
+
+    // Sea level, then the two profiles filled from below.
+    let sea = to_py(0.0);
+    for px in 0..w {
+        for py in sea..h { put(&mut buf, px, py, [22, 30, 52]) }
+        let sp = to_py(subs[px]);
+        for py in sp..h { put(&mut buf, px, py, [52, 44, 34]) }
+        let fp = to_py(surf[px]);
+        for py in fp..sp.max(fp) { put(&mut buf, px, py, [120, 96, 66]) }
+    }
+    for px in 0..w { put(&mut buf, px, sea, [90, 130, 190]) }
+    for px in 0..w {
+        let fp = to_py(surf[px]);
+        for dy in 0..2 {
+            if fp + dy < h { put(&mut buf, px, fp + dy, [240, 232, 210]) }
+        }
+    }
+
+    // Vergence at the centre, as a bar in the top-left: which way ridges lean.
+    // Vergence side, from the drift and the same axis the section was cut on.
+    // The least-curvature eigenvector carries an arbitrary sign per call, so
+    // mixing an axis from one call with an `across` from another says nothing.
+    let (ddx, ddy) = world::events::motion::plate_drift(cli.center_x, cli.center_y, seed);
+    let dir = if ddx * ax + ddy * ay < 0.0 { 1i64 } else { -1 };
+    let (bx, by) = (40i64, 40i64);
+    for t in 0..60i64 {
+        let px = bx + dir * t;
+        if px >= 0 && (px as usize) < w {
+            for dy in 0..3 { put(&mut buf, px as usize, (by + dy) as usize, [255, 170, 60]) }
+        }
+    }
+    for t in 0..12i64 {
+        let px = bx + dir * (60 - t);
+        if px >= 0 && (px as usize) < w {
+            for dy in -(t / 2)..=(t / 2) {
+                let py = by + 1 + dy;
+                if py >= 0 && (py as usize) < h { put(&mut buf, px as usize, py as usize, [255, 170, 60]) }
+            }
+        }
+    }
+    log::info!("section: across the fold axis; surface max {hi:.0} z, substrate min {lo:.0} z, vergence toward {}", if dir > 0 { "+x" } else { "-x" });
+    buf
+}
+
+/// Belt mask over the substrate coastline. Shape only: the thickening field
+/// thresholded, drawn on the land it stands on, so belt outline can be read
+/// without the vertical scale swamping it.
+fn render_orogen_belts(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let e = world::substrate_elevation_at(wx, wy, seed);
+            let t = world::orogen_field::relief(wx, wy, seed)
+                / world::orogen_field::OROGEN_MAX_RISE;
+            let base = if e >= 0.0 { (0.31, 0.40, 0.29) } else { (0.09, 0.13, 0.26) };
+            // Four bands, so the threshold sweep in the probe reads off the image.
+            let c = match t {
+                _ if t >= 0.70 => lerp_rgb(base, (1.00, 0.94, 0.80), 0.95),
+                _ if t >= 0.55 => lerp_rgb(base, (0.95, 0.63, 0.25), 0.90),
+                _ if t >= 0.40 => lerp_rgb(base, (0.78, 0.34, 0.20), 0.80),
+                _ if t >= 0.25 => lerp_rgb(base, (0.45, 0.20, 0.28), 0.70),
+                _ => base,
+            };
+            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect()
+}
+
+/// Regional tilt: a diverging ramp over the land/ocean base, with arrows on a
+/// coarse grid showing which way each landmass leans.
+///
+/// Reads the tilt field directly rather than through the composite. `TiltEvent`
+/// is a pure function of position and the substrate beneath it, so this is the
+/// same number the event returns, at a fraction of the cost.
+fn render_tilt(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    use world::events::tilt::{TILT_AMPLITUDE, potential, tilt_at};
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+
+    let mut buf: Vec<u8> = (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let e = world::substrate_elevation_at(wx, wy, seed);
+            if e < 0.0 {
+                // Ocean, desaturated — tilt does nothing here and the layer
+                // should show that rather than implying it does.
+                let d = (1.0 + e / 200.0).clamp(0.0, 1.0);
+                let v = 0.10 + 0.10 * d;
+                return [(v * 210.0) as u8, (v * 225.0) as u8, (v * 255.0) as u8];
+            }
+            let t = tilt_at(wx, wy, e, seed) / TILT_AMPLITUDE; // -1 .. 1
+            // Diverging: down is blue, up is amber, neutral is a pale grey so
+            // zero reads as zero rather than as a colour.
+            let c = if t >= 0.0 {
+                lerp_rgb((0.88, 0.88, 0.86), (0.85, 0.45, 0.10), t.min(1.0))
+            } else {
+                lerp_rgb((0.88, 0.88, 0.86), (0.10, 0.35, 0.75), (-t).min(1.0))
+            };
+            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect();
+
+    // Lean arrows, downslope, on a coarse grid — magnitude alone cannot show
+    // whether a landmass leans one way or several.
+    let spacing = (w / 26).max(24);
+    let arm = (spacing as f64 * 0.42) as i64;
+    let d = scale * 4.0;
+    let mut put = |buf: &mut Vec<u8>, x: i64, y: i64| {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 { return }
+        let k = (y as usize * w + x as usize) * 3;
+        buf[k] = 20; buf[k + 1] = 20; buf[k + 2] = 24;
+    };
+    for gy in (spacing / 2..h).step_by(spacing) {
+        for gx in (spacing / 2..w).step_by(spacing) {
+            let wx = origin_x + gx as f64 * scale;
+            let wy = origin_y + gy as f64 * scale;
+            if world::substrate_elevation_at(wx, wy, seed) < 0.0 { continue }
+            let ddx = potential(wx + d, wy, seed) - potential(wx - d, wy, seed);
+            let ddy = potential(wx, wy + d, seed) - potential(wx, wy - d, seed);
+            let m = ddx.hypot(ddy);
+            if m < 1e-12 { continue }
+            // Downslope: the way water would run.
+            let (ux, uy) = (-ddx / m, -ddy / m);
+            for t in 0..=arm {
+                put(&mut buf, gx as i64 + (ux * t as f64) as i64,
+                              gy as i64 + (uy * t as f64) as i64);
+            }
+            // Head.
+            let (tipx, tipy) = (gx as i64 + (ux * arm as f64) as i64,
+                                gy as i64 + (uy * arm as f64) as i64);
+            for t in 0..=(arm / 3) {
+                let b = t as f64;
+                for s in [-1.0f64, 1.0] {
+                    put(&mut buf,
+                        tipx - (ux * b) as i64 + (-uy * s * b * 0.6) as i64,
+                        tipy - (uy * b) as i64 + (ux * s * b * 0.6) as i64);
+                }
+            }
+        }
+    }
+    buf
 }

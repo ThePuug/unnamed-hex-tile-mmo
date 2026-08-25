@@ -5,6 +5,7 @@ pub mod events;
 pub mod glacial;
 pub mod faces;
 pub(crate) mod lithology;
+pub mod orogen_field;
 pub mod slope_form;
 pub mod spine;
 

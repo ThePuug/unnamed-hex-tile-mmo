@@ -10,6 +10,7 @@ use world::{MACRO_CELL_SIZE, PlateCache};
 use world::events::{CellScope, Composite, TileOutput, TileView, WorldEvent};
 use world::events::motion::{BoundarySegment, MotionEvent, PlateBoundaryIndex};
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::hex_to_world;
 
@@ -24,6 +25,7 @@ fn sampled_block() -> Vec<BoundarySegment> {
     let cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::with_cache(cache, SEED)));
 
     let mut coords = Vec::new();
@@ -282,6 +284,7 @@ fn cascade_at_scale() {
             let plate_cache = Arc::new(PlateCache::new(SEED));
             let mut c = Composite::new(SEED);
             c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+            c.add_event(Box::new(TiltEvent::new()));
             c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
             c.add_event(Box::new(StubLayer(scale)));
             c.add_event(Box::new(SlopeFormEvent::new()));

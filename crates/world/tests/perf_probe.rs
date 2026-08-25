@@ -12,6 +12,7 @@ use std::time::Instant;
 use world::events::Composite;
 use world::events::motion::MotionEvent;
 use world::events::plates::PlateEvent;
+use world::events::tilt::TiltEvent;
 use world::events::slope_form::SlopeFormEvent;
 use world::events::spines::SpineEvent;
 use world::PlateCache;
@@ -22,6 +23,7 @@ fn composite_full() -> Composite {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), SEED)));
     c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(SlopeFormEvent::new()));
@@ -65,6 +67,7 @@ fn perf_probe_cascade_breakdown() {
     let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(TiltEvent::new()));
     let t = Instant::now();
     c.tile_at(3000, 2000);
     println!("plate-only first_touch (1 plate cell deform): {:?}", t.elapsed());
