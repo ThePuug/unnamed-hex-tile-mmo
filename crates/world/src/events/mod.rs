@@ -67,13 +67,10 @@
 //! sparse sample, summary region, each read either side of the layer. A ratio
 //! that only looks reasonable on the dense pattern is not a result.
 
-pub mod faces;
 pub mod index;
 pub mod motion;
 pub mod orogen;
 pub mod plates;
-pub mod slope_form;
-pub mod spines;
 pub mod tilt;
 
 use std::any::Any;
@@ -616,8 +613,11 @@ impl Composite {
         coords.iter().map(|&(q, r)| ((q, r), self.tile_at(q, r))).collect()
     }
 
+    /// Elevation as a discrete z-level. Every layer works in z already —
+    /// the substrate's depths, the tilt's amplitude and the orogen's ceiling
+    /// are all stated in z — so this rounds rather than converts.
     pub fn elevation_at(&self, q: i32, r: i32) -> i32 {
-        crate::discretize_elevation(self.tile_at(q, r).elevation)
+        self.tile_at(q, r).elevation.round() as i32
     }
 
     pub fn tags_at(&self, q: i32, r: i32) -> TagSet {

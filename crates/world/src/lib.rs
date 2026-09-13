@@ -2,16 +2,9 @@ pub(crate) mod noise;
 mod plates;
 mod microplates;
 pub mod events;
-pub mod glacial;
-pub mod faces;
-pub(crate) mod lithology;
 pub mod orogen_field;
-pub mod slope_form;
-pub mod spine;
 
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
-pub use faces::{ErosionalFace, FaceIndex};
-pub use glacial::{Cirque, CirqueProbe, Outflow, GLACIATION_LINE};
 pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
                  macro_plates_in_radius, macro_plate_neighbors,
                  raw_regime_noise, warp_strength_at,
@@ -21,10 +14,6 @@ pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
 pub use microplates::{MicroCellGeometry, MicroplateCenter, MicroplateCache, PlateCentroid,
                       micro_cell_at, macro_plate_for, plate_info_at,
                       micro_cells_for_macro};
-pub use spine::{generate_spines, cross_section_profile, cross_section_tag,
-                micro_elevation_offset, RIDGE_PEAK_ELEVATION,
-                Peak, SpineInstance, SpineCache, RavineStats, RavineProbe,
-                evaluate_elevation, discretize_elevation, ELEVATION_PER_Z};
 
 // ──── Constants ────
 
@@ -275,126 +264,6 @@ pub fn world_to_hex(wx: f64, wy: f64) -> (i32, i32) {
 
 // ──── Metrics ────
 
-/// A single timing measurement from a terrain generation phase.
-pub struct TerrainMetric {
-    pub label: String,
-    pub count: u64,
-    pub unit: &'static str,
-    pub duration: std::time::Duration,
-}
-
-/// Results of a full terrain region generation pipeline.
-pub struct RegionResult {
-    pub plates: Vec<PlateCenter>,
-    pub spine_instances: Vec<SpineInstance>,
-    pub macro_ids: std::collections::HashMap<u64, u64>,
-    pub centroids: Vec<PlateCentroid>,
-    pub geometry: MicroCellGeometry,
-    pub metrics: Vec<TerrainMetric>,
-}
-
-/// Run the plate→classify→spine→prepass pipeline for a viewport region.
-/// Each phase records its own timing metric.
-pub fn generate_region(
-    seed: u64,
-    center_x: f64,
-    center_y: f64,
-    radius: f64,
-    with_spines: bool,
-) -> RegionResult {
-    use std::time::Instant;
-    let mut metrics = Vec::new();
-
-    // Phase 1: Plate generation (seed scatter + warped Voronoi assignment)
-    let lap = Instant::now();
-    let plate_cache = PlateCache::new(seed);
-    let mut plates = plate_cache.plates_in_radius(
-        center_x, center_y,
-        radius * std::f64::consts::SQRT_2 + MACRO_CELL_SIZE * 2.0,
-    );
-    metrics.push(TerrainMetric {
-        label: "Plates".into(),
-        count: plates.len() as u64,
-        unit: "plates",
-        duration: lap.elapsed(),
-    });
-
-    // Phase 2: Spine generation (candidate selection, growth, peak scattering)
-    let spine_instances = if with_spines {
-        let lap = Instant::now();
-        let instances = generate_spines(&mut plates, &plate_cache, seed);
-        let total_peaks: u64 = instances.iter()
-            .map(|i| i.peaks.len() as u64)
-            .sum();
-
-        // Aggregate ravine stats across all instances
-        let mut total_streams = 0u64;
-        let mut total_merged = 0u64;
-        let mut total_hanging = 0u64;
-        let mut total_paths = 0u64;
-        let mut global_min_w = f64::MAX;
-        let mut global_max_w = f64::MIN;
-        let mut global_min_d = f64::MAX;
-        let mut global_max_d = f64::MIN;
-        for inst in &instances {
-            let rs = inst.ravine_network.stats();
-            total_streams += rs.stream_count as u64;
-            total_merged += rs.merged_count as u64;
-            total_hanging += rs.hanging_count as u64;
-            total_paths += rs.path_count as u64;
-            if rs.stream_count > 0 {
-                global_min_w = global_min_w.min(rs.width_range.0);
-                global_max_w = global_max_w.max(rs.width_range.1);
-                global_min_d = global_min_d.min(rs.depth_range.0);
-                global_max_d = global_max_d.max(rs.depth_range.1);
-            }
-        }
-        if global_min_w == f64::MAX { global_min_w = 0.0; global_max_w = 0.0; }
-        if global_min_d == f64::MAX { global_min_d = 0.0; global_max_d = 0.0; }
-
-        metrics.push(TerrainMetric {
-            label: format!(
-                "Spines ({} instances): {} peaks, {} streams ({} merged, {} hanging), \
-                 width {:.0}-{:.0}, depth {:.0}-{:.0}, {} paths",
-                instances.len(), total_peaks, total_streams,
-                total_merged, total_hanging,
-                global_min_w, global_max_w,
-                global_min_d, global_max_d,
-                total_paths,
-            ),
-            count: total_peaks,
-            unit: "peaks",
-            duration: lap.elapsed(),
-        });
-        instances
-    } else {
-        Vec::new()
-    };
-
-    // Phase 3: Micro pre-pass (orphan correction, macro ID resolution)
-    let lap = Instant::now();
-    let mut pre_cache = MicroplateCache::new(seed);
-    pre_cache.populate_region(center_x, center_y, radius, radius);
-    let macro_ids = pre_cache.all_macro_ids();
-    let centroids: Vec<PlateCentroid> = pre_cache.centroids().cloned().collect();
-    let geometry = pre_cache.take_geometry();
-    metrics.push(TerrainMetric {
-        label: "Pre-pass".into(),
-        count: macro_ids.len() as u64,
-        unit: "micro cells",
-        duration: lap.elapsed(),
-    });
-
-    RegionResult {
-        plates,
-        spine_instances,
-        macro_ids,
-        centroids,
-        geometry,
-        metrics,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,45 +285,6 @@ mod tests {
         }
     }
 
-    fn spine_tags_at(q: i32, r: i32, plate_cache: &PlateCache, spine_cache: &mut SpineCache) -> ArrayVec<[PlateTag; 2]> {
-        let (wx, wy) = hex_to_world(q, r);
-        let mut tags = ArrayVec::new();
-        if let Some(spine_tag) = spine_cache.tag_at(wx, wy, plate_cache) {
-            tags.push(spine_tag);
-        }
-        tags
-    }
-
-    #[test]
-    fn spine_tags_at_deterministic() {
-        let plate_cache = PlateCache::new(DEFAULT_SEED);
-        let mut spine_cache = SpineCache::new(DEFAULT_SEED);
-        let a = spine_tags_at(100, 50, &plate_cache, &mut spine_cache);
-        let b = spine_tags_at(100, 50, &plate_cache, &mut spine_cache);
-        assert_eq!(a.as_slice(), b.as_slice());
-    }
-
-    /// Tags are spine tags and nothing else. A base classification here would
-    /// be the land mask coming back.
-    #[test]
-    fn spine_region_tags_are_spine_tags() {
-        let plate_cache = PlateCache::new(DEFAULT_SEED);
-        let mut spine_cache = SpineCache::new(DEFAULT_SEED);
-        let mut found_spine = false;
-        for q in (-8000..=8000).step_by(400) {
-            for r in (-8000..=8000).step_by(400) {
-                for tag in spine_tags_at(q, r, &plate_cache, &mut spine_cache) {
-                    assert!(
-                        matches!(tag, PlateTag::Ridge | PlateTag::Highland | PlateTag::Foothills),
-                        "tag should be a spine tag, got {tag:?}"
-                    );
-                    found_spine = true;
-                }
-            }
-        }
-        assert!(found_spine, "should find at least one spine-influenced tile in a 16k-tile grid");
-    }
-
     // ── Composite determinism tests ─────────────────────────────────────────
 
     fn make_composite() -> events::Composite {
@@ -462,8 +292,9 @@ mod tests {
         let plate_cache = std::sync::Arc::new(PlateCache::new(seed));
         let mut composite = events::Composite::new(seed);
         composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));
-        composite.add_event(Box::new(events::spines::SpineEvent::with_cache(plate_cache, seed)));
-        composite.add_event(Box::new(events::slope_form::SlopeFormEvent::new()));
+        composite.add_event(Box::new(events::tilt::TiltEvent::new()));
+        composite.add_event(Box::new(events::motion::MotionEvent::with_cache(plate_cache, seed)));
+        composite.add_event(Box::new(events::orogen::OrogenEvent::new()));
         composite
     }
 

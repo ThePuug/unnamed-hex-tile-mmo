@@ -9,8 +9,13 @@
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
 
-/// Haven location — world coordinates (4000, 1000) → hex (3423, 1155)
-pub const HAVEN_LOCATION: Qrz = Qrz { q: 3423, r: 1155, z: 0 };
+/// Haven location — world coordinates (127668, 18560) → hex (116953, 21431).
+///
+/// Sited at the foot of an orogen: flat walkable ground carrying 7 z of belt,
+/// with the range rising to 1,230 z about 1,276 WU away and open water 540 WU
+/// the other way. The z is a placeholder — the server resolves the real one
+/// from the terrain at startup, because elevation is generated, not authored.
+pub const HAVEN_LOCATION: Qrz = Qrz { q: 116953, r: 21431, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 

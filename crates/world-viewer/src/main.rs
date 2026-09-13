@@ -15,11 +15,9 @@ use world::events::Composite;
 use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
-use world::events::orogen::{OrogenEvent, OrogenSwathIndex, Swath};
+use world::events::orogen::OrogenEvent;
 use world::events::plates::{PlateEvent, PlateCentroidIndex};
 use world::events::tilt::TiltEvent;
-use world::events::spines::{SpineEvent, SpineInstanceIndex};
-use world::{Cirque, CirqueProbe, Outflow, RIDGE_PEAK_ELEVATION};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
@@ -27,18 +25,10 @@ enum Layer {
     Plates,
     /// Height tinting with slope shading.
     Elevation,
-    /// Ridge/Highland/Foothills coloring from spine tags.
-    Spines,
     /// Macro plate centroid markers (red dots).
     Centroids,
-    /// Spine epicenter markers (yellow dots).
-    SpinePeaks,
-    /// Glacial bowls, drawn as floor / headwall / lip / outlet.
-    Cirques,
     /// Plate boundaries, drawn by what the motion resolves them to.
     Boundaries,
-    /// Orogen crest lines, with the steep flank shaded so vergence reads.
-    OrogenCrests,
     /// PROTOTYPE: orogen as a field — hillshaded surface, composite bypassed.
     OrogenField,
     /// Regional continental tilt as a diverging ramp, with lean arrows.
@@ -54,12 +44,8 @@ fn parse_layers(s: &str) -> Vec<Layer> {
         .map(|name| match name.trim() {
             "plates" => Layer::Plates,
             "elevation" => Layer::Elevation,
-            "spines" => Layer::Spines,
             "centroids" => Layer::Centroids,
-            "spine-peaks" => Layer::SpinePeaks,
-            "cirques" => Layer::Cirques,
             "boundaries" => Layer::Boundaries,
-            "orogen-crests" => Layer::OrogenCrests,
             "orogen-field" => Layer::OrogenField,
             "orogen-section" => Layer::OrogenSection,
             "orogen-belts" => Layer::OrogenBelts,
@@ -105,8 +91,8 @@ struct Cli {
     seed: u64,
 
     /// Comma-separated layer stack drawn bottom to top.
-    /// Available: plates, elevation, spines, centroids, spine-peaks, cirques,
-    /// boundaries, orogen-crests
+    /// Available: plates, elevation, centroids, boundaries, tilt,
+    /// orogen-field, orogen-section, orogen-belts
     #[arg(long, default_value = "plates,elevation")]
     layers: String,
 
@@ -139,25 +125,16 @@ fn substrate_color(elevation: f64) -> (f64, f64, f64) {
     }
 }
 
-fn spine_color(tags: &TagSet) -> Option<(f64, f64, f64)> {
-    if tags.has(PlateTag::Ridge) {
-        Some((0.75, 0.75, 0.75))
-    } else if tags.has(PlateTag::Highland) {
-        Some((0.55, 0.40, 0.30))
-    } else if tags.has(PlateTag::Foothills) {
-        Some((0.65, 0.55, 0.40))
-    } else {
-        None
-    }
-}
-
-fn elevation_overlay(base: (f64, f64, f64), elev: f64, slope: f64) -> (f64, f64, f64) {
-    let norm = (elev / RIDGE_PEAK_ELEVATION).clamp(0.0, 1.0);
-    // Brighten toward white at peaks, darken slightly at low elevation
-    let height_color = lerp_rgb(base, (0.95, 0.95, 0.90), norm * 0.7);
-    // Slope shading: scale threshold to elevation range (steep = 5% of peak per tile)
-    let cliff_t = (slope / (RIDGE_PEAK_ELEVATION * 0.05)).clamp(0.0, 0.6);
-    lerp_rgb(height_color, (0.30, 0.25, 0.20), cliff_t)
+/// Darken by local steepness, so relief reads as relief rather than as colour
+/// alone. Height is the ramp's job — this only shades.
+///
+/// The threshold is a share of the ceiling per tile: a belt climbing its full
+/// [`orogen_field::OROGEN_MAX_RISE`] across one half-width averages under half
+/// a z per tile, so a tile stepping several z is genuinely steep ground.
+fn slope_shade(base: (f64, f64, f64), slope: f64) -> (f64, f64, f64) {
+    const STEEP_PER_TILE: f64 = 4.0;
+    let t = (slope / STEEP_PER_TILE).clamp(0.0, 0.6);
+    lerp_rgb(base, (0.30, 0.25, 0.20), t)
 }
 
 /// Convergence magnitude that saturates a boundary's colour and width. Above
@@ -189,21 +166,6 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
     }
 }
 
-/// Outlets read by what leaves them, so a glance separates a closed tarn from
-/// one that falls away and one that drains down a valley.
-fn cirque_color(part: CirqueProbe, outflow: Outflow) -> [u8; 3] {
-    match part {
-        CirqueProbe::Floor => [200, 228, 240],   // pale ice
-        CirqueProbe::Headwall => [55, 55, 75],   // dark slate
-        CirqueProbe::Lip => [190, 165, 120],     // tan bar
-        CirqueProbe::Outlet => match outflow {
-            Outflow::Impounded => [90, 60, 160],  // violet — nothing leaves
-            Outflow::Fall => [255, 40, 200],      // magenta — leaves over a wall
-            Outflow::Ravine => [255, 210, 40],    // amber — leaves down a valley
-        },
-    }
-}
-
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
@@ -223,12 +185,8 @@ fn main() {
         .map(|l| match l {
             Layer::Plates => "plates",
             Layer::Elevation => "elevation",
-            Layer::Spines => "spines",
             Layer::Centroids => "centroids",
-            Layer::SpinePeaks => "spine-peaks",
-            Layer::Cirques => "cirques",
             Layer::Boundaries => "boundaries",
-            Layer::OrogenCrests => "orogen-crests",
             Layer::OrogenField => "orogen-field",
             Layer::OrogenSection => "orogen-section",
             Layer::OrogenBelts => "orogen-belts",
@@ -270,27 +228,16 @@ fn main() {
         log::info!("Saved {output}");
         return;
     }
-    // Only add events needed for the requested layers
-    let needs_spines = layers.iter().any(|l| {
-        matches!(l, Layer::Elevation | Layer::Spines | Layer::SpinePeaks | Layer::Cirques)
-    });
     let needs_boundaries = layers.contains(&Layer::Boundaries);
-    let needs_orogen = layers.contains(&Layer::OrogenCrests);
 
+    // The whole stack, in the order the server builds it, so what the viewer
+    // draws is what the world generates.
     let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
     composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     composite.add_event(Box::new(TiltEvent::new()));
-    if needs_boundaries || needs_orogen {
-        composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), cli.seed)));
-    }
-    if needs_orogen {
-        composite.add_event(Box::new(OrogenEvent::new()));
-    }
-    if needs_spines {
-        composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, cli.seed)));
-        composite.add_event(Box::new(world::events::slope_form::SlopeFormEvent::new()));
-    }
+    composite.add_event(Box::new(MotionEvent::with_cache(plate_cache, cli.seed)));
+    composite.add_event(Box::new(OrogenEvent::new()));
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
 
@@ -347,38 +294,6 @@ fn main() {
         vec![]
     };
 
-    let cirques: Vec<Cirque> = if layers.contains(&Layer::Cirques) {
-        composite.with_indexes(|indexes| {
-            indexes
-                .get::<SpineInstanceIndex>()
-                .map(|idx| {
-                    idx.cells
-                        .values()
-                        .flat_map(|v| v.iter())
-                        .flat_map(|inst| inst.cirques.iter().cloned())
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        vec![]
-    };
-
-    let swaths: Vec<Swath> = if needs_orogen {
-        composite.with_indexes(|indexes| {
-            indexes
-                .get::<OrogenSwathIndex>()
-                .map(|idx| {
-                    idx.cells.values()
-                        .flat_map(|v| v.iter().map(|s| (**s).clone()))
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        vec![]
-    };
-
     let boundaries: Vec<BoundarySegment> = if needs_boundaries {
         composite.with_indexes(|indexes| {
             indexes
@@ -390,28 +305,12 @@ fn main() {
         vec![]
     };
 
-    let spine_epicenters: Vec<(f64, f64)> = if layers.contains(&Layer::SpinePeaks) {
-        composite.with_indexes(|indexes| {
-            indexes
-                .get::<SpineInstanceIndex>()
-                .map(|idx| {
-                    idx.cells
-                        .values()
-                        .flat_map(|v| v.iter())
-                        .map(|inst| inst.bounding_center)
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        vec![]
-    };
-
     // ── Phase 3: Render pixels (parallel by row) ──
 
     let lap = Instant::now();
     let tc = &tile_cache;
     let layer_slice = &layers;
+    let seed = cli.seed;
     let pixels: Vec<[u8; 3]> = (0..h)
         .into_par_iter()
         .flat_map(|py| {
@@ -431,9 +330,18 @@ fn main() {
                     for &layer in layer_slice {
                         match layer {
                             Layer::Plates => {
-                                color = substrate_color(elevation);
+                                // The substrate itself, which is what this layer
+                                // names — its ramp spans the substrate's own
+                                // range and nothing above it.
+                                color = substrate_color(
+                                    world::substrate_elevation_at(wx, wy, seed));
                             }
                             Layer::Elevation => {
+                                // The composite surface, on the same ramp the
+                                // terrain shader uses: dense stops through the
+                                // substrate's 45 z of freeboard, then eight more
+                                // out to the orogen ceiling at 1,200.
+                                color = orogen_ramp(elevation);
                                 if elevation > 0.0 {
                                     // Slope from 6 hex neighbors
                                     let max_diff = [
@@ -452,12 +360,7 @@ fn main() {
                                     })
                                     .fold(0.0f64, f64::max);
 
-                                    color = elevation_overlay(color, elevation, max_diff);
-                                }
-                            }
-                            Layer::Spines => {
-                                if let Some(c) = spine_color(&tags) {
-                                    color = c;
+                                    color = slope_shade(color, max_diff);
                                 }
                             }
                             _ => {} // marker layers rendered as dot overdraw
@@ -578,55 +481,6 @@ fn main() {
         );
     }
 
-    if needs_orogen {
-        // Vergence is shaded rather than ticked. A belt that holds its polarity
-        // shows the dark flank on one side for its whole length and a flip
-        // shows it jumping across the crest, which a per-segment tick cannot
-        // convey at continental zoom.
-        for s in &swaths {
-            let (a, b) = s.crest_ends();
-            let bands = ((s.steep_width / scale) as i32).clamp(1, 48);
-            for i in 1..=bands {
-                let off = s.steep_width * i as f64 / bands as f64;
-                let t = 1.0 - i as f64 / bands as f64;
-                let shade = (25.0 + 50.0 * t) as u8;
-                draw_line(
-                    &mut buf,
-                    a.0 + s.vergence_x * off, a.1 + s.vergence_y * off,
-                    b.0 + s.vergence_x * off, b.1 + s.vergence_y * off,
-                    0, 0, [shade + 25, shade, shade + 35],
-                );
-            }
-            // Toe of the graded flank, so the long side reads against the short.
-            draw_line(
-                &mut buf,
-                a.0 - s.vergence_x * s.graded_width, a.1 - s.vergence_y * s.graded_width,
-                b.0 - s.vergence_x * s.graded_width, b.1 - s.vergence_y * s.graded_width,
-                0, (6.0 / scale).max(2.0) as i32, [95, 85, 70],
-            );
-        }
-        // Crests last, over every flank, so a crossing never hides one.
-        for s in &swaths {
-            let (a, b) = s.crest_ends();
-            let c = lerp_rgb((0.55, 0.24, 0.16), (1.0, 0.95, 0.72), s.drive);
-            let hw = (s.drive * 2.0).round() as i32;
-            draw_line(
-                &mut buf, a.0, a.1, b.0, b.1, hw, 0,
-                [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8],
-            );
-        }
-        let active = swaths.iter().filter(|s| s.margin == MarginClass::Active).count();
-        let mean_drive = swaths.iter().map(|s| s.drive).sum::<f64>()
-            / swaths.len().max(1) as f64;
-        log::info!(
-            "Orogen: {} swaths ({} on active margins), mean drive {mean_drive:.3}",
-            swaths.len(), active,
-        );
-        log::info!(
-            "  legend: crest brightens with drive; dark band = steep flank (vergence side); \
-             dashed line = graded flank toe"
-        );
-    }
 
     if layers.contains(&Layer::Centroids) {
         let dot_r = (4.0 / scale).max(2.0) as i32;
@@ -636,40 +490,7 @@ fn main() {
         log::info!("Centroids: {} markers", centroids.len());
     }
 
-    if layers.contains(&Layer::SpinePeaks) {
-        let dot_r = (5.0 / scale).max(3.0) as i32;
-        for &(pwx, pwy) in &spine_epicenters {
-            draw_dot(&mut buf, pwx, pwy, dot_r, [255, 220, 50]);
-        }
-        log::info!("Spine epicenters: {} markers", spine_epicenters.len());
-    }
 
-    if layers.contains(&Layer::Cirques) {
-        // Rasterize each footprint rather than probing every pixel: bowls cover
-        // a small share of a viewport, so the cost tracks their area, not the
-        // image's.
-        for c in &cirques {
-            let px0 = ((c.cx - c.radius - origin_x) / scale).floor() as i32;
-            let px1 = ((c.cx + c.radius - origin_x) / scale).ceil() as i32;
-            let py0 = ((c.cy - c.radius - origin_y) / scale).floor() as i32;
-            let py1 = ((c.cy + c.radius - origin_y) / scale).ceil() as i32;
-            for py in py0..=py1 {
-                for px in px0..=px1 {
-                    let wx = origin_x + px as f64 * scale;
-                    let wy = origin_y + py as f64 * scale;
-                    if let Some(part) = c.probe(wx, wy) {
-                        set_pixel(&mut buf, px, py, cirque_color(part, c.outflow));
-                    }
-                }
-            }
-        }
-        let tally = |o: Outflow| cirques.iter().filter(|c| c.outflow == o).count();
-        log::info!(
-            "Cirques: {} bowls ({} impounded, {} falls, {} ravines)",
-            cirques.len(),
-            tally(Outflow::Impounded), tally(Outflow::Fall), tally(Outflow::Ravine),
-        );
-    }
 
     // ── Phase 5: Encode ──
 

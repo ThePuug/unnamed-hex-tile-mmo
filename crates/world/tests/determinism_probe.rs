@@ -8,8 +8,8 @@ use std::sync::Arc;
 use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
-use world::events::slope_form::SlopeFormEvent;
-use world::events::spines::SpineEvent;
+use world::events::motion::MotionEvent;
+use world::events::orogen::OrogenEvent;
 use world::PlateCache;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -19,24 +19,27 @@ fn composite() -> Composite {
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(SlopeFormEvent::new()));
+    c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
+    c.add_event(Box::new(OrogenEvent::new()));
     c
 }
 
-/// SpineEvent::query reads its own cell plus a 1-ring of neighbours from
-/// SpineInstanceIndex, but tile_at only guarantees the tile's *own* cell is
-/// deformed. If a neighbour cell is cold, its instances are missing and the
-/// tile reads lower. Sweep a wide grid two ways to see whether that bites:
-/// one composite for everything (neighbours warm from earlier tiles) vs a
-/// fresh composite per tile (neighbours always cold).
+/// Fresh against warm, across cell boundaries.
+///
+/// No layer in this stack reads a neighbouring cell: plates and motion resolve
+/// their own cell, and tilt and orogen are fields with `max_influence` of zero
+/// and empty `deform`. So a tile must read the same whether the cells around it
+/// were already warm or are being touched for the first time — and unlike the
+/// spine layer this replaced, that now holds by construction rather than by
+/// luck. One composite for the whole sweep against a fresh composite per probe
+/// is the test that would catch a layer quietly acquiring a neighbourhood.
 #[test]
 #[ignore]
-fn spine_cell_boundaries_agree() {
-    println!("\n=== spine-cell boundary agreement ===\n");
+fn cold_neighbours_do_not_change_a_tile() {
+    println!("\n=== cold-neighbour agreement ===\n");
 
-    // SPINE cell scale is 15,225 tiles. Step across several cells so plenty of
-    // probes land near a boundary.
+    // Step well past the widest cell scale in the stack so plenty of
+    // probes land near a cell boundary.
     const STEP: i32 = 1200;
     const N: i32 = 26;
     let origin = -(N / 2) * STEP;

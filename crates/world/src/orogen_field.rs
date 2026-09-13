@@ -437,8 +437,8 @@ const OCEANIC_LIFT: f64 = 55.0;
 const OCEANIC_CRUST_SHARE: f64 = OCEANIC_LIFT / OROGEN_MAX_RISE;
 
 /// Share of full thickening the crust at a position can take.
-fn crust_share(wx: f64, wy: f64, seed: u64) -> f64 {
-    let e = substrate_elevation_at(wx, wy, seed);
+fn crust_share(base: f64) -> f64 {
+    let e = base;
     if e >= 0.0 { return 1.0 }
     let submerged = (1.0 + e / SEA_MAX_DEPTH).clamp(0.0, 1.0);
     OCEANIC_CRUST_SHARE + (1.0 - OCEANIC_CRUST_SHARE) * submerged
@@ -447,11 +447,24 @@ fn crust_share(wx: f64, wy: f64, seed: u64) -> f64 {
 // ── The field ───────────────────────────────────────────────────────────────
 
 /// Elevation the orogen adds at a position, in z-levels. Zero outside a belt.
-pub fn relief(wx: f64, wy: f64, seed: u64) -> f64 {
+/// Elevation the orogen adds at a position, in z-levels, given the elevation of
+/// the ground it stands on.
+///
+/// The base decides how much of the thickening reaches the surface: oceanic
+/// crust is thin and dense, so a belt built on it floats lower. Taking it as an
+/// argument is what lets the event read the layer below rather than recomputing
+/// the substrate a second time.
+pub fn relief_on(wx: f64, wy: f64, base: f64, seed: u64) -> f64 {
     let Some(c) = project_to_crest(wx, wy, seed) else { return 0.0 };
     let taper = wedge(c.across, c.asymmetry);
     if taper <= 0.0 { return 0.0 }
-    OROGEN_MAX_RISE * c.strength * crust_share(wx, wy, seed) * taper
+    OROGEN_MAX_RISE * c.strength * crust_share(base) * taper
+}
+
+/// Elevation the orogen adds at a position, reading the substrate itself.
+/// Rendering and measurement only — the event passes the layer below instead.
+pub fn relief(wx: f64, wy: f64, seed: u64) -> f64 {
+    relief_on(wx, wy, substrate_elevation_at(wx, wy, seed), seed)
 }
 
 /// Substrate plus orogen. Rendering and measurement only — nothing composes

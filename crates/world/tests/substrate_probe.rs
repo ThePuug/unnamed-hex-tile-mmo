@@ -129,7 +129,7 @@ fn positive_branch_candidates() {
 #[test]
 #[ignore]
 fn world_census() {
-    use world::{PlateCache, generate_spines};
+    use world::PlateCache;
 
     const SEEDS: [u64; 6] = [
         0x9E3779B97F4A7C15,
@@ -140,15 +140,12 @@ fn world_census() {
         0x0000_0000_0000_0001,
     ];
     const RADIUS: f64 = 30_000.0;
-
     println!("\n=== world census ===\n");
-    println!("{:<20} {:>8} {:>10} {:>8} {:>10}",
-             "seed", "plates", "land %", "spines", "peaks");
-    let mut totals = (0usize, 0usize, 0usize);
+    println!("{:<20} {:>8} {:>10}", "seed", "plates", "land %");
+    let mut total_plates = 0usize;
     for seed in SEEDS {
         let cache = PlateCache::new(seed);
-        let mut plates = cache.plates_in_radius(0.0, 0.0, RADIUS);
-        let n_plates = plates.len();
+        let n_plates = cache.plates_in_radius(0.0, 0.0, RADIUS).len();
 
         // Land fraction over a coarse grid in the same disc.
         const N: i32 = 220;
@@ -165,107 +162,9 @@ fn world_census() {
             }
         }
 
-        let spines = generate_spines(&mut plates, &cache, seed);
-        let peaks: usize = spines.iter().map(|s| s.peaks.len()).sum();
-
-        println!("{seed:#018x} {n_plates:>8} {:>9.2}% {:>8} {peaks:>10}",
-                 100.0 * land as f64 / total as f64, spines.len());
-        totals.0 += n_plates;
-        totals.1 += spines.len();
-        totals.2 += peaks;
+        println!("{seed:#018x} {n_plates:>8} {:>9.2}%",
+                 100.0 * land as f64 / total as f64);
+        total_plates += n_plates;
     }
-    println!("{:<20} {:>8} {:>10} {:>8} {:>10}",
-             "TOTAL", totals.0, "", totals.1, totals.2);
-}
-
-/// Spine epicentre positions, so a rekey can be checked for drift rather than
-/// only for count.
-#[test]
-#[ignore]
-fn spine_positions() {
-    use world::{PlateCache, generate_spines};
-    const SEED2: u64 = 0x9E3779B97F4A7C15;
-    let cache = PlateCache::new(SEED2);
-    let mut plates = cache.plates_in_radius(0.0, 0.0, 30_000.0);
-    let spines = generate_spines(&mut plates, &cache, SEED2);
-    println!("\n=== spine epicentres ({}) ===\n", spines.len());
-    let mut centers: Vec<(i64, i64, usize)> = spines.iter()
-        .map(|s| (s.bounding_center.0.round() as i64,
-                  s.bounding_center.1.round() as i64,
-                  s.peaks.len()))
-        .collect();
-    centers.sort();
-    for (x, y, n) in &centers {
-        println!("  ({x:>8}, {y:>8})  {n} peaks");
-    }
-}
-
-/// How many tiles does the shore-to-deep transition span, on each side?
-/// This is what decides whether a coastline is a beach or a cliff, and it is
-/// the one measurement the depth curve was originally designed against — kept
-/// so the land branch added beside it can be read on the same scale.
-#[test]
-#[ignore]
-fn coastal_profile_width() {
-    use world::{hex_to_world, substrate_elevation_at, SEA_MAX_DEPTH, CONTINENT_MAX_RISE};
-
-    println!("\n=== coast-to-interior and coast-to-abyss width, in tiles ===\n");
-    let targets = [0.25f64, 0.50, 0.90];
-
-    let mut sea: [Vec<i32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    let mut land: [Vec<i32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-
-    for line in 0..6 {
-        let r = -9000 + line * 3000;
-        let mut prev_land: Option<bool> = None;
-        let mut q = -20000;
-        while q < 20000 {
-            let (wx, wy) = hex_to_world(q, r);
-            let is_land = substrate_elevation_at(wx, wy, SEED) >= 0.0;
-            // March away from every crossing, on whichever side it opens onto.
-            if let Some(prev) = prev_land {
-                if prev != is_land {
-                    let (widths, sign, scale) = if is_land {
-                        (&mut land, 1.0, CONTINENT_MAX_RISE)
-                    } else {
-                        (&mut sea, -1.0, SEA_MAX_DEPTH)
-                    };
-                    let mut hit = [false; 3];
-                    for d in 0..6000 {
-                        let (sx, sy) = hex_to_world(q + d, r);
-                        let e = substrate_elevation_at(sx, sy, SEED) * sign;
-                        if e < 0.0 { break } // crossed back over the datum
-                        let frac = (e / scale).clamp(0.0, 1.0);
-                        for (k, &t) in targets.iter().enumerate() {
-                            if !hit[k] && frac >= t {
-                                hit[k] = true;
-                                widths[k].push(d);
-                            }
-                        }
-                        if hit.iter().all(|&h| h) { break }
-                    }
-                }
-            }
-            prev_land = Some(is_land);
-            q += 1;
-        }
-    }
-
-    for (label, widths) in [("seaward", &sea), ("landward", &land)] {
-        println!("  {label}:");
-        for (k, &t) in targets.iter().enumerate() {
-            let mut v = widths[k].clone();
-            v.sort_unstable();
-            if v.is_empty() {
-                println!("    frac {t:.2}: never reached");
-                continue;
-            }
-            let n = v.len();
-            println!(
-                "    tiles from shore to frac {t:.2}:  median {:>5}  p25 {:>5}  p75 {:>5}  (n={n})",
-                v[n / 2], v[n / 4], v[n * 3 / 4],
-            );
-        }
-    }
-    println!("\n  (player view radius is ~400 tiles; they cover 4.33 tiles/sec)");
+    println!("{:<20} {:>8}", "TOTAL", total_plates);
 }

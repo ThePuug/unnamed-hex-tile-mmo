@@ -3,8 +3,7 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
-use world::events::slope_form::SlopeFormEvent;
-use world::events::spines::SpineEvent;
+use world::events::orogen::OrogenEvent;
 use world::TagSet;
 
 /// Server-side registry of world events.
@@ -23,9 +22,8 @@ impl EventRegistry {
         let mut composite = Composite::new(seed);
         composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
         composite.add_event(Box::new(TiltEvent::new()));
-        composite.add_event(Box::new(MotionEvent::with_cache(plate_cache.clone(), seed)));
-        composite.add_event(Box::new(SpineEvent::with_cache(plate_cache, seed)));
-        composite.add_event(Box::new(SlopeFormEvent::new()));
+        composite.add_event(Box::new(MotionEvent::with_cache(plate_cache, seed)));
+        composite.add_event(Box::new(OrogenEvent::new()));
 
         Self { composite: std::sync::Arc::new(composite) }
     }

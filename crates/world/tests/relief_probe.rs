@@ -12,8 +12,8 @@ use common::PlateTag;
 use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
-use world::events::slope_form::SlopeFormEvent;
-use world::events::spines::SpineEvent;
+use world::events::motion::MotionEvent;
+use world::events::orogen::OrogenEvent;
 use world::{hex_to_world, substrate_elevation_at, PlateCache};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -27,8 +27,8 @@ fn composite() -> Composite {
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
     c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(SpineEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(SlopeFormEvent::new()));
+    c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
+    c.add_event(Box::new(OrogenEvent::new()));
     c
 }
 
@@ -378,7 +378,7 @@ fn feature_spacing() {
 #[ignore]
 fn spawn_point_is_above_water() {
     let c = composite();
-    for &(q, r, label) in &[(3423, 1155, "server spawn")] {
+    for &(q, r, label) in &[(116953, 21431, "server spawn")] {
         let view = c.tile_at(q, r);
         let tags: Vec<_> = view.tags.iter().collect();
         println!("  {label} ({q},{r}): z={} tags={tags:?}", c.elevation_at(q, r));
@@ -397,7 +397,7 @@ fn spawn_point_is_above_water() {
 #[ignore]
 fn distance_to_water_from_spawn() {
     let c = composite();
-    let (sq, sr) = (3423, 1155);
+    let (sq, sr) = (116953, 21431);
     let mut nearest = i32::MAX;
     let mut dir = (0, 0);
     for spoke in 0..24 {
@@ -419,4 +419,142 @@ fn distance_to_water_from_spawn() {
             dir, nearest as f64 * 1.732
         );
     }
+}
+
+/// The event and the field must agree.
+///
+/// `OrogenEvent::query` passes `below.elevation` as the base, where the field's
+/// own `relief` reads the substrate directly. Below sea level tilt contributes
+/// nothing, and above it `crust_share` is already saturated, so the two should
+/// differ only in the beach band where tilt can carry a barely-positive
+/// substrate across the datum. This measures how much of the world that is.
+#[test]
+#[ignore]
+fn event_matches_the_field() {
+    use world::orogen_field::relief;
+    use world::{hex_to_world, substrate_elevation_at};
+
+    let c = composite();
+    const N: i32 = 260;
+    const STEP: i32 = 900;
+    let origin = -(N / 2) * STEP;
+    let (mut land, mut belt, mut total) = (0usize, 0usize, 0usize);
+    let mut diffs = Vec::new();
+
+    for i in 0..N {
+        for j in 0..N {
+            let (q, r) = (origin + i * STEP, origin + j * STEP);
+            let (wx, wy) = hex_to_world(q, r);
+            let base = substrate_elevation_at(wx, wy, SEED);
+            total += 1;
+            if base >= 0.0 { land += 1 }
+
+            // Orogen's contribution as the stack applies it, against the field
+            // read on its own.
+            let stacked = c.tile_at(q, r).elevation;
+            let tilt_only = world::events::tilt::tilt_at(wx, wy, base, SEED);
+            let via_event = stacked - base - tilt_only;
+            let via_field = relief(wx, wy, SEED);
+            if base >= 0.0 && (via_field > 1.0 || via_event > 1.0) { belt += 1 }
+            let d = (via_event - via_field).abs();
+            if d > 1e-9 { diffs.push(d) }
+        }
+    }
+    println!("\n=== event against field ===");
+    println!("  samples {total}, land {:.2}%, belt {:.2}% of land",
+             100.0 * land as f64 / total as f64,
+             100.0 * belt as f64 / land.max(1) as f64);
+    println!("  positions where they differ at all: {} ({:.4}%)",
+             diffs.len(), 100.0 * diffs.len() as f64 / total as f64);
+    if !diffs.is_empty() {
+        diffs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!("  difference, z: p50 {:.4}  p90 {:.4}  max {:.4}",
+                 diffs[diffs.len() / 2], diffs[diffs.len() * 9 / 10], diffs[diffs.len() - 1]);
+    }
+}
+
+#[test]
+#[ignore]
+fn adjacent_tile_steps() {
+    println!("\n=== ADJACENT-TILE ELEVATION STEPS ===");
+    let c = composite();
+    // Hex neighbours are coordinate offsets.
+    const NB: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+    const N: i32 = 340;
+    const STEP: i32 = 37;
+    let origin = -(N / 2) * STEP;
+    let mut steps = Vec::new();
+    let mut belt_steps = Vec::new();
+    let (mut blocked, mut total) = (0usize, 0usize);
+
+    for i in 0..N {
+        for j in 0..N {
+            let (q, r) = (origin + i * STEP, origin + j * STEP);
+            let z = c.elevation_at(q, r);
+            let e = c.tile_at(q, r).elevation;
+            let (wx, wy) = world::hex_to_world(q, r);
+            let base = world::substrate_elevation_at(wx, wy, SEED);
+            let in_belt = e - base > 1.0;
+            for (dq, dr) in NB {
+                let zn = c.elevation_at(q + dq, r + dr);
+                let d = (z - zn).abs();
+                total += 1;
+                if d > 1 { blocked += 1 }
+                steps.push(d as f64);
+                if in_belt { belt_steps.push(d as f64) }
+            }
+        }
+    }
+    let q = |v: &mut Vec<f64>, p: f64| { v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[((v.len() - 1) as f64 * p) as usize] };
+    println!("  neighbour pairs: {total}");
+    println!("  |dz| p50 {:.0}  p90 {:.0}  p99 {:.0}  max {:.0}",
+             q(&mut steps, 0.5), q(&mut steps, 0.9), q(&mut steps, 0.99), q(&mut steps, 1.0));
+    println!("  steps over 1 z (blocks movement): {blocked} ({:.2}%)",
+             100.0 * blocked as f64 / total as f64);
+    if !belt_steps.is_empty() {
+        println!("  within belts: p50 {:.0}  p90 {:.0}  max {:.0}  ({} pairs)",
+                 q(&mut belt_steps, 0.5), q(&mut belt_steps, 0.9), q(&mut belt_steps, 1.0),
+                 belt_steps.len());
+    }
+}
+
+/// The ceiling has to survive the stack. `OROGEN_MAX_RISE` is 1,200 z and the
+/// field reaches it; this checks the event delivers it too, sampled at crests
+/// the field probe already found rather than on a blind grid — a belt is a
+/// fifth of the land and a coarse sweep lands on its skirts.
+#[test]
+#[ignore]
+fn belt_reaches_its_ceiling() {
+    use world::orogen_field::relief;
+    println!("\n=== PEAK ELEVATION IN THE INTEGRATED WORLD ===");
+    let c = composite();
+
+    const CRESTS: [(f64, f64); 5] = [
+        (-165_471.0, 194_471.0), (-85_430.0, -5_849.0), (126_588.0, 17_832.0),
+        (-10_727.0, -109_377.0), (-97_879.0, -199_527.0),
+    ];
+    println!("  {:>12} {:>12} {:>10} {:>10} {:>10}",
+             "world x", "world y", "field", "stacked", "orogen");
+    let mut best: f64 = f64::MIN;
+    for (wx, wy) in CRESTS {
+        let (cq, cr) = world::world_to_hex(wx, wy);
+        let (mut bz, mut bo, mut bf) = (f64::MIN, 0.0, 0.0);
+        for dq in -40..=40i32 {
+            for dr in -40..=40i32 {
+                let (q, r) = (cq + dq * 30, cr + dr * 30);
+                let (px, py) = world::hex_to_world(q, r);
+                let e = c.tile_at(q, r).elevation;
+                if e > bz {
+                    bz = e;
+                    bo = e - world::substrate_elevation_at(px, py, SEED);
+                    bf = relief(px, py, SEED);
+                }
+            }
+        }
+        println!("  {wx:>12.0} {wy:>12.0} {bf:>10.1} {bz:>10.1} {bo:>10.1}");
+        best = best.max(bz);
+    }
+    println!("\n  highest stacked elevation found: {best:.1} z");
+    println!("  OROGEN_MAX_RISE = {}", world::orogen_field::OROGEN_MAX_RISE);
 }
