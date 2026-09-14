@@ -9,6 +9,7 @@ members = [
     "crates/console",
     "crates/world",
     "crates/world-viewer",
+    "crates/texgen",
 ]
 
 [profile.dev]

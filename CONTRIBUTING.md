@@ -61,6 +61,17 @@ Views, what each reads, and when one is added or removed: `crates/world-viewer/R
 
 See `cargo run --bin world-viewer -- --help` for all options.
 
+### texgen
+
+Tileable texture generator. Each texture is a module; the PNG under `assets/textures` is its output.
+
+```bash
+cargo run --bin texgen -- grass-plain
+cargo run --bin texgen -- --list
+```
+
+Textures and how one is made: `crates/texgen/README.md` and `crates/texgen/AGENTS.md`.
+
 ### console
 
 Server monitoring console tool.
