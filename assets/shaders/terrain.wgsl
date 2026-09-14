@@ -28,13 +28,20 @@ struct TerrainCut {
 }
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain_cut: TerrainCut;
 
-// Grass albedo (client TerrainExtension), repeated over world XZ since the
-// terrain carries no per-tile UVs. Loaded PNGs have no mipmaps, so the
-// repeat is sized to put a texel near a screen pixel at gameplay height; a
-// finer repeat shimmers with distance.
+// Surface albedos (client TerrainExtension), repeated over world space
+// since the terrain carries no per-tile UVs: grass and scree over XZ on the
+// tops, stone over the vertical planes on the faces. Loaded PNGs have no
+// mipmaps, so the repeats are sized to put a texel near a screen pixel at
+// gameplay height; a finer repeat shimmers with distance.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var grass_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var grass_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var cliff_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(104) var cliff_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var scree_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(106) var scree_sampler: sampler;
 const GRASS_REPEAT_WU: f32 = 8.0;
+const CLIFF_REPEAT_WU: f32 = 8.0;
+const SCREE_REPEAT_WU: f32 = 8.0;
 
 fn band_cut(world_xz: vec2<f32>) {
     let d = length(world_xz - terrain_cut.center);
@@ -105,7 +112,8 @@ const RAMP_B: array<f32, 14> = array<f32, 14>(
 // Per-tile brightness noise strength (±10%).
 const NOISE_STRENGTH: f32 = 0.10;
 
-// Cliff face color (stone grey), linear RGB.
+// Cliff face colour (stone grey), linear RGB: the mean the stone tile is
+// pinned to in texgen, so the faces keep this colour at a distance.
 const CLIFF_COLOR: vec3<f32> = vec3<f32>(0.35, 0.32, 0.28);
 
 // Normal Y threshold: below this, the face is treated as a cliff.
@@ -116,6 +124,24 @@ const CLIFF_NORMAL_THRESHOLD: f32 = 0.3;
 /// toward the upland.
 fn grass_weight(elev: f32) -> f32 {
     return smoothstep(RAMP_E[3], RAMP_E[4], elev) * (1.0 - smoothstep(RAMP_E[5], RAMP_E[6], elev));
+}
+
+/// How much of a top is scree: the ramp's mountain band, growing in from
+/// the dry olive stop to the brown flank and thinning out where bare pale
+/// rock begins.
+fn scree_weight(elev: f32) -> f32 {
+    return smoothstep(RAMP_E[7], RAMP_E[8], elev) * (1.0 - smoothstep(RAMP_E[10], RAMP_E[11], elev));
+}
+
+/// Stone on a face: the tile projected along each horizontal axis, with
+/// world up as the tile's up (image rows run downward, hence -y), the two
+/// blended by how squarely the face meets each axis.
+fn cliff_albedo(world_position: vec3<f32>, world_normal: vec3<f32>) -> vec3<f32> {
+    let n = abs(world_normal.xz);
+    let w = n / max(n.x + n.y, 1e-3);
+    let along_x = textureSample(cliff_texture, cliff_sampler, vec2<f32>(world_position.z, -world_position.y) / CLIFF_REPEAT_WU).rgb;
+    let along_z = textureSample(cliff_texture, cliff_sampler, vec2<f32>(world_position.x, -world_position.y) / CLIFF_REPEAT_WU).rgb;
+    return along_x * w.x + along_z * w.y;
 }
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -171,22 +197,27 @@ fn fragment(
     // Sampled here, in uniform control flow, because the cliff branch below
     // is not.
     let grass = textureSample(grass_texture, grass_sampler, in.world_position.xz / GRASS_REPEAT_WU).rgb;
+    let scree = textureSample(scree_texture, scree_sampler, in.world_position.xz / SCREE_REPEAT_WU).rgb;
+    let cliff = cliff_albedo(in.world_position.xyz, in.world_normal);
 
     // Convert world Y to elevation (undo rise offset + rise-per-level scaling).
     let elevation = (in.world_position.y - RISE) / RISE;
 
-    // Cliff faces are stone grey. Tops take the ramp, with the grass tile
-    // over its green band: the tile averages to the plain stop, so it is
+    // Faces wear the stone tile, which averages to the cliff grey. Tops take
+    // the ramp, with the grass tile over its green band and the scree tile
+    // over its mountain band. Grass averages to the plain stop, so it is
     // scaled to the ramp's brightness at this elevation and the ramp keeps
-    // its own light-to-dark across the band.
+    // its own light-to-dark across the band; scree is its own colour and
+    // stands in for the ramp where it is full.
     var base: vec3<f32>;
     if abs(in.world_normal.y) < CLIFF_NORMAL_THRESHOLD {
-        base = CLIFF_COLOR;
+        base = cliff;
     } else {
         let ramp = elevation_color(elevation);
         let plain = vec3<f32>(RAMP_R[4], RAMP_G[4], RAMP_B[4]);
         let lit = grass * (luminance(ramp) / luminance(plain));
         base = mix(ramp, lit, grass_weight(elevation));
+        base = mix(base, scree, scree_weight(elevation));
     }
 
     // Atmospheric fade: derive the visual horizon from camera altitude with

@@ -34,19 +34,30 @@ impl Default for TerrainCut {
 }
 
 /// Terrain material extension: elevation colour in the fragment shader,
-/// grass over the ramp's green band, atmospheric fade from the view
-/// position, and the band cut. The shaders are shared; the cut is per
-/// material, one material per LoD level.
+/// grass over the ramp's green band and scree over its mountain band on
+/// the tops, stone on the faces, atmospheric fade from the view position,
+/// and the band cut. The shaders are shared; the cut is per material, one
+/// material per LoD level.
+///
+/// Every texture is sampled in world space, so its sampler must wrap: a
+/// clamped sampler smears the edge texel across the terrain.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct TerrainExtension {
     #[uniform(100)]
     pub cut: TerrainCut,
-    /// `assets/textures/grass-plain.png`, sampled in world space, so its
-    /// sampler must wrap: a clamped sampler smears the edge texel across the
-    /// plain.
+    /// `assets/textures/grass-plain.png`, on tile tops over world XZ.
     #[texture(101)]
     #[sampler(102)]
     pub grass: Handle<Image>,
+    /// `assets/textures/cliff-stone.png`, on faces over the vertical
+    /// planes, world up as the tile's up.
+    #[texture(103)]
+    #[sampler(104)]
+    pub cliff: Handle<Image>,
+    /// `assets/textures/mountain-scree.png`, on tile tops over world XZ.
+    #[texture(105)]
+    #[sampler(106)]
+    pub scree: Handle<Image>,
 }
 
 impl MaterialExtension for TerrainExtension {
@@ -101,27 +112,34 @@ impl Server {
 }
 
 /// Terrain materials by LoD level, created on first use so a forced debug
-/// radius gets one like any ladder level. Every level shares the grass
-/// texture, loaded once here.
+/// radius gets one like any ladder level. Every level shares the textures,
+/// loaded once here.
 #[derive(Resource)]
 pub struct TerrainMaterial {
     pub by_level: HashMap<u32, Handle<TerrainMaterialAsset>>,
     grass: Handle<Image>,
+    cliff: Handle<Image>,
+    scree: Handle<Image>,
 }
 
 impl FromWorld for TerrainMaterial {
     fn from_world(world: &mut World) -> Self {
-        let grass = world.resource::<AssetServer>().load_with_settings(
-            "textures/grass-plain.png",
-            |settings: &mut ImageLoaderSettings| {
+        let assets = world.resource::<AssetServer>();
+        let repeating = |path: &'static str| {
+            assets.load_with_settings(path, |settings: &mut ImageLoaderSettings| {
                 settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                     address_mode_u: ImageAddressMode::Repeat,
                     address_mode_v: ImageAddressMode::Repeat,
                     ..ImageSamplerDescriptor::linear()
                 });
-            },
-        );
-        Self { by_level: HashMap::new(), grass }
+            })
+        };
+        Self {
+            by_level: HashMap::new(),
+            grass: repeating("textures/grass-plain.png"),
+            cliff: repeating("textures/cliff-stone.png"),
+            scree: repeating("textures/mountain-scree.png"),
+        }
     }
 }
 
@@ -145,7 +163,12 @@ impl TerrainMaterial {
                         alpha_mode: AlphaMode::Mask(0.5),
                         ..default()
                     },
-                    extension: TerrainExtension { grass: self.grass.clone(), ..default() },
+                    extension: TerrainExtension {
+                        grass: self.grass.clone(),
+                        cliff: self.cliff.clone(),
+                        scree: self.scree.clone(),
+                        ..default()
+                    },
                 })
             })
             .clone()
