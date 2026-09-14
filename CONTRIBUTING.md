@@ -57,7 +57,7 @@ Headless world composite visualization tool. Renders PNGs for validating terrain
 cargo run --bin world-viewer -- --layers plates,elevation --radius 15000 --scale 8 --output world.png
 ```
 
-Available layers: `plates`, `elevation`, `centroids`, `boundaries`, `tilt`, `orogen-field`, `orogen-belts`, `orogen-section`
+Views, what each reads, and when one is added or removed: `crates/world-viewer/README.md`.
 
 See `cargo run --bin world-viewer -- --help` for all options.
 

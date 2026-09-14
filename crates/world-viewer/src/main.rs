@@ -1,7 +1,11 @@
-//! World Viewer — renders the world event composite to image.
-
-//! Instantiates the same Composite + event stack the server uses.
-//! Same seed = same output.
+//! World viewer: the event stack, or one event's product, rendered to an image.
+//!
+//! Two kinds of view, and a view is one or the other. A composite view draws
+//! what the stack composes at each tile, read through the composite and
+//! nothing else. An event view draws one event's own product: an index read
+//! from the registry, or a field read through the event's own functions. The
+//! stack built here is the server's stack, so same seed, same image. Which
+//! views exist, and when one is added or removed, is the README.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -10,7 +14,6 @@ use clap::Parser;
 use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 
-use common::{PlateTag, TagSet};
 use world::events::Composite;
 use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
@@ -21,42 +24,77 @@ use world::events::tilt::TiltEvent;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
-    /// Crustal substrate, coloured by elevation against sea level.
+    /// Plate field: the substrate, coloured by elevation against sea level.
     Plates,
-    /// Height tinting with slope shading.
+    /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
-    /// Macro plate centroid markers (red dots).
+    /// Plate index: macro plate centroid markers (red dots).
     Centroids,
-    /// Plate boundaries, drawn by what the motion resolves them to.
+    /// Motion index: plate boundaries, drawn by what the motion resolves
+    /// them to.
     Boundaries,
-    /// PROTOTYPE: orogen as a field — hillshaded surface, composite bypassed.
+    /// Orogen field: the hillshaded surface.
     OrogenField,
-    /// Regional continental tilt as a diverging ramp, with lean arrows.
+    /// Tilt field: a diverging ramp, with lean arrows.
     Tilt,
-    /// PROTOTYPE: belt mask over the substrate coastline — belt shape alone.
+    /// Orogen field: belt mask over the substrate coastline, shape alone.
     OrogenBelts,
-    /// PROTOTYPE: cross-section through the orogen field along the midline.
+    /// Orogen field: cross-section through the viewport centre, across the
+    /// belt axis.
     OrogenSection,
+}
+
+/// Every view by its command-line name. The one list: parsing, the help text
+/// and the error message all read it.
+const LAYERS: &[(&str, Layer)] = &[
+    ("plates", Layer::Plates),
+    ("elevation", Layer::Elevation),
+    ("centroids", Layer::Centroids),
+    ("boundaries", Layer::Boundaries),
+    ("tilt", Layer::Tilt),
+    ("orogen-field", Layer::OrogenField),
+    ("orogen-belts", Layer::OrogenBelts),
+    ("orogen-section", Layer::OrogenSection),
+];
+
+impl Layer {
+    fn name(self) -> &'static str {
+        LAYERS.iter().find(|(_, l)| *l == self).map(|(n, _)| *n).unwrap()
+    }
+
+    /// A field view paints every pixel from one field and owns the image, so
+    /// it cannot stack with anything.
+    fn is_whole_image(self) -> bool {
+        matches!(
+            self,
+            Layer::Tilt | Layer::OrogenField | Layer::OrogenBelts | Layer::OrogenSection
+        )
+    }
+}
+
+fn layer_names() -> String {
+    LAYERS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+}
+
+fn layer_help() -> String {
+    format!(
+        "Comma-separated views drawn bottom to top. Available: {}",
+        layer_names()
+    )
 }
 
 fn parse_layers(s: &str) -> Vec<Layer> {
     s.split(',')
-        .map(|name| match name.trim() {
-            "plates" => Layer::Plates,
-            "elevation" => Layer::Elevation,
-            "centroids" => Layer::Centroids,
-            "boundaries" => Layer::Boundaries,
-            "orogen-field" => Layer::OrogenField,
-            "orogen-section" => Layer::OrogenSection,
-            "orogen-belts" => Layer::OrogenBelts,
-            "tilt" => Layer::Tilt,
-            other => {
-                eprintln!(
-                    "Unknown layer: {other:?}. Valid: plates, elevation, spines, \
-                     centroids, spine-peaks, cirques, boundaries, orogen-crests, \n                     orogen-field, orogen-section"
-                );
-                std::process::exit(1);
-            }
+        .map(|name| {
+            let name = name.trim();
+            LAYERS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, l)| *l)
+                .unwrap_or_else(|| {
+                    eprintln!("Unknown layer: {name:?}. Valid: {}", layer_names());
+                    std::process::exit(1);
+                })
         })
         .collect()
 }
@@ -90,12 +128,8 @@ struct Cli {
     #[arg(long, default_value_t = 0x9E3779B97F4A7C15)]
     seed: u64,
 
-    /// Comma-separated layer stack drawn bottom to top.
-    /// Available: plates, elevation, centroids, boundaries, tilt,
-    /// orogen-field, orogen-section, orogen-belts
-    #[arg(long, default_value = "plates,elevation")]
+    #[arg(long, default_value = "plates,elevation", help = layer_help())]
     layers: String,
-
 }
 
 // ── Color helpers ──
@@ -180,19 +214,7 @@ fn main() {
     let w = width as usize;
     let h = height as usize;
 
-    let layer_names: Vec<&str> = layers
-        .iter()
-        .map(|l| match l {
-            Layer::Plates => "plates",
-            Layer::Elevation => "elevation",
-            Layer::Centroids => "centroids",
-            Layer::Boundaries => "boundaries",
-            Layer::OrogenField => "orogen-field",
-            Layer::OrogenSection => "orogen-section",
-            Layer::OrogenBelts => "orogen-belts",
-            Layer::Tilt => "tilt",
-        })
-        .collect();
+    let layer_names: Vec<&str> = layers.iter().map(|l| l.name()).collect();
 
     log::info!(
         "world-viewer: center=({},{}) radius={} scale={} seed={:#x} layers=[{}] -> {}x{}",
@@ -207,25 +229,23 @@ fn main() {
     );
 
 
-    // PROTOTYPE: the orogen field is point-evaluable, so these modes render
-    // straight from the field and never touch the composite.
-    if layers.contains(&Layer::OrogenField) || layers.contains(&Layer::OrogenSection)
-        || layers.contains(&Layer::OrogenBelts) || layers.contains(&Layer::Tilt) {
+    if let Some(&view) = layers.iter().find(|l| l.is_whole_image()) {
+        if layers.len() > 1 {
+            eprintln!(
+                "{} paints the whole image and cannot stack with other views",
+                view.name()
+            );
+            std::process::exit(1);
+        }
         let t = Instant::now();
-        let buf = if layers.contains(&Layer::Tilt) {
-            render_tilt(&cli, w, h, scale)
-        } else if layers.contains(&Layer::OrogenBelts) {
-            render_orogen_belts(&cli, w, h, scale)
-        } else if layers.contains(&Layer::OrogenSection) {
-            render_orogen_section(&cli, w, h, scale)
-        } else {
-            render_orogen_field(&cli, w, h, scale)
+        let buf = match view {
+            Layer::Tilt => render_tilt(&cli, w, h, scale),
+            Layer::OrogenBelts => render_orogen_belts(&cli, w, h, scale),
+            Layer::OrogenSection => render_orogen_section(&cli, w, h, scale),
+            _ => render_orogen_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
-        let output = cli.output.clone().unwrap_or_else(|| "orogen.png".into());
-        image::save_buffer(&output, &buf, width, height, image::ColorType::Rgb8)
-            .expect("Failed to write PNG");
-        log::info!("Saved {output}");
+        save(&cli, &buf, width, height);
         return;
     }
     let needs_boundaries = layers.contains(&Layer::Boundaries);
@@ -263,9 +283,9 @@ fn main() {
     // fills the indexes the marker layers below read.
     let views = composite.tiles_at(&coords);
 
-    let tile_cache: HashMap<(i32, i32), (TagSet, f64)> = views
+    let tile_cache: HashMap<(i32, i32), f64> = views
         .into_iter()
-        .map(|((q, r), v)| ((q, r), (v.tags, v.elevation)))
+        .map(|((q, r), v)| ((q, r), v.elevation))
         .collect();
 
     let tile_secs = lap.elapsed().as_secs_f64();
@@ -320,10 +340,7 @@ fn main() {
                     let wy = origin_y + (py as f64) * scale;
                     let (q, r) = world::world_to_hex(wx, wy);
 
-                    let (tags, elevation) = tc
-                        .get(&(q, r))
-                        .copied()
-                        .unwrap_or((TagSet::new(), 0.0));
+                    let elevation = tc.get(&(q, r)).copied().unwrap_or(0.0);
 
                     let mut color = (0.0f64, 0.0, 0.0);
 
@@ -355,7 +372,7 @@ fn main() {
                                     .iter()
                                     .map(|&(dq, dr)| {
                                         let ne =
-                                            tc.get(&(q + dq, r + dr)).map_or(0.0, |v| v.1);
+                                            tc.get(&(q + dq, r + dr)).copied().unwrap_or(0.0);
                                         (ne - elevation).abs()
                                     })
                                     .fold(0.0f64, f64::max);
@@ -492,9 +509,14 @@ fn main() {
 
 
 
-    // ── Phase 5: Encode ──
+    save(&cli, &buf, width, height);
+}
 
-    let output = cli.output.unwrap_or_else(|| match cli.format.as_str() {
+/// Encode an RGB buffer in the requested format. The default output name
+/// follows the format, so `world.qoi` and `world.png` never hold the other's
+/// bytes.
+fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
+    let output = cli.output.clone().unwrap_or_else(|| match cli.format.as_str() {
         "png" => "world.png".to_string(),
         _ => "world.qoi".to_string(),
     });
@@ -502,7 +524,7 @@ fn main() {
     let lap = Instant::now();
     match cli.format.as_str() {
         "png" => {
-            image::save_buffer(&output, &buf, width, height, image::ColorType::Rgb8)
+            image::save_buffer(&output, buf, width, height, image::ColorType::Rgb8)
                 .expect("Failed to save PNG");
         }
         _ => {
@@ -511,7 +533,7 @@ fn main() {
                 height,
                 colors: Colors::Rgb,
             }
-            .encode_alloc(&buf)
+            .encode_alloc(buf)
             .expect("QOI encode failed");
             std::fs::write(&output, &encoded).expect("Failed to write QOI");
         }
@@ -520,11 +542,11 @@ fn main() {
     log::info!("Saved {output}");
 }
 
-// ── Orogen field prototype ──────────────────────────────────────────────────
+// ── Field views ─────────────────────────────────────────────────────────────
 //
-// PROTOTYPE ONLY. The orogen field is point-evaluable, so these two modes
-// bypass the composite entirely rather than materialising tiles. Nothing here
-// is part of the event stack and nothing else in the viewer depends on it.
+// Point-evaluable fields, read through the event's own functions rather than
+// through the composite: no tile is materialised, and the number drawn is the
+// number the event returns, never a re-derivation of it.
 
 /// Mirrors the terrain shader's elevation ramp, so a viewer render and the game
 /// read the same heights the same way. See `assets/shaders/terrain.wgsl` for
@@ -555,8 +577,8 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
     STOPS[STOPS.len() - 1].1
 }
 
-/// Hillshaded surface, so the fold texture reads independently of how the
-/// absolute vertical scale happens to be calibrated.
+/// Hillshaded surface, so relief reads independently of how the absolute
+/// vertical scale happens to be calibrated.
 fn render_orogen_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
@@ -595,8 +617,8 @@ fn render_orogen_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
 /// sea level, and which way the wedge leans.
 fn render_orogen_section(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let seed = cli.seed;
-    // Cut ACROSS the local fold axis, not along the image. A section taken
-    // along the axis runs down a ridge and shows no ridge-and-valley at all.
+    // Cut across the belt axis, not along the image. A section taken along
+    // the axis runs down the crest and shows no flank at all.
     let (ux, uy) = world::orogen_field::project_to_crest(cli.center_x, cli.center_y, seed)
         .map(|c| c.axis)
         .unwrap_or((1.0, 0.0));
@@ -738,7 +760,7 @@ fn render_tilt(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let spacing = (w / 26).max(24);
     let arm = (spacing as f64 * 0.42) as i64;
     let d = scale * 4.0;
-    let mut put = |buf: &mut Vec<u8>, x: i64, y: i64| {
+    let put = |buf: &mut Vec<u8>, x: i64, y: i64| {
         if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 { return }
         let k = (y as usize * w + x as usize) * 3;
         buf[k] = 20; buf[k + 1] = 20; buf[k + 2] = 24;

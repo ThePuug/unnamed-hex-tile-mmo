@@ -53,7 +53,7 @@ flat-top hex grid. All crates under `crates/`:
 | `client` | Rendering, input, networking |
 | `server` | Authority, AI, terrain serving, connections |
 | `world` | World event system + terrain generation, no Bevy |
-| `world-viewer` | CLI rendering world composite layers to PNG |
+| `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
 
