@@ -73,11 +73,14 @@ pub struct FlyoverState {
     pub world_position: Vec3,
     pub speed_multiplier: f32,
     pub hold_time: f32,
-    /// Chunks whose tiles were generated locally (not server-sourced).
+    /// Chunks whose tiles were generated locally. Server-streamed chunks
+    /// never enter this set: they stay in the Map and `LoadedChunks`
+    /// throughout flyover, and only this set is evicted on toggle-off, or
+    /// the ground under the player would vanish — the server never resends
+    /// a chunk its sent-tracking already lists.
     pub generated_chunks: HashSet<ChunkId>,
     /// Stashed normal-play state, restored on flyover toggle-off.
     pub stashed_summary_meshes: Option<HashMap<common_bevy::summary_mesh::MeshRegionKey, crate::resources::SummaryMeshState>>,
-    pub stashed_loaded: Option<HashSet<ChunkId>>,
     /// Current detail-chunk radius (chunks), published by flyover_gen each
     /// frame. This is the flyover's true local-data extent: the ownership
     /// boundary between Map-built regions and producer-built regions. In
@@ -107,7 +110,6 @@ impl Default for FlyoverState {
             hold_time: 0.0,
             generated_chunks: HashSet::new(),
             stashed_summary_meshes: None,
-            stashed_loaded: None,
             detail_radius_chunks: common_bevy::chunk::FOV_CHUNK_RADIUS,
         }
     }
@@ -278,7 +280,6 @@ fn execute_admin_actions(
                 state.mesh_handle = None;
             }
             flyover.stashed_summary_meshes = Some(stashed);
-            flyover.stashed_loaded = Some(loaded_chunks.chunks.drain().collect());
 
             // Spawn ground cursor
             let cursor_mesh = meshes.add(Sphere::new(0.25));
@@ -319,9 +320,6 @@ fn execute_admin_actions(
                 for (key, state) in stashed {
                     summary_meshes.states.insert(key, state);
                 }
-            }
-            if let Some(stashed) = flyover.stashed_loaded.take() {
-                loaded_chunks.chunks.extend(stashed);
             }
             // Drop flyover-sourced summaries; server-sourced entries survive
             // so the gameplay horizon restores instantly (the server's
