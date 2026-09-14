@@ -10,6 +10,7 @@ use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::orogen::OrogenEvent;
+use world::events::drainage::DrainageEvent;
 use world::PlateCache;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -21,6 +22,7 @@ fn composite() -> Composite {
     c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
     c.add_event(Box::new(OrogenEvent::new()));
+    c.add_event(Box::new(DrainageEvent::new()));
     c
 }
 

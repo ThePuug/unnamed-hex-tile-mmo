@@ -32,7 +32,9 @@
 //! and writes entries lying in C alone — `CellScope::publish` takes no cell id,
 //! so that half is enforced. It cannot see its own layer's ring: the cells
 //! there may not be deformed yet, and folding whatever happens to be warm makes
-//! the answer depend on visit order.
+//! the answer depend on visit order. A deform that reads no index below says
+//! so — `reads_below` returns false — and the cascade stops at it; a read from
+//! such a deform panics rather than returning empty.
 //!
 //! `prepare(L, C)` reads L's own indexes over C plus exactly one ring, which
 //! the framework guarantees is deformed by then. One ring is the entire budget
@@ -63,10 +65,11 @@
 //! reach a consumer may ask about turns it into one lookup.
 //!
 //! **Measure before and after, against the same stack without your layer.**
-//! `crates/world/tests/slope_probe.rs` shows the shape: contiguous chunk,
+//! `crates/world/tests/relief_probe.rs` shows the shape: contiguous chunk,
 //! sparse sample, summary region, each read either side of the layer. A ratio
 //! that only looks reasonable on the dense pattern is not a result.
 
+pub mod drainage;
 pub mod index;
 pub mod motion;
 pub mod orogen;
@@ -129,6 +132,9 @@ pub struct CellScope<'a> {
     lattice: &'a HexLattice,
     indexes: &'a IndexRegistry,
     seed: u64,
+    /// False only for a deform whose event declared `reads_below() == false`:
+    /// nothing beneath it was deformed, so a read would be silent-empty.
+    reads_below: bool,
 }
 
 impl<'a> CellScope<'a> {
@@ -138,9 +144,19 @@ impl<'a> CellScope<'a> {
     /// This layer's cell lattice, for reaching a neighbourhood of cells.
     pub fn lattice(&self) -> &HexLattice { self.lattice }
 
+    fn assert_reads(&self) {
+        assert!(
+            self.reads_below,
+            "an event declared reads_below() == false and then read an index \
+             from deform; nothing beneath its cell was deformed, so the read \
+             would return empty"
+        );
+    }
+
     /// Read any index. A layer settles its own ground against everything that
     /// reaches it, which means reading past its own cell.
     pub fn read<T: EventIndex>(&self) -> Option<MappedRwLockReadGuard<'_, T>> {
+        self.assert_reads();
         self.indexes.get::<T>()
     }
 
@@ -152,6 +168,7 @@ impl<'a> CellScope<'a> {
     /// arithmetic that disagreed about which cells were in scope, and an index
     /// read outside the deformed set returns empty rather than failing.
     pub fn source_cells<T: EventIndex>(&self) -> Vec<CellId> {
+        self.assert_reads();
         let scale = self.indexes
             .source_scale_of(std::any::TypeId::of::<T>())
             .unwrap_or(self.lattice.radius);
@@ -193,6 +210,15 @@ pub trait WorldEvent: Send + Sync {
     /// against an undeformed cell returns empty rather than failing, so nothing
     /// reports it.
     fn max_influence(&self) -> u32 { 0 }
+
+    /// Whether `deform` reads any index a lower layer published.
+
+    /// The cascade deforms every lower layer under a cell and its ring so that
+    /// those reads return complete data. A deform that reads none of them — a
+    /// field, or a layer routing over the closed-form surface beneath it —
+    /// returns false, and the cascade stops at it. Its [`CellScope`] then
+    /// refuses index reads rather than returning empty.
+    fn reads_below(&self) -> bool { true }
 
     /// Pre-register index types this event writes during deform.
     /// Called once during `Composite::add_event()`. Events call
@@ -682,6 +708,7 @@ impl Composite {
             lattice: &self.lattices[layer],
             indexes: &self.indexes,
             seed: self.seed,
+            reads_below: true,
         };
         let built: Arc<dyn Any + Send + Sync> = Arc::from(self.events[layer].prepare(&scope));
         self.cell_caches[layer].contexts.insert(cell_id, built.clone());
@@ -707,12 +734,16 @@ impl Composite {
         self.cell_caches[layer].metrics.cell_counters.record(false);
 
         // Cascade: this cell's footprint over every lower layer, plus one ring.
-        for sub_layer in 0..layer {
-            let sub_cells = footprint_plus_ring(
-                &self.lattices[layer], cell_id, &self.lattices[sub_layer],
-            );
-            for sub_cell in sub_cells {
-                self.ensure_deformed(sub_layer, sub_cell);
+        // Only for a deform that reads what it finds there.
+        let reads_below = self.events[layer].reads_below();
+        if reads_below {
+            for sub_layer in 0..layer {
+                let sub_cells = footprint_plus_ring(
+                    &self.lattices[layer], cell_id, &self.lattices[sub_layer],
+                );
+                for sub_cell in sub_cells {
+                    self.ensure_deformed(sub_layer, sub_cell);
+                }
             }
         }
 
@@ -724,6 +755,7 @@ impl Composite {
             lattice: &self.lattices[layer],
             indexes: &self.indexes,
             seed: self.seed,
+            reads_below,
         };
         self.events[layer].deform(&scope);
 

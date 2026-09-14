@@ -28,6 +28,8 @@ QOI to `world.qoi` (`--format png` writes `world.png`), views
 | `orogen-field` | orogen field | the hillshaded relief |
 | `orogen-belts` | orogen field | the belt mask over the coastline |
 | `orogen-section` | orogen field | a profile through the centre, cut across the belt axis |
+| `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
+| `drainage-lakes` | drainage index | flooded nodes at their surface, a white dot at each outlet |
 
 Views stack bottom to top in the order given: fills first, markers as
 overdraw. A field view paints every pixel and cannot stack; asking for one

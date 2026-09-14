@@ -135,6 +135,7 @@ impl Default for AdminComposite {
         composite.add_event(Box::new(world::events::tilt::TiltEvent::new()));
         composite.add_event(Box::new(world::events::motion::MotionEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(world::events::orogen::OrogenEvent::new()));
+        composite.add_event(Box::new(world::events::drainage::DrainageEvent::new()));
         Self(Arc::new(composite))
     }
 }

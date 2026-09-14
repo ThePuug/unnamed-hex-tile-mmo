@@ -4,12 +4,13 @@ use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::orogen::OrogenEvent;
+use world::events::drainage::DrainageEvent;
 use world::TagSet;
 
 /// Server-side registry of world events.
 
-/// Owns the Composite with PlateEvent + TiltEvent + MotionEvent +
-/// OrogenEvent. All terrain queries route through here.
+/// Owns the Composite with PlateEvent + TiltEvent + MotionEvent + OrogenEvent +
+/// DrainageEvent. All terrain queries route through here.
 /// Arc-wrapped so async chunk generation tasks can share it.
 #[derive(Resource, Clone)]
 pub struct EventRegistry {
@@ -24,6 +25,7 @@ impl EventRegistry {
         composite.add_event(Box::new(TiltEvent::new()));
         composite.add_event(Box::new(MotionEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(OrogenEvent::new()));
+        composite.add_event(Box::new(DrainageEvent::new()));
 
         Self { composite: std::sync::Arc::new(composite) }
     }

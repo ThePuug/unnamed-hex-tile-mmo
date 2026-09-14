@@ -295,6 +295,7 @@ mod tests {
         composite.add_event(Box::new(events::tilt::TiltEvent::new()));
         composite.add_event(Box::new(events::motion::MotionEvent::with_cache(plate_cache, seed)));
         composite.add_event(Box::new(events::orogen::OrogenEvent::new()));
+        composite.add_event(Box::new(events::drainage::DrainageEvent::new()));
         composite
     }
 

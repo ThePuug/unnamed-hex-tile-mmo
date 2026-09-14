@@ -19,6 +19,7 @@ use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
 use world::events::orogen::OrogenEvent;
+use world::events::drainage::{DrainageEvent, DrainageIndex, NODE_SPACING};
 use world::events::plates::{PlateEvent, PlateCentroidIndex};
 use world::events::tilt::TiltEvent;
 
@@ -42,6 +43,10 @@ enum Layer {
     /// Orogen field: cross-section through the viewport centre, across the
     /// belt axis.
     OrogenSection,
+    /// Drainage index: every reach as its node chain, width by catchment.
+    Reaches,
+    /// Drainage index: flooded nodes at their surface, outlets marked.
+    Lakes,
 }
 
 /// Every view by its command-line name. The one list: parsing, the help text
@@ -55,6 +60,8 @@ const LAYERS: &[(&str, Layer)] = &[
     ("orogen-field", Layer::OrogenField),
     ("orogen-belts", Layer::OrogenBelts),
     ("orogen-section", Layer::OrogenSection),
+    ("drainage-reaches", Layer::Reaches),
+    ("drainage-lakes", Layer::Lakes),
 ];
 
 impl Layer {
@@ -258,6 +265,7 @@ fn main() {
     composite.add_event(Box::new(TiltEvent::new()));
     composite.add_event(Box::new(MotionEvent::with_cache(plate_cache, cli.seed)));
     composite.add_event(Box::new(OrogenEvent::new()));
+    composite.add_event(Box::new(DrainageEvent::new()));
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
 
@@ -324,6 +332,49 @@ fn main() {
     } else {
         vec![]
     };
+
+    // A reach as its node positions plus the node it joins, and the catchment
+    // at its last node; a lake as its node positions and its outlet.
+    let needs_drainage = layers.contains(&Layer::Reaches) || layers.contains(&Layer::Lakes);
+    let (reaches, lakes): (Vec<(Vec<(f64, f64)>, f64)>, Vec<(Vec<(f64, f64)>, Option<(f64, f64)>)>) =
+        if needs_drainage {
+            composite.with_indexes(|indexes| {
+                indexes
+                    .get::<DrainageIndex>()
+                    .map(|idx| {
+                        let at = |k: &(i32, i32)| idx.node(*k).map(|n| (n.wx, n.wy));
+                        let reaches = idx
+                            .cells
+                            .values()
+                            .flat_map(|c| c.reaches.iter())
+                            .map(|reach| {
+                                let mut pts: Vec<(f64, f64)> =
+                                    reach.nodes.iter().filter_map(at).collect();
+                                pts.extend(reach.joins.as_ref().and_then(at));
+                                let catchment = reach
+                                    .nodes
+                                    .last()
+                                    .and_then(|k| idx.node(*k))
+                                    .map_or(1.0, |n| n.catchment);
+                                (pts, catchment)
+                            })
+                            .collect();
+                        let lakes = idx
+                            .cells
+                            .values()
+                            .flat_map(|c| c.lakes.iter())
+                            .map(|lake| {
+                                (lake.nodes.iter().filter_map(at).collect(),
+                                 lake.outlet.as_ref().and_then(at))
+                            })
+                            .collect();
+                        (reaches, lakes)
+                    })
+                    .unwrap_or_default()
+            })
+        } else {
+            (vec![], vec![])
+        };
 
     // ── Phase 3: Render pixels (parallel by row) ──
 
@@ -498,6 +549,50 @@ fn main() {
         );
     }
 
+
+    if layers.contains(&Layer::Lakes) {
+        // A node stands for the ground half a spacing around it.
+        let r = (NODE_SPACING as f64 * 0.5 / scale).round().max(1.0) as i32;
+        for (pts, outlet) in &lakes {
+            for &(x, y) in pts {
+                draw_dot(&mut buf, x, y, r, [70, 120, 230]);
+            }
+            if let Some((x, y)) = outlet {
+                draw_dot(&mut buf, *x, *y, (r / 3).max(1), [255, 255, 255]);
+            }
+        }
+        log::info!(
+            "Lakes: {} over {} flooded nodes; white dot = outlet, none = spill beyond the window",
+            lakes.len(),
+            lakes.iter().map(|l| l.0.len()).sum::<usize>()
+        );
+    }
+
+    if layers.contains(&Layer::Reaches) {
+        // Width grows with the square root of catchment, the way a channel's
+        // does with discharge, so a trunk reads as a trunk.
+        let mut largest = 0.0f64;
+        let mut drawn = 0;
+        for (pts, catchment) in &reaches {
+            largest = largest.max(*catchment);
+            let half_width = 2.0 * catchment.sqrt() / scale;
+            // A channel narrower than a pixel is not drawn at this scale.
+            if half_width < 0.5 {
+                continue;
+            }
+            drawn += 1;
+            let hw = half_width.round().min(24.0) as i32;
+            for w in pts.windows(2) {
+                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, hw, 0, [60, 170, 255]);
+            }
+        }
+        log::info!(
+            "Reaches: {} of {} wide enough to draw at this scale; width by catchment, largest {:.0} nodes",
+            drawn,
+            reaches.len(),
+            largest
+        );
+    }
 
     if layers.contains(&Layer::Centroids) {
         let dot_r = (4.0 / scale).max(2.0) as i32;
