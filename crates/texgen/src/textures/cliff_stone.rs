@@ -16,16 +16,20 @@ const DARK: Rgb = [0.08, 0.075, 0.07];
 const LIGHT: Rgb = [0.56, 0.54, 0.50];
 const IRON: Rgb = [0.36, 0.26, 0.17];
 const COOL: Rgb = [0.27, 0.29, 0.32];
-const MOSS: Rgb = [0.15, 0.20, 0.07];
+const MOSS: Rgb = [0.10, 0.14, 0.05];
 
-/// Slabs across and down the tile, and shards along and across their
-/// grain inside a shattered slab. Square slab lattice: a wide one leaves
-/// the boundaries between its rows running the width of the tile as
-/// courses.
-const SLABS: u32 = 3;
-const SHARDS: (u32, u32) = (6, 11);
+/// Slabs across and down the tile, and shards across and down the tile
+/// inside a shattered slab. Slab cells stand taller than wide, so the
+/// master cracks lean vertical and the face reads as standing up; a wide
+/// lattice does the opposite and leaves its row boundaries running the
+/// width of the tile as courses.
+const SLABS: (u32, u32) = (4, 3);
+const SHARDS: (u32, u32) = (12, 5);
 /// Share of slabs that are shattered.
 const SHATTERED: f32 = 0.4;
+/// Ledges down the tile: shelves that pinch out along their length, lit
+/// on top and in shadow underneath.
+const LEDGES: f32 = 2.0;
 
 /// One fragment edge as seen from a pixel: how far it is, and the edge's
 /// own width and depth, which are the same from either side.
@@ -59,30 +63,40 @@ pub fn build(p: &Params) -> Canvas {
     let s = p.seed;
     let mut c = Canvas::filled(n, n, CLIFF);
 
-    // Fragments: slabs from one Voronoi, shards from a finer, elongated one
-    // inside the slabs that are shattered, lying along or across the tile
-    // by the slab. A small warp bends the straight edges without making
-    // them wavy, and each edge is ragged along its length. Returns the
-    // nearest edge, the fragment's own hash, and the offset from its
-    // centre.
+    // Fragments: slabs from one Voronoi, shards from a finer, taller one
+    // inside the slabs that are shattered. A small warp bends the straight
+    // edges without making them wavy, and each edge is ragged along its
+    // length. Returns the nearest edge, the fragment's own hash, and the
+    // offset from its centre.
     let fragment_of = |u: f32, v: f32| {
         let wu = u + 0.02 * fbm(u, v, 6, 3, 0.6, s ^ 0x10);
         let wv = v + 0.02 * fbm(u, v, 6, 3, 0.6, s ^ 0x11);
         let ragged = 0.7 + 0.6 * perlin(u, v, 48, s ^ 0x16);
-        let slab = worley(wu, wv, SLABS, s ^ 0x12);
-        let mut slab_edge = edge_of(&slab, SLABS, s ^ 0x13, (0.012, 0.035), (0.7, 1.0));
+        let slab = worley_xy(wu, wv, SLABS.0, SLABS.1, s ^ 0x12);
+        let mut slab_edge = edge_of(&slab, SLABS.0, s ^ 0x13, (0.012, 0.035), (0.7, 1.0));
         slab_edge.dist *= ragged;
-        let roll = id01(slab.id.rotate_left(7));
-        if roll < SHATTERED {
-            let (cu, cv) = if roll < SHATTERED * 0.5 { SHARDS } else { (SHARDS.1, SHARDS.0) };
-            let shard = worley_xy(wu, wv, cu, cv, s ^ 0x14);
-            let mut shard_edge = edge_of(&shard, cu.max(cv), s ^ 0x15, (0.005, 0.012), (0.4, 0.7));
+        if id01(slab.id.rotate_left(7)) < SHATTERED {
+            let shard = worley_xy(wu, wv, SHARDS.0, SHARDS.1, s ^ 0x14);
+            let mut shard_edge = edge_of(&shard, SHARDS.0, s ^ 0x15, (0.005, 0.012), (0.4, 0.7));
             shard_edge.dist *= ragged;
             let edge = if shard_edge.dist < slab_edge.dist { shard_edge } else { slab_edge };
-            (edge, id01(shard.id), (shard.dx / cu as f32, shard.dy / cv as f32))
+            (edge, id01(shard.id), (shard.dx / SHARDS.0 as f32, shard.dy / SHARDS.1 as f32))
         } else {
-            (slab_edge, id01(slab.id), (slab.dx / SLABS as f32, slab.dy / SLABS as f32))
+            (slab_edge, id01(slab.id), (slab.dx / SLABS.0 as f32, slab.dy / SLABS.1 as f32))
         }
+    };
+
+    // Ledges: where a shelf runs, `on` is 1, `below` is the shadowed face
+    // just under its line, and `t` the position between lines with the
+    // line at 0. Shelves pinch out along their length, so none runs the
+    // width of the tile.
+    let ledge_of = |u: f32, v: f32| {
+        let w = v + 0.06 * fbm(u, v, 2, 2, 0.5, s ^ 0x18) + 0.012 * perlin(u, v, 9, s ^ 0x1a);
+        let t = (w * LEDGES).rem_euclid(1.0);
+        // A shelf exists only where this noise runs high: a third of the
+        // width at most, in one or two stretches.
+        let on = smoothstep(0.3, 0.6, perlin(u, 0.5 + (w * LEDGES).floor() * 0.31, 3, s ^ 0x19));
+        (on, 1.0 - smoothstep(0.0, 0.12, t), t)
     };
 
     // Cracks fade out along their length: where this drops, an edge is
@@ -110,7 +124,12 @@ pub fn build(p: &Params) -> Canvas {
         let gap = 1.0 - (1.0 - smoothstep(0.0, bevel, edge.dist)) * open;
         let slab = gap * (level + 2.0 * lean);
         let facet = ridge(u, v, 6, s ^ 0x36) * smoothstep(0.4, 0.7, hash01(key, 6, s));
-        0.5 * slab + 0.2 * facet + 0.25 * fbm(u, v, 12, 5, 0.6, s ^ 0x30) - 0.35 * spall(u, v)
+        let (on, _, t) = ledge_of(u, v);
+        // The shelf is a continuous bump: a slow rise to the lip and a
+        // steep but finite drop off its front, so the slope shading draws
+        // a lit top and a dark front face rather than a one-pixel rule.
+        let shelf = on * 0.2 * smoothstep(0.75, 0.94, t) * (1.0 - smoothstep(0.94, 1.0, t));
+        0.5 * slab + 0.2 * facet + shelf + 0.25 * fbm(u, v, 12, 5, 0.6, s ^ 0x30) - 0.35 * spall(u, v)
     };
     let e = 1.0 / n as f32;
 
@@ -131,9 +150,13 @@ pub fn build(p: &Params) -> Canvas {
         let flecks = (1.0 - smoothstep(0.08, 0.2, fleck.f1)) * smoothstep(0.96, 0.98, hash01((fleck.id >> 8) as i64, 0, s));
         px = lerp(px, LIGHT, flecks * 0.6);
 
-        // Weathering: water runs down the face in streaks.
-        let streak = smoothstep(0.35, 0.8, perlin(u, 0.11, 18, s ^ 0x34)) * (0.5 + 0.5 * perlin(u, v, 3, s ^ 0x35));
-        px = lerp(scale(px, 1.0 - 0.25 * streak), IRON, 0.2 * streak);
+        // Weathering: water runs down the face in streaks, heaviest just
+        // under a ledge and fading with the fall.
+        let (on, below, t) = ledge_of(u, v);
+        let columns = smoothstep(0.4, 0.85, perlin(u, 0.11, 28, s ^ 0x34));
+        let streak = columns * (0.25 + 0.25 * perlin(u, v, 3, s ^ 0x35) + 1.0 * on * (1.0 - smoothstep(0.0, 0.45, t)));
+        px = lerp(scale(px, 1.0 - 0.45 * streak), IRON, 0.25 * streak);
+        px = scale(px, 1.0 - 0.3 * on * below);
         px = scale(px, 1.0 - 0.15 * spall(u, v));
 
         // Cracks: each edge has its own width and depth, wavering along its
@@ -154,14 +177,14 @@ pub fn build(p: &Params) -> Canvas {
         px = scale(px, 1.0 + shade.clamp(-0.6, 0.6));
         px = lerp(px, LIGHT, smoothstep(0.7, 1.1, height(u, v)) * 0.25);
 
-        // Moss as small cushions inside the deeper open cracks where the
-        // face stays damp, each in a darker halo.
+        // Moss lives only in the channels of the master cracks and in the
+        // shadow under a ledge, where water collects, and fades into the
+        // crack shadow rather than sitting on a face.
         let damp = smoothstep(0.1, 0.45, fbm(u, v, 3, 3, 0.5, s ^ 0x40));
-        let cushion = worley(u, v, 8, s ^ 0x42);
-        let blob = 1.0 - smoothstep(0.25, 0.6, cushion.f1 + 0.15 * perlin(u, v, 40, s ^ 0x43));
-        let wet = damp * blob * smoothstep(0.3, 0.8, crack);
-        px = scale(px, 1.0 - 0.3 * smoothstep(0.0, 0.5, wet));
-        lerp(px, MOSS, wet * 0.9)
+        let fuzz = 0.6 + 0.4 * perlin(u, v, 48, s ^ 0x43);
+        let channel = (1.0 - smoothstep(width * 0.3, width * 1.4, edge.dist)) * smoothstep(0.65, 0.85, edge.depth) * open;
+        let wet = damp * fuzz * channel * (1.0 + 0.6 * on * below);
+        lerp(px, lerp(MOSS, DARK, crack * 0.4), wet.min(1.0) * 0.9)
     });
 
     // Hairline fractures that run across a fragment without splitting it.
