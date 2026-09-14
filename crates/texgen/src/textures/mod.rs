@@ -4,6 +4,7 @@
 
 mod cliff_stone;
 mod grass_plain;
+mod mountain_scree;
 
 use crate::canvas::Canvas;
 
@@ -34,6 +35,16 @@ pub const TEXTURES: &[Texture] = &[
                 edges, slabs wider than tall with some shattered into shards, a \
                 little moss in the deeper cracks.",
         build: cliff_stone::build,
+    },
+    Texture {
+        name: "mountain-scree",
+        brief: "Exposed mountain ground for high hex tile tops, seen from above: \
+                dark ochre earth covered in pebbles, a little flat bedrock and \
+                lichen showing through. Shaded only within each feature, with no \
+                shadow cast beyond its outline, so it does not read as water-sorted \
+                riverbed gravel. \
+                No bedding or fracture slabs; it must not read as the cliff face.",
+        build: mountain_scree::build,
     },
 ];
 

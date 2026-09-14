@@ -17,6 +17,12 @@ Read before adding or revising a texture.
 - **The module is the source.** The PNG is its output, committed so the
   client runs without a generation step. Seed 0 at the default size is the
   asset; other seeds are for exploration.
+- **No detached shadows.** The engine lights the surface. Shading that stays
+  inside a feature's own outline is fine; a shadow cast beyond it onto the
+  ground detaches the feature, and a field of detached stones reads as
+  bubbles on water or water-sorted gravel.
+- **Pin the mean to a ramp stop only where the shader blends the tile with
+  the ramp.** A tile that stands on its own is distinctive first.
 - **Equalize before grain.** Equalize flattens luminance drift that shows as
   a light/dark checker once tiled; grain after it keeps the per-pixel noise
   equalize would otherwise smooth.
