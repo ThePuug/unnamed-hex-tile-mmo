@@ -17,6 +17,24 @@
 }
 #endif
 
+// Band cut for this material's LoD level (client TerrainCut; the same
+// declaration lives in terrain_prepass.wgsl). Fragments whose ground
+// distance from `center` lies outside [inner, outer] are dropped: regions
+// are built whole, and this is what confines a level to its band.
+struct TerrainCut {
+    center: vec2<f32>,
+    inner: f32,
+    outer: f32,
+}
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain_cut: TerrainCut;
+
+fn band_cut(world_xz: vec2<f32>) {
+    let d = length(world_xz - terrain_cut.center);
+    if d < terrain_cut.inner || d > terrain_cut.outer {
+        discard;
+    }
+}
+
 // Horizon haze color (light blue-grey, linear RGB).
 const HORIZON_COLOR: vec3<f32> = vec3<f32>(0.72, 0.78, 0.85);
 
@@ -125,6 +143,8 @@ fn fragment(
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
     var in = vertex_output;
+
+    band_cut(in.world_position.xz);
 
     // Build PBR input from the base StandardMaterial
     var pbr_input = pbr_input_from_standard_material(in, is_front);

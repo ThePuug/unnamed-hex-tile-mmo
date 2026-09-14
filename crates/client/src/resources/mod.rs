@@ -1,7 +1,7 @@
 use bevy::{
     prelude::*,
     pbr::{ExtendedMaterial, MaterialExtension},
-    render::render_resource::AsBindGroup,
+    render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
 };
 use bimap::BiMap;
@@ -15,10 +15,31 @@ use dashmap::DashMap;
 use common_bevy::chunk::ChunkId;
 use common_bevy::summary_mesh::MeshRegionKey;
 
-/// Custom terrain material extension that computes elevation color in the fragment shader.
-/// Atmospheric fade is derived from the view's camera position (no custom uniforms needed).
+/// The band cut for one LoD level: the shaders drop fragments whose ground
+/// distance from `center` lies outside `[inner, outer]`. Field order is the
+/// uniform layout in `terrain.wgsl` and `terrain_prepass.wgsl`.
+#[derive(ShaderType, Debug, Clone, Copy)]
+pub struct TerrainCut {
+    pub center: Vec2,
+    pub inner: f32,
+    pub outer: f32,
+}
+
+impl Default for TerrainCut {
+    /// No cut: everything shows.
+    fn default() -> Self {
+        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX }
+    }
+}
+
+/// Terrain material extension: elevation colour in the fragment shader,
+/// atmospheric fade from the view position, and the band cut. The shaders
+/// are shared; the cut is per material, one material per LoD level.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
-pub struct TerrainExtension {}
+pub struct TerrainExtension {
+    #[uniform(100)]
+    pub cut: TerrainCut,
+}
 
 impl MaterialExtension for TerrainExtension {
     fn vertex_shader() -> ShaderRef {
@@ -27,7 +48,14 @@ impl MaterialExtension for TerrainExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/terrain.wgsl".into()
     }
+    /// Depth-only passes (shadow maps) apply the cut too, so a plate the
+    /// main pass drops casts no shadow onto the plate that replaces it.
+    fn prepass_fragment_shader() -> ShaderRef {
+        "shaders/terrain_prepass.wgsl".into()
+    }
 }
+
+pub type TerrainMaterialAsset = ExtendedMaterial<StandardMaterial, TerrainExtension>;
 
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
@@ -64,10 +92,38 @@ impl Server {
     }
 }
 
-/// Shared material for all chunk meshes (elevation color computed in shader)
-#[derive(Resource)]
+/// Terrain materials by LoD level, created on first use so a forced debug
+/// radius gets one like any ladder level.
+#[derive(Resource, Default)]
 pub struct TerrainMaterial {
-    pub handle: Handle<ExtendedMaterial<StandardMaterial, TerrainExtension>>,
+    pub by_level: HashMap<u32, Handle<TerrainMaterialAsset>>,
+}
+
+impl TerrainMaterial {
+    pub fn for_level(
+        &mut self,
+        r: u32,
+        materials: &mut Assets<TerrainMaterialAsset>,
+    ) -> Handle<TerrainMaterialAsset> {
+        self.by_level
+            .entry(r)
+            .or_insert_with(|| {
+                materials.add(ExtendedMaterial {
+                    base: StandardMaterial {
+                        perceptual_roughness: 1.,
+                        double_sided: true,
+                        cull_mode: None,
+                        // Mask is what gives the shadow pipeline a fragment
+                        // stage; base colour alpha is 1, so the cutoff itself
+                        // never discards.
+                        alpha_mode: AlphaMode::Mask(0.5),
+                        ..default()
+                    },
+                    extension: TerrainExtension::default(),
+                })
+            })
+            .clone()
+    }
 }
 
 /// Chunks whose appearance should NOT trigger neighbor mesh regeneration.

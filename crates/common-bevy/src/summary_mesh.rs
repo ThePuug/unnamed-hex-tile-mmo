@@ -639,16 +639,18 @@ pub fn visible_lod_regions(
     let mut out = HashSet::new();
     for band in bands {
         let half_extent = 0.5 * crate::summary::mesh_region_extent_wu(band.r);
-        // Footprint-overlap enumeration (matches the consumer): expand the
-        // band annulus by half the region extent on both ends so every
-        // region whose footprint touches the band is produced. Without
-        // this, regions centered just outside a band edge were produced by
-        // neither band — un-rendered crescents at every level boundary.
-        let outer = band.outer_wu + half_extent;
+        // Footprint-overlap enumeration over the level's window (matches
+        // the consumer): every region whose footprint touches the window
+        // is produced, so the strip the cut keeps past the band edge has
+        // data. Center-only membership left regions centered just outside
+        // an edge to neither band — un-rendered crescents at every level
+        // boundary.
+        let (win_inner, win_outer) = band.window();
+        let outer = win_outer + half_extent;
         // Skip bands whose regions cannot reach past the local boundary —
         // those are fully consumer-owned (Map-computed).
         if outer <= local_boundary_wu { continue; }
-        let inner = band.inner_wu.max(local_boundary_wu) - half_extent;
+        let inner = win_inner.max(local_boundary_wu) - half_extent;
         out.extend(visible_mesh_regions_in_band_ungated(
             band.r, cam_wx, cam_wz, inner.max(0.0), outer,
         ));

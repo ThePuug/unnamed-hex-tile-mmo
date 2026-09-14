@@ -33,12 +33,12 @@ pub const BAND_QUALITY_K: f32 = 119.75;
 /// Hex outer radius (vertex-to-vertex half-diameter) in world units.
 const HEX_OUTER_RADIUS: f32 = 1.0;
 
-/// Render-only depth bias per LoD level (WU). Adjacent levels overlap near
-/// band boundaries (footprint-overlap enumeration); on flat terrain their
-/// plates would be exactly coplanar — nested sampling produces equal
-/// center_z — and z-fight. Coarser levels sink slightly so the finer plate
-/// always wins. A tenth of one z-step per level: invisible, but well
-/// outside depth-buffer noise.
+/// Render-only depth bias per LoD level (WU). Adjacent levels overlap by
+/// `edge_overlap_wu` at each band edge; on flat terrain their plates there
+/// would be exactly coplanar — nested sampling produces equal center_z —
+/// and z-fight. Coarser levels sink slightly so the finer plate always
+/// wins. A tenth of one z-step per level: invisible, but well outside
+/// depth-buffer noise.
 pub const LEVEL_DEPTH_BIAS_WU: f32 = 0.08;
 
 /// Depth bias for a summary radius: rank of the level in LOD_LEVELS.
@@ -88,18 +88,75 @@ pub struct Band {
     pub outer_wu: f32,
 }
 
+impl Band {
+    /// The band widened by `edge_overlap_wu`: the ground this level renders,
+    /// and the range regions are enumerated against so every fragment the
+    /// cut keeps has geometry behind it.
+    pub fn window(&self) -> (f32, f32) {
+        let (inner, outer) = edge_overlap_wu(self.r);
+        ((self.inner_wu - inner).max(0.0), self.outer_wu + outer)
+    }
+}
+
+/// Flat-to-flat width of one summary at level `r`, in world units.
+pub fn summary_width_wu(r: u32) -> f32 {
+    (2 * r + 1) as f32 * HEX_OUTER_RADIUS * 3.0_f32.sqrt()
+}
+
+/// The next coarser level of the ladder, if `r` is not the coarsest.
+pub fn coarser_level(r: u32) -> Option<u32> {
+    LOD_LEVELS.iter().copied().find(|&l| l > r)
+}
+
+/// How far a level's plates extend past its band edges, `(inner, outer)`:
+/// one summary of the coarser level meeting each edge. Adjacent levels
+/// overlap by exactly that much, wide enough that a ray under the higher
+/// plate's cut edge lands on the lower plate. The coarsest level has
+/// nothing beyond its outer edge.
+pub fn edge_overlap_wu(r: u32) -> (f32, f32) {
+    (summary_width_wu(r), coarser_level(r).map_or(0.0, summary_width_wu))
+}
+
+/// Ground distance from the player at which level `r`'s band ends. At
+/// horizontal distance D the worst-case camera-to-ground distance is
+/// D + CAMERA_DISTANCE, so the camera-distance threshold
+/// `(2r+1)·2·BAND_QUALITY_K` is brought back to the ground by that much.
+pub fn threshold_horiz(r: u32) -> f32 {
+    let scale = (2 * r + 1) as f32;
+    (scale * 2.0 * BAND_QUALITY_K - common::camera::CAMERA_DISTANCE).max(0.0)
+}
+
+/// Level `r`'s band on the ladder, ignoring the horizon: from the finer
+/// level's threshold to its own.
+pub fn ladder_band(r: u32) -> Band {
+    let finer = LOD_LEVELS.iter().copied().filter(|&l| l < r).last();
+    Band {
+        r,
+        inner_wu: finer.map_or(0.0, threshold_horiz),
+        outer_wu: threshold_horiz(r),
+    }
+}
+
+/// The cut window for level `r` given the active bands: its band's
+/// `window`, except that the outermost active band has no outer edge —
+/// the horizon lies there and nothing beyond it competes. A level with no
+/// active band (stale regions awaiting eviction, or a ladder truncated by
+/// a shrunken horizon) is confined to its ladder window.
+pub fn cut_window(r: u32, bands: &[Band]) -> (f32, f32) {
+    match bands.iter().position(|b| b.r == r) {
+        Some(i) if i + 1 == bands.len() => (bands[i].window().0, f32::MAX),
+        Some(i) => bands[i].window(),
+        None => ladder_band(r).window(),
+    }
+}
+
 /// Compute active distance bands from player to `max_distance_wu` (horizontal).
 
 /// One band per nested LoD level (`LOD_LEVELS`): band r covers
-/// `[threshold(prev level), threshold(r)]` where
-/// `threshold_horiz(r) = (2r+1)·2·BAND_QUALITY_K − CAMERA_DISTANCE`
-/// (at horizontal distance D from the player, the worst-case
-/// camera-to-ground distance is D + CAMERA_DISTANCE). If the horizon
+/// `[threshold_horiz(prev level), threshold_horiz(r)]`. If the horizon
 /// extends past the coarsest level's threshold, the final band stretches
 /// to cover it.
 pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
-    use common::camera::CAMERA_DISTANCE;
-
     if max_distance_wu <= 0.0 {
         return vec![Band { r: 0, inner_wu: 0.0, outer_wu: 0.0 }];
     }
@@ -108,8 +165,7 @@ pub fn compute_active_bands(max_distance_wu: f32) -> Vec<Band> {
     let mut prev = 0.0_f32;
 
     for &r in &LOD_LEVELS {
-        let scale = (2 * r + 1) as f32;
-        let threshold_horiz = (scale * 2.0 * BAND_QUALITY_K - CAMERA_DISTANCE).max(0.0);
+        let threshold_horiz = threshold_horiz(r);
         let outer = threshold_horiz.min(max_distance_wu);
         if outer <= prev && r > 0 {
             prev = threshold_horiz;
@@ -650,6 +706,77 @@ mod tests {
             prev_outer = band.outer_wu;
         }
         assert!((prev_outer - 25_000.0).abs() < 0.01, "bands must reach the horizon");
+    }
+
+    // ── window / cut tests ──
+
+    #[test]
+    fn windows_overlap_by_one_coarse_summary_at_each_edge() {
+        let bands = compute_active_bands(25_000.0);
+        for pair in bands.windows(2) {
+            let (fine, coarse) = (&pair[0], &pair[1]);
+            let (_, fine_outer) = fine.window();
+            let (coarse_inner, _) = coarse.window();
+            let expected = summary_width_wu(coarse.r);
+            assert!(
+                (fine_outer - fine.outer_wu - expected).abs() < 0.01,
+                "r={} extends past its outer edge by {} (want {expected})",
+                fine.r, fine_outer - fine.outer_wu
+            );
+            assert!(
+                (coarse.inner_wu - coarse_inner - expected).abs() < 0.01,
+                "r={} extends past its inner edge by {} (want {expected})",
+                coarse.r, coarse.inner_wu - coarse_inner
+            );
+        }
+    }
+
+    #[test]
+    fn window_never_starts_before_the_player() {
+        assert_eq!(compute_active_bands(25_000.0)[0].window().0, 0.0);
+        assert_eq!(ladder_band(0).window().0, 0.0);
+    }
+
+    #[test]
+    fn coarsest_level_has_no_outer_overlap() {
+        let coarsest = *LOD_LEVELS.last().unwrap();
+        assert_eq!(coarser_level(coarsest), None);
+        assert_eq!(edge_overlap_wu(coarsest).1, 0.0);
+        let band = ladder_band(coarsest);
+        assert_eq!(band.window().1, band.outer_wu);
+    }
+
+    #[test]
+    fn cut_window_is_unbounded_only_for_the_outermost_band() {
+        let bands = compute_active_bands(25_000.0);
+        assert!(bands.len() >= 3, "test needs several bands");
+        for (i, band) in bands.iter().enumerate() {
+            let (inner, outer) = cut_window(band.r, &bands);
+            assert_eq!(inner, band.window().0);
+            if i + 1 == bands.len() {
+                assert_eq!(outer, f32::MAX);
+            } else {
+                assert_eq!(outer, band.window().1);
+            }
+        }
+    }
+
+    #[test]
+    fn cut_window_confines_an_inactive_level_to_its_ladder_band() {
+        let bands = compute_active_bands(1_000.0);
+        let beyond = *LOD_LEVELS.last().unwrap();
+        assert!(bands.iter().all(|b| b.r != beyond));
+        assert_eq!(cut_window(beyond, &bands), ladder_band(beyond).window());
+    }
+
+    #[test]
+    fn ladder_bands_are_the_active_bands_before_the_horizon() {
+        let bands = compute_active_bands(25_000.0);
+        for band in bands.iter().take(bands.len() - 1) {
+            let ladder = ladder_band(band.r);
+            assert_eq!(ladder.inner_wu, band.inner_wu);
+            assert_eq!(ladder.outer_wu, band.outer_wu);
+        }
     }
 
     // ── summary_radius tests ──

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    resources::{ForcedSummaryRadius, LoadedChunks, LodTriangleStats, SummaryCache, SummaryMeshes},
+    resources::{ForcedSummaryRadius, LoadedChunks, LodTriangleStats, SummaryCache, SummaryMeshes, TerrainMaterial},
     systems::world,
 };
 
@@ -18,11 +18,13 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<ForcedSummaryRadius>();
         app.init_resource::<LodTriangleStats>();
         app.init_resource::<SummaryCache>();
+        app.init_resource::<TerrainMaterial>();
 
         app.add_systems(Update, (
             world::do_spawn,
             world::dispatch_summary_tasks.after(world::do_spawn),
             world::poll_summary_meshes.after(world::dispatch_summary_tasks),
+            world::update_terrain_cut,
         ));
 
         #[cfg(feature = "admin")]

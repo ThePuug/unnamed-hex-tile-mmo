@@ -27,10 +27,7 @@ use common_bevy::{
     systems::*,
 };
 
-pub fn setup(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>>,
-) {
+pub fn setup(mut commands: Commands) {
     commands.insert_resource(
         GlobalAmbientLight {
             color: Color::WHITE,
@@ -52,18 +49,6 @@ pub fn setup(
             ..default()},
         Transform::default(),
         Moon::default()));
-
-    // Initialize shared terrain material (elevation color computed in shader)
-    let material = materials.add(bevy::pbr::ExtendedMaterial {
-        base: StandardMaterial {
-            perceptual_roughness: 1.,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        },
-        extension: crate::resources::TerrainExtension {},
-    });
-    commands.insert_resource(TerrainMaterial { handle: material });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -486,6 +471,57 @@ pub fn dispatch_summary_tasks(
     }
 }
 
+/// Active bands out to the visual horizon for a camera under `fov` at
+/// `camera_pos` — the player's (or flyover's) ground position; the camera
+/// sits camera_height above it. The horizon is the top-corner ray distance
+/// (see far_ground_wu), the same formula the server and flyover producers
+/// use so the horizons agree. `margin` widens the horizon for the keep set.
+fn horizon_bands(camera_pos: Vec3, fov: f32, margin: f32) -> Vec<common_bevy::summary::Band> {
+    let camera_height_offset = crate::systems::camera::camera_height(fov);
+    let camera_total_height = camera_height_offset + camera_pos.y.max(0.0);
+    let far_ground = common::camera::far_ground_wu(camera_total_height, fov);
+    common_bevy::summary::compute_active_bands(far_ground * (1.0 + margin))
+}
+
+/// Upload the band cut: the player's ground position and each level's
+/// window. Regions are built whole and the shaders drop fragments outside
+/// the window, so band edges follow the player every frame with no rebuild
+/// and adjacent levels overlap by one coarse summary, never a region.
+/// A forced debug radius lifts the cut.
+pub fn update_terrain_cut(
+    mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
+    terrain_material: Res<TerrainMaterial>,
+    forced_radius: Res<ForcedSummaryRadius>,
+    player_query: Query<&Transform, With<PlayerControlled>>,
+    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
+) {
+    let player = || player_query.single().ok().map(|t| t.translation);
+    #[cfg(feature = "admin")]
+    let (origin, fov) = match flyover.as_ref().filter(|f| f.active) {
+        Some(f) => (Some(f.world_position), crate::systems::camera::MAX_FLYOVER_FOV),
+        None => (player(), crate::systems::camera::MAX_GAMEPLAY_FOV),
+    };
+    #[cfg(not(feature = "admin"))]
+    let (origin, fov) = (player(), crate::systems::camera::MAX_GAMEPLAY_FOV);
+    let Some(origin) = origin else { return };
+
+    let bands = horizon_bands(origin, fov, 0.0);
+
+    for (&r, handle) in &terrain_material.by_level {
+        let Some(material) = materials.get_mut(handle) else { continue };
+        let (inner, outer) = if forced_radius.0.is_some() {
+            (0.0, f32::MAX)
+        } else {
+            common_bevy::summary::cut_window(r, &bands)
+        };
+        material.extension.cut = crate::resources::TerrainCut {
+            center: origin.xz(),
+            inner,
+            outer,
+        };
+    }
+}
+
 /// Compute visible mesh regions for auto mode (multi-band).
 
 /// Local bands (within `local_boundary_wu`): gated on loaded chunks.
@@ -502,18 +538,9 @@ fn compute_auto_mode_regions(
     margin: f32,
     local_boundary_wu: f32,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
-    use common_bevy::summary::compute_active_bands;
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
-    // Max render distance = visual horizon from camera geometry (top-corner
-    // rays — see far_ground_wu). camera_pos is the player's (or flyover's)
-    // ground/world position; the camera sits camera_height_offset above it.
-    // Same formula as the server and flyover producers so the horizons agree.
-    let camera_height_offset = crate::systems::camera::camera_height(fov);
-    let camera_total_height = camera_height_offset + camera_pos.y.max(0.0);
-    let far_ground = common::camera::far_ground_wu(camera_total_height, fov);
-
-    let bands = compute_active_bands(far_ground * (1.0 + margin));
+    let bands = horizon_bands(camera_pos, fov, margin);
     let mut all_regions = std::collections::HashSet::new();
 
     // Bands are split at the stream-radius boundary, not assigned to one
@@ -521,17 +548,17 @@ fn compute_auto_mode_regions(
     // chunk-fed) AND an ungated segment (server/flyover-fed). Assigning the
     // whole band to one side left its other segment with no regions at all.
     for band in &bands {
-        // Footprint-overlap enumeration: a region belongs to a band if its
-        // FOOTPRINT overlaps the annulus, not just its center. Regions are
-        // up to mesh_region_extent_wu(r) across — center-only membership
-        // left crescents near every band boundary covered by neither level
-        // (a region centered just inside the boundary was excluded from the
-        // coarser band even though no finer region covered its outer half).
-        // Adjacent levels now overlap slightly at boundaries; the per-level
-        // depth bias keeps the finer plate on top without z-fighting.
+        // Footprint-overlap enumeration over the level's window: a region
+        // is built if its FOOTPRINT overlaps the window, not just its
+        // center, so every fragment the cut keeps has geometry behind it.
+        // Regions are up to mesh_region_extent_wu(r) across — center-only
+        // membership left crescents near every band boundary covered by
+        // neither level. Regions are built whole; the shader cut
+        // (`update_terrain_cut`) is what confines a level to its window.
         let half_extent = 0.5 * common_bevy::summary::mesh_region_extent_wu(band.r);
-        let band_inner = (band.inner_wu * (1.0 - margin) - half_extent).max(0.0);
-        let band_outer = band.outer_wu * (1.0 + margin) + half_extent;
+        let (win_inner, win_outer) = band.window();
+        let band_inner = (win_inner * (1.0 - margin) - half_extent).max(0.0);
+        let band_outer = win_outer * (1.0 + margin) + half_extent;
 
         if band_inner < local_boundary_wu {
             // Segment within the local-data boundary: gate on loaded chunks
@@ -659,10 +686,9 @@ fn build_bevy_mesh(
     .with_inserted_indices(Indices::U32(indices.to_vec()))
 }
 
-/// Downward curtain depth (WU) for unmatched frontier edges — band
-/// boundaries, the stream/horizon frontier, and edges facing unbuilt
-/// territory. Deep enough to cover typical inter-level relief; data-driven
-/// per-edge depth is a planned refinement (well-knit-world P4).
+/// Downward curtain depth (WU) for unmatched frontier edges — the horizon
+/// and edges facing unbuilt territory. Deep enough to cover the relief
+/// between a built region and the ground beside it.
 const CURTAIN_DEPTH_WU: f32 = 24.0;
 
 /// Append cross-region skirt geometry owned by `my_key`, plus frontier
@@ -673,8 +699,10 @@ const CURTAIN_DEPTH_WU: f32 = 24.0;
 /// are suppressed on edges a neighbor will skirt.
 
 /// Curtains close the surface where no shared vertex IDs can ever exist —
-/// a different LoD level on the other side (hex lattices of different
-/// scales share no edges), or territory that has no mesh at all.
+/// the horizon, or territory that has no mesh at all. A band edge needs
+/// none: inside a level's window every perimeter has a same-level
+/// neighbour (the region beyond overlaps the window too), and the cut's
+/// one-summary overlap with the adjacent level closes the step there.
 fn append_cross_region_skirts(
     my_key: common_bevy::summary_mesh::MeshRegionKey,
     my_edges: &[common_bevy::summary_mesh::PerimeterEdge],
@@ -771,10 +799,10 @@ pub fn poll_summary_meshes(
     mut summary_meshes: ResMut<SummaryMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut tri_stats: ResMut<LodTriangleStats>,
-    terrain_material: Option<Res<TerrainMaterial>>,
+    mut terrain_material: ResMut<TerrainMaterial>,
+    mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    let Some(terrain_material) = terrain_material else { return };
     let _t = client_timers.0.scope("sum_poll");
 
     // Phase 1: Poll async tasks, store base geometry + perimeter edges.
@@ -902,7 +930,7 @@ pub fn poll_summary_meshes(
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh_handle),
-                        MeshMaterial3d(terrain_material.handle.clone()),
+                        MeshMaterial3d(terrain_material.for_level(build.key.r, &mut materials)),
                         Transform::from_translation(state.mesh_origin),
                         SummaryMesh { region_key: build.key },
                     ))
@@ -1004,19 +1032,18 @@ mod tests {
                 }
             }
 
-            // (a) Geometric coverage: sweep ground points; each must lie
-            // within some needed region of its band's level (region
-            // circumradius = extent/sqrt(3)).
-            for az_deg in (0..360).step_by(5) {
+            // (a) Geometric coverage: every ground point inside a level's
+            // window — what the cut lets that level show — must lie within
+            // some needed region of that level (region circumradius =
+            // extent/sqrt(3)). Windows overlap at band edges, so a point
+            // there is checked against both levels.
+            for (az_deg, band) in (0..360).step_by(5).flat_map(|az| bands.iter().map(move |b| (az, b))) {
                 let azr = (az_deg as f32).to_radians();
-                let mut d = 2.0_f32;
-                while d < far_ground - 1.0 {
+                let (win_inner, win_outer) = band.window();
+                let mut d = win_inner.max(2.0);
+                while d < win_outer.min(far_ground - 1.0) {
                     let px = d * azr.cos();
                     let pz = d * azr.sin();
-                    let band = bands
-                        .iter()
-                        .find(|b| d >= b.inner_wu && d <= b.outer_wu)
-                        .unwrap_or_else(|| bands.last().expect("bands non-empty"));
                     let circum = mesh_region_extent_wu(band.r) / 3.0_f32.sqrt();
                     let covered = needed.iter().any(|k| {
                         if k.r != band.r {
@@ -1043,8 +1070,8 @@ mod tests {
                         // Probe the enumerators directly with the same args
                         // compute_auto_mode_regions uses for this band.
                         let h = 0.5 * mesh_region_extent_wu(band.r);
-                        let b_inner = (band.inner_wu - h).max(0.0);
-                        let b_outer = band.outer_wu + h;
+                        let b_inner = (win_inner - h).max(0.0);
+                        let b_outer = win_outer + h;
                         let gated = common_bevy::summary_mesh::visible_mesh_regions_in_band(
                             band.r, 0.0, 0.0, b_inner, b_outer.min(boundary), &loaded,
                         );
