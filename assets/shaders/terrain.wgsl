@@ -130,11 +130,7 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
     // Convert world Y to elevation (undo rise offset + rise-per-level scaling).
-    // Summary meshes encode natural (untucked) Y in uv.x. The vertex shader
-    // may have tucked world_position.y, so use uv.x for color ramp when
-    // uv.y > 0.25 (summary vertex flag: 0.5 = non-tuckable, 1.0 = tuckable).
-    let source_y = select(in.world_position.y, in.uv.x, in.uv.y > 0.25);
-    let elevation = (source_y - RISE) / RISE;
+    let elevation = (in.world_position.y - RISE) / RISE;
 
     // Determine base color: cliff faces get stone grey, top surfaces get elevation color
     var base: vec3<f32>;
