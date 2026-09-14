@@ -1,6 +1,6 @@
 use bevy::{
     prelude::*,
-    image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
+    image::{ImageAddressMode, ImageArrayLayout, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     pbr::{ExtendedMaterial, MaterialExtension},
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
@@ -40,25 +40,32 @@ impl Default for TerrainCut {
 /// material per LoD level.
 ///
 /// Every texture is sampled in world space, so its sampler must wrap: a
-/// clamped sampler smears the edge texel across the terrain.
+/// clamped sampler smears the edge texel across the terrain. Each asset is
+/// `TEXTURE_VARIANTS` seeds of the tile stacked vertically, loaded as a
+/// texture array; the shader blends the layers by world position so the
+/// repeat never lines up.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct TerrainExtension {
     #[uniform(100)]
     pub cut: TerrainCut,
     /// `assets/textures/grass-plain.png`, on tile tops over world XZ.
-    #[texture(101)]
+    #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub grass: Handle<Image>,
     /// `assets/textures/cliff-stone.png`, on faces over the vertical
     /// planes, world up as the tile's up.
-    #[texture(103)]
+    #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub cliff: Handle<Image>,
     /// `assets/textures/mountain-scree.png`, on tile tops over world XZ.
-    #[texture(105)]
+    #[texture(105, dimension = "2d_array")]
     #[sampler(106)]
     pub scree: Handle<Image>,
 }
+
+/// Seeds stacked in each texture asset. Must match texgen's `VARIANTS`,
+/// which writes the stack, and the layer count `terrain.wgsl` blends.
+const TEXTURE_VARIANTS: u32 = 3;
 
 impl MaterialExtension for TerrainExtension {
     fn vertex_shader() -> ShaderRef {
@@ -132,6 +139,7 @@ impl FromWorld for TerrainMaterial {
                     address_mode_v: ImageAddressMode::Repeat,
                     ..ImageSamplerDescriptor::linear()
                 });
+                settings.array_layout = Some(ImageArrayLayout::RowCount { rows: TEXTURE_VARIANTS });
             })
         };
         Self {

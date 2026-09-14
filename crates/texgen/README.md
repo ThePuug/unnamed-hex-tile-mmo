@@ -9,13 +9,16 @@ tiles by construction; every run measures the seam and fails past the limit.
 ```bash
 cargo run --bin texgen -- grass-plain
 cargo run --bin texgen -- all --size 512
+cargo run --bin texgen -- grass-plain --seed 7 --variants 1 --out target/texgen   # one tile, for exploration
 cargo run --bin texgen -- --list
 cargo test --bin texgen
 ```
 
-Writes `assets/textures/<name>.png` and a 2x2 proof sheet at
-`target/texgen/<name>.tiled.png`. Defaults: 256 px, seed 0. The shipped asset
-is seed 0 at the default size; regenerate it after changing a module.
+Writes `assets/textures/<name>.png`, three seeds of the tile stacked
+vertically for the client to load as a texture array, and each seed's tile
+and 2x2 proof sheet at `target/texgen/<name>-<seed>.png` and
+`<name>-<seed>.tiled.png`. Defaults: 256 px, seeds 0 to 2. Regenerate the
+asset after changing a module.
 
 ## Textures
 

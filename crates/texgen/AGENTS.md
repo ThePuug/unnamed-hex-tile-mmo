@@ -15,8 +15,10 @@ Read before adding or revising a texture.
   copy a linear stop from `terrain.wgsl`; never hand-write sRGB values into an
   `Rgb`.
 - **The module is the source.** The PNG is its output, committed so the
-  client runs without a generation step. Seed 0 at the default size is the
-  asset; other seeds are for exploration.
+  client runs without a generation step. The asset is `VARIANTS` seeds
+  from 0, stacked vertically, at the default size; the client loads the
+  stack as a texture array and blends the layers by world position so the
+  repeat never lines up. Other seeds are for exploration.
 - **No detached shadows.** The engine lights the surface. Shading that stays
   inside a feature's own outline is fine; a shadow cast beyond it onto the
   ground detaches the feature, and a field of detached stones reads as

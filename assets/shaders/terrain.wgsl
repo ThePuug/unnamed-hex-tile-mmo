@@ -30,18 +30,35 @@ struct TerrainCut {
 
 // Surface albedos (client TerrainExtension), repeated over world space
 // since the terrain carries no per-tile UVs: grass and scree over XZ on the
-// tops, stone over the vertical planes on the faces. Loaded PNGs have no
-// mipmaps, so the repeats are sized to put a texel near a screen pixel at
-// gameplay height; a finer repeat shimmers with distance.
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var grass_texture: texture_2d<f32>;
+// tops, stone over the vertical planes on the faces. Each is an array of
+// three seeds of the same tile. A triangle lattice covers the surface, and
+// each lattice vertex picks a seed and its own offset, rotation and scale
+// for the tile; a fragment samples once per vertex of its triangle and
+// blends by barycentric weight, so no two patches of ground repeat each
+// other. Every seed tiles with itself, so a cross-fade shows no seam.
+// Loaded PNGs have no mipmaps, so the repeats are sized to put a texel
+// near a screen pixel at gameplay height; a finer repeat shimmers with
+// distance.
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var grass_texture: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var grass_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var cliff_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var cliff_texture: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var cliff_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(105) var scree_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var scree_texture: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(106) var scree_sampler: sampler;
 const GRASS_REPEAT_WU: f32 = 8.0;
 const CLIFF_REPEAT_WU: f32 = 8.0;
 const SCREE_REPEAT_WU: f32 = 8.0;
+// Lattice spacing for the per-vertex seed and transform, about one repeat,
+// so neighbouring repeats never share a transform. Weights are sharpened
+// by this power so the blend between vertices stays a narrow band and the
+// tile's detail is not averaged away over most of the ground.
+const BOMB_CELL_WU: f32 = 10.0;
+const BOMB_SHARPNESS: f32 = 4.0;
+// Scale range around the base repeat, and rotation range on the faces,
+// where up must stay up.
+const BOMB_SCALE_MIN: f32 = 0.75;
+const BOMB_SCALE_MAX: f32 = 1.3;
+const BOMB_FACE_TILT: f32 = 0.25;
 
 fn band_cut(world_xz: vec2<f32>) {
     let d = length(world_xz - terrain_cut.center);
@@ -109,9 +126,6 @@ const RAMP_B: array<f32, 14> = array<f32, 14>(
     0.216, 0.275, 0.471, 0.620, 0.863, 1.000
 );
 
-// Per-tile brightness noise strength (±10%).
-const NOISE_STRENGTH: f32 = 0.10;
-
 // Cliff face colour (stone grey), linear RGB: the mean the stone tile is
 // pinned to in texgen, so the faces keep this colour at a distance.
 const CLIFF_COLOR: vec3<f32> = vec3<f32>(0.35, 0.32, 0.28);
@@ -135,12 +149,13 @@ fn scree_weight(elev: f32) -> f32 {
 
 /// Stone on a face: the tile projected along each horizontal axis, with
 /// world up as the tile's up (image rows run downward, hence -y), the two
-/// blended by how squarely the face meets each axis.
+/// blended by how squarely the face meets each axis. The lattice lies on
+/// the face too, so the rotation is kept to a tilt.
 fn cliff_albedo(world_position: vec3<f32>, world_normal: vec3<f32>) -> vec3<f32> {
     let n = abs(world_normal.xz);
     let w = n / max(n.x + n.y, 1e-3);
-    let along_x = textureSample(cliff_texture, cliff_sampler, vec2<f32>(world_position.z, -world_position.y) / CLIFF_REPEAT_WU).rgb;
-    let along_z = textureSample(cliff_texture, cliff_sampler, vec2<f32>(world_position.x, -world_position.y) / CLIFF_REPEAT_WU).rgb;
+    let along_x = sample_bomb(cliff_texture, cliff_sampler, bomb(vec2<f32>(world_position.z, -world_position.y), CLIFF_REPEAT_WU, BOMB_FACE_TILT));
+    let along_z = sample_bomb(cliff_texture, cliff_sampler, bomb(vec2<f32>(world_position.x, -world_position.y), CLIFF_REPEAT_WU, BOMB_FACE_TILT));
     return along_x * w.x + along_z * w.y;
 }
 
@@ -173,13 +188,78 @@ fn elevation_color(elev: f32) -> vec3<f32> {
     return vec3<f32>(0.5, 0.5, 0.5);
 }
 
-/// Cheap deterministic hash noise from tile-quantized world XZ.
-/// Returns a value in [-1, 1]. Same tile always produces the same value.
-fn tile_noise(world_xz: vec2<f32>) -> f32 {
-    // Quantize to tile grid (radius = 1.0, hex spacing ≈ sqrt(3)/2 ≈ 0.866)
-    let cell = floor(world_xz);
-    let h = fract(sin(dot(cell, vec2<f32>(127.1, 311.7))) * 43758.5453);
-    return h * 2.0 - 1.0;
+/// Cheap deterministic hash of a lattice point to [0, 1).
+fn cell_hash(cell: vec2<f32>) -> f32 {
+    return fract(sin(dot(cell, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+/// One texture lookup per vertex of the lattice triangle a point falls in:
+/// the tile coordinates under that vertex's transform, the seed it picked,
+/// and the sharpened barycentric weight.
+struct Bomb {
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    uv2: vec2<f32>,
+    layer: vec3<i32>,
+    weight: vec3<f32>,
+}
+
+/// Tile coordinates for `p` (already in repeats) under lattice vertex `v`:
+/// scaled, rotated and offset by the vertex's own hashes. `tilt` bounds
+/// the rotation, in radians either way.
+fn bomb_uv(p: vec2<f32>, v: vec2<f32>, tilt: f32) -> vec2<f32> {
+    let scale = mix(BOMB_SCALE_MIN, BOMB_SCALE_MAX, cell_hash(v + vec2<f32>(17.3, 5.1)));
+    let angle = (cell_hash(v + vec2<f32>(41.7, 23.9)) - 0.5) * 2.0 * tilt;
+    let offset = vec2<f32>(cell_hash(v + vec2<f32>(3.3, 71.1)), cell_hash(v + vec2<f32>(59.9, 13.7)));
+    let c = cos(angle);
+    let s = sin(angle);
+    return mat2x2<f32>(vec2<f32>(c, s), vec2<f32>(-s, c)) * (p * scale) + offset;
+}
+
+fn bomb_layer(v: vec2<f32>) -> i32 {
+    return i32(cell_hash(v + vec2<f32>(29.1, 83.3)) * 3.0) % 3;
+}
+
+/// The lattice triangle around `surface` (in world units on the surface
+/// being textured) and the three lookups it calls for. `repeat` is the
+/// tile's base size in world units.
+fn bomb(surface: vec2<f32>, repeat: f32, tilt: f32) -> Bomb {
+    // Skew the plane so unit squares become pairs of equilateral triangles.
+    let skewed = mat2x2<f32>(vec2<f32>(1.0, 0.0), vec2<f32>(-0.57735027, 1.15470054)) * (surface / BOMB_CELL_WU);
+    let base = floor(skewed);
+    let f = fract(skewed);
+    var v0: vec2<f32>;
+    var v1: vec2<f32>;
+    var v2: vec2<f32>;
+    var w: vec3<f32>;
+    if f.x + f.y < 1.0 {
+        v0 = base;
+        v1 = base + vec2<f32>(1.0, 0.0);
+        v2 = base + vec2<f32>(0.0, 1.0);
+        w = vec3<f32>(1.0 - f.x - f.y, f.x, f.y);
+    } else {
+        v0 = base + vec2<f32>(1.0, 1.0);
+        v1 = base + vec2<f32>(1.0, 0.0);
+        v2 = base + vec2<f32>(0.0, 1.0);
+        w = vec3<f32>(f.x + f.y - 1.0, 1.0 - f.y, 1.0 - f.x);
+    }
+    w = pow(w, vec3<f32>(BOMB_SHARPNESS));
+    w = w / (w.x + w.y + w.z);
+    let p = surface / repeat;
+    var out: Bomb;
+    out.uv0 = bomb_uv(p, v0, tilt);
+    out.uv1 = bomb_uv(p, v1, tilt);
+    out.uv2 = bomb_uv(p, v2, tilt);
+    out.layer = vec3<i32>(bomb_layer(v0), bomb_layer(v1), bomb_layer(v2));
+    out.weight = w;
+    return out;
+}
+
+/// The three lookups of a bomb, blended.
+fn sample_bomb(tex: texture_2d_array<f32>, samp: sampler, b: Bomb) -> vec3<f32> {
+    return textureSample(tex, samp, b.uv0, b.layer.x).rgb * b.weight.x
+        + textureSample(tex, samp, b.uv1, b.layer.y).rgb * b.weight.y
+        + textureSample(tex, samp, b.uv2, b.layer.z).rgb * b.weight.z;
 }
 
 @fragment
@@ -196,8 +276,8 @@ fn fragment(
 
     // Sampled here, in uniform control flow, because the cliff branch below
     // is not.
-    let grass = textureSample(grass_texture, grass_sampler, in.world_position.xz / GRASS_REPEAT_WU).rgb;
-    let scree = textureSample(scree_texture, scree_sampler, in.world_position.xz / SCREE_REPEAT_WU).rgb;
+    let grass = sample_bomb(grass_texture, grass_sampler, bomb(in.world_position.xz, GRASS_REPEAT_WU, 3.14159265));
+    let scree = sample_bomb(scree_texture, scree_sampler, bomb(in.world_position.xz, SCREE_REPEAT_WU, 3.14159265));
     let cliff = cliff_albedo(in.world_position.xyz, in.world_normal);
 
     // Convert world Y to elevation (undo rise offset + rise-per-level scaling).
