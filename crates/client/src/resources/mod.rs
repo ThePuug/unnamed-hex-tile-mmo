@@ -1,5 +1,6 @@
 use bevy::{
     prelude::*,
+    image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     pbr::{ExtendedMaterial, MaterialExtension},
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
@@ -33,12 +34,19 @@ impl Default for TerrainCut {
 }
 
 /// Terrain material extension: elevation colour in the fragment shader,
-/// atmospheric fade from the view position, and the band cut. The shaders
-/// are shared; the cut is per material, one material per LoD level.
+/// grass over the ramp's green band, atmospheric fade from the view
+/// position, and the band cut. The shaders are shared; the cut is per
+/// material, one material per LoD level.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct TerrainExtension {
     #[uniform(100)]
     pub cut: TerrainCut,
+    /// `assets/textures/grass-plain.png`, sampled in world space, so its
+    /// sampler must wrap: a clamped sampler smears the edge texel across the
+    /// plain.
+    #[texture(101)]
+    #[sampler(102)]
+    pub grass: Handle<Image>,
 }
 
 impl MaterialExtension for TerrainExtension {
@@ -93,10 +101,28 @@ impl Server {
 }
 
 /// Terrain materials by LoD level, created on first use so a forced debug
-/// radius gets one like any ladder level.
-#[derive(Resource, Default)]
+/// radius gets one like any ladder level. Every level shares the grass
+/// texture, loaded once here.
+#[derive(Resource)]
 pub struct TerrainMaterial {
     pub by_level: HashMap<u32, Handle<TerrainMaterialAsset>>,
+    grass: Handle<Image>,
+}
+
+impl FromWorld for TerrainMaterial {
+    fn from_world(world: &mut World) -> Self {
+        let grass = world.resource::<AssetServer>().load_with_settings(
+            "textures/grass-plain.png",
+            |settings: &mut ImageLoaderSettings| {
+                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    ..ImageSamplerDescriptor::linear()
+                });
+            },
+        );
+        Self { by_level: HashMap::new(), grass }
+    }
 }
 
 impl TerrainMaterial {
@@ -119,7 +145,7 @@ impl TerrainMaterial {
                         alpha_mode: AlphaMode::Mask(0.5),
                         ..default()
                     },
-                    extension: TerrainExtension::default(),
+                    extension: TerrainExtension { grass: self.grass.clone(), ..default() },
                 })
             })
             .clone()
