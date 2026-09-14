@@ -89,30 +89,46 @@ pub struct Cell {
     pub f2: f32,
     /// Names the nearest cell; the same cell has the same id across the seam.
     pub id: u64,
+    /// Names the second nearest cell, so `id ^ id2` names the edge between
+    /// them from either side.
+    pub id2: u64,
+    /// Offset from the nearest feature point, in cell units.
+    pub dx: f32,
+    pub dy: f32,
 }
 
 /// Cellular noise over `cells` cells across the tile, one feature point per
 /// cell.
 pub fn worley(u: f32, v: f32, cells: u32, seed: u64) -> Cell {
-    let period = cells as i64;
-    let x = u * cells as f32;
-    let y = v * cells as f32;
+    worley_xy(u, v, cells, cells, seed)
+}
+
+/// Cellular noise over `cells_u` by `cells_v` cells across the tile, so
+/// cells can run wider than tall.
+pub fn worley_xy(u: f32, v: f32, cells_u: u32, cells_v: u32, seed: u64) -> Cell {
+    let (period_x, period_y) = (cells_u as i64, cells_v as i64);
+    let x = u * cells_u as f32;
+    let y = v * cells_v as f32;
     let cx = x.floor() as i64;
     let cy = y.floor() as i64;
-    let mut cell = Cell { f1: f32::MAX, f2: f32::MAX, id: 0 };
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            let (ix, iy) = (cx + dx, cy + dy);
-            let (wx, wy) = (wrap(ix, period), wrap(iy, period));
+    let mut cell = Cell { f1: f32::MAX, f2: f32::MAX, id: 0, id2: 0, dx: 0.0, dy: 0.0 };
+    for oy in -1..=1 {
+        for ox in -1..=1 {
+            let (ix, iy) = (cx + ox, cy + oy);
+            let (wx, wy) = (wrap(ix, period_x), wrap(iy, period_y));
             let px = ix as f32 + hash01(wx, wy, seed);
             let py = iy as f32 + hash01(wx, wy, seed ^ 0x5BD1_E995);
             let d = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
             if d < cell.f1 {
                 cell.f2 = cell.f1;
+                cell.id2 = cell.id;
                 cell.f1 = d;
                 cell.id = hash(wx, wy, seed);
+                cell.dx = x - px;
+                cell.dy = y - py;
             } else if d < cell.f2 {
                 cell.f2 = d;
+                cell.id2 = hash(wx, wy, seed);
             }
         }
     }

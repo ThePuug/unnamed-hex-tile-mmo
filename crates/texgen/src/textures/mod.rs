@@ -2,6 +2,7 @@
 //! `pub fn build(&Params) -> Canvas`, an entry in `TEXTURES`, a row in the
 //! README.
 
+mod cliff_stone;
 mod grass_plain;
 
 use crate::canvas::Canvas;
@@ -19,12 +20,22 @@ pub struct Texture {
     pub build: fn(&Params) -> Canvas,
 }
 
-pub const TEXTURES: &[Texture] = &[Texture {
-    name: "grass-plain",
-    brief: "Lowland turf for hex tile tops: the terrain ramp's plain green, \
-            unevenly grown, with a few patches worn through to bare earth.",
-    build: grass_plain::build,
-}];
+pub const TEXTURES: &[Texture] = &[
+    Texture {
+        name: "grass-plain",
+        brief: "Lowland turf for hex tile tops: the terrain ramp's plain green, \
+                unevenly grown, with a few patches worn through to bare earth.",
+        build: grass_plain::build,
+    },
+    Texture {
+        name: "cliff-stone",
+        brief: "Fractured stone for cliff faces and skirts: the terrain shader's cliff \
+                grey, a face broken into fragments with varying numbers of cracked \
+                edges, slabs wider than tall with some shattered into shards, a \
+                little moss in the deeper cracks.",
+        build: cliff_stone::build,
+    },
+];
 
 #[cfg(test)]
 mod tests {
