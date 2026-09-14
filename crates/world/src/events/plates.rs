@@ -90,7 +90,7 @@ impl EventIndex for PlateCentroidIndex {
     fn tile_view_at(&self, q: i32, r: i32) -> Option<TileView> {
         self.elevation_at.get(&(q, r)).map(|&elevation| {
             let (wx, wy) = hex_to_world(q, r);
-            TileView { q, r, wx, wy, tags: TagSet::new(), elevation, curvature: 0.0 }
+            TileView { q, r, wx, wy, tags: TagSet::new(), elevation }
         })
     }
 
@@ -314,7 +314,7 @@ mod tests {
         let e = event();
         let mut checked = 0;
         sample(|q, r, wx, wy| {
-            let view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, curvature: 0.0 };
+            let view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
             let out = e.query(q, r, &view, &(), SEED).unwrap();
             assert!(out.tags_added.is_empty(), "plates emitted tag(s) at ({q}, {r})");
             assert!(out.tags_removed.is_empty(), "plates removed tag(s) at ({q}, {r})");

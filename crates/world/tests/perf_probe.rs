@@ -125,8 +125,9 @@ fn perf_probe() {
     println!();
 
     // ── 4. Sparse sampling, 200-tile spacing (LoD mid-band pattern) ────────
-    // 100 samples in a 10x10 grid, 200 tiles apart: every sample is in a
-    // distinct slope-form cell; spine/plate cells are shared by several samples.
+    // 100 samples in a 10x10 grid, 200 tiles apart: every layer's cell is 1800
+    // tiles, so each cell serves several samples and the cost is query, not
+    // deform.
     {
         let c = composite_full();
         let t = Instant::now();
@@ -145,7 +146,7 @@ fn perf_probe() {
     println!();
 
     // ── 5. Sparse sampling, 2000-tile spacing (far-band / flyover pattern) ─
-    // Every sample in a distinct spine cell AND distinct plate region.
+    // Every sample in a distinct cell of every layer.
     {
         let c = composite_full();
         let t = Instant::now();

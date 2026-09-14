@@ -43,8 +43,8 @@ sudo apt install -y clang mold pkg-config libasound2-dev libudev-dev
 
 ```bash
 cargo build                  # Build everything
-cargo run -p server          # Run server
-cargo run -p client          # Run client (requires display)
+cargo run --bin server       # Run server
+cargo run --bin client       # Run client (requires display)
 ```
 
 ## Development Tools
@@ -54,19 +54,19 @@ cargo run -p client          # Run client (requires display)
 Headless world composite visualization tool. Renders PNGs for validating terrain generation and world event output without running the full client.
 
 ```bash
-cargo run -p world-viewer -- --layers plates,elevation --radius 15000 --scale 8 --output world.png
+cargo run --bin world-viewer -- --layers plates,elevation --radius 15000 --scale 8 --output world.png
 ```
 
 Available layers: `plates`, `elevation`, `spines`, `centroids`, `spawners`, `spine-peaks`
 
-See `cargo run -p world-viewer -- --help` for all options.
+See `cargo run --bin world-viewer -- --help` for all options.
 
 ### console
 
 Server monitoring console tool.
 
 ```bash
-cargo run -p console
+cargo run --bin console
 ```
 
 ## Project Structure

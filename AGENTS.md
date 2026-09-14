@@ -20,14 +20,20 @@ behavior changes. Per-crate guidance sits alongside the crate it governs —
 
 ```bash
 cargo build
-cargo run -p server                # separate processes
-cargo run -p client
+cargo run --bin server             # separate processes
+cargo run --bin client
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
 cargo test -p server reaction_queue
 
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
+
+Run binaries with `--bin`, not `-p`. Selecting one package resolves shared
+dependencies (`syn`, `image`, `winit`, …) with a feature set no workspace-wide
+`cargo build` or `cargo test` produces, and a binary's fingerprint records the
+dependency set it was linked against, so every switch between `-p` and a
+workspace command recompiles the binary.
 
 Bevy links as a dylib by default (`dynamic` feature) so an edit rebuilds one
 crate instead of the engine. That dylib carries no bitcode, so it cannot be

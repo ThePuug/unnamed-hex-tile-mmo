@@ -8,8 +8,8 @@ use world::TagSet;
 
 /// Server-side registry of world events.
 
-/// Owns the Composite with PlateEvent + MotionEvent + SpineEvent +
-/// SlopeFormEvent. All terrain queries route through here.
+/// Owns the Composite with PlateEvent + TiltEvent + MotionEvent +
+/// OrogenEvent. All terrain queries route through here.
 /// Arc-wrapped so async chunk generation tasks can share it.
 #[derive(Resource, Clone)]
 pub struct EventRegistry {

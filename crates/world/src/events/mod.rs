@@ -97,14 +97,6 @@ pub struct TileOutput {
     pub tags_added: TagSet,
     pub tags_removed: TagSet,
     pub elevation_delta: f64,
-    /// Laplacian of the surface this layer adds, in z per world unit squared.
-    ///
-    /// Curvature cannot be recovered from a composed elevation without reading
-    /// neighbouring tiles, which is the one thing a query may not do. The layer
-    /// that emits a feature knows its second derivative in closed form, so it
-    /// states it here and a consumer reads it at its own tile — the same
-    /// contract elevation follows, for the same reason.
-    pub curvature: f64,
 }
 
 /// Read-only composite view at a single tile.
@@ -116,10 +108,6 @@ pub struct TileView {
     pub wy: f64,
     pub tags: TagSet,
     pub elevation: f64,
-    /// Laplacian of the composed surface, summed over the layers below. Sums
-    /// because elevation does: the derivative of a sum is the sum of the
-    /// derivatives.
-    pub curvature: f64,
 }
 
 // ── CellScope ───────────────────────────────────────────────────────────────
@@ -569,7 +557,7 @@ impl Composite {
 
         // Phase 2: Query cascade — resolve tile bottom-up
         let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, curvature: 0.0 };
+        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
 
         {
             let _s = tracing::debug_span!("query").entered();
@@ -601,7 +589,6 @@ impl Composite {
                 for t in tile_out.tags_added.iter() { view.tags.add(t); }
                 for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
                 view.elevation += tile_out.elevation_delta;
-                view.curvature += tile_out.curvature;
             }
         }
 
@@ -750,7 +737,7 @@ impl Composite {
     /// no-op for cells not yet deformed).
     fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
         let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, curvature: 0.0 };
+        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
 
         for li in 0..up_to {
             let cell_id = self.lattices[li].cell_id(q, r);
@@ -774,7 +761,6 @@ impl Composite {
             for t in tile_out.tags_added.iter() { view.tags.add(t); }
             for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
             view.elevation += tile_out.elevation_delta;
-            view.curvature += tile_out.curvature;
         }
 
         view

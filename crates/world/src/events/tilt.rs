@@ -162,12 +162,6 @@ impl WorldEvent for TiltEvent {
         let gate = shore_gate(below.elevation);
         if gate <= 0.0 { return None }
         let (wx, wy) = hex_to_world(q, r);
-
-        // Curvature is published as zero rather than computed. The potential's
-        // second derivative is of order amplitude / wavelength squared —
-        // 3e-9 z per world unit squared — and the creep operator that consumes
-        // curvature was measured to need displacements above half a z-level to
-        // register at all. Stating a number that small would be stating noise.
         Some(TileOutput {
             elevation_delta: potential(wx, wy, seed) * gate,
             ..TileOutput::default()
