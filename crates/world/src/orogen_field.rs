@@ -1,4 +1,4 @@
-//! Orogen as a field — PROTOTYPE, not wired into the event stack.
+//! Orogen as a field — the relief behind OrogenEvent.
 //!
 //! A belt is not a feature placed on a carrier. Four carriers were tried and
 //! all failed the same way: every one inherited its spacing from a field whose
@@ -20,9 +20,9 @@
 //!
 //! - [`shortening`] — the compressive principal strain, straight from the
 //!   velocity gradient.
-//! - [`project_to_crest`] — Newton iteration along the least-curvature axis
-//!   walks a position onto the crest it belongs to. 98% convergence from
-//!   anywhere inside a belt, 3 iterations at the median.
+//! - [`project_to_crest`] — one closed-form step along the least-curvature
+//!   axis of the field's own Hessian puts a position on the crest it belongs
+//!   to.
 //! - The belt axis is the crest's tangent. Not derived from an orientation
 //!   octave (44.5° off, measured) nor from the strain tensor (24.2° off): the
 //!   belt is the expression of the shortening, so its axis is the shortening's
@@ -238,16 +238,6 @@ pub struct Crest {
     pub asymmetry: f64,
 }
 
-/// Walk a position onto the crest of the ridge it sits on.
-///
-/// Newton along the least-curvature axis: `p ← p − (∇f·v)/(vᵀHv)·v`. Measured
-/// from across a belt's full width, 98.1–99.0% converge in 3 iterations at the
-/// median, moving a distance that matches the start offset to within 0.5% — it
-/// walks back to the crest it came from rather than wandering — and landing
-/// within 102 WU of the independently extracted ridge line.
-///
-/// `None` where there is no crest within reach: extensional ground, or a
-/// position further than a belt's width from any ridge.
 /// Where a position's crest is, read from the field in one step.
 ///
 /// The crest offset along the least-curvature axis is `-(∇s·v) / (vᵀHv)` — the
