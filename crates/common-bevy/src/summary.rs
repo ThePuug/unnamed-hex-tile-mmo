@@ -245,6 +245,13 @@ pub fn mesh_region_extent_wu(r: u32) -> f32 {
     (2 * MESH_REGION_RADIUS) as f32 * summary_flat_to_flat
 }
 
+/// World-space distance between the centers of adjacent mesh regions at
+/// radius r: the region lattice's basis vector, √(3R²+3R+1) summaries long.
+pub fn mesh_region_spacing_wu(r: u32) -> f32 {
+    let cells = 3 * MESH_REGION_RADIUS * MESH_REGION_RADIUS + 3 * MESH_REGION_RADIUS + 1;
+    (cells as f32).sqrt() * summary_width_wu(r)
+}
+
 // ── Summary Lattice ──
 
 /// Axis-aligned summary lattice. Centers are placed at integer multiples

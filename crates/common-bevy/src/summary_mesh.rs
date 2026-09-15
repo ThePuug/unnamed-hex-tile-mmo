@@ -44,18 +44,10 @@ pub struct SummaryMeshResult {
     pub tri_count: u32,
     /// World-space origin of this mesh region (for Transform).
     pub mesh_origin: Vec3,
-    /// Cells of the region and its one-cell ring whose height resolved. The
-    /// ring feeds the perimeter corners, so anything below
-    /// `MESH_REGION_CELLS_WITH_RING` means the region is rebuilt when more
-    /// data arrives.
-    pub resolved: u32,
 }
 
 /// Cells in a mesh region (radius-9 hex ball).
 pub const MESH_REGION_CELLS: u32 = 271;
-
-/// Cells a complete build reads: the region plus its one-cell ring.
-pub const MESH_REGION_CELLS_WITH_RING: u32 = MESH_REGION_CELLS + 60;
 
 /// Downward curtain depth (WU) under edges facing unbuilt cells. Deep enough
 /// to cover the relief between a built region and the ground beside it.
@@ -65,9 +57,12 @@ pub const CURTAIN_DEPTH_WU: f32 = 24.0;
 /// lattice: `height(sq, sr)` is the cell's z, or None while its data is
 /// absent. At r = 0 the lattice coordinates are tile coordinates.
 
-/// Cells with a height are built; a corner takes the mean of whichever of
-/// its three cells have one, so a region streams in without holes and its
-/// corners settle as neighbours land. Returns None when no cell has data.
+/// Built only once every cell of the region and of the ring around it has a
+/// height — the ring is what the perimeter corners are made of — and then
+/// final: heights are durable, so nothing a built region depends on ever
+/// changes. Returns None until then. Producers cover one region ring more
+/// than consumers build (`visible_lod_regions`), so a needed region's ring
+/// always arrives.
 pub fn build_summary_mesh_region(
     radius: u32,
     region_key: MeshRegionKey,
@@ -86,21 +81,14 @@ pub fn build_summary_mesh_region(
     let region_cells: Vec<(i32, i32)> = region_lat.tiles_in_cell(region_id).collect();
     let region_set: HashSet<(i32, i32)> = region_cells.iter().copied().collect();
     let mut heights: HashMap<(i32, i32), i32> = HashMap::new();
-    let mut resolved = 0u32;
     for &(sq, sr) in &region_cells {
         for (dq, dr) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
             let cell = (sq + dq, sr + dr);
             if heights.contains_key(&cell) {
                 continue;
             }
-            if let Some(z) = height(cell.0, cell.1) {
-                heights.insert(cell, z);
-                resolved += 1;
-            }
+            heights.insert(cell, height(cell.0, cell.1)?);
         }
-    }
-    if !region_cells.iter().any(|c| heights.contains_key(c)) {
-        return None;
     }
 
     let bias = level_depth_bias(radius);
@@ -130,7 +118,7 @@ pub fn build_summary_mesh_region(
     };
 
     for &cell in &region_cells {
-        let Some(&z) = heights.get(&cell) else { continue };
+        let z = heights[&cell];
         let centre = centre_of(cell);
         let centre_y = height_y(z as f32) - bias;
 
@@ -158,12 +146,12 @@ pub fn build_summary_mesh_region(
             indices.extend([ci, corner_idx[j], corner_idx[i]]);
         }
 
-        // Curtains under edges facing cells this mesh does not build. Edge
+        // Curtains under edges facing the ring: cells this mesh does not build.
         // (i, i+1) faces the first neighbour listed for corner i.
         for i in 0..6 {
             let d = CORNER_NEIGHBOURS[i][0];
             let facing = (cell.0 + d.0, cell.1 + d.1);
-            if region_set.contains(&facing) && heights.contains_key(&facing) {
+            if region_set.contains(&facing) {
                 continue;
             }
             let j = (i + 1) % 6;
@@ -185,7 +173,6 @@ pub fn build_summary_mesh_region(
         normals,
         indices,
         mesh_origin,
-        resolved,
     })
 }
 
@@ -328,6 +315,11 @@ pub fn visible_mesh_regions_in_band_ungated(
 /// summaries beyond it whose tiles the Map can never resolve — the producer
 /// covers those. Values agree with Map-computed ones because every producer
 /// uses the same 7-sample rule over the same elevation field.
+
+/// The consumer builds a region only once its ring has heights too, so the
+/// producer covers one region ring more than the consumer needs at both
+/// ends of every band — without it, the horizon shell and the regions just
+/// inside the boundary would wait forever.
 pub fn visible_lod_regions(
     bands: &[Band],
     cam_wx: f32,
@@ -337,6 +329,7 @@ pub fn visible_lod_regions(
     let mut out = HashSet::new();
     for band in bands {
         let half_extent = 0.5 * crate::summary::mesh_region_extent_wu(band.r);
+        let ring = crate::summary::mesh_region_spacing_wu(band.r);
         // Footprint-overlap enumeration over the level's window (matches
         // the consumer): every region whose footprint touches the window
         // is produced, so the strip the cut keeps past the band edge has
@@ -344,11 +337,11 @@ pub fn visible_lod_regions(
         // an edge to neither band — un-rendered crescents at every level
         // boundary.
         let (win_inner, win_outer) = band.window();
-        let outer = win_outer + half_extent;
-        // Skip bands whose regions cannot reach past the local boundary —
-        // those are fully consumer-owned (Map-computed).
+        let outer = win_outer + half_extent + ring;
+        // Skip bands whose regions and rings cannot reach past the local
+        // boundary — those are fully consumer-owned (Map-computed).
         if outer <= local_boundary_wu { continue; }
-        let inner = win_inner.max(local_boundary_wu) - half_extent;
+        let inner = (win_inner - half_extent).max(local_boundary_wu) - ring;
         out.extend(visible_mesh_regions_in_band_ungated(
             band.r, cam_wx, cam_wz, inner.max(0.0), outer,
         ));
@@ -424,7 +417,6 @@ mod tests {
     fn flat_region_is_fans_plus_perimeter_curtains() {
         let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5)).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
-        assert_eq!(result.resolved, MESH_REGION_CELLS_WITH_RING);
         let fans = fan_vertices(&result);
         let y = fans[0].0.y;
         assert!(fans.iter().all(|(p, _)| (p.y - y).abs() < 1e-5), "flat ground is not flat");
@@ -438,20 +430,12 @@ mod tests {
     }
 
     #[test]
-    fn hole_swaps_six_fan_triangles_for_six_curtains() {
-        let full = build_summary_mesh_region(1, REGION, &|_, _| Some(5)).unwrap();
-        let hole = build_summary_mesh_region(1, REGION, &|q, r| ((q, r) != (0, 0)).then_some(5)).unwrap();
-        assert_eq!(hole.tri_count, full.tri_count - 6 + 6 * 2);
-        assert_eq!(hole.resolved, full.resolved - 1);
-    }
-
-    #[test]
-    fn ring_counts_toward_resolved_but_is_not_built() {
+    fn build_waits_for_every_cell_of_region_and_ring() {
         let region_lat = mesh_region_lattice();
-        let inside = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
-        let result = build_summary_mesh_region(1, REGION, &inside).unwrap();
-        assert_eq!(result.resolved, MESH_REGION_CELLS);
-        assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
+        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
+        assert!(build_summary_mesh_region(1, REGION, &hole).is_none(), "built with a cell missing");
+        let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
+        assert!(build_summary_mesh_region(1, REGION, &no_ring).is_none(), "built with the ring missing");
     }
 
     #[test]

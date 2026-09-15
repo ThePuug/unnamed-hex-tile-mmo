@@ -46,9 +46,9 @@ pub fn height_y(z: f32) -> f32 {
 }
 
 /// Height of a corner from the cells meeting there, in z units: the mean of
-/// those present. Cells still streaming in are absent and the corner settles
-/// when they land; the mesh and physics both read this, so they agree in
-/// the meantime too. None when none of the three is present.
+/// those present. A cell can be absent at the edge of the loaded tiles;
+/// physics and the tile outlines then take the mean of the rest, while the
+/// mesh builds only with every cell present. None when none is present.
 pub fn corner_z(cells: [Option<i32>; 3]) -> Option<f32> {
     let (sum, n) = cells
         .iter()

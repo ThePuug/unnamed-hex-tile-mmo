@@ -255,6 +255,7 @@ pub fn dispatch_summary_tasks(
     client_timers: Res<crate::resources::ClientTimers>,
     player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
     mut last_eval_pos: Local<Option<Vec3>>,
+    mut backlog: Local<bool>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     // Determine camera world position for local band computation
@@ -274,9 +275,12 @@ pub fn dispatch_summary_tasks(
         (None, Some(_)) => true,
         _ => false,
     };
-    if !map_changed && !cache_changed && !moved {
+    // A run that exhausted its budget leaves a backlog, picked up next frame.
+    let data_changed = map_changed || cache_changed;
+    if !data_changed && !moved && !*backlog {
         return;
     }
+    *backlog = false;
     if let Some(pos) = camera_pos {
         *last_eval_pos = Some(pos);
     }
@@ -410,9 +414,9 @@ pub fn dispatch_summary_tasks(
             if state.task.is_some() {
                 continue;
             }
-            if state.entity.is_some()
-                && state.resolved >= common_bevy::summary_mesh::MESH_REGION_CELLS_WITH_RING
-            {
+            // Built regions are final: their heights are durable. A region
+            // still waiting for data is retried only when data arrived.
+            if state.entity.is_some() || (state.waiting && !data_changed) {
                 continue;
             }
         }
@@ -455,18 +459,16 @@ pub fn dispatch_summary_tasks(
                     base_normals: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
-                    resolved: 0,
+                    waiting: false,
                 },
             );
         }
         mesh_dispatched += 1;
     }
 
-    // Budget exhausted with regions possibly still undispatched — re-arm the
-    // changed flag so the remainder dispatches next frame instead of waiting
-    // for the next map/cache change.
+    // Budget exhausted with regions possibly still undispatched.
     if mesh_dispatched >= MAX_MESH_TASKS {
-        map.force_changed();
+        *backlog = true;
     }
 }
 
@@ -596,9 +598,9 @@ fn compute_auto_mode_regions(
 /// tile z straight from the Map. r>0 reads the SummaryCache (server- or
 /// flyover-fed) and falls back to sampling the Map with the same 7-sample
 /// rule every producer uses — Map z and server elevation agree by
-/// construction, so the value is the same whichever side computed it. A
-/// cell whose data is absent stays unresolved and the region is
-/// re-dispatched as data streams in.
+/// construction, so the value is the same whichever side computed it. Until
+/// every cell and ring cell has data the build yields nothing, and the
+/// region is re-dispatched as data streams in.
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
@@ -611,7 +613,6 @@ fn collect_and_build_summary_mesh(
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
-        resolved: 0,
     };
 
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
@@ -657,7 +658,6 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
-        resolved: smr.resolved,
     }
 }
 
@@ -715,7 +715,7 @@ pub fn poll_summary_meshes(
                 state.base_normals = result.normals;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
-                state.resolved = result.resolved;
+                state.waiting = result.tri_count == 0;
                 to_upload.push(region_key);
             }
         }
@@ -871,6 +871,23 @@ mod tests {
                         produced.contains(k),
                         "[fov={fov:.2} y={cam_y} b={boundary}] needed region {k:?} \
                          (reach {reach:.1}) is beyond the boundary but not produced"
+                    );
+                }
+                // (c) A region is built only once its ring has heights, so
+                // every neighbour of a needed region must be produced or lie
+                // wholly inside the loaded tiles (its cells sample within a
+                // summary of their centre).
+                for (dn, dm) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
+                    let n = common_bevy::summary_mesh::MeshRegionKey { r: k.r, mn: k.mn + dn, mm: k.mm + dm };
+                    let (nx, nz) = region_center_world(&n);
+                    let n_reach = (nx * nx + nz * nz).sqrt()
+                        + 0.5 * mesh_region_extent_wu(n.r)
+                        + common_bevy::summary::summary_width_wu(n.r);
+                    assert!(
+                        produced.contains(&n) || n_reach <= boundary,
+                        "[fov={fov:.2} y={cam_y} b={boundary}] ring region {n:?} of needed \
+                         {k:?} (reach {n_reach:.1}) is neither produced nor inside the Map \
+                         — the region could never be built"
                     );
                 }
             }

@@ -251,9 +251,10 @@ pub struct SummaryMeshState {
     pub base_normals: Vec<[f32; 3]>,
     pub base_indices: Vec<u32>,
     pub base_tri_count: u32,
-    /// Cells (region + ring) whose height resolved. Below
-    /// `MESH_REGION_CELLS_WITH_RING` the region re-dispatches on new data.
-    pub resolved: u32,
+    /// The last build yielded nothing — a cell or ring cell had no data
+    /// yet. Retried when data arrives, not on every run: retrying every
+    /// frame would take the build slots from regions that can be built.
+    pub waiting: bool,
 }
 
 /// Result from an async summary mesh build task: raw geometry, turned into
@@ -264,8 +265,6 @@ pub struct SummaryMeshBuildResult {
     pub indices: Vec<u32>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,
-    /// Cells (region + ring) whose height resolved; see `SummaryMeshState`.
-    pub resolved: u32,
 }
 
 /// Tracks mesh state for all summary mesh regions.
