@@ -5,7 +5,7 @@ the README."""
 from dataclasses import dataclass
 from typing import Callable
 
-from . import boulder, pine_tree
+from . import boulder, deciduous_tree, pine_tree
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,16 @@ MODELS = [
         box=(1.7, 1.7, 6.0),
         tris=600,
         build=pine_tree.build,
+    ),
+    Model(
+        name="deciduous-tree",
+        brief="A broadleaf tree for hex tiles, seen from a few metres up: one bare "
+              "trunk with a few limbs leaving it under a full, rounded, lumpy crown "
+              "of leaf green about as wide as the tile, half again to twice a "
+              "person's height, low-poly with flat facets, standing on the ground.",
+        box=(1.7, 1.7, 4.5),
+        tris=700,
+        build=deciduous_tree.build,
     ),
 ]
 

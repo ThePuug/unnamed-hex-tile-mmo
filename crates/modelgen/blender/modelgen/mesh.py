@@ -44,11 +44,12 @@ def scale(bm, x, y, z):
     bmesh.ops.scale(bm, vec=Vector((x, y, z)), verts=bm.verts)
 
 
-def displace(bm, f):
-    """Moves every vertex along its normal by `f(co)`. Normals are those of
-    the mesh before the move, so displacement does not compound."""
+def displace(bm, f, verts=None):
+    """Moves every vertex, or each of `verts`, along its normal by `f(co)`.
+    Normals are those of the mesh before the move, so displacement does not
+    compound."""
     bm.normal_update()
-    moves = [(v, v.normal * f(v.co.copy())) for v in bm.verts]
+    moves = [(v, v.normal * f(v.co.copy())) for v in (bm.verts if verts is None else verts)]
     for v, d in moves:
         v.co += d
 
@@ -116,6 +117,32 @@ def cone(bm, segments, radius_bottom, radius_top, height, z, material_index=0):
                                 radius1=radius_bottom, radius2=radius_top, depth=height)
     bmesh.ops.translate(bm, verts=ret["verts"], vec=Vector((0, 0, z + height / 2)))
     for v in ret["verts"]:
+        for f in v.link_faces:
+            f.material_index = material_index
+    return ret["verts"]
+
+
+def sphere(bm, subdivisions, radius, centre, material_index=0):
+    """Adds an icosphere to `bm` about `centre` and returns its new
+    vertices."""
+    ret = bmesh.ops.create_icosphere(bm, subdivisions=subdivisions, radius=radius)
+    bmesh.ops.translate(bm, verts=ret["verts"], vec=Vector(centre))
+    for v in ret["verts"]:
+        for f in v.link_faces:
+            f.material_index = material_index
+    return ret["verts"]
+
+
+def limb(bm, segments, radius_start, radius_end, start, end, material_index=0):
+    """Adds a capped cone to `bm` running from `start` to `end` and returns
+    its new vertices."""
+    start, end = Vector(start), Vector(end)
+    axis = end - start
+    ret = bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segments,
+                                radius1=radius_start, radius2=radius_end, depth=axis.length)
+    turn = Vector((0, 0, 1)).rotation_difference(axis).to_matrix()
+    for v in ret["verts"]:
+        v.co = turn @ (v.co + Vector((0, 0, axis.length / 2))) + start
         for f in v.link_faces:
             f.material_index = material_index
     return ret["verts"]
