@@ -5,6 +5,9 @@ style for comments.
 
 Design specs live in the `unnamed-indie-studio-internal` repo, sibling checkout,
 `projects/unnamed-hex-tile-mmo/`. This repo carries only what binds the code.
+Assets and their generators (texgen, modelgen) live in the private
+`unnamed-hex-tile-mmo-assets` repo, mounted here as the `assets/` submodule; its
+own `AGENTS.md` binds them.
 
 | Location | Purpose |
 |----------|---------|
@@ -54,8 +57,6 @@ flat-top hex grid. All crates under `crates/`:
 | `server` | Authority, AI, terrain serving, connections |
 | `world` | World event system + terrain generation, no Bevy |
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
-| `texgen` | Tileable texture generator — each texture a module, PNGs under `assets/textures`; its `AGENTS.md` carries the creator/critic loop |
-| `modelgen` | Low-poly model generator — each model a Python module Blender runs headless, GLBs under `assets/models`; its `AGENTS.md` carries the creator/critic loop and the live-Blender MCP route |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
 

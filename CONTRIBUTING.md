@@ -10,7 +10,6 @@ The primary development environment. You need:
 
 - [Rust toolchain](https://rustup.rs/) (install via `rustup`)
 - Visual Studio Build Tools (installed automatically with rustup on Windows)
-- [Blender 5.2](https://www.blender.org/download/) only for `modelgen`; set `BLENDER` to the executable when it is not in the default install path. Everything else builds and tests without it.
 
 ### WSL / Linux
 
@@ -43,6 +42,7 @@ sudo apt install -y clang mold pkg-config libasound2-dev libudev-dev
 ## Build and Run
 
 ```bash
+git submodule update --init   # assets/ is the private assets repo; ask for access
 cargo build                  # Build everything
 cargo run --bin server       # Run server
 cargo run --bin client       # Run client (requires display)
@@ -62,16 +62,9 @@ Views, what each reads, and when one is added or removed: `crates/world-viewer/R
 
 See `cargo run --bin world-viewer -- --help` for all options.
 
-### texgen
+### assets
 
-Tileable texture generator. Each texture is a module; the PNG under `assets/textures` is its output.
-
-```bash
-cargo run --bin texgen -- grass-plain
-cargo run --bin texgen -- --list
-```
-
-Textures and how one is made: `crates/texgen/README.md` and `crates/texgen/AGENTS.md`.
+The `assets/` submodule is the private `unnamed-hex-tile-mmo-assets` repo: every asset the client loads, and the generators that make them (`texgen`, `modelgen`). It is its own Cargo workspace; build and run the generators from inside it, where its `AGENTS.md` and the crate READMEs say how. Blender 5.2 is needed there, not here.
 
 ### console
 
