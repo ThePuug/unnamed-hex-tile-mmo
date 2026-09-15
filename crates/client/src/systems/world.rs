@@ -411,7 +411,7 @@ pub fn dispatch_summary_tasks(
                 continue;
             }
             if state.entity.is_some()
-                && state.summaries_built >= common_bevy::summary_mesh::MESH_REGION_SUMMARIES
+                && state.resolved >= common_bevy::summary_mesh::MESH_REGION_CELLS_WITH_RING
             {
                 continue;
             }
@@ -455,8 +455,7 @@ pub fn dispatch_summary_tasks(
                     base_normals: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
-                    perimeter_edges: Vec::new(),
-                    summaries_built: 0,
+                    resolved: 0,
                 },
             );
         }
@@ -591,14 +590,15 @@ fn compute_auto_mode_regions(
     all_regions
 }
 
-/// Build a summary mesh region (runs off main thread).
+/// Build a mesh region (runs off main thread).
 
-/// r=0: full tile geometry from Map (slope blending, cliff skirts).
-/// r>0: reads SummaryCache first (server/flyover-fed regions), then falls
-///      back to computing center_z from Map tiles for client-owned regions
-///      within the chunk-stream radius. Summaries whose tiles are not all
-///      loaded stay unresolved and fill in as chunks stream (the region is
-///      re-dispatched on map changes until complete).
+/// One builder for every level; only the height lookup differs. r=0 reads
+/// tile z straight from the Map. r>0 reads the SummaryCache (server- or
+/// flyover-fed) and falls back to sampling the Map with the same 7-sample
+/// rule every producer uses — Map z and server elevation agree by
+/// construction, so the value is the same whichever side computed it. A
+/// cell whose data is absent stays unresolved and the region is
+/// re-dispatched as data streams in.
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
@@ -611,40 +611,43 @@ fn collect_and_build_summary_mesh(
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
-        perimeter_edges: Vec::new(),
-        summaries_built: 0,
+        resolved: 0,
     };
 
+    let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
+
     if radius == 0 {
-        let elevation_fn = |q: i32, r: i32| -> Option<i32> {
-            map.get_by_qr(q, r).map(|(qrz, _)| qrz.z)
-        };
-        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &elevation_fn)
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &tile_z)
             .as_ref()
             .map_or(empty, smr_to_result);
     }
 
-    // r>0: bulk region lookup — one DashMap access, then 271 lock-free reads.
-    // Cache misses fall back to the Map with the same 7-sample rule every
-    // other producer uses — Map z and server elevation_at agree by
-    // construction (chunks are generated from elevation_at), so values are
-    // identical regardless of which side computed them. None until all 7
-    // samples' tiles are loaded; the region re-dispatches as chunks stream.
-    let region_data = cache.get_region(&region_key);
-    let summary_z_fn = |sq: i32, sr: i32| -> Option<i32> {
-        if let Some(z) = region_data.as_ref().and_then(|d| d.cells.get(&(sq, sr)).copied()) {
-            return Some(z);
+    // The builder also reads the ring of cells around the region, which
+    // belong to neighbouring regions: cache lookups are per region, memoised
+    // across the build.
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let regions: std::cell::RefCell<
+        std::collections::HashMap<(i32, i32), Option<std::sync::Arc<crate::resources::RegionData>>>,
+    > = Default::default();
+    let summary_z = |sq: i32, sr: i32| -> Option<i32> {
+        let (mn, mm) = region_lat.cell_id(sq, sr);
+        let cached = regions
+            .borrow_mut()
+            .entry((mn, mm))
+            .or_insert_with(|| {
+                cache.get_region(&common_bevy::summary_mesh::MeshRegionKey { r: radius, mn, mm })
+            })
+            .as_ref()
+            .and_then(|d| d.cells.get(&(sq, sr)).copied());
+        if cached.is_some() {
+            return cached;
         }
-        common_bevy::summary::sample_center_z_opt(radius, sq, sr, |tq, tr| {
-            map.get_by_qr(tq, tr).map(|(qrz, _)| qrz.z)
-        })
+        common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)
     };
 
-    common_bevy::summary_mesh::build_summary_mesh_region_from_summaries(
-        radius, region_key, &summary_z_fn,
-    )
-    .as_ref()
-    .map_or(empty, smr_to_result)
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &summary_z)
+        .as_ref()
+        .map_or(empty, smr_to_result)
 }
 
 fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {
@@ -654,8 +657,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
-        perimeter_edges: smr.perimeter_edges.clone(),
-        summaries_built: smr.summaries_built,
+        resolved: smr.resolved,
     }
 }
 
@@ -686,114 +688,9 @@ fn build_bevy_mesh(
     .with_inserted_indices(Indices::U32(indices.to_vec()))
 }
 
-/// Downward curtain depth (WU) for unmatched frontier edges — the horizon
-/// and edges facing unbuilt territory. Deep enough to cover the relief
-/// between a built region and the ground beside it.
-const CURTAIN_DEPTH_WU: f32 = 24.0;
-
-/// Append cross-region skirt geometry owned by `my_key`, plus frontier
-/// curtains for perimeter edges with no same-band counterpart.
-
-/// Skirt ownership: the lower region key emits the shared-edge skirt.
-/// Matching is still checked against ALL same-band neighbors so curtains
-/// are suppressed on edges a neighbor will skirt.
-
-/// Curtains close the surface where no shared vertex IDs can ever exist —
-/// the horizon, or territory that has no mesh at all. A band edge needs
-/// none: inside a level's window every perimeter has a same-level
-/// neighbour (the region beyond overlaps the window too), and the cut's
-/// one-summary overlap with the adjacent level closes the step there.
-fn append_cross_region_skirts(
-    my_key: common_bevy::summary_mesh::MeshRegionKey,
-    my_edges: &[common_bevy::summary_mesh::PerimeterEdge],
-    all_states: &std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, SummaryMeshState>,
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-    mesh_origin: Vec3,
-) -> u32 {
-    use common_bevy::summary_mesh::{compute_cross_region_skirts, mesh_region_neighbors};
-
-    let mut tris = 0u32;
-    let mut matched: std::collections::HashSet<[(i32, i32); 2]> = std::collections::HashSet::new();
-
-    for neighbor_key in mesh_region_neighbors(my_key) {
-        if neighbor_key.r != my_key.r {
-            continue;
-        }
-        let Some(neighbor_state) = all_states.get(&neighbor_key) else { continue };
-        if neighbor_state.perimeter_edges.is_empty() {
-            continue;
-        }
-
-        // Record matches against every neighbor (curtain suppression)…
-        let neighbor_ids: std::collections::HashSet<[(i32, i32); 2]> = neighbor_state
-            .perimeter_edges
-            .iter()
-            .map(|e| e.vertex_ids)
-            .collect();
-        for e in my_edges {
-            if neighbor_ids.contains(&e.vertex_ids) {
-                matched.insert(e.vertex_ids);
-            }
-        }
-
-        // …but only the lower key emits the shared-edge skirt geometry.
-        if (my_key.mn, my_key.mm) >= (neighbor_key.mn, neighbor_key.mm) {
-            continue;
-        }
-
-        let quads = compute_cross_region_skirts(my_edges, &neighbor_state.perimeter_edges);
-        for quad in &quads {
-            let base = positions.len() as u32;
-            for &pos in &quad.positions {
-                let v = pos - mesh_origin;
-                positions.push([v.x, v.y, v.z]);
-            }
-            let n: [f32; 3] = quad.normal.into();
-            normals.extend([n; 4]);
-            indices.extend([base, base + 1, base + 2]);
-            indices.extend([base, base + 2, base + 3]);
-            tris += 2;
-        }
-    }
-
-    // Frontier curtains for unmatched edges. Vertical, cliff-shaded by the
-    // terrain shader (horizontal normal), replaced by a proper skirt on
-    // rebuild once a same-band neighbor provides the matching edge.
-    for e in my_edges {
-        if matched.contains(&e.vertex_ids) {
-            continue;
-        }
-        let top0 = e.positions[0];
-        let top1 = e.positions[1];
-        let bot0 = top0 - Vec3::Y * CURTAIN_DEPTH_WU;
-        let bot1 = top1 - Vec3::Y * CURTAIN_DEPTH_WU;
-
-        let edge_dir = (top1 - top0).normalize_or_zero();
-        let outward = edge_dir.cross(Vec3::NEG_Y).normalize_or_zero();
-        let n: [f32; 3] = if outward.length_squared() > 0.5 {
-            outward.into()
-        } else {
-            [0.0, 0.0, 1.0]
-        };
-
-        let base = positions.len() as u32;
-        for &p in &[top0, top1, bot1, bot0] {
-            let v = p - mesh_origin;
-            positions.push([v.x, v.y, v.z]);
-        }
-        normals.extend([n; 4]);
-        indices.extend([base, base + 1, base + 2]);
-        indices.extend([base, base + 2, base + 3]);
-        tris += 2;
-    }
-
-    tris
-}
-
-/// Poll completed summary mesh tasks, build meshes with cross-region skirts,
-/// spawn/update entities.
+/// Poll completed summary mesh tasks, upload their meshes, spawn/update
+/// entities. A region's geometry is final when its task completes: regions
+/// share corners by construction, so nothing is stitched afterwards.
 pub fn poll_summary_meshes(
     mut commands: Commands,
     mut summary_meshes: ResMut<SummaryMeshes>,
@@ -805,9 +702,9 @@ pub fn poll_summary_meshes(
 ) {
     let _t = client_timers.0.scope("sum_poll");
 
-    // Phase 1: Poll async tasks, store base geometry + perimeter edges.
-    // Collect keys of newly-completed regions.
-    let mut just_completed: Vec<common_bevy::summary_mesh::MeshRegionKey> = Vec::new();
+    // Poll async tasks, keeping the geometry so the entity can be respawned
+    // without a rebuild.
+    let mut to_upload: Vec<common_bevy::summary_mesh::MeshRegionKey> = Vec::new();
 
     for (&region_key, state) in summary_meshes.states.iter_mut() {
         if let Some(task) = &mut state.task {
@@ -818,56 +715,21 @@ pub fn poll_summary_meshes(
                 state.base_normals = result.normals;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
-                state.perimeter_edges = result.perimeter_edges;
-                state.summaries_built = result.summaries_built;
-                just_completed.push(region_key);
+                state.resolved = result.resolved;
+                to_upload.push(region_key);
             }
         }
     }
 
-    // Phase 2: For each just-completed region, build its mesh including
-    // cross-region skirts, and mark neighbors that need re-patching.
-    let mut needs_rebuild: Vec<common_bevy::summary_mesh::MeshRegionKey> = Vec::new();
-
-    for &region_key in &just_completed {
-        // Re-patch every completed same-band neighbor: lower-key neighbors
-        // own the shared-edge skirts against our new data, and higher-key
-        // neighbors must drop the frontier curtains they emitted while our
-        // edge data was missing (a stale curtain would be coplanar with the
-        // new skirt — z-fighting).
-        for neighbor_key in common_bevy::summary_mesh::mesh_region_neighbors(region_key) {
-            if just_completed.contains(&neighbor_key) {
-                continue; // Will be built fresh in this same pass
-            }
-            let Some(neighbor_state) = summary_meshes.states.get(&neighbor_key) else { continue };
-            if neighbor_state.base_positions.is_empty() {
-                continue; // Not yet complete
-            }
-            if neighbor_key.r == region_key.r && !needs_rebuild.contains(&neighbor_key) {
-                needs_rebuild.push(neighbor_key);
-            }
-        }
-    }
-
-    // Combine: all regions that need a mesh (re)build this frame
-    let mut all_build: Vec<common_bevy::summary_mesh::MeshRegionKey> = just_completed;
-    all_build.extend(needs_rebuild);
-
-    // Also handle orphaned states: have base geometry but no entity.
-    // Occurs after a flyover stash restore (entities were despawned on toggle-on).
-    // A task may already be pending (dispatch_summary_tasks ran first this frame);
-    // we still rebuild immediately from the stored base geometry so there is no flash.
+    // Orphaned states: geometry but no entity, after a flyover stash restore
+    // (entities were despawned on toggle-on). A task may already be pending;
+    // the stored geometry goes up now so there is no flash.
     for (&region_key, state) in summary_meshes.states.iter() {
-        if !state.base_positions.is_empty() && state.entity.is_none() {
-            if !all_build.contains(&region_key) {
-                all_build.push(region_key);
-            }
+        if !state.base_positions.is_empty() && state.entity.is_none() && !to_upload.contains(&region_key) {
+            to_upload.push(region_key);
         }
     }
 
-    // Phase 3: Build/rebuild meshes with cross-region skirts.
-    // We need read access to all states for neighbor perimeter lookups,
-    // so collect the data we need first, then mutate.
     struct MeshBuild {
         key: common_bevy::summary_mesh::MeshRegionKey,
         positions: Vec<[f32; 3]>,
@@ -876,40 +738,21 @@ pub fn poll_summary_meshes(
         tri_count: u32,
     }
 
-    let mut builds: Vec<MeshBuild> = Vec::new();
+    let builds: Vec<MeshBuild> = to_upload
+        .iter()
+        .filter_map(|&key| {
+            let state = summary_meshes.states.get(&key)?;
+            (!state.base_positions.is_empty()).then(|| MeshBuild {
+                key,
+                positions: state.base_positions.clone(),
+                normals: state.base_normals.clone(),
+                indices: state.base_indices.clone(),
+                tri_count: state.base_tri_count,
+            })
+        })
+        .collect();
 
-    for &region_key in &all_build {
-        let states = &summary_meshes.states;
-        let Some(state) = states.get(&region_key) else { continue };
-        if state.base_positions.is_empty() {
-            continue;
-        }
-
-        let mut positions = state.base_positions.clone();
-        let mut normals = state.base_normals.clone();
-        let mut indices = state.base_indices.clone();
-        let mut tri_count = state.base_tri_count;
-
-        tri_count += append_cross_region_skirts(
-            region_key,
-            &state.perimeter_edges,
-            states,
-            &mut positions,
-            &mut normals,
-            &mut indices,
-            state.mesh_origin,
-        );
-
-        builds.push(MeshBuild {
-            key: region_key,
-            positions,
-            normals,
-            indices,
-            tri_count,
-        });
-    }
-
-    // Phase 4: Upload meshes, spawn/update entities.
+    // Upload meshes, spawn/update entities.
     for build in builds {
         if build.tri_count == 0 {
             continue;
@@ -940,7 +783,7 @@ pub fn poll_summary_meshes(
         }
     }
 
-    // Phase 5: Diagnostics.
+    // Diagnostics.
     let mut total_tris = 0u64;
     let mut mesh_count = 0u32;
     tri_stats.per_band.clear();

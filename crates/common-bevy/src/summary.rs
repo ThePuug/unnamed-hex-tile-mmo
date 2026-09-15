@@ -6,7 +6,6 @@
 //! where s = 2r+1. The rendered flat-top hex at outer_radius = s tiles
 //! perfectly on this lattice with zero gaps or overlaps.
 
-use bevy::math::Vec3;
 
 use crate::geometry::flat_top_tile_center;
 
@@ -34,7 +33,7 @@ pub const BAND_QUALITY_K: f32 = 119.75;
 const HEX_OUTER_RADIUS: f32 = 1.0;
 
 /// Render-only depth bias per LoD level (WU). Adjacent levels overlap by
-/// `edge_overlap_wu` at each band edge; on flat terrain their plates there
+/// `edge_overlap_wu` at each band edge; on flat terrain their surfaces there
 /// would be exactly coplanar — nested sampling produces equal center_z —
 /// and z-fight. Coarser levels sink slightly so the finer plate always
 /// wins. A tenth of one z-step per level: invisible, but well outside
@@ -51,7 +50,6 @@ pub fn level_depth_bias(r: u32) -> f32 {
     rank as f32 * LEVEL_DEPTH_BIAS_WU
 }
 
-use common::camera::RISE as Z_SCALE;
 
 /// Vertex offset tables for canonical doubled-integer coordinates.
 /// Same formula as the tile grid canonical IDs, applied to summary-lattice coords.
@@ -428,105 +426,6 @@ pub fn select_center_z(tile_zs: &[i32]) -> i32 {
     best_z
 }
 
-// ── Summary Surface ──
-
-/// Computed surface data for a single summary hex, ready for geometry emission.
-pub struct SummarySurface {
-    /// Center vertex position (world-space).
-    pub center: Vec3,
-    /// 6 corner vertex positions (world-space), flat-top ordering:
-    /// NE(0), E(1), SE(2), SW(3), W(4), NW(5).
-    pub corners: [Vec3; 6],
-    /// Canonical vertex IDs for the 6 corners.
-    pub corner_ids: [(i32, i32); 6],
-    /// Summary-lattice coordinates.
-    pub sq: i32,
-    pub sr: i32,
-}
-
-impl SummarySurface {
-    /// Compute the surface for a flat summary hex at radius r > 0.
-
-    /// All 7 vertices (center + 6 corners) are at center_z elevation (flat).
-    /// The outer radius is (2r+1) * HEX_OUTER_RADIUS, matching the lattice
-    /// spacing so adjacent summaries tile with zero gaps or overlaps.
-    pub fn flat(
-        sq: i32,
-        sr: i32,
-        radius: u32,
-        center_q: i32,
-        center_r: i32,
-        center_z: i32,
-    ) -> Self {
-        let (center_wx, center_wz) = flat_top_tile_center(center_q, center_r, HEX_OUTER_RADIUS);
-        // Uniform per-level depth bias: keeps overlapping plates from
-        // adjacent levels out of each other's depth range (finer on top).
-        // Uniform within a level, so intra-level skirt matching is unaffected.
-        let y = center_z as f32 * Z_SCALE + Z_SCALE - level_depth_bias(radius);
-        let outer_radius = (2 * radius + 1) as f32 * HEX_OUTER_RADIUS;
-
-        // Flat-top hex corner offsets at summary outer radius
-        let w = (outer_radius as f64 * (3.0_f64).sqrt() / 2.0) as f32;
-        let h = outer_radius / 2.0;
-        let corner_offsets: [(f32, f32); 6] = [
-            (h, -w),              // 0: NE
-            (outer_radius, 0.0),  // 1: E
-            (h, w),               // 2: SE
-            (-h, w),              // 3: SW
-            (-outer_radius, 0.0), // 4: W
-            (-h, -w),             // 5: NW
-        ];
-
-        let center = Vec3::new(center_wx, y, center_wz);
-        let corners = corner_offsets.map(|(dx, dz)| Vec3::new(center_wx + dx, y, center_wz + dz));
-        let corner_ids = std::array::from_fn(|i| canonical_vertex_id(sq, sr, i));
-
-        Self {
-            center,
-            corners,
-            corner_ids,
-            sq,
-            sr,
-        }
-    }
-
-    /// Emit flat hex geometry into mesh buffers.
-
-    /// Positions are relative to `mesh_origin` for f32 precision.
-    /// Returns the number of triangles emitted (always 6).
-    pub fn emit_geometry(
-        &self,
-        positions: &mut Vec<[f32; 3]>,
-        normals: &mut Vec<[f32; 3]>,
-        indices: &mut Vec<u32>,
-        mesh_origin: Vec3,
-    ) -> u32 {
-        let base_idx = positions.len() as u32;
-
-        // Center vertex
-        let c = self.center - mesh_origin;
-        positions.push([c.x, c.y, c.z]);
-        normals.push([0.0, 1.0, 0.0]);
-
-        // 6 corner vertices
-        for corner in &self.corners {
-            let v = *corner - mesh_origin;
-            positions.push([v.x, v.y, v.z]);
-            normals.push([0.0, 1.0, 0.0]);
-        }
-
-        // 6 triangles: CCW fan from center to adjacent corner pairs
-        // Matches existing winding: (center, v_next, v_curr)
-        for i in 0..6u32 {
-            let v1 = base_idx + 1 + i;
-            let v2 = base_idx + 1 + ((i + 1) % 6);
-            indices.extend([base_idx, v2, v1]);
-        }
-
-        6
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,90 +749,28 @@ mod tests {
         );
     }
 
-    // ── SummarySurface tests ──
+    // ── canonical corner id tests ──
 
     #[test]
-    fn flat_surface_all_same_y() {
-        let surface = SummarySurface::flat(0, 0, 3, 0, 0, 10);
-        let expected_y = 10.0 * Z_SCALE + Z_SCALE - level_depth_bias(3);
-        assert!((surface.center.y - expected_y).abs() < 1e-6);
-        for corner in &surface.corners {
-            assert!(
-                (corner.y - expected_y).abs() < 1e-6,
-                "corner Y {} != center Y {}",
-                corner.y,
-                expected_y
-            );
+    fn shared_corners_have_one_canonical_id() {
+        // Every corner of cell (0,0) is a corner of the two cells listed
+        // for it in CORNER_NEIGHBOURS; all three must derive the same id.
+        use crate::surface::{CORNER_NEIGHBOURS, corner_offsets};
+        let offsets = corner_offsets(1.0);
+        for (i, [a, b]) in CORNER_NEIGHBOURS.iter().enumerate() {
+            let id = canonical_vertex_id(0, 0, i);
+            for n in [a, b] {
+                // Find which corner index of the neighbour lands on the same
+                // point, then compare ids.
+                let (nx, nz) = flat_top_tile_center(n.0, n.1, 1.0);
+                let p = (offsets[i].x, offsets[i].y);
+                let k = (0..6)
+                    .find(|&k| {
+                        ((nx + offsets[k].x) - p.0).abs() < 1e-4 && ((nz + offsets[k].y) - p.1).abs() < 1e-4
+                    })
+                    .expect("shared corner");
+                assert_eq!(canonical_vertex_id(n.0, n.1, k), id, "corner {i} vs {n:?}[{k}]");
+            }
         }
-    }
-
-    #[test]
-    fn flat_surface_outer_radius() {
-        let radius = 3u32;
-        let surface = SummarySurface::flat(0, 0, radius, 0, 0, 0);
-        let expected_outer = (2 * radius + 1) as f32 * HEX_OUTER_RADIUS;
-        let dx = surface.corners[1].x - surface.center.x;
-        assert!(
-            (dx - expected_outer).abs() < 1e-4,
-            "E corner dx {dx} != expected {expected_outer}"
-        );
-    }
-
-    #[test]
-    fn emit_geometry_counts() {
-        let surface = SummarySurface::flat(0, 0, 1, 0, 0, 5);
-        let mut positions = Vec::new();
-        let mut normals = Vec::new();
-        let mut indices = Vec::new();
-        let tris = surface.emit_geometry(&mut positions, &mut normals, &mut indices, Vec3::ZERO);
-
-        assert_eq!(tris, 6);
-        assert_eq!(positions.len(), 7);
-        assert_eq!(normals.len(), 7);
-        assert_eq!(indices.len(), 18);
-    }
-
-    #[test]
-    fn emit_geometry_normals_up() {
-        let surface = SummarySurface::flat(0, 0, 2, 0, 0, 0);
-        let mut normals = Vec::new();
-        surface.emit_geometry(&mut Vec::new(), &mut normals, &mut Vec::new(), Vec3::ZERO);
-        for n in &normals {
-            assert!((n[0]).abs() < 1e-6 && (n[1] - 1.0).abs() < 1e-6 && (n[2]).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn adjacent_summaries_share_corner_world_positions() {
-        // On a flat-top hex, the +q neighbor shares edge via
-        // SKIRT_VERTEX_MAP dir 3: curr (1,2) ↔ neighbor (5,4).
-        // So (0,0).E(1) matches (1,0).NW(5) and (0,0).SE(2) matches (1,0).W(4).
-        let r = 3u32;
-        let lat = SummaryLattice::new(r);
-        let (cq0, cr0) = lat.cell_center((0, 0));
-        let (cq1, cr1) = lat.cell_center((1, 0));
-        let s0 = SummarySurface::flat(0, 0, r, cq0, cr0, 5);
-        let s1 = SummarySurface::flat(1, 0, r, cq1, cr1, 5);
-
-        let eps = 1e-3;
-        // s0 E(1) should equal s1 NW(5) in XZ
-        assert!(
-            (s0.corners[1].x - s1.corners[5].x).abs() < eps
-                && (s0.corners[1].z - s1.corners[5].z).abs() < eps,
-            "s0.E != s1.NW: ({:.3},{:.3}) vs ({:.3},{:.3})",
-            s0.corners[1].x, s0.corners[1].z,
-            s1.corners[5].x, s1.corners[5].z,
-        );
-        // s0 SE(2) should equal s1 W(4) in XZ
-        assert!(
-            (s0.corners[2].x - s1.corners[4].x).abs() < eps
-                && (s0.corners[2].z - s1.corners[4].z).abs() < eps,
-            "s0.SE != s1.W: ({:.3},{:.3}) vs ({:.3},{:.3})",
-            s0.corners[2].x, s0.corners[2].z,
-            s1.corners[4].x, s1.corners[4].z,
-        );
-        // Canonical vertex IDs must also match at those shared corners
-        assert_eq!(s0.corner_ids[1], s1.corner_ids[5], "E/NW vertex ID mismatch");
-        assert_eq!(s0.corner_ids[2], s1.corner_ids[4], "SE/W vertex ID mismatch");
     }
 }

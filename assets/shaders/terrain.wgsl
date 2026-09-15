@@ -130,8 +130,13 @@ const RAMP_B: array<f32, 14> = array<f32, 14>(
 // pinned to in texgen, so the faces keep this colour at a distance.
 const CLIFF_COLOR: vec3<f32> = vec3<f32>(0.35, 0.32, 0.28);
 
-// Normal Y threshold: below this, the face is treated as a cliff.
-const CLIFF_NORMAL_THRESHOLD: f32 = 0.3;
+// Slope band over which a surface turns to stone, as normal Y: all stone
+// from 50° (0.64), none below 40° (0.77). Straddles the 45° at which two
+// tiles differ by more steps than can be stepped up, so a face that blocks
+// reads as rock; corners are shared, so normals vary smoothly and the
+// band blends rather than cuts.
+const CLIFF_NORMAL_FULL: f32 = 0.64;
+const CLIFF_NORMAL_NONE: f32 = 0.77;
 
 /// How much of a top is grass: the ramp's green band, full between the
 /// plain and continent stops, growing in over the beach and thinning out
@@ -274,8 +279,7 @@ fn fragment(
     // Build PBR input from the base StandardMaterial
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
-    // Sampled here, in uniform control flow, because the cliff branch below
-    // is not.
+    // Every layer is sampled; the slope blends them below.
     let grass = sample_bomb(grass_texture, grass_sampler, bomb(in.world_position.xz, GRASS_REPEAT_WU, 3.14159265));
     let scree = sample_bomb(scree_texture, scree_sampler, bomb(in.world_position.xz, SCREE_REPEAT_WU, 3.14159265));
     let cliff = cliff_albedo(in.world_position.xyz, in.world_normal);
@@ -289,16 +293,13 @@ fn fragment(
     // scaled to the ramp's brightness at this elevation and the ramp keeps
     // its own light-to-dark across the band; scree is its own colour and
     // stands in for the ramp where it is full.
-    var base: vec3<f32>;
-    if abs(in.world_normal.y) < CLIFF_NORMAL_THRESHOLD {
-        base = cliff;
-    } else {
-        let ramp = elevation_color(elevation);
-        let plain = vec3<f32>(RAMP_R[4], RAMP_G[4], RAMP_B[4]);
-        let lit = grass * (luminance(ramp) / luminance(plain));
-        base = mix(ramp, lit, grass_weight(elevation));
-        base = mix(base, scree, scree_weight(elevation));
-    }
+    let ramp = elevation_color(elevation);
+    let plain = vec3<f32>(RAMP_R[4], RAMP_G[4], RAMP_B[4]);
+    let lit = grass * (luminance(ramp) / luminance(plain));
+    var top = mix(ramp, lit, grass_weight(elevation));
+    top = mix(top, scree, scree_weight(elevation));
+    let stone = 1.0 - smoothstep(CLIFF_NORMAL_FULL, CLIFF_NORMAL_NONE, abs(in.world_normal.y));
+    var base = mix(top, cliff, stone);
 
     // Atmospheric fade: derive the visual horizon from camera altitude with
     // the same formula the LoD band math uses, then blend toward haze in the

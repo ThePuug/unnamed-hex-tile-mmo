@@ -1,7 +1,6 @@
 pub mod camera;
 pub mod glyphs;
 pub mod hex_lattice;
-pub mod hex_slope;
 pub mod hex_spatial_grid;
 pub mod network;
 pub mod numfmt;
