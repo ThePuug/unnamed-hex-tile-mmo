@@ -9,7 +9,7 @@ use world::substrate_elevation_at;
 const SEED: u64 = 0x9E3779B97F4A7C15;
 /// Several tilt wavelengths across, so the block holds a population of limbs.
 const SPAN: f64 = 400_000.0;
-const RISE: f64 = 0.8;
+use world::RISE;
 
 fn pct(v: &[f64], p: f64) -> f64 {
     if v.is_empty() { return f64::NAN }

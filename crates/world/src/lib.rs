@@ -13,14 +13,20 @@ pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 
 // ──── The vertical scale ────
 
-/// Vertical spacing of one z-level in world units. Matches
-/// `common::camera::RISE` — the dips the ranges are built at are angles on the
-/// ground the player walks, so the two axes have to be in the same units.
-pub const RISE: f64 = 0.8;
+/// Height of one z-level in this crate's horizontal unit, the tile spacing.
+///
+/// The renderer stands a z-level `common::camera::RISE` of its units tall
+/// and spaces neighbouring tiles √3 of its units apart, while this crate
+/// spaces them one apart ([`TILE_SPACING`]), so a z-level is that height
+/// over √3 here. The dips the ranges are built at and the grade a continent
+/// leans at are angles on the ground the player walks, so every horizontal
+/// length derived from a vertical one, a sheet spacing from a crust
+/// thickness, a tilt amplitude from a grade, goes through this ratio and
+/// renders at the angle it was designed at.
+pub const RISE: f64 = 0.8 / SQRT_3;
 
-/// Substrate elevation in z-levels at the abyssal plain. At [`RISE`] this is
-/// 160 world units below sea level, matching the deepest stop on the terrain
-/// shader's elevation ramp.
+/// Substrate elevation in z-levels at the abyssal plain, the deepest stop on
+/// the terrain shader's elevation ramp.
 pub const SEA_MAX_DEPTH: f64 = 200.0;
 
 /// Shelf profile exponent, applied to the normalised shore→abyss fraction.
@@ -49,8 +55,9 @@ pub const CONTINENT_RISE_EXPONENT: f64 = 1.0 / SHELF_EXPONENT;
 
 pub(crate) const SQRT_3: f64 = 1.7320508075688772;
 
-/// World-unit distance between neighbouring tiles, held by `hex_to_world` for
-/// all six directions. Anything reasoning about rise per tile reads it.
+/// Distance between neighbouring tiles in this crate's horizontal unit,
+/// held by `hex_to_world` for all six directions: a tile is the unit. The
+/// renderer spaces tiles √3 of its own units apart, which [`RISE`] carries.
 pub const TILE_SPACING: f64 = 1.0;
 
 /// Convert hex tile coordinates to world (cartesian) coordinates.

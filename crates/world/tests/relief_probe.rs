@@ -514,7 +514,7 @@ fn belt_reaches_its_ceiling() {
 
 /// Slope census over the spawn belt: how much ground stands past the angles
 /// slope form acts at, on the composed surface the player walks. Repose at
-/// 34° is where talus forms; a +1 z step per tile is 38.7° and is the most a
+/// 34° is where talus forms; a +1 z step per tile is 24.8° and is the most a
 /// player can climb; the critical angle for a bare face is 75°.
 #[test]
 #[ignore]
@@ -527,7 +527,7 @@ fn slope_census() {
     let (cx, cy) = world::hex_to_world(cq, cr);
     let outlines = Outlines::in_box(cx, cy, radius as f64 * 1.2, SEED);
     let stride = 4;
-    let angle = |dz: f64| (dz * 0.8).atan().to_degrees();
+    let angle = |dz: f64| (dz * world::RISE).atan().to_degrees();
     let mut land = 0usize;
     let mut belt = 0usize;
     let mut land_over = [0usize; 4];
@@ -682,4 +682,28 @@ fn valley_census() {
         }
     }
     println!("  land views (692 tiles) holding a valley: {with}/{views} ({:.1}%)", 100.0 * with as f64 / views.max(1) as f64);
+}
+
+/// The ground under the haven: elevation range and the steepest step within
+/// a short walk of the spawn, on the composed surface.
+#[test]
+#[ignore]
+fn spawn_neighbourhood() {
+    let c = composite();
+    let (sq, sr) = SPAWN;
+    for radius in [10i32, 30, 60, 120] {
+        let (mut lo, mut hi, mut step) = (i32::MAX, i32::MIN, 0i32);
+        for dq in -radius..=radius {
+            for dr in -radius..=radius {
+                if (dq + dr).abs() > radius { continue }
+                let z = c.elevation_at(sq + dq, sr + dr);
+                lo = lo.min(z);
+                hi = hi.max(z);
+                for (nq, nr) in [(1, 0), (0, 1), (-1, 1)] {
+                    step = step.max((c.elevation_at(sq + dq + nq, sr + dr + nr) - z).abs());
+                }
+            }
+        }
+        println!("  within {radius:>3} tiles of spawn: z {lo}..{hi} (relief {}), steepest step {step} z", hi - lo);
+    }
 }

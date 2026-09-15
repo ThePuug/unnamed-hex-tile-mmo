@@ -19,8 +19,9 @@ use crate::{hex_to_world, world_to_hex};
 pub type NodeKey = (i32, i32);
 
 /// Node spacing in tiles: the narrowest valley drainage reads as a valley,
-/// and the finest an outline turns. A sheet spacing holds two and two-thirds
-/// of these, so a range's two flanks are each resolved.
+/// and the finest an outline turns. A sheet spacing holds one and a half of
+/// these, so the trough between two ranges is resolved and their flanks are
+/// not.
 pub const NODE_SPACING: i32 = 525;
 
 /// Nodes a coast or a front runs straight before it may turn: five nodes,

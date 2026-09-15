@@ -30,7 +30,7 @@
 use std::any::Any;
 
 use crate::noise::simplex_2d;
-use crate::hex_to_world;
+use crate::{hex_to_world, RISE};
 use crate::tectonic::PLATE_SPACING;
 use super::index::IndexRegistry;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
@@ -63,11 +63,6 @@ pub const TILT_WAVELENGTH: f64 = 8.0 * PLATE_SPACING;
 
 // ── Amplitude ───────────────────────────────────────────────────────────────
 
-/// Vertical spacing of one z-level in world units. Matches
-/// `common::camera::RISE` — a grade is a ratio of two lengths, so both axes
-/// have to be in the same units.
-const RISE: f64 = 0.8;
-
 /// Regional grade a continent is built to lean at.
 ///
 /// Real continental grades run near a tenth of a percent: Australia's Great
@@ -78,8 +73,8 @@ const TARGET_GRADE: f64 = 0.001;
 /// Amplitude of the tilt potential, in z-levels.
 ///
 /// A smooth field climbs from zero to its amplitude over a quarter wavelength,
-/// so `amplitude = grade × (λ/4) / RISE`: at 0.1% over 25,000 WU that is 25 WU
-/// of rise, and 31.25 z at `RISE` 0.8.
+/// so `amplitude = grade × (λ/4) / RISE`, with the quarter wavelength in
+/// tiles and [`RISE`] turning the rise into z-levels.
 ///
 /// For scale, the substrate gives a continent ~45 z of freeboard, so a tilt of
 /// this size is a third of it either way — enough to drown one margin and lift

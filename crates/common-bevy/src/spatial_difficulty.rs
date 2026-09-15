@@ -11,10 +11,11 @@ use crate::{components::ActorAttributes, message::AbilityType};
 
 /// Haven location — world coordinates (-55750, 4250) → hex (-58204, 4907).
 ///
-/// Sited at the foot of a range on a continental plate: flat ground at 35 z
-/// with the frontal ridge rising to 337 z about 500 WU away and open water
-/// 1,677 WU the other way. The z is a placeholder — the server resolves the
-/// real one from the terrain at startup, because elevation is generated, not
+/// Sited at the foot of a belt on a continental plate: flat ground, one
+/// z-level of relief within ten tiles and never more than a one-z step
+/// within a hundred, with the ranges in view and no water within twelve
+/// hundred tiles. The z is a placeholder — the server resolves the real one
+/// from the terrain at startup, because elevation is generated, not
 /// authored.
 pub const HAVEN_LOCATION: Qrz = Qrz { q: -58204, r: 4907, z: 0 };
 

@@ -750,7 +750,7 @@ fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             let zy = -cut(wx, wy + d);
             // Depth on a grey ramp: white at the envelope, dark at 100 z down.
             let tone = 0.95 - 0.7 * (-z / 100.0).clamp(0.0, 1.0);
-            let (gx, gy) = ((zx - z) * 0.8 / d, (zy - z) * 0.8 / d);
+            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
             let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
             let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
             let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
@@ -789,8 +789,8 @@ fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             let zx = surface(wx + d, wy);
             let zy = surface(wx, wy + d);
             let base = orogen_ramp(z);
-            // RISE converts a z-level to world units of height.
-            let (gx, gy) = ((zx - z) * 0.8 / d, (zy - z) * 0.8 / d);
+            // RISE converts a z-level to this crate's horizontal unit of height.
+            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
             let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
             let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
             let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
