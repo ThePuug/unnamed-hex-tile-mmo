@@ -198,51 +198,23 @@ impl Map {
         path
     }
 
-    fn vertices_with_slopes_inner(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
+    /// The tile's seven vertices (six corners, then the centre) on the
+    /// terrain surface: corners at the mean of the three tiles meeting there
+    /// (`surface::cell_corner_zs`), the same surface the mesh draws and
+    /// physics walks. `apply_slopes = false` gives the flat hex at the
+    /// tile's own height.
+    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
         let mut verts = self.geo.vertices(qrz);
         if !apply_slopes {
             return verts;
         }
-
-        let rise = self.rise;
-        let mut vertex_adjustments: [Vec<f32>; 6] = Default::default();
-
-        let direction_to_vertices = [
-            (4, 5), (3, 4), (2, 3), (1, 2), (0, 1), (5, 0),
-        ];
-
-        for (dir_idx, direction) in qrz::DIRECTIONS.iter().enumerate() {
-            let neighbor_qrz = qrz + *direction;
-            if let Some((actual_neighbor_qrz, _)) = self.get_by_qr(neighbor_qrz.q, neighbor_qrz.r) {
-                let elevation_diff = actual_neighbor_qrz.z - qrz.z;
-                let adjustment = if elevation_diff > 0 {
-                    rise * 0.5
-                } else if elevation_diff < 0 {
-                    rise * -0.5
-                } else {
-                    0.0
-                };
-                if adjustment != 0.0 {
-                    let (v1, v2) = direction_to_vertices[dir_idx];
-                    vertex_adjustments[v1].push(adjustment);
-                    vertex_adjustments[v2].push(adjustment);
-                }
-            }
+        let corner_zs = crate::surface::cell_corner_zs((qrz.q, qrz.r), |q, r| {
+            self.get_by_qr(q, r).map(|(t, _)| t.z)
+        });
+        for (v, z) in verts.iter_mut().zip(corner_zs) {
+            v.y = crate::surface::height_y(z.unwrap_or(qrz.z as f32));
         }
-
-        for (i, adjustments) in vertex_adjustments.iter().enumerate() {
-            if let Some(&max_adj) = adjustments.iter()
-                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-            {
-                verts[i].y += max_adj;
-            }
-        }
-
         verts
-    }
-
-    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
-        self.vertices_with_slopes_inner(qrz, apply_slopes)
     }
 
     pub fn hex_vertex_normal(verts: &[Vec3], vertex_idx: usize) -> Vec3 {

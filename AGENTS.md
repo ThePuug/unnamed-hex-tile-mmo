@@ -195,11 +195,13 @@ Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
 4. **Testing magnitude on a tunable system.** Test shape — ordering,
    monotonicity, determinism — never exact values.
 5. **Dropping world-space during `Loc` updates.** Causes teleporting and falling.
-6. **Blending toward a neighbor's raw height.** `blended_terrain_y` blends
-   toward exactly ±1 `rise` using only the direction of the difference, never
-   its magnitude — a 5-tile drop next door must not yank the entity down.
-   Upward `elevation_diff > 1` is a separate concern, handled in
-   `calculate_movement` as blocking or air-time.
+6. **A second ground function.** `common_bevy::surface` is the terrain
+   surface: corners at the mean of the three cells meeting there, fans
+   between. The mesh builder places vertices on it and `movement::surface_y`
+   samples it, so feet stay on what is drawn. Never blend, clamp, or smooth
+   toward a neighbour by another rule. Whether a tile may be entered is a
+   separate concern on tile z — `is_tile_blocked` and air-time in
+   `calculate_movement`.
 7. **Mixing schedules.** `controlled::apply` and `controlled::tick` belong to
    FixedUpdate; anything touching `Transform` belongs to Update.
 8. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never

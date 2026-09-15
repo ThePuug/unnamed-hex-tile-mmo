@@ -68,73 +68,16 @@ pub fn terrain_y_at(floor_qrz: Qrz, entity_tile: Qrz, map: &Map) -> f32 {
     adjusted.y
 }
 
-/// Compute terrain height blended between the current tile and the nearest neighbor.
-/// Produces a smoothly-varying height as the entity moves between tiles, preventing
-/// discrete "stepping" at tile boundaries.
-
-/// Blends toward a fixed offset (±0.5 × rise) based on whether the neighbor is higher
-/// or lower, matching the visual terrain mesh slopes. The neighbor's actual elevation
-/// difference doesn't affect the slope amount - only the direction (up/down).
-pub fn blended_terrain_y(world_xz: Vec2, current_hx: Qrz, terrain_y: f32, _entity_tile: Qrz, current_floor_qrz: Qrz, map: &Map) -> f32 {
-    let tile_center: Vec3 = map.convert(current_hx);
-    let offset_xz = world_xz - tile_center.xz();
-
-    if offset_xz.length_squared() < 0.001 {
-        return terrain_y;
-    }
-
-    // Find the neighbor whose direction best matches the entity's offset from tile center
-    let mut best_alignment = 0.0_f32;
-    let mut best_neighbor = None;
-    for neighbor in current_hx.neighbors() {
-        let nc: Vec3 = map.convert(neighbor);
-        let to_neighbor = nc.xz() - tile_center.xz();
-        let alignment = offset_xz.dot(to_neighbor);
-        if alignment > best_alignment {
-            best_alignment = alignment;
-            best_neighbor = Some((neighbor, to_neighbor));
-        }
-    }
-
-    let Some((neighbor, to_neighbor)) = best_neighbor else {
-        return terrain_y;
-    };
-
-    let to_neighbor_len = to_neighbor.length();
-    if to_neighbor_len < 0.001 {
-        return terrain_y;
-    }
-
-    // Blend from 0 at tile center to 0.5 at boundary. Using the full center-to-center
-    // distance ensures both tiles agree on the same height at the crossing point:
-    // from A's side: A + (B-A)*0.5, from B's side: B + (A-B)*0.5 — both equal (A+B)/2.
-    let projection = offset_xz.dot(to_neighbor / to_neighbor_len);
-    let blend = (projection / to_neighbor_len).clamp(0.0, 0.5);
-
-    if blend < 0.01 {
-        return terrain_y;
-    }
-
-    let Some((nf_qrz, _)) = map.get_by_qr(neighbor.q, neighbor.r) else {
-        return terrain_y;
-    };
-
-    // Blend toward a full rise offset (will be scaled by blend factor)
-    // At boundary (blend = 0.5), this produces rise * 0.5 offset, matching terrain mesh
-    let elevation_diff = nf_qrz.z - current_floor_qrz.z;
-    let rise = map.rise();
-    let target_y = if elevation_diff > 0 {
-        // Neighbor is higher - target is one full rise above
-        terrain_y + rise
-    } else if elevation_diff < 0 {
-        // Neighbor is lower - target is one full rise below
-        terrain_y - rise
-    } else {
-        // Same height - no slope
-        terrain_y
-    };
-
-    terrain_y + (target_y - terrain_y) * blend
+/// Height of the terrain surface under `world_xz`, standing on `floor` — the
+/// same fan surface the mesh draws (`surface::surface_y`), so an entity's
+/// feet stay on what is rendered, across tile edges and up to a cliff's
+/// face. Whether a tile may be entered is decided on tile z elsewhere; this
+/// only says how high the ground is.
+pub fn surface_y(world_xz: Vec2, floor: Qrz, map: &Map) -> f32 {
+    let floor_centre: Vec3 = map.convert(floor);
+    crate::surface::surface_y(world_xz, floor, floor_centre, |q, r| {
+        map.get_by_qr(q, r).map(|(qrz, _)| qrz.z)
+    })
 }
 
 // ===== Movement Input =====
@@ -257,7 +200,7 @@ pub fn apply_vertical_movement(
 
 /// Clamp Y position to terrain floor with slope following.
 
-/// - Grounded: blends terrain height with nearest non-cliff neighbor for smooth slopes
+/// - Grounded: follows the drawn surface (`surface_y`)
 /// - Airborne: hard clamps against actual floor height
 
 /// # Returns
@@ -278,7 +221,7 @@ pub fn clamp_to_floor(
         let terrain_y = terrain_y_at(floor_qrz, current_tile, map);
 
         if airtime.is_none() {
-            let slope_y = blended_terrain_y(world_pos.xz(), current_hex, terrain_y, current_tile, floor_qrz, map);
+            let slope_y = surface_y(world_pos.xz(), floor_qrz, map) - px0.y;
             let mut y = offset.y + (slope_y - offset.y) * SLOPE_FOLLOW_SPEED;
             y = y.max(slope_y);
             return (y, false);
@@ -487,9 +430,8 @@ pub fn calculate_movement(
             let terrain_y = terrain_y_at(floor_qrz, tile, map);
 
             if airtime.is_none() {
-                // Grounded: blend terrain height for smooth slopes.
-                // Blends with downward slopes but not upward cliffs (prevents oscillation)
-                let slope_y = blended_terrain_y((px0 + offset).xz(), current_hx, terrain_y, tile, floor_qrz, map);
+                // Grounded: follow the drawn surface.
+                let slope_y = surface_y((px0 + offset).xz(), floor_qrz, map) - px0.y;
                 offset.y += (slope_y - offset.y) * SLOPE_FOLLOW_SPEED;
                 offset.y = offset.y.max(slope_y);
             } else {
