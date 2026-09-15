@@ -3,25 +3,25 @@
 
 //! Run: cargo test -p world --release --test determinism_probe -- --ignored --nocapture
 
-use std::sync::Arc;
 
 use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
-use world::events::orogen::OrogenEvent;
+use world::events::thickening::ThickeningEvent;
+use world::events::thrusting::ThrustingEvent;
 use world::events::drainage::DrainageEvent;
-use world::PlateCache;
+
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
 fn composite() -> Composite {
-    let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(PlateEvent::new()));
     c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(OrogenEvent::new()));
+    c.add_event(Box::new(MotionEvent::new()));
+    c.add_event(Box::new(ThrustingEvent::new()));
+    c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
     c
 }

@@ -5,7 +5,6 @@
 
 //! Run: cargo test -p world --release --test relief_probe -- --ignored --nocapture
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use common::PlateTag;
@@ -13,22 +12,24 @@ use world::events::Composite;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
-use world::events::orogen::OrogenEvent;
-use world::{hex_to_world, substrate_elevation_at, PlateCache};
+use world::events::thickening::ThickeningEvent;
+use world::events::thrusting::{Outlines, ThrustingEvent};
+use world::{hex_to_world, substrate_elevation_at};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
+const SPAWN: (i32, i32) = (-58204, 4907);
 
 /// Tiles per second at MOVEMENT_SPEED 0.0075 WU/ms with hex radius 1.0
 /// (neighbour spacing sqrt(3) WU): 7.5 / 1.732.
 const TILES_PER_SEC: f64 = 4.33;
 
 fn composite() -> Composite {
-    let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(PlateEvent::new()));
     c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(OrogenEvent::new()));
+    c.add_event(Box::new(MotionEvent::new()));
+    c.add_event(Box::new(ThrustingEvent::new()));
+    c.add_event(Box::new(ThickeningEvent::new()));
     c
 }
 
@@ -378,7 +379,7 @@ fn feature_spacing() {
 #[ignore]
 fn spawn_point_is_above_water() {
     let c = composite();
-    for &(q, r, label) in &[(116953, 21431, "server spawn")] {
+    for &(q, r, label) in &[(SPAWN.0, SPAWN.1, "server spawn")] {
         let view = c.tile_at(q, r);
         let tags: Vec<_> = view.tags.iter().collect();
         println!("  {label} ({q},{r}): z={} tags={tags:?}", c.elevation_at(q, r));
@@ -397,7 +398,7 @@ fn spawn_point_is_above_water() {
 #[ignore]
 fn distance_to_water_from_spawn() {
     let c = composite();
-    let (sq, sr) = (116953, 21431);
+    let (sq, sr) = SPAWN;
     let mut nearest = i32::MAX;
     let mut dir = (0, 0);
     for spoke in 0..24 {
@@ -418,58 +419,6 @@ fn distance_to_water_from_spawn() {
             "  nearest water: {nearest} tiles from spawn, offset {:?} ({:.0} WU, horizon fade starts ~757 WU)",
             dir, nearest as f64 * 1.732
         );
-    }
-}
-
-/// The event and the field must agree.
-///
-/// `OrogenEvent::query` passes `below.elevation` as the base, where the field's
-/// own `relief` reads the substrate directly. Below sea level tilt contributes
-/// nothing, and above it `crust_share` is already saturated, so the two should
-/// differ only in the beach band where tilt can carry a barely-positive
-/// substrate across the datum. This measures how much of the world that is.
-#[test]
-#[ignore]
-fn event_matches_the_field() {
-    use world::orogen_field::relief;
-    use world::{hex_to_world, substrate_elevation_at};
-
-    let c = composite();
-    const N: i32 = 260;
-    const STEP: i32 = 900;
-    let origin = -(N / 2) * STEP;
-    let (mut land, mut belt, mut total) = (0usize, 0usize, 0usize);
-    let mut diffs = Vec::new();
-
-    for i in 0..N {
-        for j in 0..N {
-            let (q, r) = (origin + i * STEP, origin + j * STEP);
-            let (wx, wy) = hex_to_world(q, r);
-            let base = substrate_elevation_at(wx, wy, SEED);
-            total += 1;
-            if base >= 0.0 { land += 1 }
-
-            // Orogen's contribution as the stack applies it, against the field
-            // read on its own.
-            let stacked = c.tile_at(q, r).elevation;
-            let tilt_only = world::events::tilt::tilt_at(wx, wy, base, SEED);
-            let via_event = stacked - base - tilt_only;
-            let via_field = relief(wx, wy, SEED);
-            if base >= 0.0 && (via_field > 1.0 || via_event > 1.0) { belt += 1 }
-            let d = (via_event - via_field).abs();
-            if d > 1e-9 { diffs.push(d) }
-        }
-    }
-    println!("\n=== event against field ===");
-    println!("  samples {total}, land {:.2}%, belt {:.2}% of land",
-             100.0 * land as f64 / total as f64,
-             100.0 * belt as f64 / land.max(1) as f64);
-    println!("  positions where they differ at all: {} ({:.4}%)",
-             diffs.len(), 100.0 * diffs.len() as f64 / total as f64);
-    if !diffs.is_empty() {
-        diffs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        println!("  difference, z: p50 {:.4}  p90 {:.4}  max {:.4}",
-                 diffs[diffs.len() / 2], diffs[diffs.len() * 9 / 10], diffs[diffs.len() - 1]);
     }
 }
 
@@ -519,42 +468,145 @@ fn adjacent_tile_steps() {
     }
 }
 
-/// The ceiling has to survive the stack. `OROGEN_MAX_RISE` is 1,200 z and the
-/// field reaches it; this checks the event delivers it too, sampled at crests
+/// The ceiling has to survive the stack. The field reaches `OROGEN_MAX_RISE`;
+/// this checks the event delivers it too, sampled at crests
 /// the field probe already found rather than on a blind grid — a belt is a
 /// fifth of the land and a coarse sweep lands on its skirts.
 #[test]
 #[ignore]
 fn belt_reaches_its_ceiling() {
-    use world::orogen_field::relief;
-    println!("\n=== PEAK ELEVATION IN THE INTEGRATED WORLD ===");
+    println!("
+=== PEAK ELEVATION IN THE BELT WINDOW ===");
     let c = composite();
+    // The belt window the seam probes scan, on a coarse grid: the tallest
+    // ground, and how much of it is plateau and how much range.
+    let (cx, cy, half) = (-48_000.0, 9_000.0, 24_000.0);
+    let outlines = Outlines::in_box(cx, cy, half, SEED);
+    let (mut best, mut at, mut plateau, mut relief) = (f64::MIN, (0.0, 0.0), 0.0, 0.0);
+    let mut stacked: Vec<f64> = Vec::new();
+    for i in 0..=120 {
+        for j in 0..=120 {
+            let (px, py) = (cx - half + i as f64 * half / 60.0, cy - half + j as f64 * half / 60.0);
+            let (q, r) = world::world_to_hex(px, py);
+            let e = c.tile_at(q, r).elevation;
+            let (f, o) = (world::events::thickening::thickening_on(px, py, &outlines), outlines.relief(px, py));
+            if f + o > 0.0 { stacked.push(e) }
+            if e > best { best = e; at = (px, py); plateau = f; relief = o }
+        }
+    }
+    stacked.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pct = |p: f64| stacked.get(((stacked.len() - 1) as f64 * p) as usize).copied().unwrap_or(0.0);
+    println!("  {} of {} samples carry plateau or range; their elevation p50 {:.0}  p90 {:.0}  max {:.0}",
+        stacked.len(), 121 * 121, pct(0.5), pct(0.9), pct(1.0));
+    println!("  highest ground {best:.1} z at ({:.0}, {:.0}): plateau {plateau:.1} + range {relief:.1}", at.0, at.1);
+    println!("  OROGEN_MAX_RISE = {:.1}", world::events::thickening::OROGEN_MAX_RISE);
+}
 
-    const CRESTS: [(f64, f64); 5] = [
-        (-165_471.0, 194_471.0), (-85_430.0, -5_849.0), (126_588.0, 17_832.0),
-        (-10_727.0, -109_377.0), (-97_879.0, -199_527.0),
-    ];
-    println!("  {:>12} {:>12} {:>10} {:>10} {:>10}",
-             "world x", "world y", "field", "stacked", "orogen");
-    let mut best: f64 = f64::MIN;
-    for (wx, wy) in CRESTS {
-        let (cq, cr) = world::world_to_hex(wx, wy);
-        let (mut bz, mut bo, mut bf) = (f64::MIN, 0.0, 0.0);
-        for dq in -40..=40i32 {
-            for dr in -40..=40i32 {
-                let (q, r) = (cq + dq * 30, cr + dr * 30);
+/// Slope census over the spawn belt: how much ground stands past the angles
+/// slope form acts at, on the composed surface the player walks. Repose at
+/// 34° is where talus forms; a +1 z step per tile is 38.7° and is the most a
+/// player can climb; the critical angle for a bare face is 75°.
+#[test]
+#[ignore]
+fn slope_census() {
+    println!("
+=== SLOPE CENSUS AROUND SPAWN ===");
+    let c = composite();
+    let (cq, cr) = SPAWN;
+    let radius = 3000;
+    let (cx, cy) = world::hex_to_world(cq, cr);
+    let outlines = Outlines::in_box(cx, cy, radius as f64 * 1.2, SEED);
+    let stride = 4;
+    let angle = |dz: f64| (dz * 0.8).atan().to_degrees();
+    let mut land = 0usize;
+    let mut belt = 0usize;
+    let mut land_over = [0usize; 4];
+    let mut belt_over = [0usize; 4];
+    let mut steps_over_one = 0usize;
+    let thresholds = [24.8, 34.0, 45.0, 60.0];
+    let t = Instant::now();
+    let mut dq = -radius;
+    while dq <= radius {
+        let mut dr = -radius;
+        while dr <= radius {
+            let (q, r) = (cq + dq, cr + dr);
+            let e = c.tile_at(q, r).elevation;
+            if e > 0.0 {
+                let steep = [(1, 0), (0, 1), (1, -1)]
+                    .iter()
+                    .map(|&(a, b)| (c.tile_at(q + a, r + b).elevation - e).abs())
+                    .fold(0.0f64, f64::max);
+                let deg = angle(steep);
+                land += 1;
                 let (px, py) = world::hex_to_world(q, r);
-                let e = c.tile_at(q, r).elevation;
-                if e > bz {
-                    bz = e;
-                    bo = e - world::substrate_elevation_at(px, py, SEED);
-                    bf = relief(px, py, SEED);
+                let in_belt = outlines.relief(px, py) > 0.0;
+                if in_belt { belt += 1; }
+                for (i, th) in thresholds.iter().enumerate() {
+                    if deg >= *th {
+                        land_over[i] += 1;
+                        if in_belt { belt_over[i] += 1; }
+                    }
+                }
+                if steep.round() > 1.0 { steps_over_one += 1; }
+            }
+            dr += stride;
+        }
+        dq += stride;
+    }
+    println!("  {land} land samples ({belt} in a belt), stride {stride}, {:.1}s", t.elapsed().as_secs_f64());
+    println!("  {:>10} {:>12} {:>12}", "slope ≥", "of land", "of belt");
+    for (i, th) in thresholds.iter().enumerate() {
+        println!("  {:>9.1}° {:>11.2}% {:>11.2}%", th,
+            100.0 * land_over[i] as f64 / land.max(1) as f64,
+            100.0 * belt_over[i] as f64 / belt.max(1) as f64);
+    }
+    println!("  tiles whose steepest neighbour steps more than +1 z (blocked on foot): {:.2}% of land",
+        100.0 * steps_over_one as f64 / land.max(1) as f64);
+}
+
+/// Where a haven could stand: low flat land within sight of a range and a
+/// short walk from open water, over the belt window on a coarse grid. Prints
+/// the best few by how near and how tall the range is.
+#[test]
+#[ignore]
+fn haven_candidates() {
+    let c = composite();
+    let (cx, cy, half, step) = (-48_000.0, 9_000.0, 24_000.0, 250.0);
+    let n = (2.0 * half / step) as i32 + 1;
+    let at = |i: i32, j: i32| (cx - half + i as f64 * step, cy - half + j as f64 * step);
+    let mut z = vec![0.0f64; (n * n) as usize];
+    for i in 0..n {
+        for j in 0..n {
+            let (px, py) = at(i, j);
+            let (q, r) = world::world_to_hex(px, py);
+            z[(i * n + j) as usize] = c.tile_at(q, r).elevation;
+        }
+    }
+    let reach = (1_500.0 / step) as i32;
+    let mut found: Vec<(f64, i32, i32, f64, f64, f64, f64)> = Vec::new();
+    for i in reach..n - reach {
+        for j in reach..n - reach {
+            let e = z[(i * n + j) as usize];
+            if !(3.0..=60.0).contains(&e) { continue }
+            let (mut flat, mut peak, mut peak_d, mut water_d) = (true, 0.0f64, f64::MAX, f64::MAX);
+            for di in -reach..=reach {
+                for dj in -reach..=reach {
+                    let v = z[((i + di) * n + j + dj) as usize];
+                    let d = ((di * di + dj * dj) as f64).sqrt() * step;
+                    if d <= step * 1.5 && (v - e).abs() > 10.0 { flat = false }
+                    if v >= 300.0 && d < peak_d { peak_d = d; peak = v }
+                    if v < 0.0 && d < water_d { water_d = d }
                 }
             }
+            if !flat || peak_d == f64::MAX || water_d == f64::MAX || water_d < 400.0 { continue }
+            found.push((peak / peak_d, i, j, e, peak, peak_d, water_d));
         }
-        println!("  {wx:>12.0} {wy:>12.0} {bf:>10.1} {bz:>10.1} {bo:>10.1}");
-        best = best.max(bz);
     }
-    println!("\n  highest stacked elevation found: {best:.1} z");
-    println!("  OROGEN_MAX_RISE = {}", world::orogen_field::OROGEN_MAX_RISE);
+    found.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    println!("  {} candidates; best by range height over its distance:", found.len());
+    for (_, i, j, e, peak, peak_d, water_d) in found.iter().take(12) {
+        let (px, py) = at(*i, *j);
+        let (q, r) = world::world_to_hex(px, py);
+        println!("    world ({px:>7.0}, {py:>7.0}) hex ({q}, {r}): z {e:.0}, range {peak:.0} z at {peak_d:.0} WU, water {water_d:.0} WU");
+    }
 }

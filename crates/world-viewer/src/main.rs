@@ -18,31 +18,30 @@ use world::events::Composite;
 use world::events::motion::{
     BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
 };
-use world::events::orogen::OrogenEvent;
+use world::events::thickening::ThickeningEvent;
+use world::events::thrusting::{Outlines, ThrustingEvent, CONVERGENCE_FULL};
 use world::events::drainage::{DrainageEvent, DrainageIndex, NODE_SPACING};
-use world::events::plates::{PlateEvent, PlateCentroidIndex};
+use world::events::plates::{Coasts, PlateEdgeIndex, PlateEvent};
+use world::lattice::node_world;
 use world::events::tilt::TiltEvent;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
-    /// Plate field: the substrate, coloured by elevation against sea level.
+    /// Plate index: the substrate from the coasts under the viewport, coloured by elevation against sea level.
     Plates,
     /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
-    /// Plate index: macro plate centroid markers (red dots).
-    Centroids,
+    /// Plate index: every edge of the plate graph along its chain, coasts white and interior edges grey, a dot at each seed.
+    Edges,
     /// Motion index: plate boundaries, drawn by what the motion resolves
     /// them to.
     Boundaries,
-    /// Orogen field: the hillshaded surface.
-    OrogenField,
+    /// Thickening field: the plateau on the substrate, hillshaded.
+    ThickeningField,
     /// Tilt field: a diverging ramp, with lean arrows.
     Tilt,
-    /// Orogen field: belt mask over the substrate coastline, shape alone.
-    OrogenBelts,
-    /// Orogen field: cross-section through the viewport centre, across the
-    /// belt axis.
-    OrogenSection,
+    /// Thrusting index: the deformation fronts, the convergent edges' chains facing the overriding plate.
+    Fronts,
     /// Drainage index: every reach as its node chain, width by catchment.
     Reaches,
     /// Drainage index: flooded nodes at their surface, outlets marked.
@@ -54,12 +53,11 @@ enum Layer {
 const LAYERS: &[(&str, Layer)] = &[
     ("plates", Layer::Plates),
     ("elevation", Layer::Elevation),
-    ("centroids", Layer::Centroids),
+    ("plate-edges", Layer::Edges),
     ("boundaries", Layer::Boundaries),
     ("tilt", Layer::Tilt),
-    ("orogen-field", Layer::OrogenField),
-    ("orogen-belts", Layer::OrogenBelts),
-    ("orogen-section", Layer::OrogenSection),
+    ("thickening-field", Layer::ThickeningField),
+    ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("drainage-lakes", Layer::Lakes),
 ];
@@ -74,7 +72,7 @@ impl Layer {
     fn is_whole_image(self) -> bool {
         matches!(
             self,
-            Layer::Tilt | Layer::OrogenField | Layer::OrogenBelts | Layer::OrogenSection
+            Layer::Tilt | Layer::ThickeningField
         )
     }
 }
@@ -170,7 +168,7 @@ fn substrate_color(elevation: f64) -> (f64, f64, f64) {
 /// alone. Height is the ramp's job — this only shades.
 ///
 /// The threshold is a share of the ceiling per tile: a belt climbing its full
-/// [`orogen_field::OROGEN_MAX_RISE`] across one half-width averages under half
+/// [`thickening::OROGEN_MAX_RISE`] across one half-width averages under half
 /// a z per tile, so a tile stepping several z is genuinely steep ground.
 fn slope_shade(base: (f64, f64, f64), slope: f64) -> (f64, f64, f64) {
     const STEEP_PER_TILE: f64 = 4.0;
@@ -247,9 +245,7 @@ fn main() {
         let t = Instant::now();
         let buf = match view {
             Layer::Tilt => render_tilt(&cli, w, h, scale),
-            Layer::OrogenBelts => render_orogen_belts(&cli, w, h, scale),
-            Layer::OrogenSection => render_orogen_section(&cli, w, h, scale),
-            _ => render_orogen_field(&cli, w, h, scale),
+            _ => render_thickening_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
         save(&cli, &buf, width, height);
@@ -259,12 +255,12 @@ fn main() {
 
     // The whole stack, in the order the server builds it, so what the viewer
     // draws is what the world generates.
-    let plate_cache = std::sync::Arc::new(world::PlateCache::new(cli.seed));
     let mut composite = Composite::new(cli.seed);
-    composite.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    composite.add_event(Box::new(PlateEvent::new()));
     composite.add_event(Box::new(TiltEvent::new()));
-    composite.add_event(Box::new(MotionEvent::with_cache(plate_cache, cli.seed)));
-    composite.add_event(Box::new(OrogenEvent::new()));
+    composite.add_event(Box::new(MotionEvent::new()));
+    composite.add_event(Box::new(ThrustingEvent::new()));
+    composite.add_event(Box::new(ThickeningEvent::new()));
     composite.add_event(Box::new(DrainageEvent::new()));
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
@@ -305,17 +301,11 @@ fn main() {
 
     // ── Phase 2: Read indexes for marker layers ──
 
-    let centroids: Vec<(f64, f64)> = if layers.contains(&Layer::Centroids) {
+    let edges: Vec<world::tectonic::Edge> = if layers.contains(&Layer::Edges) {
         composite.with_indexes(|indexes| {
             indexes
-                .get::<PlateCentroidIndex>()
-                .map(|idx| {
-                    idx.cells
-                        .values()
-                        .flat_map(|v| v.iter())
-                        .map(|e| (e.wx, e.wy))
-                        .collect()
-                })
+                .get::<PlateEdgeIndex>()
+                .map(|idx| idx.cells.values().flat_map(|v| v.iter().cloned()).collect())
                 .unwrap_or_default()
         })
     } else {
@@ -376,12 +366,41 @@ fn main() {
             (vec![], vec![])
         };
 
+    // Every convergent edge the deformed cells resolved, for the overlay:
+    // its chain, the way onto the overriding plate, and its convergence.
+    let fronts: Vec<(Vec<(f64, f64)>, (f64, f64), f64)> = if layers.contains(&Layer::Fronts) {
+        composite.with_indexes(|indexes| {
+            indexes
+                .get::<PlateBoundaryIndex>()
+                .map(|idx| {
+                    idx.cells
+                        .values()
+                        .flat_map(|v| v.iter())
+                        .filter(|s| s.regime() == BoundaryRegime::Convergent)
+                        .map(|s| {
+                            let over = s.overriding();
+                            let (mx, my) = s.mid();
+                            let (dx, dy) = (over.wx - mx, over.wy - my);
+                            let l = dx.hypot(dy).max(1.0);
+                            let chain: Vec<(f64, f64)> = s.edge.chain.iter().map(|n| node_world(*n)).collect();
+                            (chain, (dx / l, dy / l), (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        vec![]
+    };
+
     // ── Phase 3: Render pixels (parallel by row) ──
 
     let lap = Instant::now();
     let tc = &tile_cache;
     let layer_slice = &layers;
     let seed = cli.seed;
+    let coasts_box = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts_box;
     let pixels: Vec<[u8; 3]> = (0..h)
         .into_par_iter()
         .flat_map(|py| {
@@ -402,7 +421,7 @@ fn main() {
                                 // names — its ramp spans the substrate's own
                                 // range and nothing above it.
                                 color = substrate_color(
-                                    world::substrate_elevation_at(wx, wy, seed));
+                                    world::substrate_on(wx, wy, coasts, seed));
                             }
                             Layer::Elevation => {
                                 // The composite surface, on the same ramp the
@@ -496,13 +515,9 @@ fn main() {
     };
 
     if needs_boundaries {
-        // Each segment is drawn as the Voronoi edge it stands for: through the
-        // midpoint, along strike. The edge of a hexagonal cell is the spacing
-        // over sqrt(3), so drawing the full separation overshoots by 70% and
-        // buries the network under its own overdraw.
-        const EDGE_OF_SPACING: f64 = 0.577;
+        // Each edge is drawn along its chain on the lattice, which is the
+        // edge the layers above read.
         for seg in &boundaries {
-            let half = seg.separation() * EDGE_OF_SPACING * 0.5;
             let rgb = boundary_color(seg);
             let strong = (seg.convergence.abs() / BOUNDARY_FULL_SCALE).clamp(0.0, 1.0);
             let hw = (strong * 2.0).round() as i32;
@@ -511,20 +526,20 @@ fn main() {
             } else {
                 0
             };
-            draw_line(
-                &mut buf,
-                seg.mx - seg.strike_x * half, seg.my - seg.strike_y * half,
-                seg.mx + seg.strike_x * half, seg.my + seg.strike_y * half,
-                hw, dash, rgb,
-            );
-            // Vergence tick on the steep flank. White so the side reads
-            // independently of whatever the segment itself is coloured.
+            for w in seg.edge.chain.windows(2) {
+                let (x0, y0) = node_world(w[0]);
+                let (x1, y1) = node_world(w[1]);
+                draw_line(&mut buf, x0, y0, x1, y1, hw, dash, rgb);
+            }
+            // Vergence tick from the edge's midpoint toward the plate going
+            // under. White so the side reads independently of the edge's hue.
             if seg.vergence_x != 0.0 || seg.vergence_y != 0.0 {
-                let tick = seg.separation() * 0.22;
+                let (mx, my) = seg.mid();
+                let tick = seg.edge.length() * 0.22;
                 draw_line(
                     &mut buf,
-                    seg.mx, seg.my,
-                    seg.mx + seg.vergence_x * tick, seg.my + seg.vergence_y * tick,
+                    mx, my,
+                    mx + seg.vergence_x * tick, my + seg.vergence_y * tick,
                     0, 0, [255, 255, 255],
                 );
             }
@@ -594,12 +609,39 @@ fn main() {
         );
     }
 
-    if layers.contains(&Layer::Centroids) {
-        let dot_r = (4.0 / scale).max(2.0) as i32;
-        for &(cwx, cwy) in &centroids {
-            draw_dot(&mut buf, cwx, cwy, dot_r, [255, 50, 50]);
+    if layers.contains(&Layer::Fronts) {
+        // The front as a line, with a tick into the belt so the side reads.
+        for (chain, (tx, ty), converge) in &fronts {
+            for w in chain.windows(2) {
+                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, 0, 0, [255, 235, 90]);
+            }
+            for &(x0, y0) in chain.iter().skip(1).step_by(2) {
+                let tick = 60.0 + 240.0 * converge;
+                draw_line(&mut buf, x0, y0, x0 + tx * tick, y0 + ty * tick, 0, 0, [255, 235, 90]);
+            }
         }
-        log::info!("Centroids: {} markers", centroids.len());
+        log::info!("Fronts: {} convergent edges; ticks point onto the overriding plate, longer for a harder edge", fronts.len());
+    }
+
+    if layers.contains(&Layer::Edges) {
+        // A coast in white, an interior edge in grey, each along its chain;
+        // a dot at every plate seed.
+        let dot_r = (4.0 / scale).max(2.0) as i32;
+        let mut seeds: std::collections::HashSet<world::tectonic::PlateId> = std::collections::HashSet::new();
+        for e in &edges {
+            let rgb = if e.is_coast() { [240, 240, 240] } else { [140, 140, 140] };
+            for w in e.chain.windows(2) {
+                let (x0, y0) = node_world(w[0]);
+                let (x1, y1) = node_world(w[1]);
+                draw_line(&mut buf, x0, y0, x1, y1, 0, 0, rgb);
+            }
+            for p in [&e.a, &e.b] {
+                if seeds.insert(p.id) {
+                    draw_dot(&mut buf, p.wx, p.wy, dot_r, if p.continental { [255, 50, 50] } else { [50, 90, 255] });
+                }
+            }
+        }
+        log::info!("Plate edges: {} edges, {} coasts; red seeds continental, blue oceanic", edges.len(), edges.iter().filter(|e| e.is_coast()).count());
     }
 
 
@@ -672,25 +714,33 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
     STOPS[STOPS.len() - 1].1
 }
 
-/// Hillshaded surface, so relief reads independently of how the absolute
-/// vertical scale happens to be calibrated.
-fn render_orogen_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+/// The plateau on the substrate, hillshaded, so the thickening's shape reads
+/// independently of how the vertical scale is calibrated. Marches the fronts
+/// under the viewport itself, since the plateau rises with the wedge.
+fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
-    // Light from the north-west, low, so ridge lines throw shadow across strike.
+    // Light from the north-west, low, so belts throw shadow across strike.
     let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
     let d = scale.max(1.0);
+    // The plateau is read off the plate graph, so the view builds the
+    // outlines under the viewport, as the event's own prepare does.
+    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let outlines = &outlines;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
+    let surface = move |x: f64, y: f64| {
+        world::substrate_on(x, y, coasts, seed) + world::events::thickening::thickening_on(x, y, outlines)
+    };
 
     (0..h).into_par_iter().flat_map(|py| {
         (0..w).flat_map(move |px| {
             let wx = origin_x + px as f64 * scale;
             let wy = origin_y + py as f64 * scale;
-            let z = world::orogen_field::surface(wx, wy, seed);
-            let zx = world::orogen_field::surface(wx + d, wy, seed);
-            let zy = world::orogen_field::surface(wx, wy + d, seed);
-
-            // Sea covers anything below the datum; the seafloor still shades.
+            let z = surface(wx, wy);
+            let zx = surface(wx + d, wy);
+            let zy = surface(wx, wy + d);
             let base = orogen_ramp(z);
             // RISE converts a z-level to world units of height.
             let (gx, gy) = ((zx - z) * 0.8 / d, (zy - z) * 0.8 / d);
@@ -708,112 +758,6 @@ fn render_orogen_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     }).collect()
 }
 
-/// Cross-section along the viewport's horizontal midline: substrate, surface,
-/// sea level, and which way the wedge leans.
-fn render_orogen_section(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let seed = cli.seed;
-    // Cut across the belt axis, not along the image. A section taken along
-    // the axis runs down the crest and shows no flank at all.
-    let (ux, uy) = world::orogen_field::project_to_crest(cli.center_x, cli.center_y, seed)
-        .map(|c| c.axis)
-        .unwrap_or((1.0, 0.0));
-    let (ax, ay) = (-uy, ux);
-    let at = |px: usize| {
-        let t = (px as f64 - w as f64 * 0.5) * scale;
-        (cli.center_x + ax * t, cli.center_y + ay * t)
-    };
-    let surf: Vec<f64> = (0..w)
-        .map(|px| { let (x, y) = at(px); world::orogen_field::surface(x, y, seed) })
-        .collect();
-    let subs: Vec<f64> = (0..w)
-        .map(|px| { let (x, y) = at(px); world::substrate_elevation_at(x, y, seed) })
-        .collect();
-
-    let hi = surf.iter().cloned().fold(f64::MIN, f64::max).max(50.0);
-    let lo = subs.iter().cloned().fold(f64::MAX, f64::min).min(-50.0);
-    let span = (hi - lo) * 1.08;
-    let to_py = |z: f64| {
-        let t = (hi + span * 0.04 - z) / span;
-        ((t * h as f64) as i64).clamp(0, h as i64 - 1) as usize
-    };
-
-    let mut buf = vec![18u8; w * h * 3];
-    let put = |buf: &mut Vec<u8>, px: usize, py: usize, c: [u8; 3]| {
-        let k = (py * w + px) * 3;
-        buf[k] = c[0]; buf[k + 1] = c[1]; buf[k + 2] = c[2];
-    };
-
-    // Sea level, then the two profiles filled from below.
-    let sea = to_py(0.0);
-    for px in 0..w {
-        for py in sea..h { put(&mut buf, px, py, [22, 30, 52]) }
-        let sp = to_py(subs[px]);
-        for py in sp..h { put(&mut buf, px, py, [52, 44, 34]) }
-        let fp = to_py(surf[px]);
-        for py in fp..sp.max(fp) { put(&mut buf, px, py, [120, 96, 66]) }
-    }
-    for px in 0..w { put(&mut buf, px, sea, [90, 130, 190]) }
-    for px in 0..w {
-        let fp = to_py(surf[px]);
-        for dy in 0..2 {
-            if fp + dy < h { put(&mut buf, px, fp + dy, [240, 232, 210]) }
-        }
-    }
-
-    // Vergence at the centre, as a bar in the top-left: which way ridges lean.
-    // Vergence side, from the drift and the same axis the section was cut on.
-    // The least-curvature eigenvector carries an arbitrary sign per call, so
-    // mixing an axis from one call with an `across` from another says nothing.
-    let (ddx, ddy) = world::events::motion::plate_drift(cli.center_x, cli.center_y, seed);
-    let dir = if ddx * ax + ddy * ay < 0.0 { 1i64 } else { -1 };
-    let (bx, by) = (40i64, 40i64);
-    for t in 0..60i64 {
-        let px = bx + dir * t;
-        if px >= 0 && (px as usize) < w {
-            for dy in 0..3 { put(&mut buf, px as usize, (by + dy) as usize, [255, 170, 60]) }
-        }
-    }
-    for t in 0..12i64 {
-        let px = bx + dir * (60 - t);
-        if px >= 0 && (px as usize) < w {
-            for dy in -(t / 2)..=(t / 2) {
-                let py = by + 1 + dy;
-                if py >= 0 && (py as usize) < h { put(&mut buf, px as usize, py as usize, [255, 170, 60]) }
-            }
-        }
-    }
-    log::info!("section: across the fold axis; surface max {hi:.0} z, substrate min {lo:.0} z, vergence toward {}", if dir > 0 { "+x" } else { "-x" });
-    buf
-}
-
-/// Belt mask over the substrate coastline. Shape only: the thickening field
-/// thresholded, drawn on the land it stands on, so belt outline can be read
-/// without the vertical scale swamping it.
-fn render_orogen_belts(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let e = world::substrate_elevation_at(wx, wy, seed);
-            let t = world::orogen_field::relief(wx, wy, seed)
-                / world::orogen_field::OROGEN_MAX_RISE;
-            let base = if e >= 0.0 { (0.31, 0.40, 0.29) } else { (0.09, 0.13, 0.26) };
-            // Four bands, so the threshold sweep in the probe reads off the image.
-            let c = match t {
-                _ if t >= 0.70 => lerp_rgb(base, (1.00, 0.94, 0.80), 0.95),
-                _ if t >= 0.55 => lerp_rgb(base, (0.95, 0.63, 0.25), 0.90),
-                _ if t >= 0.40 => lerp_rgb(base, (0.78, 0.34, 0.20), 0.80),
-                _ if t >= 0.25 => lerp_rgb(base, (0.45, 0.20, 0.28), 0.70),
-                _ => base,
-            };
-            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
-        }).collect::<Vec<u8>>()
-    }).collect()
-}
-
 /// Regional tilt: a diverging ramp over the land/ocean base, with arrows on a
 /// coarse grid showing which way each landmass leans.
 ///
@@ -825,12 +769,14 @@ fn render_tilt(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
 
     let mut buf: Vec<u8> = (0..h).into_par_iter().flat_map(|py| {
         (0..w).flat_map(move |px| {
             let wx = origin_x + px as f64 * scale;
             let wy = origin_y + py as f64 * scale;
-            let e = world::substrate_elevation_at(wx, wy, seed);
+            let e = world::substrate_on(wx, wy, coasts, seed);
             if e < 0.0 {
                 // Ocean, desaturated — tilt does nothing here and the layer
                 // should show that rather than implying it does.
@@ -864,7 +810,7 @@ fn render_tilt(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
         for gx in (spacing / 2..w).step_by(spacing) {
             let wx = origin_x + gx as f64 * scale;
             let wy = origin_y + gy as f64 * scale;
-            if world::substrate_elevation_at(wx, wy, seed) < 0.0 { continue }
+            if world::substrate_on(wx, wy, coasts, seed) < 0.0 { continue }
             let ddx = potential(wx + d, wy, seed) - potential(wx - d, wy, seed);
             let ddy = potential(wx, wy + d, seed) - potential(wx, wy - d, seed);
             let m = ddx.hypot(ddy);

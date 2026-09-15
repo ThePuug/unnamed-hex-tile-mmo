@@ -9,13 +9,14 @@
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
 
-/// Haven location — world coordinates (127668, 18560) → hex (116953, 21431).
+/// Haven location — world coordinates (-55750, 4250) → hex (-58204, 4907).
 ///
-/// Sited at the foot of an orogen: flat walkable ground carrying 7 z of belt,
-/// with the range rising to 1,230 z about 1,276 WU away and open water 540 WU
-/// the other way. The z is a placeholder — the server resolves the real one
-/// from the terrain at startup, because elevation is generated, not authored.
-pub const HAVEN_LOCATION: Qrz = Qrz { q: 116953, r: 21431, z: 0 };
+/// Sited at the foot of a range on a continental plate: flat ground at 35 z
+/// with the frontal ridge rising to 337 z about 500 WU away and open water
+/// 1,677 WU the other way. The z is a placeholder — the server resolves the
+/// real one from the terrain at startup, because elevation is generated, not
+/// authored.
+pub const HAVEN_LOCATION: Qrz = Qrz { q: -58204, r: 4907, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 
@@ -354,8 +355,8 @@ mod tests {
 
     #[test]
     fn test_directional_zone_west() {
-        // West: -q direction (visual "left")
-        let spawn = Qrz { q: -10, r: 0, z: 0 };
+        // West: -q direction (visual "left"), measured from the haven.
+        let spawn = Qrz { q: HAVEN_LOCATION.q - 10, r: HAVEN_LOCATION.r, z: 0 };
         assert_eq!(get_directional_zone(spawn, HAVEN_LOCATION), DirectionalZone::West);
     }
 

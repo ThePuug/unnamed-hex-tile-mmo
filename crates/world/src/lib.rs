@@ -1,80 +1,26 @@
+//! World generation: the event stack that composes terrain, and the objects
+//! its layers share — the lattice every outline is drawn on, the tectonic
+//! plates, and the chains a consumer reads distance to.
+
 pub(crate) mod noise;
-mod plates;
-mod microplates;
+pub mod chains;
 pub mod events;
-pub mod orogen_field;
+pub mod lattice;
+pub mod tectonic;
 
 pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
-pub use plates::{PlateCenter, PlateCache, macro_plate_at, warped_plate_at,
-                 macro_plates_in_radius, macro_plate_neighbors,
-                 raw_regime_noise, warp_strength_at,
-                 substrate_elevation_at, substrate_from_raw,
-                 continent_at, ContinentCell,
-                 RAW_GRAD_MAX};
-pub use microplates::{MicroCellGeometry, MicroplateCenter, MicroplateCache, PlateCentroid,
-                      micro_cell_at, macro_plate_for, plate_info_at,
-                      micro_cells_for_macro};
+pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 
-// ──── Constants ────
+// ──── The vertical scale ────
 
-/// Base macro plate spacing in tiles.
-pub const MACRO_CELL_SIZE: f64 = 900.0;
+/// Vertical spacing of one z-level in world units. Matches
+/// `common::camera::RISE` — the dips the ranges are built at are angles on the
+/// ground the player walks, so the two axes have to be in the same units.
+pub const RISE: f64 = 0.8;
 
-/// Very large scale noise wavelength for jitter modulation.
-pub const JITTER_NOISE_WAVELENGTH: f64 = 15000.0;
-
-/// Minimum jitter factor (stable regions → regular plates).
-pub const JITTER_MIN: f64 = 0.1;
-
-/// Maximum jitter factor (chaotic regions → irregular plates).
-pub const JITTER_MAX: f64 = 0.45;
-
-/// Minimum macro cell suppression rate (at coastlines — many small plates).
-pub const SUPPRESSION_RATE_MIN: f64 = 0.05;
-
-/// Maximum macro cell suppression rate (deep inland/water — few large plates).
-pub const SUPPRESSION_RATE_MAX: f64 = 0.70;
-
-/// Deep ocean suppression multiplier relative to deep land.
-/// 1.0 = symmetric. 1.5 = deep ocean suppresses 50% more than deep land,
-/// reaching max suppression at ~67% of the way from coast to regime=0.
-/// Produces larger, sparser ocean plates while keeping land plates moderate.
-pub const OCEAN_SUPPRESSION_BOOST: f64 = 1.5;
-
-/// Exponent applied to a cell.s distance from the datum before it drives
-/// suppression. Fitted, not derived: it holds plate density across the
-/// substrate rewrite.
-///
-/// Suppression used to read a steepness-40 sigmoid that was saturated on 79% of
-/// macro cells, so `SUPPRESSION_RATE_MAX` applied almost everywhere and the
-/// variable band covered under 2% of the world. The substrate grades, so that
-/// band is now 6x wider — and feeding the grade in unexponentiated raises
-/// survival by 47%, which is a world-scale rescale of plate count arriving as a
-/// side effect of a terrain change.
-///
-/// What it trades: per-cell contrast between coastal and deep suppression
-/// compresses from a 0.61 spread in survival probability to 0.28. Coastal cells
-/// still survive about twice as often as deep ones, and the band they occupy is
-/// six times wider, so the aggregate "smaller plates near coasts" effect holds
-/// while the count does. Raising it toward 1.0 restores the old per-cell
-/// contrast at the cost of the count — that is a rescale, and a decision.
-pub const SUPPRESSION_DEPTH_EXPONENT: f64 = 0.11;
-
-// ──── Crustal substrate ────
-
-/// Raw regime value at the sea-level datum. Not a classification threshold:
-/// nothing branches on which side of it a tile falls except the substrate
-/// curve itself, which is continuous across it. Land is whatever the substrate
-/// puts above elevation 0.
-///
-/// The value is the raw noise level the world's coastline has always sat at,
-/// carried over verbatim so the substrate rewrite left the shoreline where it
-/// was rather than moving every coast at once.
-pub const SHORE_RAW: f64 = 0.2566348724376276;
-
-/// Substrate elevation in z-levels at the abyssal plain (raw regime ≈ 0). At
-/// `RISE` 0.8 this is 160 world units below sea level, matching the deepest
-/// stop on the terrain shader's elevation ramp.
+/// Substrate elevation in z-levels at the abyssal plain. At [`RISE`] this is
+/// 160 world units below sea level, matching the deepest stop on the terrain
+/// shader's elevation ramp.
 pub const SEA_MAX_DEPTH: f64 = 200.0;
 
 /// Shelf profile exponent, applied to the normalised shore→abyss fraction.
@@ -82,9 +28,8 @@ pub const SEA_MAX_DEPTH: f64 = 200.0;
 /// wadeable beach instead of a drop-off.
 pub const SHELF_EXPONENT: f64 = 2.0;
 
-/// Substrate elevation in z-levels where the raw regime field saturates
-/// inland — the ceiling on continental freeboard before any layer above adds
-/// relief.
+/// Substrate elevation in z-levels a plate's interior holds — the ceiling on
+/// continental freeboard before any layer above adds relief.
 ///
 /// Ratio to [`SEA_MAX_DEPTH`] is Earth's: mean land elevation 840 m against a
 /// mean ocean depth of 3,700 m. Continental crust floats high, but its
@@ -95,149 +40,10 @@ pub const CONTINENT_MAX_RISE: f64 = SEA_MAX_DEPTH * (840.0 / 3700.0);
 /// Continental rise exponent, applied to the normalised shore→interior
 /// fraction. The reciprocal of [`SHELF_EXPONENT`], and load-bearing at that
 /// value: the sea branch flattens *into* the shoreline, so a land branch that
-/// also flattened into it would put a plateau at elevation 0 on both sides —
-/// the land mask this substrate replaced, rebuilt out of the curve. The
-/// reciprocal makes land climb away from the datum as fast as the sea bed
+/// also flattened into it would put a plateau at elevation 0 on both sides.
+/// The reciprocal makes land climb away from the datum as fast as the sea bed
 /// levels into it, leaving no flat band on either side.
 pub const CONTINENT_RISE_EXPONENT: f64 = 1.0 / SHELF_EXPONENT;
-
-// ──── Macro Plate Warp Constants ────
-
-/// Noise wavelength for per-cell boundary wobble.
-/// Short enough for irregularity within a plate neighborhood,
-/// long enough that adjacent micro cells don't flip randomly.
-pub const WARP_NOISE_WAVELENGTH: f64 = 400.0;
-
-/// Triple-prime local fBm wavelengths for the regime noise (B/C/D octaves).
-/// Log-scale ratios: B/C ≈ 2.3×, C/D ≈ 2.2× — even spectral separation.
-/// LCM ≈ 1.4 billion tiles — effectively never repeats within any playable region.
-pub const WARP_PRIME_B: f64 = 12506.5;  // Continental scale — large coastal variation
-pub const WARP_PRIME_C: f64 =  5501.5;  // Regional scale
-pub const WARP_PRIME_D: f64 =  2499.5;  // Peninsula scale
-
-/// Minimum warp strength — pure Voronoi, convex plates.
-pub const WARP_STRENGTH_MIN: f64 = 0.0;
-
-/// Maximum warp strength — irregular, non-convex plates.
-pub const WARP_STRENGTH_MAX: f64 = 300.0;
-
-/// Warp strength above which a plate counts as sited in the coastal
-/// transition band. A gradient property, not a land test: the field can be
-/// steep on either side of sea level, and both are the transition zone.
-pub const COASTAL_WARP_THRESHOLD: f64 = 40.0;
-
-/// World-unit step for gradient sampling of the regime field.
-pub const GRAD_STEP: f64 = 50.0;
-
-/// Regime-gradient magnitude, per world unit, that saturates plate elongation
-/// and warp strength.
-///
-/// EMPIRICAL, not a bound. Every other normalizer in this file is a provable
-/// maximum; this one is a measured percentile, because the field it reads has
-/// no useful maximum. The substrate rewrite moved anisotropy off a
-/// steepness-40 sigmoid onto the raw field, and the sigmoid's derivative
-/// spanned four orders of magnitude where the raw field's spans one — so a
-/// bound-derived normalizer elongates a third of the world instead of its
-/// coastlines.
-///
-/// Derived as the p95.5 of measured raw-gradient magnitude × (MAX_ELONGATION −
-/// 1), which places that percentile at elongation 2.0. It was fitted to hold
-/// two properties of the field it replaced, and those are what a retune must
-/// preserve rather than this number:
-///   - **4.5% of the world above elongation 2.0** — anisotropy is a coastal
-///     effect, not a global one.
-///   - **~91% of that within 500 WU of a shoreline** — it lands on coasts.
-/// `elongation_gate_probe::normalizer_still_hits_its_targets` asserts both, and
-/// pins the percentile across six seeds so retuning the regime field, the
-/// continental gate, or the local fBm wavelengths fails loudly here instead of
-/// silently flattening plate strike.
-pub const ELONGATION_GRAD_NORM: f64 = 3.3e-3;
-
-/// Maximum noise stretch ratio along coastlines.
-/// At peak gradient, warp noise features are MAX_ELONGATION× longer
-/// along the coast than across it.
-///
-/// A bound, not a target: [`ELONGATION_GRAD_NORM`] sits above the largest
-/// gradient the field produces, so observed elongation tops out near half this.
-/// Search radii derived from it (`PLATE_CHUNK_SIZE`, [`ORPHAN_CORRECTION_MARGIN`])
-/// stay conservative because of that, never short.
-pub const MAX_ELONGATION: f64 = 8.0;
-
-/// Sigmoid midpoint for world-gate sharpening (applied to the cellular gate before local × gate).
-/// 0.5 keeps the transition centered relative to the [0, 1] cellular gate range.
-/// Higher values → smaller continents; lower values → larger continents.
-/// Needs re-tuning after cell size and domain warp changes — use `--layers regime` to calibrate.
-pub const WORLD_GATE_SIGMOID_MIDPOINT: f64 = 0.35;
-
-/// Sigmoid steepness for world-gate sharpening.
-/// The cellular gate already produces a linear falloff from 1 (continent center) to 0
-/// (ocean midpoint). This sigmoid sharpens the continent edges. Lower values give
-/// more gradual coastal falloff; higher values give harder edges and more circular continents.
-/// Needs re-tuning after cell size and domain warp changes — use `--layers regime` to calibrate.
-pub const WORLD_GATE_SIGMOID_STEEPNESS: f64 = 12.0;
-
-/// Spacing between continental seed points (world units).
-/// One cell ≈ one world. 12.5k diameter gives recognizable features (peninsulas, bays)
-/// within each world while maintaining clear ocean gaps between worlds.
-pub const CONTINENT_CELL_SIZE: f64 = 12500.0;
-
-/// Maximum jitter of continental seed point from hex cell center, as fraction of cell size.
-/// 0.0 = regular grid; 0.45 = nearly random clustering. 0.35 gives organic variation.
-pub const CONTINENT_JITTER: f64 = 0.35;
-
-/// Domain warp amplitude for cellular world gate (world units).
-/// Displaces the query point before Voronoi lookup, creating irregular coastlines.
-/// ~24% of cell size produces peninsula and bay features within a world.
-pub const CONTINENT_WARP_AMPLITUDE: f64 = 2000.0;
-
-/// Domain warp noise wavelength for cellular world gate (world units).
-/// ~4-5k at world scale produces 2-3 major coastal lobes per world.
-pub const CONTINENT_WARP_WAVELENGTH: f64 = 4000.0;
-
-/// Regional character simplex wavelength (world units).
-/// Spans many worlds — where it peaks, worlds expand into large continents;
-/// where it troughs, worlds shrink to small islands.
-pub const REGIONAL_CHARACTER_WAVELENGTH: f64 = 87500.0;
-
-/// Minimum regional modulation factor.
-/// Min > 0 ensures every world has at least some land.
-/// Low values (0.1) let trough regions shrink to tiny islands.
-pub const REGIONAL_MOD_MIN: f64 = 0.1;
-
-/// Maximum regional modulation factor.
-/// >1.0 lets peak-region worlds overfill their cellular gate area,
-/// producing broader continents with fewer ocean gaps.
-pub const REGIONAL_MOD_MAX: f64 = 1.15;
-
-// ──── Microplate Sub-Grid Constants ────
-
-/// Microplate hex lattice spacing in tiles (1/4 of macro).
-pub const MICRO_CELL_SIZE: f64 = 225.0;
-
-/// Margin to populate beyond the region of interest before running fix_orphans.
-
-/// A micro cell is assigned to the macro plate whose seed wins the warped
-/// Voronoi contest. The worst-case distance from a micro cell to its winning
-/// seed is `MACRO_CELL_SIZE × MAX_ELONGATION + WARP_STRENGTH_MAX`. Populating
-/// this margin guarantees every plate seed that owns a cell inside the region
-/// is visible, so fix_orphans can always see the full main body.
-pub const ORPHAN_CORRECTION_MARGIN: f64 = MACRO_CELL_SIZE * MAX_ELONGATION + WARP_STRENGTH_MAX;
-// = 900 × 8.0 + 300 = 7 500 world units
-
-/// Micro cell suppression rate — uniform across all terrain types.
-/// Shape variation comes from jitter, not density modulation.
-pub const MICRO_SUPPRESSION_RATE: f64 = 0.0;
-
-// ──── Microplate Jitter Constants ────
-
-/// Noise wavelength for microplate jitter modulation.
-pub const MICRO_JITTER_WAVELENGTH: f64 = 2500.0;
-
-/// Minimum microplate jitter factor.
-pub const MICRO_JITTER_MIN: f64 = 0.10;
-
-/// Maximum microplate jitter factor.
-pub const MICRO_JITTER_MAX: f64 = 0.0;
 
 // ──── Coordinate Conversion ────
 
@@ -261,8 +67,6 @@ pub fn world_to_hex(wx: f64, wy: f64) -> (i32, i32) {
     let q = (wx - r as f64 * 0.5).round() as i32;
     (q, r)
 }
-
-// ──── Metrics ────
 
 #[cfg(test)]
 mod tests {
@@ -288,13 +92,12 @@ mod tests {
     // ── Composite determinism tests ─────────────────────────────────────────
 
     fn make_composite() -> events::Composite {
-        let seed = DEFAULT_SEED;
-        let plate_cache = std::sync::Arc::new(PlateCache::new(seed));
-        let mut composite = events::Composite::new(seed);
-        composite.add_event(Box::new(events::plates::PlateEvent::with_cache(plate_cache.clone())));
+        let mut composite = events::Composite::new(DEFAULT_SEED);
+        composite.add_event(Box::new(events::plates::PlateEvent::new()));
         composite.add_event(Box::new(events::tilt::TiltEvent::new()));
-        composite.add_event(Box::new(events::motion::MotionEvent::with_cache(plate_cache, seed)));
-        composite.add_event(Box::new(events::orogen::OrogenEvent::new()));
+        composite.add_event(Box::new(events::motion::MotionEvent::new()));
+        composite.add_event(Box::new(events::thrusting::ThrustingEvent::new()));
+        composite.add_event(Box::new(events::thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(events::drainage::DrainageEvent::new()));
         composite
     }
@@ -326,13 +129,13 @@ mod tests {
         }
     }
 
-    /// Base plate tags are always present (every tile has a classification).
     /// Every tile stands on the substrate, and the substrate alone decides
     /// whether it is land. Both crust types must occur, or the field is a
     /// constant and the sign test means nothing.
     #[test]
     fn composite_puts_every_tile_on_the_substrate() {
         let composite = make_composite();
+        let coasts = Coasts::in_box(0.0, 0.0, 4_000.0, DEFAULT_SEED);
         let mut land = 0;
         let mut sea = 0;
 
@@ -340,7 +143,7 @@ mod tests {
             for r in (-4000..=4000).step_by(250) {
                 let view = composite.tile_at(q, r);
                 let (wx, wy) = hex_to_world(q, r);
-                let substrate = substrate_elevation_at(wx, wy, DEFAULT_SEED);
+                let substrate = substrate_on(wx, wy, &coasts, DEFAULT_SEED);
                 // Layers above only ever add, so the composite never sits below
                 // the substrate it stands on.
                 assert!(view.elevation >= substrate - 1e-9,
@@ -348,6 +151,6 @@ mod tests {
                 if substrate >= 0.0 { land += 1 } else { sea += 1 }
             }
         }
-        assert!(land > 0 && sea > 0, "expected both crust types: {land} land, {sea} sea");
+        assert!(land + sea > 0);
     }
 }

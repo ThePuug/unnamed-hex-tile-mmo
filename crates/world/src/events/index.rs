@@ -89,11 +89,15 @@ impl<T: EventIndex + 'static> AnyIndex for T {
 pub struct IndexRegistry {
     /// Immutable after init. Each value has an independent RwLock.
     entries: HashMap<TypeId, Arc<RwLock<Box<dyn AnyIndex>>>>,
+    /// The layer that fills each index, so a read can deform exactly that
+    /// layer under the reader's footprint and nothing else.
+    layers: HashMap<TypeId, usize>,
+    registering: usize,
 }
 
 impl IndexRegistry {
     pub fn new() -> Self {
-        Self { entries: HashMap::new() }
+        Self { entries: HashMap::new(), layers: HashMap::new(), registering: 0 }
     }
 
     /// Pre-register a typed index. Called during `Composite::add_event()`.
@@ -101,6 +105,18 @@ impl IndexRegistry {
     pub fn pre_register<T: EventIndex>(&mut self) {
         self.entries.entry(TypeId::of::<T>())
             .or_insert_with(|| Arc::new(RwLock::new(Box::new(T::default()))));
+        self.layers.entry(TypeId::of::<T>()).or_insert(self.registering);
+    }
+
+    /// The layer whose `register_indexes` is running, recorded against every
+    /// index it registers.
+    pub fn set_registering_layer(&mut self, layer: usize) {
+        self.registering = layer;
+    }
+
+    /// The layer that fills `T`, or None if nothing registered it.
+    pub fn layer_of<T: EventIndex>(&self) -> Option<usize> {
+        self.layers.get(&TypeId::of::<T>()).copied()
     }
 
 

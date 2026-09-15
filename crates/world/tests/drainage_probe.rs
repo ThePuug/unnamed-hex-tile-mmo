@@ -3,7 +3,6 @@
 //!
 //! Run: cargo test -p world --release --test drainage_probe -- --ignored --nocapture
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use common::HexLattice;
@@ -11,23 +10,25 @@ use world::events::drainage::{
     node_tile, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
 };
 use world::events::motion::MotionEvent;
-use world::events::orogen::OrogenEvent;
+use world::events::thickening::ThickeningEvent;
+use world::events::plates::Coasts;
+use world::events::thrusting::{Outlines, ThrustingEvent};
 use world::events::plates::PlateEvent;
 use world::events::tilt::{potential, TiltEvent};
 use world::events::Composite;
-use world::{hex_to_world, PlateCache};
+use world::hex_to_world;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 /// Spawn: on land, under a belt.
-const SPAWN: (i32, i32) = (116953, 21431);
+const SPAWN: (i32, i32) = (-58204, 4907);
 
 fn composite() -> Composite {
-    let plate_cache = Arc::new(PlateCache::new(SEED));
     let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::with_cache(plate_cache.clone())));
+    c.add_event(Box::new(PlateEvent::new()));
     c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::with_cache(plate_cache, SEED)));
-    c.add_event(Box::new(OrogenEvent::new()));
+    c.add_event(Box::new(MotionEvent::new()));
+    c.add_event(Box::new(ThrustingEvent::new()));
+    c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
     c
 }
@@ -40,13 +41,30 @@ fn spawn_cell() -> (i32, i32) {
     lattice().cell_id(SPAWN.0, SPAWN.1)
 }
 
+/// The plate outlines a routing of `cell` can see: built over its window,
+/// what the framework hands its deform.
+fn outlines_for(cell: (i32, i32)) -> Outlines {
+    let lat = lattice();
+    let (cq, cr) = lat.cell_center(cell);
+    let (cx, cy) = hex_to_world(cq, cr);
+    Outlines::in_box(cx, cy, (3 * lat.radius + 1) as f64, SEED)
+}
+
+/// The coasts a routing of `cell` can see, likewise.
+fn coasts_for(cell: (i32, i32)) -> Coasts {
+    let lat = lattice();
+    let (cq, cr) = lat.cell_center(cell);
+    let (cx, cy) = hex_to_world(cq, cr);
+    Coasts::in_box(cx, cy, (3 * lat.radius + 1) as f64, SEED)
+}
+
 /// The routing reads the ground the game stands on: a node's elevation is the
 /// composed tile's elevation, exactly, because both are the same functions
 /// summed in the same order.
 #[test]
 fn nodes_sit_on_the_composed_surface() {
     let c = composite();
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED);
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let mut worst = 0.0f64;
     let mut checked = 0;
     for (k, &key) in routing.keys.iter().enumerate().step_by(211) {
@@ -61,7 +79,7 @@ fn nodes_sit_on_the_composed_surface() {
 /// Every land node reaches the sea or the window's edge, and never loops.
 #[test]
 fn every_land_node_drains_to_a_sink() {
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED);
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let n = routing.keys.len();
     let (mut land, mut to_sea, mut to_edge) = (0, 0, 0);
     for k in 0..n {
@@ -89,7 +107,7 @@ fn every_land_node_drains_to_a_sink() {
 /// two ways, and a reach follows the bigger one.
 #[test]
 fn catchment_is_conserved_and_grows_downstream() {
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED);
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let n = routing.keys.len();
     let at_sinks: f64 = (0..n)
         .filter(|&k| routing.down[k].is_none())
@@ -159,8 +177,8 @@ fn neighbouring_windows_agree_on_shared_nodes() {
     let a = spawn_cell();
     let b = lat.neighbor_cells(a)[0];
     let ev = DrainageEvent::new();
-    let ra = ev.route(&lat, a, SEED);
-    let rb = ev.route(&lat, b, SEED);
+    let ra = ev.route(&lat, a, SEED, &coasts_for(a), &outlines_for(a));
+    let rb = ev.route(&lat, b, SEED, &coasts_for(b), &outlines_for(b));
 
     let (mut shared, mut agree, mut same_catchment) = (0, 0, 0);
     for (kb, &key) in rb.keys.iter().enumerate() {
@@ -193,7 +211,7 @@ fn neighbouring_windows_agree_on_shared_nodes() {
 #[test]
 #[ignore]
 fn continents_drain_down_their_tilt() {
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED);
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let h = NODE_SPACING as f64;
     let (mut channels, mut with_tilt, mut nodes_to_sea, mut land) = (0, 0, 0.0f64, 0u64);
     let mut ends = [0usize; 4];
@@ -250,7 +268,7 @@ fn continents_drain_down_their_tilt() {
 #[test]
 #[ignore]
 fn catchment_distribution() {
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED);
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let mut c: Vec<f64> = (0..routing.keys.len())
         .filter(|&k| routing.kind[k] == Kind::Land)
         .map(|k| routing.catchment[k])
@@ -272,6 +290,49 @@ fn catchment_distribution() {
     );
 }
 
+/// The lakes: how deep each stands over its floor, and how many sit inside
+/// a belt. A trough between two ranges impounds until something breaches
+/// the sill, and the depth is how much breaching it takes.
+#[test]
+#[ignore]
+fn lakes_in_the_troughs() {
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
+    let cell = routing.owned_cell();
+    let mut depths: Vec<f64> = Vec::new();
+    let mut in_belt = 0usize;
+    let outlines = outlines_for(spawn_cell());
+    for lake in &cell.lakes {
+        let floor = lake
+            .nodes
+            .iter()
+            .map(|k| cell.nodes[k].elevation)
+            .fold(f64::MAX, f64::min);
+        depths.push(lake.surface - floor);
+        let (q, r) = node_tile(lake.nodes[0]);
+        let (wx, wy) = hex_to_world(q, r);
+        if outlines.relief(wx, wy) > 0.0 {
+            in_belt += 1;
+        }
+    }
+    depths.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p = |f: f64| depths.get(((depths.len().max(1) - 1) as f64 * f) as usize).copied().unwrap_or(0.0);
+    println!(
+        "\n=== lakes in cell {:?} ===\n{} lakes, {} inside a belt; depth over floor p50 {:.1} z, p90 {:.1} z, max {:.1} z; \
+         nodes per lake p50 {}",
+        spawn_cell(),
+        depths.len(),
+        in_belt,
+        p(0.5),
+        p(0.9),
+        depths.last().copied().unwrap_or(0.0),
+        {
+            let mut sizes: Vec<usize> = cell.lakes.iter().map(|l| l.nodes.len()).collect();
+            sizes.sort_unstable();
+            sizes.get(sizes.len() / 2).copied().unwrap_or(0)
+        }
+    );
+}
+
 /// What a cell costs, and what the first tile in a fresh composite costs
 /// because of it.
 #[test]
@@ -279,11 +340,13 @@ fn catchment_distribution() {
 fn cost() {
     let lat = lattice();
     let ev = DrainageEvent::new();
+    let outlines = outlines_for(spawn_cell());
+    let coasts = coasts_for(spawn_cell());
     let t = Instant::now();
-    let routing = ev.route(&lat, spawn_cell(), SEED);
+    let routing = ev.route(&lat, spawn_cell(), SEED, &coasts, &outlines);
     let cold = t.elapsed();
     let t = Instant::now();
-    let _ = ev.route(&lat, spawn_cell(), SEED);
+    let _ = ev.route(&lat, spawn_cell(), SEED, &coasts, &outlines);
     let warm = t.elapsed();
     println!(
         "\n=== cost ===\nwindow: {} nodes, {} owned; route cold {:.1} ms, with elevations memoised {:.1} ms",

@@ -5,15 +5,17 @@
 //! catchment, and the lakes that closed ground fills. It moves no ground and
 //! its query returns nothing: dissection cuts along what this publishes.
 //!
-//! # The surface is a function
+//! # The surface is a function, plus one index
 //!
-//! Everything beneath this layer is a field, so the surface beneath it is one
-//! function of position and seed — [`surface_at`] — evaluated at each node
-//! without materialising a tile. That is what lets routing, which needs the
-//! ground over a whole basin, happen in `deform`. It binds the stack beneath:
-//! a layer added under drainage stays a field, or states its elevation as a
-//! function and is added to [`surface_at`], or drainage routes over ground
-//! that is not there. `drainage_probe` checks the sum against the composite.
+//! The field layers beneath — substrate, tilt, thickening — sum to one
+//! function of position and seed, and the ranges come from the thrusting
+//! layer's fronts, the one index this deform reads over its window.
+//! [`surface_at`] is that sum, evaluated at each node without materialising a
+//! tile, which is what lets routing, which needs the ground over a whole
+//! basin, happen in `deform`. A layer added beneath drainage either stays a
+//! field or publishes what drainage needs, and is added to [`surface_at`], or
+//! drainage routes over ground that is not there. `drainage_probe` checks the
+//! sum against the composite.
 //!
 //! # One lattice, one window
 //!
@@ -30,10 +32,9 @@
 //! continues on the far side. Catchment is counted within the window, so the
 //! largest rivers plateau in discharge past it rather than truncating.
 //!
-//! The deform reads no index, and says so: the cascade stops here instead of
-//! deforming four layers of cells under a continent-sized window for nothing.
-//! Node elevations are memoised across windows, so each node is evaluated
-//! once however many windows contain it.
+//! Reading the front index deforms the thrusting cells under the window and
+//! nothing else beneath. Node elevations are memoised across windows, so each
+//! node is evaluated once however many windows contain it.
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -43,90 +44,47 @@ use common::HexLattice;
 use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::plates::{Coasts, PlateEdgeIndex};
+use super::thickening::thickening_on;
+use super::thrusting::{outlines_of, Outlines};
 use super::tilt::tilt_at;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
-use crate::orogen_field::{relief_on, BELT_HALF_WIDTH};
-use crate::{
-    hex_to_world, substrate_elevation_at, world_to_hex, CONTINENT_CELL_SIZE, CONTINENT_JITTER,
-    CONTINENT_WARP_AMPLITUDE,
-};
+use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
+pub use crate::lattice::{node_tile, NodeKey, NODE_SPACING};
+use crate::tectonic::PLATE_REACH;
+use crate::{hex_to_world, substrate_on};
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Nodes across one belt flank. A range's crest has to read as a divide
-/// rather than as one line of nodes, and one node spacing is the narrowest
-/// valley the layer means to read as a valley.
-const NODES_PER_FLANK: f64 = 5.0;
-
-/// Node spacing in tiles, derived from the belt half-width.
-pub const NODE_SPACING: i32 = (BELT_HALF_WIDTH / NODES_PER_FLANK) as i32;
-
-/// The furthest land of a continent cell lies from its seed point: the bound
-/// the plate layer guarantees.
-const CONTINENT_BOUND: f64 =
-    CONTINENT_CELL_SIZE * (1.0 + CONTINENT_JITTER) + CONTINENT_WARP_AMPLITUDE;
 
 /// What one ring of cells clears, as a multiple of the cell radius. The
 /// framework measures it at `add_event`; it is restated here because the
 /// scale below is derived from it and a const cannot call the measurement.
 const RING_CLEARANCE: f64 = 1.268;
 
-/// Cell scale, derived: one ring covers the bound a continent cell guarantees
-/// for its land, so a basin that fits one continent cell is counted whole.
-pub const DRAINAGE_CELL_SCALE: u32 = (CONTINENT_BOUND / RING_CLEARANCE) as u32 + 1;
+/// Cell scale, derived: one ring covers a plate's reach from its seed, so a
+/// basin that drains a plate's interior to its coast is counted whole.
+pub const DRAINAGE_CELL_SCALE: u32 = (PLATE_REACH / RING_CLEARANCE) as u32 + 1;
 
 /// Two water levels closer than this are one flat.
 const FLAT: f64 = 1e-9;
-
-/// The six neighbours in angular order, 60° apart from `+x` round to `300°`,
-/// so consecutive entries bound one facet.
-const NEIGHBOURS: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
 
 const SIXTY: f64 = std::f64::consts::PI / 3.0;
 
 // ── The surface ─────────────────────────────────────────────────────────────
 
-/// The surface beneath drainage at a position, in z-levels: every layer below
-/// it, summed as the functions they are. Equal to the composed tile's
-/// elevation at a tile centre.
-pub fn surface_at(wx: f64, wy: f64, seed: u64) -> f64 {
-    let substrate = substrate_elevation_at(wx, wy, seed);
+/// The surface beneath drainage at a position, in z-levels: the layers
+/// summed as the functions they are, the substrate from the coasts in reach,
+/// the tilt, the ranges and the plateau from the plate outlines in reach.
+/// Equal to the composed tile's elevation at a tile centre.
+pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> f64 {
+    let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
-    base + relief_on(wx, wy, base, seed).max(0.0)
+    base + outlines.relief(wx, wy).max(0.0) + thickening_on(wx, wy, outlines).max(0.0)
 }
 
 // ── Nodes ───────────────────────────────────────────────────────────────────
 
-/// A node's lattice coordinates. Its tile is `(i × NODE_SPACING, j × NODE_SPACING)`.
-pub type NodeKey = (i32, i32);
-
-pub fn node_tile(key: NodeKey) -> (i32, i32) {
-    (key.0 * NODE_SPACING, key.1 * NODE_SPACING)
-}
-
-/// The node nearest a position.
-pub fn nearest_node(wx: f64, wy: f64) -> NodeKey {
-    let (q, r) = world_to_hex(wx, wy);
-    let s = NODE_SPACING as f64;
-    hex_round(q as f64 / s, r as f64 / s)
-}
-
-fn hex_round(fq: f64, fr: f64) -> (i32, i32) {
-    let fs = -fq - fr;
-    let (mut q, mut r, s) = (fq.round(), fr.round(), fs.round());
-    let (dq, dr, ds) = ((q - fq).abs(), (r - fr).abs(), (s - fs).abs());
-    if dq > dr && dq > ds {
-        q = -r - s;
-    } else if dr > ds {
-        r = -q - s;
-    }
-    (q as i32, r as i32)
-}
-
-fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
-    let (dq, dr) = (a.0 - b.0, a.1 - b.1);
-    dq.abs().max(dr.abs()).max((dq + dr).abs())
-}
 
 /// The steepest of the six facets around a node on the water surface: the
 /// downslope angle in world space, the index of the facet's first edge, and
@@ -460,19 +418,20 @@ impl DrainageEvent {
         Self { elevations: DashMap::new() }
     }
 
-    fn elevation(&self, key: NodeKey, seed: u64) -> f64 {
+    fn elevation(&self, key: NodeKey, seed: u64, coasts: &Coasts, outlines: &Outlines) -> f64 {
         if let Some(e) = self.elevations.get(&key) {
             return *e;
         }
         let (q, r) = node_tile(key);
         let (wx, wy) = hex_to_world(q, r);
-        let e = surface_at(wx, wy, seed);
+        let e = surface_at(wx, wy, seed, coasts, outlines);
         self.elevations.insert(key, e);
         e
     }
 
-    /// Route the window of `cell`: every node in the cell and its ring.
-    pub fn route(&self, lattice: &HexLattice, cell: CellId, seed: u64) -> Routing {
+    /// Route the window of `cell`: every node in the cell and its ring, on
+    /// the surface the fronts in reach complete.
+    pub fn route(&self, lattice: &HexLattice, cell: CellId, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Routing {
         // ── Nodes in the window, in key order ──
         let centre = lattice.cell_center(cell);
         let reach = 3 * lattice.radius as i32 + 1;
@@ -504,7 +463,7 @@ impl DrainageEvent {
             .iter()
             .map(|&(i, j)| NEIGHBOURS.map(|(di, dj)| index.get(&(i + di, j + dj)).copied()))
             .collect();
-        let elevation: Vec<f64> = keys.iter().map(|&k| self.elevation(k, seed)).collect();
+        let elevation: Vec<f64> = keys.iter().map(|&k| self.elevation(k, seed, coasts, outlines)).collect();
 
         let mut kind: Vec<Kind> = (0..n)
             .map(|k| {
@@ -736,15 +695,22 @@ impl WorldEvent for DrainageEvent {
     /// A node publishes its own downstream link, which reaches one spacing.
     fn max_influence(&self) -> u32 { NODE_SPACING as u32 }
 
-    /// The surface is read as a function; no index beneath is touched.
-    fn reads_below(&self) -> bool { false }
-
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<DrainageIndex>();
     }
 
+    /// The one index read beneath: the thrusting fronts over this cell's
+    /// window, which complete the surface the nodes are evaluated on. The
+    /// cells read are the fronts' cells under the window plus one ring, so a
+    /// node's nearest front is in reach from every window that holds the
+    /// node, and its elevation is the same in all of them.
     fn deform(&self, scope: &CellScope) {
-        let routing = self.route(scope.lattice(), scope.cell(), scope.seed());
+        let outlines = outlines_of(scope);
+        let edge_cells = scope.source_cells::<PlateEdgeIndex>();
+        let coasts = Coasts::new(
+            &scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(),
+        );
+        let routing = self.route(scope.lattice(), scope.cell(), scope.seed(), &coasts, &outlines);
         scope.publish::<DrainageIndex>(routing.owned_cell());
     }
 

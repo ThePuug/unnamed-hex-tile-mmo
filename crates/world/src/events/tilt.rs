@@ -30,7 +30,8 @@
 use std::any::Any;
 
 use crate::noise::simplex_2d;
-use crate::{CONTINENT_CELL_SIZE, hex_to_world};
+use crate::hex_to_world;
+use crate::tectonic::PLATE_SPACING;
 use super::index::IndexRegistry;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
@@ -51,14 +52,14 @@ pub const TILT_CELL_SCALE: u32 = 1800;
 /// The gradient of a smooth field holds one direction for about a quarter of
 /// its wavelength — from a maximum to the next zero — so a landmass sits on one
 /// limb only if it fits well inside that quarter. A continent is
-/// [`CONTINENT_CELL_SIZE`] across, so eight of them puts the quarter-wave at
+/// [`PLATE_SPACING`] across, so eight of them puts the quarter-wave at
 /// two continents and a landmass occupies at most half a limb: the lean holds
 /// its direction right across, with margin, rather than turning over in the
 /// middle.
 ///
 /// Corroboration rather than derivation: the orogen prototype's orientation
 /// octave landed at 120,000 for the same reason on a different quantity.
-pub const TILT_WAVELENGTH: f64 = 8.0 * CONTINENT_CELL_SIZE;
+pub const TILT_WAVELENGTH: f64 = 8.0 * PLATE_SPACING;
 
 // ── Amplitude ───────────────────────────────────────────────────────────────
 
@@ -203,7 +204,7 @@ mod tests {
     #[test]
     fn a_continent_fits_inside_one_limb() {
         let quarter = TILT_WAVELENGTH * 0.25;
-        assert!(quarter >= 2.0 * CONTINENT_CELL_SIZE,
+        assert!(quarter >= 2.0 * PLATE_SPACING,
             "quarter wavelength {quarter} holds under two continents");
     }
 

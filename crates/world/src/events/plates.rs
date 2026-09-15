@@ -1,326 +1,374 @@
-//! PlateEvent — Event #0: macro plate centroids, and the crustal substrate
-//! every layer above stands on.
+//! PlateEvent — the tectonic plates: their edges on the lattice, and the
+//! crustal substrate every layer above stands on.
+//!
+//! # Claims
+//!
+//! The plate is the primary object. A plate is a Voronoi cell around a seed a
+//! continent-width apart, continental or oceanic, and a continent is a
+//! connected group of continental plates. Every edge between two plates is
+//! drawn on the lattice and published: which two plates, which sides are
+//! continental, and the chain. A coast is an edge with one continental side,
+//! and there is no coast inside a plate. The substrate is a function of
+//! distance to the nearest coast: the sea floor falls to the abyss on one
+//! side and the land rises to its freeboard on the other, each over half a
+//! plate, and holds past that. Interior relief is a noise height scaled by
+//! the rise, so it varies the interior and never moves the shoreline.
+//!
+//! # The window
+//!
+//! `deform` publishes the edges whose midpoints lie in the cell: every plate
+//! whose ground can reach the cell is gathered, its polygon read for its
+//! edges, and each edge kept once by its pair. `prepare` gathers the coasts
+//! of the cell and its ring into buckets. A query reads the nearest coast
+//! within the substrate's reach, and with none in reach the plate the tile
+//! lies in says whether the flat ground is land or abyss. The cell scale
+//! derives from how far an edge's chain can lie from the edge's midpoint,
+//! since a cell has to hold the whole chain of any edge it or its ring owns.
 
-//! Deform: discovers plate centroids at plate granularity (not per-tile) and
-//! registers them in PlateCentroidIndex with the substrate elevation each one
-//! stands at.
-//! Query: places the substrate — the elevation the regime field gives this
-//! position, above or below the sea-level datum.
-
-use std::collections::HashMap;
+use std::any::Any;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use common::{HexLattice, TagSet};
+use dashmap::DashMap;
 
-use crate::hex_to_world;
-use crate::plates::{PlateCache, substrate_from_raw, raw_regime_noise};
-use crate::world_to_hex;
+use crate::chains::{join_at_nodes, Segment, SegmentGrid};
+use crate::lattice::{node_world, NODE_SPACING};
+use crate::noise::simplex_2d;
+use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_SPACING};
+use crate::{hex_to_world, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::thrusting::OUTLINE_REACH;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
-const PLATE_CELL_SCALE: u32 = 1800;
+/// How far from a coast the substrate reaches its full height or depth:
+/// half a plate, so a plate's interior is flat and its margin is the ramp.
+pub const COAST_REACH: f64 = 0.5 * PLATE_SPACING;
 
-// ── PlateCentroidIndex ──────────────────────────────────────────────────────
+/// The farthest any node of an edge's chain lies from the edge's midpoint,
+/// in world units.
+///
+/// EMPIRICAL, measured by `edge_reach_is_bounded` over thousands of edges:
+/// half the longest edge plus the widest the lattice path swings from the
+/// straight line, with margin.
+pub const EDGE_REACH: f64 = 10_000.0;
 
-/// Centroid entry registered by PlateEvent.
-pub struct CentroidEntry {
-    pub q: i32,
-    pub r: i32,
-    pub wx: f64,
-    pub wy: f64,
-    pub plate_id: u64,
-    pub cell_q: i32,
-    pub cell_r: i32,
-    /// Substrate elevation at the centroid. Above 0 is continental crust.
-    pub elevation: f64,
+/// The farthest an edge's influence reaches from its midpoint: its chain,
+/// and the substrate's ramp from the coast the chain draws.
+pub const EDGE_INFLUENCE: f64 = EDGE_REACH + COAST_REACH;
+
+/// What one ring of cells clears, as a multiple of the cell radius. The
+/// framework measures it at `add_event`; restated because the scale below is
+/// derived from it and a const cannot call the measurement.
+const RING_CLEARANCE: f64 = 1.268;
+
+/// Cell scale of every layer that publishes or reads the plate graph: one
+/// ring holds every edge whose chain or shore reaches a tile of the cell, and
+/// the whole outline of any plate a tile of the cell stands in, which the
+/// ranges and the plateau read.
+pub const GRAPH_CELL_SCALE: u32 = {
+    let reach = if OUTLINE_REACH > EDGE_INFLUENCE { OUTLINE_REACH } else { EDGE_INFLUENCE };
+    (reach / RING_CLEARANCE) as u32 + 1
+};
+
+/// Bucket of the coast grid: two node spacings, so a chain segment spans a
+/// bucket or two and a search from the shore stops within a ring.
+const COAST_BUCKET: f64 = 2.0 * NODE_SPACING as f64;
+
+/// Interior relief as a share of the continental rise: enough to vary the
+/// interior, never enough to reach the datum.
+const RELIEF_SHARE: f64 = 0.3;
+
+/// Wavelength of the interior relief's longer octave, in world units; the
+/// shorter is a third of it.
+const RELIEF_WAVELENGTH: f64 = 4_000.0;
+
+const RELIEF_SEED: u64 = 0x5265_6C69_6566_5F5F; // "Relief__"
+
+
+// ── The index ───────────────────────────────────────────────────────────────
+
+/// The edges of the plate graph each cell owns: those whose midpoint lies in
+/// it.
+#[derive(Default)]
+pub struct PlateEdgeIndex {
+    pub cells: HashMap<CellId, Vec<Edge>>,
 }
 
-/// Index of macro plate centroids and their Voronoi neighbor graph.
-/// Populated by PlateEvent, queried by SpineEvent.
-pub struct PlateCentroidIndex {
-    pub cells: HashMap<CellId, Vec<CentroidEntry>>,
-    pub neighbor_graph: HashMap<(i32, i32), Vec<(i32, i32)>>,
-    /// Fast (q, r) → substrate elevation lookup for tile_view_at.
-    elevation_at: HashMap<(i32, i32), f64>,
-}
-
-impl Default for PlateCentroidIndex {
-    fn default() -> Self {
-        Self { cells: HashMap::new(), neighbor_graph: HashMap::new(), elevation_at: HashMap::new() }
+impl PlateEdgeIndex {
+    pub fn edges_in(&self, cell_ids: &[CellId]) -> Vec<Edge> {
+        cell_ids
+            .iter()
+            .filter_map(|id| self.cells.get(id))
+            .flat_map(|v| v.iter().cloned())
+            .collect()
     }
 }
 
-/// What one cell contributes: its own centroids, and the graph and elevation
-/// entries for those centroids. All three are keyed to ground inside the cell, so they
-/// travel together and are written together.
-pub struct PlateCentroidCell {
-    pub centroids: Vec<CentroidEntry>,
-    pub neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)>,
-    pub elevation_at: Vec<((i32, i32), f64)>,
-}
-
-impl CellIndex for PlateCentroidIndex {
-    type Cell = PlateCentroidCell;
+impl CellIndex for PlateEdgeIndex {
+    type Cell = Vec<Edge>;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
-        self.cells.insert(cell, entry.centroids);
-        for (at, nbrs) in entry.neighbor_edges {
-            self.neighbor_graph.insert(at, nbrs);
-        }
-        for (at, elevation) in entry.elevation_at {
-            self.elevation_at.insert(at, elevation);
-        }
+        self.cells.insert(cell, entry);
     }
 }
 
-impl EventIndex for PlateCentroidIndex {
-    fn source_scale(&self) -> u32 { PLATE_CELL_SCALE }
+impl EventIndex for PlateEdgeIndex {
+    fn source_scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
     fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids.iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|entries| entries.iter().map(|e| (e.q, e.r)))
+        self.edges_in(cell_ids)
+            .iter()
+            .map(|e| { let (x, y) = e.mid(); world_to_hex(x, y) })
             .collect()
     }
 
-    fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)> {
-        self.neighbor_graph.get(&(q, r)).cloned().unwrap_or_default()
-    }
-
-    fn tile_view_at(&self, q: i32, r: i32) -> Option<TileView> {
-        self.elevation_at.get(&(q, r)).map(|&elevation| {
-            let (wx, wy) = hex_to_world(q, r);
-            TileView { q, r, wx, wy, tags: TagSet::new(), elevation }
-        })
-    }
+    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
 
     fn remove_cell(&mut self, cell_id: CellId) {
-        if let Some(entries) = self.cells.remove(&cell_id) {
-            for entry in &entries {
-                self.neighbor_graph.remove(&(entry.q, entry.r));
-                self.elevation_at.remove(&(entry.q, entry.r));
-            }
-        }
+        self.cells.remove(&cell_id);
     }
 }
 
-// ── PlateEvent ──────────────────────────────────────────────────────────────
+// ── Coasts ──────────────────────────────────────────────────────────────────
 
+/// The coasts a set of tiles can see: every coast chain's segments, facing
+/// the land, bucketed for a nearest search.
+pub struct Coasts {
+    grid: SegmentGrid,
+}
+
+impl Coasts {
+    /// The coasts among a set of edges.
+    pub fn new(edges: &[Edge]) -> Self {
+        let mut segments = Vec::new();
+        let mut nodes = Vec::new();
+        for e in edges.iter().filter(|e| e.is_coast()) {
+            let land = if e.a.continental { &e.a } else { &e.b };
+            // One side per chain, read off the straight edge, so every step
+            // of the chain faces the land the edge does.
+            let left = Segment::is_left((e.x0, e.y0), (e.x1, e.y1), (land.wx, land.wy));
+            for w in e.chain.windows(2) {
+                segments.push(Segment::along(node_world(w[0]), node_world(w[1]), left));
+                nodes.push((w[0], w[1]));
+            }
+        }
+        join_at_nodes(&mut segments, &nodes);
+        Self { grid: SegmentGrid::new(segments, COAST_BUCKET) }
+    }
+
+    /// The coasts within reach of every position in a square box: what a
+    /// view or a probe builds once, since the event reads them from the index.
+    pub fn in_box(cx: f64, cy: f64, half: f64, seed: u64) -> Self {
+        let radius = half * std::f64::consts::SQRT_2 + COAST_REACH;
+        let mut seen: HashSet<(PlateId, PlateId)> = HashSet::new();
+        let mut edges = Vec::new();
+        for p in plates_near(cx, cy, radius, seed) {
+            for e in edges_of(p.id, seed) {
+                if seen.insert(e.ids()) {
+                    edges.push(e);
+                }
+            }
+        }
+        Self::new(&edges)
+    }
+
+    /// Distance to the nearest coast within the substrate's reach, and
+    /// whether the position lies on the land side of it.
+    pub fn shore(&self, x: f64, y: f64) -> Option<(f64, bool)> {
+        self.grid.nearest(x, y, COAST_REACH).map(|n| (n.distance, n.side > 0.0))
+    }
+
+    pub fn segments(&self) -> &[Segment] {
+        self.grid.segments()
+    }
+}
+
+// ── The substrate ───────────────────────────────────────────────────────────
+
+/// Interior relief at a position, in [−1, 1]: two octaves.
+fn interior_relief(wx: f64, wy: f64, seed: u64) -> f64 {
+    let long = simplex_2d(wx / RELIEF_WAVELENGTH, wy / RELIEF_WAVELENGTH, seed ^ RELIEF_SEED);
+    let short = simplex_2d(3.0 * wx / RELIEF_WAVELENGTH, 3.0 * wy / RELIEF_WAVELENGTH, seed ^ RELIEF_SEED ^ 1);
+    (0.7 * long + 0.3 * short).clamp(-1.0, 1.0)
+}
+
+/// The substrate at a position given the coasts in reach, in z-levels.
+///
+/// On the land side the ground rises from the shoreline to the continental
+/// freeboard over [`COAST_REACH`] and holds, carrying the interior relief
+/// scaled by that rise; on the sea side it falls to the abyssal depth over
+/// the same reach. The shelf exponent holds the near-shore floor shallow and
+/// the land branch takes its reciprocal, so neither side flattens at the
+/// datum. Past the reach the plate the position lies in decides which flat
+/// it is on.
+pub fn substrate_on(wx: f64, wy: f64, coasts: &Coasts, seed: u64) -> f64 {
+    let (frac, land) = match coasts.shore(wx, wy) {
+        Some((d, land)) => ((d / COAST_REACH).clamp(0.0, 1.0), land),
+        None => (1.0, plate_at(wx, wy, seed).continental),
+    };
+    if land {
+        let rise = CONTINENT_MAX_RISE * frac.powf(CONTINENT_RISE_EXPONENT);
+        rise * (1.0 + RELIEF_SHARE * interior_relief(wx, wy, seed))
+    } else {
+        -SEA_MAX_DEPTH * frac.powf(SHELF_EXPONENT)
+    }
+}
+
+/// The substrate at a position, building the coasts around it first.
+/// Measurement only: a probe or a test asking about one position. Every
+/// reader with many positions builds [`Coasts`] once.
+pub fn substrate_elevation_at(wx: f64, wy: f64, seed: u64) -> f64 {
+    substrate_on(wx, wy, &Coasts::in_box(wx, wy, 0.0, seed), seed)
+}
+
+// ── The event ───────────────────────────────────────────────────────────────
+
+/// The plate layer, with a memo of every plate's edges it has computed: a
+/// plate's edges are a pure function of its id and the seed, and each plate
+/// is asked for by every cell its edges can reach, a few dozen times.
 pub struct PlateEvent {
-    plate_cache: Arc<PlateCache>,
+    edges: DashMap<PlateId, Arc<Vec<Edge>>>,
 }
 
 impl PlateEvent {
-    pub fn new(seed: u64) -> Self {
-        Self::with_cache(Arc::new(PlateCache::new(seed)))
+    pub fn new() -> Self { PlateEvent { edges: DashMap::new() } }
+
+    fn edges_of_plate(&self, id: PlateId, seed: u64) -> Arc<Vec<Edge>> {
+        self.edges.entry(id).or_insert_with(|| Arc::new(edges_of(id, seed))).clone()
     }
 
-    pub fn with_cache(plate_cache: Arc<PlateCache>) -> Self {
-        Self { plate_cache }
+    /// The edges a cell owns: those of every plate in reach whose midpoint
+    /// lies in the cell, each once, in pair order.
+    pub fn edges_of_cell(&self, lattice: &common::HexLattice, cell: CellId, seed: u64) -> Vec<Edge> {
+        let (cq, cr) = lattice.cell_center(cell);
+        let (cx, cy) = hex_to_world(cq, cr);
+        let mut seen: HashSet<(PlateId, PlateId)> = HashSet::new();
+        let mut edges: Vec<Edge> = Vec::new();
+        for p in plates_near(cx, cy, lattice.radius as f64, seed) {
+            for e in self.edges_of_plate(p.id, seed).iter() {
+                let (mx, my) = e.mid();
+                let (q, r) = world_to_hex(mx, my);
+                if lattice.cell_id(q, r) != cell || !seen.insert(e.ids()) { continue }
+                edges.push(e.clone());
+            }
+        }
+        edges.sort_by_key(|e| e.ids());
+        edges
     }
+}
+
+impl Default for PlateEvent {
+    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for PlateEvent {
     fn name(&self) -> &str { "plates" }
-    fn scale(&self) -> u32 { PLATE_CELL_SCALE }
+    fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
+
+    /// An edge reaches as far as its chain does from its midpoint, and the
+    /// shore's ramp beyond that.
+    fn max_influence(&self) -> u32 { EDGE_INFLUENCE as u32 }
+
     fn register_indexes(&self, registry: &mut IndexRegistry) {
-        registry.pre_register::<PlateCentroidIndex>();
+        registry.pre_register::<PlateEdgeIndex>();
     }
 
     fn deform(&self, scope: &CellScope) {
-        let cell_id = scope.cell();
-        let lattice = HexLattice::new(self.scale());
-        let (center_q, center_r) = lattice.cell_center(cell_id);
-        let (center_wx, center_wy) = hex_to_world(center_q, center_r);
+        let edges = self.edges_of_cell(scope.lattice(), scope.cell(), scope.seed());
+        scope.publish::<PlateEdgeIndex>(edges);
+    }
 
-        let cell_world_radius = self.scale() as f64 * 1.5 + crate::MACRO_CELL_SIZE;
-        let plates = self.plate_cache.plates_in_radius(center_wx, center_wy, cell_world_radius);
-
-        let mut centroids: Vec<CentroidEntry> = Vec::new();
-        let mut neighbor_edges: Vec<((i32, i32), Vec<(i32, i32)>)> = Vec::new();
-        let mut elevation_at_entries: Vec<((i32, i32), f64)> = Vec::new();
-
-        for plate in &plates {
-            let (pq, pr) = world_to_hex(plate.wx, plate.wy);
-            // Only register centroids whose position falls in this cell
-            if lattice.cell_id(pq, pr) != cell_id { continue; }
-
-            let elevation = self.plate_cache.plate_elevation(plate);
-            centroids.push(CentroidEntry {
-                q: pq, r: pr,
-                wx: plate.wx, wy: plate.wy,
-                plate_id: plate.id,
-                cell_q: plate.cell_q, cell_r: plate.cell_r,
-                elevation,
-            });
-
-            let nbrs = self.plate_cache.plate_neighbors(plate.wx, plate.wy);
-            let nbr_coords: Vec<(i32, i32)> = nbrs.iter()
-                .map(|n| world_to_hex(n.wx, n.wy))
-                .collect();
-            neighbor_edges.push(((pq, pr), nbr_coords));
-            elevation_at_entries.push(((pq, pr), elevation));
-        }
-
-        scope.publish::<PlateCentroidIndex>(PlateCentroidCell {
-            centroids,
-            neighbor_edges,
-            elevation_at: elevation_at_entries,
-        });
+    /// Every coast a tile in this cell can see: the cell's and its ring's.
+    fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
+        let cells = scope.lattice().cells_within_distance(scope.cell(), 1);
+        let edges = scope
+            .read::<PlateEdgeIndex>()
+            .map(|idx| idx.edges_in(&cells))
+            .unwrap_or_default();
+        Box::new(Coasts::new(&edges))
     }
 
     fn query(
         &self,
         q: i32, r: i32,
         _below: &TileView,
-        _cell: &(dyn std::any::Any + Send + Sync),
+        cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
+        let coasts = cell.downcast_ref::<Coasts>()?;
         let (wx, wy) = hex_to_world(q, r);
-
-        // The substrate lives here because sea level has no structure: it is a
-        // pure function of (position, seed), so the layer that would carry it
-        // could never read another cell and its correct margin is zero. The
-        // framework derives margin from cell scales, not from what a layer
-        // reads, so a layer of its own costs a full cascade for a function
-        // call. If sea level ever becomes dynamic — glacial eustasy, or a base
-        // level driven by drainage — it has real structure and earns its layer
-        // back.
-        //
-        // No tag accompanies it. Whether this tile is land is not a
-        // classification any layer stores; it is `elevation >= 0.0`, read off
-        // the composite by whoever needs to know.
-        Some(TileOutput {
-            elevation_delta: substrate_from_raw(raw_regime_noise(wx, wy, seed)),
-            ..TileOutput::default()
-        })
+        Some(TileOutput { elevation_delta: substrate_on(wx, wy, coasts, seed), ..TileOutput::default() })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CONTINENT_MAX_RISE, SEA_MAX_DEPTH, SHORE_RAW};
+    use crate::tectonic::PLATE_REACH;
 
-    const SEED: u64 = 0x9E3779B97F4A7C15;
+    const S: u64 = 0x9E3779B97F4A7C15;
 
-    fn event() -> PlateEvent {
-        PlateEvent::new(SEED)
-    }
-
-    fn sample(mut f: impl FnMut(i32, i32, f64, f64)) {
-        for i in 0..200 {
-            for j in 0..200 {
-                let (q, r) = (i * 150 - 15000, j * 150 - 15000);
-                let (wx, wy) = hex_to_world(q, r);
-                f(q, r, wx, wy);
-            }
-        }
-    }
-
-    /// The datum is the only thing that decides land, and the curve agrees
-    /// with it on both sides. Nothing else may.
+    /// Every node of every edge's chain lies within the stated reach of the
+    /// edge's midpoint, and the reach is not slack.
     #[test]
-    fn substrate_sign_follows_the_datum() {
-        let mut land = 0;
-        let mut sea = 0;
-        sample(|_, _, wx, wy| {
-            let raw = raw_regime_noise(wx, wy, SEED);
-            let e = crate::substrate_elevation_at(wx, wy, SEED);
-            if raw >= SHORE_RAW {
-                assert!(e >= 0.0, "raw {raw} above the datum gave elevation {e}");
-                land += 1;
-            } else {
-                assert!(e < 0.0, "raw {raw} below the datum gave elevation {e}");
-                sea += 1;
-            }
-        });
-        assert!(land > 1000 && sea > 1000, "unbalanced sample: {land} land, {sea} sea");
-    }
-
-    /// Both branches stay inside the range their constants declare, and both
-    /// actually reach for it — a branch that never approaches its extreme is a
-    /// branch whose scale constant is not doing anything.
-    #[test]
-    fn substrate_is_bounded_and_uses_its_range() {
-        let mut deepest: f64 = 0.0;
-        let mut highest: f64 = 0.0;
-        sample(|_, _, wx, wy| {
-            let e = crate::substrate_elevation_at(wx, wy, SEED);
-            assert!(
-                (-SEA_MAX_DEPTH..=CONTINENT_MAX_RISE).contains(&e),
-                "elevation {e} out of range at ({wx}, {wy})"
-            );
-            deepest = deepest.min(e);
-            highest = highest.max(e);
-        });
-        assert!(deepest < -SEA_MAX_DEPTH * 0.9, "open ocean stayed shallow: {deepest}");
-        assert!(highest > CONTINENT_MAX_RISE * 0.7, "interiors stayed low: {highest}");
-    }
-
-    /// The two branches are one curve, and what that has to buy is a coastline
-    /// a player can walk off. Continuity in the abstract is not the claim — the
-    /// claim is that adjacent tiles across a shoreline sit a step apart rather
-    /// than a ledge, and that neither side is a flat band, which would be the
-    /// land mask rebuilt out of the curve.
-    #[test]
-    fn shoreline_is_a_step_not_a_ledge() {
-        let mut steps: Vec<f64> = Vec::new();
-        for r in (-6000..6000).step_by(37) {
-            let mut prev: Option<f64> = None;
-            for q in -400..400 {
-                let (wx, wy) = hex_to_world(q, r);
-                let e = crate::substrate_elevation_at(wx, wy, SEED);
-                if let Some(p) = prev {
-                    // Only the band either side of the datum is under test.
-                    if p.abs() < 8.0 || e.abs() < 8.0 {
-                        steps.push((e - p).abs());
+    fn edge_reach_is_bounded() {
+        let mut worst: f64 = 0.0;
+        for cq in -12..=12 {
+            for cr in -12..=12 {
+                for e in edges_of((cq, cr), S) {
+                    let (mx, my) = e.mid();
+                    for n in &e.chain {
+                        let (x, y) = node_world(*n);
+                        worst = worst.max((x - mx).hypot(y - my));
                     }
                 }
-                prev = Some(e);
             }
         }
-        assert!(steps.len() > 1000, "too few near-shore tiles sampled: {}", steps.len());
-        steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let median = steps[steps.len() / 2];
-        let p999 = steps[steps.len() * 999 / 1000];
-        let max = steps[steps.len() - 1];
-        assert!(median < 1.0, "median coastal step {median} z — that is a staircase");
-        assert!(p999 < 4.0, "p99.9 coastal step {p999} z reads as a ledge");
-        assert!(max < 8.0, "worst coastal step {max} z is a cliff");
-        // Not flat either: the shore band has to actually climb.
-        assert!(steps.iter().any(|&s| s > 0.1),
-            "no tile pair near the shore moved — that band is a mask");
+        assert!(worst <= EDGE_REACH, "a chain node {worst:.0} from its edge's midpoint, past EDGE_REACH");
+        assert!(worst > 0.5 * EDGE_REACH, "EDGE_REACH is slack: the farthest node is {worst:.0}");
+        assert!(EDGE_REACH < 2.0 * PLATE_REACH);
     }
 
-    /// The substrate is monotone in the field it reads: a position with more
-    /// crust under it is never lower than one with less.
+    /// The substrate is continuous through the shoreline, sea on the sea
+    /// side, land on the land side, and holds its extremes past the reach.
     #[test]
-    fn substrate_is_monotone_in_raw() {
-        let mut prev = f64::NEG_INFINITY;
-        for i in 0..=1000 {
-            let raw = i as f64 / 1000.0 * 1.15;
-            let e = substrate_from_raw(raw);
-            assert!(e >= prev, "substrate fell from {prev} to {e} at raw {raw}");
-            prev = e;
+    fn substrate_crosses_the_datum_at_the_coast() {
+        let (cx, cy) = (0.0, 0.0);
+        let coasts = Coasts::in_box(cx, cy, 30_000.0, S);
+        assert!(!coasts.segments().is_empty(), "no coast within 30,000 of the origin");
+        let mut land = 0;
+        let mut sea = 0;
+        for i in 0..120 {
+            for j in 0..120 {
+                let (x, y) = (cx - 30_000.0 + i as f64 * 500.0, cy - 30_000.0 + j as f64 * 500.0);
+                let z = substrate_on(x, y, &coasts, S);
+                match coasts.shore(x, y) {
+                    Some((d, true)) => { assert!(z >= 0.0, "land below the datum {z} at {d:.0} from the coast"); land += 1 }
+                    Some((d, false)) => { assert!(z <= 0.0, "sea above the datum {z} at {d:.0} from the coast"); sea += 1 }
+                    None => assert!(z >= CONTINENT_MAX_RISE * (1.0 - RELIEF_SHARE) - 1e-9 || (z + SEA_MAX_DEPTH).abs() < 1e-9),
+                }
+                assert!(z >= -SEA_MAX_DEPTH - 1e-9 && z <= CONTINENT_MAX_RISE * (1.0 + RELIEF_SHARE) + 1e-9, "substrate {z} out of range");
+            }
         }
+        assert!(land > 100 && sea > 100, "{land} land, {sea} sea samples near a coast");
     }
 
-    /// PlateEvent emits elevation and nothing else. A tag here would be a land
-    /// mask by another name.
+    /// The edges a cell owns are exactly those whose midpoints lie in it,
+    /// and two cells never own the same edge.
     #[test]
-    fn query_emits_no_tags() {
-        let e = event();
-        let mut checked = 0;
-        sample(|q, r, wx, wy| {
-            let view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
-            let out = e.query(q, r, &view, &(), SEED).unwrap();
-            assert!(out.tags_added.is_empty(), "plates emitted tag(s) at ({q}, {r})");
-            assert!(out.tags_removed.is_empty(), "plates removed tag(s) at ({q}, {r})");
-            assert_eq!(out.elevation_delta, crate::substrate_elevation_at(wx, wy, SEED));
-            checked += 1;
-        });
-        assert!(checked > 1000);
+    fn cells_own_edges_by_midpoint() {
+        let lattice = common::HexLattice::new(GRAPH_CELL_SCALE);
+        let home = lattice.cell_id(0, 0);
+        let mut owned: HashSet<(PlateId, PlateId)> = HashSet::new();
+        let event = PlateEvent::new();
+        for cell in lattice.cells_within_distance(home, 1) {
+            for e in event.edges_of_cell(&lattice, cell, S) {
+                let (mx, my) = e.mid();
+                let (q, r) = world_to_hex(mx, my);
+                assert_eq!(lattice.cell_id(q, r), cell);
+                assert!(owned.insert(e.ids()), "edge {:?} owned twice", e.ids());
+            }
+        }
+        assert!(owned.len() > 10, "{} edges over seven cells", owned.len());
     }
 }
