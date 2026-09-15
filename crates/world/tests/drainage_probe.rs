@@ -369,3 +369,33 @@ fn cost() {
         second.as_secs_f64() * 1e3
     );
 }
+
+/// Base level is the first lake down a node's larger share, or the sea:
+/// what dissection cuts toward, published because only the routing knows
+/// the path.
+#[test]
+fn base_level_is_the_first_lake_downstream_or_the_sea() {
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
+    let n = routing.keys.len();
+    let (mut lakes, mut seas) = (0, 0);
+    for k in 0..n {
+        if !matches!(routing.kind[k], Kind::Land | Kind::Lake) { continue }
+        let mut cur = k;
+        let expected = loop {
+            if let Some(id) = routing.lake_of[cur] {
+                let surface = routing.surface[cur];
+                let _ = id;
+                break surface;
+            }
+            match routing.down[cur] {
+                Some(d) if matches!(routing.kind[d], Kind::Land | Kind::Lake) => cur = d,
+                _ => break 0.0,
+            }
+        };
+        if expected > 0.0 { lakes += 1 } else { seas += 1 }
+        assert!((routing.base[k] - expected).abs() < 1e-9, "base {} against {expected} at {:?}", routing.base[k], routing.keys[k]);
+        assert!(routing.elevation[k] >= routing.base[k] - 1e-9 || routing.lake_of[k].is_some(), "ground below its base at {:?}", routing.keys[k]);
+    }
+    println!("{lakes} nodes drain to a lake, {seas} to the sea or the window's edge");
+    assert!(seas > 0);
+}

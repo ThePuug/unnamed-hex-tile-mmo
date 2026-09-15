@@ -14,6 +14,9 @@ use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::thickening::ThickeningEvent;
 use world::events::thrusting::{Outlines, ThrustingEvent};
+use world::events::drainage::{surface_at, DrainageEvent};
+use world::events::dissection::{DissectionEvent, Valleys};
+use world::events::plates::Coasts;
 use world::{hex_to_world, substrate_elevation_at};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -30,6 +33,8 @@ fn composite() -> Composite {
     c.add_event(Box::new(MotionEvent::new()));
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
+    c.add_event(Box::new(DrainageEvent::new()));
+    c.add_event(Box::new(DissectionEvent::new()));
     c
 }
 
@@ -139,20 +144,22 @@ fn local_relief() {
     println!("\n=== local relief (what one screen contains) ===\n");
     let c = composite();
 
-    // View radius: FIXED_STREAM_RADIUS 21 chunks * 19 tiles = 399 tiles.
-    // Sample a coarse ring set out to that radius from each standpoint.
-    const VIEW: i32 = 400;
-    const RINGS: [i32; 4] = [100, 200, 300, 400];
-    const SPOKES: usize = 12;
+    // View radius: FIXED_STREAM_RADIUS 21 chunks × 16.46 tiles of Euclidean
+    // chunk spacing = 346 tiles of streamed detail. Sample rings out to it.
+    const VIEW: i32 = 346;
+    const RINGS: [i32; 7] = [50, 100, 150, 200, 250, 300, 346];
+    const SPOKES: usize = 24;
 
-    // Standpoints spread across the same continental span as the census,
-    // deliberately including spine interiors and open plains.
-    let standpoints: Vec<(i32, i32)> = (0..40)
+    // Standpoints on a spiral around the spawn, on land only: what a player
+    // walking out from the haven stands on.
+    let standpoints: Vec<(i32, i32)> = (0..400)
         .map(|i| {
             let a = i as f64 * 2.399963; // golden-angle spiral
             let rad = 1500.0 * (i as f64).sqrt();
-            ((rad * a.cos()) as i32, (rad * a.sin()) as i32)
+            (SPAWN.0 + (rad * a.cos()) as i32, SPAWN.1 + (rad * a.sin()) as i32)
         })
+        .filter(|&(q, r)| c.elevation_at(q, r) >= 0)
+        .take(40)
         .collect();
 
     let mut flat_screens = 0u32;
@@ -320,24 +327,27 @@ fn feature_spacing() {
     const LEN: i32 = 60_000; // tiles walked
     const STEP: i32 = 25; // sample every 25 tiles
 
-    let mut runs: Vec<i32> = Vec::new(); // lengths of dead-flat stretches, in tiles
+    // A flat run: consecutive land samples within one z-level of where the
+    // run began. Sea ends a run and is not counted.
+    let mut runs: Vec<i32> = Vec::new();
     let mut current = 0i32;
+    let mut start: Option<i32> = None;
     let mut nonzero = 0u32;
     let mut samples = 0u32;
 
     let t = Instant::now();
     let mut q = -LEN / 2;
     while q < LEN / 2 {
-        let z = c.elevation_at(q, 0);
+        let z = c.elevation_at(q, SPAWN.1);
         samples += 1;
-        if z == 0 {
-            current += STEP;
-        } else {
-            nonzero += 1;
-            if current > 0 {
-                runs.push(current);
+        if z >= 0 { nonzero += 1 }
+        match start {
+            Some(z0) if z >= 0 && (z - z0).abs() <= 1 => current += STEP,
+            _ => {
+                if current > 0 { runs.push(current) }
+                start = if z >= 0 { Some(z) } else { None };
+                current = if z >= 0 { STEP } else { 0 };
             }
-            current = 0;
         }
         q += STEP;
     }
@@ -352,7 +362,7 @@ fn feature_spacing() {
         t.elapsed()
     );
     println!(
-        "  samples with any elevation: {nonzero}/{samples} ({:.1}%)",
+        "  land samples: {nonzero}/{samples} ({:.1}%)",
         100.0 * nonzero as f64 / samples as f64
     );
     if runs.is_empty() {
@@ -360,7 +370,7 @@ fn feature_spacing() {
         return;
     }
     let n = runs.len();
-    println!("  dead-flat stretches: {n}");
+    println!("  flat stretches on land (within one z of their start): {n}");
     println!(
         "    median {} tiles ({:.1} min), p90 {} tiles ({:.1} min), max {} tiles ({:.1} min)",
         runs[n / 2],
@@ -609,4 +619,67 @@ fn haven_candidates() {
         let (q, r) = world::world_to_hex(px, py);
         println!("    world ({px:>7.0}, {py:>7.0}) hex ({q}, {r}): z {e:.0}, range {peak:.0} z at {peak_d:.0} WU, water {water_d:.0} WU");
     }
+}
+
+/// Valley census over the belt window: how much land lies in a valley, how
+/// deep and how steep the valleys are on plains against belts, and how many
+/// views hold one. The cut is read off the valleys directly, against the
+/// envelope the layers beneath dissection sum to.
+#[test]
+#[ignore]
+fn valley_census() {
+    println!("\n=== valley census (the belt window) ===\n");
+    let (cx, cy, half, step) = (-48_000.0, 9_000.0, 12_000.0, 250.0);
+    let t = Instant::now();
+    let valleys = Valleys::in_box(cx, cy, half, SEED);
+    let outlines = Outlines::in_box(cx, cy, half, SEED);
+    let coasts = Coasts::in_box(cx, cy, half, SEED);
+    println!("  valleys, outlines and coasts built in {:?}", t.elapsed());
+    let n = (2.0 * half / step) as usize + 1;
+    let at = |i: usize, j: usize| (cx - half + i as f64 * step, cy - half + j as f64 * step);
+    let mut land = 0usize;
+    let mut cut_land = 0usize;
+    let mut depths: Vec<f64> = Vec::new();
+    let mut plain_slopes: Vec<f64> = Vec::new();
+    let mut belt_slopes: Vec<f64> = Vec::new();
+    let mut in_valley = vec![false; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let (x, y) = at(i, j);
+            let envelope = surface_at(x, y, SEED, &coasts, &outlines);
+            if envelope < 0.0 { continue }
+            land += 1;
+            let cut = valleys.cut_at(x, y, envelope);
+            if cut <= 0.0 { continue }
+            cut_land += 1;
+            in_valley[j * n + i] = true;
+            depths.push(cut);
+            // The steepest of the two axis gradients at eight tiles, in z per tile.
+            let e8x = surface_at(x + 8.0, y, SEED, &coasts, &outlines);
+            let e8y = surface_at(x, y + 8.0, SEED, &coasts, &outlines);
+            let cx8 = valleys.cut_at(x + 8.0, y, e8x);
+            let cy8 = valleys.cut_at(x, y + 8.0, e8y);
+            let slope = ((cx8 - cut).abs() / 8.0).max((cy8 - cut).abs() / 8.0);
+            if outlines.relief(x, y) > 0.0 || envelope > 100.0 { belt_slopes.push(slope) } else { plain_slopes.push(slope) }
+        }
+    }
+    let pct = |v: &mut Vec<f64>, p: f64| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v.get(((v.len().max(1) - 1) as f64 * p) as usize).copied().unwrap_or(0.0)
+    };
+    println!("  {land} land samples, {cut_land} in a valley ({:.1}%)", 100.0 * cut_land as f64 / land.max(1) as f64);
+    println!("  depth p50 {:.1}  p90 {:.1}  max {:.1} z", pct(&mut depths, 0.5), pct(&mut depths, 0.9), pct(&mut depths, 1.0));
+    println!("  wall slope on plains p50 {:.2}  p90 {:.2}  max {:.2} z/tile ({} samples)", pct(&mut plain_slopes, 0.5), pct(&mut plain_slopes, 0.9), pct(&mut plain_slopes, 1.0), plain_slopes.len());
+    println!("  wall slope in belts  p50 {:.2}  p90 {:.2}  max {:.2} z/tile ({} samples)", pct(&mut belt_slopes, 0.5), pct(&mut belt_slopes, 0.9), pct(&mut belt_slopes, 1.0), belt_slopes.len());
+    // A view is 692 tiles across: three samples. Share of land views holding a valley.
+    let (mut views, mut with) = (0usize, 0usize);
+    for j in 0..n - 2 {
+        for i in 0..n - 2 {
+            let (x, y) = at(i + 1, j + 1);
+            if surface_at(x, y, SEED, &coasts, &outlines) < 0.0 { continue }
+            views += 1;
+            if (0..3).any(|dj| (0..3).any(|di| in_valley[(j + dj) * n + i + di])) { with += 1 }
+        }
+    }
+    println!("  land views (692 tiles) holding a valley: {with}/{views} ({:.1}%)", 100.0 * with as f64 / views.max(1) as f64);
 }

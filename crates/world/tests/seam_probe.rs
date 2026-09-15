@@ -6,6 +6,7 @@
 //! Run: cargo test -p world --release --test seam_probe -- --ignored --nocapture
 
 
+use world::events::dissection::{DissectionEvent, Valleys};
 use world::events::drainage::{surface_at, DrainageEvent};
 use world::events::motion::MotionEvent;
 use world::events::plates::PlateEvent;
@@ -26,6 +27,7 @@ fn composite() -> Composite {
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
+    c.add_event(Box::new(DissectionEvent::new()));
     c
 }
 
@@ -39,6 +41,7 @@ fn straight_seams_in_the_belt_window() {
     let (cx, cy, half, step) = (0.0, 0.0, 30_000.0, 250.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let coasts = Coasts::in_box(cx, cy, half, SEED);
+    let valleys = Valleys::in_box(cx, cy, half, SEED);
     let n = (2.0 * half / step) as usize;
     let mut comp = vec![0.0f64; n * n];
     let mut field = vec![0.0f64; n * n];
@@ -48,7 +51,8 @@ fn straight_seams_in_the_belt_window() {
             let (q, r) = world_to_hex(x, y);
             comp[j * n + i] = c.tile_at(q, r).elevation;
             let (wx, wy) = hex_to_world(q, r);
-            field[j * n + i] = surface_at(wx, wy, SEED, &coasts, &outlines);
+            let envelope = surface_at(wx, wy, SEED, &coasts, &outlines);
+            field[j * n + i] = envelope - valleys.cut_at(wx, wy, envelope);
         }
     }
     let mut jumps = Vec::new();
@@ -71,7 +75,7 @@ fn straight_seams_in_the_belt_window() {
     for (dc, df, m0, m1, x, y) in jumps.iter().take(12) {
         println!("  comp {dc:>7.1}  field {df:>7.1}  diff {m0:>7.1} | {m1:>7.1}  at ({x:>8.0},{y:>8.0})");
     }
-    println!("decomposition either side of the three largest: substrate, tilt, thickening_on, relief");
+    println!("decomposition either side of the three largest: substrate, tilt, thickening_on, relief, cut");
     for (_, _, _, _, x, y) in jumps.iter().take(3) {
         for xx in [*x, x + step] {
             let (q, r) = world_to_hex(xx, *y);
@@ -82,7 +86,8 @@ fn straight_seams_in_the_belt_window() {
             let relief = outlines.relief(wx, wy).max(0.0);
             let thick = world::events::thickening::thickening_on(wx, wy, &outlines).max(0.0);
             let plateau = base + thick;
-            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  sum {:>7.1}", plateau + relief);
+            let cut = valleys.cut_at(wx, wy, plateau + relief);
+            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  cut {cut:>7.1}  sum {:>7.1}", plateau + relief - cut);
         }
     }
 }
@@ -97,6 +102,7 @@ fn fine_seams_in_the_belt_window() {
     let (cx, cy, half, step) = (-48_000.0, 9_000.0, 12_000.0, 8.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let coasts = Coasts::in_box(cx, cy, half, SEED);
+    let valleys = Valleys::in_box(cx, cy, half, SEED);
     let n = (2.0 * half / step) as usize;
     let mut jumps: Vec<(f64, f64, f64)> = Vec::new();
     let mut row = vec![0.0f64; n];
@@ -127,8 +133,9 @@ fn fine_seams_in_the_belt_window() {
             let relief = outlines.relief(wx, wy).max(0.0);
             let thick = world::events::thickening::thickening_on(wx, wy, &outlines).max(0.0);
             let plateau = base + thick;
+            let cut = valleys.cut_at(wx, wy, plateau + relief);
             let room = outlines.at(wx, wy).map_or("none".to_string(), |(p, _)| format!("{:?}", p.id));
-            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  plate {room}  sum {:.1}  composite {:.1}", plateau + relief, c.tile_at(q, r).elevation);
+            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  cut {cut:>7.1}  plate {room}  sum {:.1}  composite {:.1}", plateau + relief - cut, c.tile_at(q, r).elevation);
 
         }
     }

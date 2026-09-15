@@ -5,6 +5,7 @@ use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::thickening::ThickeningEvent;
 use world::events::thrusting::ThrustingEvent;
+use world::events::dissection::DissectionEvent;
 use world::events::drainage::DrainageEvent;
 use world::TagSet;
 
@@ -27,6 +28,7 @@ impl EventRegistry {
         composite.add_event(Box::new(ThrustingEvent::new()));
         composite.add_event(Box::new(ThickeningEvent::new()));
         composite.add_event(Box::new(DrainageEvent::new()));
+        composite.add_event(Box::new(DissectionEvent::new()));
 
         Self { composite: std::sync::Arc::new(composite) }
     }

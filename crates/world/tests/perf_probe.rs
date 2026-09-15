@@ -15,6 +15,7 @@ use world::events::tilt::TiltEvent;
 use world::events::thickening::ThickeningEvent;
 use world::events::thrusting::ThrustingEvent;
 use world::events::drainage::DrainageEvent;
+use world::events::dissection::DissectionEvent;
 
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -27,6 +28,7 @@ fn composite_full() -> Composite {
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
+    c.add_event(Box::new(DissectionEvent::new()));
     c
 }
 

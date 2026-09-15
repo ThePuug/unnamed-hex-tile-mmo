@@ -99,6 +99,7 @@ mod tests {
         composite.add_event(Box::new(events::thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(events::thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(events::drainage::DrainageEvent::new()));
+        composite.add_event(Box::new(events::dissection::DissectionEvent::new()));
         composite
     }
 

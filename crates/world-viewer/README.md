@@ -26,6 +26,7 @@ QOI to `world.qoi` (`--format png` writes `world.png`), views
 | `boundaries` | motion index | each edge along its chain: hue by regime, width by convergence, a tick toward the plate going under |
 | `tilt` | tilt field | the potential as a diverging ramp, arrows downslope |
 | `thickening-field` | thickening field | the plateau on the substrate, hillshaded; builds the coasts and plate outlines under the viewport itself |
+| `dissection-field` | dissection field | the cut on its own, hillshaded, every valley a depression in a flat sheet; routes the drainage cells under the viewport itself |
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |
 | `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
 | `drainage-lakes` | drainage index | flooded nodes at their surface, a white dot at each outlet |

@@ -138,6 +138,7 @@ impl Default for AdminComposite {
         composite.add_event(Box::new(world::events::thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(world::events::thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(world::events::drainage::DrainageEvent::new()));
+        composite.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
         Self(Arc::new(composite))
     }
 }

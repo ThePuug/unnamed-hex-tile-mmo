@@ -20,7 +20,8 @@ use world::events::motion::{
 };
 use world::events::thickening::ThickeningEvent;
 use world::events::thrusting::{Outlines, ThrustingEvent, CONVERGENCE_FULL};
-use world::events::drainage::{DrainageEvent, DrainageIndex, NODE_SPACING};
+use world::events::dissection::{DissectionEvent, Valleys};
+use world::events::drainage::{surface_at, DrainageEvent, DrainageIndex, NODE_SPACING};
 use world::events::plates::{Coasts, PlateEdgeIndex, PlateEvent};
 use world::lattice::node_world;
 use world::events::tilt::TiltEvent;
@@ -38,6 +39,8 @@ enum Layer {
     Boundaries,
     /// Thickening field: the plateau on the substrate, hillshaded.
     ThickeningField,
+    /// Dissection field: the cut on its own, hillshaded.
+    DissectionField,
     /// Tilt field: a diverging ramp, with lean arrows.
     Tilt,
     /// Thrusting index: the deformation fronts, the convergent edges' chains facing the overriding plate.
@@ -57,6 +60,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("boundaries", Layer::Boundaries),
     ("tilt", Layer::Tilt),
     ("thickening-field", Layer::ThickeningField),
+    ("dissection-field", Layer::DissectionField),
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("drainage-lakes", Layer::Lakes),
@@ -72,7 +76,7 @@ impl Layer {
     fn is_whole_image(self) -> bool {
         matches!(
             self,
-            Layer::Tilt | Layer::ThickeningField
+            Layer::Tilt | Layer::ThickeningField | Layer::DissectionField
         )
     }
 }
@@ -245,6 +249,7 @@ fn main() {
         let t = Instant::now();
         let buf = match view {
             Layer::Tilt => render_tilt(&cli, w, h, scale),
+            Layer::DissectionField => render_dissection_field(&cli, w, h, scale),
             _ => render_thickening_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
@@ -262,6 +267,7 @@ fn main() {
     composite.add_event(Box::new(ThrustingEvent::new()));
     composite.add_event(Box::new(ThickeningEvent::new()));
     composite.add_event(Box::new(DrainageEvent::new()));
+    composite.add_event(Box::new(DissectionEvent::new()));
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
 
@@ -712,6 +718,47 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
         if z >= a && z < b { return lerp_rgb(ca, cb, (z - a) / (b - a)) }
     }
     STOPS[STOPS.len() - 1].1
+}
+
+/// The cut on its own, hillshaded: every valley as a depression in a flat
+/// sheet, darker the deeper, so the network's shape reads without the
+/// envelope under it. Routes the drainage cells under the viewport itself,
+/// as the event's own prepare reads them.
+fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
+    let d = scale.max(1.0);
+    let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let valleys = &valleys;
+    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let outlines = &outlines;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
+    let cut = move |x: f64, y: f64| {
+        let envelope = surface_at(x, y, seed, coasts, outlines);
+        valleys.cut_at(x, y, envelope)
+    };
+
+    (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let z = -cut(wx, wy);
+            let zx = -cut(wx + d, wy);
+            let zy = -cut(wx, wy + d);
+            // Depth on a grey ramp: white at the envelope, dark at 100 z down.
+            let tone = 0.95 - 0.7 * (-z / 100.0).clamp(0.0, 1.0);
+            let (gx, gy) = ((zx - z) * 0.8 / d, (zy - z) * 0.8 / d);
+            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
+            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
+            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
+            let shade = 0.35 + 0.85 * lambert;
+            let c = (tone * shade).clamp(0.0, 1.0);
+            [(c * 255.0) as u8, (c * 255.0) as u8, ((c * 0.92) * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect()
 }
 
 /// The plateau on the substrate, hillshaded, so the thickening's shape reads

@@ -70,6 +70,7 @@
 //! sparse sample, summary region, each read either side of the layer. A ratio
 //! that only looks reasonable on the dense pattern is not a result.
 
+pub mod dissection;
 pub mod drainage;
 pub mod index;
 pub mod motion;

@@ -171,6 +171,10 @@ pub struct DrainageNode {
     /// Water draining through this one, itself included, in nodes. Fractional
     /// because a node's water splits between two neighbours.
     pub catchment: f64,
+    /// Base level, in z-levels: the surface of the first lake down the larger
+    /// share's path, or sea level. What a river here cuts toward and never
+    /// below.
+    pub base: f64,
     /// The node taking the larger share of this one's water. None at a sink.
     pub down: Option<NodeKey>,
     /// Index into the cell's lakes when this node is flooded.
@@ -218,6 +222,12 @@ impl DrainageIndex {
     pub fn node(&self, key: NodeKey) -> Option<&DrainageNode> {
         let (q, r) = node_tile(key);
         self.cells.get(&Self::lattice().cell_id(q, r))?.nodes.get(&key)
+    }
+
+    /// The published cells among `cell_ids`: what a reader gathers over its
+    /// footprint and ring.
+    pub fn cells_in(&self, cell_ids: &[CellId]) -> Vec<&DrainageCell> {
+        cell_ids.iter().filter_map(|id| self.cells.get(id)).collect()
     }
 }
 
@@ -322,6 +332,9 @@ pub struct Routing {
     /// The receiver of the larger share.
     pub down: Vec<Option<usize>>,
     pub catchment: Vec<f64>,
+    /// Base level at each node: the first lake down the larger share's
+    /// path, or sea level.
+    pub base: Vec<f64>,
     pub lake_of: Vec<Option<usize>>,
     index: HashMap<NodeKey, usize>,
     lakes: Vec<RoutedLake>,
@@ -375,6 +388,7 @@ impl Routing {
                     surface: self.surface[k],
                     direction: self.direction[k],
                     catchment: self.catchment[k],
+                    base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
                     lake: self.lake_of[k].and_then(|id| lake_local.get(&id).copied()),
                 },
@@ -626,6 +640,33 @@ impl DrainageEvent {
             lakes.push(RoutedLake { members, surface: surface[k], outlet });
         }
 
+        // ── Base level: the first lake down each node's larger share, else
+        //    the sea; water leaving the window is read as reaching the sea ──
+        let mut base: Vec<Option<f64>> = vec![None; n];
+        for k in 0..n {
+            if base[k].is_some() {
+                continue;
+            }
+            let mut path = vec![k];
+            let level = loop {
+                let cur = *path.last().unwrap();
+                if let Some(b) = base[cur] {
+                    break b;
+                }
+                if let Some(id) = lake_of[cur] {
+                    break lakes[id].surface;
+                }
+                match down[cur] {
+                    Some(d) if !matches!(kind[d], Kind::Sea | Kind::Edge) => path.push(d),
+                    _ => break 0.0,
+                }
+            };
+            for p in path {
+                base[p] = Some(level);
+            }
+        }
+        let base: Vec<f64> = base.into_iter().map(|b| b.unwrap_or(0.0)).collect();
+
         // ── Reaches: a head is a source, a confluence, or a lake outlet ──
         let mut land_in = vec![0u32; n];
         let mut lake_in = vec![false; n];
@@ -674,6 +715,7 @@ impl DrainageEvent {
             flow,
             down,
             catchment,
+            base,
             lake_of,
             index,
             lakes,
