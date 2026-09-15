@@ -32,17 +32,20 @@ Read before adding or revising a texture.
 ## Making one: creator and critics
 
 A texture is done when two critics pass it, not when it looks fine to the one
-who drew it.
+who drew it. The `/texgen` skill drives the loop; the two critics are one run
+of the `critic-round` workflow, which runs them in parallel on paths, never
+images, with the Read tool only, since anything else holds the file against
+the next build.
 
 1. **Creator.** Write or revise the module, register it, run
    `cargo run --bin texgen -- <name>`. The seam check must print `tiles`.
    Look at both PNGs before asking anyone else to.
-2. **Comparison critic.** A subagent given the name, its `brief` from the
-   registry, and the paths of the tile and the proof sheet. It answers: does
+2. **Comparison critic.** Given the name, its `brief` from the registry,
+   and the tile and the proof sheet. It answers: does
    the tile read as the brief; are there seams, banding, or an obvious repeat
    on the sheet; does the feature scale read as ground seen from a few metres
    up. PASS, or FAIL with at most three defects, worst first.
-3. **Blind critic.** A subagent given a copy of the tile under a neutral
+3. **Blind critic.** Given a copy of the tile under a neutral
    name (`tile.png` in the scratchpad) and nothing else: no texture name, no
    brief. The file name is context, so the real path never goes to it. It
    says in one line what material this is, then any defects it sees. It
@@ -50,6 +53,6 @@ who drew it.
 4. Fix the defects and return to 1. Cap at four rounds; past that, stop and
    put the remaining defects to the user rather than sanding forever.
 
-Run both critics in parallel. Give them paths, never the image in the prompt,
-and tell them to open the image with the Read tool only: a critic that opens
-it any other way holds the file, and the next run cannot overwrite it.
+Wait for the workflow's result; never poll for it with sleeps or timers,
+which fire their own completions long after the answer and outlive the
+round.

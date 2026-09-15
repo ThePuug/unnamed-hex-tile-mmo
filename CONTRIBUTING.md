@@ -10,6 +10,7 @@ The primary development environment. You need:
 
 - [Rust toolchain](https://rustup.rs/) (install via `rustup`)
 - Visual Studio Build Tools (installed automatically with rustup on Windows)
+- [Blender 5.2](https://www.blender.org/download/) only for `modelgen`; set `BLENDER` to the executable when it is not in the default install path. Everything else builds and tests without it.
 
 ### WSL / Linux
 

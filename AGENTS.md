@@ -55,6 +55,7 @@ flat-top hex grid. All crates under `crates/`:
 | `world` | World event system + terrain generation, no Bevy |
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `texgen` | Tileable texture generator — each texture a module, PNGs under `assets/textures`; its `AGENTS.md` carries the creator/critic loop |
+| `modelgen` | Low-poly model generator — each model a Python module Blender runs headless, GLBs under `assets/models`; its `AGENTS.md` carries the creator/critic loop and the live-Blender MCP route |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
 
