@@ -32,6 +32,16 @@
 //! hillslope, which is what keeps the sheet flow an undissected envelope
 //! sheds from printing a valley along every thread.
 //!
+//! In the floor runs the channel, a slot as wide and as deep as its
+//! catchment says: a tile wide and a z-level deep at the channel head,
+//! several of each at a trunk, growing as the square root of the catchment
+//! the way a channel's width and depth grow with discharge. Water stands in
+//! it to the floor, so the slot is what keeps a river below its banks. The
+//! slot is cut below base level too, where the valley stops: a channel
+//! reaching the sea runs under it, and one entering a lake shallows to
+//! nothing at the flooded node. A river ends at its reach's last land node,
+//! so a channel stops short of the shore by up to one spacing. Unbuilt.
+//!
 //! Not dissection's: channels finer than the node spacing, floodplains,
 //! meanders, sediment, terraces. Unbuilt.
 //!
@@ -79,16 +89,56 @@ pub const CATCHMENT_FULL: f64 = 48.0;
 /// that keeps the river flowing.
 pub const RELIEF_SHARE_MAX: f64 = 0.7;
 
+/// How far past the channel head a catchment of `catchment` nodes has grown,
+/// as the square root of its share of the way to a full trunk: the way a
+/// channel's width and depth grow with discharge. None below the head.
+fn growth(catchment: f64) -> Option<f64> {
+    if catchment <= CHANNEL_HEAD {
+        return None;
+    }
+    Some(((catchment - CHANNEL_HEAD) / (CATCHMENT_FULL - CHANNEL_HEAD)).min(1.0).sqrt())
+}
+
 /// The share of the height above base level a channel of `catchment` nodes
 /// has cut: nothing below the channel head, then growing as the square root
 /// of the catchment past it, the way a channel's width does, to the full
 /// share.
 pub fn relief_share(catchment: f64) -> f64 {
-    if catchment <= CHANNEL_HEAD {
+    growth(catchment).map_or(0.0, |g| RELIEF_SHARE_MAX * g)
+}
+
+// ── The channel ─────────────────────────────────────────────────────────────
+
+/// Half-width of the channel at the channel head, in tiles. A straight line
+/// can pass 1/√3 of a tile from every tile centre, the hex lattice's covering
+/// radius, so a narrower strip leaves gaps in a stream.
+pub const CHANNEL_HALF_WIDTH_MIN: f64 = 0.6;
+
+/// Half-width of a full trunk's channel, in tiles.
+pub const CHANNEL_HALF_WIDTH_MAX: f64 = 3.5;
+
+/// Depth of the channel at the channel head, in z-levels: the one step a
+/// walker wades.
+pub const CHANNEL_DEPTH_MIN: f64 = 1.0;
+
+/// Depth of a full trunk's channel, in z-levels.
+pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
+
+/// The channel's half-width at `catchment` nodes: nothing below the channel
+/// head, then from the head's width to a trunk's as the catchment grows.
+pub fn channel_half_width(catchment: f64) -> f64 {
+    growth(catchment).map_or(0.0, |g| CHANNEL_HALF_WIDTH_MIN + (CHANNEL_HALF_WIDTH_MAX - CHANNEL_HALF_WIDTH_MIN) * g)
+}
+
+/// The depth of the channel slot below the valley floor at a node: nothing
+/// below the channel head and nothing on flooded ground, where the lake is
+/// the water; otherwise from the head's depth to a trunk's as the catchment
+/// grows. Cut below base level too: a channel reaching the sea is under it.
+pub fn channel_depth(node: &DrainageNode) -> f64 {
+    if node.lake.is_some() {
         return 0.0;
     }
-    let u = ((catchment - CHANNEL_HEAD) / (CATCHMENT_FULL - CHANNEL_HEAD)).min(1.0);
-    RELIEF_SHARE_MAX * u.sqrt()
+    growth(node.catchment).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
 }
 
 /// A valley's cross-section at a share `u` of the half-width from its
@@ -110,13 +160,34 @@ pub fn depth_at(node: &DrainageNode) -> f64 {
     (node.elevation - node.base).max(0.0) * relief_share(node.catchment)
 }
 
-/// What one channel segment cuts, at each end.
+/// What one channel segment cuts, at each end: the valley's depth and base
+/// level, and the channel slot's half-width and depth.
 #[derive(Clone, Copy, Debug)]
 struct Cut {
     depth0: f64,
     depth1: f64,
     base0: f64,
     base1: f64,
+    half0: f64,
+    half1: f64,
+    chan0: f64,
+    chan1: f64,
+}
+
+impl Cut {
+    fn at(&self, t: f64) -> (f64, f64, f64, f64) {
+        let lerp = |a: f64, b: f64| a + t * (b - a);
+        (lerp(self.depth0, self.depth1), lerp(self.base0, self.base1), lerp(self.half0, self.half1), lerp(self.chan0, self.chan1))
+    }
+}
+
+/// The two cuts at a position: the valley's, and the channel slot's below
+/// the valley floor. The channel is where the water stands: a river's
+/// surface is the floor, the ground plus the channel cut.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Cuts {
+    pub valley: f64,
+    pub channel: f64,
 }
 
 /// The valleys a set of tiles can lie in: every channel segment of the
@@ -144,7 +215,16 @@ impl Valleys {
                     if let Some(p) = prev {
                         if keep(p.key) || keep(n.key) {
                             segments.push(Segment::along((p.wx, p.wy), (n.wx, n.wy), true));
-                            cuts.push(Cut { depth0: depth_at(p), depth1: depth_at(n), base0: p.base, base1: n.base });
+                            cuts.push(Cut {
+                                depth0: depth_at(p),
+                                depth1: depth_at(n),
+                                base0: p.base,
+                                base1: n.base,
+                                half0: channel_half_width(p.catchment),
+                                half1: channel_half_width(n.catchment),
+                                chan0: channel_depth(p),
+                                chan1: channel_depth(n),
+                            });
                         }
                     }
                     prev = Some(n);
@@ -183,20 +263,29 @@ impl Valleys {
         self.grid.is_empty()
     }
 
-    /// The cut at a position whose envelope is `envelope`, in z-levels: the
-    /// deepest valley in reach, each interpolated along its segment and
-    /// profiled across it, never below the base level it drains to.
-    pub fn cut_at(&self, wx: f64, wy: f64, envelope: f64) -> f64 {
-        let mut cut = 0.0f64;
+    /// The cuts at a position whose envelope is `envelope`, in z-levels: of
+    /// every valley in reach, each interpolated along its segment and
+    /// profiled across it, the one that with its channel cuts deepest. A
+    /// valley never cuts below the base level it drains to; its channel, a
+    /// slot of the segment's half-width and depth, cuts on below it.
+    pub fn cuts_at(&self, wx: f64, wy: f64, envelope: f64) -> Cuts {
+        let mut best = Cuts::default();
         self.grid.for_each_within(wx, wy, VALLEY_HALF_WIDTH, |i, d| {
             let (t, _) = self.grid.segments()[i].project(wx, wy);
-            let c = &self.cuts[i];
-            let depth = c.depth0 + t * (c.depth1 - c.depth0);
-            let base = c.base0 + t * (c.base1 - c.base0);
-            let v = (depth * profile(d / VALLEY_HALF_WIDTH)).min((envelope - base).max(0.0));
-            cut = cut.max(v);
+            let (depth, base, half, chan) = self.cuts[i].at(t);
+            let valley = (depth * profile(d / VALLEY_HALF_WIDTH)).min((envelope - base).max(0.0));
+            let channel = if d <= half { chan } else { 0.0 };
+            if valley + channel > best.valley + best.channel {
+                best = Cuts { valley, channel };
+            }
         });
-        cut
+        best
+    }
+
+    /// The whole cut at a position: valley and channel together.
+    pub fn cut_at(&self, wx: f64, wy: f64, envelope: f64) -> f64 {
+        let c = self.cuts_at(wx, wy, envelope);
+        c.valley + c.channel
     }
 }
 
@@ -281,6 +370,31 @@ mod tests {
         }
     }
 
+    /// The channel is nothing at the head, a tile and a z-level just past
+    /// it, grows with catchment, and saturates at a trunk's.
+    #[test]
+    fn channel_starts_at_the_head_and_saturates() {
+        let node = |catchment: f64, lake: Option<usize>| DrainageNode {
+            key: (0, 0), q: 0, r: 0, wx: 0.0, wy: 0.0, elevation: 10.0, surface: 10.0,
+            direction: (1.0, 0.0), catchment, base: 0.0, down: None, lake, sill: false,
+        };
+        assert_eq!(channel_half_width(CHANNEL_HEAD), 0.0);
+        assert_eq!(channel_depth(&node(CHANNEL_HEAD, None)), 0.0);
+        let just_past = CHANNEL_HEAD + 1e-9;
+        assert!((channel_half_width(just_past) - CHANNEL_HALF_WIDTH_MIN).abs() < 1e-3);
+        assert!((channel_depth(&node(just_past, None)) - CHANNEL_DEPTH_MIN).abs() < 1e-3);
+        let (mut last_w, mut last_d) = (0.0, 0.0);
+        for i in 0..200 {
+            let c = CHANNEL_HEAD + i as f64 * 0.5;
+            let (w, d) = (channel_half_width(c), channel_depth(&node(c, None)));
+            assert!(w >= last_w && d >= last_d, "channel shrinks at {c}");
+            (last_w, last_d) = (w, d);
+        }
+        assert_eq!(channel_half_width(10.0 * CATCHMENT_FULL), CHANNEL_HALF_WIDTH_MAX);
+        assert_eq!(channel_depth(&node(10.0 * CATCHMENT_FULL, None)), CHANNEL_DEPTH_MAX);
+        assert_eq!(channel_depth(&node(10.0 * CATCHMENT_FULL, Some(0))), 0.0, "a channel cut into a lake");
+    }
+
     /// The share starts at the head, grows with catchment, and saturates.
     #[test]
     fn share_starts_at_the_head_and_saturates() {
@@ -348,5 +462,38 @@ mod tests {
             let cut = valleys.cut_at(x + 100.0, y + 60.0, n.elevation);
             assert!(cut >= 0.0 && cut <= n.elevation.max(0.0) + 1e-9, "cut {cut} at {:?}", n.key);
         }
+    }
+
+    /// At a channelled node the slot is cut to the node's channel depth
+    /// beneath the valley floor, and past the channel's half-width it is
+    /// not; the surface a river stands at, the ground plus the channel cut,
+    /// is the valley floor either way.
+    #[test]
+    fn the_channel_is_a_slot_in_the_valley_floor() {
+        let lattice = DrainageIndex::lattice();
+        let cell = lattice.cell_id(-58_204, 4_907);
+        let (cq, cr) = lattice.cell_center(cell);
+        let (cx, cy) = hex_to_world(cq, cr);
+        let window = (3 * lattice.radius + 1) as f64;
+        let coasts = Coasts::in_box(cx, cy, window, S);
+        let outlines = Outlines::in_box(cx, cy, window, S);
+        let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
+        let valleys = Valleys::new(&[&published], |_| true);
+        let mut channelled = 0;
+        for n in published.nodes.values() {
+            if channel_depth(n) <= 0.0 || n.sill {
+                continue;
+            }
+            channelled += 1;
+            let (x, y) = node_world(n.key);
+            let at = valleys.cuts_at(x, y, n.elevation);
+            assert!((at.channel - channel_depth(n)).abs() < 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
+            assert!(at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
+            let (dx, dy) = (-n.direction.1, n.direction.0);
+            let off = channel_half_width(n.catchment) + 1.0;
+            let beside = valleys.cuts_at(x + dx * off, y + dy * off, n.elevation);
+            assert!(beside.channel == 0.0 || beside.channel < at.channel + 1e-9, "a channel beside the channel at {:?}", n.key);
+        }
+        assert!(channelled > 0, "no channelled node in the spawn cell");
     }
 }
