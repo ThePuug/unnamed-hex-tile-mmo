@@ -179,17 +179,30 @@ pub fn do_incremental(
 
 /// Generate a chunk of terrain tiles (pure computation, no ECS access).
 fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
-    let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]> = tinyvec::ArrayVec::new();
+    let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]> = tinyvec::ArrayVec::new();
     let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
 
     for &(q, r) in &coords {
         let z = registry.elevation_at(q, r);
+        let water = registry.water_at(q, r);
         let qrz = Qrz { q, r, z };
         let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
-        tiles.push((qrz, typ));
+        tiles.push((qrz, typ, water));
     }
 
     TerrainChunk::new(tiles)
+}
+
+/// Merge a chunk's tiles into the server Map for physics, collision and AI,
+/// leaving ground already there alone, and build the tiles as sent.
+fn merge_and_pack(chunk: &TerrainChunk, map: &Map) -> tinyvec::ArrayVec<[(i32, EntityType, Option<i32>); 272]> {
+    for &(qrz, typ, water) in &chunk.tiles {
+        if map.get(qrz).is_none() {
+            map.insert(qrz, typ);
+            map.set_water(qrz.q, qrz.r, water);
+        }
+    }
+    chunk.tiles.iter().map(|&(qrz, typ, water)| (qrz.z, typ, water)).collect()
 }
 
 /// Dispatch chunk generation: cache hits → immediate Do, cache misses →
@@ -274,17 +287,7 @@ fn send_cached_chunk(
 ) {
     world_cache.access_order.get_or_insert(chunk_id, || ());
     let chunk = Arc::clone(world_cache.chunks.get(&chunk_id).unwrap());
-
-    // Insert tiles into server Map for physics/collision/AI
-    for &(qrz, typ) in &chunk.tiles {
-        if map.get(qrz).is_none() {
-            map.insert(qrz, typ);
-        }
-    }
-
-    let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
-        .map(|&(qrz, typ)| (qrz.z, typ))
-        .collect();
+    let wire_tiles = merge_and_pack(&chunk, map);
     writer.write(Do {
         event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
     });
@@ -318,17 +321,7 @@ pub fn poll_chunk_tasks(
             world_cache.chunks.insert(chunk_id, Arc::clone(&chunk));
             world_cache.access_order.get_or_insert(chunk_id, || ());
 
-            // Insert tiles into server Map
-            for &(qrz, typ) in &chunk.tiles {
-                if map.get(qrz).is_none() {
-                    map.insert(qrz, typ);
-                }
-            }
-
-            // Send to client
-            let wire_tiles: tinyvec::ArrayVec<[(i32, EntityType); 272]> = chunk.tiles.iter()
-                .map(|&(qrz, typ)| (qrz.z, typ))
-                .collect();
+            let wire_tiles = merge_and_pack(&chunk, &map);
             writer.write(Do {
                 event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles }
             });

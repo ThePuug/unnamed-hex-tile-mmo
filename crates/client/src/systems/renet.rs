@@ -59,6 +59,7 @@ pub fn write_do(
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     summary_cache: Res<crate::resources::SummaryCache>,
+    map: Res<common_bevy::resources::map::Map>,
     mut network_metrics: ResMut<NetworkMetrics>,
     _locs: Query<&Loc>,
     time: Res<Time>,
@@ -233,9 +234,12 @@ pub fn write_do(
 
         match message {
             Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
-                // Reconstruct (q,r) from chunk_tiles iteration order
-                for ((q, r), (z, typ)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
+                // Reconstruct (q,r) from chunk_tiles iteration order. The
+                // ground arrives as a spawn; the water goes straight to the
+                // map, which holds it apart from the ground.
+                for ((q, r), (z, typ, water)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
                     let qrz = Qrz { q, r, z };
+                    map.set_water(q, r, water);
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);

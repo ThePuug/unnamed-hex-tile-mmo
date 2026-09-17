@@ -38,6 +38,12 @@ impl EventRegistry {
         self.composite.elevation_at(q, r)
     }
 
+    /// The surface water stands at over a tile as a z-level, or None where
+    /// the tile is dry.
+    pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
+        self.composite.water_at(q, r)
+    }
+
     /// Get tags at a hex tile position.
     #[allow(dead_code)]
     pub fn tags_at(&self, q: i32, r: i32) -> TagSet {

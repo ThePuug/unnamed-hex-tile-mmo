@@ -192,13 +192,15 @@ impl ChunkId {
 }
 
 /// A chunk of terrain containing up to CHUNK_TILES tiles (hex ball of radius CHUNK_RADIUS).
+/// Each tile is its position, its type, and the surface water stands at over
+/// it, or None where it is dry.
 #[derive(Clone, Debug)]
 pub struct TerrainChunk {
-    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]>,
+    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]>,
 }
 
 impl TerrainChunk {
-    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType); 272]>) -> Self {
+    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]>) -> Self {
         Self {
             tiles,
         }
@@ -561,7 +563,7 @@ mod tests {
         let chunk4 = ChunkId(3, 3);
 
         let mut tiles1 = tinyvec::ArrayVec::new();
-        tiles1.push((Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(crate::components::entity_type::decorator::Decorator { index: 0, is_solid: true })));
+        tiles1.push((Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(crate::components::entity_type::decorator::Decorator { index: 0, is_solid: true }), None));
         let tiles2 = tiles1.clone();
         let tiles3 = tiles1.clone();
         let tiles4 = tiles1.clone();

@@ -32,6 +32,9 @@ pub struct Map {
     orientation: qrz::HexOrientation,
     /// Hot-path elevation index: single shard probe, no chunk derivation.
     flat: Arc<DashMap<(i32, i32), i32>>,
+    /// Flooded tiles only: the surface water stands at, as a z-level. A
+    /// tile absent here is dry.
+    water: Arc<DashMap<(i32, i32), i32>>,
     /// Chunk-sharded storage for mesh generation and EntityType lookups.
     chunks: Arc<DashMap<ChunkId, HashMap<(i32, i32), TileRecord>>>,
     changed: Arc<AtomicBool>,
@@ -63,6 +66,7 @@ impl Map {
             rise,
             orientation,
             flat: Arc::new(flat),
+            water: Arc::new(DashMap::new()),
             chunks: Arc::new(chunks),
             changed: Arc::new(AtomicBool::new(false)),
             geo: Arc::new(geo),
@@ -79,8 +83,24 @@ impl Map {
         self.changed.store(true, Ordering::Relaxed);
     }
 
+    /// Set or clear the surface water stands at over a tile. Independent of
+    /// `insert`, so a tile's ground and its water may arrive in either order.
+    pub fn set_water(&self, q: i32, r: i32, water: Option<i32>) {
+        match water {
+            Some(w) => { self.water.insert((q, r), w); }
+            None => { self.water.remove(&(q, r)); }
+        }
+        self.changed.store(true, Ordering::Relaxed);
+    }
+
+    /// The surface water stands at over a tile, or None where it is dry.
+    pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
+        self.water.get(&(q, r)).map(|w| *w)
+    }
+
     pub fn remove(&self, qrz: Qrz) -> Option<EntityType> {
         self.flat.remove(&(qrz.q, qrz.r));
+        self.water.remove(&(qrz.q, qrz.r));
         let chunk_id = loc_to_chunk(qrz);
         let removed = self.chunks.get_mut(&chunk_id)
             .and_then(|mut bucket| bucket.remove(&(qrz.q, qrz.r)).map(|r| r.typ));
@@ -98,6 +118,7 @@ impl Map {
         if let Some((_, bucket)) = self.chunks.remove(&chunk_id) {
             for &(q, r) in bucket.keys() {
                 self.flat.remove(&(q, r));
+                self.water.remove(&(q, r));
             }
             self.changed.store(true, Ordering::Relaxed);
         }

@@ -155,7 +155,7 @@ struct FlyoverSummaryTracker {
 /// Pending async tile generation tasks.
 #[derive(Default, Resource)]
 struct PendingFlyoverTiles {
-    tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType)>>>,
+    tasks: HashMap<ChunkId, Task<Vec<(qrz::Qrz, EntityType, Option<i32>)>>>,
 }
 
 
@@ -544,9 +544,10 @@ fn flyover_generate_chunks(
             let mut tiles = Vec::with_capacity(CHUNK_TILES);
             for (q, r) in chunk_tiles(chunk_id) {
                 let z = composite.elevation_at(q, r);
+                let water = composite.water_at(q, r);
                 let qrz = qrz::Qrz { q, r, z };
                 let decorator = Decorator { index: 3, is_solid: true };
-                tiles.push((qrz, EntityType::Decorator(decorator)));
+                tiles.push((qrz, EntityType::Decorator(decorator), water));
             }
             tiles
         });
@@ -565,8 +566,9 @@ fn poll_flyover_tile_tasks(
     let _t = client_timers.0.scope("fly_poll");
     pending.tasks.retain(|&chunk_id, task| {
         if let Some(tiles) = block_on(future::poll_once(task)) {
-            for (qrz, entity_type) in tiles {
+            for (qrz, entity_type, water) in tiles {
                 map.insert(qrz, entity_type);
+                map.set_water(qrz.q, qrz.r, water);
             }
             loaded_chunks.insert(chunk_id);
             false

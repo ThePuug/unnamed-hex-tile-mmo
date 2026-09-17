@@ -16,11 +16,12 @@ pub enum Event {
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
     /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles).
     /// Tiles are ordered by `chunk_tiles(chunk_id)` iteration order — receiver
-    /// reconstructs (q, r) by zipping with the same iterator. Only z + type sent.
+    /// reconstructs (q, r) by zipping with the same iterator. Per tile: z,
+    /// type, and the surface water stands at, or None where dry.
     ChunkData {
         ent: Entity,
         chunk_id: ChunkId,
-        tiles: ArrayVec<[(i32, EntityType); 272]>,
+        tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
