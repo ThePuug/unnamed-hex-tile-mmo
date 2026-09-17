@@ -399,6 +399,39 @@ pub fn sample_center_z_opt(
     Some(select_center_z(&zs))
 }
 
+/// The water surface a summary carries: the surface a majority of its seven
+/// samples share, or None. A lake wider than the summary keeps its surface;
+/// a river narrower than it vanishes into its valley, the way a valley
+/// narrower than a summary vanishes under the height rule. `water_at` is a
+/// tile's surface, or None where it is dry.
+pub fn sample_center_water(
+    r: u32,
+    sq: i32,
+    sr: i32,
+    mut water_at: impl FnMut(i32, i32) -> Option<i32>,
+) -> Option<i32> {
+    let (cq, cr) = summary_lattice(r).cell_center((sq, sr));
+    let d = (2 * r as i32 + 1) / 3;
+    let offsets: [(i32, i32); 7] = [(0,0),(d,0),(-d,0),(0,d),(0,-d),(d,-d),(-d,d)];
+    let mut ws = [None; 7];
+    for (i, (dq, dr)) in offsets.into_iter().enumerate() {
+        ws[i] = water_at(cq + dq, cr + dr);
+    }
+    select_center_water(&ws)
+}
+
+/// The surface more than half of the samples share, or None.
+pub fn select_center_water(ws: &[Option<i32>]) -> Option<i32> {
+    let mut best: Option<(i32, usize)> = None;
+    for &w in ws.iter().flatten() {
+        let n = ws.iter().filter(|&&x| x == Some(w)).count();
+        if best.map_or(true, |(_, bn)| n > bn) {
+            best = Some((w, n));
+        }
+    }
+    best.filter(|&(_, n)| 2 * n > ws.len()).map(|(w, _)| w)
+}
+
 // ── Center z selection ──
 
 /// Select center_z using extremal deviation from the mean.
@@ -525,6 +558,18 @@ mod tests {
     #[test]
     fn select_center_z_single_tile() {
         assert_eq!(select_center_z(&[42]), 42);
+    }
+
+    /// Water needs a majority of the samples at one surface: four of seven
+    /// carry it, three do not, and four split between two surfaces do not.
+    #[test]
+    fn select_center_water_needs_a_majority_at_one_surface() {
+        let s = Some(5);
+        assert_eq!(select_center_water(&[s, s, s, s, None, None, None]), Some(5));
+        assert_eq!(select_center_water(&[s, s, s, None, None, None, None]), None);
+        assert_eq!(select_center_water(&[s, s, Some(6), Some(6), None, None, None]), None);
+        assert_eq!(select_center_water(&[s, s, s, s, Some(6), Some(6), Some(6)]), Some(5));
+        assert_eq!(select_center_water(&[None; 7]), None);
     }
 
     #[test]

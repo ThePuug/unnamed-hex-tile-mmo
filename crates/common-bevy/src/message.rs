@@ -172,13 +172,15 @@ impl Component {
     }
 }
 
-/// Server-sent summary hex: one flat hex at summary-lattice coords (sq, sr).
+/// Server-sent summary hex: one flat hex at summary-lattice coords (sq, sr),
+/// its height and the water surface over it, or None where it is dry.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct SummaryData {
     pub r: u32,
     pub sq: i32,
     pub sr: i32,
     pub center_z: i32,
+    pub water: Option<i32>,
 }
 
 /// Key identifying a summary hex in a specific band (summary-lattice coords).

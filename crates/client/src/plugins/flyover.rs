@@ -717,7 +717,7 @@ fn flyover_summary_dispatch(
     let pos = flyover.world_position;
 
     use common_bevy::message::SummaryData;
-    use common_bevy::summary::{compute_active_bands, mesh_region_lattice, sample_center_z};
+    use common_bevy::summary::{compute_active_bands, mesh_region_lattice, sample_center_water, sample_center_z};
     use common_bevy::summary_mesh::{MeshRegionKey, visible_lod_regions};
 
     // Same horizon formula as compute_auto_mode_regions (consumer side) so
@@ -776,7 +776,8 @@ fn flyover_summary_dispatch(
             region_lat.tiles_in_cell((rk.mn, rk.mm))
                 .map(|(sn, sm)| {
                     let center_z = sample_center_z(rk.r, sn, sm, |q, r| composite.elevation_at(q, r));
-                    SummaryData { r: rk.r, sq: sn, sr: sm, center_z }
+                    let water = sample_center_water(rk.r, sn, sm, |q, r| composite.water_at(q, r));
+                    SummaryData { r: rk.r, sq: sn, sr: sm, center_z, water }
                 })
                 .collect()
         });
@@ -801,8 +802,8 @@ fn flyover_poll_summary_tasks(
 
     for (region_key, mut task) in current {
         if let Some(results) = block_on(future::poll_once(&mut task)) {
-            let cells: HashMap<(i32, i32), i32> = results.iter()
-                .map(|d| ((d.sq, d.sr), d.center_z))
+            let cells: HashMap<(i32, i32), (i32, Option<i32>)> = results.iter()
+                .map(|d| ((d.sq, d.sr), (d.center_z, d.water)))
                 .collect();
             summary_cache.insert_region(region_key, crate::resources::RegionData {
                 cells,

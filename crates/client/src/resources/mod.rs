@@ -317,9 +317,10 @@ pub struct SummaryCache {
     new_data: Arc<AtomicBool>,
 }
 
-/// Elevation data for one mesh region's summary cells.
+/// One mesh region's summary cells: each cell's height and the water
+/// surface over it, or None where it is dry.
 pub struct RegionData {
-    pub cells: HashMap<(i32, i32), i32>,
+    pub cells: HashMap<(i32, i32), (i32, Option<i32>)>,
     pub source: RegionSource,
 }
 

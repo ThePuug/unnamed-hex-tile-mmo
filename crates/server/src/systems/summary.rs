@@ -6,7 +6,7 @@ use common_bevy::{
     components::Loc,
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, mesh_region_lattice, sample_center_z, summary_lattice},
+    summary::{compute_active_bands, mesh_region_lattice, sample_center_water, sample_center_z, summary_lattice},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
@@ -79,8 +79,8 @@ pub fn dispatch_summary_tasks(
                 let key = SummaryKey { r: rk.r, sq, sr };
                 if vis_cache.sent.contains(&key) { continue; }
                 any_new = true;
-                if let Some(center_z) = summary_cache.get(&key) {
-                    cached_additions.push(SummaryData { r: rk.r, sq, sr, center_z });
+                if let Some((center_z, water)) = summary_cache.get(&key) {
+                    cached_additions.push(SummaryData { r: rk.r, sq, sr, center_z, water });
                     vis_cache.sent.insert(key);
                 } else {
                     all_cached = false;
@@ -124,7 +124,8 @@ pub fn dispatch_summary_tasks(
                     rl.tiles_in_cell((rk.mn, rk.mm))
                         .map(|(sq, sr)| {
                             let center_z = sample_center_z(rk.r, sq, sr, |q, r| reg.elevation_at(q, r));
-                            SummaryData { r: rk.r, sq, sr, center_z }
+                            let water = sample_center_water(rk.r, sq, sr, |q, r| reg.water_at(q, r));
+                            SummaryData { r: rk.r, sq, sr, center_z, water }
                         })
                         .collect()
                 });
@@ -151,6 +152,7 @@ pub fn poll_summary_tasks(
                 summary_cache.insert(
                     SummaryKey { r: data.r, sq: data.sq, sr: data.sr },
                     data.center_z,
+                    data.water,
                 );
             }
             task_queue.in_flight.remove(&region_key);

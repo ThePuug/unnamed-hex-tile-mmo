@@ -10,17 +10,18 @@ use common_bevy::message::SummaryKey;
 /// never change (no invalidation needed until runtime deformation).
 #[derive(Resource, Default)]
 pub struct SummaryCache {
-    entries: HashMap<SummaryKey, i32>,
+    /// Height and water surface per summary.
+    entries: HashMap<SummaryKey, (i32, Option<i32>)>,
 }
 
 impl SummaryCache {
     /// Cache lookup only — returns None on miss.
-    pub fn get(&self, key: &SummaryKey) -> Option<i32> {
+    pub fn get(&self, key: &SummaryKey) -> Option<(i32, Option<i32>)> {
         self.entries.get(key).copied()
     }
 
     /// Store a computed result.
-    pub fn insert(&mut self, key: SummaryKey, center_z: i32) {
-        self.entries.insert(key, center_z);
+    pub fn insert(&mut self, key: SummaryKey, center_z: i32, water: Option<i32>) {
+        self.entries.insert(key, (center_z, water));
     }
 }

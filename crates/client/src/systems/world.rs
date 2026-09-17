@@ -620,7 +620,7 @@ fn collect_and_build_summary_mesh(
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
 
     // The water over the region, built once the ground is: at r = 0 the
-    // map's per-tile surface; summaries carry none yet, so above it nothing.
+    // map's per-tile surface, above it the surface each summary carries.
     let with_water = |smr: &common_bevy::summary_mesh::SummaryMeshResult, water: &dyn Fn(i32, i32) -> Option<i32>| {
         let mut result = smr_to_result(smr);
         let w = common_bevy::summary_mesh::build_water_mesh_region(radius, region_key, water);
@@ -642,25 +642,37 @@ fn collect_and_build_summary_mesh(
     let regions: std::cell::RefCell<
         std::collections::HashMap<(i32, i32), Option<std::sync::Arc<crate::resources::RegionData>>>,
     > = Default::default();
-    let summary_z = |sq: i32, sr: i32| -> Option<i32> {
+    let cached = |sq: i32, sr: i32| -> Option<(i32, Option<i32>)> {
         let (mn, mm) = region_lat.cell_id(sq, sr);
-        let cached = regions
+        regions
             .borrow_mut()
             .entry((mn, mm))
             .or_insert_with(|| {
                 cache.get_region(&common_bevy::summary_mesh::MeshRegionKey { r: radius, mn, mm })
             })
             .as_ref()
-            .and_then(|d| d.cells.get(&(sq, sr)).copied());
-        if cached.is_some() {
-            return cached;
+            .and_then(|d| d.cells.get(&(sq, sr)).copied())
+    };
+    let summary_z = |sq: i32, sr: i32| -> Option<i32> {
+        if let Some((z, _)) = cached(sq, sr) {
+            return Some(z);
         }
         common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)
+    };
+    // Water follows the height's provenance: the cached surface where the
+    // cell was sent, else the same seven samples over the map's tiles, and
+    // nothing where the tiles are not all there.
+    let summary_water = |sq: i32, sr: i32| -> Option<i32> {
+        if let Some((_, water)) = cached(sq, sr) {
+            return water;
+        }
+        common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)?;
+        common_bevy::summary::sample_center_water(radius, sq, sr, |q, r| map.water_at(q, r))
     };
 
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &summary_z)
         .as_ref()
-        .map_or(empty, smr_to_result)
+        .map_or(empty, |smr| with_water(smr, &summary_water))
 }
 
 fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {
