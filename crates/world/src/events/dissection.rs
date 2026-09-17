@@ -45,6 +45,15 @@
 //! Not dissection's: channels finer than the node spacing, floodplains,
 //! meanders, sediment, terraces. Unbuilt.
 //!
+//! # Water
+//!
+//! Dissection also publishes the surface water stands at over each tile,
+//! since it alone knows the floor it left: the sea at zero wherever the
+//! ground lies below it, a lake's surface within one node spacing of the
+//! lake's flooded nodes wherever the ground lies below that, and in a
+//! channel the valley floor the channel is cut into. The highest stands. A
+//! tile with no surface over it is dry ground.
+//!
 //! # The window
 //!
 //! No deform: nothing originates here. `prepare` gathers the drainage cells
@@ -54,9 +63,10 @@
 //! tiles, and reading them costs no route.
 
 use std::any::Any;
+use std::collections::HashMap;
 
 use crate::chains::{Segment, SegmentGrid};
-use crate::lattice::{hex_distance, node_tile, NodeKey, NODE_SPACING};
+use crate::lattice::{hex_distance, nearest_node, node_tile, NodeKey, DIRECTIONS, NODE_SPACING};
 use crate::{hex_to_world, world_to_hex};
 use super::drainage::{DrainageCell, DrainageEvent, DrainageIndex, DrainageNode, DRAINAGE_CELL_SCALE};
 use super::index::IndexRegistry;
@@ -191,10 +201,12 @@ pub struct Cuts {
 }
 
 /// The valleys a set of tiles can lie in: every channel segment of the
-/// drainage cells in reach, bucketed for the search, with what each cuts.
+/// drainage cells in reach, bucketed for the search, with what each cuts;
+/// and every flooded node in reach with its lake's surface.
 pub struct Valleys {
     grid: SegmentGrid,
     cuts: Vec<Cut>,
+    flooded: HashMap<NodeKey, f64>,
 }
 
 impl Valleys {
@@ -231,7 +243,12 @@ impl Valleys {
                 }
             }
         }
-        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), cuts }
+        let flooded = cells
+            .iter()
+            .flat_map(|c| c.lakes.iter())
+            .flat_map(|l| l.nodes.iter().map(move |&k| (k, l.surface)))
+            .collect();
+        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), cuts, flooded }
     }
 
     /// The valleys under a square box, routed from the plate graph directly:
@@ -287,6 +304,37 @@ impl Valleys {
         let c = self.cuts_at(wx, wy, envelope);
         c.valley + c.channel
     }
+
+    /// The surface water stands at over a position whose ground, after the
+    /// cuts, is `ground`: the highest of the sea, a lake within one node
+    /// spacing of a flooded node, and the floor of the channel the position
+    /// lies in. None where none stands above the ground.
+    pub fn surface_at(&self, wx: f64, wy: f64, ground: f64, cuts: Cuts) -> Option<f64> {
+        let mut surface: Option<f64> = None;
+        let mut stand = |s: f64| {
+            if s > ground {
+                surface = Some(surface.map_or(s, |v| v.max(s)));
+            }
+        };
+        stand(0.0);
+        if cuts.channel > 0.0 {
+            stand(ground + cuts.channel);
+        }
+        // Every node within one spacing of a position is the nearest node
+        // or one of its six neighbours: the nearest lies within the
+        // lattice's covering radius, a spacing over √3, and the second ring
+        // starts at √3 spacings.
+        let n = nearest_node(wx, wy);
+        let reach = NODE_SPACING as f64;
+        for key in std::iter::once(n).chain(DIRECTIONS.iter().map(|(di, dj)| (n.0 + di, n.1 + dj))) {
+            let Some(&s) = self.flooded.get(&key) else { continue };
+            let (x, y) = crate::lattice::node_world(key);
+            if (x - wx).hypot(y - wy) <= reach {
+                stand(s);
+            }
+        }
+        surface
+    }
 }
 
 /// The valleys a cell's tiles can lie in: the drainage cells under the cell
@@ -339,11 +387,13 @@ impl WorldEvent for DissectionEvent {
     ) -> Option<TileOutput> {
         let valleys = cell.downcast_ref::<Valleys>()?;
         let (wx, wy) = hex_to_world(q, r);
-        let cut = valleys.cut_at(wx, wy, below.elevation);
-        if cut <= 0.0 {
+        let cuts = valleys.cuts_at(wx, wy, below.elevation);
+        let cut = cuts.valley + cuts.channel;
+        let water = valleys.surface_at(wx, wy, below.elevation - cut, cuts);
+        if cut <= 0.0 && water.is_none() {
             return None;
         }
-        Some(TileOutput { elevation_delta: -cut, ..TileOutput::default() })
+        Some(TileOutput { elevation_delta: -cut, water, ..TileOutput::default() })
     }
 }
 
@@ -495,5 +545,48 @@ mod tests {
             assert!(beside.channel == 0.0 || beside.channel < at.channel + 1e-9, "a channel beside the channel at {:?}", n.key);
         }
         assert!(channelled > 0, "no channelled node in the spawn cell");
+    }
+
+    /// Water stands at the valley floor in a channel, at the lake's surface
+    /// over a flooded node, at zero over ground below the sea, and nowhere
+    /// over dry ground above it.
+    #[test]
+    fn water_stands_at_the_floor_the_surface_and_the_sea() {
+        let lattice = DrainageIndex::lattice();
+        let cell = lattice.cell_id(-58_204, 4_907);
+        let (cq, cr) = lattice.cell_center(cell);
+        let (cx, cy) = hex_to_world(cq, cr);
+        let window = (3 * lattice.radius + 1) as f64;
+        let coasts = Coasts::in_box(cx, cy, window, S);
+        let outlines = Outlines::in_box(cx, cy, window, S);
+        let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
+        let valleys = Valleys::new(&[&published], |_| true);
+        let (mut rivers, mut lakes, mut dry) = (0, 0, 0);
+        for n in published.nodes.values() {
+            let (x, y) = node_world(n.key);
+            let cuts = valleys.cuts_at(x, y, n.elevation);
+            let ground = n.elevation - cuts.valley - cuts.channel;
+            let water = valleys.surface_at(x, y, ground, cuts);
+            if let Some(lake) = n.lake {
+                lakes += 1;
+                assert_eq!(water, Some(published.lakes[lake].surface), "a flooded node not under its lake at {:?}", n.key);
+            } else if cuts.channel > 0.0 {
+                rivers += 1;
+                let floor = n.elevation - cuts.valley;
+                assert!(water.map_or(false, |w| w >= floor - 1e-9), "a channel not under water at {:?}", n.key);
+                if water == Some(floor) {
+                    assert!((water.unwrap() - ground - cuts.channel).abs() < 1e-9);
+                }
+            } else if ground >= 0.0 {
+                let near_lake = water.map_or(false, |w| w > 0.0);
+                if !near_lake {
+                    dry += 1;
+                    assert_eq!(water, None, "water over dry ground at {:?}", n.key);
+                }
+            } else {
+                assert_eq!(water, Some(0.0), "sea floor not under the sea at {:?}", n.key);
+            }
+        }
+        assert!(rivers > 0 && lakes > 0 && dry > 0, "rivers {rivers}, lakes {lakes}, dry {dry}");
     }
 }

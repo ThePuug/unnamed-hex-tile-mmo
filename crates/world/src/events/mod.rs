@@ -103,6 +103,10 @@ pub struct TileOutput {
     pub tags_added: TagSet,
     pub tags_removed: TagSet,
     pub elevation_delta: f64,
+    /// The surface water stands at over this tile, in z-levels, where the
+    /// layer puts one. Surfaces compose by the highest: water covers what
+    /// lies under it.
+    pub water: Option<f64>,
 }
 
 /// Read-only composite view at a single tile.
@@ -114,6 +118,19 @@ pub struct TileView {
     pub wy: f64,
     pub tags: TagSet,
     pub elevation: f64,
+    /// The highest water surface any layer below put over this tile.
+    pub water: Option<f64>,
+}
+
+impl TileView {
+    fn compose(&mut self, out: &TileOutput) {
+        for t in out.tags_added.iter() { self.tags.add(t); }
+        for t in out.tags_removed.iter() { self.tags.remove(t); }
+        self.elevation += out.elevation_delta;
+        if let Some(w) = out.water {
+            self.water = Some(self.water.map_or(w, |v| v.max(w)));
+        }
+    }
 }
 
 // ── CellScope ───────────────────────────────────────────────────────────────
@@ -571,7 +588,7 @@ impl Composite {
 
         // Phase 2: Query cascade — resolve tile bottom-up
         let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
+        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None };
 
         {
             let _s = tracing::debug_span!("query").entered();
@@ -600,9 +617,7 @@ impl Composite {
                     to
                 };
 
-                for t in tile_out.tags_added.iter() { view.tags.add(t); }
-                for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
-                view.elevation += tile_out.elevation_delta;
+                view.compose(&tile_out);
             }
         }
 
@@ -619,6 +634,16 @@ impl Composite {
     /// are all stated in z — so this rounds rather than converts.
     pub fn elevation_at(&self, q: i32, r: i32) -> i32 {
         self.tile_at(q, r).elevation.round() as i32
+    }
+
+    /// The surface water stands at over a tile as a z-level, or None where
+    /// the tile is dry. Surface and ground round to the same steps, and a
+    /// surface at a step covers the tiles below it and leaves the tiles at
+    /// it dry, so ground under less than half a step of water is dry.
+    pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
+        let view = self.tile_at(q, r);
+        let surface = view.water?.round() as i32;
+        (surface > view.elevation.round() as i32).then_some(surface)
     }
 
     pub fn tags_at(&self, q: i32, r: i32) -> TagSet {
@@ -759,7 +784,7 @@ impl Composite {
     /// no-op for cells not yet deformed).
     fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
         let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0 };
+        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None };
 
         for li in 0..up_to {
             let cell_id = self.lattices[li].cell_id(q, r);
@@ -780,9 +805,7 @@ impl Composite {
                 to
             };
 
-            for t in tile_out.tags_added.iter() { view.tags.add(t); }
-            for t in tile_out.tags_removed.iter() { view.tags.remove(t); }
-            view.elevation += tile_out.elevation_delta;
+            view.compose(&tile_out);
         }
 
         view

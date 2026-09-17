@@ -41,6 +41,9 @@ enum Layer {
     ThickeningField,
     /// Dissection field: the cut on its own, hillshaded.
     DissectionField,
+    /// Water field: the dissected ground hillshaded, and every surface
+    /// standing over it in blue, darker with depth.
+    WaterField,
     /// Tilt field: a diverging ramp, with lean arrows.
     Tilt,
     /// Thrusting index: the deformation fronts, the convergent edges' chains facing the overriding plate.
@@ -61,6 +64,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("tilt", Layer::Tilt),
     ("thickening-field", Layer::ThickeningField),
     ("dissection-field", Layer::DissectionField),
+    ("water-field", Layer::WaterField),
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("drainage-lakes", Layer::Lakes),
@@ -76,7 +80,7 @@ impl Layer {
     fn is_whole_image(self) -> bool {
         matches!(
             self,
-            Layer::Tilt | Layer::ThickeningField | Layer::DissectionField
+            Layer::Tilt | Layer::ThickeningField | Layer::DissectionField | Layer::WaterField
         )
     }
 }
@@ -250,6 +254,7 @@ fn main() {
         let buf = match view {
             Layer::Tilt => render_tilt(&cli, w, h, scale),
             Layer::DissectionField => render_dissection_field(&cli, w, h, scale),
+            Layer::WaterField => render_water_field(&cli, w, h, scale),
             _ => render_thickening_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
@@ -757,6 +762,63 @@ fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             let shade = 0.35 + 0.85 * lambert;
             let c = (tone * shade).clamp(0.0, 1.0);
             [(c * 255.0) as u8, (c * 255.0) as u8, ((c * 0.92) * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect()
+}
+
+/// The dissected ground hillshaded in grey, and every surface standing over
+/// it in blue, darker with depth: the sea, the lakes, and the channels.
+/// Routes the drainage cells under the viewport as the event's prepare does.
+fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
+    let d = scale.max(1.0);
+    let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let valleys = &valleys;
+    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let outlines = &outlines;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
+    // The ground after the cuts, and the surface over it as the tile rule
+    // reads it: rounded to steps, dry where the surface's step is not above
+    // the ground's.
+    let sample = move |x: f64, y: f64| -> (f64, Option<f64>) {
+        let envelope = surface_at(x, y, seed, coasts, outlines);
+        let cuts = valleys.cuts_at(x, y, envelope);
+        let ground = envelope - cuts.valley - cuts.channel;
+        let water = valleys
+            .surface_at(x, y, ground, cuts)
+            .map(|s| s.round())
+            .filter(|s| *s > ground.round());
+        (ground, water)
+    };
+
+    (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let (z, water) = sample(wx, wy);
+            let (zx, _) = sample(wx + d, wy);
+            let (zy, _) = sample(wx, wy + d);
+            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
+            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
+            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
+            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
+            let shade = 0.35 + 0.85 * lambert;
+            match water {
+                Some(s) => {
+                    // Depth on a blue ramp: pale at a step deep, deep blue at 30.
+                    let t = ((s - z) / 30.0).clamp(0.0, 1.0);
+                    let c = lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), t);
+                    [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
+                }
+                None => {
+                    let c = (0.85 * shade).clamp(0.0, 1.0);
+                    [(c * 255.0) as u8, (c * 0.97 * 255.0) as u8, (c * 0.9 * 255.0) as u8]
+                }
+            }
         }).collect::<Vec<u8>>()
     }).collect()
 }
