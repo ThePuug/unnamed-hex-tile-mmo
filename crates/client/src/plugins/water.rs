@@ -1,14 +1,11 @@
-//! Water surface — a single camera-following plane at sea level.
+//! The sea: a single camera-following plane at sea level, and the material
+//! every water surface is drawn with.
 
-//! `SeaEvent` gives every tile below the regime land threshold a negative
-//! elevation, so the seabed is already real terrain that the elevation ramp in
-//! `terrain.wgsl` shades blue. What was missing is the surface itself: without
-//! it the ocean reads as a flat blue plain rather than water.
-
-//! Deliberately independent of the chunk/LoD mesh pipeline. Water is a plane of
-//! constant height everywhere in the world, so it needs no per-chunk geometry,
-//! no decimation, and no streaming — one quad parented to the camera's XZ
-//! covers every case the terrain pipeline would otherwise have to special-case.
+//! The sea is a plane of constant height everywhere in the world, so it
+//! needs no per-chunk geometry, no decimation, and no streaming: one quad
+//! parented to the camera's XZ covers it to the horizon. Lakes and rivers
+//! stand above it at a surface per tile, built with each mesh region by the
+//! terrain pipeline and drawn with the material this plugin owns.
 
 use bevy::prelude::*;
 use bevy_camera::visibility::NoFrustumCulling;
@@ -32,6 +29,11 @@ const WATER_EXTENT: f32 = 30_000.0;
 /// Marker for the water surface entity.
 #[derive(Component)]
 struct WaterSurface;
+
+/// The one material every water surface is drawn with: the sea's, shared
+/// by the lakes and rivers the mesh regions build.
+#[derive(Resource)]
+pub struct WaterMaterial(pub Handle<StandardMaterial>);
 
 pub struct WaterPlugin;
 
@@ -62,6 +64,7 @@ fn setup_water_surface(
         cull_mode: None,
         ..default()
     });
+    commands.insert_resource(WaterMaterial(material.clone()));
 
     commands.spawn((
         Mesh3d(mesh),

@@ -251,10 +251,21 @@ pub struct SummaryMeshState {
     pub base_normals: Vec<[f32; 3]>,
     pub base_indices: Vec<u32>,
     pub base_tri_count: u32,
+    /// The water standing over the region, built with the ground and drawn
+    /// as a child of its entity, so it lives and dies with the ground.
+    pub base_water: WaterGeometry,
     /// The last build yielded nothing — a cell or ring cell had no data
     /// yet. Retried when data arrives, not on every run: retrying every
     /// frame would take the build slots from regions that can be built.
     pub waiting: bool,
+}
+
+/// Raw geometry of the water over a mesh region; empty where none stands.
+#[derive(Clone, Default)]
+pub struct WaterGeometry {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
 }
 
 /// Result from an async summary mesh build task: raw geometry, turned into
@@ -265,6 +276,7 @@ pub struct SummaryMeshBuildResult {
     pub indices: Vec<u32>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,
+    pub water: WaterGeometry,
 }
 
 /// Tracks mesh state for all summary mesh regions.
@@ -279,6 +291,10 @@ pub struct SummaryMeshes {
 pub struct SummaryMesh {
     pub region_key: MeshRegionKey,
 }
+
+/// Marker component for the water mesh under a summary mesh entity.
+#[derive(Component)]
+pub struct WaterMesh;
 
 /// Where a cached region's values came from. Values are identical across
 /// producers (same 7-sample rule over the same elevation field) — provenance

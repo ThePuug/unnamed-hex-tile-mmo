@@ -459,6 +459,7 @@ pub fn dispatch_summary_tasks(
                     base_normals: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
+                    base_water: Default::default(),
                     waiting: false,
                 },
             );
@@ -613,14 +614,25 @@ fn collect_and_build_summary_mesh(
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
+        water: Default::default(),
     };
 
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
 
+    // The water over the region, built once the ground is: at r = 0 the
+    // map's per-tile surface; summaries carry none yet, so above it nothing.
+    let with_water = |smr: &common_bevy::summary_mesh::SummaryMeshResult, water: &dyn Fn(i32, i32) -> Option<i32>| {
+        let mut result = smr_to_result(smr);
+        let w = common_bevy::summary_mesh::build_water_mesh_region(radius, region_key, water);
+        result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
+        result
+    };
+
     if radius == 0 {
+        let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &tile_z)
             .as_ref()
-            .map_or(empty, smr_to_result);
+            .map_or(empty, |smr| with_water(smr, &tile_water));
     }
 
     // The builder also reads the ring of cells around the region, which
@@ -658,6 +670,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
+        water: Default::default(),
     }
 }
 
@@ -698,6 +711,7 @@ pub fn poll_summary_meshes(
     mut tri_stats: ResMut<LodTriangleStats>,
     mut terrain_material: ResMut<TerrainMaterial>,
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
+    water_material: Res<crate::plugins::water::WaterMaterial>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("sum_poll");
@@ -715,6 +729,7 @@ pub fn poll_summary_meshes(
                 state.base_normals = result.normals;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
+                state.base_water = result.water;
                 state.waiting = result.tri_count == 0;
                 to_upload.push(region_key);
             }
@@ -736,6 +751,7 @@ pub fn poll_summary_meshes(
         normals: Vec<[f32; 3]>,
         indices: Vec<u32>,
         tri_count: u32,
+        water: crate::resources::WaterGeometry,
     }
 
     let builds: Vec<MeshBuild> = to_upload
@@ -748,6 +764,7 @@ pub fn poll_summary_meshes(
                 normals: state.base_normals.clone(),
                 indices: state.base_indices.clone(),
                 tri_count: state.base_tri_count,
+                water: state.base_water.clone(),
             })
         })
         .collect();
@@ -765,9 +782,12 @@ pub fn poll_summary_meshes(
         state.mesh_handle = Some(mesh_handle.clone());
         state.tri_count = build.tri_count;
 
-        match state.entity {
+        let entity = match state.entity {
             Some(entity) => {
                 commands.entity(entity).insert(Mesh3d(mesh_handle));
+                // The water is the ground's child: rebuilt with it.
+                commands.entity(entity).despawn_related::<Children>();
+                entity
             }
             None => {
                 let entity = commands
@@ -779,7 +799,19 @@ pub fn poll_summary_meshes(
                     ))
                     .id();
                 state.entity = Some(entity);
+                entity
             }
+        };
+
+        if !build.water.indices.is_empty() {
+            let water = build_bevy_mesh(&build.water.positions, &build.water.normals, &build.water.indices);
+            commands.entity(entity).with_child((
+                Mesh3d(meshes.add(water)),
+                MeshMaterial3d(water_material.0.clone()),
+                Transform::IDENTITY,
+                bevy_light::NotShadowCaster,
+                crate::resources::WaterMesh,
+            ));
         }
     }
 

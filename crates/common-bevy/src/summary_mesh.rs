@@ -176,6 +176,95 @@ pub fn build_summary_mesh_region(
     })
 }
 
+/// Build the water of a mesh region at `radius`: a flat hexagon at its
+/// surface over every cell with water, and a curtain down each edge that
+/// does not meet a flooded neighbour at the same surface, so a river
+/// stepping down reads as a fall and a bank the rounding left half a step
+/// low shows no gap under the water's edge. `water(sq, sr)` is the surface
+/// over a cell as a z-level, or None where it is dry or unknown. Water at
+/// zero is not built: the sea is one plane drawn to the horizon. Sinks by
+/// the level's depth bias with the ground, and is empty where nothing is
+/// flooded.
+pub fn build_water_mesh_region(
+    radius: u32,
+    region_key: MeshRegionKey,
+    water: &dyn Fn(i32, i32) -> Option<i32>,
+) -> SummaryMeshResult {
+    let lattice = summary_lattice(radius);
+    let region_lat = mesh_region_lattice();
+    let region_id = (region_key.mn, region_key.mm);
+
+    let region_center = region_lat.cell_center(region_id);
+    let (origin_cq, origin_cr) = lattice.cell_center(region_center);
+    let (origin_wx, origin_wz) = flat_top_tile_center(origin_cq, origin_cr, 1.0);
+    let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
+
+    let bias = level_depth_bias(radius);
+    let offsets = corner_offsets(lattice.scale as f32);
+    // A surface at a step lies between that step's ground and the one
+    // below it: the tiles below the step are under it, the tiles at it dry.
+    let surface_y = |w: i32| height_y(w as f32 - 0.5) - bias;
+    // The drop that hides a dry neighbour's ground standing a rounding's
+    // half step under the water's edge.
+    let bank_drop = height_y(0.0) - height_y(-1.0);
+
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let push = |positions: &mut Vec<[f32; 3]>, normals: &mut Vec<[f32; 3]>, p: Vec3, n: Vec3| -> u32 {
+        let v = p - mesh_origin;
+        positions.push([v.x, v.y, v.z]);
+        normals.push([n.x, n.y, n.z]);
+        (positions.len() - 1) as u32
+    };
+
+    for cell in region_lat.tiles_in_cell(region_id) {
+        let Some(w) = water(cell.0, cell.1).filter(|&w| w > 0) else { continue };
+        let (cq, cr) = lattice.cell_center(cell);
+        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+        let y = surface_y(w);
+        let ci = push(&mut positions, &mut normals, Vec3::new(wx, y, wz), Vec3::Y);
+        let corners = offsets.map(|o| Vec3::new(wx + o.x, y, wz + o.y));
+        let mut idx = [0u32; 6];
+        for i in 0..6 {
+            idx[i] = push(&mut positions, &mut normals, corners[i], Vec3::Y);
+        }
+        for i in 0..6 {
+            let j = (i + 1) % 6;
+            indices.extend([ci, idx[j], idx[i]]);
+        }
+
+        // Edge (i, i+1) faces the first neighbour listed for corner i.
+        for i in 0..6 {
+            let d = CORNER_NEIGHBOURS[i][0];
+            let facing = water(cell.0 + d.0, cell.1 + d.1);
+            let bottom = match facing {
+                Some(nw) if nw >= w => continue,
+                Some(nw) => surface_y(nw.max(0)),
+                None => y - bank_drop,
+            };
+            let j = (i + 1) % 6;
+            let (top0, top1) = (corners[i], corners[j]);
+            let (bot0, bot1) = (Vec3::new(top0.x, bottom, top0.z), Vec3::new(top1.x, bottom, top1.z));
+            let outward = (top1 - top0).normalize_or_zero().cross(Vec3::NEG_Y).normalize_or_zero();
+            let n = if outward.length_squared() > 0.5 { outward } else { Vec3::Z };
+            let base = positions.len() as u32;
+            for p in [top0, top1, bot1, bot0] {
+                push(&mut positions, &mut normals, p, n);
+            }
+            indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+
+    SummaryMeshResult {
+        tri_count: indices.len() as u32 / 3,
+        positions,
+        normals,
+        indices,
+        mesh_origin,
+    }
+}
+
 /// Enumerate mesh regions within a distance band that overlap loaded chunks.
 
 /// `camera_wx/wz`: camera world position (XZ plane).
@@ -411,6 +500,44 @@ mod tests {
     #[test]
     fn build_returns_none_when_no_data() {
         assert!(build_summary_mesh_region(1, REGION, &|_, _| None).is_none());
+    }
+
+    /// Water is a flat fan over each flooded cell at its surface, half a
+    /// step under the ground's height at that step; the sea builds nothing;
+    /// a curtain hangs under every edge but one shared with a neighbour at
+    /// the same surface, down to a lower neighbour's surface.
+    #[test]
+    fn water_is_flat_at_its_surface_with_curtains_to_lower_water() {
+        let dry = build_water_mesh_region(0, MeshRegionKey { r: 0, mn: 0, mm: 0 }, &|_, _| None);
+        assert_eq!(dry.tri_count, 0);
+        let sea = build_water_mesh_region(0, MeshRegionKey { r: 0, mn: 0, mm: 0 }, &|_, _| Some(0));
+        assert_eq!(sea.tri_count, 0, "the sea is the plane's, not the region's");
+
+        // Two flooded cells side by side at one surface, a third beside them a step lower.
+        let water = |q: i32, r: i32| match (q, r) {
+            (0, 0) | (1, 0) => Some(4),
+            (2, 0) => Some(3),
+            _ => None,
+        };
+        let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
+        let built = build_water_mesh_region(0, key, &water);
+        // Three fans of six, and a curtain on every edge but the one shared
+        // at one surface and the lower cell's edge under the higher one's
+        // drop: 5 + 5 + 5 quads.
+        assert_eq!(built.tri_count, 3 * 6 + 2 * (5 + 5 + 5));
+        let ys: Vec<f32> = built
+            .positions
+            .iter()
+            .zip(&built.normals)
+            .filter(|(_, n)| n[1] > 0.5)
+            .map(|(p, _)| p[1])
+            .collect();
+        let expect = |w: i32| height_y(w as f32 - 0.5);
+        for y in &ys {
+            assert!((y - expect(4)).abs() < 1e-4 || (y - expect(3)).abs() < 1e-4, "surface at {y}");
+        }
+        assert!(ys.iter().any(|y| (y - expect(4)).abs() < 1e-4) && ys.iter().any(|y| (y - expect(3)).abs() < 1e-4));
+        assert!(expect(4) < height_y(4.0) && expect(4) > height_y(3.0), "a surface at a step sits between that step's ground and the one below");
     }
 
     #[test]
