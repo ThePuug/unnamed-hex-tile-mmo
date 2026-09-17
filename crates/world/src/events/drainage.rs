@@ -179,6 +179,10 @@ pub struct DrainageNode {
     pub down: Option<NodeKey>,
     /// Index into the cell's lakes when this node is flooded.
     pub lake: Option<usize>,
+    /// This node is a lake's outlet: the sill whose height is the lake's
+    /// surface. A valley cut here would drain the lake, so dissection cuts
+    /// none.
+    pub sill: bool,
 }
 
 /// A channel: nodes in downstream order, and where the last one drains.
@@ -369,6 +373,10 @@ impl Routing {
             });
         }
 
+        // Every lake in the window, not only the owned ones: an outlet is
+        // owned by whichever cell holds the rim node, and that cell may own
+        // no flooded node of the lake it drains.
+        let sills: HashSet<usize> = self.lakes.iter().filter_map(|l| l.outlet).collect();
         let mut nodes = HashMap::new();
         for k in 0..self.keys.len() {
             if !self.owned[k] || matches!(self.kind[k], Kind::Sea | Kind::Edge) {
@@ -391,6 +399,7 @@ impl Routing {
                     base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
                     lake: self.lake_of[k].and_then(|id| lake_local.get(&id).copied()),
+                    sill: sills.contains(&k),
                 },
             );
         }

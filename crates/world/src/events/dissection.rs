@@ -16,11 +16,13 @@
 //! belt with a trunk river through it has a gorge.
 //!
 //! A river cuts toward its base level and never below it: the sea, or the
-//! lake it ends in, so flooded ground is never cut. A floor is the envelope
-//! less a share of its height above base level, and that share saturates
-//! below one, so a graded trunk keeps the fall that keeps it flowing. Along
-//! a reach the floor never rises, because the envelope falls downstream and
-//! the share grows with the water; a test holds it.
+//! lake it ends in, so flooded ground is never cut. A lake's outlet is its
+//! sill, uncut, since a cut there drains the lake the routing filled; the
+//! river leaving a lake cuts from the first node downstream. A floor is the
+//! envelope less a share of its height above base level, and that share
+//! saturates below one, so a graded trunk keeps the fall that keeps it
+//! flowing. Along a reach the floor never rises, because the envelope falls
+//! downstream and the share grows with the water; a test holds it.
 //!
 //! A valley reaches half the node spacing to each side, so neighbouring
 //! valleys meet at their divide, and where two overlap the deeper stands.
@@ -98,8 +100,13 @@ pub fn profile(u: f64) -> f64 {
 }
 
 /// The depth a channel has cut at a node: its share of the node's height
-/// above base level. Nothing on flooded ground, which lies below its base.
+/// above base level. Nothing on flooded ground, which lies below its base,
+/// and nothing at a lake's sill, which holds the lake's surface: the river
+/// leaving a lake cuts from the first node downstream.
 pub fn depth_at(node: &DrainageNode) -> f64 {
+    if node.sill {
+        return 0.0;
+    }
     (node.elevation - node.base).max(0.0) * relief_share(node.catchment)
 }
 
@@ -322,6 +329,19 @@ mod tests {
                 assert_eq!(depth_at(n), 0.0, "a flooded node cut at {:?}", n.key);
             }
         }
+        let mut sills = 0;
+        for lake in &published.lakes {
+            let Some(outlet) = lake.outlet.and_then(|o| published.nodes.get(&o)) else { continue };
+            sills += 1;
+            assert!(outlet.sill, "a lake's outlet not marked as its sill at {:?}", outlet.key);
+            assert_eq!(depth_at(outlet), 0.0, "a sill cut at {:?}", outlet.key);
+            assert!(outlet.elevation >= lake.surface - 1e-9, "a sill below its lake's surface at {:?}", outlet.key);
+            let next = outlet.down.and_then(|d| published.nodes.get(&d));
+            if let Some(next) = next {
+                assert!(next.elevation - depth_at(next) <= outlet.elevation + 1e-9, "a floor rising past a sill at {:?}", next.key);
+            }
+        }
+        assert!(sills > 0, "no lake in the spawn cell drains through an outlet the cell owns");
         let valleys = Valleys::new(&[&published], |_| true);
         for n in published.nodes.values() {
             let (x, y) = node_world(n.key);
