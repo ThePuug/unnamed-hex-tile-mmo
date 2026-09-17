@@ -59,6 +59,19 @@ pub const LEDGE_GRAB_THRESHOLD: f32 = 0.0;
 /// Maximum entity count per tile before considering it solid
 pub const MAX_ENTITIES_PER_TILE: usize = 7;
 
+/// The depth of water a walker wades, in z-levels: one, the same step that
+/// bounds a climb. Deeper water is not entered; crossing it, by swimming, a
+/// ford, a bridge or a boat, is undesigned, so it blocks.
+pub const WADE_DEPTH: i32 = 1;
+
+/// Whether a tile stands under more water than a walker wades.
+pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
+    match (map.water_at(q, r), map.get_by_qr(q, r)) {
+        (Some(surface), Some((floor, _))) => surface - floor.z > WADE_DEPTH,
+        _ => false,
+    }
+}
+
 // ===== Terrain Helpers =====
 
 /// Compute terrain height at the entity's tile, given the floor Qrz.
@@ -242,6 +255,7 @@ pub fn clamp_to_floor(
 /// - Cliff transition (elevation diff > 1 going upward, unless jumping high enough)
 /// - Solid decorator with no valid floor nearby
 /// - Entity stacking (>= MAX_ENTITIES_PER_TILE entities)
+/// - Water deeper than a walker wades
 pub fn is_tile_blocked(
     current_tile: Qrz,
     current_offset: Vec3,
@@ -293,7 +307,7 @@ pub fn is_tile_blocked(
         false
     };
 
-    is_cliff_transition || is_blocked_by_solid
+    is_cliff_transition || is_blocked_by_solid || is_deep_water(map, next_hx.q, next_hx.r)
 }
 
 /// Process multiple physics timesteps.
@@ -405,7 +419,7 @@ pub fn calculate_movement(
             };
 
             let is_blocked_by_solid = exact_is_solid && next_floor.is_none();
-            let is_blocked = is_cliff_transition || is_blocked_by_solid;
+            let is_blocked = is_cliff_transition || is_blocked_by_solid || is_deep_water(map, next_hx.q, next_hx.r);
 
             if is_blocked {
                 rel_px * HERE
@@ -581,6 +595,38 @@ mod tests {
             output.position.offset.x > 0.0,
             "Stationary entity with east heading should move in +X direction"
         );
+    }
+
+    /// A step of water is waded and deeper water blocks: the next tile
+    /// under one step of water is entered, under two it is not, and a dry
+    /// tile beside a flooded one is unaffected.
+    #[test]
+    fn deep_water_blocks_and_shallow_water_is_waded() {
+        let map = create_test_map();
+        let nntree = create_test_nntree();
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        for (q, r) in [(0, 0), (1, 0), (2, 0), (-1, 0)] {
+            map.insert(Qrz { q, r, z: 0 }, ground);
+        }
+        map.set_water(1, 0, Some(1));
+        map.set_water(2, 0, Some(2));
+        assert!(!is_deep_water(&map, 1, 0), "a step of water is waded");
+        assert!(is_deep_water(&map, 2, 0), "two steps of water block");
+        assert!(!is_deep_water(&map, -1, 0), "dry ground is dry");
+
+        let toward = |dest: Qrz| MovementInput {
+            position: Position::at_tile(Qrz { q: 0, r: 0, z: 0 }),
+            heading: Heading::new(dest),
+            destination: dest,
+            airtime: None,
+            movement_speed: MOVEMENT_SPEED,
+        };
+        let wade = calculate_movement(toward(Qrz { q: 1, r: 0, z: 0 }), 125, &map, &nntree);
+        assert!(wade.position.offset.x > 0.0, "walks into a step of water");
+
+        map.set_water(1, 0, Some(2));
+        let blocked = calculate_movement(toward(Qrz { q: 1, r: 0, z: 0 }), 125, &map, &nntree);
+        assert!(blocked.position.offset.x < wade.position.offset.x, "held back by deep water");
     }
 
     // ===== Vertical Movement Tests =====
