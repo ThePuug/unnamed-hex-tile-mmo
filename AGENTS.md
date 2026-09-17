@@ -165,6 +165,14 @@ on `Loc`. Membership is automatic — `on_add`/`on_remove` hooks plus re-insert 
 squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
 100.
 
+**Water.** A tile's water is one surface, a z-level, published by dissection
+and rounded once, in `Composite::water_at`: surface and ground round to the
+same steps, a surface's step covers the tiles below it and leaves the tiles
+at it dry, so a dry tile has none. `Map::water_at` holds it apart from the
+ground so either may arrive first; `movement::is_deep_water` is the one entry
+rule. Water at zero is never built: the sea is the client's one plane, and a
+channel or lake surface at zero is under it.
+
 ## Pinned system ordering
 
 Ordering appears in about twenty places, most of it UI setup chaining off
