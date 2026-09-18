@@ -36,11 +36,15 @@ pub const ATTRIBUTE_SKIN: MeshVertexAttribute =
     MeshVertexAttribute::new("Skin", 0xC3_47_12_02, VertexFormat::Float32x3);
 
 /// The glTF loader with the attributes a worn piece ships; it drops any it
-/// is not told of.
+/// is not told of. The glTF crate hands the loader a custom attribute's
+/// name with its leading underscore stripped, so both spellings are
+/// registered.
 pub fn gltf_plugin() -> GltfPlugin {
     GltfPlugin::default()
         .add_custom_vertex_attribute("_CENTRE", ATTRIBUTE_CENTRE)
+        .add_custom_vertex_attribute("CENTRE", ATTRIBUTE_CENTRE)
         .add_custom_vertex_attribute("_SKIN", ATTRIBUTE_SKIN)
+        .add_custom_vertex_attribute("SKIN", ATTRIBUTE_SKIN)
 }
 
 /// A region of the body: behind every plane, a point with its outward
