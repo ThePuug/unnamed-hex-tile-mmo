@@ -231,6 +231,19 @@ impl Map {
         }
         verts
     }
+
+    /// The face between two neighbours: its unit normal from `here` into
+    /// `next` and its midpoint, in the ground plane (`qrz::Map::face`).
+    pub fn face(&self, here: Qrz, next: Qrz) -> (Vec2, Vec2) {
+        self.geo.face(here, next)
+    }
+
+    /// Where a ray from `from` in `here` along `dir` leaves the tile: the
+    /// distance to the first face and the neighbour across it
+    /// (`qrz::Map::exit`).
+    pub fn exit(&self, from: Vec2, dir: Vec2, here: Qrz) -> (f32, Qrz) {
+        self.geo.exit(from, dir, here)
+    }
 }
 
 impl Convert<Qrz, Vec3> for Map {

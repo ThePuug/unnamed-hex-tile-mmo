@@ -42,7 +42,7 @@ use std::{
     f64::consts::SQRT_3
 };
 
-use glam::Vec3;
+use glam::{Vec2, Vec3, Vec3Swizzles};
 use derive_more::*;
 
 use crate::qrz::{ self, Qrz };
@@ -192,6 +192,38 @@ pub fn get(&self, qrz: Qrz) -> Option<&T> {
                 center + Vec3 { x: 0., y: self.rise, z: 0. },            // Center
             ],
         }
+    }
+
+    /// The face between `here` and its neighbour `next`, in the ground plane
+    /// (x, z): the unit normal from `here` into `next`, and the midpoint. A
+    /// face is the perpendicular bisector of the two centres.
+    pub fn face(&self, here: Qrz, next: Qrz) -> (Vec2, Vec2) {
+        let a: Vec3 = self.convert(here);
+        let b: Vec3 = self.convert(next);
+        let (a, b) = (a.xz(), b.xz());
+        ((b - a).normalize(), (a + b) * 0.5)
+    }
+
+    /// Where a ray from `from`, a ground-plane point in `here`, along `dir`
+    /// leaves the tile: the multiple of `dir` to the first face it meets,
+    /// world units for a unit `dir`, and the neighbour across that face. A
+    /// point a hair past a face, as rounding leaves it, exits through it at
+    /// zero. A ray meeting no face, `dir` zero, returns infinity and `here`.
+    pub fn exit(&self, from: Vec2, dir: Vec2, here: Qrz) -> (f32, Qrz) {
+        let mut nearest = (f32::INFINITY, here);
+        for offset in qrz::DIRECTIONS {
+            let next = here + offset;
+            let (normal, mid) = self.face(here, next);
+            let toward = dir.dot(normal);
+            if toward <= 0. {
+                continue;
+            }
+            let distance = (mid - from).dot(normal).max(0.) / toward;
+            if distance < nearest.0 {
+                nearest = (distance, next);
+            }
+        }
+        nearest
     }
 
     /// Estimate heap bytes used by the internal BTreeMap + HashMap + flat index.
@@ -475,5 +507,54 @@ mod tests {
         let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::PointyTop);
         let pos = map.convert(Qrz { q: 1, r: 0, z: 0 });
         assert!(pos.x > 0.0, "Pointy-top q=1 should have positive X");
+    }
+
+    /// A face's normal points from the tile's centre to its neighbour's, and
+    /// the face lies halfway between them, in either orientation.
+    #[test]
+    fn a_face_bisects_the_centres() {
+        for orientation in [HexOrientation::FlatTop, HexOrientation::PointyTop] {
+            let map: Map<i32> = Map::new(2.0, 0.8, orientation);
+            let here = Qrz { q: 3, r: -2, z: 0 };
+            for offset in qrz::DIRECTIONS {
+                let next = here + offset;
+                let (normal, mid) = map.face(here, next);
+                let a: Vec3 = map.convert(here);
+                let b: Vec3 = map.convert(next);
+                assert!((normal.length() - 1.).abs() < 1e-6);
+                assert!(normal.dot((b.xz() - a.xz()).normalize()) > 1. - 1e-6);
+                assert!(mid.distance(a.xz()) - mid.distance(b.xz()) < 1e-6);
+            }
+        }
+    }
+
+    /// From the centre, a ray straight at a neighbour leaves through that
+    /// face at the inradius; a ray at a corner leaves at the circumradius,
+    /// farther; a ray from a hair past a face leaves through it at once.
+    #[test]
+    fn a_ray_leaves_through_the_face_it_meets_first() {
+        let map: Map<i32> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
+        let here = Qrz { q: 0, r: 0, z: 0 };
+        let centre: Vec3 = map.convert(here);
+        let inradius = (SQRT_3 / 2.) as f32;
+
+        for offset in qrz::DIRECTIONS {
+            let (normal, _) = map.face(here, here + offset);
+            let (distance, next) = map.exit(centre.xz(), normal, here);
+            assert_eq!(next, here + offset);
+            assert!((distance - inradius).abs() < 1e-5, "{distance}");
+        }
+
+        let corner = map.vertices(here)[0].xz() - centre.xz();
+        let (distance, _) = map.exit(centre.xz(), corner.normalize(), here);
+        assert!((distance - 1.).abs() < 1e-5, "{distance}");
+        assert!(distance > inradius);
+
+        let east = here + qrz::DIRECTIONS[3];
+        let (normal, mid) = map.face(here, east);
+        let (distance, next) = map.exit(mid + normal * 1e-4, normal, here);
+        assert_eq!((distance, next), (0., east));
+
+        assert_eq!(map.exit(centre.xz(), Vec2::ZERO, here), (f32::INFINITY, here));
     }
 }

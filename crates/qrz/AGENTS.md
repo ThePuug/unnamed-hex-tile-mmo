@@ -102,6 +102,8 @@ pub struct Map<T> {
 - `neighbors(qrz) -> Vec<(Qrz, T)>` - Adjacent hexes, filtered to walkable elevation (`|Δz| ≤ 1`)
 - `line(&a, &b) -> Vec<Qrz>` - Hexes along a line
 - `vertices(qrz) -> Vec<Vec3>` - **7** positions: 6 outer vertices clockwise, then the center. Flat-top order is `[NE, E, SE, SW, W, NW, Center]`; pointy-top is `[N, NE, SE, S, SW, NW, Center]`
+- `face(here, next) -> (Vec2, Vec2)` - The face between neighbours in the ground plane (x, z): unit normal from `here` into `next`, and midpoint
+- `exit(from, dir, here) -> (f32, Qrz)` - Where a ground-plane ray leaves `here`: distance along `dir` to the first face, and the neighbour across it. Zero for a point already a hair past a face
 
 ### `Convert<T, U>` Trait
 
