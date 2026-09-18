@@ -4,26 +4,31 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// A garment the asset build makes, cut for every body that can wear it.
+/// A piece the asset build makes, cut for every body that can wear it: a
+/// garment of the leather set, or a plate of the kit.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Piece {
     LeatherHood,
     LeatherVest,
+    PlateCuirass,
     LeatherGloves,
     LeatherGirdle,
     LeatherPants,
     LeatherBoots,
+    SwordBreaker,
 }
 
 impl Piece {
     /// Every piece, in slot order.
-    pub const ALL: [Piece; 6] = [
+    pub const ALL: [Piece; 8] = [
         Piece::LeatherHood,
         Piece::LeatherVest,
+        Piece::PlateCuirass,
         Piece::LeatherGloves,
         Piece::LeatherGirdle,
         Piece::LeatherPants,
         Piece::LeatherBoots,
+        Piece::SwordBreaker,
     ];
 
     /// The asset's name: the stem of `models/<name>-<actor>.glb`, and the
@@ -32,10 +37,22 @@ impl Piece {
         match self {
             Piece::LeatherHood => "leather-hood",
             Piece::LeatherVest => "leather-vest",
+            Piece::PlateCuirass => "plate-cuirass",
             Piece::LeatherGloves => "leather-gloves",
             Piece::LeatherGirdle => "leather-girdle",
             Piece::LeatherPants => "leather-pants",
             Piece::LeatherBoots => "leather-boots",
+            Piece::SwordBreaker => "sword-breaker",
+        }
+    }
+
+    /// How many styles the piece is made in: the glTF scenes its asset
+    /// holds, one outfit each. The leather set comes in three; the plate
+    /// kit in one.
+    pub fn styles(self) -> u8 {
+        match self {
+            Piece::PlateCuirass | Piece::SwordBreaker => 1,
+            _ => STYLES,
         }
     }
 
@@ -44,11 +61,12 @@ impl Piece {
     pub fn slot(self) -> Slot {
         match self {
             Piece::LeatherHood => Slot::Head,
-            Piece::LeatherVest => Slot::Torso,
+            Piece::LeatherVest | Piece::PlateCuirass => Slot::Torso,
             Piece::LeatherGloves => Slot::Hands,
             Piece::LeatherGirdle => Slot::Waist,
             Piece::LeatherPants => Slot::Legs,
             Piece::LeatherBoots => Slot::Feet,
+            Piece::SwordBreaker => Slot::OffHand,
         }
     }
 
@@ -56,10 +74,12 @@ impl Piece {
         match self {
             Piece::LeatherHood => "Leather Hood",
             Piece::LeatherVest => "Leather Vest",
+            Piece::PlateCuirass => "Plate Cuirass",
             Piece::LeatherGloves => "Leather Gloves",
             Piece::LeatherGirdle => "Leather Girdle",
             Piece::LeatherPants => "Leather Pants",
             Piece::LeatherBoots => "Leather Boots",
+            Piece::SwordBreaker => "Sword-breaker",
         }
     }
 }
@@ -72,10 +92,13 @@ pub enum Slot {
     Waist,
     Legs,
     Feet,
+    OffHand,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 6] = [Slot::Head, Slot::Torso, Slot::Hands, Slot::Waist, Slot::Legs, Slot::Feet];
+    pub const ALL: [Slot; 7] = [Slot::Head, Slot::Torso, Slot::Hands, Slot::Waist, Slot::Legs, Slot::Feet, Slot::OffHand];
+    /// The slots a garment goes in, down the body; the rest are held.
+    pub const BODY: [Slot; 6] = [Slot::Head, Slot::Torso, Slot::Hands, Slot::Waist, Slot::Legs, Slot::Feet];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -85,6 +108,8 @@ impl Slot {
             Slot::Waist => "Waist",
             Slot::Legs => "Legs",
             Slot::Feet => "Feet",
+            Slot::OffHand => "Off
+hand",
         }
     }
 
@@ -93,8 +118,8 @@ impl Slot {
     }
 }
 
-/// The styles every piece is made in: the set's seeds, one outfit each,
-/// which are the piece's glTF scenes in order.
+/// The styles the leather set is made in: its seeds, one outfit each,
+/// which are a piece's glTF scenes in order (`Piece::styles`).
 pub const STYLES: u8 = 3;
 
 /// A piece in a style.
@@ -108,7 +133,7 @@ pub struct Item {
 /// client that sees the actor.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Equipment {
-    worn: [Option<Item>; 6],
+    worn: [Option<Item>; 7],
 }
 
 impl Equipment {
@@ -151,7 +176,7 @@ impl Inventory {
     pub fn every_piece() -> Self {
         let items = Piece::ALL
             .iter()
-            .flat_map(|&piece| (0..STYLES).map(move |style| Item { piece, style }))
+            .flat_map(|&piece| (0..piece.styles()).map(move |style| Item { piece, style }))
             .collect();
         Self { items }
     }
@@ -201,15 +226,16 @@ mod tests {
     #[test]
     fn every_piece_fills_the_bag_slot_by_slot() {
         let bag = Inventory::every_piece();
-        assert_eq!(bag.items.len(), Piece::ALL.len() * STYLES as usize);
+        assert_eq!(bag.items.len(), Piece::ALL.iter().map(|p| p.styles() as usize).sum::<usize>());
         let slots: Vec<Slot> = bag.items.iter().map(|i| i.piece.slot()).collect();
         let mut sorted = slots.clone();
         sorted.sort_by_key(|s| s.index());
         assert_eq!(slots, sorted);
         for piece in Piece::ALL {
-            for style in 0..STYLES {
+            for style in 0..piece.styles() {
                 assert!(bag.contains(item(piece, style)));
             }
+            assert!(!bag.contains(item(piece, piece.styles())));
         }
     }
 

@@ -14,6 +14,7 @@ use common_bevy::{
     components::{
         behaviour::Behaviour,
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
+        equipment::{Equipment, Item, Piece},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
             EntityType,
@@ -107,6 +108,11 @@ fn spawn_engagement(
                 common_bevy::components::loaded_by::LoadedBy::default(),
             ))
             .id();
+        // An NPC wears what the server gives it, with no bag and no asking.
+        let worn = kit(archetype);
+        if worn.items().next().is_some() {
+            commands.entity(npc_entity).insert(worn);
+        }
 
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => {
@@ -159,4 +165,15 @@ fn get_random_hex_offset(index: usize) -> Qrz {
         Qrz { q: -1, r: 1, z: 0 },
     ];
     directions[index % directions.len()]
+}
+
+/// What an NPC of `archetype` wears: the Defender its plate cuirass and
+/// sword-breaker; the rest go bare.
+fn kit(archetype: EnemyArchetype) -> Equipment {
+    let mut worn = Equipment::default();
+    if archetype == EnemyArchetype::Defender {
+        worn.wear(Item { piece: Piece::PlateCuirass, style: 0 });
+        worn.wear(Item { piece: Piece::SwordBreaker, style: 0 });
+    }
+    worn
 }

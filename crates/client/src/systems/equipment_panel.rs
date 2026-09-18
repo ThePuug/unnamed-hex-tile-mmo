@@ -79,49 +79,15 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 ..default()
             })
             .with_children(|row| {
-                // The six slots, squares stacked down the closeup's left.
+                // The body's six slots, squares stacked down the closeup's left.
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.),
                     ..default()
                 })
                 .with_children(|slots| {
-                    for slot in Slot::ALL {
-                        slots
-                            .spawn((
-                                Node {
-                                    width: Val::Px(SLOT),
-                                    height: Val::Px(SLOT),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(2.)),
-                                    border_radius: BorderRadius::all(Val::Px(4.)),
-                                    ..default()
-                                },
-                                BackgroundColor(OTHER_ROW),
-                                BorderColor::all(UNWORN),
-                            ))
-                            .with_children(|cell| {
-                                // Placed absolutely so that, hidden, it leaves the
-                                // name centred rather than pushed aside.
-                                cell.spawn((
-                                    SlotIcon { slot, shown: None },
-                                    ImageNode::default(),
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        width: Val::Px(SLOT - 8.0),
-                                        height: Val::Px(SLOT - 8.0),
-                                        ..default()
-                                    },
-                                    Visibility::Hidden,
-                                ));
-                                cell.spawn((
-                                    SlotText(slot),
-                                    Text::new(slot.name()),
-                                    TextFont { font_size: 11.0, ..default() },
-                                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                ));
-                            });
+                    for slot in Slot::BODY {
+                        slot_square(slots, slot);
                     }
                 });
 
@@ -140,16 +106,16 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                     BorderColor::all(UNWORN),
                 ));
 
-                // Down the closeup's right, five squares held for accessories and,
-                // under them, the main hand and the off hand side by side, held
-                // for weapons. Both are unbuilt, so nothing fills them yet.
+                // Down the closeup's right, five squares held for accessories,
+                // which are unbuilt, and under them the main hand, held for a
+                // weapon, and the off hand, which holds a shield.
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.),
                     ..default()
                 })
                 .with_children(|slots| {
-                    for _ in 0..Slot::ALL.len() - 1 {
+                    for _ in 0..Slot::BODY.len() - 1 {
                         slots.spawn(held_square());
                     }
                     slots
@@ -159,18 +125,15 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                             ..default()
                         })
                         .with_children(|hands| {
-                            for name in ["Main
-hand", "Off
-hand"] {
-                                hands.spawn(held_square()).with_children(|cell| {
-                                    cell.spawn((
-                                        Text::new(name),
-                                        TextFont { font_size: 11.0, ..default() },
-                                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                        TextLayout::new_with_justify(Justify::Center),
-                                    ));
-                                });
-                            }
+                            hands.spawn(held_square()).with_children(|cell| {
+                                cell.spawn((
+                                    Text::new("Main\nhand"),
+                                    TextFont { font_size: 11.0, ..default() },
+                                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                                    TextLayout::new_with_justify(Justify::Center),
+                                ));
+                            });
+                            slot_square(hands, Slot::OffHand);
                         });
                 });
             });
@@ -195,6 +158,47 @@ hand"] {
                     },
                 ));
             });
+        });
+}
+
+/// A slot's square under `parent`: its item's icon, or the slot's name while
+/// it is empty.
+fn slot_square(parent: &mut ChildSpawnerCommands, slot: Slot) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Px(SLOT),
+                height: Val::Px(SLOT),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(2.)),
+                border_radius: BorderRadius::all(Val::Px(4.)),
+                ..default()
+            },
+            BackgroundColor(OTHER_ROW),
+            BorderColor::all(UNWORN),
+        ))
+        .with_children(|cell| {
+            // Placed absolutely so that, hidden, it leaves the name centred
+            // rather than pushed aside.
+            cell.spawn((
+                SlotIcon { slot, shown: None },
+                ImageNode::default(),
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Px(SLOT - 8.0),
+                    height: Val::Px(SLOT - 8.0),
+                    ..default()
+                },
+                Visibility::Hidden,
+            ));
+            cell.spawn((
+                SlotText(slot),
+                Text::new(slot.name()),
+                TextFont { font_size: 11.0, ..default() },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
         });
 }
 
