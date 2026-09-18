@@ -202,6 +202,8 @@ impl EdgeOutline {
 pub struct PlateOutline {
     pub id: PlateId,
     pub continental: bool,
+    /// The plate's age, as `tectonic::Plate::age`.
+    pub age: f64,
     pub edges: Vec<EdgeOutline>,
 }
 
@@ -258,6 +260,7 @@ impl Outlines {
                 let outline = plates.entry(plate.id).or_insert_with(|| PlateOutline {
                     id: plate.id,
                     continental: plate.continental,
+                    age: plate.age,
                     edges: Vec::new(),
                 });
                 // An oceanic plate carries no wedge: its crust has nothing to
@@ -330,7 +333,6 @@ impl Outlines {
         }
         None
     }
-
     /// Elevation the ranges add at a position, in z-levels: the strongest
     /// wedge of the convergent edges of the plate the position stands in,
     /// each ending against every other edge of the plate. A wedge ends
@@ -340,8 +342,15 @@ impl Outlines {
     /// convergence.
     pub fn relief(&self, x: f64, y: f64) -> f64 {
         let Some((plate, distances)) = self.at(x, y) else { return 0.0 };
+        Self::relief_of(plate, &distances)
+    }
+
+    /// [`Outlines::relief`] for the plate and distances [`Outlines::at`]
+    /// found, so a caller reading several layers at one position looks the
+    /// plate up once.
+    pub fn relief_of(plate: &PlateOutline, distances: &[f64]) -> f64 {
         let mut best = 0.0f64;
-        for (i, (e, d)) in plate.edges.iter().zip(&distances).enumerate() {
+        for (i, (e, d)) in plate.edges.iter().zip(distances).enumerate() {
             if e.converge <= 0.0 { continue }
             let family = range_family(RANGE_STEEP_HALF_WIDTH - RANGE_SPACING * sheets_in(*d), sheets_of(e.converge));
             if family <= 0.0 { continue }

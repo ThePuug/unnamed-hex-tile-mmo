@@ -40,7 +40,7 @@ use std::any::Any;
 use crate::hex_to_world;
 use super::index::IndexRegistry;
 use super::plates::GRAPH_CELL_SCALE;
-use super::thrusting::{outlines_of, sheets_in, sheets_of, smoothstep, Outlines, RANGE_RISE, RANGE_SPACING};
+use super::thrusting::{outlines_of, sheets_in, sheets_of, smoothstep, Outlines, PlateOutline, RANGE_RISE, RANGE_SPACING};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The plateau ─────────────────────────────────────────────────────────────
@@ -74,8 +74,14 @@ pub const ESCARPMENT: f64 = 2.0 * RANGE_SPACING;
 /// carry no convergence.
 pub fn plateau_share(outlines: &Outlines, wx: f64, wy: f64) -> f64 {
     let Some((plate, distances)) = outlines.at(wx, wy) else { return 0.0 };
+    plateau_share_of(plate, &distances)
+}
+
+/// [`plateau_share`] for the plate and distances `Outlines::at` found, so a
+/// caller reading several layers at one position looks the plate up once.
+pub fn plateau_share_of(plate: &PlateOutline, distances: &[f64]) -> f64 {
     let (mut weighted, mut weight) = (0.0, 0.0);
-    for (e, d) in plate.edges.iter().zip(&distances) {
+    for (e, d) in plate.edges.iter().zip(distances) {
         if e.converge <= 0.0 { continue }
         let sheets = sheets_of(e.converge);
         let climb = (sheets_in(*d) / sheets).min(1.0);
@@ -86,7 +92,7 @@ pub fn plateau_share(outlines: &Outlines, wx: f64, wy: f64) -> f64 {
         weight += w;
     }
     if weight <= 0.0 { return 0.0 }
-    let quiet = plate.quiet_distance(&distances);
+    let quiet = plate.quiet_distance(distances);
     (weighted / weight) * smoothstep(quiet / ESCARPMENT)
 }
 

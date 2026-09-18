@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use common::HexLattice;
 use world::events::drainage::{
-    node_tile, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
+    node_tile, DrainageEvent, CHANNEL_HEAD, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
 };
 use world::events::motion::MotionEvent;
 use world::events::thickening::ThickeningEvent;
@@ -370,7 +370,8 @@ fn cost() {
     );
 }
 
-/// Base level is the first lake down a node's larger share, or the sea:
+/// Base level is the first lake down a node's larger share, a cut node's
+/// floor, or the sea:
 /// what dissection cuts toward, published because only the routing knows
 /// the path.
 #[test]
@@ -382,6 +383,9 @@ fn base_level_is_the_first_lake_downstream_or_the_sea() {
         if !matches!(routing.kind[k], Kind::Land | Kind::Lake) { continue }
         let mut cur = k;
         let expected = loop {
+            if cur != k && routing.cut[cur] > 0.0 {
+                break routing.elevation[cur] - routing.cut[cur];
+            }
             if let Some(id) = routing.lake_of[cur] {
                 let surface = routing.surface[cur];
                 let _ = id;
@@ -398,4 +402,55 @@ fn base_level_is_the_first_lake_downstream_or_the_sea() {
     }
     println!("{lakes} nodes drain to a lake, {seas} to the sea or the window's edge");
     assert!(seas > 0);
+}
+
+/// A spilling lake's sill is cut, never below the base level beneath it,
+/// and its surface is the cut sill. From the sill the breach runs down the
+/// outflow without rising and ends on ground no higher than it. A pit that
+/// drains less than a channel head keeps its lake whole. Age is a share.
+#[test]
+fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
+    for k in 0..routing.keys.len() {
+        assert!((0.0..=1.0).contains(&routing.age[k]), "age {} at {:?}", routing.age[k], routing.keys[k]);
+        assert!(routing.cut[k] >= 0.0, "a negative cut at {:?}", routing.keys[k]);
+    }
+    let cell = routing.owned_cell();
+    let (mut cut, mut kept, mut breach_nodes) = (0, 0, 0);
+    for lake in &cell.lakes {
+        let Some(sill) = lake.outlet.and_then(|o| cell.nodes.get(&o)) else { continue };
+        let floor = lake.nodes.iter().map(|k| cell.nodes[k].elevation).fold(f64::MAX, f64::min);
+        println!("lake of {} nodes: surface {:.1}, floor {:.1}, sill {:.1} cut {:.2}, age {:.2}, catchment {:.1}, base {:.1}", lake.nodes.len(), lake.surface, floor, sill.elevation, sill.cut, sill.age, sill.catchment, sill.base);
+        assert!((sill.elevation - sill.cut - lake.surface).abs() < 1e-9, "a lake's surface off its cut sill at {:?}", sill.key);
+        assert!(lake.surface >= sill.base - 1e-9, "a lake cut below the base level beneath its sill at {:?}", sill.key);
+        if sill.catchment <= CHANNEL_HEAD {
+            assert_eq!(sill.cut, 0.0, "a sill cut by water below the channel head at {:?}", sill.key);
+            kept += 1;
+        }
+        if sill.cut == 0.0 {
+            continue;
+        }
+        cut += 1;
+        let mut last = lake.surface;
+        let mut next = sill.down.and_then(|d| cell.nodes.get(&d));
+        while let Some(n) = next {
+            if n.lake.is_some() {
+                break;
+            }
+            let ground = n.elevation - n.cut;
+            assert!(ground <= last + 1e-9, "the breach rises at {:?}", n.key);
+            if n.cut == 0.0 {
+                break;
+            }
+            breach_nodes += 1;
+            last = ground;
+            next = n.down.and_then(|d| cell.nodes.get(&d));
+        }
+    }
+    let (breached, deepest, at) = routing.cut.iter().enumerate().fold((0, 0.0f64, (0.0, 0.0)), |(n, d, at), (k, &c)| {
+        let (q, r) = node_tile(routing.keys[k]);
+        if c > d { (n + 1, c, hex_to_world(q, r)) } else { (n + (c > 0.0) as usize, d, at) }
+    });
+    println!("{cut} owned sills cut, {breach_nodes} nodes of breach behind them; {kept} lakes kept for draining less than a head; {breached} nodes cut in the window, deepest {deepest:.1} z at world {at:?}");
+    assert!(cut > 0, "no sill in the spawn cell is cut");
 }
