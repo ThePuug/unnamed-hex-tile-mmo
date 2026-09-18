@@ -140,27 +140,38 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                     BorderColor::all(UNWORN),
                 ));
 
-                // Six squares down the closeup's right, held for accessories,
-                // which are unbuilt: nothing fills them yet.
+                // Down the closeup's right, five squares held for accessories and,
+                // under them, the main hand and the off hand side by side, held
+                // for weapons. Both are unbuilt, so nothing fills them yet.
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.),
                     ..default()
                 })
                 .with_children(|slots| {
-                    for _ in 0..Slot::ALL.len() {
-                        slots.spawn((
-                            Node {
-                                width: Val::Px(SLOT),
-                                height: Val::Px(SLOT),
-                                border: UiRect::all(Val::Px(2.)),
-                                border_radius: BorderRadius::all(Val::Px(4.)),
-                                ..default()
-                            },
-                            BackgroundColor(OTHER_ROW),
-                            BorderColor::all(Color::srgb(0.25, 0.25, 0.25)),
-                        ));
+                    for _ in 0..Slot::ALL.len() - 1 {
+                        slots.spawn(held_square());
                     }
+                    slots
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(4.),
+                            ..default()
+                        })
+                        .with_children(|hands| {
+                            for name in ["Main
+hand", "Off
+hand"] {
+                                hands.spawn(held_square()).with_children(|cell| {
+                                    cell.spawn((
+                                        Text::new(name),
+                                        TextFont { font_size: 11.0, ..default() },
+                                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                                        TextLayout::new_with_justify(Justify::Center),
+                                    ));
+                                });
+                            }
+                        });
                 });
             });
 
@@ -185,6 +196,23 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 ));
             });
         });
+}
+
+/// A square held for a slot that is not built yet.
+fn held_square() -> (Node, BackgroundColor, BorderColor) {
+    (
+        Node {
+            width: Val::Px(SLOT),
+            height: Val::Px(SLOT),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(2.)),
+            border_radius: BorderRadius::all(Val::Px(4.)),
+            ..default()
+        },
+        BackgroundColor(OTHER_ROW),
+        BorderColor::all(Color::srgb(0.25, 0.25, 0.25)),
+    )
 }
 
 /// The digits act on the bag; `-` and `+` move between tabs; `0` closes.
