@@ -308,8 +308,9 @@ pub struct DrainageNode {
     /// The true downslope at this node, a unit vector in world space. Across a
     /// lake it points along the flood's path to the outlet.
     pub direction: (f64, f64),
-    /// Water draining through this one, itself included, in nodes. Fractional
-    /// because a node's water splits between two neighbours.
+    /// Water draining through this one, itself included, in nodes, fractional
+    /// because a node's water splits, and never less than at any node above
+    /// it on its reach: what its channel is cut by.
     pub catchment: f64,
     /// Base level, in z-levels: the surface of the first lake down the larger
     /// share's path, or sea level. What a river here cuts toward and never
@@ -516,6 +517,9 @@ pub struct Routing {
     /// The receiver of the larger share.
     pub down: Vec<Option<usize>>,
     pub catchment: Vec<f64>,
+    /// The catchment each node's channel is cut by: its own, or the most at
+    /// any node above it on its reach.
+    pub carried: Vec<f64>,
     /// Base level at each node: the first lake down the larger share's
     /// path, or sea level.
     pub base: Vec<f64>,
@@ -583,7 +587,7 @@ impl Routing {
                     elevation: self.elevation[k],
                     surface: self.surface[k],
                     direction: self.direction[k],
-                    catchment: self.catchment[k],
+                    catchment: self.carried[k],
                     base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
                     lake: self.lake_of[k].and_then(|id| lake_local.get(&id).copied()),
@@ -1202,6 +1206,18 @@ impl DrainageEvent {
             };
             reaches.push(RoutedReach { nodes, end });
         }
+        // ── The catchment a reach's channel is cut by never falls along it:
+        //    water that split away at a node cut the channel above, and the
+        //    river below is one river, so a channel is cut by the most water
+        //    that has run down it ──
+        let mut carried = catchment.clone();
+        for reach in &reaches {
+            let mut most = 0.0f64;
+            for &k in &reach.nodes {
+                most = most.max(catchment[k]);
+                carried[k] = most;
+            }
+        }
 
         // ── The river across each lake: the flood's path from the deepest
         //    flooded node to the sill, a reach so the throat to the sill and
@@ -1234,6 +1250,7 @@ impl DrainageEvent {
             flow,
             down,
             catchment,
+            carried,
             base,
             lake_of,
             parent,
