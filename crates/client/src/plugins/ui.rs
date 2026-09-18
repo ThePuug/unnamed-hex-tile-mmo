@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, character_panel, character_panel_respec, combat_log, combat_ui, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
+use crate::systems::{action_bar, character_panel, character_panel_respec, combat_log, combat_ui, equipment_panel, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
 
@@ -52,6 +52,11 @@ impl Plugin for UiPlugin {
             Update,
             (
                 character_panel::toggle_panel,
+                character_panel::update_tabs,
+                equipment_panel::handle_numpad,
+                equipment_panel::rebuild_bag,
+                equipment_panel::update_bag,
+                equipment_panel::update_slots,
                 character_panel::handle_shift_drag,
                 character_panel::update_attributes,
                 character_panel::update_axis_button_visibility,

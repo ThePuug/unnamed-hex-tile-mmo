@@ -11,6 +11,7 @@ pub mod combat;
 pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;
 pub mod equipment;
+pub mod equipment_panel;
 pub mod hiding;
 pub mod input;
 pub mod prediction; // Movement prediction and VisualPosition interpolation

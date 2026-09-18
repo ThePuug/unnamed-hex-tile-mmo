@@ -5,6 +5,49 @@ use common_bevy::{
     systems::combat::damage::contest_factor,
 };
 
+use crate::systems::equipment_panel;
+
+/// The panel's tabs, stacked down its left edge in this order.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PanelTab {
+    #[default]
+    Attributes,
+    Equipment,
+}
+
+impl PanelTab {
+    pub const ALL: [PanelTab; 2] = [PanelTab::Attributes, PanelTab::Equipment];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PanelTab::Attributes => "Attributes",
+            PanelTab::Equipment => "Equipment",
+        }
+    }
+
+    pub fn above(self) -> PanelTab {
+        match self {
+            PanelTab::Attributes => PanelTab::Attributes,
+            PanelTab::Equipment => PanelTab::Attributes,
+        }
+    }
+
+    pub fn below(self) -> PanelTab {
+        match self {
+            PanelTab::Attributes => PanelTab::Equipment,
+            PanelTab::Equipment => PanelTab::Equipment,
+        }
+    }
+}
+
+/// A tab's content, shown while its tab is chosen.
+#[derive(Component)]
+pub struct TabContent(pub PanelTab);
+
+/// A tab's label in the strip.
+#[derive(Component)]
+pub struct TabLabel(pub PanelTab);
+
 /// Marker component for the character panel root node
 #[derive(Component)]
 pub struct CharacterPanel;
@@ -188,6 +231,9 @@ impl DraftAttributes {
 #[derive(Resource, Default)]
 pub struct CharacterPanelState {
     pub visible: bool,
+    pub tab: PanelTab,
+    /// The bag row the digits act on.
+    pub bag_row: usize,
     pub dragging: Option<DragState>,
     pub pending_respec: Option<DraftAttributes>,  // None = no pending changes
 }
@@ -712,18 +758,18 @@ pub fn setup(
 ) {
     commands.init_resource::<CharacterPanelState>();
 
-    // Create character panel (initially hidden)
-    commands
+    // The panel: a strip of tabs down its left edge, the chosen tab's content beside it.
+    let panel = commands
         .spawn((
             CharacterPanel,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.),
                 top: Val::Px(100.),
-                width: Val::Px(770.),
+                width: Val::Px(900.),
                 padding: UiRect::new(Val::Px(20.), Val::Px(20.), Val::Px(20.), Val::Px(10.)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(15.),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.),
                 border_radius: BorderRadius::all(Val::Px(8.)),
                 ..default()
             },
@@ -731,6 +777,33 @@ pub fn setup(
             BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
             Visibility::Hidden,
         ))
+        .id();
+    spawn_tab_strip(&mut commands, panel);
+    let content = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                ..default()
+            },
+            ChildOf(panel),
+        ))
+        .id();
+    let attributes = commands
+        .spawn((
+            TabContent(PanelTab::Attributes),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(15.),
+                ..default()
+            },
+            ChildOf(content),
+        ))
+        .id();
+    equipment_panel::spawn_tab(&mut commands, content);
+
+    commands
+        .entity(attributes)
         .with_children(|parent| {
             // Main content: two columns (sliders left, stats right)
             parent.spawn((
@@ -839,20 +912,80 @@ pub fn toggle_panel(
     mut query: Query<&mut Visibility, With<CharacterPanel>>,
 ) {
     if keyboard.just_pressed(KEYCODE_CHARACTER_PANEL) {
-        state.visible = !state.visible;
-
-        // Cancel any pending respec when closing panel
-        if !state.visible {
-            state.pending_respec = None;
-        }
-
         if let Ok(mut visibility) = query.single_mut() {
-            *visibility = if state.visible {
-                Visibility::Visible
+            if state.visible {
+                close(&mut state, &mut visibility);
             } else {
-                Visibility::Hidden
-            };
+                state.visible = true;
+                *visibility = Visibility::Visible;
+            }
         }
+    }
+}
+
+/// Closes the panel, dropping any respec not yet applied.
+pub fn close(state: &mut CharacterPanelState, visibility: &mut Visibility) {
+    state.visible = false;
+    state.pending_respec = None;
+    *visibility = Visibility::Hidden;
+}
+
+fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
+    commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.),
+                width: Val::Px(110.),
+                ..default()
+            },
+            ChildOf(panel),
+        ))
+        .with_children(|strip| {
+            for tab in PanelTab::ALL {
+                strip.spawn((
+                    TabLabel(tab),
+                    Text::new(tab.name()),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                    Node {
+                        padding: UiRect::axes(Val::Px(8.), Val::Px(6.)),
+                        border_radius: BorderRadius::all(Val::Px(4.)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ));
+            }
+            strip.spawn((
+                Text::new("- above
++ below"),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(Color::srgb(0.45, 0.45, 0.45)),
+                Node {
+                    margin: UiRect::top(Val::Px(8.)),
+                    padding: UiRect::left(Val::Px(8.)),
+                    ..default()
+                },
+            ));
+        });
+}
+
+/// Shows the chosen tab's content and marks its label.
+pub fn update_tabs(
+    state: Res<CharacterPanelState>,
+    mut contents: Query<(&TabContent, &mut Node)>,
+    mut labels: Query<(&TabLabel, &mut BackgroundColor, &mut TextColor)>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    for (content, mut node) in &mut contents {
+        node.display = if content.0 == state.tab { Display::Flex } else { Display::None };
+    }
+    for (label, mut background, mut color) in &mut labels {
+        let chosen = label.0 == state.tab;
+        *background = BackgroundColor(if chosen { Color::srgba(0.25, 0.25, 0.25, 0.9) } else { Color::NONE });
+        *color = TextColor(if chosen { Color::srgb(0.95, 0.85, 0.5) } else { Color::srgb(0.6, 0.6, 0.6) });
     }
 }
 

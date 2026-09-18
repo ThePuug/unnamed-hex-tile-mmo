@@ -81,12 +81,17 @@ fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
+    panel: Res<crate::systems::character_panel::CharacterPanelState>,
     mut camera_orbit: ResMut<CameraOrbit>,
     map: Res<map::Map>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     dt: Res<Time>,
 ) {
+    // The character panel is modal: while it is open every gameplay key
+    // reads as released, so the character stops and nothing fires.
+    let released = ButtonInput::default();
+    let keyboard: &ButtonInput<KeyCode> = if panel.visible { &released } else { &keyboard };
     if let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() {
         // Note: We removed client-side death prediction
         // The server will reject inputs for dead players, preventing premature input blocking
