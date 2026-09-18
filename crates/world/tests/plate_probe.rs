@@ -103,6 +103,11 @@ fn plate_graph_report() {
         println!("continental plates {} ({:.1}%); continents by plate count: {}",
             continental, 100.0 * continental as f64 / ids.len() as f64,
             by_size.iter().map(|(s, n)| format!("{s}×{n}")).collect::<Vec<_>>().join(" "));
+        let mut ages: Vec<f64> = plates.values().map(|p| p.age).collect();
+        let (new, aged) = (ages.iter().filter(|&&a| a <= 0.0).count(), ages.iter().filter(|&&a| a >= 1.0).count());
+        println!("age: new {:.1}%, fully aged {:.1}%, p25 {:.2} p50 {:.2} p75 {:.2}",
+            100.0 * new as f64 / ids.len() as f64, 100.0 * aged as f64 / ids.len() as f64,
+            percentile(&mut ages, 0.25), percentile(&mut ages, 0.5), percentile(&mut ages, 0.75));
         println!("edges {}: length p50 {:.0} p90 {:.0} max {:.0}", edges.len(),
             percentile(&mut lengths, 0.5), percentile(&mut lengths, 0.9), percentile(&mut lengths, 1.0));
         println!("regime by length: convergent {:.1}%  divergent {:.1}%  transform {:.1}%",

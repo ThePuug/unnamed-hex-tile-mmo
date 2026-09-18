@@ -30,6 +30,8 @@ use world::events::tilt::TiltEvent;
 enum Layer {
     /// Plate index: the substrate from the coasts under the viewport, coloured by elevation against sea level.
     Plates,
+    /// Plate field: each plate's age as a grey ramp, black new, white aged: which plates keep their lakes and which are drained.
+    Age,
     /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
     /// Plate index: every edge of the plate graph along its chain, coasts white and interior edges grey, a dot at each seed.
@@ -58,6 +60,7 @@ enum Layer {
 /// and the error message all read it.
 const LAYERS: &[(&str, Layer)] = &[
     ("plates", Layer::Plates),
+    ("age", Layer::Age),
     ("elevation", Layer::Elevation),
     ("plate-edges", Layer::Edges),
     ("boundaries", Layer::Boundaries),
@@ -433,6 +436,10 @@ fn main() {
                                 // range and nothing above it.
                                 color = substrate_color(
                                     world::substrate_on(wx, wy, coasts, seed));
+                            }
+                            Layer::Age => {
+                                let v = 0.15 + 0.8 * world::tectonic::plate_at(wx, wy, seed).age;
+                                color = (v, v, v);
                             }
                             Layer::Elevation => {
                                 // The composite surface, on the same ramp the

@@ -7,6 +7,8 @@
 //! A plate is a Voronoi cell around a seed on a jittered hex lattice. It is
 //! continental or oceanic by one slow field sampled at its seed, so
 //! continental plates cluster, and a continent is a connected group of them.
+//! It has an age by a second such field: how far erosion has carried its
+//! landscape, which drainage and dissection read and nothing here uses.
 //! An edge between two plates is the straight line between two Voronoi
 //! vertices, drawn on the lattice as runs with sparse corners. A coast is an
 //! edge with one continental side and one oceanic.
@@ -42,6 +44,17 @@ pub const CONTINENT_WAVELENGTH: f64 = 3.0 * PLATE_SPACING;
 /// `plate_probe`.
 pub const CONTINENT_GATE: f64 = 0.20;
 
+/// Wavelength of the field that gives a plate its age: the continent's, so
+/// the plates of one orogeny are of one age.
+pub const AGE_WAVELENGTH: f64 = CONTINENT_WAVELENGTH;
+
+/// The level of that field at which a plate is fully aged; at its negative
+/// the plate is new, and between them age runs linearly.
+///
+/// EMPIRICAL: a tenth of plates new and a tenth fully aged, the quartiles
+/// near 0.2 and 0.8, measured by `plate_probe`.
+pub const AGE_SPREAD: f64 = 0.5;
+
 /// The farthest any ground of a plate lies from its seed, in world units.
 ///
 /// EMPIRICAL, measured by `plate_reach_is_bounded` over thousands of plates
@@ -54,6 +67,7 @@ const ROW: f64 = 0.866_025_403_784_438_6;
 const JITTER_SEED_X: u64 = 0x506C_6174_655F_5F58; // "Plate__X"
 const JITTER_SEED_Y: u64 = 0x506C_6174_655F_5F59; // "Plate__Y"
 const CONTINENT_SEED: u64 = 0x436F_6E74_696E_656E; // "Continen"
+const AGE_SEED: u64 = 0x506C_6174_6541_6765; // "PlateAge"
 
 /// A plate's identity: its seed's lattice cell.
 pub type PlateId = (i32, i32);
@@ -64,6 +78,9 @@ pub struct Plate {
     pub wx: f64,
     pub wy: f64,
     pub continental: bool,
+    /// How far erosion has carried the plate's landscape, from 0, an orogen
+    /// still filling its basins, to 1, one drained through gorges.
+    pub age: f64,
 }
 
 /// The lattice cell whose undisplaced centre is nearest a position.
@@ -88,7 +105,9 @@ pub fn seed_point(id: PlateId, seed: u64) -> (f64, f64) {
 pub fn plate(id: PlateId, seed: u64) -> Plate {
     let (wx, wy) = seed_point(id, seed);
     let level = simplex_2d(wx / CONTINENT_WAVELENGTH, wy / CONTINENT_WAVELENGTH, seed ^ CONTINENT_SEED);
-    Plate { id, wx, wy, continental: level > CONTINENT_GATE }
+    let aged = simplex_2d(wx / AGE_WAVELENGTH, wy / AGE_WAVELENGTH, seed ^ AGE_SEED);
+    let age = ((aged + AGE_SPREAD) / (2.0 * AGE_SPREAD)).clamp(0.0, 1.0);
+    Plate { id, wx, wy, continental: level > CONTINENT_GATE, age }
 }
 
 /// Lattice cells within `rings` of a cell, in odd-r offset coordinates.
