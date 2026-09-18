@@ -1,14 +1,19 @@
+//! Keyboard to input messages. The client owns the clock for its own
+//! movement: every fixed tick it attributes the elapsed time to the open
+//! input and sends it, and every change of keys or heading opens a new one.
+
 use bevy::prelude::*;
-use qrz::Qrz;
 
 use crate::systems::camera::CameraOrbit;
 use crate::*;
 use common_bevy::{
     components::{
         keybits::*,
+        position::Position,
         target::Target,
+        AirTime,
     },
-    message::{AbilityType, Component, Event},
+    message::{AbilityType, Event, *},
     resources::*,
     systems::targeting::RangeTier,
 };
@@ -19,244 +24,206 @@ pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
 pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
 
-/// Milliseconds between periodic input sends
-pub const INPUT_SEND_INTERVAL_MS: u128 = 1000;
+/// Milliseconds an input stays open before a new one is opened for the same
+/// keys, so the server confirms at least this often.
+pub const INPUT_ROLL_MS: u128 = 1000;
 
-/// Hex direction indices ordered by visual angle (0°, 60°, 120°, 180°, 240°, 300°).
+/// Milliseconds of an open input accumulated before they go on the wire.
+pub const INPUT_SEND_MS: u16 = 50;
 
-/// For **flat-top** the visual angles align with the 6 directions:
-///   0°=N(0,-1), 60°=NE(1,-1), 120°=SE(1,0), 180°=S(0,1), 240°=SW(-1,1), 300°=NW(-1,0)
-
-/// For **pointy-top** the visual angles are offset 30° but the 60° step spacing is the same:
-///   0→NE(1,-1), 1→E(1,0), 2→SE(0,1), 3→SW(-1,1), 4→W(-1,0), 5→NW(0,-1)
-
-/// In both cases, stepping +1 index = +60° clockwise rotation.
-const HEX_DIRECTIONS_FLAT: [Qrz; 6] = [
-    Qrz { q: 0, r: -1, z: 0 },   // 0: N   (0°)
-    Qrz { q: 1, r: -1, z: 0 },   // 1: NE  (60°)
-    Qrz { q: 1, r: 0, z: 0 },    // 2: SE  (120°)
-    Qrz { q: 0, r: 1, z: 0 },    // 3: S   (180°)
-    Qrz { q: -1, r: 1, z: 0 },   // 4: SW  (240°)
-    Qrz { q: -1, r: 0, z: 0 },   // 5: NW  (300°)
-];
-
-const HEX_DIRECTIONS_POINTY: [Qrz; 6] = [
-    Qrz { q: 1, r: -1, z: 0 },   // 0: NE  (30°)
-    Qrz { q: 1, r: 0, z: 0 },    // 1: E   (90°)
-    Qrz { q: 0, r: 1, z: 0 },    // 2: SE  (150°)
-    Qrz { q: -1, r: 1, z: 0 },   // 3: SW  (210°)
-    Qrz { q: -1, r: 0, z: 0 },   // 4: W   (270°)
-    Qrz { q: 0, r: -1, z: 0 },   // 5: NW  (330°)
-];
-
-/// Find direction index from Qrz in the given direction table.
-fn qrz_to_index(dir: &Qrz, table: &[Qrz; 6]) -> Option<usize> {
-    table.iter().position(|&d| d.q == dir.q && d.r == dir.r)
-}
-
-/// Rotate a Qrz direction by a number of hex steps through the given table.
-fn rotate_qrz(dir: &Qrz, steps: i32, table: &[Qrz; 6]) -> Qrz {
-    if let Some(idx) = qrz_to_index(dir, table) {
-        let new_idx = (idx as i32 + steps).rem_euclid(6) as usize;
-        table[new_idx]
-    } else {
-        *dir
-    }
-}
-
-/// Convert a Qrz direction to KeyBits flags
-fn qrz_to_keybits(dir: &Qrz) -> KeyBits {
-    let mut keybits = KeyBits::default();
-    match (dir.q, dir.r) {
-        (1, 0) => keybits.set_pressed([KB_HEADING_Q], true),                              // East / SE(flat)
-        (-1, 0) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_NEG], true),             // West / NW(flat)
-        (1, -1) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true), // NE
-        (0, -1) => keybits.set_pressed([KB_HEADING_R, KB_HEADING_NEG], true),             // NW / N(flat)
-        (0, 1) => keybits.set_pressed([KB_HEADING_R], true),                              // SE / S(flat)
-        (-1, 1) => keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R], true),               // SW
-        _ => {}
-    }
-    keybits
-}
+/// Slots a backward diagonal turns away from straight back: 45°.
+const BACK_DIAGONAL_SLOTS: i32 = 3;
 
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
     mut camera_orbit: ResMut<CameraOrbit>,
-    map: Res<map::Map>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
+    mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
 ) {
     // The character panel is modal: while it is open every gameplay key
     // reads as released, so the character stops and nothing fires.
     let released = ButtonInput::default();
     let keyboard: &ButtonInput<KeyCode> = if panel.visible { &released } else { &keyboard };
-    if let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() {
-        // Note: We removed client-side death prediction
-        // The server will reject inputs for dead players, preventing premature input blocking
-        let delta_ns = dt.delta().as_nanos();
-        keybits0.accumulator += delta_ns;
+    let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() else { return };
 
-        // Check GCD before allowing ability usage
-        let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
+    let delta_ns = dt.delta().as_nanos();
+    keybits0.accumulator += delta_ns;
 
-        // MVP Ability Set
+    // Check GCD before allowing ability usage
+    let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
 
-        // Lunge ability (Q key) - Gap closer
-        if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target: target.entity }});
+    // MVP Ability Set
+
+    // Lunge ability (Q key) - Gap closer
+    if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
+        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target: target.entity }});
+    }
+
+    // Overpower ability (W key) - Heavy strike
+    if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
+        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
+    }
+
+    // Counter ability (E key) - Reactive counter-attack
+    if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
+        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
+    }
+
+    // Kick ability (R key) - Reactive knockback
+    if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
+        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
+    }
+
+    // Dismiss front queue threat (no GCD check — independent of ability system)
+    if keyboard.just_pressed(KeyCode::KeyD) {
+        writer.write(Try { event: Event::Dismiss { ent }});
+    }
+
+    // Tier Lock Targeting
+
+    // 1 key: Lock to Close tier (1-2 hexes)
+    if keyboard.just_pressed(KeyCode::Digit1) {
+        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Close }});
+    }
+
+    // 2 key: Lock to Mid tier (3-6 hexes)
+    if keyboard.just_pressed(KeyCode::Digit2) {
+        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Mid }});
+    }
+
+    // 3 key: Lock to Far tier (7+ hexes)
+    if keyboard.just_pressed(KeyCode::Digit3) {
+        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Far }});
+    }
+
+    let mut keybits = KeyBits { heading: keybits0.heading, ..default() };
+    keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
+
+    // Shift hands the arrows to camera panning.
+    let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    if !shift_pressed && keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
+        let up = keyboard.pressed(KEYCODE_UP);
+        let down = keyboard.pressed(KEYCODE_DOWN);
+        let left = keyboard.pressed(KEYCODE_LEFT);
+        let right = keyboard.pressed(KEYCODE_RIGHT);
+
+        // Left and right step the camera, alone or with Up; a backward
+        // diagonal holds it. Forward is whatever stop the camera lands on.
+        let turning = !(down && !up);
+        if turning && left && !right {
+            camera_orbit.step_ccw(dt.delta_secs());
+        } else if turning && right && !left {
+            camera_orbit.step_cw(dt.delta_secs());
+        } else {
+            camera_orbit.release();
         }
 
-        // Overpower ability (W key) - Heavy strike
-        if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
-        }
-
-        // Counter ability (E key) - Reactive counter-attack
-        if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
-        }
-
-        // Kick ability (R key) - Reactive knockback
-        if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
-            writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
-        }
-
-        // Dismiss front queue threat (no GCD check — independent of ability system)
-        if keyboard.just_pressed(KeyCode::KeyD) {
-            writer.write(Try { event: Event::Dismiss { ent }});
-        }
-
-        // Tier Lock Targeting
-
-        // 1 key: Lock to Close tier (1-2 hexes)
-        if keyboard.just_pressed(KeyCode::Digit1) {
-            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Close }});
-        }
-
-        // 2 key: Lock to Mid tier (3-6 hexes)
-        if keyboard.just_pressed(KeyCode::Digit2) {
-            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Mid }});
-        }
-
-        // 3 key: Lock to Far tier (7+ hexes)
-        if keyboard.just_pressed(KeyCode::Digit3) {
-            writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Far }});
-        }
-
-        let mut keybits = KeyBits::default();
-        keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
-
-        let orientation = map.orientation();
-        let dir_table = match orientation {
-            qrz::HexOrientation::FlatTop => &HEX_DIRECTIONS_FLAT,
-            qrz::HexOrientation::PointyTop => &HEX_DIRECTIONS_POINTY,
+        let forward = camera_orbit.forward();
+        let heading = if up && !down {
+            Some(forward)
+        } else if down && !up {
+            let back = forward.reversed();
+            Some(if left && !right { back.turned(BACK_DIAGONAL_SLOTS) }
+                else if right && !left { back.turned(-BACK_DIAGONAL_SLOTS) }
+                else { back })
+        } else {
+            None
         };
 
-        // Skip movement input when Shift is pressed (camera panning mode)
-        let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        if !shift_pressed && keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
-            // Use discrete target_index as the stable camera frame for direction resolution
-            let camera_rotation_idx = camera_orbit.target_index;
-
-            let up = keyboard.pressed(KEYCODE_UP);
-            let down = keyboard.pressed(KEYCODE_DOWN);
-            let left = keyboard.pressed(KEYCODE_LEFT);
-            let right = keyboard.pressed(KEYCODE_RIGHT);
-
-            // Determine visual direction and camera rotation side-effect.
-
-            // Up/Up+Left/Up+Right: move forward (with optional diagonal).
-            //   Up+Left also steps camera CCW. Up+Right also steps camera CW.
-            // Down/Down+Left/Down+Right: move backward. No camera rotation.
-            // Left or Right alone: camera rotation only, no movement.
-            let visual_dir = if up && !down {
-                if left && !right {
-                    camera_orbit.step_ccw();
-                    Qrz { q: -1, r: 0, z: 0 }    // NW (forward-left)
-                } else if right && !left {
-                    camera_orbit.step_cw();
-                    Qrz { q: 1, r: -1, z: 0 }     // NE (forward-right)
-                } else {
-                    Qrz { q: 0, r: -1, z: 0 }     // N (forward)
-                }
-            } else if down && !up {
-                if left && !right {
-                    Qrz { q: -1, r: 1, z: 0 }     // SW (backward-left)
-                } else if right && !left {
-                    Qrz { q: 1, r: 0, z: 0 }      // SE (backward-right)
-                } else {
-                    Qrz { q: 0, r: 1, z: 0 }      // S (backward)
-                }
-            } else if left && !right {
-                camera_orbit.step_ccw();
-                Qrz { q: 0, r: 0, z: 0 }          // Rotate only, no movement
-            } else if right && !left {
-                camera_orbit.step_cw();
-                Qrz { q: 0, r: 0, z: 0 }          // Rotate only, no movement
-            } else {
-                Qrz { q: 0, r: 0, z: 0 }
-            };
-
-            if visual_dir.q != 0 || visual_dir.r != 0 {
-                // Rotate visual direction to world space using the pre-rotation camera frame
-                let world_dir = rotate_qrz(&visual_dir, -(camera_rotation_idx as i32), dir_table);
-
-                let jump_flag = keybits.key_bits & KB_JUMP;
-                keybits = qrz_to_keybits(&world_dir);
-                keybits.key_bits |= jump_flag;
-            }
+        if let Some(heading) = heading {
+            keybits.set_pressed([KB_MOVE], true);
+            keybits.heading = heading;
         }
+    } else {
+        camera_orbit.release();
+    }
 
-        // Send input if either keybits changed or periodic interval has elapsed
-        // Periodic updates prevent dt overflow but won't create duplicate inputs
-        // because controlled::tick will skip if key_bits haven't changed
-        if keybits0.key_bits != keybits.key_bits || keybits0.accumulator >= INPUT_SEND_INTERVAL_MS * 1_000_000 {
-            *keybits0 = keybits;
-            writer.write(Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }});
+    // A new input opens when the keys change, or after INPUT_ROLL_MS so the
+    // server confirms at least that often.
+    if !keybits0.same_input(&keybits) || keybits0.accumulator >= INPUT_ROLL_MS * 1_000_000 {
+        *keybits0 = keybits;
+        let Some(buffer) = buffers.get_mut(&ent) else { return };
+        open_input(buffer, ent, keybits, &mut writer);
+    }
+}
+
+/// Opens input `seq + 1` at the front of the queue and puts it on the wire,
+/// after flushing what the closing input has not sent yet, so the server
+/// sees the old input whole before the new one.
+fn open_input(buffer: &mut InputQueue, ent: Entity, key_bits: KeyBits, writer: &mut MessageWriter<Try>) {
+    let Some(Event::Input { key_bits: kb0, seq: seq0, .. }) = buffer.queue.front().cloned() else {
+        panic!("Queue invariant violation: entity {ent} has empty queue");
+    };
+    if buffer.unsent_ms > 0 {
+        writer.write(Try { event: Event::Input { ent, key_bits: kb0, dt: buffer.unsent_ms, seq: seq0 }});
+        buffer.unsent_ms = 0;
+    }
+    let seq = seq0.wrapping_add(1);
+    buffer.queue.push_front(Event::Input { ent, key_bits, dt: 0, seq });
+    writer.write(Try { event: Event::Input { ent, key_bits, dt: 0, seq }});
+}
+
+/// Attributes the fixed tick to the open input and sends it once
+/// `INPUT_SEND_MS` have gathered. Sub-millisecond time carries over, so the
+/// client's clock and the server's agree over any span.
+pub fn tick(
+    time: Res<Time>,
+    mut buffers: ResMut<InputQueues>,
+    mut writer: MessageWriter<Try>,
+) {
+    let delta_us = time.delta().as_micros() as u32;
+    let entities: Vec<Entity> = buffers.entities().copied().collect();
+    for ent in entities {
+        let Some(buffer) = buffers.get_mut(&ent) else { continue };
+        buffer.residual_us += delta_us;
+        let dt = (buffer.residual_us / 1000) as u16;
+        buffer.residual_us %= 1000;
+        if dt == 0 { continue; }
+
+        let Some(Event::Input { key_bits, dt: dt0, seq, .. }) = buffer.queue.front_mut() else {
+            panic!("Queue invariant violation: entity {ent} has empty queue");
+        };
+        *dt0 = dt0.saturating_add(dt);
+        let (key_bits, seq) = (*key_bits, *seq);
+
+        buffer.unsent_ms += dt;
+        if buffer.unsent_ms >= INPUT_SEND_MS {
+            writer.write(Try { event: Event::Input { ent, key_bits, dt: buffer.unsent_ms, seq }});
+            buffer.unsent_ms = 0;
         }
     }
 }
 
-
-pub fn do_input(
+/// Adopts the server's position for a closed input and drops it from the
+/// queue. Prediction then replays only what is still open, from exactly
+/// where the server left the entity.
+pub fn do_confirm(
     mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
+    mut query: Query<(&mut Position, &mut AirTime)>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Input { ent, key_bits, dt, seq }} = message else { continue };
-        let ent = *ent;
-        let key_bits = *key_bits;
-        let dt = *dt;
-        let seq = *seq;
+        let Do { event: Event::Confirm { ent, seq, position, airtime } } = message else { continue };
+        let (ent, seq) = (*ent, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
 
-        // Maintain invariant: all queues always have at least 1 input
-        // Never remove the last input (the accumulating one)
+        // Never remove the last input: the open one accumulates.
         if buffer.queue.len() <= 1 {
             panic!("Queue invariant violation: attempted to remove last input (seq {seq}). Queue must always have at least 1 input.");
         }
 
-        // Server sends confirmations in order from back (oldest first)
-        // Simply pop from back
         let removed = buffer.queue.pop_back().expect("queue should have at least 2 inputs");
-        let Event::Input { ent: ent0, key_bits: kb0, dt: dt0, seq: seq0 } = removed else { panic!("not input") };
-
-        // Verify the confirmation matches what we expected
-        assert!(ent == ent0, "Entity mismatch");
+        let Event::Input { seq: seq0, .. } = removed else { panic!("not input") };
         assert!(seq == seq0, "Seq mismatch: expected {seq0}, got {seq}");
 
-        if key_bits != kb0 {
-            warn!("KeyBits mismatch for seq {seq}: client={:?}, server={:?}", kb0, key_bits);
+        if let Ok((mut pos, mut air)) = query.get_mut(ent) {
+            *pos = *position;
+            air.state = *airtime;
         }
 
-        // dt mismatch is expected due to client-side prediction
-        if (dt as i32 - dt0 as i32).abs() > 109 {
-            warn!("dt mismatch for seq {seq}: server={dt}, client={dt0}");
-        }
-
-        // Warn if queue is getting too long (indicates confirmations not keeping up)
         if buffer.queue.len() > 5 {
             warn!("Input queue length: {} (confirmations lagging)", buffer.queue.len());
         }

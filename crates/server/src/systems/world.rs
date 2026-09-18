@@ -10,7 +10,6 @@ use common_bevy::{
         entity_type::*,
         equipment::Equipment,
         heading::Heading,
-        keybits::KeyBits,
         position::Position,
         resources::*,
     },
@@ -161,7 +160,6 @@ pub fn do_spawn(
                         commands.entity(ent).insert((
                             Actor,
                             AirTime { state: Some(125), step: None },
-                            KeyBits::default(),
                             Heading::default(),
                             Position::at_tile(qrz),
                             LastAutoAttack::default(), // Track auto-attack cooldown

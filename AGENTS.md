@@ -12,7 +12,7 @@ own `AGENTS.md` binds them.
 | Location | Purpose |
 |----------|---------|
 | `design.md` | Game pitch / north-star |
-| `design/` | Technical specs, one per system — `networking.md` covers transport, movement sync, visual interpolation |
+| `design/` | Technical specs, one per system — `movement.md` covers heading, physics, input timing and remote simulation; `networking.md` covers transport and what crosses the wire |
 
 Check the relevant spec before changing a system, and update it there when
 behavior changes. Per-crate guidance sits alongside the crate it governs —
@@ -128,17 +128,34 @@ sample points at `d = scale/3` land exactly on the child level's centers. All
 three producers — local `Map`, server `EventRegistry`, flyover
 `AdminComposite` — use that one rule, or refinement changes the silhouette.
 
+**INV-007 — Client-timed input is credit-bound.** Every millisecond of
+player physics the server runs came from a `Try::Input` the client timed,
+accepted by `server::systems::input::InputGuard` against a credit that
+refills from `Time<Real>` and is capped. The server never times a player
+input itself and never applies one that was not accepted. Refilling from the
+virtual clock would let one long server frame clamp every honest client.
+
 ## Patterns
 
 **Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is server
 authority; `VisualPosition` is rendering interpolation only.
-`WORLD_POS = map.convert(Position.tile) + Position.offset`. Canonical physics is
-`movement::calculate_movement()`; `physics::apply()` is a thin wrapper.
+`WORLD_POS = map.convert(Position.tile) + Position.offset`; the offset may
+leave the tile, and `server::systems::actor::update` re-bases when it does.
+Movement is `Heading` (24 bearings) × speed × dt in
+`movement::calculate_movement()`, the canonical physics; `physics::apply()` is
+a thin wrapper. The result must not depend on how dt is partitioned — no
+per-call smoothing, no per-step constant unscaled by dt — because the client
+replays in different slices what the server applied.
 
 **Client-side prediction.** `InputQueue` distinguishes local from remote
-players. `predict_local_player` replays the queue from `Position.offset` into
-`VisualPosition`. Keys push front, `controlled::tick` accumulates dt, the server
-pops back, the client dequeues by `seq`.
+players. `input::update_keybits` pushes a new `seq` at the front on any key or
+heading change, `input::tick` attributes the fixed tick to the front and puts
+it on the wire, the server's `input::apply` runs exactly that dt and answers
+`Event::Confirm` with its `Position` when the seq closes, and
+`input::do_confirm` pops the back by `seq` and adopts it.
+`movement::predict_local_player` replays the queue from `Position` into
+`VisualPosition`. Remote entities run the same physics in
+`movement::simulate_remote` from their last `MovementIntent`.
 
 **Network events.** `Try` (client→server) → server validates → `Do`
 (server→client broadcast). Never write `Do` directly.
@@ -186,19 +203,17 @@ channel or lake surface at zero is under it.
 ## Pinned system ordering
 
 Ordering appears in about twenty places, most of it UI setup chaining off
-`camera::setup` and sequencing internal to one plugin. These three are the ones
+`camera::setup` and sequencing internal to one plugin. These two are the ones
 that produce gameplay bugs when broken:
 
-- `input::do_input.after(controlled::tick)` — dt must accumulate before inputs
-  are consumed.
 - `advance_interpolation.before(actor::update)` — `VisualPosition` advances
   before `Transform` reads `current()`.
-- `world::do_incremental.after(actor::apply_movement_intent)` —
-  `MovementPrediction` must exist when the confirming `Loc` arrives, or the
-  no-prediction fallback sets a wrong visual target.
+- `movement::do_loc.after(movement::apply_displace)` — a `Loc` that ends a
+  slide must see the `Displacing` marker the slide inserted, or it snaps.
 
-Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
-`VisualPosition`, `actor::update` renders it.
+Remote-entity interpolation is not its own system: `movement::apply_intent`
+seeds the simulation, `movement::simulate_remote` advances `Position` and
+points `VisualPosition` at it, `actor::update` renders it.
 
 ## Anti-patterns
 
@@ -222,8 +237,10 @@ Remote-entity interpolation is not its own system: `apply_movement_intent` seeds
    toward a neighbour by another rule. Whether a tile may be entered is a
    separate concern on tile z — `is_tile_blocked` and air-time in
    `calculate_movement`.
-7. **Mixing schedules.** `controlled::apply` and `controlled::tick` belong to
-   FixedUpdate; anything touching `Transform` belongs to Update.
+7. **Mixing schedules.** Physics — `input::apply` on the server, `input::tick`,
+   `movement::predict_local_player` and `movement::simulate_remote` on the
+   client — belongs to the fixed schedules; anything touching `Transform`
+   belongs to Update.
 8. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never
    momentarily empty (INV-002).
 

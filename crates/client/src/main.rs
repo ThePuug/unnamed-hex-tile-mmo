@@ -31,7 +31,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, hiding, input, prediction, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::flyover;
@@ -65,7 +65,6 @@ fn main() {
         crate::network::NetworkPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        common_bevy::plugins::controlled::ControlledPlugin,
         DevConsolePlugin,
         DiagnosticsPlugin,
         crate::plugins::world_streaming::WorldStreamingPlugin,
@@ -86,20 +85,20 @@ fn main() {
     ));
 
 
-    // Ensure proper ordering: update_keybits -> tick -> do_input
     #[cfg(feature = "admin")]
     app.add_systems(PreUpdate, input::update_keybits.run_if(flyover::not_in_flyover));
     #[cfg(not(feature = "admin"))]
     app.add_systems(PreUpdate, input::update_keybits);
 
     app.add_systems(FixedUpdate, (
-        input::do_input.after(common_bevy::systems::behaviour::controlled::tick),
+        input::tick,
+        input::do_confirm,
+        movement::simulate_remote,
         common_bevy::systems::combat::resources::regenerate_resources,
     ));
 
-    // Predict local player position by replaying InputQueue from confirmed state
     app.add_systems(FixedPostUpdate, (
-        prediction::predict_local_player,
+        movement::predict_local_player,
     ));
 
     app.add_systems(PreUpdate, (
@@ -108,9 +107,10 @@ fn main() {
 
     app.add_systems(Update, (
         actor::do_spawn,
-        actor::apply_movement_intent, // Apply movement intent predictions
+        movement::apply_intent,
+        movement::apply_displace,
         actor::try_gcd,
-        prediction::advance_interpolation.before(actor::update), // Advance VisualPosition before rendering
+        movement::advance_interpolation.before(actor::update), // Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
@@ -144,11 +144,10 @@ fn main() {
         combat::handle_clear_queue,
         combat::handle_ability_failed,
         common_bevy::systems::world::try_incremental,
-        // do_incremental must run AFTER apply_movement_intent so that
-        // MovementPrediction exists when Loc updates arrive. Otherwise the
-        // no-prediction fallback fires every frame, setting wrong visual targets.
-        common_bevy::systems::world::do_incremental
-            .after(actor::apply_movement_intent),
+        common_bevy::systems::world::do_incremental,
+        // A Loc that ends a slide must see the Displacing marker the slide
+        // inserted, so the slide handler runs (and its commands apply) first.
+        movement::do_loc.after(movement::apply_displace),
     ));
 
     // Attack telegraph systems

@@ -161,15 +161,11 @@ pub fn handle_lunge(
         // Send MovementIntent for visual charge (fast dash)
         let charge_duration_ms = (distance as u16 * 50).max(100);
         writer.write(Do {
-            event: GameEvent::MovementIntent {
-                ent: *ent,
-                destination: landing_loc + qrz::Qrz::Z,
-                duration_ms: charge_duration_ms,
-            },
+            event: GameEvent::Displace { ent: *ent, destination: landing_loc + qrz::Qrz::Z, duration_ms: charge_duration_ms },
         });
 
         // Update caster's location
-        commands.entity(*ent).insert(Loc::new(landing_loc));
+        commands.entity(*ent).insert((Loc::new(landing_loc), common_bevy::components::position::Position::at_tile(landing_loc)));
 
         // Broadcast Loc update to clients
         writer.write(Do {

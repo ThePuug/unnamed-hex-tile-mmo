@@ -1,57 +1,273 @@
+//! Player input: the clock guard on client-timed inputs, their application
+//! to physics with confirmation, and the movement intents other clients
+//! simulate from.
+
+use std::collections::HashMap;
+
 use bevy::prelude::*;
-use ::renet::DefaultChannel;
-use crate::network::ServerNet;
-use qrz::Convert;
-
 use common_bevy::{
-    components::{ tier_lock::TierLock, heading::{ Heading, HERE }, keybits::*, position::Position, * },
+    components::{
+        heading::Heading, keybits::*, movement_intent_state::MovementIntentState,
+        position::Position, resources::RespawnTimer, tier_lock::TierLock, *,
+    },
     message::{Event, *},
-    resources::map::Map,
+    plugins::nntree::NNTree,
+    resources::{map::Map, InputQueues},
+    systems::{movement::{JUMP_DURATION_MS, MOVEMENT_SPEED}, physics},
 };
-use crate::*;
+use crate::{network::ServerNet, systems::stagger::Knockback, *};
 
-pub fn try_input(
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
-) {
-    for message in reader.read() {
-        let Try { event } = message;
-        let Event::Input { ent, .. } = event else { continue };
-        let ent = *ent;
+/// Longest slice of time one input message may carry. Legitimate messages
+/// carry a few ticks; this also keeps the i16 cast in physics unreachable.
+pub const MAX_INPUT_DT_MS: u16 = 250;
 
-        // Ignore input from dead players (those with RespawnTimer)
-        if respawn_query.get(ent).is_ok() {
-            continue;
+/// Time a connection may have accepted ahead of real time. Above realistic
+/// network bunching, so a stalled link never clamps; small enough that idle
+/// or dead time banks less than a second of movement.
+pub const CREDIT_CAP_MS: f32 = 1000.0;
+
+/// Input messages accepted per second. A client sends about twenty; the
+/// margin covers retransmit bunching.
+pub const MAX_INPUTS_PER_SECOND: u16 = 256;
+
+/// Time one input may accumulate before further extensions are dropped. The
+/// client opens a new input every second, so only a misbehaving one gets here.
+pub const MAX_OPEN_INPUT_MS: u16 = 2000;
+
+/// Violations inside `VIOLATION_WINDOW_S` that disconnect the client.
+pub const MAX_VIOLATIONS: u8 = 10;
+pub const VIOLATION_WINDOW_S: f32 = 10.0;
+
+/// The clock guard for one connection (INV-007): every millisecond physics
+/// applies for a player was drawn from this credit, which refills at real
+/// time. Refilled from `Time<Real>`: the default clock is virtual and clamps
+/// a long frame, which would refill less than clients legitimately sent.
+#[derive(Debug)]
+pub struct InputGuard {
+    credit_ms: f32,
+    last_refill: f32,
+    messages: u16,
+    window_start: f32,
+    violations: u8,
+    violation_start: f32,
+    open_seq: u8,
+    open_key_bits: KeyBits,
+    open_dt: u16,
+}
+
+enum Verdict {
+    Apply(u16),
+    Drop,
+    Violation(&'static str),
+}
+
+impl InputGuard {
+    fn new(now: f32) -> Self {
+        Self {
+            credit_ms: CREDIT_CAP_MS,
+            last_refill: now,
+            messages: 0,
+            window_start: now,
+            violations: 0,
+            violation_start: now,
+            open_seq: 1,
+            open_key_bits: KeyBits::default(),
+            open_dt: 0,
+        }
+    }
+
+    fn accept(&mut self, now: f32, key_bits: KeyBits, dt: u16, seq: u8) -> Verdict {
+        self.credit_ms = (self.credit_ms + (now - self.last_refill) * 1000.0).min(CREDIT_CAP_MS);
+        self.last_refill = now;
+
+        if now - self.window_start >= 1.0 {
+            self.messages = 0;
+            self.window_start = now;
+        }
+        self.messages = self.messages.saturating_add(1);
+        if self.messages > MAX_INPUTS_PER_SECOND {
+            return Verdict::Violation("input rate");
+        }
+        if dt > MAX_INPUT_DT_MS {
+            return Verdict::Violation("input dt");
         }
 
-        writer.write(Do { event: event.clone() });
+        if seq == self.open_seq.wrapping_add(1) {
+            self.open_seq = seq;
+            self.open_key_bits = key_bits;
+            self.open_dt = 0;
+        } else if seq == self.open_seq {
+            if !key_bits.same_input(&self.open_key_bits) {
+                return Verdict::Violation("input changed under its seq");
+            }
+            if dt == 0 || self.open_dt.saturating_add(dt) > MAX_OPEN_INPUT_MS {
+                return Verdict::Drop;
+            }
+        } else {
+            return Verdict::Violation("input seq");
+        }
+
+        let applied = dt.min(self.credit_ms as u16);
+        self.credit_ms -= applied as f32;
+        self.open_dt += applied;
+        if applied < dt {
+            debug!("input clamped: {dt} ms requested, {applied} ms of credit");
+        }
+        Verdict::Apply(applied)
+    }
+
+    /// Records a violation; true when the client has earned a disconnect.
+    fn violate(&mut self, now: f32) -> bool {
+        if now - self.violation_start >= VIOLATION_WINDOW_S {
+            self.violations = 0;
+            self.violation_start = now;
+        }
+        self.violations = self.violations.saturating_add(1);
+        self.violations >= MAX_VIOLATIONS
     }
 }
 
-pub fn send_input(
+/// One guard per player entity. An entity is fresh per connection, so no
+/// state survives a reconnect.
+#[derive(Default, Resource)]
+pub struct InputGuards(pub HashMap<Entity, InputGuard>);
+
+/// Passes each player input through its guard and forwards what may apply.
+/// A new sequence is forwarded even with nothing to apply, since opening it
+/// is what closes and confirms the previous one.
+pub fn try_input(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut guards: ResMut<InputGuards>,
+    mut net: ResMut<ServerNet>,
     lobby: Res<Lobby>,
-    mut conn: ResMut<ServerNet>,
-    mut buffers: ResMut<InputQueues>,
+    time: Res<Time<Real>>,
 ) {
-    let entities_to_send: Vec<Entity> = buffers.entities().copied().collect();
+    let now = time.elapsed_secs();
+    for message in reader.read() {
+        let Try { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
+        let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
+        let guard = guards.0.entry(ent).or_insert_with(|| InputGuard::new(now));
+        let opened = seq == guard.open_seq.wrapping_add(1);
+        match guard.accept(now, key_bits, dt, seq) {
+            Verdict::Apply(applied) => {
+                if applied > 0 || opened {
+                    writer.write(Do { event: Event::Input { ent, key_bits, dt: applied, seq } });
+                }
+            }
+            Verdict::Drop => {}
+            Verdict::Violation(what) => {
+                warn!("input violation from {ent}: {what}");
+                if guard.violate(now) {
+                    if let Some(&client_id) = lobby.get_by_right(&ent) {
+                        warn!("disconnecting {client_id}: repeated input violations");
+                        net.disconnect(client_id);
+                    }
+                }
+            }
+        }
+    }
+}
 
-    for ent in entities_to_send {
+/// Applies accepted inputs to physics in arrival order. The queue holds one
+/// entry, the open input (INV-002); a message with the next sequence closes
+/// it, confirming the position it left the entity at, and replaces it in
+/// place. A dead player's inputs keep the sequence moving but do not move it.
+pub fn apply(
+    mut reader: MessageReader<Do>,
+    mut commands: Commands,
+    mut buffers: ResMut<InputQueues>,
+    mut query: Query<(&mut Heading, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>)>,
+    map: Res<Map>,
+    nntree: Res<NNTree>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
+        let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
+        let Ok((mut heading, mut position, mut airtime, attrs, dead)) = query.get_mut(ent) else { continue };
+        let Some(front) = buffer.queue.front_mut() else {
+            panic!("Queue invariant violation: entity {ent} has empty queue");
+        };
+        let Event::Input { seq: seq0, dt: dt0, .. } = front else { panic!("not input") };
 
-        // Queue invariant: all queues must have at least 1 input
-        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-
-        while buffer.queue.len() > 1 {
-            let event = buffer.queue.pop_back().unwrap();
-            let message = bincode::serde::encode_to_vec(
-                Do { event },
-                bincode::config::legacy()).unwrap();
-            conn.send_reliable(*lobby.get_by_right(&ent).unwrap(), DefaultChannel::ReliableOrdered, message);
+        if seq == seq0.wrapping_add(1) {
+            // Through commands: a reader and a writer of `Do` in one system is a
+            // conflicting access (B0002).
+            commands.write_message(Do { event: Event::Confirm { ent, seq: *seq0, position: *position, airtime: airtime.state } });
+            *front = Event::Input { ent, key_bits, dt, seq };
+        } else if seq == *seq0 {
+            *dt0 = dt0.saturating_add(dt);
+        } else {
+            continue;
         }
 
-        // Queue invariant maintained: exactly 1 input remaining (the accumulating one)
-        assert_eq!(buffer.queue.len(), 1, "Queue must have exactly 1 input after sending confirmations");
+        if dead.is_some() {
+            continue;
+        }
+
+        let moving = key_bits.is_pressed(KB_MOVE);
+        if moving && *heading != key_bits.heading {
+            *heading = key_bits.heading;
+        }
+        if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() {
+            airtime.state = Some(JUMP_DURATION_MS);
+        }
+        let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+        let (offset, air) = physics::apply(*position, *heading, moving, airtime.state, movement_speed, dt as i16, &map, &nntree);
+        position.offset = offset;
+        airtime.state = air;
+    }
+}
+
+/// Tells every client that has an entity loaded what to simulate it from:
+/// sent when its heading, motion or airborne state changes and at every tile
+/// crossing while it moves, so a lost intent is repaired within a tile.
+/// Motion is what physics produced this tick, so an input that moved nothing
+/// reports a stopped entity. A knocked-back entity is driven by its
+/// displacement instead.
+pub fn broadcast_movement_intent(
+    mut commands: Commands,
+    mut writer: MessageWriter<Do>,
+    mut query: Query<(Entity, &Loc, &Position, &Heading, &AirTime, Option<&mut MovementIntentState>), Without<Knockback>>,
+    map: Res<Map>,
+) {
+    for (ent, loc, position, heading, airtime, state) in &mut query {
+        let Some(mut state) = state else {
+            commands.entity(ent).insert(MovementIntentState {
+                last_tick: *position,
+                sent_heading: *heading,
+                sent_tile: **loc,
+                ..default()
+            });
+            continue;
+        };
+
+        let here = position.to_world(&map).xz();
+        let there = state.last_tick.to_world(&map).xz();
+        let moving = here.distance_squared(there) > 1e-8;
+        let airborne = airtime.state.is_some();
+        state.last_tick = *position;
+
+        let changed = moving != state.sent_moving
+            || *heading != state.sent_heading
+            || airborne != state.sent_airborne
+            || (moving && **loc != state.sent_tile);
+        if !changed {
+            continue;
+        }
+        state.sent_moving = moving;
+        state.sent_heading = *heading;
+        state.sent_airborne = airborne;
+        state.sent_tile = **loc;
+
+        writer.write(Do { event: Event::MovementIntent {
+            ent,
+            position: *position,
+            heading: *heading,
+            moving,
+            airtime: airtime.state,
+        }});
     }
 }
 
@@ -81,96 +297,6 @@ pub fn try_set_tier_lock(
                 },
             });
         }
-    }
-}
-
-/// Broadcast movement intent for player inputs
-
-/// Runs in FixedPostUpdate after physics has processed all inputs.
-/// At this point Heading and offset.state are up-to-date, so we can accurately
-/// broadcast where players are heading, enabling client-side prediction of remote players.
-pub fn broadcast_player_movement_intent(
-    mut commands: Commands,
-    mut writer: MessageWriter<Do>,
-    buffers: Res<InputQueues>,
-    mut query: Query<(&Loc, &Heading, &Position, Option<&ActorAttributes>, Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>)>,
-    map: Res<Map>,
-) {
-    for (ent, buffer) in buffers.iter() {
-        // Queue invariant: all queues must have at least 1 input
-        assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-
-        let Ok((loc, heading, position, attrs, o_intent_state)) = query.get_mut(ent) else { continue; };
-
-        // Get the first input (the accumulating one that physics will process next)
-        let Some(input) = buffer.queue.back() else { continue; };
-        let Event::Input { key_bits, .. } = input else { unreachable!() };
-
-        // Get or initialize MovementIntentState first (needed for reset logic)
-        let mut intent_state = if let Some(state) = o_intent_state {
-            state
-        } else {
-            // First time - add component and skip (will process next frame)
-            commands.entity(ent).insert(common_bevy::components::movement_intent_state::MovementIntentState::default());
-            continue;
-        };
-
-        // Check if moving (any movement keys pressed)
-        let is_moving = key_bits.is_pressed(KB_HEADING_Q) || key_bits.is_pressed(KB_HEADING_R);
-
-        // Calculate destination tile
-        let destination = if is_moving {
-            // Moving: destination is next tile in movement direction (use Heading component, not key_bits)
-            **heading + **loc
-        } else {
-            // Stopped: destination is current tile (to snap back to heading position)
-            **loc
-        };
-
-        // Skip if already broadcast for this destination and heading
-        if destination == intent_state.last_broadcast_dest && *heading == intent_state.last_broadcast_heading {
-            continue;
-        }
-
-        // Calculate distance and duration
-        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-        let distance = if is_moving {
-            // Moving: distance from current position to destination heading-adjusted position
-            let current_world = map.convert(**loc) + position.offset;
-            let dest_tile_center = map.convert(destination);
-
-            // Calculate destination heading-adjusted offset (use Heading component, not key_bits)
-            let dest_heading_neighbor = map.convert(destination + **heading);
-            let dest_direction = dest_heading_neighbor - dest_tile_center;
-            let dest_offset = (dest_direction * HERE).xz();
-            let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
-
-            (dest_world - current_world).length()
-        } else {
-            // Stopped: distance from current position to current tile heading-adjusted position
-            let current_world = map.convert(**loc) + position.offset;
-            let tile_center = map.convert(**loc);
-            let heading_neighbor = map.convert(**loc + **heading);
-            let direction = heading_neighbor - tile_center;
-            let heading_offset = (direction * HERE).xz();
-            let dest_world = tile_center + Vec3::new(heading_offset.x, 0.0, heading_offset.y);
-            (dest_world - current_world).length()
-        };
-
-        let duration_ms = (distance / movement_speed) as u16;
-
-        // Update state and broadcast
-        intent_state.last_broadcast_dest = destination;
-        intent_state.last_broadcast_heading = *heading;
-
-        writer.write(Do {
-            event: Event::MovementIntent {
-                ent,
-                destination, // Players stand ON terrain (already at correct Z)
-                duration_ms,
-            }
-        });
     }
 }
 
@@ -261,3 +387,53 @@ pub fn try_respec_attributes(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn moving() -> KeyBits {
+        KeyBits { key_bits: KB_MOVE, heading: Heading::from_slot(3), accumulator: 0 }
+    }
+
+    #[test]
+    fn a_new_seq_opens_and_the_same_seq_extends() {
+        let mut guard = InputGuard::new(0.0);
+        assert!(matches!(guard.accept(0.0, moving(), 0, 2), Verdict::Apply(0)));
+        assert!(matches!(guard.accept(0.01, moving(), 16, 2), Verdict::Apply(16)));
+        assert!(matches!(guard.accept(0.02, moving(), 0, 2), Verdict::Drop), "nothing to apply");
+        assert!(matches!(guard.accept(0.03, moving(), 16, 4), Verdict::Violation(_)), "skipped seq");
+        assert!(matches!(guard.accept(0.04, KeyBits::default(), 16, 2), Verdict::Violation(_)), "keys changed under the seq");
+    }
+
+    /// Time is drawn from real time: a burst spends the bank, then the
+    /// guard admits only what has elapsed.
+    #[test]
+    fn credit_bounds_accepted_time() {
+        let mut guard = InputGuard::new(0.0);
+        let mut accepted = 0u32;
+        for i in 0..20 {
+            let seq = 2u8.wrapping_add(i as u8);
+            if let Verdict::Apply(dt) = guard.accept(0.0, moving(), MAX_INPUT_DT_MS, seq) {
+                accepted += dt as u32;
+            }
+        }
+        assert_eq!(accepted, CREDIT_CAP_MS as u32, "an instant burst gets the cap and no more");
+        assert!(matches!(guard.accept(0.0, moving(), 16, 22), Verdict::Apply(0)));
+        assert!(matches!(guard.accept(0.5, moving(), 16, 23), Verdict::Apply(16)), "real time refills");
+    }
+
+    #[test]
+    fn oversized_and_flooded_inputs_are_violations() {
+        let mut guard = InputGuard::new(0.0);
+        assert!(matches!(guard.accept(0.0, moving(), MAX_INPUT_DT_MS + 1, 2), Verdict::Violation(_)));
+        let mut guard = InputGuard::new(0.0);
+        let mut violations = 0;
+        for _ in 0..=MAX_INPUTS_PER_SECOND {
+            if let Verdict::Violation(_) = guard.accept(0.0, moving(), 1, 2) { violations += 1; }
+        }
+        assert_eq!(violations, 1, "the message past the rate is refused");
+        assert!(!guard.violate(0.0));
+        for _ in 1..MAX_VIOLATIONS - 1 { guard.violate(0.0); }
+        assert!(guard.violate(0.0), "repeated violations disconnect");
+    }
+}

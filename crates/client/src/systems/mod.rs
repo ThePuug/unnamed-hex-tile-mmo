@@ -15,7 +15,7 @@ pub mod equipment;
 pub mod equipment_panel;
 pub mod hiding;
 pub mod input;
-pub mod prediction; // Movement prediction and VisualPosition interpolation
+pub mod movement;
 pub mod renet;
 pub mod resolved_threats; // Resolved threats stack below threat queue
 pub mod resource_bars;

@@ -15,7 +15,7 @@ use common_bevy::{
         resources::*,
         tier_lock::TierLock,
     },
-    message::{ Component, Event, * },
+    message::{ Event, * },
     plugins::nntree::*,
     resources::*,
     systems::combat::{
@@ -34,6 +34,7 @@ pub fn do_manage_connections(
     mut conn: ResMut<ServerNet>,
     mut lobby: ResMut<Lobby>,
     mut buffers: ResMut<InputQueues>,
+    mut guards: ResMut<crate::systems::input::InputGuards>,
     mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
@@ -119,7 +120,7 @@ pub fn do_manage_connections(
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue {
-                    queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into() }));
+                    queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into(), ..default() }));
 
                 // init client
                 let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
@@ -166,6 +167,7 @@ pub fn do_manage_connections(
                 info!("Player {} disconnected: {:?}", client_id, reason);
                 let ent = lobby.remove_by_left(&client_id).unwrap().1;
                 buffers.remove(&ent);
+                guards.0.remove(&ent);
 
                 // Send Despawn to all players who had this entity loaded
                 if let Ok(loaded_by) = loaded_by_query.get(ent) {
@@ -198,9 +200,9 @@ pub fn write_try(
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let (message, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match message {
-                Try { event: Event::Incremental { component: Component::KeyBits(keybits), .. } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
-                    writer.write(Try { event: Event::Incremental { ent, component: Component::KeyBits(keybits) }});
+                Try { event: Event::Input { ent: _, key_bits, dt, seq } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
                 }
                 Try { event: Event::Gcd { typ, .. } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
@@ -257,9 +259,7 @@ pub fn write_try(
             Event::Spawn { .. } => unreachable!(),
             Event::Incremental { ent, component } => {
                 let ent = *ent;
-                let component = *component;
-                if matches!(component, Component::KeyBits(_)) { continue; }
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
+                let component = *component;                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 let bytes = bincode::serde::encode_to_vec(
                     Do { event: Event::Incremental { ent, component }},
                     bincode::config::legacy()).unwrap();
@@ -367,18 +367,20 @@ pub fn write_try(
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
-            Event::MovementIntent { ent, destination, duration_ms } => {
+            Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => {
                 let ent = *ent;
-                let destination = *destination;
-                let duration_ms = *duration_ms;
-                // Movement intent via Unreliable channel for client-side prediction
+                // Unreliable: the latest wins, and Loc repairs a loss.
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::MovementIntent { ent, destination, duration_ms }},
-                    bincode::config::legacy()).unwrap();
+                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
                 for &player_ent in &loaded_by.players {
                     let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
                     conn.send_unreliable(*client_id, bytes.clone());
+                }
+            }
+            Event::Confirm { ent, .. } => {
+                if let Some(client_id) = lobby.get_by_right(ent) {
+                    let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes);
                 }
             }
             Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {

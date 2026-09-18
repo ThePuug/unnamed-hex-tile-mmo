@@ -8,14 +8,18 @@ use common_bevy::{
     resources::map::Map,
 };
 
-/// Number of discrete orbit positions
-const ORBIT_STOPS: usize = 6;
-/// Angular separation between orbit stops (60°)
-const ORBIT_STEP: f32 = PI / 3.0;
+/// Orbit stops: one per heading, so forward is always a heading.
+pub const ORBIT_STOPS: usize = HEADING_SLOTS as usize;
+/// Angular separation between orbit stops.
+const ORBIT_STEP: f32 = 2.0 * PI / ORBIT_STOPS as f32;
+/// Seconds between steps while a turn key is held.
+const ORBIT_REPEAT_SECS: f32 = 0.08;
 /// Exponential decay constant for orbit interpolation (~0.25s to settle)
 const INTERPOLATION_SPEED: f32 = 12.0;
 /// Threshold below which interpolation snaps to target
 const SNAP_THRESHOLD: f32 = 0.005;
+
+use common_bevy::components::heading::{Heading, HEADING_SLOTS};
 
 // Re-export canonical camera constants from common.
 pub use common::camera::{CAMERA_DISTANCE, MAX_GAMEPLAY_FOV, camera_height};
@@ -30,18 +34,21 @@ pub fn gameplay_camera_height() -> f32 {
     camera_height(MAX_GAMEPLAY_FOV)
 }
 
-/// Camera orbit state with discrete 60° stops and smooth interpolation.
+/// Camera orbit state: discrete stops, one per heading, and smooth interpolation.
 #[derive(Resource)]
 pub struct CameraOrbit {
     /// Current interpolated angle (radians, 0 = behind player facing north)
     pub current: f32,
-    /// Target stop index (0..5, each 60° apart)
+    /// Target stop index, counter-clockwise from behind the player
     pub target_index: usize,
+    /// Whether a turn key is held, and the seconds until it steps again
+    held: bool,
+    repeat: f32,
 }
 
 impl Default for CameraOrbit {
     fn default() -> Self {
-        Self { current: 0.0, target_index: 0 }
+        Self { current: 0.0, target_index: 0, held: false, repeat: 0.0 }
     }
 }
 
@@ -50,22 +57,35 @@ impl CameraOrbit {
         self.target_index as f32 * ORBIT_STEP
     }
 
-    pub fn is_interpolating(&self) -> bool {
-        angle_diff(self.current, self.target_angle()).abs() > SNAP_THRESHOLD
+    /// The heading the camera faces: the orbit angle runs counter-clockwise
+    /// and a bearing clockwise, so the stop index counts down from north.
+    pub fn forward(&self) -> Heading {
+        Heading::from_slot(((ORBIT_STOPS - self.target_index) % ORBIT_STOPS) as u8)
     }
 
-    /// Step clockwise (triggered by Up+Right movement input)
-    pub fn step_cw(&mut self) {
-        if !self.is_interpolating() {
-            self.target_index = (self.target_index + ORBIT_STOPS - 1) % ORBIT_STOPS;
+    /// One step on the first call while held, then one every ORBIT_REPEAT_SECS.
+    fn step(&mut self, delta: isize, dt: f32) {
+        if self.held {
+            self.repeat -= dt;
+            if self.repeat > 0.0 { return; }
         }
+        self.held = true;
+        self.repeat = ORBIT_REPEAT_SECS;
+        self.target_index = (self.target_index as isize + delta).rem_euclid(ORBIT_STOPS as isize) as usize;
     }
 
-    /// Step counterclockwise (triggered by Up+Left movement input)
-    pub fn step_ccw(&mut self) {
-        if !self.is_interpolating() {
-            self.target_index = (self.target_index + 1) % ORBIT_STOPS;
-        }
+    pub fn step_cw(&mut self, dt: f32) {
+        self.step(-1, dt);
+    }
+
+    pub fn step_ccw(&mut self, dt: f32) {
+        self.step(1, dt);
+    }
+
+    /// The turn keys are up: the next press steps at once.
+    pub fn release(&mut self) {
+        self.held = false;
+        self.repeat = 0.0;
     }
 }
 

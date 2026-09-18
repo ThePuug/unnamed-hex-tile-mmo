@@ -35,11 +35,11 @@ pub fn tick_stagger(
 /// Stops when: no progress, no walkable neighbors, or remaining_tiles exhausted.
 pub fn process_knockback(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Loc, &mut Knockback)>,
+    mut query: Query<(Entity, &mut Loc, &mut Position, &mut Knockback)>,
     map: Res<Map>,
     mut writer: MessageWriter<Do>,
 ) {
-    for (ent, mut loc, mut knockback) in &mut query {
+    for (ent, mut loc, mut position, mut knockback) in &mut query {
         if knockback.remaining_tiles <= 0 {
             commands.entity(ent).remove::<Knockback>();
             continue;
@@ -70,6 +70,7 @@ pub fn process_knockback(
         // Move to next tile (Loc is standing height: floor + Z)
         let new_loc = Loc::new(next_qrz + Qrz::Z);
         *loc = new_loc;
+        *position = Position::at_tile(*new_loc);
 
         writer.write(Do {
             event: GameEvent::Incremental {

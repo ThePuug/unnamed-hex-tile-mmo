@@ -341,26 +341,6 @@ fn execute_admin_actions(
     }
 }
 
-/// Flat-top hex direction table for flyover movement (same as input.rs).
-const HEX_DIRECTIONS_FLAT: [qrz::Qrz; 6] = [
-    qrz::Qrz { q: 0, r: -1, z: 0 },   // 0: N   (0°)
-    qrz::Qrz { q: 1, r: -1, z: 0 },   // 1: NE  (60°)
-    qrz::Qrz { q: 1, r: 0, z: 0 },    // 2: SE  (120°)
-    qrz::Qrz { q: 0, r: 1, z: 0 },    // 3: S   (180°)
-    qrz::Qrz { q: -1, r: 1, z: 0 },   // 4: SW  (240°)
-    qrz::Qrz { q: -1, r: 0, z: 0 },   // 5: NW  (300°)
-];
-
-/// Rotate a hex direction by stepping through the direction table.
-fn rotate_hex(dir: &qrz::Qrz, steps: i32) -> qrz::Qrz {
-    if let Some(idx) = HEX_DIRECTIONS_FLAT.iter().position(|d| d.q == dir.q && d.r == dir.r) {
-        let new_idx = (idx as i32 + steps).rem_euclid(6) as usize;
-        HEX_DIRECTIONS_FLAT[new_idx]
-    } else {
-        *dir
-    }
-}
-
 /// Smooth camera movement using hex-direction arrow keys with speed ramp.
 fn flyover_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -383,48 +363,33 @@ fn flyover_movement(
         let left = keyboard.pressed(KeyCode::ArrowLeft);
         let right = keyboard.pressed(KeyCode::ArrowRight);
 
-        let camera_idx = orbit.target_index;
-
-        let visual_dir = if up && !down {
-            if left && !right {
-                orbit.step_ccw();
-                qrz::Qrz { q: -1, r: 0, z: 0 }
-            } else if right && !left {
-                orbit.step_cw();
-                qrz::Qrz { q: 1, r: -1, z: 0 }
-            } else {
-                qrz::Qrz { q: 0, r: -1, z: 0 }
-            }
-        } else if down && !up {
-            if left && !right {
-                qrz::Qrz { q: -1, r: 1, z: 0 }
-            } else if right && !left {
-                qrz::Qrz { q: 1, r: 0, z: 0 }
-            } else {
-                qrz::Qrz { q: 0, r: 1, z: 0 }
-            }
-        } else if left && !right {
-            orbit.step_ccw();
-            qrz::Qrz { q: 0, r: 0, z: 0 }
-        } else if right && !left {
-            orbit.step_cw();
-            qrz::Qrz { q: 0, r: 0, z: 0 }
+        // Same steering as the player: left and right step the camera unless
+        // backing diagonally, and forward is the stop the camera lands on.
+        let turning = !(down && !up);
+        if turning && left && !right {
+            orbit.step_ccw(dt);
+        } else if turning && right && !left {
+            orbit.step_cw(dt);
         } else {
-            qrz::Qrz { q: 0, r: 0, z: 0 }
+            orbit.release();
+        }
+        let forward = orbit.forward();
+        let heading = if up && !down {
+            Some(forward)
+        } else if down && !up {
+            let back = forward.reversed();
+            Some(if left && !right { back.turned(3) } else if right && !left { back.turned(-3) } else { back })
+        } else {
+            None
         };
 
-        if visual_dir.q != 0 || visual_dir.r != 0 {
+        if let Some(heading) = heading {
             flyover.hold_time += dt;
             let t = (flyover.hold_time / RAMP_SECONDS).min(1.0);
             flyover.speed_multiplier = 1.0 + (MAX_SPEED_MULTIPLIER - 1.0) * t * t;
 
-            let world_dir = rotate_hex(&visual_dir, -(camera_idx as i32));
-
-            let origin = qrz::Qrz { q: 0, r: 0, z: 0 };
-            let origin_world: Vec3 = map.convert(origin);
-            let neighbor_world: Vec3 = map.convert(world_dir);
-            let mut direction = (neighbor_world - origin_world).normalize();
-            direction.y = 0.0;
+            let dir = heading.to_world_dir();
+            let direction = Vec3::new(dir.x, 0.0, dir.y);
 
             let speed = flyover.speed_multiplier;
             flyover.world_position += direction * BASE_SPEED * speed * dt;
@@ -433,6 +398,7 @@ fn flyover_movement(
             flyover.speed_multiplier = 1.0;
         }
     } else {
+        orbit.release();
         flyover.hold_time = 0.0;
         flyover.speed_multiplier = 1.0;
     }

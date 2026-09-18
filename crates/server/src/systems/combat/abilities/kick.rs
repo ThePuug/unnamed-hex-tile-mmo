@@ -223,11 +223,7 @@ pub fn handle_kick(
                 // +Z: entities stand ON terrain (matches MovementIntent convention).
                 let knockback_duration_ms = tiles_pushed as u16 * 125;
                 writer.write(Do {
-                    event: GameEvent::MovementIntent {
-                        ent: threat.source,
-                        destination: kb_destination + Qrz::Z,
-                        duration_ms: knockback_duration_ms,
-                    },
+                    event: GameEvent::Displace { ent: threat.source, destination: kb_destination + Qrz::Z, duration_ms: knockback_duration_ms },
                 });
 
                 // Tile-by-tile knockback: process_knockback moves 1 tile per server tick (125ms).

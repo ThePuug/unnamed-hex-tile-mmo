@@ -141,3 +141,10 @@ pub struct DeathMarker {
 /// Marker for compass container
 #[derive(Component)]
 pub struct CompassContainer;
+/// A remote entity is simulated from its last movement intent: whether it
+/// travels along its heading, and the fixed time not yet attributed to it.
+#[derive(Component, Debug)]
+pub struct RemoteMotion {
+    pub moving: bool,
+    pub residual_us: u32,
+}

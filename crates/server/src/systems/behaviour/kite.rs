@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use rand::seq::IteratorRandom;
-use qrz::{Convert, Qrz};
+use qrz::Qrz;
 
 use common_bevy::{
     components::{
@@ -17,67 +17,6 @@ use common_bevy::{
 use crate::components::{
     target_lock::TargetLock,
 };
-
-/// Helper: Broadcast movement intent when NPC decides to move
-fn broadcast_intent(
-    commands: &mut Commands,
-    writer: &mut MessageWriter<Do>,
-    map: &Map,
-    npc_entity: Entity,
-    npc_loc: &Loc,
-    next_tile: Qrz,
-    heading: &Heading,
-    movement_speed: f32,
-    intent_state_opt: Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
-) {
-    // Get or initialize MovementIntentState
-    let intent_state = if let Some(state) = intent_state_opt {
-        state
-    } else {
-        // First time - add component and skip (will process next frame)
-        commands.entity(npc_entity).insert(common_bevy::components::movement_intent_state::MovementIntentState::default());
-        return;
-    };
-
-    // Skip if already broadcast for this destination and heading
-    if next_tile == intent_state.last_broadcast_dest && *heading == intent_state.last_broadcast_heading {
-        return;
-    }
-
-    // Calculate distance and duration (to heading-adjusted destination position)
-    // Both source and destination use standing height for consistent distance
-    let current_world: Vec3 = map.convert(**npc_loc); // Standing height
-    let dest_standing = next_tile + qrz::Qrz::Z;     // Standing height
-    let dest_tile_center: Vec3 = map.convert(dest_standing);
-
-    // Calculate heading-adjusted offset at destination (movement direction)
-    // Y is dropped via .xz() so z-level of movement_direction doesn't matter
-    let movement_direction = next_tile - **npc_loc;
-    let dest_offset = if movement_direction != qrz::Qrz::default() {
-        use common_bevy::components::heading::HERE;
-        let heading_neighbor: Vec3 = map.convert(dest_standing + movement_direction);
-        let direction = heading_neighbor - dest_tile_center;
-        (direction * HERE).xz()
-    } else {
-        Vec2::ZERO
-    };
-    let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
-
-    let distance = (dest_world - current_world).length();
-    let duration_ms = (distance / movement_speed) as u16;
-
-    // Update state and broadcast
-    intent_state.last_broadcast_dest = next_tile;
-    intent_state.last_broadcast_heading = *heading;
-
-    writer.write(Do {
-        event: Event::MovementIntent {
-            ent: npc_entity,
-            destination: dest_standing,
-            duration_ms,
-        }
-    });
-}
 
 /// Score a neighbor tile for kite movement.
 /// Higher score = more preferred destination.
@@ -175,7 +114,6 @@ pub fn kite(
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
-        Option<&mut common_bevy::components::movement_intent_state::MovementIntentState>,
         &EngagementMember,
         Option<&Stagger>,
     )>,
@@ -186,7 +124,7 @@ pub fn kite(
     dt: Res<Time>,
     mut writer: MessageWriter<common_bevy::message::Do>,
 ) {
-    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, mut intent_state_opt, engagement_member, stagger_opt) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, stagger_opt) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
@@ -225,9 +163,9 @@ pub fn kite(
                 .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
             if let Some((next_tile, _)) = best_neighbor {
-                let direction = (*next_tile - start).normalize();
-                let desired_heading = Heading::new(direction);
-                *npc_heading = desired_heading;
+                if let Some(heading) = Heading::between(&map, start, *next_tile) {
+                    *npc_heading = heading;
+                }
 
                 if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
                     npc_airtime.state = Some(125);
@@ -235,21 +173,7 @@ pub fn kite(
 
                 let dt_ms = dt.delta().as_millis() as i16;
                 let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-                // Broadcast intent BEFORE physics computes movement
-                broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
-
-                let (offset, airtime) = physics::apply(
-                    Loc::new(*next_tile),
-                    dt_ms,
-                    *npc_loc,
-                    npc_position.offset,
-                    npc_airtime.state,
-                    movement_speed,
-                    *npc_heading,
-                    &map,
-                    &nntree,
-                );
+                let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                 npc_position.offset = offset;
                 npc_airtime.state = airtime;
@@ -319,9 +243,9 @@ pub fn kite(
                         .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
                     if let Some((next_tile, _)) = best_neighbor {
-                        let direction = (*next_tile - start).normalize();
-                        let desired_heading = Heading::new(direction);
-                        *npc_heading = desired_heading;
+                        if let Some(heading) = Heading::between(&map, start, *next_tile) {
+                            *npc_heading = heading;
+                        }
 
                         if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
                             npc_airtime.state = Some(125);
@@ -329,21 +253,7 @@ pub fn kite(
 
                         let dt_ms = dt.delta().as_millis() as i16;
                         let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-                        // Broadcast intent BEFORE physics computes movement
-                        broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
-
-                        let (offset, airtime) = physics::apply(
-                            Loc::new(*next_tile),
-                            dt_ms,
-                            *npc_loc,
-                            npc_position.offset,
-                            npc_airtime.state,
-                            movement_speed,
-                            *npc_heading,
-                            &map,
-                            &nntree,
-                        );
+                        let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                         npc_position.offset = offset;
                         npc_airtime.state = airtime;
@@ -398,9 +308,9 @@ pub fn kite(
         let action = kite_config.determine_action(distance);
 
         // Always face target (kiter maintains facing while moving)
-        let direction = (**target_loc - **npc_loc).normalize();
-        let desired_heading = Heading::new(direction);
-        *npc_heading = desired_heading;
+        if let Some(heading) = Heading::between(&map, **npc_loc, **target_loc) {
+            *npc_heading = heading;
+        }
 
         // Fetch spawn location for score-based neighbor selection
         let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
@@ -434,21 +344,7 @@ pub fn kite(
 
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-                    // Broadcast intent BEFORE physics computes movement
-                    broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
-
-                    let (offset, airtime) = physics::apply(
-                        Loc::new(*next_tile),
-                        dt_ms,
-                        *npc_loc,
-                        npc_position.offset,
-                        npc_airtime.state,
-                        movement_speed,
-                        *npc_heading,
-                        &map,
-                        &nntree,
-                    );
+                    let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                     npc_position.offset = offset;
                     npc_airtime.state = airtime;
@@ -482,21 +378,7 @@ pub fn kite(
 
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-
-                    // Broadcast intent BEFORE physics computes movement
-                    broadcast_intent(&mut commands, &mut writer, &map, npc_entity, npc_loc, *next_tile, &npc_heading, movement_speed, intent_state_opt.as_deref_mut());
-
-                    let (offset, airtime) = physics::apply(
-                        Loc::new(*next_tile),
-                        dt_ms,
-                        *npc_loc,
-                        npc_position.offset,
-                        npc_airtime.state,
-                        movement_speed,
-                        *npc_heading,
-                        &map,
-                        &nntree,
-                    );
+                    let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                     npc_position.offset = offset;
                     npc_airtime.state = airtime;

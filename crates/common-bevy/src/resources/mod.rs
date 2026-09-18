@@ -57,6 +57,11 @@ impl InputQueues {
 #[derive(Clone, Debug, Default, Resource)]
 pub struct InputQueue {
     pub queue: VecDeque<Event>,
+    /// Microseconds of fixed time not yet attributed to an input, so a
+    /// 15.625 ms tick alternates 15 and 16 ms instead of losing the fraction.
+    pub residual_us: u32,
+    /// Milliseconds of the open input not yet on the wire.
+    pub unsent_ms: u16,
 }
 
 #[cfg(test)]

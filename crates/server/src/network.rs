@@ -183,6 +183,12 @@ impl ServerNet {
         }
         stale
     }
+
+    /// Drops a client: its queues, then its connection.
+    pub fn disconnect(&mut self, client_id: ClientId) {
+        self.clients.remove(&client_id);
+        self.server.disconnect(client_id);
+    }
 }
 
 // ── Plugin ──

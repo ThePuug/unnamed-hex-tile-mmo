@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Item}, heading::*, keybits::*, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
@@ -25,7 +25,12 @@ pub enum Event {
     },
     Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
+    /// Client → Server: `dt` milliseconds of input `seq` on the client.s own
+    /// clock. A new `seq` opens an input; the same `seq` again extends it.
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
+    /// Server → Client: input `seq` closed with the entity here. The client
+    /// adopts the position and replays only the inputs still open.
+    Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16> },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
@@ -64,13 +69,12 @@ pub enum Event {
     Dismiss { ent: Entity },
     /// Client → Server: Set tier lock for targeting
     SetTierLock { ent: Entity, tier: RangeTier },
-    /// Server → Client: Entity intends to move to destination
-    /// Sent when movement starts (before completion) to enable client-side prediction
-    MovementIntent {
-        ent: Entity,
-        destination: Qrz,   // Target tile
-        duration_ms: u16,   // Expected travel time (for speed scaling)
-    },
+    /// Server → Client: the state a remote entity is simulated from. Sent
+    /// when any of it changes and at every tile crossing while moving.
+    MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, airtime: Option<i16> },
+    /// Server → Client: the entity slides to a standing-height tile under an
+    /// ability (lunge, knockback), arriving after `duration_ms`.
+    Displace { ent: Entity, destination: Qrz, duration_ms: u16 },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
@@ -149,7 +153,6 @@ pub enum Component {
     Equipment(Equipment),
     Health(Health),
     Heading(Heading),
-    KeyBits(KeyBits),
     Loc(Loc),
     Mana(Mana),
     PlayerControlled(PlayerControlled),
@@ -167,7 +170,6 @@ impl Component {
             Component::CombatState(v) => { entity.insert(v); }
             Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }
-            Component::KeyBits(v) => { entity.insert(v); }
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }

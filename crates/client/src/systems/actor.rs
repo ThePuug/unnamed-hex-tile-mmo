@@ -15,7 +15,7 @@ use common_bevy::{
     },
     message::{ Event, * },
     plugins::nntree::NearestNeighbor,
-    resources::{map::Map, InputQueues},
+    resources::map::Map,
 };
 
 pub fn setup() {}
@@ -194,80 +194,6 @@ pub(crate) fn get_asset(typ: EntityType) -> String {
 
 /// When a MovementIntent arrives, start interpolating toward the predicted destination.
 /// Local player is skipped (already predicted via Input system).
-pub fn apply_movement_intent(
-    mut commands: Commands,
-    mut reader: MessageReader<Do>,
-    mut query: Query<(&Loc, &Heading, &mut VisualPosition)>,
-    map: Res<Map>,
-    time: Res<Time>,
-    buffers: Res<InputQueues>,
-) {
-    for message in reader.read() {
-        let Do { event: Event::MovementIntent { ent, destination, duration_ms } } = message
-            else { continue };
-        let ent = *ent;
-        let destination = *destination;
-        let duration_ms = *duration_ms;
-
-        // Local player: normal movement is predicted via Input, not Intent.
-        // But ability-driven displacement (lunge, etc.) sends MovementIntent from server.
-        // Insert AbilityDisplacement marker so do_incremental interpolates instead of snapping.
-        if buffers.get(&ent).is_some() {
-            if let Ok(mut entity_cmd) = commands.get_entity(ent) {
-                entity_cmd.insert(common_bevy::components::AbilityDisplacement { duration_ms });
-            }
-            continue;
-        }
-
-        let Ok((loc, heading, mut visual)) = query.get_mut(ent) else {
-            continue;
-        };
-
-        let duration_secs = duration_ms as f32 / 1000.0;
-        let flat_dist = loc.flat_distance(&destination);
-
-        if flat_dist > 1 {
-            // Multi-tile movement: compute greedy terrain-following path
-            // Use floor-level coordinates for pathfinding (Loc is standing height = floor + Z)
-            let current_floor = map.get_by_qr(loc.q, loc.r).map(|(f, _)| f).unwrap_or(**loc);
-            let dest_floor = qrz::Qrz { q: destination.q, r: destination.r, z: destination.z - 1 };
-            let path = map.greedy_path(current_floor, dest_floor, flat_dist as usize);
-            if !path.is_empty() {
-                let waypoints: Vec<Vec3> = path.iter()
-                    .map(|&tile| map.convert(tile + qrz::Qrz::Z))
-                    .collect();
-                visual.interpolate_along_path(&waypoints, duration_secs);
-            } else {
-                // Fallback: direct interpolation
-                let dest_world: Vec3 = map.convert(destination);
-                visual.interpolate_toward(dest_world, duration_secs);
-            }
-        } else {
-            // Single-tile movement: existing heading-adjusted interpolation
-            let dest_tile_center: Vec3 = map.convert(destination);
-
-            let dest_offset = if **heading != default() {
-                use common_bevy::components::heading::HERE;
-                let heading_neighbor: Vec3 = map.convert(destination + **heading);
-                let direction = heading_neighbor - dest_tile_center;
-                (direction * HERE).xz()
-            } else {
-                Vec2::ZERO
-            };
-            let dest_world = dest_tile_center + Vec3::new(dest_offset.x, 0.0, dest_offset.y);
-            visual.interpolate_toward(dest_world, duration_secs);
-        }
-
-        if let Ok(mut entity_cmd) = commands.get_entity(ent) {
-            entity_cmd.insert(common_bevy::components::movement_prediction::MovementPrediction {
-                predicted_dest: destination,
-                predicted_arrival: time.elapsed() + Duration::from_millis(duration_ms as u64),
-                prediction_start: time.elapsed(),
-            });
-        }
-    }
-}
-
 /// Spawn a debug sphere as a child of the given actor entity.
 /// Called at actor spawn time (if grid visible) and when grid is toggled on.
 pub fn spawn_debug_sphere(

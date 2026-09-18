@@ -48,7 +48,6 @@ fn main() {
         crate::network::NetworkPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        common_bevy::plugins::controlled::ControlledPlugin,
         crate::plugins::behaviour::BehaviourPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
         crate::plugins::world_streaming::WorldStreamingPlugin,
@@ -64,6 +63,7 @@ fn main() {
     app.add_observer(combat::resolve_threat);
 
     app.add_systems(FixedUpdate, (
+        input::apply,
         common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
         common_bevy::systems::combat::state::update_combat_state,
         common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery lockout
@@ -72,7 +72,7 @@ fn main() {
     ));
 
     app.add_systems(FixedPostUpdate, (
-        input::broadcast_player_movement_intent, // Broadcast player movement intents AFTER physics has processed all inputs
+        input::broadcast_movement_intent,
         actor::broadcast_heading_changes, // Broadcast heading changes to clients
     ));
 
@@ -104,7 +104,6 @@ fn main() {
     app.add_systems(Update, (
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
-        input::send_input,
         input::try_input,
         input::try_set_tier_lock, // Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
@@ -136,6 +135,7 @@ fn main() {
 
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
+    app.init_resource::<input::InputGuards>();
     let seed = 0x9E3779B97F4A7C15;
     let registry = crate::resources::event_registry::EventRegistry::new(seed);
     // One definition of where the world starts: the difficulty origin and the

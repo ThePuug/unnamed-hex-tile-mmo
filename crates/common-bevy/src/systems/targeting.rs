@@ -29,37 +29,6 @@ use crate::{
     plugins::nntree::*,
 };
 
-impl Heading {
-    /// Convert heading to angle in degrees (flat-top hex)
-
-    /// Returns the angle in degrees (0-360) for the heading direction.
-    /// Flat-top compass bearings:
-    /// - 0° = North
-    /// - 60° = Northeast
-    /// - 120° = Southeast
-    /// - 180° = South
-    /// - 240° = Southwest
-    /// - 300° = Northwest
-
-    /// # Examples
-
-    /// ```ignore
-    /// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Southeast
-    /// assert_eq!(heading.to_angle(), 120.0);
-    /// ```
-    pub fn to_angle(&self) -> f32 {
-        match (self.q, self.r) {
-            (0, -1) => 0.0,     // North
-            (1, -1) => 60.0,    // Northeast
-            (1, 0) => 120.0,    // Southeast
-            (0, 1) => 180.0,    // South
-            (-1, 1) => 240.0,   // Southwest
-            (-1, 0) => 300.0,   // Northwest
-            _ => 0.0,           // Default/invalid heading
-        }
-    }
-}
-
 /// Check if a target location is within the caster's facing cone
 
 /// The facing cone is 120° wide (±60° from the heading angle).
@@ -78,7 +47,7 @@ impl Heading {
 /// # Examples
 
 /// ```ignore
-/// let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+/// let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 /// let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 /// let target = Loc::new(Qrz { q: 1, r: 0, z: 0 }); // Directly east
 
@@ -539,7 +508,7 @@ mod tests {
         ];
 
         for (qrz, expected_angle, direction_name) in test_cases {
-            let heading = Heading::new(qrz);
+            let heading = Heading::from_hex(qrz);
             let angle = heading.to_angle();
             assert_eq!(
                 angle, expected_angle,
@@ -556,19 +525,12 @@ mod tests {
         assert_eq!(angle, 0.0, "Default heading should produce 0.0 degrees");
     }
 
-    #[test]
-    fn test_heading_to_angle_invalid_heading() {
-        let heading = Heading::new(Qrz { q: 2, r: 0, z: 0 });
-        let angle = heading.to_angle();
-        assert_eq!(angle, 0.0, "Invalid heading should default to 0.0 degrees");
-    }
-
     // ===== FACING CONE TESTS =====
 
     #[test]
     fn test_facing_cone_target_directly_ahead() {
         // Heading East, target directly east
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target = Loc::new(Qrz { q: 1, r: 0, z: 0 });
 
@@ -581,7 +543,7 @@ mod tests {
     #[test]
     fn test_facing_cone_target_at_edge_of_cone() {
         // Heading SE (120°), target NE at 60° should be within ±60° cone
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target_ne = Loc::new(Qrz { q: 1, r: -1, z: 0 }); // Northeast neighbor
 
@@ -594,7 +556,7 @@ mod tests {
     #[test]
     fn test_facing_cone_target_outside_cone() {
         // Heading SE (120°), target to the NW should be outside
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // SE
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target = Loc::new(Qrz { q: -1, r: 0, z: 0 }); // West
 
@@ -608,7 +570,7 @@ mod tests {
     fn test_facing_cone_target_at_same_tile() {
         // Target at same location as caster should return true
         // This handles cases where multiple entities occupy the same hex
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let target = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
@@ -633,7 +595,7 @@ mod tests {
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
         for (heading_qrz, target_offset, direction_name) in test_cases {
-            let heading = Heading::new(heading_qrz);
+            let heading = Heading::from_hex(heading_qrz);
             let target = Loc::new(*caster + target_offset);
 
             assert!(
@@ -647,7 +609,7 @@ mod tests {
     #[test]
     fn test_facing_cone_perpendicular_targets() {
         // Heading SE (120°), targets 120°+ away should be outside cone
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
         // North target (0°) is 120° away from SE (120°) - outside ±60° cone
@@ -668,7 +630,7 @@ mod tests {
     #[test]
     fn test_facing_cone_boundary_precision() {
         // Test the 120° cone (±60° from heading)
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // SE = 120°
         let caster = Loc::new(Qrz { q: 0, r: 0, z: 0 });
 
         // NE at 60° is 60° from SE heading (120°) - at edge of cone
@@ -803,7 +765,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -826,7 +788,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
@@ -845,7 +807,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn target behind (west) - NPC
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
@@ -867,7 +829,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn targets at different distances, all in front - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 3, r: 0, z: 0 })); // Far
@@ -891,7 +853,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
 
         // Spawn two targets at same distance (1 hex away) - NPCs
         // One directly ahead (east), one at an angle (northeast)
@@ -916,7 +878,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn decorator (not targetable) and actor - NPC
         spawn_decorator(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Decorator directly ahead
@@ -940,7 +902,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn targets at different tiers - NPCs
         let close_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
@@ -964,7 +926,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn targets at different tiers - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
@@ -989,7 +951,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn only close targets - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
@@ -1012,7 +974,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East = 90°
 
         // Spawn targets at various angles - NPCs
         let ne_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: -1, z: 0 })); // Northeast (30°) - within cone
@@ -1038,7 +1000,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1068,7 +1030,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (NPC - no PlayerControlled)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1103,7 +1065,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // Facing East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1183,7 +1145,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let player_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // Facing East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // Facing East
 
         // Spawn player
         let player = spawn_actor(&mut world, &mut nntree, player_loc);
@@ -1252,7 +1214,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1288,7 +1250,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1327,7 +1289,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
@@ -1363,7 +1325,7 @@ mod tests {
         let (mut world, mut nntree) = setup_test_world();
 
         let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::new(Qrz { q: 1, r: 0, z: 0 }); // East
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }); // East
 
         // Spawn caster (player)
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);

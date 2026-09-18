@@ -47,7 +47,7 @@ pub fn update(
     if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
         if let Ok((loc, heading)) = player_query.single() {
             // Calculate the hex direction from the player's heading
-            let target_direction = **loc + **heading;
+            let target_direction = **loc + heading.hex_dir();
             
             // Find the actual terrain tile in that direction
             if let Some((actual_tile, _)) = map.get_by_qr(target_direction.q, target_direction.r) {

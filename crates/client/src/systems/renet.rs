@@ -20,7 +20,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
     match &message.event {
         Event::Init { .. } => "Init",
         Event::Spawn { .. } => "Spawn",
-        Event::Input { .. } => "Input",
+        Event::Confirm { .. } => "Confirm",
         Event::Despawn { .. } => "Despawn",
         Event::Incremental { component, .. } => match component {
             Component::Loc(_) => "Inc:Loc",
@@ -31,7 +31,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::TierLock(_) => "Inc:TierLock",
             Component::CombatState(_) => "Inc:Combat",
             Component::Behaviour(_) => "Inc:Behaviour",
-            Component::KeyBits(_) => "Inc:KeyBits",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Returning(_) => "Inc:Returning",
             Component::Equipment(_) => "Inc:Equipment",
@@ -45,6 +44,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::UseAbility { .. } => "UseAbility",
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
+        Event::Displace { .. } => "Displace",
         Event::EvictChunks { .. } => "EvictChunks",
         Event::SummaryBatch { .. } => "SummaryBatch",
         Event::Inventory { .. } => "Inventory",
@@ -92,7 +92,7 @@ pub fn write_do(
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
-                    queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into() }));
+                    queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into(), ..default() }));
                 do_writer.write(Do { event: Event::Init { ent, dt }});
             }
 
@@ -114,12 +114,12 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
             }
 
-            Do { event: Event::Input { ent, key_bits, dt, seq } } => {
+            Do { event: Event::Confirm { ent, seq, position, airtime } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
-                 };
-                do_writer.write(Do { event: Event::Input { ent, key_bits, dt, seq } });
+                };
+                do_writer.write(Do { event: Event::Confirm { ent, seq, position, airtime } });
             }
             Do { event: Event::Despawn { ent } } => {
                 // Check if this is the local player (has InputQueue)
@@ -291,13 +291,14 @@ pub fn write_do(
         network_metrics.record_received(message_type, serialized.len());
 
         match message {
-            Do { event: Event::MovementIntent { ent, destination, duration_ms } } => {
-                // Map entity ID and forward for prediction system
-                let Some(&local_ent) = l2r.get_by_right(&ent) else {
-                    // Entity not yet spawned on client - ignore intent silently
-                    continue
-                };
-                do_writer.write(Do { event: Event::MovementIntent { ent: local_ent, destination, duration_ms } });
+            Do { event: Event::MovementIntent { ent, position, heading, moving, airtime } } => {
+                // An intent for an entity not yet spawned is dropped: the next one repairs it.
+                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
+                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, airtime } });
+            }
+            Do { event: Event::Displace { ent, destination, duration_ms } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
+                do_writer.write(Do { event: Event::Displace { ent, destination, duration_ms } });
             }
             _ => {
                 panic!("Unexpected message on Unreliable channel: {:?}", message);
@@ -313,10 +314,10 @@ pub fn send_try(
 ) {
     for message in reader.read() {
         match &message.event {
-            Event::Incremental { ent, component: Component::KeyBits(keybits) } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Incremental {
+            Event::Input { ent, key_bits, dt, seq } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input {
                     ent: *l2r.get_by_left(ent).unwrap(),
-                    component: Component::KeyBits(*keybits)
+                    key_bits: *key_bits, dt: *dt, seq: *seq,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Gcd { ent, typ, .. } => {

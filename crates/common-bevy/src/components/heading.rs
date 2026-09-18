@@ -1,313 +1,163 @@
-//! Hexagonal Movement Direction Component
-
-//! This module defines the `Heading` component which represents movement direction
-//! in hexagonal coordinate space. Heading is used to determine which direction an
-//! entity is moving or facing.
-
-//! # Coordinate System
-
-//! Heading uses the same Qrz (axial hex coordinates) as the rest of the codebase,
-//! typically representing unit direction vectors in one of the six cardinal hex directions.
-
-//! # Conversions
-
-//! ## KeyBits → Heading
-//! Player input (KeyBits) is converted to Heading using a priority-based mapping:
-//! 1. Q+R+NEG → Northeast (1, -1, 0)
-//! 2. Q+R → Southwest (-1, 1, 0)
-//! 3. Q+NEG → West (-1, 0, 0)
-//! 4. R+NEG → Northwest (0, -1, 0)
-//! 5. Q → East (1, 0, 0)
-//! 6. R → Southeast (0, 1, 0)
-
-//! ## Heading → Quat
-//! Heading is converted to a quaternion rotation for rendering (flat-top hex).
-//! Each of the six cardinal directions maps to a specific Y-axis rotation:
-//! - North: 0 / 2π (0°)
-//! - Northeast: PI*10/6 (300°, i.e. 2π - 60°)
-//! - Southeast: PI*8/6 (240°, i.e. 2π - 120°)
-//! - South: PI (180°)
-//! - Southwest: PI*4/6 (120°, i.e. 2π - 240°)
-//! - Northwest: PI*2/6 (60°, i.e. 2π - 300°)
-
-//! ## Heading → KeyBits
-//! Heading can be converted back to KeyBits for network transmission. This conversion
-//! analyzes the Qrz coordinates to determine which key combination represents that direction.
-
-//! # Distance Thresholds
-
-//! - `HERE` (0.33): Threshold for considering an entity at its current tile
-//! - `THERE` (1.33): Threshold for considering an entity at an adjacent tile
-
-//! These thresholds are used in movement and collision detection to determine when
-//! an entity has crossed tile boundaries.
-
-use std::f32::consts::PI;
+//! A compass bearing in fixed steps: the direction an entity travels and,
+//! after it stops, the direction it faces.
 
 use bevy::prelude::*;
+use qrz::{Convert, Qrz};
 use serde::{Deserialize, Serialize};
 
-use crate::components::{ *,
-    keybits::*,
-};
+use crate::resources::map::Map;
 
-pub const HERE: f32 = 0.33;
-pub const THERE: f32 = 1.33;
+/// Bearings a heading can take, evenly spaced around the compass. A multiple
+/// of six, so every tile-to-tile bearing of the hex grid is a heading.
+pub const HEADING_SLOTS: u8 = 24;
 
-#[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Heading(Qrz);
+/// Degrees between adjacent headings.
+pub const SLOT_DEGREES: f32 = 360.0 / HEADING_SLOTS as f32;
+
+/// A compass bearing clockwise from north in steps of [`SLOT_DEGREES`].
+/// Movement travels along it; combat reads it as the facing. The six
+/// tile-to-tile bearings of the flat-top grid are every fourth slot from
+/// north.
+#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct Heading(u8);
 
 impl Heading {
-    pub fn new(qrz: Qrz) -> Self {
-        Self(qrz)
+    pub const NORTH: Heading = Heading(0);
+
+    pub fn from_slot(slot: u8) -> Self {
+        Heading(slot % HEADING_SLOTS)
+    }
+
+    pub fn slot(self) -> u8 {
+        self.0
+    }
+
+    pub fn degrees(self) -> f32 {
+        self.0 as f32 * SLOT_DEGREES
+    }
+
+    /// Alias of [`Heading::degrees`] for the targeting cone.
+    pub fn to_angle(self) -> f32 {
+        self.degrees()
+    }
+
+    /// The nearest heading to a bearing in degrees clockwise from north.
+    pub fn from_degrees(degrees: f32) -> Self {
+        let slot = (degrees.rem_euclid(360.0) / SLOT_DEGREES).round() as u8;
+        Heading(slot % HEADING_SLOTS)
+    }
+
+    /// This heading turned clockwise by `slots` (counter-clockwise if negative).
+    pub fn turned(self, slots: i32) -> Self {
+        Heading((self.0 as i32 + slots).rem_euclid(HEADING_SLOTS as i32) as u8)
+    }
+
+    pub fn reversed(self) -> Self {
+        self.turned(HEADING_SLOTS as i32 / 2)
+    }
+
+    /// Unit direction in the ground plane as (x, z): north is -z, east is +x.
+    pub fn to_world_dir(self) -> Vec2 {
+        let (sin, cos) = self.degrees().to_radians().sin_cos();
+        Vec2::new(sin, -cos)
+    }
+
+    /// The heading nearest a ground-plane direction given as (x, z), or None
+    /// for a zero vector.
+    pub fn from_world_dir(xz: Vec2) -> Option<Self> {
+        if xz.length_squared() < 1e-12 {
+            return None;
+        }
+        Some(Self::from_degrees(xz.x.atan2(-xz.y).to_degrees()))
+    }
+
+    /// The heading from one world point toward another.
+    pub fn toward(from: Vec3, to: Vec3) -> Option<Self> {
+        Self::from_world_dir((to - from).xz())
+    }
+
+    /// The heading from one tile's centre toward another's.
+    pub fn between(map: &Map, from: Qrz, to: Qrz) -> Option<Self> {
+        let (from, to): (Vec3, Vec3) = (map.convert(from), map.convert(to));
+        Self::toward(from, to)
+    }
+
+    /// The heading of a hex offset on the flat-top grid, north for zero.
+    pub fn from_hex(offset: Qrz) -> Self {
+        let x = 1.5 * offset.q as f32;
+        let z = 3f32.sqrt() * (offset.q as f32 / 2.0 + offset.r as f32);
+        Self::from_world_dir(Vec2::new(x, z)).unwrap_or(Self::NORTH)
+    }
+
+    /// The tile-to-tile direction nearest this heading on the flat-top grid.
+    pub fn hex_dir(self) -> Qrz {
+        const DIRS: [Qrz; 6] = [
+            Qrz { q: 0, r: -1, z: 0 },
+            Qrz { q: 1, r: -1, z: 0 },
+            Qrz { q: 1, r: 0, z: 0 },
+            Qrz { q: 0, r: 1, z: 0 },
+            Qrz { q: -1, r: 1, z: 0 },
+            Qrz { q: -1, r: 0, z: 0 },
+        ];
+        let per = HEADING_SLOTS / 6;
+        DIRS[((self.0 + per / 2) / per) as usize % 6]
     }
 }
 
 impl From<Heading> for Quat {
-    /// Flat-top hex: compass bearings N=0°, NE=60°, SE=120°, S=180°, SW=240°, NW=300°.
-    /// quat_angle = 2π - compass (Y-rotation positive = CCW from above, compass = CW).
-    fn from(value: Heading) -> Self {
-        match (value.q, value.r) {
-            (0, -1) => Quat::from_rotation_y(0.0),          // N:  0°  → 2π-0   = 0
-            (1, -1) => Quat::from_rotation_y(PI*10./6.),    // NE: 60° → 2π-π/3 = 5π/3
-            (1, 0)  => Quat::from_rotation_y(PI*8./6.),     // SE: 120°→ 2π-2π/3= 4π/3
-            (0, 1)  => Quat::from_rotation_y(PI),           // S:  180°→ π
-            (-1, 1) => Quat::from_rotation_y(PI*4./6.),     // SW: 240°→ 2π-4π/3= 2π/3
-            (-1, 0) => Quat::from_rotation_y(PI*2./6.),     // NW: 300°→ 2π-5π/3= π/3
-            _  => Quat::from_rotation_y(PI),
-        }
-    }
-}
-
-impl From<KeyBits> for Heading {
-    fn from(value: KeyBits) -> Self {
-        Heading::new(if value.all_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG]) { Qrz { q: 1, r: -1, z: 0 } }
-            else if value.all_pressed([KB_HEADING_Q, KB_HEADING_R]) { Qrz { q: -1, r: 1, z: 0 } }
-            else if value.all_pressed([KB_HEADING_Q, KB_HEADING_NEG]) { Qrz { q: -1, r: 0, z: 0 } }
-            else if value.all_pressed([KB_HEADING_R, KB_HEADING_NEG]) { Qrz { q: 0, r: -1, z: 0 } }
-            else if value.all_pressed([KB_HEADING_Q]) { Qrz { q: 1, r: 0, z: 0 } }
-            else if value.all_pressed([KB_HEADING_R]) { Qrz { q: 0, r: 1, z: 0 } }
-            else { Qrz::default() })
+    /// A bearing runs clockwise seen from above; a Y rotation runs
+    /// counter-clockwise, so the angle is negated.
+    fn from(heading: Heading) -> Self {
+        Quat::from_rotation_y(-heading.degrees().to_radians())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::PI;
-
-    // ===== CONSTRUCTION AND DEFAULT TESTS =====
 
     #[test]
-    fn test_default_heading_is_zero() {
-        let heading = Heading::default();
-        assert_eq!(*heading, Qrz::default());
-        assert_eq!(heading.q, 0);
-        assert_eq!(heading.r, 0);
-        assert_eq!(heading.z, 0);
-    }
-
-    #[test]
-    fn test_new_heading() {
-        let heading = Heading::new(Qrz { q: 1, r: -1, z: 0 });
-        assert_eq!(heading.q, 1);
-        assert_eq!(heading.r, -1);
-        assert_eq!(heading.z, 0);
-    }
-
-    #[test]
-    fn test_heading_deref() {
-        let heading = Heading::new(Qrz { q: 2, r: -1, z: -1 });
-        let qrz: &Qrz = &*heading;
-        assert_eq!(qrz.q, 2);
-        assert_eq!(qrz.r, -1);
-    }
-
-    // ===== KEYBITS TO HEADING CONVERSION TESTS =====
-
-    #[test]
-    fn test_keybits_to_heading_six_cardinal_directions() {
-        let test_cases: Vec<(&[u8], Qrz, &str)> = vec![
-            (&[KB_HEADING_Q], Qrz { q: 1, r: 0, z: 0 }, "East"),
-            (&[KB_HEADING_R], Qrz { q: 0, r: 1, z: 0 }, "Southeast"),
-            (&[KB_HEADING_Q, KB_HEADING_R], Qrz { q: -1, r: 1, z: 0 }, "Southwest"),
-            (&[KB_HEADING_Q, KB_HEADING_NEG], Qrz { q: -1, r: 0, z: 0 }, "West"),
-            (&[KB_HEADING_R, KB_HEADING_NEG], Qrz { q: 0, r: -1, z: 0 }, "Northwest"),
-            (&[KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], Qrz { q: 1, r: -1, z: 0 }, "Northeast"),
+    fn hex_bearings_are_headings() {
+        let hex = [
+            (Qrz { q: 0, r: -1, z: 0 }, 0.0),
+            (Qrz { q: 1, r: -1, z: 0 }, 60.0),
+            (Qrz { q: 1, r: 0, z: 0 }, 120.0),
+            (Qrz { q: 0, r: 1, z: 0 }, 180.0),
+            (Qrz { q: -1, r: 1, z: 0 }, 240.0),
+            (Qrz { q: -1, r: 0, z: 0 }, 300.0),
         ];
-
-        for (keys, expected_qrz, direction_name) in test_cases {
-            let mut keybits = KeyBits::default();
-            keybits.set_pressed(keys.iter().copied(), true);
-
-            let heading = Heading::from(keybits);
-            assert_eq!(*heading, expected_qrz, "{} should map to {:?}", direction_name, expected_qrz);
+        for (offset, degrees) in hex {
+            let heading = Heading::from_hex(offset);
+            assert_eq!(heading.degrees(), degrees, "{offset:?}");
+            assert_eq!(heading.hex_dir(), offset, "{offset:?} round trips");
+            assert_eq!(Heading::from_world_dir(heading.to_world_dir()), Some(heading));
         }
     }
 
     #[test]
-    fn test_keybits_no_direction_produces_zero_heading() {
-        let keybits = KeyBits::default();
-        let heading = Heading::from(keybits);
-        assert_eq!(*heading, Qrz::default(), "No keys pressed should produce zero heading");
+    fn slots_wrap_and_turn() {
+        assert_eq!(Heading::from_slot(HEADING_SLOTS), Heading::NORTH);
+        assert_eq!(Heading::NORTH.turned(-1).slot(), HEADING_SLOTS - 1);
+        assert_eq!(Heading::NORTH.reversed().degrees(), 180.0);
+        assert_eq!(Heading::from_degrees(359.0), Heading::NORTH);
+        assert_eq!(Heading::from_degrees(-90.0).degrees(), 270.0);
     }
 
     #[test]
-    fn test_keybits_jump_only_produces_zero_heading() {
-        let mut keybits = KeyBits::default();
-        keybits.set_pressed([KB_JUMP], true);
-
-        let heading = Heading::from(keybits);
-        assert_eq!(*heading, Qrz::default(), "Jump only should produce zero heading");
+    fn world_dir_rounds_to_nearest_slot() {
+        let a = Heading::from_slot(1).to_world_dir();
+        let b = Heading::from_slot(2).to_world_dir();
+        let nearer_a = a.lerp(b, 0.4);
+        assert_eq!(Heading::from_world_dir(nearer_a), Some(Heading::from_slot(1)));
+        assert_eq!(Heading::from_world_dir(Vec2::ZERO), None);
     }
 
     #[test]
-    fn test_keybits_conversion_priority_order() {
-        // Test that the conversion checks conditions in the right order
-        // Q+R+NEG should take priority over Q+R
-        let mut keybits = KeyBits::default();
-        keybits.set_pressed([KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG], true);
-
-        let heading = Heading::from(keybits);
-        assert_eq!(*heading, Qrz { q: 1, r: -1, z: 0 }, "Q+R+NEG should produce Northeast");
-    }
-
-    // ===== HEADING TO QUAT CONVERSION TESTS =====
-
-    fn approx_eq(a: Quat, b: Quat, epsilon: f32) -> bool {
-        (a.x - b.x).abs() < epsilon &&
-        (a.y - b.y).abs() < epsilon &&
-        (a.z - b.z).abs() < epsilon &&
-        (a.w - b.w).abs() < epsilon
-    }
-
-    #[test]
-    fn test_heading_to_quat_six_directions() {
-        // Flat-top hex: quat_angle = 2π - compass_bearing
-        let test_cases = vec![
-            (Qrz { q: 0, r: -1, z: 0 }, 0.0,        "North"),
-            (Qrz { q: 1, r: -1, z: 0 }, PI*10./6.,   "Northeast"),
-            (Qrz { q: 1, r: 0, z: 0 },  PI*8./6.,    "Southeast"),
-            (Qrz { q: 0, r: 1, z: 0 },  PI,          "South"),
-            (Qrz { q: -1, r: 1, z: 0 }, PI*4./6.,    "Southwest"),
-            (Qrz { q: -1, r: 0, z: 0 }, PI*2./6.,    "Northwest"),
-        ];
-
-        for (qrz, expected_angle, direction_name) in test_cases {
-            let heading = Heading::new(qrz);
-            let quat: Quat = heading.into();
-            let expected = Quat::from_rotation_y(expected_angle);
-
-            assert!(
-                approx_eq(quat, expected, 0.0001),
-                "{} ({:?}) should produce rotation of {} radians, got {:?} expected {:?}",
-                direction_name, qrz, expected_angle, quat, expected
-            );
-        }
-    }
-
-    #[test]
-    fn test_heading_to_quat_default_fallback() {
-        // Any heading that's not one of the six cardinal directions should produce PI rotation
-        let heading = Heading::new(Qrz { q: 2, r: 0, z: -2 });
-        let quat: Quat = heading.into();
-        let expected = Quat::from_rotation_y(PI);
-
-        assert!(approx_eq(quat, expected, 0.0001), "Non-cardinal heading should use default PI rotation");
-    }
-
-    #[test]
-    fn test_heading_to_quat_zero_heading() {
-        let heading = Heading::default();
-        let quat: Quat = heading.into();
-        let expected = Quat::from_rotation_y(PI);
-
-        assert!(approx_eq(quat, expected, 0.0001), "Zero heading should use default PI rotation");
-    }
-
-    // ===== SERIALIZATION TESTS =====
-
-
-    #[test]
-    fn test_heading_equality() {
-        let h1 = Heading::new(Qrz { q: 1, r: 0, z: -1 });
-        let h2 = Heading::new(Qrz { q: 1, r: 0, z: -1 });
-        let h3 = Heading::new(Qrz { q: 0, r: 1, z: -1 });
-
-        assert_eq!(h1, h2, "Same headings should be equal");
-        assert_ne!(h1, h3, "Different headings should not be equal");
-    }
-
-    // ===== ROUNDTRIP CONVERSION TESTS =====
-
-    #[test]
-    fn test_heading_keybits_heading_roundtrip() {
-        // Heading -> KeyBits -> Heading should preserve direction for cardinal directions
-        // Note: The roundtrip produces normalized unit direction vectors (z=0)
-        let test_cases = vec![
-            (Qrz { q: 1, r: 0, z: -1 }, Qrz { q: 1, r: 0, z: 0 }),   // East
-            (Qrz { q: 0, r: 1, z: -1 }, Qrz { q: 0, r: 1, z: 0 }),   // Southeast
-            (Qrz { q: -1, r: 1, z: 0 }, Qrz { q: -1, r: 1, z: 0 }),  // Southwest
-            (Qrz { q: -1, r: 0, z: 1 }, Qrz { q: -1, r: 0, z: 0 }),  // West
-            (Qrz { q: 0, r: -1, z: 1 }, Qrz { q: 0, r: -1, z: 0 }),  // Northwest
-            (Qrz { q: 1, r: -1, z: 0 }, Qrz { q: 1, r: -1, z: 0 }),  // Northeast
-        ];
-
-        for (original_qrz, normalized_qrz) in test_cases {
-            let heading1 = Heading::new(original_qrz);
-            let keybits = KeyBits::from(heading1);
-            let heading2 = Heading::from(keybits);
-
-            assert_eq!(
-                *heading2, normalized_qrz,
-                "Roundtrip Heading->KeyBits->Heading should produce normalized direction for {:?}",
-                original_qrz
-            );
-        }
-    }
-
-    #[test]
-    fn test_keybits_heading_keybits_roundtrip() {
-        // KeyBits -> Heading -> KeyBits should preserve key combination
-        let test_cases: Vec<&[u8]> = vec![
-            &[KB_HEADING_Q],
-            &[KB_HEADING_R],
-            &[KB_HEADING_Q, KB_HEADING_R],
-            &[KB_HEADING_Q, KB_HEADING_NEG],
-            &[KB_HEADING_R, KB_HEADING_NEG],
-            &[KB_HEADING_Q, KB_HEADING_R, KB_HEADING_NEG],
-        ];
-
-        for keys in test_cases {
-            let mut keybits1 = KeyBits::default();
-            keybits1.set_pressed(keys.iter().copied(), true);
-
-            let heading = Heading::from(keybits1);
-            let keybits2 = KeyBits::from(heading);
-
-            assert_eq!(
-                keybits1.key_bits & 0b111, // Mask to only direction bits
-                keybits2.key_bits & 0b111,
-                "Roundtrip KeyBits->Heading->KeyBits should preserve direction bits for {:?}",
-                keys
-            );
-        }
-    }
-
-    // ===== MAGIC NUMBER DOCUMENTATION TESTS =====
-
-    #[test]
-    fn test_here_constant_value() {
-        assert_eq!(HERE, 0.33, "HERE threshold should be 0.33");
-    }
-
-    #[test]
-    fn test_there_constant_value() {
-        assert_eq!(THERE, 1.33, "THERE threshold should be 1.33");
-    }
-
-    #[test]
-    fn test_here_less_than_there() {
-        assert!(HERE < THERE, "HERE should be less than THERE for distance thresholds");
+    fn rotation_follows_the_compass() {
+        let north: Quat = Heading::NORTH.into();
+        assert!(north.abs_diff_eq(Quat::IDENTITY, 1e-6));
+        let east: Quat = Heading::from_degrees(90.0).into();
+        let forward = east * Vec3::NEG_Z;
+        assert!(forward.abs_diff_eq(Vec3::X, 1e-5), "east faces +x, got {forward}");
     }
 }

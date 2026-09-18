@@ -1,25 +1,15 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use crate::components::heading::Heading;
+use crate::components::{heading::Heading, position::Position};
 
-/// Server-side component for tracking movement intent broadcast state
-
-/// Tracks the last destination and heading broadcast for an entity.
-/// Used to prevent re-sending intents when neither has changed.
-#[derive(Component, Debug)]
+/// What the last movement intent told other clients, and the position at the
+/// previous tick so motion since then can be detected. Server only.
+#[derive(Component, Debug, Default)]
 pub struct MovementIntentState {
-    /// Last destination we broadcast to clients
-    pub last_broadcast_dest: Qrz,
-    /// Last heading we broadcast to clients
-    pub last_broadcast_heading: Heading,
-}
-
-impl Default for MovementIntentState {
-    fn default() -> Self {
-        Self {
-            last_broadcast_dest: Qrz { q: 0, r: 0, z: 0 },
-            last_broadcast_heading: default(),
-        }
-    }
+    pub last_tick: Position,
+    pub sent_heading: Heading,
+    pub sent_moving: bool,
+    pub sent_tile: Qrz,
+    pub sent_airborne: bool,
 }
