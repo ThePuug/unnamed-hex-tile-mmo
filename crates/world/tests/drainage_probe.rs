@@ -454,3 +454,46 @@ fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
     println!("{cut} owned sills cut, {breach_nodes} nodes of breach behind them; {kept} lakes kept for draining less than a head; {breached} nodes cut in the window, deepest {deepest:.1} z at world {at:?}");
     assert!(cut > 0, "no sill in the spawn cell is cut");
 }
+
+/// Where the ground is cut below the envelope and by how much, over the
+/// cells around a few places, each cut told apart: a sill, the breach
+/// down its outflow, or a rim node lowered to a lake's spill. The deepest
+/// rim cuts are the notches a walker meets.
+#[test]
+#[ignore]
+fn deepest_cuts() {
+    let lat = lattice();
+    let places = [("spawn", SPAWN), ("belt", world::world_to_hex(-46_300.0, 3_200.0)), ("bowl", world::world_to_hex(-62_475.0, 10_912.0))];
+    let mut found: Vec<(f64, &str, (i32, i32), (f64, f64), &'static str, f64, f64)> = Vec::new();
+    for (label, at) in places {
+        let center = lat.cell_id(at.0, at.1);
+        for cell in lat.cells_within_distance(center, 1) {
+            let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts_for(cell), &outlines_for(cell));
+            let owned = routing.owned_cell();
+            let sills: std::collections::HashSet<_> = owned.lakes.iter().filter_map(|l| l.outlet).collect();
+            let mut breach = std::collections::HashSet::new();
+            for &s in &sills {
+                let mut next = owned.nodes.get(&s).and_then(|n| n.down);
+                while let Some(k) = next {
+                    let Some(n) = owned.nodes.get(&k) else { break };
+                    if n.cut <= 0.0 || !breach.insert(k) { break }
+                    next = n.down;
+                }
+            }
+            for (key, n) in &owned.nodes {
+                if n.cut <= 0.0 { continue }
+                let kind = if sills.contains(key) { "sill" } else if breach.contains(key) { "breach" } else { "rim" };
+                let (q, r) = node_tile(*key);
+                found.push((n.cut, label, (q, r), hex_to_world(q, r), kind, n.elevation, n.elevation - n.cut));
+            }
+        }
+    }
+    found.sort_by(|a, b| b.0.total_cmp(&a.0));
+    found.dedup_by(|a, b| a.2 == b.2);
+    println!("{:>7} {:>6} {:>16} {:>18} {:>7} {:>8} {:>8}", "cut", "place", "qr", "world", "kind", "envelope", "floor");
+    for (cut, label, (q, r), (wx, wy), kind, env, floor) in found.iter().take(25) {
+        println!("{cut:7.1} {label:>6} {:>16} {:>18} {kind:>7} {env:8.1} {floor:8.1}", format!("({q},{r})"), format!("({wx:.0},{wy:.0})"));
+    }
+    let rims = found.iter().filter(|f| f.4 == "rim").count();
+    println!("{} cut nodes, {rims} of them rim", found.len());
+}
