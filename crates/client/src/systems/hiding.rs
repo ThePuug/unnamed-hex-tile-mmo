@@ -19,13 +19,13 @@ use bevy::{
     prelude::*,
 };
 use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use common_bevy::components::{entity_type::EntityType, equipment::Item};
 
 use crate::systems::{
     actor::actor_name,
-    equipment::{SocketAnchor, Worn},
+    equipment::{rig, SocketAnchor, Worn},
 };
 
 /// The centre of the ring a vertex was cut at, zero where no ring made it.
@@ -328,6 +328,7 @@ pub fn hide_under(
     actors: Query<(Entity, &Children, &EntityType), With<Redress>>,
     worn: Query<&Worn>,
     children: Query<&Children>,
+    parents: Query<&ChildOf>,
     names: Query<&Name>,
     hides: Query<&Hides>,
     covers: Query<&Covers>,
@@ -371,7 +372,8 @@ pub fn hide_under(
 
         // The actor's own mesh, under its rig, loses the faces its pieces cover.
         let body = actor_name(*typ);
-        let Some(rig) = kids.iter().find(|&e| names.get(e).is_ok_and(|n| n.as_str() == body)) else { continue };
+        let all: HashSet<Entity> = pieces.iter().map(|(e, _)| *e).collect();
+        let Some(rig) = rig(actor, body, &children, &parents, &names, &all) else { continue };
         let covered: BTreeSet<u32> = pieces
             .iter()
             .flat_map(|&(piece, w)| w.nodes(piece, &children))

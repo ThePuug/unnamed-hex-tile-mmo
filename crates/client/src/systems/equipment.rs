@@ -50,6 +50,24 @@ impl Worn {
     }
 }
 
+/// The actor's own rig: its scene's root node, named for the body. The
+/// scene spawner puts an unnamed root above it, and every worn piece's scene
+/// carries a copy of the rig under the same name, so the search walks the
+/// actor's descendants and skips anything inside a worn piece.
+pub fn rig(
+    actor: Entity,
+    body: &str,
+    children: &Query<&Children>,
+    parents: &Query<&ChildOf>,
+    names: &Query<&Name>,
+    worn: &HashSet<Entity>,
+) -> Option<Entity> {
+    children.iter_descendants(actor).find(|&e| {
+        names.get(e).is_ok_and(|n| n.as_str() == body)
+            && parents.iter_ancestors(e).take_while(|&a| a != actor).all(|a| !worn.contains(&a))
+    })
+}
+
 /// Keeps the local player's bag as the server sends it.
 pub fn do_inventory(
     mut commands: Commands,
@@ -98,8 +116,10 @@ pub fn dress(
     }
 }
 
-/// Points each unbound piece's joints at its wearer's, once both scenes are
-/// spawned, then drops the piece's copies of the body and its rig.
+/// Hangs each unbound piece from its wearer's rig once both scenes are
+/// spawned: a skinned piece's joints are pointed at the actor's, a socket
+/// piece's nodes are moved onto the rig's sockets, and the piece's copies
+/// of the body and its rig are dropped.
 pub fn bind_worn(
     mut commands: Commands,
     mut pieces: Query<(Entity, &ChildOf, &mut Worn)>,
@@ -110,19 +130,15 @@ pub fn bind_worn(
     anchors: Query<&SocketAnchor>,
     mut skins: Query<&mut SkinnedMesh>,
 ) {
-    for (piece, child_of, mut worn) in &mut pieces {
-        if worn.bound {
-            continue;
-        }
+    let all: HashSet<Entity> = pieces.iter().map(|(e, ..)| e).collect();
+    let unbound: Vec<Entity> = pieces.iter().filter(|(_, _, w)| !w.bound).map(|(e, ..)| e).collect();
+    for piece in unbound {
+        let Ok((_, child_of, _)) = pieces.get(piece) else { continue };
         let actor = child_of.parent();
         let Ok(typ) = actors.get(actor) else { continue };
         let body = actor_name(*typ);
 
-        // The actor's rig is its scene's root node, a direct child named for
-        // the body; the piece's copy of it sits a level deeper, under `piece`.
-        let Some(rig) = children.get(actor).ok().and_then(|c| {
-            c.iter().find(|&e| names.get(e).is_ok_and(|n| n.as_str() == body))
-        }) else { continue };
+        let Some(rig) = rig(actor, body, &children, &parents, &names, &all) else { continue };
         let joints: HashMap<&str, Entity> = children
             .iter_descendants(rig)
             .filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e)))
@@ -140,6 +156,7 @@ pub fn bind_worn(
                 .map(|(_, a)| joints.get(format!("socket.{}", a.0).as_str()).copied())
                 .collect::<Option<Vec<Entity>>>()
             else { continue };
+            let Ok((_, _, mut worn)) = pieces.get_mut(piece) else { continue };
             for (&(node, _), socket) in anchored.iter().zip(sockets) {
                 commands.entity(node).insert(ChildOf(socket));
                 worn.moved.push(node);
@@ -191,7 +208,9 @@ pub fn bind_worn(
                 commands.entity(e).try_despawn();
             }
         }
-        worn.bound = true;
+        if let Ok((_, _, mut worn)) = pieces.get_mut(piece) {
+            worn.bound = true;
+        }
         commands.entity(actor).insert(Redress);
     }
 }
