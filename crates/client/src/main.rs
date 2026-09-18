@@ -114,6 +114,7 @@ fn main() {
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
+        animator::play_abilities,
         animator::update,
         targeting::update_targets, // Update hostile targets every frame (detects when targets move)
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)

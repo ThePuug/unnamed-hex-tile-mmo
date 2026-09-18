@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::{prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
-use crate::components::*;
+use crate::{components::*, systems::animator::Clip};
 use common_bevy::{
     components::{
         behaviour::Behaviour,
@@ -20,9 +20,9 @@ use common_bevy::{
 
 pub fn setup() {}
 
-/// Plays an actor's scene once it is spawned: the walk on the player entity's
-/// own scene, which the animator switches from, and whatever the observer's
-/// owner asks of it after.
+/// Plays an actor's scene once it is spawned: every clip its GLB holds, in the
+/// order the asset numbers them (`animator::Clip`), the idle playing, which
+/// the animator switches from.
 pub(crate) fn ready(
     trigger: On<SceneInstanceReady>,
     mut commands: Commands,
@@ -31,6 +31,7 @@ pub(crate) fn ready(
     q_child: Query<&Children>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
+    gltfs: Res<Assets<Gltf>>,
 ) {
     let entity = trigger.entity;
     for child in q_child.iter_descendants(entity) {
@@ -39,13 +40,16 @@ pub(crate) fn ready(
 
             let &typ = query.get(entity).expect("couldn't get entity type");
             let asset = get_asset(typ);
-            let (graph, _) = AnimationGraph::from_clips([
-                asset_server.load(GltfAssetLabel::Animation(0).from_asset(asset.clone())),
-                asset_server.load(GltfAssetLabel::Animation(1).from_asset(asset.clone())),
-                asset_server.load(GltfAssetLabel::Animation(2).from_asset(asset.clone()))]);
+            // The scene is loaded, so the file it came from is too, and its
+            // animations come in file order: the order the asset numbers them.
+            let clips: Vec<Handle<AnimationClip>> = match gltfs.get(&asset_server.load::<Gltf>(asset.clone())) {
+                Some(gltf) => gltf.animations.clone(),
+                None => (0..3).map(|i| asset_server.load(GltfAssetLabel::Animation(i).from_asset(asset.clone()))).collect(),
+            };
+            let (graph, _) = AnimationGraph::from_clips(clips);
             let handle = AnimationGraphHandle(graphs.add(graph));
             let mut transitions = AnimationTransitions::new();
-            transitions.play(&mut player, 2.into(), Duration::ZERO).set_speed(1.).repeat();
+            transitions.play(&mut player, Clip::Idle.node(), Duration::ZERO).set_speed(1.).repeat();
             commands.entity(child)
                 .insert(handle)
                 .insert(transitions);
