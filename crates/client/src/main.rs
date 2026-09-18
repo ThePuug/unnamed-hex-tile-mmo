@@ -166,8 +166,8 @@ fn main() {
         (
             equipment::do_inventory,
             equipment::dress,
+            hiding::parse_extras,
             equipment::bind_worn,
-            hiding::parse_hides,
             hiding::hide_under,
         ).chain(),
         renet::handle_pong,

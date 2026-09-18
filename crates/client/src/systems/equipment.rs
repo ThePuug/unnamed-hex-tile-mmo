@@ -24,13 +24,29 @@ use crate::systems::{actor::actor_name, hiding::Redress};
 #[derive(Component)]
 pub struct Worn {
     pub item: Item,
-    /// Whether the piece's joints point at the actor's yet.
+    /// Whether the piece hangs from the actor's rig yet.
     bound: bool,
+    /// Nodes moved out of the scene onto the rig's sockets, which go when
+    /// the piece does.
+    moved: Vec<Entity>,
 }
+
+/// The rig socket a node hangs from, named by its extras.
+#[derive(Component)]
+pub struct SocketAnchor(pub String);
 
 impl Worn {
     pub fn is_bound(&self) -> bool {
         self.bound
+    }
+
+    /// The piece's nodes: the scene under `piece` and whatever was moved
+    /// onto a socket.
+    pub fn nodes(&self, piece: Entity, children: &Query<&Children>) -> Vec<Entity> {
+        children
+            .iter_descendants(piece)
+            .chain(self.moved.iter().flat_map(|&m| std::iter::once(m).chain(children.iter_descendants(m))))
+            .collect()
     }
 }
 
@@ -62,6 +78,9 @@ pub fn dress(
             if wanted.contains(&worn.item) {
                 present.insert(worn.item);
             } else {
+                for &moved in &worn.moved {
+                    commands.entity(moved).try_despawn();
+                }
                 commands.entity(piece).despawn();
             }
         }
@@ -69,7 +88,7 @@ pub fn dress(
         for item in wanted.difference(&present) {
             let path = format!("models/{}-{}.glb", item.piece.name(), body);
             commands.spawn((
-                Worn { item: *item, bound: false },
+                Worn { item: *item, bound: false, moved: Vec::new() },
                 Name::new(format!("worn:{}", item.piece.name())),
                 SceneRoot(asset_server.load(GltfAssetLabel::Scene(item.style as usize).from_asset(path))),
                 ChildOf(actor),
@@ -88,6 +107,7 @@ pub fn bind_worn(
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
+    anchors: Query<&SocketAnchor>,
     mut skins: Query<&mut SkinnedMesh>,
 ) {
     for (piece, child_of, mut worn) in &mut pieces {
@@ -107,6 +127,27 @@ pub fn bind_worn(
             .iter_descendants(rig)
             .filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e)))
             .collect();
+
+        // A socket piece hangs its nodes from the rig's sockets, keeping the
+        // transforms the build wrote relative to the socket's point.
+        let anchored: Vec<(Entity, &SocketAnchor)> = children
+            .iter_descendants(piece)
+            .filter_map(|e| anchors.get(e).ok().map(|a| (e, a)))
+            .collect();
+        if !anchored.is_empty() {
+            let Some(sockets) = anchored
+                .iter()
+                .map(|(_, a)| joints.get(format!("socket.{}", a.0).as_str()).copied())
+                .collect::<Option<Vec<Entity>>>()
+            else { continue };
+            for (&(node, _), socket) in anchored.iter().zip(sockets) {
+                commands.entity(node).insert(ChildOf(socket));
+                worn.moved.push(node);
+            }
+            worn.bound = true;
+            commands.entity(actor).insert(Redress);
+            continue;
+        }
 
         let skinned: Vec<Entity> = children
             .iter_descendants(piece)

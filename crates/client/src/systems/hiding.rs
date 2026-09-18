@@ -1,11 +1,13 @@
-//! Faces of a worn piece under another piece are not drawn.
+//! Faces under a worn piece are not drawn: the faces of the pieces under
+//! it, and the faces of the body it lies over.
 //!
 //! A piece's node extras name the pieces it lies over and the regions of the
 //! body it covers. A face of a named piece goes when each of its vertices
 //! lies in one of those regions, `margin` in, judged at its `_CENTRE`, the
 //! centre of the ring it was cut at, or at the vertex where no ring made it.
-//! The build applies the same test before it renders a proof sheet, so the
-//! sheet shows what the client draws.
+//! The same extras list `covers`, the triangles of the wearer's own mesh the
+//! piece lies over, which go while it is worn. The build applies both before
+//! it renders a proof sheet, so the sheet shows what the client draws.
 //!
 //! Regions and centres are in the build's own frame, z up with the front
 //! along +y; a position read from the mesh is turned back into it before it
@@ -17,11 +19,14 @@ use bevy::{
     prelude::*,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-use common_bevy::components::equipment::Item;
+use common_bevy::components::{entity_type::EntityType, equipment::Item};
 
-use crate::systems::equipment::Worn;
+use crate::systems::{
+    actor::actor_name,
+    equipment::{SocketAnchor, Worn},
+};
 
 /// The centre of the ring a vertex was cut at, zero where no ring made it.
 pub const ATTRIBUTE_CENTRE: MeshVertexAttribute =
@@ -100,7 +105,7 @@ fn station(run: &[Vec3], p: Vec3) -> f32 {
     best.map_or(0.0, |(_, s)| s)
 }
 
-/// What a piece's node declares it hides.
+/// What a piece's node declares it hides of other pieces.
 #[derive(Clone, Component, Debug)]
 pub struct Hides {
     pub over: Vec<String>,
@@ -108,9 +113,15 @@ pub struct Hides {
     pub margin: f32,
 }
 
+/// The triangles of the wearer's mesh a piece's node lies over.
+#[derive(Clone, Component, Debug)]
+pub struct Covers(pub Vec<u32>);
+
 #[derive(Deserialize)]
 struct Extras {
     hides: Option<HidesJson>,
+    covers: Option<Vec<u32>>,
+    socket: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -134,9 +145,7 @@ fn vec3s(flat: &[f32]) -> Vec<Vec3> {
 }
 
 impl Hides {
-    pub fn parse(extras: &str) -> Option<Hides> {
-        let parsed: Extras = serde_json::from_str(extras).ok()?;
-        let h = parsed.hides?;
+    fn from_json(h: HidesJson) -> Hides {
         let regions = h
             .regions
             .iter()
@@ -149,7 +158,12 @@ impl Hides {
                 }
             })
             .collect();
-        Some(Hides { over: h.over, regions, margin: h.margin })
+        Hides { over: h.over, regions, margin: h.margin }
+    }
+
+    #[cfg(test)]
+    pub fn parse(extras: &str) -> Option<Hides> {
+        serde_json::from_str::<Extras>(extras).ok()?.hides.map(Hides::from_json)
     }
 }
 
@@ -188,8 +202,22 @@ pub fn drawn(judged: &[Vec3], indices: &[u32], hiders: &[(&[Region], f32)]) -> V
         .collect()
 }
 
+fn triangles(mesh: &Mesh) -> Option<Vec<u32>> {
+    Some(match mesh.indices() {
+        Some(Indices::U32(v)) => v.clone(),
+        Some(Indices::U16(v)) => v.iter().map(|&i| i as u32).collect(),
+        None => (0..mesh.count_vertices() as u32).collect(),
+    })
+}
+
+fn with_indices(mesh: &Mesh, kept: Vec<u32>) -> Mesh {
+    let mut out = mesh.clone();
+    out.insert_indices(Indices::U32(kept));
+    out
+}
+
 /// `mesh` with the faces under `hiders` left out of its index buffer.
-fn with_hidden_faces(mesh: &Mesh, hiders: &[(&[Region], f32)]) -> Option<Mesh> {
+fn without_hidden_faces(mesh: &Mesh, hiders: &[(&[Region], f32)]) -> Option<Mesh> {
     let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
         return None;
     };
@@ -198,15 +226,19 @@ fn with_hidden_faces(mesh: &Mesh, hiders: &[(&[Region], f32)]) -> Option<Mesh> {
         _ => None,
     };
     let judged = judged(positions, centres);
-    let indices: Vec<u32> = match mesh.indices() {
-        Some(Indices::U32(v)) => v.clone(),
-        Some(Indices::U16(v)) => v.iter().map(|&i| i as u32).collect(),
-        None => (0..positions.len() as u32).collect(),
-    };
-    let kept = drawn(&judged, &indices, hiders);
-    let mut out = mesh.clone();
-    out.insert_indices(Indices::U32(kept));
-    Some(out)
+    let kept = drawn(&judged, &triangles(mesh)?, hiders);
+    Some(with_indices(mesh, kept))
+}
+
+/// `mesh` with the triangles numbered in `faces` left out.
+fn without_faces(mesh: &Mesh, faces: &BTreeSet<u32>) -> Option<Mesh> {
+    let kept = triangles(mesh)?
+        .chunks_exact(3)
+        .enumerate()
+        .filter(|(t, _)| !faces.contains(&(*t as u32)))
+        .flat_map(|(_, tri)| tri.iter().copied())
+        .collect();
+    Some(with_indices(mesh, kept))
 }
 
 /// The actor's worn set changed: hiding is recomputed once every piece is
@@ -219,36 +251,89 @@ pub struct Redress;
 #[derive(Component)]
 pub struct Shipped(Handle<Mesh>);
 
-/// Copies with faces hidden, by the shipped mesh and the items over it,
-/// shared by every actor wearing that combination.
+/// Copies with faces hidden, by the shipped mesh and the items that hide
+/// them, shared by every actor wearing that combination.
 #[derive(Default, Resource)]
 pub struct HiddenMeshes(HashMap<(AssetId<Mesh>, Vec<Item>), Handle<Mesh>>);
 
-/// Reads what each newly spawned node declares it hides.
-pub fn parse_hides(
+/// Reads what each newly spawned node declares: what it hides, what of
+/// the body it covers, and the socket it hangs from.
+pub fn parse_extras(
     mut commands: Commands,
     nodes: Query<(Entity, &GltfExtras), Added<GltfExtras>>,
 ) {
     for (node, extras) in &nodes {
-        if let Some(hides) = Hides::parse(&extras.value) {
-            commands.entity(node).insert(hides);
+        let Ok(parsed) = serde_json::from_str::<Extras>(&extras.value) else { continue };
+        let mut node = commands.entity(node);
+        if let Some(hides) = parsed.hides {
+            node.insert(Hides::from_json(hides));
+        }
+        if let Some(covers) = parsed.covers {
+            node.insert(Covers(covers));
+        }
+        if let Some(socket) = parsed.socket {
+            node.insert(SocketAnchor(socket));
         }
     }
 }
 
+type Primitives<'w, 's> = Query<'w, 's, (&'static mut Mesh3d, &'static mut Visibility, Option<&'static Shipped>)>;
+
+/// Draws `primitive` from its shipped mesh, or from the copy `hidden` makes
+/// of it, cached under `key`. A primitive with nothing left to draw is
+/// hidden outright rather than drawn from an empty index buffer.
+fn redraw(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    cache: &mut HiddenMeshes,
+    primitives: &mut Primitives,
+    primitive: Entity,
+    hidden: Option<(&[Item], &dyn Fn(&Mesh) -> Option<Mesh>)>,
+) {
+    let Ok((mut mesh3d, mut visibility, shipped)) = primitives.get_mut(primitive) else { return };
+    let shipped = match shipped {
+        Some(s) => s.0.clone(),
+        None => {
+            commands.entity(primitive).insert(Shipped(mesh3d.0.clone()));
+            mesh3d.0.clone()
+        }
+    };
+    let Some((by, hide)) = hidden else {
+        mesh3d.0 = shipped;
+        *visibility = Visibility::Inherited;
+        return;
+    };
+    let key = (shipped.id(), by.to_vec());
+    let handle = match cache.0.get(&key) {
+        Some(handle) => handle.clone(),
+        None => {
+            let Some(copy) = meshes.get(&shipped).and_then(hide) else { return };
+            let handle = meshes.add(copy);
+            cache.0.insert(key, handle.clone());
+            handle
+        }
+    };
+    let empty = meshes.get(&handle).and_then(|m| m.indices()).is_some_and(|i| i.is_empty());
+    *visibility = if empty { Visibility::Hidden } else { Visibility::Inherited };
+    mesh3d.0 = handle;
+}
+
 /// Redraws each piece an actor wears with the faces under its other pieces
-/// left out, once all of them are bound.
+/// left out, and the actor's own mesh without the faces its pieces cover,
+/// once all of them are bound.
 pub fn hide_under(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cache: ResMut<HiddenMeshes>,
-    actors: Query<(Entity, &Children), With<Redress>>,
+    actors: Query<(Entity, &Children, &EntityType), With<Redress>>,
     worn: Query<&Worn>,
     children: Query<&Children>,
+    names: Query<&Name>,
     hides: Query<&Hides>,
-    mut primitives: Query<(&mut Mesh3d, &mut Visibility, Option<&Shipped>)>,
+    covers: Query<&Covers>,
+    mut primitives: Primitives,
 ) {
-    for (actor, kids) in &actors {
+    for (actor, kids, typ) in &actors {
         let pieces: Vec<(Entity, &Worn)> = kids.iter().filter_map(|c| worn.get(c).ok().map(|w| (c, w))).collect();
         if pieces.iter().any(|(_, w)| !w.is_bound()) {
             continue;
@@ -257,10 +342,10 @@ pub fn hide_under(
 
         let declared: Vec<(Item, Vec<&Hides>)> = pieces
             .iter()
-            .map(|&(piece, w)| (w.item, children.iter_descendants(piece).filter_map(|d| hides.get(d).ok()).collect()))
+            .map(|&(piece, w)| (w.item, w.nodes(piece, &children).into_iter().filter_map(|n| hides.get(n).ok()).collect()))
             .collect();
 
-        for &(under, w) in &pieces {
+        for &(piece, w) in &pieces {
             let name = w.item.piece.name();
             let mut hiders: Vec<(Item, Vec<(&[Region], f32)>)> = declared
                 .iter()
@@ -275,38 +360,36 @@ pub fn hide_under(
                 })
                 .collect();
             hiders.sort_by_key(|(item, _)| *item);
-            let key_items: Vec<Item> = hiders.iter().map(|(item, _)| *item).collect();
+            let by: Vec<Item> = hiders.iter().map(|(item, _)| *item).collect();
             let tests: Vec<(&[Region], f32)> = hiders.iter().flat_map(|(_, over)| over.iter().copied()).collect();
+            let hide = |m: &Mesh| without_hidden_faces(m, &tests);
+            let hidden = (!tests.is_empty()).then_some((by.as_slice(), &hide as &dyn Fn(&Mesh) -> Option<Mesh>));
+            for primitive in w.nodes(piece, &children) {
+                redraw(&mut commands, &mut meshes, &mut cache, &mut primitives, primitive, hidden);
+            }
+        }
 
-            for primitive in children.iter_descendants(under) {
-                let Ok((mut mesh3d, mut visibility, shipped)) = primitives.get_mut(primitive) else { continue };
-                let shipped = match shipped {
-                    Some(s) => s.0.clone(),
-                    None => {
-                        commands.entity(primitive).insert(Shipped(mesh3d.0.clone()));
-                        mesh3d.0.clone()
-                    }
-                };
-                if tests.is_empty() {
-                    mesh3d.0 = shipped;
-                    *visibility = Visibility::Inherited;
-                    continue;
-                }
-                let key = (shipped.id(), key_items.clone());
-                let handle = match cache.0.get(&key) {
-                    Some(handle) => handle.clone(),
-                    None => {
-                        let Some(hidden) = meshes.get(&shipped).and_then(|m| with_hidden_faces(m, &tests)) else { continue };
-                        let handle = meshes.add(hidden);
-                        cache.0.insert(key, handle.clone());
-                        handle
-                    }
-                };
-                // A primitive with nothing left to draw is hidden outright
-                // rather than drawn from an empty index buffer.
-                let empty = meshes.get(&handle).and_then(|m| m.indices()).is_some_and(|i| i.is_empty());
-                *visibility = if empty { Visibility::Hidden } else { Visibility::Inherited };
-                mesh3d.0 = handle;
+        // The actor's own mesh, under its rig, loses the faces its pieces cover.
+        let body = actor_name(*typ);
+        let Some(rig) = kids.iter().find(|&e| names.get(e).is_ok_and(|n| n.as_str() == body)) else { continue };
+        let covered: BTreeSet<u32> = pieces
+            .iter()
+            .flat_map(|&(piece, w)| w.nodes(piece, &children))
+            .filter_map(|n| covers.get(n).ok())
+            .flat_map(|c| c.0.iter().copied())
+            .collect();
+        let mut by: Vec<Item> = pieces.iter().map(|(_, w)| w.item).collect();
+        by.sort();
+        let hide = |m: &Mesh| without_faces(m, &covered);
+        let hidden = (!covered.is_empty()).then_some((by.as_slice(), &hide as &dyn Fn(&Mesh) -> Option<Mesh>));
+        let body_mesh = format!("{body}-mesh");
+        let body_nodes: Vec<Entity> = children
+            .iter_descendants(rig)
+            .filter(|&n| names.get(n).is_ok_and(|x| x.as_str() == body_mesh))
+            .collect();
+        for node in body_nodes {
+            for primitive in children.iter_descendants(node) {
+                redraw(&mut commands, &mut meshes, &mut cache, &mut primitives, primitive, hidden);
             }
         }
     }
@@ -315,7 +398,7 @@ pub fn hide_under(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::components::equipment::Piece;
+    use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology};
 
     const Z: f32 = 1.0;
 
@@ -376,15 +459,27 @@ mod tests {
     }
 
     #[test]
+    fn covered_triangles_go_by_their_number() {
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0, 0.0, 0.0]; 4]);
+        mesh.insert_indices(Indices::U16(vec![0, 1, 2, 1, 2, 3, 2, 3, 0]));
+        let gone = BTreeSet::from([1]);
+        let out = without_faces(&mesh, &gone).expect("indexed mesh");
+        assert_eq!(out.indices(), Some(&Indices::U32(vec![0, 1, 2, 2, 3, 0])));
+    }
+
+    #[test]
     fn hides_parse_from_node_extras() {
-        let extras = r#"{"hides":{"over":["leather-boots"],"regions":[{"planes":[0,0,1, 0,0,-1, 0,0,0, 0,0,1],"run":[0,0,0, 0,0,1],"span":[0.0,0.5]}],"margin":0.01},"skin":true,"actor":"player"}"#;
+        let extras = r#"{"hides":{"over":["leather-boots"],"regions":[{"planes":[0,0,1, 0,0,-1, 0,0,0, 0,0,1],"run":[0,0,0, 0,0,1],"span":[0.0,0.5]}],"margin":0.01},"covers":[3,4],"socket":"waist","actor":"player"}"#;
         let hides = Hides::parse(extras).expect("hides");
         assert_eq!(hides.over, vec!["leather-boots".to_string()]);
         assert_eq!(hides.regions.len(), 1);
         assert_eq!(hides.regions[0].planes.len(), 2);
         assert_eq!(hides.regions[0].run.len(), 2);
         assert_eq!(hides.regions[0].span, Some((0.0, 0.5)));
+        let parsed: Extras = serde_json::from_str(extras).unwrap();
+        assert_eq!(parsed.covers, Some(vec![3, 4]));
+        assert_eq!(parsed.socket.as_deref(), Some("waist"));
         assert!(Hides::parse(r#"{"skin":true,"actor":"player"}"#).is_none());
-        let _ = Piece::LeatherBoots;
     }
 }
