@@ -123,6 +123,70 @@ pub fn is_tile_blocked(
     cliff || (solid && next_floor.is_none()) || is_deep_water(map, next.q, next.r)
 }
 
+/// How far short of a refused face a walk stops, in world units: a hair, so
+/// the position still converts to its own tile and never the refused one. A
+/// distance from the face, not per step, so the stop is the same however
+/// the time is sliced.
+const FACE_MARGIN: f32 = 0.01;
+
+/// Faces one walk may meet. A sub-step is shorter than a tile, so a few
+/// crossings and slides cover it; the cap only ends the bounce between the
+/// two walls of a concave corner, which makes no progress.
+const FACES_PER_WALK: usize = 16;
+
+/// Displacement of a walk of `reach` world units along the unit `heading`
+/// from `from`, a ground-plane point in `here` whose floor is `floor`. The
+/// walk crosses the faces [`is_tile_blocked`] allows and slides along the
+/// ones it refuses: against a face only the heading's component along it is
+/// kept, so a graze keeps most of its speed, a head-on push stands, and past
+/// the face's end the heading resumes.
+fn walk(
+    from: Vec2,
+    heading: Vec2,
+    reach: f32,
+    mut here: Qrz,
+    mut floor: Option<Qrz>,
+    world_y: f32,
+    airtime: Option<i16>,
+    map: &Map,
+    nntree: &NNTree,
+) -> Vec2 {
+    let mut pos = from;
+    let mut left = reach;
+    let mut dir = heading;
+    // Speed along `dir` as a fraction of full: the cosine of the incidence
+    // while sliding, so a slide spends `left` faster than it covers ground.
+    let mut rate = 1.0;
+    for _ in 0..FACES_PER_WALK {
+        let (to_face, next) = map.exit(pos, dir, here);
+        let run = left * rate;
+        if run <= to_face {
+            pos += dir * run;
+            break;
+        }
+        if is_tile_blocked(floor, next, world_y, airtime, map, nntree) {
+            let short = (to_face - FACE_MARGIN).max(0.0);
+            pos += dir * short;
+            left -= short / rate;
+            let along = map.face(here, next).0.perp();
+            let kept = heading.dot(along);
+            if kept.abs() < 1e-6 {
+                break;
+            }
+            dir = along * kept.signum();
+            rate = kept.abs();
+        } else {
+            pos += dir * to_face;
+            left -= to_face / rate;
+            here = next;
+            floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
+            dir = heading;
+            rate = 1.0;
+        }
+    }
+    pos - from
+}
+
 /// Advance `input` by `dt0` milliseconds in sub-steps of at most
 /// [`PHYSICS_TIMESTEP_MS`]. The tile stays `input.position.tile`; the offset
 /// may leave it, and the caller re-bases when the world position crosses
@@ -180,13 +244,12 @@ pub fn calculate_movement(
         }
 
         if input.moving {
-            let step = dir * input.movement_speed * dt as f32;
-            let landing: Qrz = map.convert(px0 + offset + Vec3::new(step.x, 0.0, step.y));
-            let crossing = (landing.q, landing.r) != (here.q, here.r);
-            if !crossing || !is_tile_blocked(floor, landing, px0.y + offset.y, airtime, map, nntree) {
-                offset.x += step.x;
-                offset.z += step.y;
-            }
+            let moved = walk(
+                (px0 + offset).xz(), dir, input.movement_speed * dt as f32,
+                here, floor, px0.y + offset.y, airtime, map, nntree,
+            );
+            offset.x += moved.x;
+            offset.z += moved.y;
         }
 
         let world = px0 + offset;
@@ -373,5 +436,95 @@ mod tests {
         let here: Qrz = map.convert(world);
         let (floor, _) = map.get_by_qr(here.q, here.r).unwrap();
         assert!((world.y - surface_y(world.xz(), floor, &map)).abs() < 1e-5);
+    }
+
+    fn cliff(map: &Map, q: i32, r: i32) {
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        map.insert(Qrz { q, r, z: 2 }, ground);
+    }
+
+    /// A wall met at an angle is slid along: the heading's component along
+    /// the face is kept and the rest is lost, so the run along the wall grows
+    /// with the angle of incidence from nothing head-on, and the wall is
+    /// never entered.
+    #[test]
+    fn a_wall_is_slid_along_by_the_angle_of_incidence() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        cliff(&map, 1, 0);
+        let nntree = create_test_nntree();
+        let here = Qrz { q: 0, r: 0, z: 1 };
+        let wall = Qrz { q: 1, r: 0, z: 1 };
+        let (normal, mid) = map.face(here, wall);
+        let along = normal.perp();
+        let centre: Vec3 = map.convert(here);
+        let start = mid - normal * 0.1 - centre.xz();
+
+        let run = |slot: u8| {
+            let position = Position::new(here, Vec3::new(start.x, 0.0, start.y));
+            let input = MovementInput { position, ..walking(Heading::from_slot(slot), true) };
+            let out = calculate_movement(input, 50, &map, &nntree);
+            let ended: Qrz = map.convert(centre + out.position.offset);
+            assert_ne!((ended.q, ended.r), (wall.q, wall.r), "slot {slot} entered the wall");
+            let moved = out.position.offset.xz() - start;
+            assert!(moved.dot(normal) <= 0.1 + 1e-5, "slot {slot} passed the face");
+            moved.dot(along)
+        };
+
+        // The face's normal is the slot-8 bearing; slots 3 to 13 press toward it.
+        let runs: Vec<f32> = (3..=13).map(run).collect();
+        assert!(runs[5].abs() < 1e-4, "head-on stands: {}", runs[5]);
+        for pair in runs.windows(2) {
+            assert!(pair[0] < pair[1], "the run along the face grows with the incidence: {runs:?}");
+        }
+    }
+
+    /// A walk into a wall at an angle, along it and round its end reaches
+    /// the same place in 16 ms and 125 ms slices, and walks on past it.
+    #[test]
+    fn a_slide_is_independent_of_partition() {
+        let map = create_test_map();
+        flat_ground(&map, 6);
+        cliff(&map, 1, 0);
+        let nntree = create_test_nntree();
+        let input = walking(Heading::from_slot(9), true);
+
+        let whole = calculate_movement(input, 1000, &map, &nntree);
+        let mut sliced = input;
+        let mut left = 1000;
+        while left > 0 {
+            let dt = left.min(16);
+            let out = calculate_movement(sliced, dt, &map, &nntree);
+            sliced.position = out.position;
+            sliced.airtime = out.airtime;
+            left -= dt;
+        }
+        assert!(whole.position.offset.abs_diff_eq(sliced.position.offset, 1e-3),
+            "whole {:?} vs sliced {:?}", whole.position.offset, sliced.position.offset);
+
+        let centre: Vec3 = map.convert(input.position.tile);
+        let ended: Qrz = map.convert(centre + whole.position.offset);
+        assert!(ended.q >= 1 && (ended.q, ended.r) != (1, 0), "walked on past the wall: {ended:?}");
+    }
+
+    /// Two walls meeting at a corner hold an entity pushed into it: each
+    /// face's slide runs into the other, and the walk ends without progress.
+    #[test]
+    fn a_concave_corner_holds() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        cliff(&map, 1, 0);
+        cliff(&map, 0, 1);
+        let nntree = create_test_nntree();
+        let into_corner = Heading::from_slot(10);
+        let centre: Vec3 = map.convert(Qrz { q: 0, r: 0, z: 1 });
+
+        let first = calculate_movement(walking(into_corner, true), 250, &map, &nntree);
+        let input = MovementInput { position: first.position, ..walking(into_corner, true) };
+        let more = calculate_movement(input, 250, &map, &nntree);
+
+        let ended: Qrz = map.convert(centre + more.position.offset);
+        assert_eq!((ended.q, ended.r), (0, 0), "held in the corner: {:?}", more.position.offset);
+        assert!(more.position.offset.xz().abs_diff_eq(first.position.offset.xz(), 1e-4), "no progress once held");
     }
 }
