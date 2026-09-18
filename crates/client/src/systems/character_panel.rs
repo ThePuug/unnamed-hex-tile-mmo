@@ -781,8 +781,9 @@ pub fn setup(
                 width: Val::Px(PANE_WIDTH),
                 flex_shrink: 0.0,
                 padding: UiRect::new(Val::Px(20.), Val::Px(20.), Val::Px(20.), Val::Px(10.)),
-                border: UiRect::all(Val::Px(1.)),
-                border_radius: BorderRadius::all(Val::Px(8.)),
+                // The strip draws the pane's left edge, so the open tab can cover it.
+                border: UiRect::new(Val::Px(0.), Val::Px(1.), Val::Px(1.), Val::Px(1.)),
+                border_radius: BorderRadius::right(Val::Px(8.)),
                 ..default()
             },
             BackgroundColor(PANE),
@@ -936,8 +937,10 @@ const PANE: Color = Color::srgba(0.1, 0.1, 0.1, 0.9);
 const PANE_EDGE: Color = Color::srgb(0.4, 0.4, 0.4);
 const TAB_SHUT: Color = Color::srgba(0.05, 0.05, 0.05, 0.9);
 
-/// A tab's frame in the strip: bordered on three sides, its right edge
-/// over the pane's so the chosen one opens into the pane.
+/// A tab's frame in the strip: bordered on three sides. The strip draws the
+/// pane's left edge, and the chosen frame reaches over it, so it opens into
+/// the pane; a child is drawn over its parent's border, whatever the order
+/// of siblings.
 #[derive(Component)]
 pub struct TabFrame(pub PanelTab);
 
@@ -949,10 +952,10 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                 row_gap: Val::Px(6.),
                 width: Val::Px(120.),
                 padding: UiRect::vertical(Val::Px(16.)),
+                border: UiRect::right(Val::Px(1.)),
                 ..default()
             },
-            // Drawn after the pane, so a tab's edge lies over the pane's border.
-            ZIndex(1),
+            BorderColor::all(PANE_EDGE),
             ChildOf(panel),
         ))
         .with_children(|strip| {
@@ -963,8 +966,7 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                         Node {
                             justify_content: JustifyContent::FlexEnd,
                             padding: UiRect::axes(Val::Px(12.), Val::Px(8.)),
-                            margin: UiRect::right(Val::Px(-1.)),
-                            border: UiRect::all(Val::Px(1.)),
+                            border: UiRect::new(Val::Px(1.), Val::Px(0.), Val::Px(1.), Val::Px(1.)),
                             border_radius: BorderRadius::left(Val::Px(6.)),
                             ..default()
                         },
@@ -1012,7 +1014,8 @@ pub fn update_tabs(
     }
     for (frame, mut node, mut background, mut border) in &mut frames {
         let open = frame.0 == state.tab;
-        node.border.right = if open { Val::Px(0.) } else { Val::Px(1.) };
+        // The open frame reaches one border's width over the strip's edge.
+        node.margin.right = if open { Val::Px(-1.) } else { Val::Px(0.) };
         *background = BackgroundColor(if open { PANE } else { TAB_SHUT });
         *border = BorderColor::all(PANE_EDGE);
     }
