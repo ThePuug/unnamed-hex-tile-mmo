@@ -163,6 +163,8 @@ fn main() {
     app.add_systems(Update, (
         world::do_init,
         equipment::do_inventory,
+        equipment::dress,
+        equipment::bind_worn,
         renet::handle_pong,
         renet::periodic_ping,
         world::update,

@@ -161,23 +161,26 @@ pub fn try_gcd(
     }
 }
 
-fn get_asset(typ: EntityType) -> String {
+/// The body an actor is drawn with: its rig under `actors/`, and the cut of
+/// every piece it wears under `models/`. Identity decides it; the triumvirate
+/// shapes combat only.
+pub fn actor_name(typ: EntityType) -> &'static str {
     match typ {
-        EntityType::Actor(desc) => {
-            // Model is determined by identity, not triumvirate
-            // Triumvirate (origin/approach/resilience) affects combat behavior only
-            match desc.identity {
-                ActorIdentity::Player => "actors/player-basic.glb".to_string(),
-                ActorIdentity::Npc(npc_type) => match npc_type {
-                    NpcType::WildDog => "actors/dog-basic.glb".to_string(),
-                    NpcType::ForestSprite => "actors/sprite-basic.glb".to_string(),
-                    NpcType::Juggernaut => "actors/juggernaut-basic.glb".to_string(),
-                    NpcType::Defender => "actors/player-basic.glb".to_string(), // Reuse player model
-                }
+        EntityType::Actor(desc) => match desc.identity {
+            ActorIdentity::Player => "player",
+            ActorIdentity::Npc(npc_type) => match npc_type {
+                NpcType::WildDog => "dog",
+                NpcType::ForestSprite => "sprite",
+                NpcType::Juggernaut => "juggernaut",
+                NpcType::Defender => "player",
             }
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }
+}
+
+fn get_asset(typ: EntityType) -> String {
+    format!("actors/{}-basic.glb", actor_name(typ))
 }
 
 /// Apply movement intent to predict remote entity movement ( +)
