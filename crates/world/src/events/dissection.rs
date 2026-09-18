@@ -191,8 +191,8 @@ struct Cut {
     /// sample. Elsewhere, a river entering a lake included, the depth is
     /// interpolated and an unsampled ridge stands.
     graded: bool,
-    /// The lake surface the segment holds when it is the throat between a
-    /// lake and its sill: the water in it is the lake's, to the lip.
+    /// The lake surface the segment holds when it is the river across a lake
+    /// or the throat to its sill: the water in it is the lake's, to the lip.
     pool: Option<f64>,
     base0: f64,
     base1: f64,
@@ -274,7 +274,7 @@ impl Valleys {
                                 floor0: p.elevation - depth_at(p),
                                 floor1: n.elevation - depth_at(n),
                                 graded: p.sill || n.sill || p.cut > 0.0 || n.cut > 0.0 || (p.lake.is_some() && n.lake.is_some()),
-                                pool: (p.lake.is_some() && n.sill).then(|| n.elevation - depth_at(n)),
+                                pool: (p.lake.is_some() && (n.lake.is_some() || n.sill)).then(|| p.surface),
                                 base0: p.base,
                                 base1: n.base,
                                 half0: channel_half_width(p.catchment),
