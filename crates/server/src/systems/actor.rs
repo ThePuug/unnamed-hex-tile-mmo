@@ -51,6 +51,32 @@ pub struct ChunkTaskQueue {
     waiters: std::collections::HashMap<ChunkId, Vec<Entity>>,
 }
 
+impl ChunkTaskQueue {
+    /// Records `ent` as waiting on `chunk_id`. True when the chunk is newly
+    /// queued; false when it was queued or in flight already, so the request
+    /// joins the waiters instead of raising a second task.
+    fn enqueue(&mut self, chunk_id: ChunkId, ent: Entity) -> bool {
+        match self.waiters.entry(chunk_id) {
+            std::collections::hash_map::Entry::Occupied(mut waiting) => {
+                if !waiting.get().contains(&ent) {
+                    waiting.get_mut().push(ent);
+                }
+                false
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(vec![ent]);
+                self.pending.push(chunk_id);
+                true
+            }
+        }
+    }
+
+    /// Everyone waiting on `chunk_id`, released to be sent it.
+    fn release(&mut self, chunk_id: ChunkId) -> Vec<Entity> {
+        self.waiters.remove(&chunk_id).unwrap_or_default()
+    }
+}
+
 /// Hex distance between two chunks (in tiles, via their center tiles).
 fn chunk_hex_distance(a: ChunkId, b: ChunkId) -> i32 {
     let ca = a.center();
@@ -235,18 +261,8 @@ pub fn try_discover_chunk(
                 continue;
             }
 
-            // Queued or in flight already: join its waiters, served on completion.
-            match task_queue.waiters.entry(chunk_id) {
-                std::collections::hash_map::Entry::Occupied(mut waiting) => {
-                    if !waiting.get().contains(&ent) {
-                        waiting.get_mut().push(ent);
-                    }
-                }
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    slot.insert(vec![ent]);
-                    task_queue.pending.push(chunk_id);
-                }
-            }
+            // Queued or in flight already: joins its waiters, served on completion.
+            task_queue.enqueue(chunk_id, ent);
         }
     }
 
@@ -270,7 +286,7 @@ pub fn try_discover_chunk(
 
             // Generated for another request while queued: send now.
             if world_cache.chunks.contains_key(&chunk_id) {
-                let waiting = task_queue.waiters.remove(&chunk_id).unwrap_or_default();
+                let waiting = task_queue.release(chunk_id);
                 send_cached_chunk(&waiting, chunk_id, &mut world_cache, &*map, &mut writer);
                 continue;
             }
@@ -338,7 +354,7 @@ pub fn poll_chunk_tasks(
             world_cache.access_order.get_or_insert(chunk_id, || ());
 
             let wire_tiles = merge_and_pack(&chunk, &map);
-            for ent in task_queue.waiters.remove(&chunk_id).unwrap_or_default() {
+            for ent in task_queue.release(chunk_id) {
                 writer.write(Do {
                     event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles.clone() }
                 });
@@ -396,5 +412,41 @@ pub fn broadcast_heading_changes(
                 component: Component::Heading(heading),
             },
         });
+    }
+}
+
+#[cfg(test)]
+mod chunk_queue_tests {
+    use super::*;
+
+    #[test]
+    fn a_second_request_for_a_queued_chunk_joins_its_waiters() {
+        let mut world = World::new();
+        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let mut queue = ChunkTaskQueue::default();
+        let chunk = ChunkId(3, -2);
+
+        assert!(queue.enqueue(chunk, a));
+        assert!(!queue.enqueue(chunk, b));
+        assert!(!queue.enqueue(chunk, a));
+        assert_eq!(queue.pending, vec![chunk]);
+
+        assert_eq!(queue.release(chunk), vec![a, b]);
+        assert!(queue.release(chunk).is_empty());
+    }
+
+    #[test]
+    fn a_chunk_in_flight_still_collects_waiters() {
+        let mut world = World::new();
+        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let mut queue = ChunkTaskQueue::default();
+        let chunk = ChunkId(0, 0);
+
+        assert!(queue.enqueue(chunk, a));
+        queue.pending.clear();
+        queue.in_flight.insert(chunk);
+        assert!(!queue.enqueue(chunk, b));
+        assert!(queue.pending.is_empty());
+        assert_eq!(queue.release(chunk), vec![a, b]);
     }
 }

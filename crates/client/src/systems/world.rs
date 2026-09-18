@@ -148,7 +148,7 @@ pub fn update(
     mut a_light: ResMut<GlobalAmbientLight>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
-    player_query: Query<&Loc, With<PlayerControlled>>,
+    player_query: Query<&Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
 ) {
     let dt = server.current_time(time.elapsed().as_millis());
     // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
@@ -253,7 +253,7 @@ pub fn dispatch_summary_tasks(
     forced_radius: Res<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
-    player_query: Query<&Transform, With<common_bevy::components::behaviour::PlayerControlled>>,
+    player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
     mut last_eval_pos: Local<Option<Vec3>>,
     mut backlog: Local<bool>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
@@ -494,7 +494,7 @@ pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
     forced_radius: Res<ForcedSummaryRadius>,
-    player_query: Query<&Transform, With<PlayerControlled>>,
+    player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let player = || player_query.single().ok().map(|t| t.translation);

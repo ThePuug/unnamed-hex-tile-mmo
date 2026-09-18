@@ -56,7 +56,7 @@ impl FullscreenMaterial for VignetteSettings {
 /// Update vignette intensity based on player combat state
 fn update_vignette_intensity(
     mut vignette_query: Query<&mut VignetteSettings>,
-    player_query: Query<&CombatState, With<PlayerControlled>>,
+    player_query: Query<&CombatState, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
     time: Res<Time>,
 ) {
     let Ok(combat_state) = player_query.single() else {
