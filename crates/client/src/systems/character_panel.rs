@@ -988,9 +988,9 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                 TextFont { font_size: 10.0, ..default() },
                 TextColor(Color::srgb(0.5, 0.5, 0.5)),
                 TextLayout::new_with_justify(Justify::Right),
+                // A margin, since a text node takes no padding of its own.
                 Node {
-                    margin: UiRect::top(Val::Px(8.)),
-                    padding: UiRect::right(Val::Px(20.)),
+                    margin: UiRect::new(Val::Px(0.), Val::Px(20.), Val::Px(8.), Val::Px(0.)),
                     align_self: AlignSelf::FlexEnd,
                     ..default()
                 },
