@@ -2420,6 +2420,7 @@ dependencies = [
  "renet",
  "renet_netcode",
  "serde",
+ "serde_json",
  "world",
 ]
 

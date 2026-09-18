@@ -28,6 +28,7 @@ bincode = { version = "2", default-features = false, features = ["std", "serde"]
 chrono = "0"
 renet = "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 bevy_egui = "0.39"
 
 [dependencies.qrz]

@@ -18,7 +18,7 @@ use common_bevy::{
     message::{Event, *},
 };
 
-use crate::systems::actor::actor_name;
+use crate::systems::{actor::actor_name, hiding::Redress};
 
 /// A worn piece's scene, a child of the actor wearing it.
 #[derive(Component)]
@@ -26,6 +26,12 @@ pub struct Worn {
     pub item: Item,
     /// Whether the piece's joints point at the actor's yet.
     bound: bool,
+}
+
+impl Worn {
+    pub fn is_bound(&self) -> bool {
+        self.bound
+    }
 }
 
 /// Keeps the local player's bag as the server sends it.
@@ -69,6 +75,7 @@ pub fn dress(
                 ChildOf(actor),
             ));
         }
+        commands.entity(actor).insert(Redress);
     }
 }
 
@@ -144,5 +151,6 @@ pub fn bind_worn(
             }
         }
         worn.bound = true;
+        commands.entity(actor).insert(Redress);
     }
 }

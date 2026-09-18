@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// A garment the asset build makes, cut for every body that can wear it.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Piece {
     LeatherHood,
     LeatherVest,
@@ -98,7 +98,7 @@ impl Slot {
 pub const STYLES: u8 = 3;
 
 /// A piece in a style.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Item {
     pub piece: Piece,
     pub style: u8,

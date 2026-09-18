@@ -31,7 +31,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, input, prediction, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, hiding, input, prediction, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::flyover;
@@ -47,6 +47,7 @@ fn setup(
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins
+        .set(hiding::gltf_plugin())
         .set(AssetPlugin {
             file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").to_string(),
             ..default()
@@ -162,9 +163,13 @@ fn main() {
 
     app.add_systems(Update, (
         world::do_init,
-        equipment::do_inventory,
-        equipment::dress,
-        equipment::bind_worn,
+        (
+            equipment::do_inventory,
+            equipment::dress,
+            equipment::bind_worn,
+            hiding::parse_hides,
+            hiding::hide_under,
+        ).chain(),
         renet::handle_pong,
         renet::periodic_ping,
         world::update,
@@ -183,6 +188,7 @@ fn main() {
     ));
 
     app.init_resource::<InputQueues>();
+    app.init_resource::<hiding::HiddenMeshes>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
