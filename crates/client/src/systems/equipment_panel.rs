@@ -183,7 +183,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
 /// The digits act on the bag; `-` and `+` move between tabs; `0` closes.
 /// Nothing is read while the console is open, which has the numpad then.
 pub fn handle_numpad(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
     console: Res<DevConsole>,
     mut state: ResMut<CharacterPanelState>,
     mut panel: Query<&mut Visibility, With<CharacterPanel>>,
@@ -193,23 +193,26 @@ pub fn handle_numpad(
     if !state.visible || console.visible {
         return;
     }
+    // A key the panel takes is cleared, or the input system may read it
+    // again next frame with the panel shut: 0 is also the jump.
     if keyboard.just_pressed(KeyCode::Numpad0) {
+        keyboard.clear_just_pressed(KeyCode::Numpad0);
         if let Ok(mut visibility) = panel.single_mut() {
             close(&mut state, &mut visibility);
         }
         return;
     }
-    if keyboard.just_pressed(KeyCode::NumpadSubtract) {
+    if keyboard.clear_just_pressed(KeyCode::NumpadSubtract) {
         state.tab = state.tab.above();
     }
-    if keyboard.just_pressed(KeyCode::NumpadAdd) {
+    if keyboard.clear_just_pressed(KeyCode::NumpadAdd) {
         state.tab = state.tab.below();
     }
     if state.tab != PanelTab::Equipment {
         return;
     }
     let Ok((ent, bag, equipment)) = player.single() else { return };
-    if keyboard.just_pressed(KeyCode::NumpadDecimal) {
+    if keyboard.clear_just_pressed(KeyCode::NumpadDecimal) {
         state.bag_row = (state.bag_row + 1) % rows(bag.items.len());
     }
     const DIGITS: [KeyCode; BAG_WIDTH] = [
@@ -218,7 +221,7 @@ pub fn handle_numpad(
         KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
     ];
     for (column, key) in DIGITS.iter().enumerate() {
-        if !keyboard.just_pressed(*key) {
+        if !keyboard.clear_just_pressed(*key) {
             continue;
         }
         let Some(&item) = bag.items.get(state.bag_row * BAG_WIDTH + column) else { continue };
