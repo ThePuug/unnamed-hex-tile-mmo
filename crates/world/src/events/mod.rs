@@ -512,9 +512,8 @@ impl CellCache {
     }
 
     fn evict_if_over_budget(&self) {
-        // Eviction intentionally disabled — caches grow unbounded.
-        // `max_cells` / `last_accessed` / `access_counter` are retained for when
-        // LRU is reinstated. See world-events.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/, Implementation Gaps).
+        // Eviction is unbuilt: caches grow unbounded. `max_cells`, `last_accessed`
+        // and `access_counter` wait on it.
     }
 }
 
