@@ -213,7 +213,7 @@ pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlin
     let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
     let Some((plate, distances)) = outlines.at(wx, wy) else { return (base, 0.0) };
-    let relief = Outlines::relief_of(plate, &distances).max(0.0);
+    let relief = outlines.relief_of(plate, &distances, wx, wy).max(0.0);
     let plateau = PLATEAU_RISE * plateau_share_of(plate, &distances).max(0.0);
     (base + relief + plateau, plate.age)
 }
