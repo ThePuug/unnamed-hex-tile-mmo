@@ -758,7 +758,8 @@ pub fn setup(
 ) {
     commands.init_resource::<CharacterPanelState>();
 
-    // The panel: a strip of tabs down its left edge, the chosen tab's content beside it.
+    // The panel: a strip of tabs down the left edge of a bordered pane, the
+    // chosen tab opening into it.
     let panel = commands
         .spawn((
             CharacterPanel,
@@ -766,15 +767,9 @@ pub fn setup(
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.),
                 top: Val::Px(100.),
-                width: Val::Px(900.),
-                padding: UiRect::new(Val::Px(20.), Val::Px(20.), Val::Px(20.), Val::Px(10.)),
                 flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(16.),
-                border_radius: BorderRadius::all(Val::Px(8.)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
-            BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
             Visibility::Hidden,
         ))
         .id();
@@ -783,9 +778,15 @@ pub fn setup(
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                flex_grow: 1.0,
+                width: Val::Px(PANE_WIDTH),
+                flex_shrink: 0.0,
+                padding: UiRect::new(Val::Px(20.), Val::Px(20.), Val::Px(20.), Val::Px(10.)),
+                border: UiRect::all(Val::Px(1.)),
+                border_radius: BorderRadius::all(Val::Px(8.)),
                 ..default()
             },
+            BackgroundColor(PANE),
+            BorderColor::all(PANE_EDGE),
             ChildOf(panel),
         ))
         .id();
@@ -930,51 +931,78 @@ pub fn close(state: &mut CharacterPanelState, visibility: &mut Visibility) {
     *visibility = Visibility::Hidden;
 }
 
+const PANE_WIDTH: f32 = 770.0;
+const PANE: Color = Color::srgba(0.1, 0.1, 0.1, 0.9);
+const PANE_EDGE: Color = Color::srgb(0.4, 0.4, 0.4);
+const TAB_SHUT: Color = Color::srgba(0.05, 0.05, 0.05, 0.9);
+
+/// A tab's frame in the strip: bordered on three sides, its right edge
+/// over the pane's so the chosen one opens into the pane.
+#[derive(Component)]
+pub struct TabFrame(pub PanelTab);
+
 fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
     commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(6.),
-                width: Val::Px(110.),
+                width: Val::Px(120.),
+                padding: UiRect::vertical(Val::Px(16.)),
                 ..default()
             },
+            // Drawn after the pane, so a tab's edge lies over the pane's border.
+            ZIndex(1),
             ChildOf(panel),
         ))
         .with_children(|strip| {
             for tab in PanelTab::ALL {
-                strip.spawn((
-                    TabLabel(tab),
-                    Text::new(tab.name()),
-                    TextFont { font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                    Node {
-                        padding: UiRect::axes(Val::Px(8.), Val::Px(6.)),
-                        border_radius: BorderRadius::all(Val::Px(4.)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::NONE),
-                ));
+                strip
+                    .spawn((
+                        TabFrame(tab),
+                        Node {
+                            justify_content: JustifyContent::FlexEnd,
+                            padding: UiRect::axes(Val::Px(12.), Val::Px(8.)),
+                            margin: UiRect::right(Val::Px(-1.)),
+                            border: UiRect::all(Val::Px(1.)),
+                            border_radius: BorderRadius::left(Val::Px(6.)),
+                            ..default()
+                        },
+                        BackgroundColor(TAB_SHUT),
+                        BorderColor::all(PANE_EDGE),
+                    ))
+                    .with_children(|frame| {
+                        frame.spawn((
+                            TabLabel(tab),
+                            Text::new(tab.name()),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                        ));
+                    });
             }
             strip.spawn((
                 Text::new("- above
 + below"),
                 TextFont { font_size: 10.0, ..default() },
                 TextColor(Color::srgb(0.45, 0.45, 0.45)),
+                TextLayout::new_with_justify(Justify::Right),
                 Node {
                     margin: UiRect::top(Val::Px(8.)),
-                    padding: UiRect::left(Val::Px(8.)),
+                    padding: UiRect::right(Val::Px(12.)),
+                    align_self: AlignSelf::FlexEnd,
                     ..default()
                 },
             ));
         });
 }
 
-/// Shows the chosen tab's content and marks its label.
+/// Shows the chosen tab's content, opens its frame into the pane and
+/// marks its label.
 pub fn update_tabs(
     state: Res<CharacterPanelState>,
-    mut contents: Query<(&TabContent, &mut Node)>,
-    mut labels: Query<(&TabLabel, &mut BackgroundColor, &mut TextColor)>,
+    mut contents: Query<(&TabContent, &mut Node), Without<TabFrame>>,
+    mut frames: Query<(&TabFrame, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+    mut labels: Query<(&TabLabel, &mut TextColor)>,
 ) {
     if !state.is_changed() {
         return;
@@ -982,10 +1010,15 @@ pub fn update_tabs(
     for (content, mut node) in &mut contents {
         node.display = if content.0 == state.tab { Display::Flex } else { Display::None };
     }
-    for (label, mut background, mut color) in &mut labels {
-        let chosen = label.0 == state.tab;
-        *background = BackgroundColor(if chosen { Color::srgba(0.25, 0.25, 0.25, 0.9) } else { Color::NONE });
-        *color = TextColor(if chosen { Color::srgb(0.95, 0.85, 0.5) } else { Color::srgb(0.6, 0.6, 0.6) });
+    for (frame, mut node, mut background, mut border) in &mut frames {
+        let open = frame.0 == state.tab;
+        node.border.right = if open { Val::Px(0.) } else { Val::Px(1.) };
+        *background = BackgroundColor(if open { PANE } else { TAB_SHUT });
+        *border = BorderColor::all(PANE_EDGE);
+    }
+    for (label, mut color) in &mut labels {
+        let open = label.0 == state.tab;
+        *color = TextColor(if open { Color::srgb(0.95, 0.85, 0.5) } else { Color::srgb(0.6, 0.6, 0.6) });
     }
 }
 
