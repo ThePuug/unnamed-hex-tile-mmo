@@ -8,6 +8,7 @@
 //! terrain pipeline and drawn with the material this plugin owns.
 
 use bevy::prelude::*;
+use crate::systems::closeup::CloseupCamera;
 use bevy_camera::visibility::NoFrustumCulling;
 use bevy_light::NotShadowCaster;
 
@@ -86,7 +87,7 @@ fn setup_water_surface(
 /// Keep the quad centred under the camera. Y is fixed at the waterline — only
 /// XZ tracks, so the surface stays a true horizontal plane at constant height.
 fn follow_camera(
-    camera: Query<&Transform, (With<Camera3d>, Without<WaterSurface>)>,
+    camera: Query<&Transform, (With<Camera3d>, Without<WaterSurface>, Without<CloseupCamera>)>,
     mut water: Query<&mut Transform, With<WaterSurface>>,
 ) {
     let Ok(cam) = camera.single() else { return };

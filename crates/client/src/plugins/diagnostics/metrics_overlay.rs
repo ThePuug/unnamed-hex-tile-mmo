@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use crate::systems::closeup::CloseupCamera;
 use bevy_camera::Viewport;
 use bevy_egui::{egui, EguiContext, EguiContexts};
 
@@ -452,7 +453,7 @@ pub fn update_metrics_overlay(
     state: Res<DiagnosticsState>,
     mut contexts: EguiContexts,
     overlay: Res<OverlayCameraEntity>,
-    mut camera_q: Query<&mut Camera, (With<Camera3d>, Without<OverlayCamera>)>,
+    mut camera_q: Query<&mut Camera, (With<Camera3d>, Without<OverlayCamera>, Without<CloseupCamera>)>,
     windows: Query<&Window>,
     diagnostics: Res<DiagnosticsStore>,
     map: Res<Map>,

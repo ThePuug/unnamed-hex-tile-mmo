@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use crate::systems::closeup::CloseupCamera;
 use std::f32::consts::PI;
 
 use crate::plugins::vignette::VignetteSettings;
@@ -96,7 +97,7 @@ pub fn setup(
 pub fn update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
-    mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
+    mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
     time: Res<Time>,

@@ -1,11 +1,12 @@
 use bevy::prelude::*;
+use crate::systems::closeup::CloseupCamera;
 
 /// System to update floating text (damage numbers)
 /// Projects world position to screen space, moves text upward, fades out, and despawns
 pub fn update_floating_text(
     mut commands: Commands,
     mut query: Query<(Entity, &mut crate::components::FloatingText, &mut Node, &mut TextColor)>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -307,7 +308,7 @@ pub fn update_health_bars(
     >,
     mut child_node_query: Query<&mut Node, (Without<crate::components::WorldHealthBar>, Without<crate::components::HostileHealthBar>, Without<crate::components::AllyHealthBar>)>,
     entity_query: Query<(&common_bevy::components::resources::Health, &Transform)>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
     time: Res<Time>,
 ) {
@@ -434,7 +435,7 @@ pub fn update_threat_queue_dots(
         (Without<crate::components::HostileQueueDots>, Without<crate::components::AllyQueueDots>)
     >,
     queue_query: Query<(Option<&common_bevy::components::reaction_queue::ReactionQueue>, &Transform)>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -657,7 +658,7 @@ pub fn update_recovery_bars(
         Without<crate::components::WorldHealthBar>,
     )>,
     entity_query: Query<(Option<&common_bevy::components::recovery::GlobalRecovery>, &Transform)>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
     time: Res<Time>,
 ) {

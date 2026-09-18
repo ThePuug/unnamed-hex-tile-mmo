@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::prelude::*;
+use crate::systems::closeup::CloseupCamera;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::time::common_conditions::on_timer;
 
@@ -453,7 +454,7 @@ fn flyover_movement(
 fn flyover_camera_update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
-    mut camera: Query<(&mut Projection, &mut Transform), With<Camera3d>>,
+    mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     map: Res<Map>,
     time: Res<Time>,
     flyover: Res<FlyoverState>,
@@ -504,7 +505,7 @@ fn flyover_generate_chunks(
     loaded_chunks: Res<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    camera_query: Query<&Projection, With<Camera3d>>,
+    camera_query: Query<&Projection, (With<Camera3d>, Without<CloseupCamera>)>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("fly_gen");
@@ -601,7 +602,7 @@ fn flyover_evict_chunks(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut skip_regen: ResMut<SkipNeighborRegen>,
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
-    camera_query: Query<&Projection, With<Camera3d>>,
+    camera_query: Query<&Projection, (With<Camera3d>, Without<CloseupCamera>)>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("fly_evic");
