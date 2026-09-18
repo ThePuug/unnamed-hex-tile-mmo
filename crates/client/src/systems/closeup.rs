@@ -65,10 +65,11 @@ pub fn setup(
     commands.entity(view).insert(ImageNode::new(target.clone()));
 
     // The figure fills the frame's height with a little over it and under.
+    // Its front faces -z, so the camera stands there, looking back at it.
     let r = map.radius();
     let height = FIGURE_HEIGHT * r;
     let distance = 0.6 * height / (FOV / 2.0).tan();
-    let eye = STAGE + Vec3::new(0.0, height * 0.52, distance);
+    let eye = STAGE + Vec3::new(0.0, height * 0.52, -distance);
     let at = STAGE + Vec3::new(0.0, height * 0.5, 0.0);
     commands.spawn((
         CloseupCamera,
@@ -86,7 +87,7 @@ pub fn setup(
     ));
     commands.spawn((
         DirectionalLight { illuminance: 6000.0, shadows_enabled: false, ..default() },
-        Transform::from_translation(STAGE + Vec3::new(2.0, 4.0, 3.0) * r).looking_at(at, Vec3::Y),
+        Transform::from_translation(STAGE + Vec3::new(-2.0, 4.0, -3.0) * r).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
     ));
 }
