@@ -23,9 +23,21 @@ pub const BAG_WIDTH: usize = 9;
 #[derive(Component)]
 pub struct CloseupView;
 
-/// The text naming what a slot holds.
+/// The text naming an empty slot.
 #[derive(Component)]
 pub struct SlotText(pub Slot);
+
+/// The icon of what a slot holds, and the item it shows.
+#[derive(Component)]
+pub struct SlotIcon {
+    pub slot: Slot,
+    shown: Option<Item>,
+}
+
+/// The icon asset an item is shown by: the piece alone, in the item's style.
+fn icon(asset_server: &AssetServer, item: Item) -> Handle<Image> {
+    asset_server.load(format!("icons/{}-{}.png", item.piece.name(), item.style))
+}
 
 /// The bag's rows of cells.
 #[derive(Component)]
@@ -100,16 +112,16 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                             .insert(BackgroundColor(OTHER_ROW))
                             .with_children(|row| {
                                 row.spawn((
-                                    Text::new(slot.name()),
-                                    TextFont { font_size: 12.0, ..default() },
-                                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                    Node { width: Val::Px(50.), ..default() },
+                                    SlotIcon { slot, shown: None },
+                                    ImageNode::default(),
+                                    Node { width: Val::Px(40.), height: Val::Px(40.), ..default() },
+                                    Visibility::Hidden,
                                 ));
                                 row.spawn((
                                     SlotText(slot),
-                                    Text::new(""),
+                                    Text::new(slot.name()),
                                     TextFont { font_size: 13.0, ..default() },
-                                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
                                 ));
                             });
                     }
@@ -190,14 +202,10 @@ fn rows(items: usize) -> usize {
     items.div_ceil(BAG_WIDTH).max(1)
 }
 
-fn label(item: Item) -> String {
-    let short = item.piece.display_name().rsplit(' ').next().unwrap_or("");
-    format!("{short} {}", item.style + 1)
-}
-
 /// Lays the bag out again whenever its contents change.
 pub fn rebuild_bag(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     player: Query<&Inventory, (With<Actor>, Changed<Inventory>)>,
     grid: Query<Entity, With<BagGrid>>,
 ) {
@@ -228,9 +236,8 @@ pub fn rebuild_bag(
                         ))
                         .with_children(|cell| {
                             cell.spawn((
-                                Text::new(label(item)),
-                                TextFont { font_size: 11.0, ..default() },
-                                TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                                ImageNode::new(icon(&asset_server, item)),
+                                Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                             ));
                             cell.spawn((
                                 BagCellKey,
@@ -277,20 +284,34 @@ pub fn update_bag(
     }
 }
 
-/// Names what each slot holds.
+/// Shows each slot's item by its icon, or the slot's name when empty.
 pub fn update_slots(
     state: Res<CharacterPanelState>,
+    asset_server: Res<AssetServer>,
     player: Query<&Equipment, With<Actor>>,
-    mut slots: Query<(&SlotText, &mut Text)>,
+    mut icons: Query<(&mut SlotIcon, &mut ImageNode, &mut Visibility)>,
+    mut names: Query<(&SlotText, &mut Visibility), Without<SlotIcon>>,
 ) {
     if !state.visible {
         return;
     }
     let Ok(equipment) = player.single() else { return };
-    for (slot, mut text) in &mut slots {
-        let named = equipment.worn(slot.0).map(label).unwrap_or_default();
-        if text.0 != named {
-            text.0 = named;
+    for (mut slot, mut image, mut visibility) in &mut icons {
+        let worn = equipment.worn(slot.slot);
+        if slot.shown == worn {
+            continue;
+        }
+        slot.shown = worn;
+        if let Some(item) = worn {
+            image.image = icon(&asset_server, item);
+        }
+        *visibility = if worn.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    for (slot, mut visibility) in &mut names {
+        let shown = equipment.worn(slot.0).is_none();
+        let wanted = if shown { Visibility::Inherited } else { Visibility::Hidden };
+        if *visibility != wanted {
+            *visibility = wanted;
         }
     }
 }
