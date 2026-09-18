@@ -7,6 +7,7 @@ pub mod attack_telegraph;
 pub mod camera;
 pub mod character_panel;
 pub mod character_panel_respec;
+pub mod closeup;
 pub mod combat;
 pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;

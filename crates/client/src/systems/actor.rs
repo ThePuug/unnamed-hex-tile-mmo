@@ -20,7 +20,10 @@ use common_bevy::{
 
 pub fn setup() {}
 
-fn ready(
+/// Plays an actor's scene once it is spawned: the walk on the player entity's
+/// own scene, which the animator switches from, and whatever the observer's
+/// owner asks of it after.
+pub(crate) fn ready(
     trigger: On<SceneInstanceReady>,
     mut commands: Commands,
     query: Query<&EntityType>,
@@ -179,7 +182,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
     }
 }
 
-fn get_asset(typ: EntityType) -> String {
+pub(crate) fn get_asset(typ: EntityType) -> String {
     format!("actors/{}-basic.glb", actor_name(typ))
 }
 
