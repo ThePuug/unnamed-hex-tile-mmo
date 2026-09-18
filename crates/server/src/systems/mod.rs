@@ -4,6 +4,7 @@ pub mod behaviour;
 pub mod combat;
 pub mod engagement_cleanup;
 pub mod engagement_spawner;
+pub mod equipment;
 pub mod input;
 pub mod npc_ability_usage;
 pub mod reaction_queue;

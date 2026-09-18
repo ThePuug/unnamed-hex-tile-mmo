@@ -63,6 +63,7 @@ pub fn update_area_of_interest(
         Option<&Stamina>,
         Option<&Mana>,
         Option<&CombatState>,
+        Option<&common_bevy::components::equipment::Equipment>,
     ), Without<RespawnTimer>>,
     nntree: Res<NNTree>,
     lobby: Res<Lobby>,
@@ -94,10 +95,10 @@ pub fn update_area_of_interest(
                     if !e_loaded_by.players.contains(&other_ent) {
                         e_loaded_by.players.insert(other_ent);
                         // Send Spawn(E) to other player
-                        if let Ok((_, &typ, attrs, pc, heading, health, stamina, mana, combat_state)) = actor_query.get(ent) {
+                        if let Ok((_, &typ, attrs, pc, heading, health, stamina, mana, combat_state, equipment)) = actor_query.get(ent) {
                             let spawn_events = generate_actor_spawn_events(
                                 ent, typ, **loc,
-                                attrs.copied(), pc, heading, health, stamina, mana, combat_state,
+                                attrs.copied(), pc, heading, health, stamina, mana, combat_state, equipment,
                             );
                             for event in spawn_events {
                                 let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
@@ -115,10 +116,10 @@ pub fn update_area_of_interest(
                         if !other_loaded_by.players.contains(&ent) {
                             other_loaded_by.players.insert(ent);
                             // Send Spawn(other) to E
-                            if let Ok((&other_loc, &other_typ, other_attrs, other_pc, other_heading, other_health, other_stamina, other_mana, other_combat_state)) = actor_query.get(other_ent) {
+                            if let Ok((&other_loc, &other_typ, other_attrs, other_pc, other_heading, other_health, other_stamina, other_mana, other_combat_state, other_equipment)) = actor_query.get(other_ent) {
                                 let spawn_events = generate_actor_spawn_events(
                                     other_ent, other_typ, *other_loc,
-                                    other_attrs.copied(), other_pc, other_heading, other_health, other_stamina, other_mana, other_combat_state,
+                                    other_attrs.copied(), other_pc, other_heading, other_health, other_stamina, other_mana, other_combat_state, other_equipment,
                                 );
                                 for event in spawn_events {
                                     let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();

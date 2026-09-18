@@ -31,7 +31,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, input, prediction, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, input, prediction, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::flyover;
@@ -162,6 +162,7 @@ fn main() {
 
     app.add_systems(Update, (
         world::do_init,
+        equipment::do_inventory,
         renet::handle_pong,
         renet::periodic_ping,
         world::update,

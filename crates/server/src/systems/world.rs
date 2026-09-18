@@ -8,6 +8,7 @@ use common_bevy::{
     components::{ *,
         behaviour::PlayerControlled,
         entity_type::*,
+        equipment::Equipment,
         heading::Heading,
         keybits::KeyBits,
         position::Position,
@@ -37,6 +38,7 @@ pub fn generate_actor_spawn_events(
     stamina: Option<&Stamina>,
     mana: Option<&Mana>,
     combat_state: Option<&CombatState>,
+    equipment: Option<&Equipment>,
 ) -> Vec<Do> {
     let mut events = Vec::new();
 
@@ -65,6 +67,10 @@ pub fn generate_actor_spawn_events(
 
     if let Some(cs) = combat_state {
         events.push(Do { event: Event::Incremental { ent, component: Component::CombatState(*cs) }});
+    }
+
+    if let Some(e) = equipment {
+        events.push(Do { event: Event::Incremental { ent, component: Component::Equipment(*e) }});
     }
 
     events
@@ -97,6 +103,7 @@ pub fn try_spawn(
         Option<&Stamina>,
         Option<&Mana>,
         Option<&CombatState>,
+        Option<&Equipment>,
     ), Without<RespawnTimer>>,
 ) {
     for message in reader.read() {
@@ -104,7 +111,7 @@ pub fn try_spawn(
         let ent = *ent;
         // Skip dead players (those with RespawnTimer) - they shouldn't be discovered/spawned
         // until process_respawn sends an official Spawn event after the 5-second timer
-        let Ok((loc, typ, attrs, player_controlled, heading, health, stamina, mana, combat_state)) = query.get(ent) else { continue; };
+        let Ok((loc, typ, attrs, player_controlled, heading, health, stamina, mana, combat_state, equipment)) = query.get(ent) else { continue; };
 
         // Send Spawn + all available actor components using shared helper
         // This ensures remote players are immediately visible and targetable
@@ -119,6 +126,7 @@ pub fn try_spawn(
             stamina,
             mana,
             combat_state,
+            equipment,
         );
 
         for event in spawn_events {

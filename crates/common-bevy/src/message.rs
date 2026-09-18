@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, heading::*, keybits::*, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Item}, heading::*, keybits::*, reaction_queue::*, resources::*, * },
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
@@ -83,6 +83,10 @@ pub enum Event {
         additions: Vec<SummaryData>,
         removals: Vec<SummaryKey>,
     },
+    /// Client → Server (Try): wear an item from the bag, or take it off
+    Wear { ent: Entity, item: Item, on: bool },
+    /// Server → Client: the bag, sent to its owner only
+    Inventory { ent: Entity, items: Vec<Item> },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,
@@ -142,6 +146,7 @@ pub enum ClearType {
 pub enum Component {
     Behaviour(Behaviour),
     CombatState(CombatState),
+    Equipment(Equipment),
     Health(Health),
     Heading(Heading),
     KeyBits(KeyBits),
@@ -160,6 +165,7 @@ impl Component {
         match self {
             Component::Behaviour(v) => { entity.insert(v); }
             Component::CombatState(v) => { entity.insert(v); }
+            Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }
             Component::KeyBits(v) => { entity.insert(v); }
             Component::Mana(v) => { entity.insert(v); }

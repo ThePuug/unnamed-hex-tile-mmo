@@ -9,6 +9,7 @@ use common_bevy::{
         entity_type::{ *,
             actor::*,
         },
+        equipment::{Equipment, Inventory},
         keybits::*,
         reaction_queue::*,
         resources::*,
@@ -88,6 +89,8 @@ pub fn do_manage_connections(
                 // Initialize reaction queue with capacity based on Focus attribute
                 let queue_capacity = attrs.window_size();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
+                let equipment = Equipment::default();
+                let bag = Inventory::every_piece();
 
                 let ent = commands.spawn((
                     typ,
@@ -110,6 +113,8 @@ pub fn do_manage_connections(
                     NearestNeighbor::new(ent, loc),
                     common_bevy::components::loaded_by::LoadedBy::default(),
                     common_bevy::components::AttackRange::default(),
+                    equipment,
+                    bag.clone(),
                 ));
 
                 // init input buffer for client
@@ -137,12 +142,19 @@ pub fn do_manage_connections(
                     Some(&stamina),
                     Some(&mana),
                     Some(&combat_state),
+                    Some(&equipment),
                 );
 
                 for event in spawn_events {
                     let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
+
+                // The bag goes to its owner only, after Init so the client has its entity
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::Inventory { ent, items: bag.items }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
 
                 // Write Spawn to message bus so do_spawn_discover triggers initial chunk discovery
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
@@ -219,6 +231,10 @@ pub fn write_try(
                 Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }});
+                }
+                Try { event: Event::Wear { ent: _, item, on } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    writer.write(Try { event: Event::Wear { ent, item, on }});
                 }
                 _ => {}
             }
@@ -382,6 +398,15 @@ pub fn write_try(
                         Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }},
                         bincode::config::legacy()).unwrap();
                     conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
+                }
+            }
+            Event::Inventory { ent, .. } => {
+                let ent = *ent;
+                if let Some(client_id) = lobby.get_by_right(&ent) {
+                    let serialized = bincode::serde::encode_to_vec(
+                        message,
+                        bincode::config::legacy()).unwrap();
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, serialized);
                 }
             }
             _ => {}

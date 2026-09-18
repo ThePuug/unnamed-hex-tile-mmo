@@ -34,6 +34,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::KeyBits(_) => "Inc:KeyBits",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Returning(_) => "Inc:Returning",
+            Component::Equipment(_) => "Inc:Equipment",
         },
         Event::Gcd { .. } => "Gcd",
         Event::ChunkData { .. } => "ChunkData",
@@ -46,6 +47,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::MovementIntent { .. } => "MovementIntent",
         Event::EvictChunks { .. } => "EvictChunks",
         Event::SummaryBatch { .. } => "SummaryBatch",
+        Event::Inventory { .. } => "Inventory",
         _ => "Other",
     }
 }
@@ -153,6 +155,13 @@ pub fn write_do(
                     continue
                 };
                 do_writer.write(Do { event: Event::Incremental { ent, component } });
+            }
+            Do { event: Event::Inventory { ent, items } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    warn!("Client: Inventory for {:?} before its entity", ent);
+                    continue
+                };
+                do_writer.write(Do { event: Event::Inventory { ent, items } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
@@ -339,6 +348,13 @@ pub fn send_try(
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     tier: *tier
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Event::Wear { ent, item, on } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Wear {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    item: *item,
+                    on: *on,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Dismiss { ent } => {

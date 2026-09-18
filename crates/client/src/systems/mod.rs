@@ -10,6 +10,7 @@ pub mod character_panel_respec;
 pub mod combat;
 pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;
+pub mod equipment;
 pub mod input;
 pub mod prediction; // Movement prediction and VisualPosition interpolation
 pub mod renet;
