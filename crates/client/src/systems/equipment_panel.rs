@@ -102,10 +102,17 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                                 BorderColor::all(UNWORN),
                             ))
                             .with_children(|cell| {
+                                // Placed absolutely so that, hidden, it leaves the
+                                // name centred rather than pushed aside.
                                 cell.spawn((
                                     SlotIcon { slot, shown: None },
                                     ImageNode::default(),
-                                    Node { width: Val::Px(SLOT - 8.0), height: Val::Px(SLOT - 8.0), ..default() },
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        width: Val::Px(SLOT - 8.0),
+                                        height: Val::Px(SLOT - 8.0),
+                                        ..default()
+                                    },
                                     Visibility::Hidden,
                                 ));
                                 cell.spawn((
