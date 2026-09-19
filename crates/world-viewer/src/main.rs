@@ -796,7 +796,7 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
         let cuts = valleys.cuts_at(x, y, envelope);
         let ground = envelope - cuts.valley - cuts.channel;
         let water = valleys
-            .surface_at(x, y, ground, cuts)
+            .surface_at(x, y, envelope, ground, cuts)
             .map(|s| s.round())
             .filter(|s| *s > ground.round());
         (ground, water)

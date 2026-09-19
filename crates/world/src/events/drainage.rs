@@ -132,7 +132,7 @@ const FINE_BUDGET: usize = 12_000;
 
 /// A point of the fine lattice in world space: the node lattice is linear
 /// in its keys, so a fine key is a node key scaled.
-fn fine_world(key: NodeKey) -> (f64, f64) {
+pub fn fine_world(key: NodeKey) -> (f64, f64) {
     let o = crate::lattice::node_world((0, 0));
     let (ax, ay) = crate::lattice::node_world((1, 0));
     let (bx, by) = crate::lattice::node_world((0, 1));

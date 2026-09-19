@@ -58,13 +58,16 @@
 //!
 //! Dissection also publishes the surface water stands at over each tile,
 //! since it alone knows the floor it left: the sea at zero wherever the
-//! ground lies below it, a lake's surface over the lake's extent, the ground
-//! drainage found its water reaches on the fine lattice, or, for a lake
-//! never read there, within one node spacing of its flooded nodes and not
-//! past its sill, wherever the ground lies below that surface; the lake's
-//! surface too over the throat to its sill, where the throat's cut brought
-//! the ground under it; and in a channel the valley floor the channel is
-//! cut into. The highest stands. A tile with no surface over it is dry
+//! ground lies below it; a lake's surface over the lake's extent, the fine
+//! points drainage found its water reaches, and over the shore between the
+//! extent and the ground at the surface, where the envelope stays under
+//! the surface from the tile to the extent, so the water meets the land at
+//! the surface's own contour and never crosses a rim; for a lake never
+//! read on the fine lattice, within one node spacing of its flooded nodes
+//! and not past its sill; the lake's surface too over the throat to its
+//! sill, where the throat's cut brought the ground under it; and in a
+//! channel the valley floor the channel is cut into. The highest stands,
+//! and only over ground below it. A tile with no surface over it is dry
 //! ground.
 //!
 //! # The window
@@ -76,16 +79,19 @@
 //! tiles, and reading them costs no route.
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{hex_distance, nearest_node, node_tile, NodeKey, DIRECTIONS, NODE_SPACING};
 use crate::{hex_to_world, world_to_hex};
-use super::drainage::{growth, nearest_fine, DrainageCell, DrainageEvent, DrainageIndex, DrainageNode, DRAINAGE_CELL_SCALE};
+use super::drainage::{
+    fine_world, growth, nearest_fine, surface_at as envelope_at, DrainageCell, DrainageEvent, DrainageIndex,
+    DrainageNode, DRAINAGE_CELL_SCALE,
+};
 pub use super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
 use super::index::IndexRegistry;
-use super::plates::Coasts;
-use super::thrusting::Outlines;
+use super::plates::{Coasts, PlateEdgeIndex};
+use super::thrusting::{outlines_of, Outlines};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The valley ──────────────────────────────────────────────────────────────
@@ -132,6 +138,14 @@ pub const CHANNEL_DEPTH_MIN: f64 = 1.0;
 
 /// Depth of a full trunk's channel, in z-levels.
 pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
+
+// ── The shore ───────────────────────────────────────────────────────────────
+
+/// How often the envelope is read along the line from a shore tile to the
+/// lake's extent, in tiles. A rim crest is a crease at repose, so a crest
+/// the samples straddle stands within half a step of one and a crest under
+/// half a step's climb, a level or two, is the most the line can miss.
+const SHORE_STEP: f64 = 4.0;
 
 /// The channel's half-width at `catchment` nodes: nothing below the channel
 /// head, then from the head's width to a trunk's as the catchment grows.
@@ -228,35 +242,57 @@ pub struct Cuts {
     pub pool: Option<f64>,
 }
 
-/// A lake as the flood reads it: its surface; its extent on the fine
-/// lattice when drainage read it there, the points its water stands over,
-/// which the flood holds to; else where its water ends, its sill, since
+/// A lake as the flood reads it: its surface; whether drainage read it on
+/// the fine lattice, when its water stands over the extent it found there
+/// and the shore between; else where its water ends, its sill, since
 /// ground beyond the sill along the line out from the flooded node holds
 /// the river's water and not the lake's.
 #[derive(Clone, Debug)]
 struct Shore {
     surface: f64,
-    extent: Option<HashSet<NodeKey>>,
+    read: bool,
     ends: Option<(f64, f64)>,
+}
+
+/// The envelope as drainage reads it, at any position: what a shore is
+/// read against between a tile and a lake's extent.
+pub struct Envelope {
+    seed: u64,
+    coasts: Coasts,
+    outlines: Outlines,
+}
+
+impl Envelope {
+    pub fn new(seed: u64, coasts: Coasts, outlines: Outlines) -> Self {
+        Envelope { seed, coasts, outlines }
+    }
+
+    pub fn at(&self, x: f64, y: f64) -> f64 {
+        envelope_at(x, y, self.seed, &self.coasts, &self.outlines)
+    }
 }
 
 /// The valleys a set of tiles can lie in: every channel segment of the
 /// drainage cells in reach, bucketed for the search, with what each cuts;
-/// and every flooded node in reach with its lake.
+/// every flooded node in reach with its lake, and every point of the fine
+/// lattice a lake's water stands over.
 pub struct Valleys {
     grid: SegmentGrid,
     cuts: Vec<Cut>,
     flooded: HashMap<NodeKey, usize>,
+    extent_of: HashMap<NodeKey, usize>,
     shores: Vec<Shore>,
+    envelope: Envelope,
 }
 
 impl Valleys {
     /// Valleys from published drainage cells, keeping the segments with an
-    /// end `keep` accepts. Nodes are looked up across every cell given,
-    /// since a reach's downstream link may name a node the next cell owns; a
-    /// link to no published node, the sea or the window's edge, ends the
-    /// valley at the last node, where a river to the sea is at the shore.
-    pub fn new(cells: &[&DrainageCell], keep: impl Fn(NodeKey) -> bool) -> Self {
+    /// end `keep` accepts, over the envelope the cells were routed on.
+    /// Nodes are looked up across every cell given, since a reach's
+    /// downstream link may name a node the next cell owns; a link to no
+    /// published node, the sea or the window's edge, ends the valley at the
+    /// last node, where a river to the sea is at the shore.
+    pub fn new(cells: &[&DrainageCell], keep: impl Fn(NodeKey) -> bool, envelope: Envelope) -> Self {
         let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
         let mut segments = Vec::new();
         let mut cuts = Vec::new();
@@ -289,14 +325,15 @@ impl Valleys {
             }
         }
         let mut flooded = HashMap::new();
+        let mut extent_of = HashMap::new();
         let mut shores = Vec::new();
         for lake in cells.iter().flat_map(|c| c.lakes.iter()) {
             let ends = lake.outlet.and_then(node).map(|s| (s.wx, s.wy));
-            let extent = (!lake.extent.is_empty()).then(|| lake.extent.iter().copied().collect());
             flooded.extend(lake.nodes.iter().map(|&k| (k, shores.len())));
-            shores.push(Shore { surface: lake.surface, extent, ends });
+            extent_of.extend(lake.extent.iter().map(|&k| (k, shores.len())));
+            shores.push(Shore { surface: lake.surface, read: !lake.extent.is_empty(), ends });
         }
-        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), cuts, flooded, shores }
+        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), cuts, flooded, extent_of, shores, envelope }
     }
 
     /// The valleys under a square box, routed from the plate graph directly:
@@ -321,7 +358,9 @@ impl Valleys {
             })
             .collect();
         let refs: Vec<&DrainageCell> = cells.iter().collect();
-        Self::new(&refs, |_| true)
+        let reach = half + NODE_SPACING as f64;
+        let envelope = Envelope::new(seed, Coasts::in_box(cx, cy, reach, seed), Outlines::in_box(cx, cy, reach, seed));
+        Self::new(&refs, |_| true, envelope)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -364,16 +403,22 @@ impl Valleys {
         c.valley + c.channel
     }
 
-    /// The surface water stands at over a position whose ground, after the
-    /// cuts, is `ground`: the highest of the sea, a lake over the position,
-    /// the lake's pool in the throat to its sill, and the floor of the
-    /// channel the position lies in. None where none stands above the
-    /// ground. A lake stands over a position within one node spacing of a
-    /// flooded node that lies in the lake's extent, read on the fine
-    /// lattice, or, for a lake never read there, that is not past its sill
-    /// on the line out from the flooded node: the lake's plane would
-    /// otherwise hang over the gorge the river leaves by.
-    pub fn surface_at(&self, wx: f64, wy: f64, ground: f64, cuts: Cuts) -> Option<f64> {
+    /// The surface water stands at over a position whose envelope is
+    /// `envelope` and whose ground, after the cuts, is `ground`: the
+    /// highest of the sea, a lake over the position, the lake's pool in the
+    /// throat to its sill, and the floor of the channel the position lies
+    /// in. None where none stands above the ground.
+    ///
+    /// A lake read on the fine lattice stands over its extent, the fine
+    /// points its water reaches, and over the shore between: a position
+    /// under the surface whose nearest fine point is not in the extent but
+    /// neighbours one, when the envelope stays under the surface along the
+    /// line from the position to that point, so the water never crosses a
+    /// rim to stand over the far side. A lake never read there stands
+    /// within one node spacing of a flooded node and not past its sill on
+    /// the line out from the flooded node: the lake's plane would otherwise
+    /// hang over the gorge the river leaves by.
+    pub fn surface_at(&self, wx: f64, wy: f64, envelope: f64, ground: f64, cuts: Cuts) -> Option<f64> {
         let mut surface: Option<f64> = None;
         let mut stand = |s: f64| {
             if s > ground {
@@ -387,6 +432,19 @@ impl Valleys {
         if let Some(pool) = cuts.pool {
             stand(pool);
         }
+        let p = nearest_fine(wx, wy);
+        if let Some(&shore) = self.extent_of.get(&p) {
+            stand(self.shores[shore].surface);
+        } else {
+            for (di, dj) in DIRECTIONS {
+                let q = (p.0 + di, p.1 + dj);
+                let Some(&shore) = self.extent_of.get(&q) else { continue };
+                let s = self.shores[shore].surface;
+                if envelope < s && self.under(wx, wy, fine_world(q), s) {
+                    stand(s);
+                }
+            }
+        }
         // Every node within one spacing of a position is the nearest node
         // or one of its six neighbours: the nearest lies within the
         // lattice's covering radius, a spacing over √3, and the second ring
@@ -395,21 +453,30 @@ impl Valleys {
         let reach = NODE_SPACING as f64;
         for key in std::iter::once(n).chain(DIRECTIONS.iter().map(|(di, dj)| (n.0 + di, n.1 + dj))) {
             let Some(&shore) = self.flooded.get(&key) else { continue };
-            let (x, y) = crate::lattice::node_world(key);
-            let from_flooded = (x - wx).hypot(y - wy);
-            if from_flooded > reach {
+            let Shore { surface: s, read, ends } = &self.shores[shore];
+            if *read {
                 continue;
             }
-            let Shore { surface: s, extent, ends } = &self.shores[shore];
-            let held = match extent {
-                Some(extent) => extent.contains(&nearest_fine(wx, wy)),
-                None => ends.map_or(true, |(px, py)| (wx - px) * (px - x) + (wy - py) * (py - y) <= 0.0),
-            };
-            if held {
+            let (x, y) = crate::lattice::node_world(key);
+            if (x - wx).hypot(y - wy) > reach {
+                continue;
+            }
+            if ends.map_or(true, |(px, py)| (wx - px) * (px - x) + (wy - py) * (py - y) <= 0.0) {
                 stand(*s);
             }
         }
         surface
+    }
+
+    /// Whether the envelope stays under `surface` along the line from a
+    /// position to a point, read every [`SHORE_STEP`] between them.
+    fn under(&self, wx: f64, wy: f64, to: (f64, f64), surface: f64) -> bool {
+        let (dx, dy) = (to.0 - wx, to.1 - wy);
+        let steps = (dx.hypot(dy) / SHORE_STEP).ceil().max(1.0);
+        (1..steps as usize).all(|i| {
+            let t = i as f64 / steps;
+            self.envelope.at(wx + dx * t, wy + dy * t) < surface
+        })
     }
 }
 
@@ -417,13 +484,16 @@ impl Valleys {
 /// and its ring, keeping the segments within a valley's reach of the cell's
 /// ground.
 pub fn valleys_of(scope: &CellScope) -> Valleys {
+    let edge_cells = scope.source_cells::<PlateEdgeIndex>();
+    let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default());
+    let envelope = Envelope::new(scope.seed(), coasts, outlines_of(scope));
     let cells = scope.source_cells::<DrainageIndex>();
     let Some(idx) = scope.read::<DrainageIndex>() else {
-        return Valleys::new(&[], |_| true);
+        return Valleys::new(&[], |_| true, envelope);
     };
     let centre = scope.lattice().cell_center(scope.cell());
     let keep_within = scope.lattice().radius as i32 + NODE_SPACING + VALLEY_HALF_WIDTH.ceil() as i32;
-    Valleys::new(&idx.cells_in(&cells), |key| hex_distance(node_tile(key), centre) <= keep_within)
+    Valleys::new(&idx.cells_in(&cells), |key| hex_distance(node_tile(key), centre) <= keep_within, envelope)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -465,7 +535,7 @@ impl WorldEvent for DissectionEvent {
         let (wx, wy) = hex_to_world(q, r);
         let cuts = valleys.cuts_at(wx, wy, below.elevation);
         let cut = cuts.valley + cuts.channel;
-        let water = valleys.surface_at(wx, wy, below.elevation - cut, cuts);
+        let water = valleys.surface_at(wx, wy, below.elevation, below.elevation - cut, cuts);
         if cut <= 0.0 && water.is_none() {
             return None;
         }
@@ -616,7 +686,7 @@ mod tests {
         }
         assert!(sills > 0, "no lake in the spawn cell drains through an outlet the cell owns");
         assert!(cut_sills > 0, "no sill in the spawn cell is cut");
-        let valleys = Valleys::new(&[&published], |_| true);
+        let valleys = Valleys::new(&[&published], |_| true, Envelope::new(S, coasts, outlines));
         for n in published.nodes.values() {
             let (x, y) = node_world(n.key);
             let cut = valleys.cut_at(x + 100.0, y + 60.0, n.elevation);
@@ -638,7 +708,7 @@ mod tests {
         let coasts = Coasts::in_box(cx, cy, window, S);
         let outlines = Outlines::in_box(cx, cy, window, S);
         let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
-        let valleys = Valleys::new(&[&published], |_| true);
+        let valleys = Valleys::new(&[&published], |_| true, Envelope::new(S, coasts, outlines));
         let mut channelled = 0;
         for n in published.nodes.values() {
             if channel_depth(n) <= 0.0 || n.sill {
@@ -672,13 +742,13 @@ mod tests {
         let coasts = Coasts::in_box(cx, cy, window, S);
         let outlines = Outlines::in_box(cx, cy, window, S);
         let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
-        let valleys = Valleys::new(&[&published], |_| true);
+        let valleys = Valleys::new(&[&published], |_| true, Envelope::new(S, coasts, outlines));
         let (mut rivers, mut lakes, mut dry) = (0, 0, 0);
         for n in published.nodes.values() {
             let (x, y) = node_world(n.key);
             let cuts = valleys.cuts_at(x, y, n.elevation);
             let ground = n.elevation - cuts.valley - cuts.channel;
-            let water = valleys.surface_at(x, y, ground, cuts);
+            let water = valleys.surface_at(x, y, n.elevation, ground, cuts);
             if let Some(lake) = n.lake {
                 lakes += 1;
                 // A node flooded by a hair reads dry, as the spec allows.
