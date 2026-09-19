@@ -68,8 +68,35 @@
 //! nothing at the flooded node. A river ends at its reach's last land node,
 //! so a channel stops short of the shore by up to one spacing. Unbuilt.
 //!
-//! Not dissection's: channels finer than the node spacing, floodplains,
-//! meanders, sediment, terraces. Unbuilt.
+//! # The meander
+//!
+//! A river far above its base level cuts down: its bed erodes faster than
+//! its banks, and the channel holds the flow line through a gorge. A river
+//! at grade, its floor falling only as fast as its load needs, cuts
+//! sideways instead: the flow in any slight bend scours the outer bank and
+//! builds the inner, the bend grows and walks downstream, and the river
+//! sweeps a belt several bends wide, planing it level as it goes. So where
+//! the floor's grade toward the next node is under the grade a river cuts
+//! down at, the channel meanders across the flow line and the floor is
+//! level across the belt it has swept; how far, by the plate's age, the
+//! same dial the depth turns on. The train is the sine-generated curve, the
+//! heading swinging as a sine of the distance along the channel, with the
+//! wavelength a channel's width sets and each bend's length its own by a
+//! hash, its size following: the shape is the curve's and the hash sets a
+//! quantity. The channel crosses the flow line at every node, so a train
+//! fits between two nodes as a whole number of half-waves, and it crosses
+//! toward the side a hash of the node picks, so the train continues
+//! through a node whichever cell drew each side. A tributary's train
+//! fades into the trunk over its last bend by the share of the water it
+//! brings, and ends at the trunk's bank where it first meets the trunk's
+//! channel, so the two never knot at the node. The channel is drawn as a
+//! polyline laid across the flow
+//! line, kept by its position along the line, so a tile reads its distance
+//! to the channel from the samples near its own position and never scans
+//! the train.
+//!
+//! Not dissection's: channels finer than the node spacing, sediment,
+//! terraces, the bank a bend cuts and the bar it builds. Unbuilt.
 //!
 //! # Water
 //!
@@ -97,10 +124,13 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::f64::consts::PI;
+use std::sync::OnceLock;
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{hex_distance, nearest_node, node_tile, NodeKey, DIRECTIONS, NODE_SPACING};
-use crate::{hex_to_world, world_to_hex};
+use crate::noise::{hash_channel, hash_channel_f64};
+use crate::{hex_to_world, world_to_hex, RISE};
 use super::drainage::{
     fine_world, growth, nearest_fine, surface_at as envelope_at, DrainageCell, DrainageEvent, DrainageIndex,
     DrainageNode, DRAINAGE_CELL_SCALE,
@@ -148,8 +178,7 @@ pub const YOUNG_SHARE: f64 = 0.5;
 /// does, to the full share; and with age, from a young plate's share of it
 /// to the whole.
 pub fn relief_share(catchment: f64, age: f64) -> f64 {
-    let aged = YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0);
-    growth(catchment).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged)
+    growth(catchment).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged(age))
 }
 
 // ── The channel ─────────────────────────────────────────────────────────────
@@ -168,6 +197,97 @@ pub const CHANNEL_DEPTH_MIN: f64 = 1.0;
 
 /// Depth of a full trunk's channel, in z-levels.
 pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
+
+// ── The meander ─────────────────────────────────────────────────────────────
+
+/// A meander's wavelength along the flow line as a multiple of the
+/// channel's width: Leopold and Wolman's 10.9, holding from brooks to the
+/// Mississippi.
+pub const MEANDER_WAVELENGTH: f64 = 10.9;
+
+/// The angle the channel crosses the flow line at, in radians: the
+/// amplitude of the sine-generated curve's heading. Sinuosity is the
+/// reciprocal of the Bessel J0 of it, here about 1.9, a well-developed
+/// train with rounded lobes. Under a right angle, so the channel never
+/// runs back up the valley and its position along the flow line is
+/// one-to-one.
+pub const MEANDER_DEFLECTION: f64 = 1.45;
+
+/// The floor's grade, as rise over run, at and under which a river is at
+/// grade and sweeps its whole belt: a thousandth, the slope of the
+/// meandering rivers of the plains.
+pub const MEANDER_GRADE_FULL: f64 = 0.001;
+
+/// The grade at and over which a river cuts down and holds the flow line:
+/// a hundredth, where mountain streams begin.
+pub const MEANDER_GRADE_NONE: f64 = 0.01;
+
+/// How far one bend's length strays from the train's, as a share of it;
+/// its size follows its length.
+pub const MEANDER_LOBE_VARIANCE: f64 = 0.3;
+
+/// Points per wavelength of channel the train is drawn with, and the
+/// shortest step in world units. A bend's tightest radius is its length
+/// over pi times the deflection, so a step this share of the wavelength
+/// misses the shortest bend's curve by under half a tile at a trunk, and
+/// a step under a tile resolves nothing a tile can show.
+const MEANDER_STEPS_PER_WAVE: f64 = 24.0;
+const MEANDER_STEP_MIN: f64 = 1.0;
+
+/// Hash channels: which side a node's crossing turns toward, and a bend's
+/// length.
+const MEANDER_SIDE: u64 = 0x6d65_616e;
+const MEANDER_LOBE: u64 = 0x6c6f_6265;
+
+/// The sine-generated curve over one wavelength of unit path: how far it
+/// advances along the flow line, the Bessel J0 of the deflection, and how
+/// far it reaches to the side at a lobe's apex.
+fn meander_shape() -> (f64, f64) {
+    static SHAPE: OnceLock<(f64, f64)> = OnceLock::new();
+    *SHAPE.get_or_init(|| {
+        let n = 4096;
+        let (mut x, mut y, mut peak) = (0.0, 0.0, 0.0f64);
+        for i in 0..n {
+            let s = (i as f64 + 0.5) / n as f64;
+            let heading = MEANDER_DEFLECTION * (2.0 * PI * s).cos();
+            x += heading.cos() / n as f64;
+            y += heading.sin() / n as f64;
+            peak = peak.max(y.abs());
+        }
+        (x, peak)
+    })
+}
+
+/// How far a full train whose wavelength along the flow line is
+/// `wavelength` reaches to either side of the line, in world units, its
+/// largest lobe included: what the belt a river at grade has swept is wide
+/// to each side, before its channel. A channel of width `w` has a
+/// wavelength of [`MEANDER_WAVELENGTH`] times `w`, fitted between its nodes.
+pub fn meander_amplitude(wavelength: f64) -> f64 {
+    let (advance, peak) = meander_shape();
+    (1.0 + MEANDER_LOBE_VARIANCE) * peak * wavelength / advance
+}
+
+/// The aged share: what a plate of `age` has done of an aged plate's
+/// cutting, sideways as much as down.
+fn aged(age: f64) -> f64 {
+    YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)
+}
+
+/// How far the river at a node has turned to its banks, 0 to 1: nothing
+/// above the channel head or on flooded ground; else the plate's aged
+/// share by how far the floor's grade over `run` to `floor_down`, the next
+/// floor downstream, lies under the grade a river cuts down at, whole at
+/// the grade of the plains and nothing at a mountain stream's.
+pub fn vigour(node: &DrainageNode, floor_down: f64, run: f64) -> f64 {
+    if node.lake.is_some() || growth(node.catchment).is_none() {
+        return 0.0;
+    }
+    let floor = node.elevation - depth_at(node);
+    let grade = (floor - floor_down).max(0.0) * RISE / run;
+    let g = ((grade - MEANDER_GRADE_FULL) / (MEANDER_GRADE_NONE - MEANDER_GRADE_FULL)).clamp(0.0, 1.0);
+    aged(node.age) * (1.0 - g * g * (3.0 - 2.0 * g))
+}
 
 // ── The shore ───────────────────────────────────────────────────────────────
 
@@ -222,8 +342,9 @@ pub fn depth_at(node: &DrainageNode) -> f64 {
 }
 
 /// What one channel segment cuts, at each end: the envelope and the valley
-/// floor, the base level, and the channel slot's half-width and depth.
-#[derive(Clone, Copy, Debug)]
+/// floor, the base level, the channel slot's half-width and depth, and
+/// how far the river meanders; and the train it meanders on.
+#[derive(Clone, Debug)]
 struct Cut {
     env0: f64,
     env1: f64,
@@ -246,6 +367,13 @@ struct Cut {
     chan1: f64,
     /// The flow line's length, what `t` runs along.
     length: f64,
+    vigour0: f64,
+    vigour1: f64,
+    /// The share of the end node's water the start node brings: near one
+    /// along a channel, small for a tributary entering a trunk.
+    entry: f64,
+    /// The channel's train, or none where the river holds the flow line.
+    meander: Option<Meander>,
 }
 
 /// One sub-segment of a flow line: which cut it belongs to and where along
@@ -256,6 +384,220 @@ struct Sub {
     cut: usize,
     start: f64,
     length: f64,
+}
+
+/// A flow line as a polyline: the length along it at each point, and a
+/// unit normal at each, the mean of the sub-segments' meeting there, so an
+/// offset from the line turns with it and never steps at a joint.
+struct Axis {
+    pts: Vec<(f64, f64)>,
+    cum: Vec<f64>,
+    normals: Vec<(f64, f64)>,
+}
+
+impl Axis {
+    fn new(pts: Vec<(f64, f64)>) -> Self {
+        let mut cum = Vec::with_capacity(pts.len());
+        let mut sides = Vec::with_capacity(pts.len());
+        let mut total = 0.0;
+        cum.push(0.0);
+        for pair in pts.windows(2) {
+            let (dx, dy) = (pair[1].0 - pair[0].0, pair[1].1 - pair[0].1);
+            let len = dx.hypot(dy);
+            total += len;
+            cum.push(total);
+            sides.push(if len > 0.0 { (-dy / len, dx / len) } else { (0.0, 0.0) });
+        }
+        let unit = |(x, y): (f64, f64)| {
+            let len = x.hypot(y);
+            if len > 0.0 { (x / len, y / len) } else { (0.0, 0.0) }
+        };
+        let normals = (0..pts.len())
+            .map(|i| match (i.checked_sub(1).and_then(|j| sides.get(j)), sides.get(i)) {
+                (Some(a), Some(b)) => unit((a.0 + b.0, a.1 + b.1)),
+                (Some(a), None) | (None, Some(a)) => *a,
+                (None, None) => (0.0, 0.0),
+            })
+            .collect();
+        Axis { pts, cum, normals }
+    }
+
+    fn length(&self) -> f64 {
+        *self.cum.last().unwrap_or(&0.0)
+    }
+
+    /// The point at length `x` along the line and the normal there, found
+    /// from sub-segment `from` onward, which advances with `x`.
+    fn at(&self, x: f64, from: &mut usize) -> ((f64, f64), (f64, f64)) {
+        while *from + 2 < self.cum.len() && self.cum[*from + 1] < x {
+            *from += 1;
+        }
+        let j = *from;
+        let len = self.cum[j + 1] - self.cum[j];
+        let u = if len > 0.0 { ((x - self.cum[j]) / len).clamp(0.0, 1.0) } else { 0.0 };
+        let lerp = |a: (f64, f64), b: (f64, f64)| (a.0 + u * (b.0 - a.0), a.1 + u * (b.1 - a.1));
+        let (nx, ny) = lerp(self.normals[j], self.normals[j + 1]);
+        let nl = nx.hypot(ny);
+        let normal = if nl > 0.0 { (nx / nl, ny / nl) } else { self.normals[j] };
+        (lerp(self.pts[j], self.pts[j + 1]), normal)
+    }
+}
+
+/// A channel's train laid across its flow line: its points in world space
+/// and each one's position along the line, ascending, so the points near
+/// a position along the line are found by that position; and how far it
+/// reaches to each side at full vigour, its largest lobe included, before
+/// the channel's own half-width.
+#[derive(Clone, Debug)]
+struct Meander {
+    along: Vec<f64>,
+    pts: Vec<(f64, f64)>,
+    step: f64,
+    amplitude: f64,
+    /// The wavelength along the flow line, as fitted between the nodes.
+    wavelength: f64,
+}
+
+impl Meander {
+    /// The train from node `p` to node `n` across `axis`, at the vigour
+    /// each end has, or none where neither end meanders or no channel runs:
+    /// the sine-generated curve crossing the line at both nodes, toward the
+    /// side each node's hash picks, a whole number of half-waves at the
+    /// wavelength the channel's width sets, each bend's length its own by
+    /// a hash and its size following, the whole scaled by the vigour along
+    /// the line. Over its last bend the train fades toward the line by the
+    /// share of `n`'s water `p` brings, so a tributary arrives at a trunk
+    /// along its flow line and a channel continuing through a node keeps
+    /// its train.
+    fn new(axis: &Axis, p: &DrainageNode, n: &DrainageNode, cut: &Cut, seed: u64) -> Option<Self> {
+        let width = cut.half0 + cut.half1;
+        if width <= 0.0 || (cut.vigour0 <= 0.0 && cut.vigour1 <= 0.0) {
+            return None;
+        }
+        let length = axis.length();
+        let side = |key: NodeKey| if hash_channel(key.0 as i64, key.1 as i64, seed, MEANDER_SIDE) & 1 == 0 { 1.0 } else { -1.0 };
+        let (sign, sign1) = (side(p.key), side(n.key));
+        // Half-waves between the nodes: the count nearest the wavelength
+        // whose parity turns the crossing at `n` the way `n`'s hash says.
+        let wavelength = MEANDER_WAVELENGTH * width;
+        let target = 2.0 * length / wavelength;
+        let even = sign == sign1;
+        let mut k = target.round().max(1.0) as u64;
+        if (k % 2 == 0) != even {
+            k = if k > 1 && (target - (k - 1) as f64).abs() <= ((k + 1) as f64 - target).abs() { k - 1 } else { k + 1 };
+        }
+        let (advance, _) = meander_shape();
+        let wavelength = 2.0 * length / k as f64;
+        let path_wave = wavelength / advance;
+        let path = length / advance;
+        let amplitude = meander_amplitude(wavelength);
+        // Each bend's length: its share of the path, normalised so the
+        // bends fill it; a bend's size follows its length, since the curve
+        // returns to the line over any bend.
+        let mut bends: Vec<f64> = (0..k)
+            .map(|j| 1.0 + MEANDER_LOBE_VARIANCE * (2.0 * hash_channel_f64(p.key.0 as i64, p.key.1 as i64, seed, MEANDER_LOBE.wrapping_add(j)) - 1.0))
+            .collect();
+        let total: f64 = bends.iter().sum();
+        for b in &mut bends {
+            *b *= path / total;
+        }
+        let entry = cut.entry;
+        let step = (path_wave / MEANDER_STEPS_PER_WAVE).max(MEANDER_STEP_MIN);
+        // Each bend is walked in its own whole number of steps, so its
+        // midpoint samples sit symmetrically about its centre and the
+        // curve returns to the line at its end exactly. The fade scales the
+        // offset and never the heading, for the same reason.
+        let mut samples = Vec::with_capacity((path / step) as usize + bends.len() + 1);
+        let (mut x, mut y) = (0.0, 0.0);
+        let mut longest: f64 = 0.0;
+        samples.push((x, y, 1.0));
+        for (j, &bend) in bends.iter().enumerate() {
+            let count = (bend / step).ceil().max(1.0);
+            let step = bend / count;
+            longest = longest.max(step);
+            let side = if j % 2 == 0 { sign } else { -sign };
+            for i in 0..count as usize {
+                let frac = (i as f64 + 0.5) / count;
+                let heading = side * MEANDER_DEFLECTION * (PI * frac).cos();
+                x += step * heading.cos();
+                y += step * heading.sin();
+                let end = (i as f64 + 1.0) / count;
+                let fade = if j + 1 == bends.len() { 1.0 - (1.0 - entry) * end * end * (3.0 - 2.0 * end) } else { 1.0 };
+                samples.push((x, y, fade));
+            }
+        }
+        let step = longest;
+        let scale = length / x;
+        let mut from = 0;
+        let mut along = Vec::with_capacity(samples.len());
+        let mut pts = Vec::with_capacity(samples.len());
+        for &(x, y, fade) in &samples {
+            let x = (x * scale).min(length);
+            let t = x / length;
+            let vigour = cut.vigour0 + t * (cut.vigour1 - cut.vigour0);
+            let offset = y * fade * vigour;
+            let (point, normal) = axis.at(x, &mut from);
+            along.push(x);
+            pts.push((point.0 + offset * normal.0, point.1 + offset * normal.1));
+        }
+        Some(Meander { along, pts, step, amplitude, wavelength })
+    }
+
+    /// End this train where it first crosses the `trunk` points, walking
+    /// downstream over its last `reach` of line: a tributary joins the
+    /// trunk at the trunk's bank and runs no further. Untouched when the
+    /// two never cross before the node, where both trains meet in any
+    /// case.
+    fn end_at(&mut self, trunk: &[(f64, f64)], reach: f64) {
+        let Some(&length) = self.along.last() else { return };
+        let first = self.along.partition_point(|&a| a < length - reach).saturating_sub(1);
+        for i in first..self.pts.len() - 1 {
+            let (a, b) = (self.pts[i], self.pts[i + 1]);
+            let mut hit: Option<(f64, (f64, f64))> = None;
+            for pair in trunk.windows(2) {
+                let (c, d) = (pair[0], pair[1]);
+                let (rx, ry) = (b.0 - a.0, b.1 - a.1);
+                let (sx, sy) = (d.0 - c.0, d.1 - c.1);
+                let den = rx * sy - ry * sx;
+                if den.abs() < 1e-12 {
+                    continue;
+                }
+                let (qx, qy) = (c.0 - a.0, c.1 - a.1);
+                let t = (qx * sy - qy * sx) / den;
+                let u = (qx * ry - qy * rx) / den;
+                if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) && hit.map_or(true, |(bt, _)| t < bt) {
+                    hit = Some((t, (a.0 + t * rx, a.1 + t * ry)));
+                }
+            }
+            if let Some((t, point)) = hit {
+                let along = self.along[i] + t * (self.along[i + 1] - self.along[i]);
+                self.pts.truncate(i + 1);
+                self.along.truncate(i + 1);
+                self.pts.push(point);
+                self.along.push(along);
+                return;
+            }
+        }
+    }
+
+    /// The distance from a position to the channel, read from the points
+    /// within reach of the position's length `x` along the flow line: the
+    /// channel's half-width, the step, and the stretch a bend of the line
+    /// puts between lengths along it and distances beside it.
+    fn distance(&self, x: f64, wx: f64, wy: f64) -> f64 {
+        let reach = 4.0 * CHANNEL_HALF_WIDTH_MAX + 2.0 * self.step;
+        let lo = self.along.partition_point(|&a| a < x - reach).saturating_sub(1);
+        let hi = self.along.partition_point(|&a| a <= x + reach).min(self.pts.len() - 1);
+        let mut best = f64::MAX;
+        for i in lo..hi {
+            let (a, b) = (self.pts[i], self.pts[i + 1]);
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let len2 = dx * dx + dy * dy;
+            let u = if len2 > 0.0 { (((wx - a.0) * dx + (wy - a.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            best = best.min((wx - a.0 - u * dx).hypot(wy - a.1 - u * dy));
+        }
+        best
+    }
 }
 
 /// The flow line from node `p` to node `n`: a cubic leaving `p` along its
@@ -295,17 +637,35 @@ fn flow_line(p: &DrainageNode, n: &DrainageNode) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// What a cut reads at one point along its segment.
+#[derive(Clone, Copy, Debug)]
+struct At {
+    depth: f64,
+    base: f64,
+    half: f64,
+    chan: f64,
+    /// How far the belt the river has swept reaches to each side of the
+    /// flow line: the train's reach by the vigour, then the channel.
+    belt: f64,
+}
+
 impl Cut {
-    /// The valley's depth below `envelope` at `t` along the segment, and
-    /// the base level, channel half-width and channel depth there.
-    fn at(&self, t: f64, envelope: f64) -> (f64, f64, f64, f64) {
+    /// The valley's depth below `envelope` at `t` along the segment, with
+    /// the base level, channel half-width, channel depth and belt there.
+    /// Where the river meanders, the floor is planed level across its belt
+    /// by as much as it does: the depth takes up the envelope's rise over
+    /// the line's own, interpolated between the nodes, by the vigour.
+    fn at(&self, t: f64, envelope: f64) -> At {
         let lerp = |a: f64, b: f64| a + t * (b - a);
+        let vigour = lerp(self.vigour0, self.vigour1);
+        let half = lerp(self.half0, self.half1);
         let depth = if self.graded {
             (envelope - lerp(self.floor0, self.floor1)).max(0.0)
         } else {
-            lerp(self.env0 - self.floor0, self.env1 - self.floor1)
+            lerp(self.env0 - self.floor0, self.env1 - self.floor1) + vigour * (envelope - lerp(self.env0, self.env1))
         };
-        (depth, lerp(self.base0, self.base1), lerp(self.half0, self.half1), lerp(self.chan0, self.chan1))
+        let reach = self.meander.as_ref().map_or(0.0, |m| m.amplitude);
+        At { depth, base: lerp(self.base0, self.base1), half, chan: lerp(self.chan0, self.chan1), belt: vigour * reach + half }
     }
 }
 
@@ -374,9 +734,21 @@ impl Valleys {
     /// last node, where a river to the sea is at the shore.
     pub fn new(cells: &[&DrainageCell], keep: impl Fn(NodeKey) -> bool, envelope: Envelope) -> Self {
         let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
+        // The next floor downstream is the node's own base level where its
+        // downstream node is unpublished, the sea or the window's edge, and
+        // never under that base: a river entering a lake grades to the
+        // lake's surface, not to the lakebed beneath it.
+        let vigour_of = |n: &DrainageNode| {
+            let (floor_down, run) = match n.down.and_then(node) {
+                Some(d) => (d.elevation - depth_at(d), (d.wx - n.wx).hypot(d.wy - n.wy)),
+                None => (n.base, NODE_SPACING as f64),
+            };
+            vigour(n, floor_down.max(n.base), run)
+        };
         let mut segments = Vec::new();
         let mut subs = Vec::new();
-        let mut cuts = Vec::new();
+        let mut cuts: Vec<Cut> = Vec::new();
+        let mut ends: Vec<(NodeKey, NodeKey)> = Vec::new();
         for c in cells {
             for reach in &c.reaches {
                 let mut prev: Option<&DrainageNode> = None;
@@ -384,15 +756,12 @@ impl Valleys {
                     let Some(n) = node(key) else { break };
                     if let Some(p) = prev {
                         if keep(p.key) || keep(n.key) {
-                            let line = flow_line(p, n);
-                            let mut start = 0.0;
-                            for pair in line.windows(2) {
-                                let length = (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1);
+                            let axis = Axis::new(flow_line(p, n));
+                            for (j, pair) in axis.pts.windows(2).enumerate() {
                                 segments.push(Segment::along(pair[0], pair[1], true));
-                                subs.push(Sub { cut: cuts.len(), start, length });
-                                start += length;
+                                subs.push(Sub { cut: cuts.len(), start: axis.cum[j], length: axis.cum[j + 1] - axis.cum[j] });
                             }
-                            cuts.push(Cut {
+                            let mut cut = Cut {
                                 env0: p.elevation,
                                 env1: n.elevation,
                                 floor0: p.elevation - depth_at(p),
@@ -405,12 +774,59 @@ impl Valleys {
                                 half1: channel_half_width(n.catchment),
                                 chan0: channel_depth(p),
                                 chan1: channel_depth(n),
-                                length: start,
-                            });
+                                length: axis.length(),
+                                vigour0: vigour_of(p),
+                                vigour1: vigour_of(n),
+                                entry: if n.catchment > 0.0 { (p.catchment / n.catchment).clamp(0.0, 1.0) } else { 1.0 },
+                                meander: None,
+                            };
+                            cut.meander = Meander::new(&axis, p, n, &cut, envelope.seed);
+                            ends.push((p.key, n.key));
+                            cuts.push(cut);
                         }
                     }
                     prev = Some(n);
                 }
+            }
+        }
+        // A tributary, a segment bringing under half its end node's water,
+        // ends its train where it first crosses the trunk's: the train
+        // leaving the node, and the one arriving with the most water. Each
+        // is searched over two wavelengths from the node.
+        let mut leaving: HashMap<NodeKey, usize> = HashMap::new();
+        let mut arriving: HashMap<NodeKey, usize> = HashMap::new();
+        for (i, &(from, to)) in ends.iter().enumerate() {
+            leaving.insert(from, i);
+            if cuts[i].entry > 0.5 {
+                arriving.insert(to, i);
+            }
+        }
+        for i in 0..cuts.len() {
+            if cuts[i].entry > 0.5 || cuts[i].meander.is_none() {
+                continue;
+            }
+            let to = ends[i].1;
+            let reach = |m: &Meander| 2.0 * m.wavelength;
+            let trunks: Vec<Vec<(f64, f64)>> = [leaving.get(&to), arriving.get(&to)]
+                .into_iter()
+                .enumerate()
+                .filter_map(|(which, j)| {
+                    let m = cuts[*j?].meander.as_ref()?;
+                    let span = reach(m);
+                    Some(if which == 0 {
+                        let last = m.along.partition_point(|&a| a <= span).min(m.pts.len() - 1);
+                        m.pts[..=last].to_vec()
+                    } else {
+                        let length = *m.along.last().unwrap_or(&0.0);
+                        let first = m.along.partition_point(|&a| a < length - span).saturating_sub(1);
+                        m.pts[first..].to_vec()
+                    })
+                })
+                .collect();
+            let tributary = cuts[i].meander.as_mut().unwrap();
+            let span = reach(tributary);
+            for trunk in &trunks {
+                tributary.end_at(trunk, span);
             }
         }
         let mut flooded = HashMap::new();
@@ -458,15 +874,21 @@ impl Valleys {
 
     /// The cuts at a position whose envelope is `envelope`, in z-levels: of
     /// every valley in reach, each interpolated along its flow line and
-    /// profiled across it, the deepest; and of every channel the position
-    /// lies in, the deepest slot, whichever valley's wall it crosses, so a
-    /// tributary keeps its channel down the wall of a trunk's deeper
-    /// valley. A breach cuts to the straight floor between its nodes,
-    /// through any ridge between them; any other valley interpolates its
-    /// depth. A valley never cuts below the base level it drains to; its
-    /// channel, a slot of the segment's half-width and depth, cuts on
-    /// below it. A throat in reach pools the lake's water to its sill's
-    /// floor.
+    /// profiled across it from the edge of its belt, the deepest; and of
+    /// every channel the position lies in, the deepest slot, whichever
+    /// valley's wall it crosses, so a tributary keeps its channel down the
+    /// wall of a trunk's deeper valley. A breach cuts to the straight floor
+    /// between its nodes, through any ridge between them; any other valley
+    /// interpolates its depth. A valley never cuts below the base level it
+    /// drains to; its channel, a slot of the segment's half-width and depth
+    /// along its train, cuts on below it. A throat in reach pools the
+    /// lake's water to its sill's floor.
+    ///
+    /// Every sub-segment in reach reads on its own and the deepest stands,
+    /// which keeps the cut continuous: the nearest point on a bent line
+    /// jumps along it across the bend's inside, and a read off the nearest
+    /// alone would step there. A far sub-segment's read of the train can
+    /// only miss the channel, never find one that is not there.
     pub fn cuts_at(&self, wx: f64, wy: f64, envelope: f64) -> Cuts {
         let mut best = Cuts::default();
         let mut pool: Option<f64> = None;
@@ -474,12 +896,17 @@ impl Valleys {
             let sub = self.subs[i];
             let (along, _) = self.grid.segments()[i].project(wx, wy);
             let cut = &self.cuts[sub.cut];
-            let t = (sub.start + along * sub.length) / cut.length;
-            let (depth, base, half, chan) = cut.at(t, envelope);
-            let valley = (depth * profile(d / VALLEY_HALF_WIDTH)).min((envelope - base).max(0.0));
+            let x = sub.start + along * sub.length;
+            let t = x / cut.length;
+            let at = cut.at(t, envelope);
+            let u = if at.belt < VALLEY_HALF_WIDTH { ((d - at.belt) / (VALLEY_HALF_WIDTH - at.belt)).max(0.0) } else { 0.0 };
+            let valley = (at.depth * profile(u)).min((envelope - at.base).max(0.0));
             best.valley = best.valley.max(valley);
-            if d <= half {
-                best.channel = best.channel.max(chan);
+            if d <= at.belt.max(at.half) {
+                let beside = cut.meander.as_ref().map_or(d, |m| m.distance(x, wx, wy));
+                if beside <= at.half {
+                    best.channel = best.channel.max(at.chan);
+                }
             }
             // The pool holds over the throat itself, not past the lip, and
             // only where the throat's cut brought the ground under it: low
@@ -853,14 +1280,97 @@ mod tests {
             let at = valleys.cuts_at(x, y, n.elevation);
             assert!((at.channel - channel_depth(n)).abs() < 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
             assert!(n.lake.is_some() || at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
+            // Past the widest belt any train sweeps, square off the flow
+            // line at the node, no slot of this channel is cut; one there
+            // is another channel's, interpolated short of its own node.
             let (dx, dy) = (-n.direction.1, n.direction.0);
-            let off = channel_half_width(n.catchment) + 1.0;
+            let off = 1.5 * meander_amplitude(MEANDER_WAVELENGTH * 2.0 * CHANNEL_HALF_WIDTH_MAX) + CHANNEL_HALF_WIDTH_MAX + 1.0;
             let beside = valleys.cuts_at(x + dx * off, y + dy * off, n.elevation);
-            // Beside the node the slot is the segment's, interpolated a hair
-            // short of the node, so the slack is interpolation's.
             assert!(beside.channel == 0.0 || beside.channel < at.channel + 1e-6, "a channel beside the channel at {:?}", n.key);
         }
         assert!(channelled > 0, "no channelled node in the spawn cell");
+    }
+
+    /// A train between two nodes on a straight flow line crosses the line
+    /// at both, never runs back along it, keeps within its amplitude by
+    /// the vigour, and at full vigour is longer than the line by about its
+    /// sinuosity; at no vigour there is no train, and the channel is the
+    /// line.
+    #[test]
+    fn the_train_crosses_at_the_nodes_within_its_amplitude() {
+        let node = |wx: f64, key: NodeKey| DrainageNode {
+            key, q: 0, r: 0, wx, wy: 0.0, elevation: 10.0, surface: 10.0, direction: (1.0, 0.0),
+            catchment: CATCHMENT_FULL, base: 0.0, down: None, lake: None, sill: false, age: 1.0, cut: 0.0,
+        };
+        let l = NODE_SPACING as f64;
+        let (p, n) = (node(0.0, (0, 0)), node(l, (1, 0)));
+        let axis = Axis::new(flow_line(&p, &n));
+        assert!((axis.length() - l).abs() < 1e-9);
+        let cut = |v0: f64, v1: f64| Cut {
+            env0: 10.0, env1: 10.0, floor0: 5.0, floor1: 5.0, graded: false, pool: None, base0: 0.0, base1: 0.0,
+            half0: CHANNEL_HALF_WIDTH_MAX, half1: CHANNEL_HALF_WIDTH_MAX, chan0: 3.0, chan1: 3.0, length: l,
+            vigour0: v0, vigour1: v1, entry: 1.0, meander: None,
+        };
+        assert!(Meander::new(&axis, &p, &n, &cut(0.0, 0.0), S).is_none());
+        let full = Meander::new(&axis, &p, &n, &cut(1.0, 1.0), S).unwrap();
+        let first = full.pts[0];
+        let last = full.pts[full.pts.len() - 1];
+        assert!(first.0.abs() < 1e-6 && first.1.abs() < 1e-6, "the train starts at {first:?}");
+        assert!((last.0 - l).abs() < 1e-6 && last.1.abs() < 1e-6, "the train ends at {last:?}");
+        let mut path = 0.0;
+        for pair in full.pts.windows(2) {
+            assert!(pair[1].0 > pair[0].0, "the train runs back along the line at {:?}", pair[0]);
+            path += (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1);
+        }
+        for w in full.along.windows(2) {
+            assert!(w[1] > w[0]);
+        }
+        let reach = full.pts.iter().map(|p| p.1.abs()).fold(0.0, f64::max);
+        assert!(reach <= full.amplitude + 1e-9 && reach > 0.5 * full.amplitude, "reach {reach} of {}", full.amplitude);
+        // Lobes alternate sides: the train returns across the line at
+        // every crossing, many times over a spacing.
+        let crossings = full.pts.windows(2).filter(|w| (w[0].1 > 0.0) != (w[1].1 > 0.0)).count();
+        assert!(crossings >= 4, "the train crosses the line {crossings} times");
+        assert!(full.pts.iter().any(|p| p.1 > 0.3 * full.amplitude) && full.pts.iter().any(|p| p.1 < -0.3 * full.amplitude));
+        let (advance, _) = meander_shape();
+        let sinuosity = path / l;
+        assert!(sinuosity > 1.2 && sinuosity < 1.0 / advance * 1.2, "sinuosity {sinuosity} for {}", 1.0 / advance);
+        let half = Meander::new(&axis, &p, &n, &cut(0.5, 0.5), S).unwrap();
+        let reach = half.pts.iter().map(|p| p.1.abs()).fold(0.0, f64::max);
+        assert!(reach <= 0.5 * half.amplitude + 1e-9, "half vigour reaches {reach} of {}", half.amplitude);
+        for (a, b) in full.pts.iter().zip(&half.pts) {
+            assert!((a.1 * 0.5 - b.1).abs() < 1e-9, "the half train is not the full one halved");
+        }
+    }
+
+    /// Vigour is nothing above the channel head and on flooded ground,
+    /// whole for an aged plate's trunk at the grade of the plains, nothing
+    /// at a mountain stream's, falls with the grade between, and grows
+    /// with age.
+    #[test]
+    fn vigour_falls_with_grade_and_grows_with_age() {
+        let node = |catchment: f64, age: f64, lake: Option<usize>| DrainageNode {
+            key: (0, 0), q: 0, r: 0, wx: 0.0, wy: 0.0, elevation: 10.0, surface: 10.0, direction: (1.0, 0.0),
+            catchment, base: 0.0, down: None, lake, sill: false, age, cut: 0.0,
+        };
+        let run = NODE_SPACING as f64;
+        let down = |n: &DrainageNode, grade: f64| n.elevation - depth_at(n) - grade * run / RISE;
+        let trunk = node(CATCHMENT_FULL, 1.0, None);
+        assert_eq!(vigour(&node(CHANNEL_HEAD, 1.0, None), 0.0, run), 0.0);
+        assert_eq!(vigour(&node(CATCHMENT_FULL, 1.0, Some(0)), 0.0, run), 0.0);
+        assert!((vigour(&trunk, down(&trunk, MEANDER_GRADE_FULL), run) - 1.0).abs() < 1e-12);
+        assert!((vigour(&trunk, down(&trunk, 0.0), run) - 1.0).abs() < 1e-12);
+        assert_eq!(vigour(&trunk, down(&trunk, MEANDER_GRADE_NONE), run), 0.0);
+        let mut last = 1.0;
+        for i in 1..=20 {
+            let grade = MEANDER_GRADE_FULL + (MEANDER_GRADE_NONE - MEANDER_GRADE_FULL) * i as f64 / 20.0;
+            let v = vigour(&trunk, down(&trunk, grade), run);
+            assert!(v <= last, "vigour rises with grade at {grade}");
+            last = v;
+        }
+        let young = node(CATCHMENT_FULL, 0.0, None);
+        let v = vigour(&young, down(&young, 0.0), run);
+        assert!(v > 0.0 && v < 1.0 && (v - YOUNG_SHARE).abs() < 1e-12, "a young plate's vigour {v}");
     }
 
     /// Water stands at the valley floor in a channel, at the lake's surface
