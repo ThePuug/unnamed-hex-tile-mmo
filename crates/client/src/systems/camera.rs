@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{core_pipeline::prepass::DepthPrepass, prelude::*};
 use crate::systems::closeup::CloseupCamera;
 use std::f32::consts::PI;
 
@@ -111,6 +111,9 @@ pub fn setup(
         Transform::default(),
         Actor,
         VignetteSettings::default(),
+        // Depth first, so the terrain's fragment shader runs once per pixel
+        // that shows and never for one another tile covers.
+        DepthPrepass,
     ));
 }
 
