@@ -15,16 +15,12 @@ use rapid_qoi::{Colors, Qoi};
 use rayon::prelude::*;
 
 use world::events::Composite;
-use world::events::motion::{
-    BoundaryRegime, BoundarySegment, MarginClass, MotionEvent, PlateBoundaryIndex,
-};
-use world::events::thickening::ThickeningEvent;
-use world::events::thrusting::{Outlines, ThrustingEvent, CONVERGENCE_FULL};
-use world::events::dissection::{DissectionEvent, Valleys};
-use world::events::drainage::{surface_at, DrainageEvent, DrainageIndex, NODE_SPACING};
-use world::events::plates::{Coasts, PlateEdgeIndex, PlateEvent};
+use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateBoundaryIndex};
+use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
+use world::events::dissection::Valleys;
+use world::events::drainage::{surface_at, DrainageIndex, NODE_SPACING};
+use world::events::plates::{Coasts, PlateEdgeIndex};
 use world::lattice::node_world;
-use world::events::tilt::TiltEvent;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
@@ -268,14 +264,7 @@ fn main() {
 
     // The whole stack, in the order the server builds it, so what the viewer
     // draws is what the world generates.
-    let mut composite = Composite::new(cli.seed);
-    composite.add_event(Box::new(PlateEvent::new()));
-    composite.add_event(Box::new(TiltEvent::new()));
-    composite.add_event(Box::new(MotionEvent::new()));
-    composite.add_event(Box::new(ThrustingEvent::new()));
-    composite.add_event(Box::new(ThickeningEvent::new()));
-    composite.add_event(Box::new(DrainageEvent::new()));
-    composite.add_event(Box::new(DissectionEvent::new()));
+    let composite = Composite::standard(cli.seed);
 
     // ── Phase 1: Materialize unique hex tiles visible in the pixel grid ──
 

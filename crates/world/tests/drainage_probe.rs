@@ -514,8 +514,7 @@ fn shore_section() {
     let (coasts, outlines) = (coasts_for(cell), outlines_for(cell));
     let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts, &outlines);
     let owned = routing.owned_cell();
-    let mut c = composite();
-    c.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
+    let c = Composite::standard(SEED);
     let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
     let n = (len / step).ceil() as usize;
     println!("{:>6} {:>8} {:>8} {:>8} {:>8} {:>6}  {:>12} lake", "s", "wx", "wy", "envelope", "ground", "water", "fine");
@@ -547,8 +546,7 @@ fn holes() {
     let (coasts, outlines) = (coasts_for(cell), outlines_for(cell));
     let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts, &outlines);
     let owned = routing.owned_cell();
-    let mut c = composite();
-    c.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
+    let c = Composite::standard(SEED);
     let (mut wet, mut holes) = (0, 0);
     let mut shown = 0;
     let mut y = cy - radius;

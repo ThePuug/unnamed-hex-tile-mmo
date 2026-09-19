@@ -99,15 +99,7 @@ mod tests {
     // ── Composite determinism tests ─────────────────────────────────────────
 
     fn make_composite() -> events::Composite {
-        let mut composite = events::Composite::new(DEFAULT_SEED);
-        composite.add_event(Box::new(events::plates::PlateEvent::new()));
-        composite.add_event(Box::new(events::tilt::TiltEvent::new()));
-        composite.add_event(Box::new(events::motion::MotionEvent::new()));
-        composite.add_event(Box::new(events::thrusting::ThrustingEvent::new()));
-        composite.add_event(Box::new(events::thickening::ThickeningEvent::new()));
-        composite.add_event(Box::new(events::drainage::DrainageEvent::new()));
-        composite.add_event(Box::new(events::dissection::DissectionEvent::new()));
-        composite
+        events::Composite::standard(DEFAULT_SEED)
     }
 
     #[test]

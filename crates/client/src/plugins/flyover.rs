@@ -132,15 +132,7 @@ struct AdminComposite(pub Arc<world::events::Composite>);
 impl Default for AdminComposite {
     fn default() -> Self {
         let seed = 0x9E3779B97F4A7C15;
-        let mut composite = world::events::Composite::new(seed);
-        composite.add_event(Box::new(world::events::plates::PlateEvent::new()));
-        composite.add_event(Box::new(world::events::tilt::TiltEvent::new()));
-        composite.add_event(Box::new(world::events::motion::MotionEvent::new()));
-        composite.add_event(Box::new(world::events::thrusting::ThrustingEvent::new()));
-        composite.add_event(Box::new(world::events::thickening::ThickeningEvent::new()));
-        composite.add_event(Box::new(world::events::drainage::DrainageEvent::new()));
-        composite.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
-        Self(Arc::new(composite))
+        Self(Arc::new(world::events::Composite::standard(seed)))
     }
 }
 

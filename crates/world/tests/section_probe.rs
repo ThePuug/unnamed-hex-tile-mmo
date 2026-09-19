@@ -2,13 +2,7 @@
 //! Run: SECTION="x0,y0,x1,y1,step" cargo test -p world --release --test section_probe -- --ignored --nocapture
 
 use world::events::Composite;
-use world::events::plates::PlateEvent;
-use world::events::tilt::TiltEvent;
-use world::events::motion::MotionEvent;
-use world::events::thickening::ThickeningEvent;
-use world::events::thrusting::{Outlines, ThrustingEvent};
-use world::events::drainage::DrainageEvent;
-use world::events::dissection::DissectionEvent;
+use world::events::thrusting::Outlines;
 use world::world_to_hex;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -19,14 +13,7 @@ fn section() {
     let spec = std::env::var("SECTION").unwrap();
     let v: Vec<f64> = spec.split(',').map(|s| s.trim().parse().unwrap()).collect();
     let (x0, y0, x1, y1, step) = (v[0], v[1], v[2], v[3], v[4]);
-    let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::new()));
-    c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::new()));
-    c.add_event(Box::new(ThrustingEvent::new()));
-    c.add_event(Box::new(ThickeningEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
-    c.add_event(Box::new(DissectionEvent::new()));
+    let c = Composite::standard(SEED);
     let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
     let outlines = Outlines::in_box((x0 + x1) / 2.0, (y0 + y1) / 2.0, len / 2.0 + 10.0, SEED);
     let n = (len / step).ceil() as usize;

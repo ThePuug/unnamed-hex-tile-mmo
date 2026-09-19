@@ -6,29 +6,17 @@
 //! Run: cargo test -p world --release --test seam_probe -- --ignored --nocapture
 
 
-use world::events::dissection::{DissectionEvent, Valleys};
-use world::events::drainage::{surface_at, DrainageEvent};
-use world::events::motion::MotionEvent;
-use world::events::plates::PlateEvent;
-use world::events::thickening::ThickeningEvent;
+use world::events::dissection::Valleys;
+use world::events::drainage::surface_at;
 use world::events::plates::Coasts;
-use world::events::thrusting::{Outlines, ThrustingEvent};
-use world::events::tilt::TiltEvent;
+use world::events::thrusting::Outlines;
 use world::events::Composite;
 use world::{hex_to_world, world_to_hex};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
 fn composite() -> Composite {
-    let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::new()));
-    c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::new()));
-    c.add_event(Box::new(ThrustingEvent::new()));
-    c.add_event(Box::new(ThickeningEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
-    c.add_event(Box::new(DissectionEvent::new()));
-    c
+    Composite::standard(SEED)
 }
 
 /// Sweep the spawn belt's window on a coarse grid: the largest jumps in

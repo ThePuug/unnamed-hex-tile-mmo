@@ -9,13 +9,9 @@ use std::time::Instant;
 
 use common::PlateTag;
 use world::events::Composite;
-use world::events::plates::PlateEvent;
-use world::events::tilt::TiltEvent;
-use world::events::motion::MotionEvent;
-use world::events::thickening::ThickeningEvent;
-use world::events::thrusting::{Outlines, ThrustingEvent};
-use world::events::drainage::{surface_at, DrainageEvent};
-use world::events::dissection::{DissectionEvent, Valleys};
+use world::events::thrusting::Outlines;
+use world::events::drainage::surface_at;
+use world::events::dissection::Valleys;
 use world::events::plates::Coasts;
 use world::{hex_to_world, substrate_elevation_at};
 
@@ -27,15 +23,7 @@ const SPAWN: (i32, i32) = (-58204, 4907);
 const TILES_PER_SEC: f64 = 4.33;
 
 fn composite() -> Composite {
-    let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::new()));
-    c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::new()));
-    c.add_event(Box::new(ThrustingEvent::new()));
-    c.add_event(Box::new(ThickeningEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
-    c.add_event(Box::new(DissectionEvent::new()));
-    c
+    Composite::standard(SEED)
 }
 
 fn minutes(tiles: f64) -> f64 {

@@ -9,27 +9,14 @@
 use std::time::Instant;
 
 use world::events::Composite;
-use world::events::motion::MotionEvent;
 use world::events::plates::PlateEvent;
 use world::events::tilt::TiltEvent;
-use world::events::thickening::ThickeningEvent;
-use world::events::thrusting::ThrustingEvent;
-use world::events::drainage::DrainageEvent;
-use world::events::dissection::DissectionEvent;
 
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
 fn composite_full() -> Composite {
-    let mut c = Composite::new(SEED);
-    c.add_event(Box::new(PlateEvent::new()));
-    c.add_event(Box::new(TiltEvent::new()));
-    c.add_event(Box::new(MotionEvent::new()));
-    c.add_event(Box::new(ThrustingEvent::new()));
-    c.add_event(Box::new(ThickeningEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
-    c.add_event(Box::new(DissectionEvent::new()));
-    c
+    Composite::standard(SEED)
 }
 
 /// All tiles within `radius` hex distance of (cq, cr).
