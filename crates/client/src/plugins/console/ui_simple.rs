@@ -116,13 +116,20 @@ pub fn update_console_menu(
                         TextColor(Color::WHITE),
                     ));
 
+                    let video_key = if cfg!(feature = "admin") { "3" } else { "2" };
+                    parent.spawn((
+                        Text::new(format!("{video_key}. Video")),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));
 
                     // Toggles after
-                    let metrics_key = if cfg!(feature = "admin") { "3" } else { "2" };
+                    let metrics_key = if cfg!(feature = "admin") { "4" } else { "3" };
                     parent.spawn((
                         Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
                         TextFont { font_size: 16.0, ..default() },
@@ -154,6 +161,36 @@ pub fn update_console_menu(
                         )),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(state_color(diagnostics_state.fixed_lighting_enabled)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: 8.0, ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("0. Back to Main Menu"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                MenuPath::Video => {
+                    parent.spawn((
+                        Text::new(format!(
+                            "1. Toggle MSAA              [{}]",
+                            if diagnostics_state.msaa_off { "Off" } else { "4x" }
+                        )),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(!diagnostics_state.msaa_off)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(format!(
+                            "2. Toggle Shadow Filter     [{}]",
+                            if diagnostics_state.hard_shadows { "2x2" } else { "Gaussian" }
+                        )),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(!diagnostics_state.hard_shadows)),
                     ));
 
                     parent.spawn((

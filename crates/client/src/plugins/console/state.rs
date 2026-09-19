@@ -65,6 +65,7 @@ impl Default for DevConsole {
 pub enum MenuPath {
     Root,
     Terrain,
+    Video,
     #[cfg(feature = "admin")]
     Flyover,
     #[cfg(feature = "admin")]
@@ -80,6 +81,7 @@ impl MenuPath {
         match self {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
+            MenuPath::Video => "Video Settings",
             #[cfg(feature = "admin")]
             MenuPath::Flyover => "Flyover Camera",
             #[cfg(feature = "admin")]

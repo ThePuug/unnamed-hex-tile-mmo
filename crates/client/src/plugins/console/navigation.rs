@@ -76,6 +76,7 @@ pub fn handle_console_input(
             handle_root_menu(&mut keyboard, &mut console, &mut action_writer);
         }
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut action_writer),
+        MenuPath::Video => handle_video_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::Flyover => handle_flyover_menu(&mut keyboard, &mut console, &mut action_writer, &flyover),
         #[cfg(feature = "admin")]
@@ -108,8 +109,15 @@ fn handle_root_menu(
         consumed = Some(KeyCode::Numpad2);
     }
 
+    let video_key = if cfg!(feature = "admin") { KeyCode::Numpad3 } else { KeyCode::Numpad2 };
+    if consumed.is_none() && keyboard.just_pressed(video_key) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::Video;
+        consumed = Some(video_key);
+    }
+
     // Toggles after submenus
-    let toggle_key = if cfg!(feature = "admin") { KeyCode::Numpad3 } else { KeyCode::Numpad2 };
+    let toggle_key = if cfg!(feature = "admin") { KeyCode::Numpad4 } else { KeyCode::Numpad3 };
     if consumed.is_none() && keyboard.just_pressed(toggle_key) {
         action_writer.write(DevConsoleAction::ToggleMetricsOverlay);
         consumed = Some(toggle_key);
@@ -131,6 +139,25 @@ fn handle_terrain_menu(
         consumed = Some(KeyCode::Numpad1);
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
         action_writer.write(DevConsoleAction::ToggleFixedLighting);
+        consumed = Some(KeyCode::Numpad2);
+    }
+
+    if let Some(key) = consumed {
+        keyboard.clear_just_pressed(key);
+    }
+}
+
+fn handle_video_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    let mut consumed = None;
+
+    if keyboard.just_pressed(KeyCode::Numpad1) {
+        action_writer.write(DevConsoleAction::ToggleMsaa);
+        consumed = Some(KeyCode::Numpad1);
+    } else if keyboard.just_pressed(KeyCode::Numpad2) {
+        action_writer.write(DevConsoleAction::ToggleShadowFilter);
         consumed = Some(KeyCode::Numpad2);
     }
 

@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{light::ShadowFilteringMethod, prelude::*};
 
 use crate::{
     plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay},
@@ -12,6 +12,8 @@ pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,
     ToggleFixedLighting,
+    ToggleMsaa,
+    ToggleShadowFilter,
 
     // Top-level toggles
     ToggleMetricsOverlay,
@@ -39,6 +41,8 @@ pub fn execute_console_actions(
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay)>,
     actor_query: Query<Entity, With<Behaviour>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
+    mut camera_msaa: Query<&mut Msaa, With<Camera>>,
+    world_camera: Query<Entity, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
 ) {
     for action in reader.read() {
         match action {
@@ -74,6 +78,23 @@ pub fn execute_console_actions(
                 diagnostics_state.fixed_lighting_enabled = !diagnostics_state.fixed_lighting_enabled;
                 info!("Fixed lighting: {}", if diagnostics_state.fixed_lighting_enabled { "ON" } else { "OFF" });
             }
+            DevConsoleAction::ToggleShadowFilter => {
+                diagnostics_state.hard_shadows = !diagnostics_state.hard_shadows;
+                let method = if diagnostics_state.hard_shadows { ShadowFilteringMethod::Hardware2x2 } else { ShadowFilteringMethod::Gaussian };
+                for camera in world_camera.iter() {
+                    commands.entity(camera).insert(method);
+                }
+                info!("Shadow filter: {:?}", method);
+            }
+            DevConsoleAction::ToggleMsaa => {
+                diagnostics_state.msaa_off = !diagnostics_state.msaa_off;
+                // Every camera on the window, or the ones left at 4x stop
+                // sharing its main texture and draw the UI a second time.
+                for mut msaa in camera_msaa.iter_mut() {
+                    *msaa = if diagnostics_state.msaa_off { Msaa::Off } else { Msaa::Sample4 };
+                }
+                info!("MSAA: {}", if diagnostics_state.msaa_off { "OFF" } else { "4x" });
+            }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;
                 info!("Metrics overlay: {}", if diagnostics_state.metrics_overlay_visible { "ON" } else { "OFF" });
@@ -92,3 +113,4 @@ pub fn execute_console_actions(
         }
     }
 }
+
