@@ -497,3 +497,114 @@ fn deepest_cuts() {
     let rims = found.iter().filter(|f| f.4 == "rim").count();
     println!("{} cut nodes, {rims} of them rim", found.len());
 }
+
+/// A lake's shore along a line, at the tile level: the envelope, the
+/// composed ground, the water, and whether the nearest fine point is in
+/// the lake's extent. Run with `SHORE="x0,y0,x1,y1,step"`.
+#[test]
+#[ignore]
+fn shore_section() {
+    use world::events::drainage::nearest_fine;
+    let spec = std::env::var("SHORE").unwrap();
+    let v: Vec<f64> = spec.split(',').map(|s| s.trim().parse().unwrap()).collect();
+    let (x0, y0, x1, y1, step) = (v[0], v[1], v[2], v[3], v[4]);
+    let lat = lattice();
+    let (mq, mr) = world::world_to_hex((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let cell = lat.cell_id(mq, mr);
+    let (coasts, outlines) = (coasts_for(cell), outlines_for(cell));
+    let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts, &outlines);
+    let owned = routing.owned_cell();
+    let mut c = composite();
+    c.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
+    let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
+    let n = (len / step).ceil() as usize;
+    println!("{:>6} {:>8} {:>8} {:>8} {:>8} {:>6}  {:>12} lake", "s", "wx", "wy", "envelope", "ground", "water", "fine");
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let (wx, wy) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+        let (q, r) = world::world_to_hex(wx, wy);
+        let envelope = world::events::drainage::surface_at(wx, wy, SEED, &coasts, &outlines);
+        let ground = c.tile_at(q, r).elevation;
+        let water = c.water_at(q, r).map(|w| w.to_string()).unwrap_or("-".into());
+        let fine = nearest_fine(wx, wy);
+        let held: Vec<String> = owned.lakes.iter().filter(|l| l.extent.contains(&fine)).map(|l| format!("{:.1}", l.surface)).collect();
+        println!("{:6.0} {wx:8.0} {wy:8.0} {envelope:8.1} {ground:8.1} {water:>6}  {:>12} {}", t * len, format!("{fine:?}"), if held.is_empty() { "-".to_string() } else { held.join(" ") });
+    }
+}
+
+/// Dry tiles under a lake's surface within a node spacing of its flooded
+/// nodes: the holes in the water. Run with `HOLES="cx,cy,radius,stride"`.
+#[test]
+#[ignore]
+fn holes() {
+    use world::events::drainage::nearest_fine;
+    let spec = std::env::var("HOLES").unwrap();
+    let v: Vec<f64> = spec.split(',').map(|s| s.trim().parse().unwrap()).collect();
+    let (cx, cy, radius, stride) = (v[0], v[1], v[2], v[3]);
+    let lat = lattice();
+    let (mq, mr) = world::world_to_hex(cx, cy);
+    let cell = lat.cell_id(mq, mr);
+    let (coasts, outlines) = (coasts_for(cell), outlines_for(cell));
+    let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts, &outlines);
+    let owned = routing.owned_cell();
+    let mut c = composite();
+    c.add_event(Box::new(world::events::dissection::DissectionEvent::new()));
+    let (mut wet, mut holes) = (0, 0);
+    let mut shown = 0;
+    let mut y = cy - radius;
+    while y <= cy + radius {
+        let mut x = cx - radius;
+        while x <= cx + radius {
+            let (q, r) = world::world_to_hex(x, y);
+            let view = c.tile_at(q, r);
+            let water = c.water_at(q, r);
+            if water.is_some() { wet += 1 }
+            if water.is_none() {
+                let envelope = world::events::drainage::surface_at(x, y, SEED, &coasts, &outlines);
+                for lake in &owned.lakes {
+                    let near = lake.nodes.iter().any(|k| { let (nq, nr) = node_tile(*k); let (nx, ny) = hex_to_world(nq, nr); (nx - x).hypot(ny - y) <= NODE_SPACING as f64 });
+                    if near && lake.surface > view.elevation + 0.5 {
+                        holes += 1;
+                        let fine = nearest_fine(x, y);
+                        if shown < 12 {
+                            shown += 1;
+                            let (fx, fy) = world::events::drainage::fine_world(fine);
+                            let fine_env = world::events::drainage::surface_at(fx, fy, SEED, &coasts, &outlines);
+                            println!("hole at qr ({q},{r}) world ({x:.0},{y:.0}): ground {:.1}, envelope {envelope:.1}, lake {:.1}, fine {fine:?} in extent {} at {:.0} from it, envelope there {fine_env:.1}", view.elevation, lake.surface, lake.extent.contains(&fine), (fx - x).hypot(fy - y));
+                        }
+                        break;
+                    }
+                }
+            }
+            x += stride;
+        }
+        y += stride;
+    }
+    println!("{wet} wet samples, {holes} holes");
+}
+
+/// One tile's water as every cell around it publishes the lake: which
+/// cells' copies of the lake hold the tile's nearest fine point in their
+/// extent. Run with `TILE="q,r"`.
+#[test]
+#[ignore]
+fn tile_shores() {
+    use world::events::drainage::nearest_fine;
+    let spec = std::env::var("TILE").unwrap();
+    let v: Vec<i32> = spec.split(',').map(|s| s.trim().parse().unwrap()).collect();
+    let (q, r) = (v[0], v[1]);
+    let (wx, wy) = hex_to_world(q, r);
+    let fine = nearest_fine(wx, wy);
+    let lat = lattice();
+    let home = lat.cell_id(q, r);
+    for cell in lat.cells_within_distance(home, 1) {
+        let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts_for(cell), &outlines_for(cell));
+        let owned = routing.owned_cell();
+        for lake in &owned.lakes {
+            let near = lake.nodes.iter().filter(|k| { let (nq, nr) = node_tile(**k); let (nx, ny) = hex_to_world(nq, nr); (nx - wx).hypot(ny - wy) <= NODE_SPACING as f64 }).count();
+            let nearest = lake.nodes.iter().map(|k| { let (nq, nr) = node_tile(*k); let (nx, ny) = hex_to_world(nq, nr); (nx - wx).hypot(ny - wy) }).fold(f64::MAX, f64::min);
+            if nearest > 6.0 * NODE_SPACING as f64 { continue }
+            println!("cell {cell:?}: nearest node {nearest:.0}; lake surface {:.1}, {} owned nodes, {near} within a spacing, extent {} points, holds the tile's fine point: {}", lake.surface, lake.nodes.len(), lake.extent.len(), lake.extent.contains(&fine));
+        }
+    }
+}
