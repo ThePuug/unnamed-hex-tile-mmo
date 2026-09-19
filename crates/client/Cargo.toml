@@ -15,7 +15,7 @@ trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 [dependencies]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = "0.18"
+bevy = { version = "0.18", features = ["dds"] }
 bevy_asset = "0.18"
 bevy_camera = "0.18"
 bevy_easings = "0.18"
