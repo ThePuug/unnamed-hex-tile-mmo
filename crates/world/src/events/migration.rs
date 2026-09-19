@@ -37,23 +37,38 @@
 //! down at, the channel meanders across the flow line; how far, by the
 //! plate's age, the same dial the depth turns on: the segment's vigour.
 //!
-//! The train drawn here is a stand-in for that process: the sine-generated
-//! curve, the heading swinging as a sine of the distance along the channel,
-//! with the wavelength a channel's width sets and each bend's length its
-//! own by a hash, its size following. It is the equilibrium shape of one
-//! bend stamped along the line, so it is regular where a river is not. The
-//! migration that makes a train irregular, bends growing, walking
-//! downstream and cutting off at the neck, is unbuilt; it replaces this
-//! train and nothing that reads it.
+//! The train is that process run: the channel migrates. Each step every
+//! point's bank retreats outward from its bend by the curvature averaged
+//! over a couple of widths to each side of it, less the curvature at the
+//! point itself, after Howard and Knutson; the flow answers the curvature
+//! upstream of a point, which walks a bend downstream, but a segment
+//! pinned at its nodes cannot let bends walk, so the average is taken to
+//! both sides and bends grow where they lie, and the local term damps
+//! every wave the average cannot see so the channel's own spacing never
+//! grows into a zigzag. A bend is cut off when its banks touch across its
+//! neck, or sooner when a flood cuts a chute across its point bar, at a
+//! bend sinuosity of three: the loop is left as an oxbow, the channel runs
+//! straight across, and the oxbow silts to a scar in time, a plug in the
+//! floodplain the bank cannot cut, so the next bend takes its turn
+//! elsewhere. Bends of every age lie along a channel that has run long
+//! enough, some new in a cutoff's straight, some at their neck, so the
+//! train is irregular the way a river's is and its belt drifts across the
+//! floor as its cutoffs leave it. How far the bank retreats is the vigour;
+//! a river with none holds its flow line.
 //!
-//! The channel crosses the flow line at every node, so a train fits between
-//! two nodes as a whole number of half-waves, and it crosses toward the
-//! side a hash of the node picks, so the train continues through a node
-//! whichever cell drew each side. A tributary's train fades toward the flow
-//! line over its last bend by the share of the water it brings, so it
-//! arrives along its flow line; where it first crosses the trunk's train it
-//! ends, at the trunk's bank, which a reader settles over its ring since a
-//! trunk's segment may be another cell's.
+//! The channel starts from a seed with a slight sinuosity: the
+//! sine-generated curve at the wavelength the width sets, each bend's
+//! length and size its own by a hash, so bends mature unequally, crossing
+//! the flow line at both nodes toward the side each node's hash picks. The
+//! nodes pin the channel, since a segment is one cell's and its neighbour
+//! must draw the same node; the seed and the bank's retreat fade over a
+//! shoulder at each end so the pin leaves a straight and never a kink, and
+//! the two segments' trains never tangle across the node they share. A
+//! tributary's seed fades toward the flow line over its last bend by the
+//! share of the water it brings, so it arrives at a trunk along its line;
+//! where it first crosses the trunk's train it ends, at the trunk's bank,
+//! which a reader settles over its ring since a trunk's segment may be
+//! another cell's.
 //!
 //! # The cell
 //!
@@ -72,6 +87,7 @@ use std::sync::OnceLock;
 
 use common::HexLattice;
 
+use crate::chains::{Segment, SegmentGrid};
 use super::drainage::{aged, growth, DrainageCell, DrainageIndex, DrainageNode};
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
@@ -205,10 +221,13 @@ impl Axis {
     }
 
     /// The point at length `x` along the line and the normal there, found
-    /// from sub-segment `from` onward, which advances with `x`.
+    /// from sub-segment `from`, which follows `x` either way.
     pub fn at(&self, x: f64, from: &mut usize) -> ((f64, f64), (f64, f64)) {
         while *from + 2 < self.cum.len() && self.cum[*from + 1] < x {
             *from += 1;
+        }
+        while *from > 0 && self.cum[*from] > x {
+            *from -= 1;
         }
         let j = *from;
         let len = self.cum[j + 1] - self.cum[j];
@@ -245,9 +264,16 @@ pub const MEANDER_GRADE_FULL: f64 = 0.001;
 /// a hundredth, where mountain streams begin.
 pub const MEANDER_GRADE_NONE: f64 = 0.01;
 
-/// How far one bend's length strays from the train's, as a share of it;
-/// its size follows its length.
+/// How far one bend's length strays from the train's in the seed, as a
+/// share of it.
 pub const MEANDER_LOBE_VARIANCE: f64 = 0.3;
+
+/// How far one bend's size strays from the train's in the seed, as a
+/// share of it. Bends grow exponentially as they migrate, a few e-folds
+/// over a run, so a bend seeded at a fifth of its neighbour is still young
+/// when the neighbour reaches its neck: bends of every age lie along the
+/// train, and a river is a mix of straights and loops instead of a coil.
+pub const MEANDER_SIZE_VARIANCE: f64 = 0.8;
 
 /// Points per wavelength of channel the train is drawn with, and the
 /// shortest step in world units. A bend's tightest radius is its length
@@ -257,10 +283,11 @@ pub const MEANDER_LOBE_VARIANCE: f64 = 0.3;
 const MEANDER_STEPS_PER_WAVE: f64 = 24.0;
 const MEANDER_STEP_MIN: f64 = 1.0;
 
-/// Hash channels: which side a node's crossing turns toward, and a bend's
-/// length.
+/// Hash channels: which side a node's crossing turns toward, a bend's
+/// length, and a bend's size.
 const MEANDER_SIDE: u64 = 0x6d65_616e;
 const MEANDER_LOBE: u64 = 0x6c6f_6265;
+const MEANDER_SIZE: u64 = 0x7369_7a65;
 
 /// The sine-generated curve over one wavelength of unit path: how far it
 /// advances along the flow line, the Bessel J0 of the deflection, and how
@@ -305,116 +332,342 @@ pub fn vigour(node: &DrainageNode, floor_down: f64, run: f64) -> f64 {
     aged(node.age) * (1.0 - g * g * (3.0 - 2.0 * g))
 }
 
-/// A channel's train laid across its flow line: its points in world space
-/// and each one's position along the line, ascending, so the points near
-/// a position along the line are found by that position; and how far it
-/// reaches to each side at full vigour, its largest lobe included, before
-/// the channel's own half-width.
+/// The seed a train grows from, in the flow line's frame: the sine-generated
+/// curve crossing the line at both nodes, toward the side each node's hash
+/// picks, a whole number of half-waves at the wavelength the channel's
+/// width sets, each bend's length and size its own by a hash, at
+/// [`MIGRATION_SEED`] of its full amplitude. Over its last
+/// bend it fades toward the line by `entry`, the share of the end node's
+/// water the channel brings, so a tributary arrives at a trunk along its
+/// flow line. Returns the points as (along, across) in world units, and
+/// the fitted wavelength.
+fn seed_train(length: f64, width: f64, from: NodeKey, to: NodeKey, entry: f64, seed: u64) -> (Vec<(f64, f64)>, f64) {
+    let side = |key: NodeKey| if hash_channel(key.0 as i64, key.1 as i64, seed, MEANDER_SIDE) & 1 == 0 { 1.0 } else { -1.0 };
+    let (sign, sign1) = (side(from), side(to));
+    // Half-waves between the nodes: the count nearest the wavelength
+    // whose parity turns the crossing at the end the way its hash says.
+    let wavelength = MEANDER_WAVELENGTH * width;
+    let target = 2.0 * length / wavelength;
+    let even = sign == sign1;
+    let mut k = target.round().max(1.0) as u64;
+    if (k % 2 == 0) != even {
+        k = if k > 1 && (target - (k - 1) as f64).abs() <= ((k + 1) as f64 - target).abs() { k - 1 } else { k + 1 };
+    }
+    let (advance, _) = meander_shape();
+    let wavelength = 2.0 * length / k as f64;
+    let path_wave = wavelength / advance;
+    let path = length / advance;
+    // Each bend's length: its share of the path, normalised so the bends
+    // fill it; a bend's size follows its length, since the curve returns
+    // to the line over any bend.
+    let mut bends: Vec<f64> = (0..k)
+        .map(|j| {
+            let u = hash_channel_f64(from.0 as i64, from.1 as i64, seed, MEANDER_LOBE.wrapping_add(j));
+            1.0 + MEANDER_LOBE_VARIANCE * (2.0 * u - 1.0)
+        })
+        .collect();
+    let total: f64 = bends.iter().sum();
+    for b in &mut bends {
+        *b *= path / total;
+    }
+    let step = (path_wave / MEANDER_STEPS_PER_WAVE).max(MEANDER_STEP_MIN);
+    // Each bend is walked in its own whole number of steps, so its
+    // midpoint samples sit symmetrically about its centre and the curve
+    // returns to the line at its end exactly. The fade and the bend's
+    // size scale the offset and never the heading, for the same reason.
+    let mut pts = Vec::with_capacity((path / step) as usize + bends.len() + 1);
+    let (mut x, mut y) = (0.0, 0.0);
+    pts.push((x, y));
+    for (j, &bend) in bends.iter().enumerate() {
+        let count = (bend / step).ceil().max(1.0);
+        let step = bend / count;
+        let side = if j % 2 == 0 { sign } else { -sign };
+        let size = {
+            let u = hash_channel_f64(from.0 as i64, from.1 as i64, seed, MEANDER_SIZE.wrapping_add(j as u64));
+            1.0 + MEANDER_SIZE_VARIANCE * (2.0 * u - 1.0)
+        };
+        for i in 0..count as usize {
+            let frac = (i as f64 + 0.5) / count;
+            let heading = side * MEANDER_DEFLECTION * (PI * frac).cos();
+            x += step * heading.cos();
+            y += step * heading.sin();
+            let end = (i as f64 + 1.0) / count;
+            let fade = if j + 1 == bends.len() { 1.0 - (1.0 - entry) * end * end * (3.0 - 2.0 * end) } else { 1.0 };
+            pts.push((x, y * size * fade * MIGRATION_SEED));
+        }
+    }
+    let scale = length / x;
+    for p in &mut pts {
+        p.0 = (p.0 * scale).min(length);
+    }
+    (pts, wavelength)
+}
+
+// ── Migration ───────────────────────────────────────────────────────────────
+
+/// Points per channel width the channel is walked with as it migrates.
+const MIGRATION_SPACING: f64 = 1.0;
+
+/// How far the curvature is averaged to each side of a point, in widths,
+/// for the bank's retreat there. The flow answers the curvature over a
+/// few widths, the way Ikeda, Parker and Sawai found; it answers it
+/// upstream, which walks a bend downstream as it grows, but a segment
+/// pinned at its nodes cannot let bends walk, they pile against the
+/// downstream pin, so the average is taken to both sides and bends grow
+/// where they lie. Two widths: at one the average cannot damp the
+/// zigzag the channel's own spacing would grow into; at three it no
+/// longer grows a bend of the wavelength the width sets.
+pub const MIGRATION_LAG: f64 = 2.0;
+
+/// How much the retreat owes to the averaged curvature against the
+/// curvature at the point itself, which counts against it, after Howard
+/// and Knutson. The local term damps what the average smooths away: a
+/// wave of two widths shrinks, one of four holds, and one of the width's
+/// wavelength grows fastest, so the channel's spacing never grows into a
+/// zigzag and the wavelength a river picks is the one its width sets.
+const MIGRATION_AVERAGED: f64 = 3.5;
+
+/// Bank retreat per step per unit of net curvature, in widths: the
+/// erodibility and a step's time in one number, small enough that the
+/// tightest bend a neck allows moves under a fifth of a width in a step.
+const MIGRATION_RATE: f64 = 0.05;
+
+/// Steps a channel migrates for at full vigour: past a trunk's first
+/// cutoffs, where its sinuosity settles near one and a half and its belt
+/// near a wavelength to each side, with bends of every age along it. A
+/// head stream at full vigour, three times the points, costs three times
+/// a trunk: ten and thirty milliseconds.
+///
+/// EMPIRICAL: read from `migration_probe`.
+pub const MIGRATION_STEPS: usize = 400;
+
+/// Steps an oxbow stays open water after its bend is cut off, before it
+/// has silted to a scar: the last of a run's cutoffs are lakes, the rest
+/// are plugs in the floodplain the bank still cannot cut.
+const OXBOW_LIFE: usize = 150;
+
+/// Steps between searches for a neck. A neck closes over many steps and
+/// the search is the costliest part of one.
+const NECK_EVERY: usize = 4;
+
+/// The length at each end of a segment over which the bank's retreat
+/// fades to nothing, in wavelengths: the node pins the channel, and a pin
+/// needs a shoulder or the channel kinks against it. A grown loop reaches
+/// a quarter wavelength back from its own bend, so at three quarters the
+/// first loop past the shoulder on one side of a node stays half a
+/// wavelength clear of the first on the other, and the two segments'
+/// trains never tangle across the node they share.
+const MIGRATION_TAPER: f64 = 0.75;
+
+/// The distance between two parts of the channel, in widths, at which the
+/// neck between them breaks: the banks touch.
+const NECK: f64 = 1.0;
+
+/// The sinuosity of one bend, its path over its chord, at which a flood
+/// cuts a chute across its point bar: the bend is cut off while still
+/// open, well before its neck closes, so a train is open bends and
+/// straights instead of loops packed shoulder to shoulder, and its
+/// sinuosity settles under two instead of near three.
+const CHUTE_SINUOSITY: f64 = 3.0;
+
+/// The longest chord a chute is looked for across, in widths: what the
+/// points are bucketed at.
+const CHUTE_REACH: f64 = 8.0;
+
+/// The fewest points two parts of the channel can be apart along it and
+/// still be a neck or a chute; fewer is one bend's own wall.
+const NECK_LOOP: usize = 8;
+
+/// The share of its full amplitude the seed train is drawn at: a slight
+/// sinuosity at the wavelength the width sets, for the bends to grow from.
+const MIGRATION_SEED: f64 = 0.1;
+
+/// How far across the valley a channel may sweep, as a share of the
+/// valley's half-width: the wall stops the bank.
+const MIGRATION_ROOM: f64 = 0.8;
+
+/// How far an oxbow's fill resists the bank, in widths, and what it
+/// leaves of the retreat there. An abandoned loop fills with the fines
+/// the flood drops in it, a plug the next bend cannot cut as it cuts
+/// the floodplain's sand, so a bend that has cut off does not grow back
+/// in its own place: the next bend downstream takes its turn, and the
+/// cutoffs spread along the river instead of stacking at one neck.
+const PLUG_REACH: f64 = 2.0;
+const PLUG_RETREAT: f64 = 0.2;
+
+/// A channel's train across its flow line: the live channel in world
+/// space, the loops it has cut off, and both bucketed for the search; how
+/// far it has strayed from the line over its migration, what the belt it
+/// swept is wide to each side before the channel's own half-width; and
+/// the wavelength its width set.
 #[derive(Clone, Debug)]
 pub struct Train {
-    pub along: Vec<f64>,
     pub pts: Vec<(f64, f64)>,
-    pub step: f64,
+    pub oxbows: Vec<Vec<(f64, f64)>>,
+    grid: SegmentGrid,
     pub amplitude: f64,
-    /// The wavelength along the flow line, as fitted between the nodes.
     pub wavelength: f64,
 }
 
 impl Train {
     /// The train of `channel` across `axis`, or none where neither end
-    /// meanders or no channel runs: the sine-generated curve crossing the
-    /// line at both nodes, toward the side each node's hash picks, a whole
-    /// number of half-waves at the wavelength the channel's width sets,
-    /// each bend's length its own by a hash and its size following, the
-    /// whole scaled by the vigour along the line. Over its last bend the
-    /// train fades toward the line by the share of the end node's water
-    /// the channel brings, so a tributary arrives at a trunk along its flow
-    /// line and a channel continuing through a node keeps its train.
+    /// meanders or no channel runs: the seed train migrated for
+    /// [`MIGRATION_STEPS`] steps.
     fn new(axis: &Axis, channel: &Channel, seed: u64) -> Option<Self> {
+        Self::migrated(axis, channel, seed, MIGRATION_STEPS)
+    }
+
+    /// The seed train migrated for `steps` steps, in the flow line's frame
+    /// and in units of the channel's width. Each step, every point's bank
+    /// retreats outward from the bend by the curvature over the lag
+    /// upstream of it, by the vigour there and by the taper at the ends;
+    /// the channel is resampled to its spacing; and wherever two parts of
+    /// it come within a width the neck breaks, the loop between them is an
+    /// oxbow, and the channel runs straight across. The channel never
+    /// sweeps past the valley's wall.
+    pub fn migrated(axis: &Axis, channel: &Channel, seed: u64, steps: usize) -> Option<Self> {
         let width = channel.half0 + channel.half1;
         if width <= 0.0 || (channel.vigour0 <= 0.0 && channel.vigour1 <= 0.0) {
             return None;
         }
         let length = axis.length();
-        let side = |key: NodeKey| if hash_channel(key.0 as i64, key.1 as i64, seed, MEANDER_SIDE) & 1 == 0 { 1.0 } else { -1.0 };
-        let (sign, sign1) = (side(channel.from), side(channel.to));
-        // Half-waves between the nodes: the count nearest the wavelength
-        // whose parity turns the crossing at the end the way its hash says.
-        let wavelength = MEANDER_WAVELENGTH * width;
-        let target = 2.0 * length / wavelength;
-        let even = sign == sign1;
-        let mut k = target.round().max(1.0) as u64;
-        if (k % 2 == 0) != even {
-            k = if k > 1 && (target - (k - 1) as f64).abs() <= ((k + 1) as f64 - target).abs() { k - 1 } else { k + 1 };
-        }
-        let (advance, _) = meander_shape();
-        let wavelength = 2.0 * length / k as f64;
-        let path_wave = wavelength / advance;
-        let path = length / advance;
-        let amplitude = meander_amplitude(wavelength);
-        // Each bend's length: its share of the path, normalised so the
-        // bends fill it; a bend's size follows its length, since the curve
-        // returns to the line over any bend.
-        let mut bends: Vec<f64> = (0..k)
-            .map(|j| {
-                let u = hash_channel_f64(channel.from.0 as i64, channel.from.1 as i64, seed, MEANDER_LOBE.wrapping_add(j));
-                1.0 + MEANDER_LOBE_VARIANCE * (2.0 * u - 1.0)
-            })
+        let (seeded, wavelength) = seed_train(length, width, channel.from, channel.to, channel.entry, seed);
+        // Into widths.
+        let length_w = length / width;
+        let taper = MIGRATION_TAPER * wavelength / width;
+        let shoulder = |d: f64| {
+            let u = (d / taper).clamp(0.0, 1.0);
+            u * u * (3.0 - 2.0 * u)
+        };
+        // Into widths, the seed arriving along the line at both nodes: a
+        // seed crossing the node at its full deflection puts its sharpest
+        // bend against the pin, and the first bend past the shoulder
+        // inherits it and matures first in every segment alike.
+        let mut pts: Vec<(f64, f64)> = seeded
+            .iter()
+            .map(|&(x, y)| (x / width, y / width * shoulder(x / width) * shoulder(length_w - x / width)))
             .collect();
-        let total: f64 = bends.iter().sum();
-        for b in &mut bends {
-            *b *= path / total;
-        }
-        let step = (path_wave / MEANDER_STEPS_PER_WAVE).max(MEANDER_STEP_MIN);
-        // Each bend is walked in its own whole number of steps, so its
-        // midpoint samples sit symmetrically about its centre and the
-        // curve returns to the line at its end exactly. The fade scales the
-        // offset and never the heading, for the same reason.
-        let mut samples = Vec::with_capacity((path / step) as usize + bends.len() + 1);
-        let (mut x, mut y) = (0.0, 0.0);
-        let mut longest: f64 = 0.0;
-        samples.push((x, y, 1.0));
-        for (j, &bend) in bends.iter().enumerate() {
-            let count = (bend / step).ceil().max(1.0);
-            let step = bend / count;
-            longest = longest.max(step);
-            let side = if j % 2 == 0 { sign } else { -sign };
-            for i in 0..count as usize {
-                let frac = (i as f64 + 0.5) / count;
-                let heading = side * MEANDER_DEFLECTION * (PI * frac).cos();
-                x += step * heading.cos();
-                y += step * heading.sin();
-                let end = (i as f64 + 1.0) / count;
-                let fade = if j + 1 == bends.len() { 1.0 - (1.0 - channel.entry) * end * end * (3.0 - 2.0 * end) } else { 1.0 };
-                samples.push((x, y, fade));
+        let room = MIGRATION_ROOM * VALLEY_HALF_WIDTH / width;
+        let decay = (-MIGRATION_SPACING / MIGRATION_LAG).exp();
+        let mut oxbows: Vec<(usize, Vec<(f64, f64)>)> = Vec::new();
+        let mut plugs: HashMap<(i64, i64), Vec<(f64, f64)>> = HashMap::new();
+        let plugged = |plugs: &HashMap<(i64, i64), Vec<(f64, f64)>>, p: (f64, f64)| -> bool {
+            let (bx, by) = ((p.0 / PLUG_REACH).floor() as i64, (p.1 / PLUG_REACH).floor() as i64);
+            (-1..=1).any(|dx| {
+                (-1..=1).any(|dy| {
+                    plugs.get(&(bx + dx, by + dy)).map_or(false, |v| v.iter().any(|q| (q.0 - p.0).hypot(q.1 - p.1) < PLUG_REACH))
+                })
+            })
+        };
+        let mut amplitude: f64 = 0.0;
+        pts = resample(&pts, MIGRATION_SPACING);
+        for step in 0..steps {
+            let n = pts.len();
+            if n < 3 {
+                break;
+            }
+            // The curvature at every point, and its average to each side:
+            // an exponential average walked down the channel and one
+            // walked up it, halved.
+            let mut curvature = vec![0.0; n];
+            for i in 1..n - 1 {
+                let (a, b, c) = (pts[i - 1], pts[i], pts[i + 1]);
+                let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+                let (bcx, bcy) = (c.0 - b.0, c.1 - b.1);
+                let (acx, acy) = (c.0 - a.0, c.1 - a.1);
+                let cross = abx * bcy - aby * bcx;
+                let denom = abx.hypot(aby) * bcx.hypot(bcy) * acx.hypot(acy);
+                curvature[i] = if denom > 0.0 { (2.0 * cross / denom).clamp(-2.0, 2.0) } else { 0.0 };
+            }
+            let mut averaged = vec![0.0; n];
+            let mut down = 0.0;
+            for i in 0..n {
+                down = down * decay + curvature[i] * (1.0 - decay);
+                averaged[i] = 0.5 * down;
+            }
+            let mut up = 0.0;
+            for i in (0..n).rev() {
+                up = up * decay + curvature[i] * (1.0 - decay);
+                averaged[i] += 0.5 * up;
+            }
+            let mut shift = vec![(0.0, 0.0); n];
+            for i in 1..n - 1 {
+                let (a, b, c) = (pts[i - 1], pts[i], pts[i + 1]);
+                let (acx, acy) = (c.0 - a.0, c.1 - a.1);
+                let x = b.0;
+                let t = (x / length_w).clamp(0.0, 1.0);
+                let vigour = channel.vigour0 + t * (channel.vigour1 - channel.vigour0);
+                let plug = if plugged(&plugs, b) { PLUG_RETREAT } else { 1.0 };
+                let net = MIGRATION_AVERAGED * averaged[i] - curvature[i];
+                let retreat = MIGRATION_RATE * net * vigour * plug * shoulder(x) * shoulder(length_w - x);
+                // The left normal of the chord through the point; a left
+                // turn's outer bank is on the right, so the bank retreats
+                // against the normal.
+                let len = acx.hypot(acy);
+                if len > 0.0 {
+                    shift[i] = (retreat * acy / len, -retreat * acx / len);
+                }
+            }
+            for i in 1..n - 1 {
+                pts[i].0 += shift[i].0;
+                pts[i].1 = (pts[i].1 + shift[i].1).clamp(-room, room);
+                amplitude = amplitude.max(pts[i].1.abs());
+            }
+            pts = resample(&pts, MIGRATION_SPACING);
+            if step % NECK_EVERY != 0 {
+                continue;
+            }
+            if let Some((i, j)) = neck(&pts) {
+                let mut loop_pts: Vec<(f64, f64)> = pts[i..=j].to_vec();
+                loop_pts.push(pts[i]);
+                for &q in &loop_pts {
+                    plugs.entry(((q.0 / PLUG_REACH).floor() as i64, (q.1 / PLUG_REACH).floor() as i64)).or_default().push(q);
+                }
+                oxbows.push((step, loop_pts));
+                pts.drain(i + 1..j);
+                pts = resample(&pts, MIGRATION_SPACING);
             }
         }
-        let step = longest;
-        let scale = length / x;
-        let mut from = 0;
-        let mut along = Vec::with_capacity(samples.len());
-        let mut pts = Vec::with_capacity(samples.len());
-        for &(x, y, fade) in &samples {
-            let x = (x * scale).min(length);
-            let t = x / length;
-            let vigour = channel.vigour0 + t * (channel.vigour1 - channel.vigour0);
-            let offset = y * fade * vigour;
-            let (point, normal) = axis.at(x, &mut from);
-            along.push(x);
-            pts.push((point.0 + offset * normal.0, point.1 + offset * normal.1));
-        }
-        Some(Train { along, pts, step, amplitude, wavelength })
+        // Into world.
+        let place = |frame: &[(f64, f64)]| -> Vec<(f64, f64)> {
+            let mut from = 0;
+            frame
+                .iter()
+                .map(|&(x, y)| {
+                    let (point, normal) = axis.at((x * width).clamp(0.0, length), &mut from);
+                    (point.0 + y * width * normal.0, point.1 + y * width * normal.1)
+                })
+                .collect()
+        };
+        let pts = place(&pts);
+        let oxbows: Vec<Vec<(f64, f64)>> = oxbows
+            .iter()
+            .filter(|(at, _)| at + OXBOW_LIFE >= steps)
+            .map(|(_, o)| place(o))
+            .collect();
+        let grid = Self::bucket(&pts, &oxbows);
+        Some(Train { pts, oxbows, grid, amplitude: amplitude * width, wavelength })
+    }
+
+    /// The live channel and the oxbows as segments in buckets of a few
+    /// channel widths, so the slot's half-width is found in one ring.
+    fn bucket(pts: &[(f64, f64)], oxbows: &[Vec<(f64, f64)>]) -> SegmentGrid {
+        let segments: Vec<Segment> = std::iter::once(pts)
+            .chain(oxbows.iter().map(|o| o.as_slice()))
+            .flat_map(|line| line.windows(2).map(|w| Segment::along(w[0], w[1], true)))
+            .collect();
+        SegmentGrid::new(segments, 4.0 * CHANNEL_HALF_WIDTH_MAX)
     }
 
     /// End this train where it first crosses the `trunk` points, walking
-    /// downstream over its last `reach` of line: a tributary joins the
-    /// trunk at the trunk's bank and runs no further. Untouched when the
-    /// two never cross before the node, where both trains meet in any
-    /// case.
-    pub fn end_at(&mut self, trunk: &[(f64, f64)], reach: f64) {
-        let Some(&length) = self.along.last() else { return };
-        let first = self.along.partition_point(|&a| a < length - reach).saturating_sub(1);
-        for i in first..self.pts.len() - 1 {
+    /// downstream from its start: a tributary is captured wherever the
+    /// trunk's train has swept across it, joins the trunk at the trunk's
+    /// bank there, and runs no further; the oxbows its lost reach left
+    /// within two wavelengths of the capture go with it, since the trunk's
+    /// belt swept that ground. Untouched when the two never cross before
+    /// the node, where both trains meet in any case.
+    pub fn end_at(&mut self, trunk: &[(f64, f64)]) {
+        for i in 0..self.pts.len().saturating_sub(1) {
             let (a, b) = (self.pts[i], self.pts[i + 1]);
             let mut hit: Option<(f64, (f64, f64))> = None;
             for pair in trunk.windows(2) {
@@ -432,35 +685,141 @@ impl Train {
                     hit = Some((t, (a.0 + t * rx, a.1 + t * ry)));
                 }
             }
-            if let Some((t, point)) = hit {
-                let along = self.along[i] + t * (self.along[i + 1] - self.along[i]);
+            if let Some((_, point)) = hit {
                 self.pts.truncate(i + 1);
-                self.along.truncate(i + 1);
                 self.pts.push(point);
-                self.along.push(along);
+                let reach = 2.0 * self.wavelength;
+                self.oxbows.retain(|o| {
+                    let n = o.len() as f64;
+                    let (cx, cy) = o.iter().fold((0.0, 0.0), |(x, y), p| (x + p.0 / n, y + p.1 / n));
+                    (cx - point.0).hypot(cy - point.1) > reach
+                });
+                self.grid = Self::bucket(&self.pts, &self.oxbows);
                 return;
             }
         }
     }
 
-    /// The distance from a position to the channel, read from the points
-    /// within reach of the position's length `x` along the flow line: the
-    /// channel's half-width, the step, and the stretch a bend of the line
-    /// puts between lengths along it and distances beside it.
-    pub fn distance(&self, x: f64, wx: f64, wy: f64) -> f64 {
-        let reach = 4.0 * CHANNEL_HALF_WIDTH_MAX + 2.0 * self.step;
-        let lo = self.along.partition_point(|&a| a < x - reach).saturating_sub(1);
-        let hi = self.along.partition_point(|&a| a <= x + reach).min(self.pts.len() - 1);
-        let mut best = f64::MAX;
-        for i in lo..hi {
-            let (a, b) = (self.pts[i], self.pts[i + 1]);
-            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-            let len2 = dx * dx + dy * dy;
-            let u = if len2 > 0.0 { (((wx - a.0) * dx + (wy - a.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
-            best = best.min((wx - a.0 - u * dx).hypot(wy - a.1 - u * dy));
+    /// The last `reach` of the channel, walked back from its end: what a
+    /// tributary's train is tested against.
+    pub fn tail(&self, reach: f64) -> &[(f64, f64)] {
+        let mut first = self.pts.len().saturating_sub(1);
+        let mut walked = 0.0;
+        while first > 0 && walked < reach {
+            walked += (self.pts[first].0 - self.pts[first - 1].0).hypot(self.pts[first].1 - self.pts[first - 1].1);
+            first -= 1;
         }
-        best
+        &self.pts[first..]
     }
+
+    /// The first `reach` of the channel from its start.
+    pub fn head(&self, reach: f64) -> &[(f64, f64)] {
+        let mut last = 0;
+        let mut walked = 0.0;
+        while last + 1 < self.pts.len() && walked < reach {
+            walked += (self.pts[last + 1].0 - self.pts[last].0).hypot(self.pts[last + 1].1 - self.pts[last].1);
+            last += 1;
+        }
+        &self.pts[..=last]
+    }
+
+    /// The distance from a position to the channel or an oxbow, when one
+    /// lies within a trunk's channel and a margin; else more than any slot
+    /// is wide.
+    pub fn distance(&self, wx: f64, wy: f64) -> f64 {
+        self.grid.nearest(wx, wy, CHANNEL_HALF_WIDTH_MAX + 1.0).map_or(f64::MAX, |n| n.distance)
+    }
+}
+
+/// The channel walked again at `spacing` from its first point, its last
+/// point kept, each new point on the Catmull-Rom curve through the old
+/// ones. Walking the chords instead cuts the corner of every bend by a
+/// few hundredths of its amplitude, more than a step grows it, and cuts
+/// it less where the samples sit still against the pinned node than
+/// where they slide as the channel lengthens, so the head of a segment
+/// would grow and its tail would waste.
+fn resample(pts: &[(f64, f64)], spacing: f64) -> Vec<(f64, f64)> {
+    let n = pts.len();
+    if n < 2 {
+        return pts.to_vec();
+    }
+    // Past either end the curve continues by reflection, so a straight
+    // line resamples straight to its last point.
+    let at = |i: isize| -> (f64, f64) {
+        let last = n as isize - 1;
+        if i < 0 {
+            let (o, m) = (pts[0], pts[(-i).min(last) as usize]);
+            (2.0 * o.0 - m.0, 2.0 * o.1 - m.1)
+        } else if i > last {
+            let (o, m) = (pts[last as usize], pts[(2 * last - i).max(0) as usize]);
+            (2.0 * o.0 - m.0, 2.0 * o.1 - m.1)
+        } else {
+            pts[i as usize]
+        }
+    };
+    let curve = |i: usize, u: f64| -> (f64, f64) {
+        let (p0, p1, p2, p3) = (at(i as isize - 1), at(i as isize), at(i as isize + 1), at(i as isize + 2));
+        let (u2, u3) = (u * u, u * u * u);
+        let blend = |a: f64, b: f64, c: f64, d: f64| {
+            0.5 * (2.0 * b + (c - a) * u + (2.0 * a - 5.0 * b + 4.0 * c - d) * u2 + (3.0 * b - a - 3.0 * c + d) * u3)
+        };
+        (blend(p0.0, p1.0, p2.0, p3.0), blend(p0.1, p1.1, p2.1, p3.1))
+    };
+    let mut out = vec![pts[0]];
+    let mut carry = 0.0;
+    for i in 0..n - 1 {
+        let (a, b) = (pts[i], pts[i + 1]);
+        let len = (b.0 - a.0).hypot(b.1 - a.1);
+        if len <= 0.0 {
+            continue;
+        }
+        let mut s = spacing - carry;
+        while s <= len {
+            out.push(curve(i, s / len));
+            s += spacing;
+        }
+        carry = len - (s - spacing);
+    }
+    let last = pts[n - 1];
+    if out.last().map_or(true, |&o| (o.0 - last.0).hypot(o.1 - last.1) > 0.5 * spacing) {
+        out.push(last);
+    } else if out.len() > 1 {
+        *out.last_mut().unwrap() = last;
+    }
+    out
+}
+
+/// The cutoff most due along the channel: of every two points at least
+/// [`NECK_LOOP`] apart along it, within [`NECK`] of each other or with a
+/// path between them over [`CHUTE_SINUOSITY`] times their chord, the pair
+/// whose chord is the smallest share of its path; found by bucketing the
+/// points at [`CHUTE_REACH`]. None when the channel is clear.
+fn neck(pts: &[(f64, f64)]) -> Option<(usize, usize)> {
+    let mut buckets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, p) in pts.iter().enumerate() {
+        buckets.entry(((p.0 / CHUTE_REACH).floor() as i64, (p.1 / CHUTE_REACH).floor() as i64)).or_default().push(i);
+    }
+    let mut best: Option<(usize, usize, f64)> = None;
+    for (i, p) in pts.iter().enumerate() {
+        let (bx, by) = ((p.0 / CHUTE_REACH).floor() as i64, (p.1 / CHUTE_REACH).floor() as i64);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let Some(others) = buckets.get(&(bx + dx, by + dy)) else { continue };
+                for &j in others {
+                    if j < i + NECK_LOOP {
+                        continue;
+                    }
+                    let d = (pts[j].0 - p.0).hypot(pts[j].1 - p.1);
+                    let path = (j - i) as f64 * MIGRATION_SPACING;
+                    let share = d / path;
+                    if (d < NECK || d * CHUTE_SINUOSITY < path) && best.map_or(true, |(_, _, bs)| share < bs) {
+                        best = Some((i, j, share));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(i, j, _)| (i, j))
 }
 
 // ── The index ───────────────────────────────────────────────────────────────
@@ -708,13 +1067,14 @@ mod tests {
         }
     }
 
-    /// A train between two nodes on a straight flow line crosses the line
-    /// at both, never runs back along it, alternates sides, keeps within
-    /// its amplitude by the vigour, and at full vigour is longer than the
-    /// line by about its sinuosity; at no vigour there is no train, and the
-    /// channel is the line.
+    /// A trunk's channel between two nodes on a straight flow line: at no
+    /// vigour there is no train and the channel is the line; migrated, it
+    /// still runs from node to node, stays inside the valley, is longer
+    /// than the line by a river's sinuosity, and has swept a belt that is
+    /// narrower the shorter it runs and at half vigour; and it is the same
+    /// train twice.
     #[test]
-    fn the_train_crosses_at_the_nodes_within_its_amplitude() {
+    fn a_migrated_train_joins_its_nodes_and_grows_with_its_run() {
         let l = NODE_SPACING as f64;
         let (p, n) = (
             node(0.0, 0.0, (0, 0), (1.0, 0.0), CATCHMENT_FULL, 1.0, None),
@@ -727,33 +1087,74 @@ mod tests {
             half0: CHANNEL_HALF_WIDTH_MAX, half1: CHANNEL_HALF_WIDTH_MAX, vigour0: v0, vigour1: v1, entry: 1.0,
         };
         assert!(Train::new(&axis, &channel(0.0, 0.0), S).is_none());
+        let sinuosity = |t: &Train| t.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum::<f64>() / l;
         let full = Train::new(&axis, &channel(1.0, 1.0), S).unwrap();
         let first = full.pts[0];
         let last = full.pts[full.pts.len() - 1];
         assert!(first.0.abs() < 1e-6 && first.1.abs() < 1e-6, "the train starts at {first:?}");
         assert!((last.0 - l).abs() < 1e-6 && last.1.abs() < 1e-6, "the train ends at {last:?}");
-        let mut path = 0.0;
-        for pair in full.pts.windows(2) {
-            assert!(pair[1].0 > pair[0].0, "the train runs back along the line at {:?}", pair[0]);
-            path += (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1);
+        for line in std::iter::once(&full.pts).chain(&full.oxbows) {
+            for &(x, y) in line {
+                assert!(x > -VALLEY_HALF_WIDTH && x < l + VALLEY_HALF_WIDTH && y.abs() <= VALLEY_HALF_WIDTH, "the channel left the valley at ({x}, {y})");
+            }
         }
-        for w in full.along.windows(2) {
-            assert!(w[1] > w[0]);
-        }
-        let reach = full.pts.iter().map(|p| p.1.abs()).fold(0.0, f64::max);
-        assert!(reach <= full.amplitude + 1e-9 && reach > 0.5 * full.amplitude, "reach {reach} of {}", full.amplitude);
-        let crossings = full.pts.windows(2).filter(|w| (w[0].1 > 0.0) != (w[1].1 > 0.0)).count();
-        assert!(crossings >= 4, "the train crosses the line {crossings} times");
-        assert!(full.pts.iter().any(|p| p.1 > 0.3 * full.amplitude) && full.pts.iter().any(|p| p.1 < -0.3 * full.amplitude));
-        let (advance, _) = meander_shape();
-        let sinuosity = path / l;
-        assert!(sinuosity > 1.2 && sinuosity < 1.0 / advance * 1.2, "sinuosity {sinuosity} for {}", 1.0 / advance);
+        assert!(full.amplitude > 0.0 && full.amplitude <= VALLEY_HALF_WIDTH);
+        let s_full = sinuosity(&full);
+        assert!(s_full > 1.3, "a trunk at full vigour is only {s_full} sinuous");
+        let young = Train::migrated(&axis, &channel(1.0, 1.0), S, MIGRATION_STEPS / 4).unwrap();
         let half = Train::new(&axis, &channel(0.5, 0.5), S).unwrap();
-        let reach = half.pts.iter().map(|p| p.1.abs()).fold(0.0, f64::max);
-        assert!(reach <= 0.5 * half.amplitude + 1e-9, "half vigour reaches {reach} of {}", half.amplitude);
-        for (a, b) in full.pts.iter().zip(&half.pts) {
-            assert!((a.1 * 0.5 - b.1).abs() < 1e-9, "the half train is not the full one halved");
+        assert!(young.amplitude < full.amplitude, "a shorter run swept wider: {} for {}", young.amplitude, full.amplitude);
+        assert!(half.amplitude < full.amplitude, "half vigour swept wider: {} for {}", half.amplitude, full.amplitude);
+        assert!(sinuosity(&young) > 1.0 && sinuosity(&young) < s_full, "a shorter run is not straighter: {} for {s_full}", sinuosity(&young));
+        let again = Train::new(&axis, &channel(1.0, 1.0), S).unwrap();
+        assert_eq!(full.pts, again.pts, "the same channel migrated twice differs");
+        // Every point of the channel is within the slot's reach of itself.
+        for &(x, y) in &full.pts {
+            assert!(full.distance(x, y) < 1e-9);
         }
+    }
+
+    /// Resampling keeps both ends and walks the line at its spacing:
+    /// exactly on evenly spaced points, and near it on uneven ones, since
+    /// the curve through them is walked by their chords' lengths. A bend
+    /// resampled keeps its apex: the curve passes through the points.
+    #[test]
+    fn resampling_keeps_the_ends_the_spacing_and_the_apex() {
+        let line: Vec<(f64, f64)> = (0..10).map(|i| (i as f64 * 2.5, 0.0)).collect();
+        let out = resample(&line, 1.0);
+        assert_eq!(out[0], line[0]);
+        assert_eq!(*out.last().unwrap(), *line.last().unwrap());
+        for w in out.windows(2).take(out.len() - 2) {
+            let d = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+            assert!((d - 1.0).abs() < 1e-9, "a step of {d}");
+        }
+        let uneven: Vec<(f64, f64)> = (0..10).map(|i| (i as f64 * 2.5 + if i % 2 == 0 { 0.0 } else { 0.5 }, 0.0)).collect();
+        for w in resample(&uneven, 1.0).windows(2).take(20) {
+            let d = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+            assert!((d - 1.0).abs() < 0.25, "a step of {d}");
+        }
+        // A sinusoid at one point per unit, resampled at a phase between
+        // its points: the apex survives to within a hundredth.
+        let wave: Vec<(f64, f64)> = (0..40).map(|i| (i as f64, (i as f64 * PI / 10.0).sin())).collect();
+        let out = resample(&wave, 1.0);
+        let apex = out.iter().map(|p| p.1).fold(0.0, f64::max);
+        assert!(apex > 0.99, "the apex fell to {apex}");
+    }
+
+    /// A straight channel has no neck; a channel looping back on itself
+    /// has one where its two limbs touch, and never between neighbours.
+    #[test]
+    fn a_neck_is_found_where_the_limbs_touch() {
+        let straight: Vec<(f64, f64)> = (0..40).map(|i| (i as f64, 0.0)).collect();
+        assert_eq!(neck(&straight), None);
+        // A hairpin: out along y = 0, back along y = 0.5, thirty points apart.
+        let mut hairpin: Vec<(f64, f64)> = (0..20).map(|i| (i as f64, 0.0)).collect();
+        hairpin.extend((0..20).map(|i| (19.0 - i as f64, 0.5)));
+        let (i, j) = neck(&hairpin).expect("no neck in a hairpin");
+        assert!(j >= i + NECK_LOOP);
+        assert!((hairpin[i].0 - hairpin[i].1).abs() < 25.0);
+        let d = (hairpin[j].0 - hairpin[i].0).hypot(hairpin[j].1 - hairpin[i].1);
+        assert!(d < NECK);
     }
 
     /// Vigour is nothing above the channel head and on flooded ground,
@@ -821,3 +1222,4 @@ mod tests {
         }
     }
 }
+

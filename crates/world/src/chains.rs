@@ -176,6 +176,7 @@ pub fn join_at_nodes(segments: &mut [Segment], nodes: &[(NodeKey, NodeKey)]) {
 /// a ring `k` out holds nothing nearer than `k − 1` buckets, whatever the
 /// position within its own. A search bounded by a reach of a few buckets
 /// visits a few dozen buckets, nearly all empty.
+#[derive(Clone, Debug)]
 pub struct SegmentGrid {
     segments: Vec<Segment>,
     buckets: Vec<Vec<u32>>,

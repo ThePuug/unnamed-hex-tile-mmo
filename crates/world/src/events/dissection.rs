@@ -103,7 +103,7 @@ use super::drainage::{
 };
 pub use super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
 use super::index::IndexRegistry;
-use super::migration::{channels, Channel, ChannelIndex, Train, AXIS_SWING, MIGRATION_CELL_SCALE};
+use super::migration::{channels, Channel, ChannelIndex, Train, AXIS_SWING, CHANNEL_REACH, MIGRATION_CELL_SCALE};
 pub use super::migration::VALLEY_HALF_WIDTH;
 use super::plates::{Coasts, PlateEdgeIndex};
 use super::thrusting::{outlines_of, Outlines};
@@ -203,7 +203,7 @@ struct At {
     half: f64,
     chan: f64,
     /// How far the belt the river has swept reaches to each side of the
-    /// flow line: the train's reach by the vigour, then the channel.
+    /// flow line: the farthest its train strayed, then the channel.
     belt: f64,
 }
 
@@ -223,7 +223,7 @@ impl Cut {
             lerp(self.env0 - self.floor0, self.env1 - self.floor1) + vigour * (envelope - lerp(self.env0, self.env1))
         };
         let reach = self.train.as_ref().map_or(0.0, |m| m.amplitude);
-        At { depth, base: lerp(self.base0, self.base1), half, chan: lerp(self.chan0, self.chan1), belt: vigour * reach + half }
+        At { depth, base: lerp(self.base0, self.base1), half, chan: lerp(self.chan0, self.chan1), belt: reach + half }
     }
 }
 
@@ -328,8 +328,9 @@ impl Valleys {
         }
         // A tributary, a channel bringing under half its end node's water,
         // ends its train where it first crosses the trunk's: the train
-        // leaving the node, and the one arriving with the most water. Each
-        // is searched over two wavelengths from the node.
+        // leaving the node, and the one arriving with the most water, each
+        // over three of the trunk's wavelengths from the node, which holds
+        // every loop of the trunk's that can lie across the tributary.
         let mut leaving: HashMap<NodeKey, usize> = HashMap::new();
         let mut arriving: HashMap<NodeKey, usize> = HashMap::new();
         for (i, &(from, to, entry)) in ends.iter().enumerate() {
@@ -343,27 +344,18 @@ impl Valleys {
                 continue;
             }
             let to = ends[i].1;
-            let reach = |m: &Train| 2.0 * m.wavelength;
+            let reach = |m: &Train| 3.0 * m.wavelength;
             let trunks: Vec<Vec<(f64, f64)>> = [leaving.get(&to), arriving.get(&to)]
                 .into_iter()
                 .enumerate()
                 .filter_map(|(which, j)| {
                     let m = cuts[*j?].train.as_ref()?;
-                    let span = reach(m);
-                    Some(if which == 0 {
-                        let last = m.along.partition_point(|&a| a <= span).min(m.pts.len() - 1);
-                        m.pts[..=last].to_vec()
-                    } else {
-                        let length = *m.along.last().unwrap_or(&0.0);
-                        let first = m.along.partition_point(|&a| a < length - span).saturating_sub(1);
-                        m.pts[first..].to_vec()
-                    })
+                    Some(if which == 0 { m.head(reach(m)).to_vec() } else { m.tail(reach(m)).to_vec() })
                 })
                 .collect();
             let tributary = cuts[i].train.as_mut().unwrap();
-            let span = reach(tributary);
             for trunk in &trunks {
-                tributary.end_at(trunk, span);
+                tributary.end_at(trunk);
             }
         }
         let mut flooded = HashMap::new();
@@ -401,7 +393,8 @@ impl Valleys {
             })
             .collect();
         let refs: Vec<&DrainageCell> = cells.iter().collect();
-        let drawn = channels(&refs, |_| true, seed);
+        let within = half * std::f64::consts::SQRT_2 + CHANNEL_REACH;
+        let drawn = channels(&refs, |p| (p.wx - cx).hypot(p.wy - cy) <= within, seed);
         let channel_refs: Vec<&Channel> = drawn.iter().collect();
         let reach = half + NODE_SPACING as f64;
         let envelope = Envelope::new(seed, Coasts::in_box(cx, cy, reach, seed), Outlines::in_box(cx, cy, reach, seed));
@@ -443,7 +436,7 @@ impl Valleys {
             let valley = (at.depth * profile(u)).min((envelope - at.base).max(0.0));
             best.valley = best.valley.max(valley);
             if d <= at.belt.max(at.half) {
-                let beside = cut.train.as_ref().map_or(d, |m| m.distance(x, wx, wy));
+                let beside = cut.train.as_ref().map_or(d, |m| m.distance(wx, wy));
                 if beside <= at.half {
                     best.channel = best.channel.max(at.chan);
                 }
@@ -670,8 +663,9 @@ mod tests {
     }
 
     /// On a routed cell, the floor along every reach never rises past the
-    /// lake it leaves, flooded ground is never cut, and no cut at a tile
-    /// exceeds the envelope's height above sea level.
+    /// lake it leaves, flooded ground is never cut, no valley cut at a tile
+    /// exceeds the envelope's height above sea level, and no slot is
+    /// deeper than a trunk's.
     #[test]
     fn floors_never_rise_and_lakes_are_uncut() {
         let (published, valleys) = spawn_valleys();
@@ -725,15 +719,17 @@ mod tests {
         assert!(cut_sills > 0, "no sill in the spawn cell is cut");
         for n in published.nodes.values() {
             let (x, y) = node_world(n.key);
-            let cut = valleys.cut_at(x + 100.0, y + 60.0, n.elevation);
-            assert!(cut >= 0.0 && cut <= n.elevation.max(0.0) + 1e-9, "cut {cut} at {:?}", n.key);
+            let cuts = valleys.cuts_at(x + 100.0, y + 60.0, n.elevation);
+            assert!(cuts.valley >= 0.0 && cuts.valley <= n.elevation.max(0.0) + 1e-9, "valley {} at {:?}", cuts.valley, n.key);
+            assert!(cuts.channel >= 0.0 && cuts.channel <= CHANNEL_DEPTH_MAX, "slot {} at {:?}", cuts.channel, n.key);
         }
     }
 
-    /// At a channelled node the slot is cut to the node's channel depth
-    /// beneath the valley floor, and past the widest belt any train sweeps
-    /// it is not; the surface a river stands at, the ground plus the
-    /// channel cut, is the valley floor either way.
+    /// At a channelled node the slot is cut at least to the node's channel
+    /// depth beneath the valley floor, deeper only where a bigger river's
+    /// train has wandered over the node, and past the widest belt any
+    /// train sweeps it is not; the surface a river stands at, the ground
+    /// plus the channel cut, is the valley floor either way.
     #[test]
     fn the_channel_is_a_slot_in_the_valley_floor() {
         let (published, valleys) = spawn_valleys();
@@ -745,7 +741,7 @@ mod tests {
             channelled += 1;
             let (x, y) = node_world(n.key);
             let at = valleys.cuts_at(x, y, n.elevation);
-            assert!((at.channel - channel_depth(n)).abs() < 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
+            assert!(at.channel >= channel_depth(n) - 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
             assert!(n.lake.is_some() || at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
             // Past the widest belt any train sweeps, square off the flow
             // line at the node, no slot of this channel is cut; one there
