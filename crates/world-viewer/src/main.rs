@@ -19,6 +19,7 @@ use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateB
 use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
 use world::events::dissection::Valleys;
 use world::events::drainage::{surface_at, DrainageIndex, NODE_SPACING};
+use world::events::migration::ChannelIndex;
 use world::events::plates::{Coasts, PlateEdgeIndex};
 use world::lattice::node_world;
 
@@ -50,6 +51,9 @@ enum Layer {
     Reaches,
     /// Drainage index: flooded nodes at their surface, outlets marked.
     Lakes,
+    /// Channel index: every channel as its train across its flow line, or
+    /// the line where it holds it, width by catchment.
+    Channels,
 }
 
 /// Every view by its command-line name. The one list: parsing, the help text
@@ -67,6 +71,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("drainage-lakes", Layer::Lakes),
+    ("channels", Layer::Channels),
 ];
 
 impl Layer {
@@ -588,6 +593,42 @@ fn main() {
             lakes.len(),
             lakes.iter().map(|l| l.0.len()).sum::<usize>()
         );
+    }
+
+    if layers.contains(&Layer::Channels) {
+        // Each channel along its train, or its flow line where the river
+        // holds it; width by the catchment at its start node, as a reach.
+        let drawn: Vec<(Vec<(f64, f64)>, f64, bool)> = composite.with_indexes(|indexes| {
+            let (Some(channels), Some(drainage)) = (indexes.get::<ChannelIndex>(), indexes.get::<DrainageIndex>()) else {
+                return Vec::new();
+            };
+            channels
+                .cells
+                .values()
+                .flat_map(|c| c.channels.iter())
+                .map(|ch| {
+                    let catchment = drainage.node(ch.from).map_or(1.0, |n| n.catchment);
+                    match &ch.train {
+                        Some(train) => (train.pts.clone(), catchment, true),
+                        None => (ch.axis.clone(), catchment, false),
+                    }
+                })
+                .collect()
+        });
+        let mut trains = 0;
+        for (pts, catchment, meanders) in &drawn {
+            let half_width = 2.0 * catchment.sqrt() / scale;
+            if half_width < 0.5 {
+                continue;
+            }
+            trains += *meanders as usize;
+            let hw = half_width.round().min(24.0) as i32;
+            let rgb = if *meanders { [60, 170, 255] } else { [120, 200, 255] };
+            for w in pts.windows(2) {
+                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, hw, 0, rgb);
+            }
+        }
+        log::info!("Channels: {} of which {trains} meander; paler where the river holds its flow line", drawn.len());
     }
 
     if layers.contains(&Layer::Reaches) {

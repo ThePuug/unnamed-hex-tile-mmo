@@ -73,6 +73,7 @@
 pub mod dissection;
 pub mod drainage;
 pub mod index;
+pub mod migration;
 pub mod motion;
 pub mod thickening;
 pub mod thrusting;
@@ -393,6 +394,13 @@ pub(super) fn footprint_plus_ring(
     out.into_iter().collect()
 }
 
+/// What one ring of cells clears, as a multiple of the cell radius: what
+/// [`one_ring_clearance`] measures at `add_event`, restated so an event can
+/// derive its cell scale from its reach, since a const cannot call the
+/// measurement. The assertion at `add_event` catches a restatement gone
+/// stale.
+pub const RING_CLEARANCE: f64 = 1.268;
+
 /// The furthest a feature may reach from its origin and still be folded by
 /// every cell it touches, given that a cell reads exactly one ring.
 ///
@@ -553,6 +561,7 @@ impl Composite {
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
+        composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));
         composite
     }

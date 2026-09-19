@@ -88,19 +88,13 @@ use super::plates::{Coasts, PlateEdgeIndex};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
 use super::tilt::tilt_at;
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
 pub use crate::lattice::{node_tile, NodeKey, NODE_SPACING};
 use crate::tectonic::PLATE_REACH;
 use crate::{hex_to_world, substrate_on};
 
 // ── Constants ───────────────────────────────────────────────────────────────
-
-
-/// What one ring of cells clears, as a multiple of the cell radius. The
-/// framework measures it at `add_event`; it is restated here because the
-/// scale below is derived from it and a const cannot call the measurement.
-const RING_CLEARANCE: f64 = 1.268;
 
 /// Cell scale, derived: one ring covers a plate's reach from its seed, so a
 /// basin that drains a plate's interior to its coast is counted whole.
@@ -199,6 +193,48 @@ pub const SILL_CUT_RATE: f64 = 1.5;
 /// lake at any age.
 pub fn sill_share(age: f64, catchment: f64) -> f64 {
     growth(catchment).map_or(0.0, |g| (SILL_CUT_RATE * age * g).min(1.0))
+}
+
+/// The share of its height above base level a full trunk on a fully aged
+/// plate has removed: the Grand Canyon's 1.6 km cut through a 2.3 km
+/// plateau. The rest is the fall that keeps the river flowing.
+pub const RELIEF_SHARE_MAX: f64 = 0.7;
+
+/// What a new plate's rivers have done as a share of an aged plate's, down
+/// and sideways alike: the narrow cut of a young orogen, its plateau
+/// surface largely intact.
+///
+/// Tuning, not yet judged in the viewer.
+pub const YOUNG_SHARE: f64 = 0.5;
+
+/// The aged share: what a plate of `age` has done of an aged plate's work.
+pub fn aged(age: f64) -> f64 {
+    YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)
+}
+
+/// The share of the height above base level a channel of `catchment` nodes
+/// on a plate of `age` has cut: nothing below the channel head, then growing
+/// as the square root of the catchment past it, the way a channel's width
+/// does, to the full share; and with age, from a young plate's share of it
+/// to the whole.
+pub fn relief_share(catchment: f64, age: f64) -> f64 {
+    growth(catchment).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged(age))
+}
+
+/// The floor a river has cut to at a node, in z-levels: where the routing
+/// cut a sill or a breach, exactly the ground it routed over; on flooded
+/// ground the lakebed, which lies below its base and is not cut; else the
+/// envelope less its share of the height above base level. Dissection cuts
+/// to it and never below; a channel entering a lake grades to the lake's
+/// surface, its base, and never to the bed.
+pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, cut: f64, sill: bool, flooded: bool) -> f64 {
+    if sill || cut > 0.0 {
+        return elevation - cut;
+    }
+    if flooded {
+        return elevation;
+    }
+    elevation - (elevation - base).max(0.0) * relief_share(catchment, age)
 }
 
 // ── The surface ─────────────────────────────────────────────────────────────
@@ -332,6 +368,10 @@ pub struct DrainageNode {
     /// breach through the rim, to where the ground is no higher. Nothing
     /// elsewhere. A floor is never above the envelope less this.
     pub cut: f64,
+    /// The floor the river has cut to here, as [`floor_at`] gives it: what
+    /// dissection cuts down to at the node, and what the grade of a reach
+    /// is read from.
+    pub floor: f64,
 }
 
 /// A channel: nodes in downstream order, and where the last one drains.
@@ -576,6 +616,8 @@ impl Routing {
             }
             let (q, r) = node_tile(self.keys[k]);
             let (wx, wy) = hex_to_world(q, r);
+            let lake = self.lake_of[k].and_then(|id| lake_local.get(&id).copied());
+            let sill = sills.contains(&k);
             nodes.insert(
                 self.keys[k],
                 DrainageNode {
@@ -590,10 +632,11 @@ impl Routing {
                     catchment: self.carried[k],
                     base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
-                    lake: self.lake_of[k].and_then(|id| lake_local.get(&id).copied()),
-                    sill: sills.contains(&k),
+                    lake,
+                    sill,
                     age: self.age[k],
                     cut: self.cut[k],
+                    floor: floor_at(self.elevation[k], self.base[k], self.carried[k], self.age[k], self.cut[k], sill, lake.is_some()),
                 },
             );
         }
@@ -1306,5 +1349,57 @@ impl WorldEvent for DrainageEvent {
         _seed: u64,
     ) -> Option<TileOutput> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The share starts at the head, grows with catchment, and saturates.
+    #[test]
+    fn share_starts_at_the_head_and_saturates() {
+        assert_eq!(relief_share(CHANNEL_HEAD, 1.0), 0.0);
+        assert_eq!(relief_share(1.0, 1.0), 0.0);
+        let mut last = 0.0;
+        for i in 0..200 {
+            let a = CHANNEL_HEAD + i as f64 * 0.5;
+            let g = relief_share(a, 1.0);
+            assert!(g >= last && g <= RELIEF_SHARE_MAX, "share {g} at {a}");
+            last = g;
+        }
+        assert!((relief_share(CATCHMENT_FULL, 1.0) - RELIEF_SHARE_MAX).abs() < 1e-12);
+        assert_eq!(relief_share(10.0 * CATCHMENT_FULL, 1.0), RELIEF_SHARE_MAX);
+    }
+
+    /// The share grows with the plate's age, from a young plate's share of
+    /// the full cut to the whole of it, at every catchment past the head.
+    #[test]
+    fn share_grows_with_age() {
+        for c in [CHANNEL_HEAD + 1.0, CATCHMENT_FULL / 2.0, CATCHMENT_FULL] {
+            let (young, old) = (relief_share(c, 0.0), relief_share(c, 1.0));
+            assert!(young > 0.0 && young < old, "share {young} young, {old} old at {c}");
+            assert!((young - YOUNG_SHARE * old).abs() < 1e-12);
+            let mut last = young;
+            for i in 1..=10 {
+                let s = relief_share(c, i as f64 / 10.0);
+                assert!(s >= last, "share falls with age at {c}");
+                last = s;
+            }
+        }
+    }
+
+    /// A node's floor is the routed ground where a sill or a breach was
+    /// cut, the lakebed on flooded ground, and the envelope less its share
+    /// of the height above base elsewhere, never below base.
+    #[test]
+    fn the_floor_is_the_cut_the_bed_or_the_share() {
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 7.0, true, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 7.0, false, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, true), 20.0);
+        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, false);
+        assert!((floor - (20.0 - 15.0 * RELIEF_SHARE_MAX)).abs() < 1e-12);
+        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 0.0, false, false), 20.0);
+        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, false), 3.0);
     }
 }

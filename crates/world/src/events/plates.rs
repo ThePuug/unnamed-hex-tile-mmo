@@ -38,7 +38,7 @@ use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_SPAC
 use crate::{hex_to_world, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::thrusting::OUTLINE_REACH;
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 /// How far from a coast the substrate reaches its full height or depth:
 /// half a plate, so a plate's interior is flat and its margin is the ramp.
@@ -55,11 +55,6 @@ pub const EDGE_REACH: f64 = 10_000.0;
 /// The farthest an edge's influence reaches from its midpoint: its chain,
 /// and the substrate's ramp from the coast the chain draws.
 pub const EDGE_INFLUENCE: f64 = EDGE_REACH + COAST_REACH;
-
-/// What one ring of cells clears, as a multiple of the cell radius. The
-/// framework measures it at `add_event`; restated because the scale below is
-/// derived from it and a const cannot call the measurement.
-const RING_CLEARANCE: f64 = 1.268;
 
 /// Cell scale of every layer that publishes or reads the plate graph: one
 /// ring holds every edge whose chain or shore reaches a tile of the cell, and

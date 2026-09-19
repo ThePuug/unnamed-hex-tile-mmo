@@ -32,6 +32,7 @@ QOI to `world.qoi` (`--format png` writes `world.png`), views
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |
 | `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
 | `drainage-lakes` | drainage index | flooded nodes at their surface, a white dot at each outlet |
+| `channels` | channel index | every channel as its train across its flow line, paler where the river holds the line, width by catchment |
 
 Views stack bottom to top in the order given: fills first, markers as
 overdraw. A field view paints every pixel and cannot stack; asking for one
