@@ -33,6 +33,23 @@
 //! reach the floor never rises, because the envelope falls downstream and
 //! the share grows with the water; a test holds it.
 //!
+//! # The flow line
+//!
+//! Drainage's nodes are samples of a flow line, and the chord between two
+//! of them was never the river: dissection draws the channel between two
+//! nodes as the curve that leaves each along its own downslope, the true
+//! outflow drainage publishes at every node, and arrives at the next along
+//! that node's. So a river bends at the wavelength of the ground that
+//! turns it, tributaries arrive at their confluence pointing downstream
+//! along the trunk's outflow, and a reach turning at a node turns as a
+//! curve and never as a corner. A downslope more than square to its chord
+//! is read as square: the flow turns harder at that node than a curve
+//! between samples can carry, and a hook toward the node would be drawn
+//! from nothing. The line is a cubic between the nodes with those tangents
+//! at the chord's length, drawn as a polyline, and it stays within
+//! [`AXIS_SWING`] of the chord. On a uniformly tilted plain the downslope
+//! holds and the line is straight, which is right: nothing there bends it.
+//!
 //! A valley reaches half the node spacing to each side, so neighbouring
 //! valleys meet at their divide, and where two overlap the deeper stands.
 //! Depth alone sets a wall's steepness: gentle on a plain, a gorge through a
@@ -100,6 +117,19 @@ use super::{CellScope, TileOutput, TileView, WorldEvent};
 /// spacing, so neighbouring valleys meet at their divide and never take each
 /// other's walls. Structural, not tuned.
 pub const VALLEY_HALF_WIDTH: f64 = NODE_SPACING as f64 / 2.0;
+
+/// The farthest the flow line between two nodes strays from their chord,
+/// in world units: a quarter of the spacing. A cubic with tangents of the
+/// chord's length within a right angle of it lies within `t(1 - t)` of a
+/// chord from the chord, a quarter at most; a test holds it over every
+/// tangent pair.
+pub const AXIS_SWING: f64 = NODE_SPACING as f64 / 4.0;
+
+/// Sub-segments the flow line between two nodes is drawn with. The line's
+/// curvature peaks at the ends of a reverse bend with square tangents, a
+/// radius of a sixth of the chord, where a sub-segment this short misses
+/// the curve by a tile; along an ordinary bend by a fraction of one.
+const AXIS_STEPS: usize = 24;
 
 /// The share of its height above base level a full trunk on a fully aged
 /// plate has removed: the Grand Canyon's 1.6 km cut through a 2.3 km
@@ -214,6 +244,55 @@ struct Cut {
     half1: f64,
     chan0: f64,
     chan1: f64,
+    /// The flow line's length, what `t` runs along.
+    length: f64,
+}
+
+/// One sub-segment of a flow line: which cut it belongs to and where along
+/// the line it starts, so a position projected onto it reads its `t` along
+/// the whole line.
+#[derive(Clone, Copy, Debug)]
+struct Sub {
+    cut: usize,
+    start: f64,
+    length: f64,
+}
+
+/// The flow line from node `p` to node `n`: a cubic leaving `p` along its
+/// downslope and arriving at `n` along `n`'s, each tangent the chord's
+/// length and turned no further than square to the chord, as
+/// [`AXIS_STEPS`] steps of points.
+fn flow_line(p: &DrainageNode, n: &DrainageNode) -> Vec<(f64, f64)> {
+    let (cx, cy) = (n.wx - p.wx, n.wy - p.wy);
+    let length = cx.hypot(cy);
+    let tangent = |(dx, dy): (f64, f64)| -> (f64, f64) {
+        let along = dx * cx + dy * cy;
+        let across = cx * dy - cy * dx;
+        if dx.hypot(dy) < 0.5 || (along <= 0.0 && across == 0.0) {
+            (cx, cy)
+        } else if along < 0.0 {
+            let sign = across.signum();
+            (-cy * sign, cx * sign)
+        } else {
+            (dx * length, dy * length)
+        }
+    };
+    let (m0x, m0y) = tangent(p.direction);
+    let (m1x, m1y) = tangent(n.direction);
+    (0..=AXIS_STEPS)
+        .map(|i| {
+            let t = i as f64 / AXIS_STEPS as f64;
+            let (t2, t3) = (t * t, t * t * t);
+            let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+            let h10 = t3 - 2.0 * t2 + t;
+            let h01 = -2.0 * t3 + 3.0 * t2;
+            let h11 = t3 - t2;
+            (
+                h00 * p.wx + h10 * m0x + h01 * n.wx + h11 * m1x,
+                h00 * p.wy + h10 * m0y + h01 * n.wy + h11 * m1y,
+            )
+        })
+        .collect()
 }
 
 impl Cut {
@@ -278,6 +357,7 @@ impl Envelope {
 /// lattice a lake's water stands over.
 pub struct Valleys {
     grid: SegmentGrid,
+    subs: Vec<Sub>,
     cuts: Vec<Cut>,
     flooded: HashMap<NodeKey, usize>,
     extent_of: HashMap<NodeKey, usize>,
@@ -295,6 +375,7 @@ impl Valleys {
     pub fn new(cells: &[&DrainageCell], keep: impl Fn(NodeKey) -> bool, envelope: Envelope) -> Self {
         let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
         let mut segments = Vec::new();
+        let mut subs = Vec::new();
         let mut cuts = Vec::new();
         for c in cells {
             for reach in &c.reaches {
@@ -303,7 +384,14 @@ impl Valleys {
                     let Some(n) = node(key) else { break };
                     if let Some(p) = prev {
                         if keep(p.key) || keep(n.key) {
-                            segments.push(Segment::along((p.wx, p.wy), (n.wx, n.wy), true));
+                            let line = flow_line(p, n);
+                            let mut start = 0.0;
+                            for pair in line.windows(2) {
+                                let length = (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1);
+                                segments.push(Segment::along(pair[0], pair[1], true));
+                                subs.push(Sub { cut: cuts.len(), start, length });
+                                start += length;
+                            }
                             cuts.push(Cut {
                                 env0: p.elevation,
                                 env1: n.elevation,
@@ -317,6 +405,7 @@ impl Valleys {
                                 half1: channel_half_width(n.catchment),
                                 chan0: channel_depth(p),
                                 chan1: channel_depth(n),
+                                length: start,
                             });
                         }
                     }
@@ -333,7 +422,7 @@ impl Valleys {
             extent_of.extend(lake.extent.iter().map(|&k| (k, shores.len())));
             shores.push(Shore { surface: lake.surface, read: !lake.extent.is_empty(), ends });
         }
-        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), cuts, flooded, extent_of, shores, envelope }
+        Self { grid: SegmentGrid::new(segments, VALLEY_HALF_WIDTH), subs, cuts, flooded, extent_of, shores, envelope }
     }
 
     /// The valleys under a square box, routed from the plate graph directly:
@@ -343,7 +432,7 @@ impl Valleys {
         let lattice = DrainageIndex::lattice();
         let (q, r) = world_to_hex(cx, cy);
         let centre = lattice.cell_id(q, r);
-        let rings = ((half * std::f64::consts::SQRT_2 + VALLEY_HALF_WIDTH) / lattice.radius as f64).ceil() as u32 + 1;
+        let rings = ((half * std::f64::consts::SQRT_2 + VALLEY_HALF_WIDTH + AXIS_SWING) / lattice.radius as f64).ceil() as u32 + 1;
         let window = (3 * lattice.radius + 1) as f64;
         let event = DrainageEvent::new();
         let cells: Vec<DrainageCell> = lattice
@@ -368,28 +457,34 @@ impl Valleys {
     }
 
     /// The cuts at a position whose envelope is `envelope`, in z-levels: of
-    /// every valley in reach, each interpolated along its segment and
-    /// profiled across it, the one that with its channel cuts deepest. A
-    /// breach cuts to the straight floor between its nodes, through any
-    /// ridge between them; any other valley interpolates its depth. A
-    /// valley never cuts below the base level it drains to; its channel, a
-    /// slot of the segment's half-width and depth, cuts on below it. A
-    /// throat in reach pools the lake's water to its sill's floor.
+    /// every valley in reach, each interpolated along its flow line and
+    /// profiled across it, the deepest; and of every channel the position
+    /// lies in, the deepest slot, whichever valley's wall it crosses, so a
+    /// tributary keeps its channel down the wall of a trunk's deeper
+    /// valley. A breach cuts to the straight floor between its nodes,
+    /// through any ridge between them; any other valley interpolates its
+    /// depth. A valley never cuts below the base level it drains to; its
+    /// channel, a slot of the segment's half-width and depth, cuts on
+    /// below it. A throat in reach pools the lake's water to its sill's
+    /// floor.
     pub fn cuts_at(&self, wx: f64, wy: f64, envelope: f64) -> Cuts {
         let mut best = Cuts::default();
         let mut pool: Option<f64> = None;
         self.grid.for_each_within(wx, wy, VALLEY_HALF_WIDTH, |i, d| {
-            let (t, _) = self.grid.segments()[i].project(wx, wy);
-            let (depth, base, half, chan) = self.cuts[i].at(t, envelope);
+            let sub = self.subs[i];
+            let (along, _) = self.grid.segments()[i].project(wx, wy);
+            let cut = &self.cuts[sub.cut];
+            let t = (sub.start + along * sub.length) / cut.length;
+            let (depth, base, half, chan) = cut.at(t, envelope);
             let valley = (depth * profile(d / VALLEY_HALF_WIDTH)).min((envelope - base).max(0.0));
-            let channel = if d <= half { chan } else { 0.0 };
-            if valley + channel > best.valley + best.channel {
-                best = Cuts { valley, channel, pool: None };
+            best.valley = best.valley.max(valley);
+            if d <= half {
+                best.channel = best.channel.max(chan);
             }
             // The pool holds over the throat itself, not past the lip, and
             // only where the throat's cut brought the ground under it: low
             // ground beside it is the lake's if its extent says so.
-            if let Some(p) = self.cuts[i].pool.filter(|&p| (0.0..1.0).contains(&t) && envelope >= p) {
+            if let Some(p) = cut.pool.filter(|&p| (0.0..1.0).contains(&t) && envelope >= p) {
                 pool = Some(pool.map_or(p, |q| q.max(p)));
             }
         });
@@ -492,7 +587,7 @@ pub fn valleys_of(scope: &CellScope) -> Valleys {
         return Valleys::new(&[], |_| true, envelope);
     };
     let centre = scope.lattice().cell_center(scope.cell());
-    let keep_within = scope.lattice().radius as i32 + NODE_SPACING + VALLEY_HALF_WIDTH.ceil() as i32;
+    let keep_within = scope.lattice().radius as i32 + NODE_SPACING + (VALLEY_HALF_WIDTH + AXIS_SWING).ceil() as i32;
     Valleys::new(&idx.cells_in(&cells), |key| hex_distance(node_tile(key), centre) <= keep_within, envelope)
 }
 
@@ -563,6 +658,45 @@ mod tests {
             assert!(p <= last, "profile rises at {u}");
             assert!(last - p <= 1.5 * 0.01 + 1e-9, "profile steeper than its middle at {u}");
             last = p;
+        }
+    }
+
+    /// Over every pair of downslopes, square, backward and missing ones
+    /// included, the flow line runs from its first node to its second,
+    /// never upstream of the first or past the second along the chord,
+    /// stays within the swing of the chord, and leaves the first node along
+    /// its downslope wherever that is within a right angle of the chord.
+    #[test]
+    fn the_flow_line_joins_its_nodes_within_the_swing() {
+        let node = |wx: f64, wy: f64, direction: (f64, f64)| DrainageNode {
+            key: (0, 0), q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0,
+            direction, catchment: 10.0, base: 0.0, down: None, lake: None, sill: false, age: 1.0, cut: 0.0,
+        };
+        let l = NODE_SPACING as f64;
+        let bearings: Vec<(f64, f64)> = (0..24)
+            .map(|i| {
+                let a = i as f64 * std::f64::consts::PI / 12.0;
+                (a.cos(), a.sin())
+            })
+            .chain(std::iter::once((0.0, 0.0)))
+            .collect();
+        for &da in &bearings {
+            for &db in &bearings {
+                let (p, n) = (node(0.0, 0.0, da), node(l, 0.0, db));
+                let line = flow_line(&p, &n);
+                assert_eq!(line.len(), AXIS_STEPS + 1);
+                assert_eq!(line[0], (0.0, 0.0));
+                assert!((line[AXIS_STEPS].0 - l).abs() < 1e-9 && line[AXIS_STEPS].1.abs() < 1e-9);
+                for &(x, y) in &line {
+                    assert!(x >= -1e-9 && x <= l + 1e-9, "the line runs past a node at {x} for {da:?} {db:?}");
+                    assert!(y.abs() <= AXIS_SWING + 1e-9, "the line swings {y} for {da:?} {db:?}");
+                }
+                if da.0 > 1e-9 {
+                    let (dx, dy) = (line[1].0 - line[0].0, line[1].1 - line[0].1);
+                    let cos = (dx * da.0 + dy * da.1) / dx.hypot(dy);
+                    assert!(cos > (10.0f64).to_radians().cos(), "the line leaves off its downslope for {da:?} {db:?}");
+                }
+            }
         }
     }
 
