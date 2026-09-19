@@ -662,6 +662,39 @@ pub fn update_metrics_overlay(
 
                     ui.add_space(4.0);
 
+                    // ── GPU ──
+                    // Every pass Bevy times on the GPU, heaviest first, and
+                    // their sum: the frame is GPU-bound when the sum nears
+                    // the frame time, and CPU-bound when it falls well short.
+                    draw_section(ui, "GPU", content_width, |ui| {
+                        const PASS_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                        let mut passes: Vec<(&str, f64)> = diagnostics
+                            .iter()
+                            .filter_map(|d| {
+                                let name = d.path().as_str().strip_prefix("render/")?.strip_suffix("/elapsed_gpu")?;
+                                Some((name, d.smoothed()?))
+                            })
+                            .collect();
+                        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        let sum: f64 = passes.iter().map(|(_, ms)| ms).sum();
+                        seg_row(ui, cw, |s| {
+                            s.full(&format!("{:<15}", "all passes"), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(sum), "ms"), ALARM_FRAME.color(sum));
+                        });
+                        for (name, ms) in passes.iter().take(10) {
+                            // The last path component names the pass; the
+                            // tail of it is the telling part.
+                            let leaf = name.rsplit('/').next().unwrap_or(name);
+                            let shown: String = leaf.chars().rev().take(SEG_WIDTH).collect::<Vec<_>>().into_iter().rev().collect();
+                            seg_row(ui, cw, |s| {
+                                s.full(&format!("{shown:<15}"), COLOR_DIM);
+                                s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*ms), "ms"), COLOR_DIM);
+                            });
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
                     // ── NETWORK ──
                     draw_section(ui, "NETWORK", content_width, |ui| {
                         const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
