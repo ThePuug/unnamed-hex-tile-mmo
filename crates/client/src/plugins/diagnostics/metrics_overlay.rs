@@ -418,6 +418,10 @@ pub fn setup_overlay_camera(mut commands: Commands) {
             Camera2d,
             Camera {
                 order: 100,
+                // Drawn over the world's camera on the same window. Left to
+                // clear, it wipes the world whenever MSAA is off: with it on,
+                // the writeback marks the target cleared before this pass.
+                clear_color: ClearColorConfig::None,
                 ..default()
             },
             EguiContext::default(),
