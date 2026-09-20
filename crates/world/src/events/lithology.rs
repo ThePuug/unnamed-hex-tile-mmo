@@ -46,13 +46,14 @@
 //! plain's unconsolidated wedge. Unbuilt.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use crate::noise::{hash_channel_f64, simplex_2d};
 use crate::tectonic::{aged, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, substrate_on};
 use super::index::IndexRegistry;
 use super::plates::{Coasts, PlateEdgeIndex, GRAPH_CELL_SCALE};
-use super::thrusting::{outlines_of, Outlines};
+use super::thrusting::{outlines_for, Outlines};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const COVER_SEED: u64 = 0x436f_7665_725f_5f5f; // "Cover___"
@@ -292,7 +293,7 @@ impl Default for LithologyEvent {
 /// What a cell's tiles read: the coasts and outlines in reach.
 struct Reach {
     coasts: Coasts,
-    outlines: Outlines,
+    outlines: Arc<Outlines>,
 }
 
 impl WorldEvent for LithologyEvent {
@@ -310,7 +311,7 @@ impl WorldEvent for LithologyEvent {
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         let edge_cells = scope.source_cells::<PlateEdgeIndex>();
         let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(), scope.seed());
-        Box::new(Reach { coasts, outlines: outlines_of(scope) })
+        Box::new(Reach { coasts, outlines: outlines_for(scope) })
     }
 
     /// What stands at the tile: the cuesta over the envelope beneath.

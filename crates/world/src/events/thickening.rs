@@ -40,7 +40,9 @@ use std::any::Any;
 use crate::hex_to_world;
 use super::index::IndexRegistry;
 use super::plates::GRAPH_CELL_SCALE;
-use super::thrusting::{outlines_of, sheets_in, sheets_of, smoothstep, Outlines, PlateOutline, RANGE_RISE, RANGE_SPACING};
+use std::sync::Arc;
+
+use super::thrusting::{outlines_for, sheets_in, sheets_of, smoothstep, Outlines, PlateOutline, RANGE_RISE, RANGE_SPACING};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The plateau ─────────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ impl WorldEvent for ThickeningEvent {
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(outlines_of(scope))
+        Box::new(outlines_for(scope))
     }
 
     fn query(
@@ -137,7 +139,7 @@ impl WorldEvent for ThickeningEvent {
         cell: &(dyn Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
-        let outlines = cell.downcast_ref::<Outlines>()?;
+        let outlines = cell.downcast_ref::<Arc<Outlines>>()?;
         let (wx, wy) = hex_to_world(q, r);
         let rise = thickening_on(wx, wy, outlines);
         if rise <= 0.0 { return None }

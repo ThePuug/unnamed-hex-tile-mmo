@@ -81,13 +81,16 @@
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use dashmap::DashMap;
 
 use crate::chains::{join_at_nodes, Segment};
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, RISE, SEA_MAX_DEPTH};
-use super::index::IndexRegistry;
+use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
 use super::thickening::ESCARPMENT;
@@ -350,6 +353,12 @@ pub struct Standing<'a> {
     pub y: f64,
 }
 
+/// How many reads [`Outlines::at`] remembers before it forgets them all:
+/// a tile is read by the three layers standing on the outlines in turn,
+/// and a few thousand tiles are in flight at once, so the memo needs to
+/// hold that many and no more.
+const RECENT_READS: usize = 16_384;
+
 /// The outlines of every plate a set of tiles can stand in, built from the
 /// resolved edges the motion layer published, read through the warp.
 pub struct Outlines {
@@ -360,6 +369,10 @@ pub struct Outlines {
     /// reach costs no lookup.
     fronts: Vec<(PlateId, usize, [f64; 4])>,
     seed: u64,
+    /// The last reads by position: the plate found, its distances, and the
+    /// warped position. The layers above thrusting read one tile in turn,
+    /// so the second and third reads of it are lookups.
+    recent: DashMap<(u64, u64), (PlateId, Vec<f64>, f64, f64)>,
 }
 
 impl Outlines {
@@ -423,7 +436,7 @@ impl Outlines {
             .flat_map(|p| p.edges.iter().enumerate().filter(|(_, e)| e.converge > 0.0).map(move |(k, e)| (p.id, k, e.bounds)))
             .collect();
         fronts.sort_unstable_by_key(|f| (f.0, f.1));
-        Self { plates, fronts, seed }
+        Self { plates, fronts, seed, recent: DashMap::new() }
     }
 
     /// The outlines of every plate within reach of a square box, built from
@@ -461,6 +474,23 @@ impl Outlines {
     /// stand across it, and where two corners lie within a swing of each
     /// other it can stand across two.
     pub fn at(&self, x: f64, y: f64) -> Option<Standing<'_>> {
+        let key = (x.to_bits(), y.to_bits());
+        if let Some(hit) = self.recent.get(&key) {
+            let (id, distances, x, y) = &*hit;
+            return self.plates.get(id).map(|plate| Standing { plate, distances: distances.clone(), x: *x, y: *y });
+        }
+        let found = self.find(x, y);
+        if let Some(at) = &found {
+            if self.recent.len() >= RECENT_READS {
+                self.recent.clear();
+            }
+            self.recent.insert(key, (at.plate.id, at.distances.clone(), at.x, at.y));
+        }
+        found
+    }
+
+    /// [`Outlines::at`] without the memo.
+    fn find(&self, x: f64, y: f64) -> Option<Standing<'_>> {
         let (x, y) = warp(x, y, self.seed);
         let home = plate_cell_for(x, y);
         let first = self.plates.get(&home)?;
@@ -676,6 +706,51 @@ impl Default for ThrustingEvent {
     fn default() -> Self { Self::new() }
 }
 
+/// The outlines each cell of the graph lattice reads, published by the
+/// thrusting layer and read by every layer standing on the outlines, so
+/// one tile's plate is found once for all of them.
+#[derive(Default)]
+pub struct OutlineIndex {
+    cells: HashMap<CellId, Arc<Outlines>>,
+}
+
+impl OutlineIndex {
+    pub fn cell(&self, cell: CellId) -> Option<Arc<Outlines>> {
+        self.cells.get(&cell).cloned()
+    }
+}
+
+impl CellIndex for OutlineIndex {
+    type Cell = Arc<Outlines>;
+
+    fn set(&mut self, cell: CellId, entry: Self::Cell) {
+        self.cells.insert(cell, entry);
+    }
+}
+
+impl EventIndex for OutlineIndex {
+    fn source_scale(&self) -> u32 { GRAPH_CELL_SCALE }
+
+    /// Nothing stands at a tile: the outlines are the plate graph's.
+    fn tiles(&self, _cell_ids: &[CellId]) -> Vec<(i32, i32)> { Vec::new() }
+
+    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
+
+    fn remove_cell(&mut self, cell_id: CellId) {
+        self.cells.remove(&cell_id);
+    }
+}
+
+/// The outlines a cell of the graph lattice reads: the entry the thrusting
+/// layer published for it. What thrusting itself and every layer above at
+/// the same scale ask in `prepare`.
+pub fn outlines_for(scope: &CellScope) -> Arc<Outlines> {
+    scope
+        .read::<OutlineIndex>()
+        .and_then(|idx| idx.cell(scope.cell()))
+        .unwrap_or_else(|| Arc::new(Outlines::new(&[], scope.seed())))
+}
+
 /// The outlines of every plate a cell's tiles can stand in: the resolved
 /// edges of the graph's cells under the cell and its ring.
 pub fn outlines_of(scope: &CellScope) -> Outlines {
@@ -693,13 +768,18 @@ impl WorldEvent for ThrustingEvent {
     /// Nothing originates here.
     fn max_influence(&self) -> u32 { 0 }
 
-    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
+    fn register_indexes(&self, registry: &mut IndexRegistry) {
+        registry.pre_register::<OutlineIndex>();
+    }
 
-    /// Nothing to place: the ranges are read off the plate graph.
-    fn deform(&self, _scope: &CellScope) {}
+    /// Nothing to place: the ranges are read off the plate graph. The
+    /// cell's outlines are published for every layer that reads them.
+    fn deform(&self, scope: &CellScope) {
+        scope.publish::<OutlineIndex>(Arc::new(outlines_of(scope)));
+    }
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(outlines_of(scope))
+        Box::new(outlines_for(scope))
     }
 
     fn query(
@@ -709,7 +789,7 @@ impl WorldEvent for ThrustingEvent {
         cell: &(dyn Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
-        let outlines = cell.downcast_ref::<Outlines>()?;
+        let outlines = cell.downcast_ref::<Arc<Outlines>>()?;
         let (wx, wy) = hex_to_world(q, r);
         let rise = outlines.relief(wx, wy);
         if rise <= 0.0 { return None }
