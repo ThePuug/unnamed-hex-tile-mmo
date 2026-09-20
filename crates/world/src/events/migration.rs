@@ -1009,6 +1009,7 @@ impl WorldEvent for MigrationEvent {
 mod tests {
     use super::*;
     use super::super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD, YOUNG_SHARE};
+    use std::collections::HashSet;
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
@@ -1190,9 +1191,10 @@ mod tests {
         assert!(v > 0.0 && v < 1.0 && (v - YOUNG_SHARE).abs() < 1e-12, "a young plate's vigour {v}");
     }
 
-    /// A routed cell's channels: one per node with a downstream node, each
-    /// owned by the cell its start node lies in, its flow line running from
-    /// the start node to the end node.
+    /// A routed cell's channels: one from every land node with a downstream
+    /// node, none from a flooded node off its lake's throat, each owned by
+    /// the cell its start node lies in, its flow line running from the
+    /// start node to the end node.
     #[test]
     fn a_cell_publishes_the_channels_starting_in_it() {
         use super::super::drainage::{DrainageEvent, DrainageIndex};
@@ -1212,8 +1214,11 @@ mod tests {
         let all = channels(&[&published], |_| true, S);
         let owned = channels(&[&published], |p| fine.cell_id(p.q, p.r) == own, S);
         assert!(!all.is_empty() && !owned.is_empty() && owned.len() < all.len());
-        let with_down = published.nodes.values().filter(|n| n.down.map_or(false, |d| published.nodes.contains_key(&d))).count();
-        assert!(all.len() >= with_down, "{} channels for {with_down} nodes with a published downstream node", all.len());
+        let from: HashSet<NodeKey> = all.iter().map(|c| c.from).collect();
+        for n in published.nodes.values().filter(|n| n.down.map_or(false, |d| published.nodes.contains_key(&d))) {
+            let on_throat = published.reaches.iter().any(|r| r.nodes.contains(&n.key));
+            assert_eq!(from.contains(&n.key), n.lake.is_none() || on_throat, "channel from {:?}, lake {:?}", n.key, n.lake);
+        }
         for ch in &all {
             let (p, n) = (&published.nodes[&ch.from], &published.nodes[&ch.to]);
             assert_eq!(ch.axis.len(), AXIS_STEPS + 1);

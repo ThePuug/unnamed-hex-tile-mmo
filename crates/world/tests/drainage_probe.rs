@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use common::HexLattice;
 use world::events::drainage::{
-    node_tile, DrainageEvent, CHANNEL_HEAD, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
+    node_tile, DrainageEvent, CHANNEL_HEAD, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING, REMNANT_MIN,
 };
 use world::events::motion::MotionEvent;
 use world::events::lithology::LithologyEvent;
@@ -431,7 +431,9 @@ fn base_level_is_the_first_lake_downstream_or_the_sea() {
 /// A spilling lake's sill is cut, never below the base level beneath it,
 /// and its surface is the cut sill. From the sill the breach runs down the
 /// outflow without rising and ends on ground no higher than it. A pit that
-/// drains less than a channel head keeps its lake whole. Age is a share.
+/// drains less than a channel head keeps its lake whole: its sill is
+/// lowered only to the rim the fine lattice reads, never breached below
+/// it, so the lake stands at least a remnant deep. Age is a share.
 #[test]
 fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
     let cell = cell_with_a_cut_sill();
@@ -449,8 +451,9 @@ fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
         assert!((sill.elevation - sill.cut - lake.surface).abs() < 1e-9, "a lake's surface off its cut sill at {:?}", sill.key);
         assert!(lake.surface >= sill.base - 1e-9, "a lake cut below the base level beneath its sill at {:?}", sill.key);
         if sill.catchment <= CHANNEL_HEAD {
-            assert_eq!(sill.cut, 0.0, "a sill cut by water below the channel head at {:?}", sill.key);
+            assert!(lake.surface - floor >= REMNANT_MIN - 1e-9, "a pit below the channel head breached to a sliver at {:?}", sill.key);
             kept += 1;
+            continue;
         }
         if sill.cut == 0.0 {
             continue;
