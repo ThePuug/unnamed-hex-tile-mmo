@@ -136,15 +136,19 @@ pub fn channel_depth(node: &DrainageNode) -> f64 {
     if node.lake.is_some() && node.cut <= 0.0 {
         return 0.0;
     }
-    growth(node.catchment).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
+    growth(node.catchment, node.erodibility).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
 }
 
 /// A valley's cross-section at a share `u` of the half-width from its
-/// channel: one at the channel, nothing at the divide, level at both and
-/// steepest between, the foot incision leaves and the rim diffusion rounds.
-pub fn profile(u: f64) -> f64 {
+/// channel through rock of `erodibility`: one at the channel, nothing at
+/// the divide, level at both and steepest between, the foot incision
+/// leaves and the rim diffusion rounds. In weak rock the wall is the
+/// smooth step; in hard rock creep does little against incision, so the
+/// drop crowds against the channel and the valley is a gorge under a wide
+/// rim: the step raised to the hardness.
+pub fn profile(u: f64, erodibility: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
-    1.0 - u * u * (3.0 - 2.0 * u)
+    (1.0 - u * u * (3.0 - 2.0 * u)).powf(1.0 / erodibility.max(0.05))
 }
 
 /// What dissection removes at a node: the envelope less the floor drainage
@@ -177,6 +181,8 @@ struct Cut {
     half1: f64,
     chan0: f64,
     chan1: f64,
+    erode0: f64,
+    erode1: f64,
     /// The flow line's length, what `t` runs along.
     length: f64,
     vigour0: f64,
@@ -205,6 +211,7 @@ struct At {
     /// How far the belt the river has swept reaches to each side of the
     /// flow line: the farthest its train strayed, then the channel.
     belt: f64,
+    erodibility: f64,
 }
 
 impl Cut {
@@ -223,7 +230,14 @@ impl Cut {
             lerp(self.env0 - self.floor0, self.env1 - self.floor1) + vigour * (envelope - lerp(self.env0, self.env1))
         };
         let reach = self.train.as_ref().map_or(0.0, |m| m.amplitude);
-        At { depth, base: lerp(self.base0, self.base1), half, chan: lerp(self.chan0, self.chan1), belt: reach + half }
+        At {
+            depth,
+            base: lerp(self.base0, self.base1),
+            half,
+            chan: lerp(self.chan0, self.chan1),
+            belt: reach + half,
+            erodibility: lerp(self.erode0, self.erode1),
+        }
     }
 }
 
@@ -320,6 +334,8 @@ impl Valleys {
                 half1: ch.half1,
                 chan0: channel_depth(p),
                 chan1: channel_depth(n),
+                erode0: p.erodibility,
+                erode1: n.erodibility,
                 length: start,
                 vigour0: ch.vigour0,
                 vigour1: ch.vigour1,
@@ -433,7 +449,7 @@ impl Valleys {
             let t = x / cut.length;
             let at = cut.at(t, envelope);
             let u = if at.belt < VALLEY_HALF_WIDTH { ((d - at.belt) / (VALLEY_HALF_WIDTH - at.belt)).max(0.0) } else { 0.0 };
-            let valley = (at.depth * profile(u)).min((envelope - at.base).max(0.0));
+            let valley = (at.depth * profile(u, at.erodibility)).min((envelope - at.base).max(0.0));
             best.valley = best.valley.max(valley);
             if d <= at.belt.max(at.half) {
                 let beside = cut.train.as_ref().map_or(d, |m| m.distance(wx, wy));
@@ -609,37 +625,55 @@ mod tests {
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
-    /// The spawn cell routed, with its channels drawn and its valleys
-    /// built, and the envelope they were routed on.
+    /// The nearest cell to the spawn that owns a channelled node and a
+    /// lake with its outlet, routed, with its channels drawn and its
+    /// valleys built over the envelope they were routed on. Searched
+    /// rather than named, since a change beneath drainage can drain the
+    /// lakes of any one cell.
     fn spawn_valleys() -> (DrainageCell, Valleys) {
         let lattice = DrainageIndex::lattice();
-        let cell = lattice.cell_id(-58_204, 4_907);
-        let (cq, cr) = lattice.cell_center(cell);
-        let (cx, cy) = hex_to_world(cq, cr);
-        let window = (3 * lattice.radius + 1) as f64;
-        let coasts = Coasts::in_box(cx, cy, window, S);
-        let outlines = Outlines::in_box(cx, cy, window, S);
-        let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
-        let drawn = channels(&[&published], |_| true, S);
-        let refs: Vec<&Channel> = drawn.iter().collect();
-        let valleys = Valleys::new(&[&published], &refs, |_| true, Envelope::new(S, coasts, outlines));
-        (published, valleys)
+        let spawn = lattice.cell_id(-58_204, 4_907);
+        let mut cells = lattice.cells_within_distance(spawn, 2);
+        cells.sort_by_key(|&c| (hex_distance(lattice.cell_center(c), lattice.cell_center(spawn)), c));
+        for cell in cells {
+            let (cq, cr) = lattice.cell_center(cell);
+            let (cx, cy) = hex_to_world(cq, cr);
+            let window = (3 * lattice.radius + 1) as f64;
+            let coasts = Coasts::in_box(cx, cy, window, S);
+            let outlines = Outlines::in_box(cx, cy, window, S);
+            let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
+            let outlet = published.lakes.iter().any(|l| l.outlet.map_or(false, |o| published.nodes.contains_key(&o)));
+            let channelled = published.nodes.values().any(|n| channel_depth(n) > 0.0);
+            if !(outlet && channelled) {
+                continue;
+            }
+            let drawn = channels(&[&published], |_| true, S);
+            let refs: Vec<&Channel> = drawn.iter().collect();
+            let valleys = Valleys::new(&[&published], &refs, |_| true, Envelope::new(S, coasts, outlines));
+            return (published, valleys);
+        }
+        panic!("no cell within two of the spawn owns a lake with its outlet and a channel");
     }
 
     /// The profile is level at the channel and the divide, falls between,
-    /// and is never steeper than one and a half depths per half-width.
+    /// and in weak rock is never steeper than one and a half depths per
+    /// half-width; in hard rock it drops nearer the channel and is lower
+    /// everywhere between.
     #[test]
     fn profile_is_level_at_channel_and_divide() {
-        assert_eq!(profile(0.0), 1.0);
-        assert_eq!(profile(1.0), 0.0);
+        assert_eq!(profile(0.0, 1.0), 1.0);
+        assert_eq!(profile(1.0, 1.0), 0.0);
         let mut last = 1.0;
         for i in 1..=100 {
             let u = i as f64 / 100.0;
-            let p = profile(u);
+            let p = profile(u, 1.0);
             assert!(p <= last, "profile rises at {u}");
             assert!(last - p <= 1.5 * 0.01 + 1e-9, "profile steeper than its middle at {u}");
             last = p;
+            let hard = profile(u, 0.3);
+            assert!(hard <= p, "a gorge stands higher than a vale's wall at {u}");
         }
+        assert!(profile(0.25, 0.3) < 0.6 && profile(0.25, 1.0) > 0.8);
     }
 
     /// The channel's depth is nothing at the head, a z-level just past it,
@@ -648,7 +682,7 @@ mod tests {
     fn channel_depth_starts_at_the_head_and_saturates() {
         let node = |catchment: f64, lake: Option<usize>| DrainageNode {
             key: (0, 0), q: 0, r: 0, wx: 0.0, wy: 0.0, elevation: 10.0, surface: 10.0,
-            direction: (1.0, 0.0), catchment, base: 0.0, down: None, lake, sill: false, age: 1.0, cut: 0.0, floor: 5.0,
+            direction: (1.0, 0.0), catchment, base: 0.0, down: None, lake, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
         };
         assert_eq!(channel_depth(&node(CHANNEL_HEAD, None)), 0.0);
         assert!((channel_depth(&node(CHANNEL_HEAD + 1e-9, None)) - CHANNEL_DEPTH_MIN).abs() < 1e-3);

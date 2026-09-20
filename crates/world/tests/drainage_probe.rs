@@ -10,6 +10,7 @@ use world::events::drainage::{
     node_tile, DrainageEvent, CHANNEL_HEAD, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
 };
 use world::events::motion::MotionEvent;
+use world::events::lithology::LithologyEvent;
 use world::events::thickening::ThickeningEvent;
 use world::events::plates::Coasts;
 use world::events::thrusting::{Outlines, ThrustingEvent};
@@ -29,8 +30,31 @@ fn composite() -> Composite {
     c.add_event(Box::new(MotionEvent::new()));
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
+    c.add_event(Box::new(LithologyEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
     c
+}
+
+/// The nearest cell to the spawn whose routing cuts a sill it owns: what
+/// the sill's claims are read on. Searched, since a change beneath
+/// drainage can drain the lakes of any one cell.
+fn cell_with_a_cut_sill() -> (i32, i32) {
+    let lat = lattice();
+    let spawn = spawn_cell();
+    let mut cells = lat.cells_within_distance(spawn, 2);
+    let centre = lat.cell_center(spawn);
+    cells.sort_by_key(|&c| {
+        let (q, r) = lat.cell_center(c);
+        ((q - centre.0).abs() + (r - centre.1).abs() + (q + r - centre.0 - centre.1).abs(), c)
+    });
+    for cell in cells {
+        let routing = DrainageEvent::new().route(&lat, cell, SEED, &coasts_for(cell), &outlines_for(cell));
+        let owned = routing.owned_cell();
+        if owned.lakes.iter().any(|l| l.outlet.and_then(|o| owned.nodes.get(&o)).map_or(false, |s| s.cut > 0.0)) {
+            return cell;
+        }
+    }
+    panic!("no cell within two of the spawn cuts a sill it owns");
 }
 
 fn lattice() -> HexLattice {
@@ -410,7 +434,8 @@ fn base_level_is_the_first_lake_downstream_or_the_sea() {
 /// drains less than a channel head keeps its lake whole. Age is a share.
 #[test]
 fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
+    let cell = cell_with_a_cut_sill();
+    let routing = DrainageEvent::new().route(&lattice(), cell, SEED, &coasts_for(cell), &outlines_for(cell));
     for k in 0..routing.keys.len() {
         assert!((0.0..=1.0).contains(&routing.age[k]), "age {} at {:?}", routing.age[k], routing.keys[k]);
         assert!(routing.cut[k] >= 0.0, "a negative cut at {:?}", routing.keys[k]);
@@ -452,7 +477,7 @@ fn a_cut_sill_lowers_its_lake_and_breaches_the_rim() {
         if c > d { (n + 1, c, hex_to_world(q, r)) } else { (n + (c > 0.0) as usize, d, at) }
     });
     println!("{cut} owned sills cut, {breach_nodes} nodes of breach behind them; {kept} lakes kept for draining less than a head; {breached} nodes cut in the window, deepest {deepest:.1} z at world {at:?}");
-    assert!(cut > 0, "no sill in the spawn cell is cut");
+    assert!(cut > 0, "no sill in the cell is cut");
 }
 
 /// Where the ground is cut below the envelope and by how much, over the

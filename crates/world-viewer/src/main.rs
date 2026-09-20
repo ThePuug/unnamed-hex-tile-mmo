@@ -19,6 +19,7 @@ use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateB
 use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
 use world::events::dissection::Valleys;
 use world::events::drainage::{surface_at, DrainageIndex, NODE_SPACING};
+use world::events::lithology::{rock_on, Rock};
 use world::events::migration::ChannelIndex;
 use world::events::plates::{Coasts, PlateEdgeIndex};
 use world::lattice::node_world;
@@ -38,6 +39,9 @@ enum Layer {
     Boundaries,
     /// Thickening field: the plateau on the substrate, hillshaded.
     ThickeningField,
+    /// Lithology field: the rock at the surface by kind, the cuestas
+    /// hillshaded over it.
+    LithologyField,
     /// Dissection field: the cut on its own, hillshaded.
     DissectionField,
     /// Water field: the dissected ground hillshaded, and every surface
@@ -66,6 +70,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("boundaries", Layer::Boundaries),
     ("tilt", Layer::Tilt),
     ("thickening-field", Layer::ThickeningField),
+    ("lithology-field", Layer::LithologyField),
     ("dissection-field", Layer::DissectionField),
     ("water-field", Layer::WaterField),
     ("thrusting-fronts", Layer::Fronts),
@@ -84,7 +89,7 @@ impl Layer {
     fn is_whole_image(self) -> bool {
         matches!(
             self,
-            Layer::Tilt | Layer::ThickeningField | Layer::DissectionField | Layer::WaterField
+            Layer::Tilt | Layer::ThickeningField | Layer::LithologyField | Layer::DissectionField | Layer::WaterField
         )
     }
 }
@@ -259,6 +264,7 @@ fn main() {
             Layer::Tilt => render_tilt(&cli, w, h, scale),
             Layer::DissectionField => render_dissection_field(&cli, w, h, scale),
             Layer::WaterField => render_water_field(&cli, w, h, scale),
+            Layer::LithologyField => render_lithology_field(&cli, w, h, scale),
             _ => render_thickening_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
@@ -902,6 +908,73 @@ fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
         }).collect::<Vec<u8>>()
     }).collect()
+}
+
+/// The rock at the surface by kind, shale grey, sandstone tan, limestone
+/// pale, basement dark red, the sea blue, with the cuestas hillshaded: the
+/// bands and rings the cover makes and the scarps that stand on them.
+fn render_lithology_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
+    let d = scale.max(1.0);
+    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let outlines = &outlines;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
+    let at = move |x: f64, y: f64| {
+        let substrate = world::substrate_on(x, y, coasts, seed);
+        (rock_on(x, y, seed, coasts, outlines), substrate)
+    };
+    let mut counts = [0usize; 5];
+    let buf: Vec<u8> = (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let (g, substrate) = at(wx, wy);
+            if substrate <= 0.0 {
+                return [40u8, 70, 140];
+            }
+            let base: (f64, f64, f64) = match g.rock {
+                Rock::Shale => (0.55, 0.55, 0.52),
+                Rock::Sandstone => (0.82, 0.68, 0.42),
+                Rock::Limestone => (0.90, 0.88, 0.78),
+                Rock::Basement => (0.55, 0.25, 0.22),
+            };
+            let z = g.stand;
+            let zx = at(wx + d, wy).0.stand;
+            let zy = at(wx, wy + d).0.stand;
+            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
+            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
+            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
+            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
+            let shade = 0.45 + 0.7 * lambert;
+            [
+                ((base.0 * shade).clamp(0.0, 1.0) * 255.0) as u8,
+                ((base.1 * shade).clamp(0.0, 1.0) * 255.0) as u8,
+                ((base.2 * shade).clamp(0.0, 1.0) * 255.0) as u8,
+            ]
+        }).collect::<Vec<u8>>()
+    }).collect();
+    // A census of the land in view, for the eye's check of the shares.
+    let step = (w / 200).max(1);
+    for py in (0..h).step_by(step) {
+        for px in (0..w).step_by(step) {
+            let (g, substrate) = at(origin_x + px as f64 * scale, origin_y + py as f64 * scale);
+            if substrate <= 0.0 { counts[4] += 1; continue }
+            counts[match g.rock { Rock::Shale => 0, Rock::Sandstone => 1, Rock::Limestone => 2, Rock::Basement => 3 }] += 1;
+        }
+    }
+    let land: usize = counts[..4].iter().sum::<usize>().max(1);
+    log::info!(
+        "Lithology: shale {:.0}%, sandstone {:.0}%, limestone {:.0}%, basement {:.0}% of the land in view",
+        100.0 * counts[0] as f64 / land as f64,
+        100.0 * counts[1] as f64 / land as f64,
+        100.0 * counts[2] as f64 / land as f64,
+        100.0 * counts[3] as f64 / land as f64,
+    );
+    buf
 }
 
 /// Regional tilt: a diverging ramp over the land/ocean base, with arrows on a

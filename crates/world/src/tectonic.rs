@@ -55,6 +55,18 @@ pub const AGE_WAVELENGTH: f64 = CONTINENT_WAVELENGTH;
 /// near 0.2 and 0.8, measured by `plate_probe`.
 pub const AGE_SPREAD: f64 = 0.5;
 
+/// What a new plate's erosion has done as a share of an aged plate's, down
+/// and sideways alike: the narrow cut of a young orogen, its plateau
+/// surface largely intact, its cuestas barely etched.
+///
+/// Tuning, not yet judged in the viewer.
+pub const YOUNG_SHARE: f64 = 0.5;
+
+/// The aged share: what a plate of `age` has done of an aged plate's work.
+pub fn aged(age: f64) -> f64 {
+    YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)
+}
+
 /// The farthest any ground of a plate lies from its seed, in world units.
 ///
 /// EMPIRICAL, measured by `plate_reach_is_bounded` over thousands of plates

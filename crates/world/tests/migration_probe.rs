@@ -15,7 +15,7 @@ const SEED: u64 = 0x9E3779B97F4A7C15;
 fn node(wx: f64, key: (i32, i32), catchment: f64) -> DrainageNode {
     DrainageNode {
         key, q: 0, r: 0, wx, wy: 0.0, elevation: 10.0, surface: 10.0, direction: (1.0, 0.0), catchment, base: 0.0,
-        down: None, lake: None, sill: false, age: 1.0, cut: 0.0, floor: 5.0,
+        down: None, lake: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
     }
 }
 
@@ -24,7 +24,7 @@ fn straight(key: (i32, i32), catchment: f64) -> (Axis, Channel) {
     let l = NODE_SPACING as f64;
     let (p, n) = (node(0.0, key, catchment), node(l, (key.0 + 1, key.1), catchment));
     let axis = Axis::new(flow_line(&p, &n));
-    let half = channel_half_width(catchment);
+    let half = channel_half_width(catchment, 1.0);
     let channel = Channel {
         from: p.key, to: n.key, axis: Vec::new(), train: None, half0: half, half1: half, vigour0: 1.0, vigour1: 1.0, entry: 1.0,
     };

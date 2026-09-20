@@ -27,6 +27,7 @@ QOI to `world.qoi` (`--format png` writes `world.png`), views
 | `boundaries` | motion index | each edge along its chain: hue by regime, width by convergence, a tick toward the plate going under |
 | `tilt` | tilt field | the potential as a diverging ramp, arrows downslope |
 | `thickening-field` | thickening field | the plateau on the substrate, hillshaded; builds the coasts and plate outlines under the viewport itself |
+| `lithology-field` | lithology field | the rock at the surface by kind, shale grey, sandstone tan, limestone pale, basement red, the cuestas hillshaded; logs the shares of the land in view |
 | `dissection-field` | dissection field | the cut on its own, hillshaded, every valley a depression in a flat sheet; routes the drainage cells under the viewport itself |
 | `water-field` | dissection field | the dissected ground hillshaded, and every surface standing over it in blue, darker with depth: the sea, the lakes, the channels; rounded to steps as a tile reads it |
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |

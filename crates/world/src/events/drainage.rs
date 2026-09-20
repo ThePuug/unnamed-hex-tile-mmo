@@ -84,6 +84,7 @@ use common::HexLattice;
 use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::lithology::rock_at;
 use super::plates::{Coasts, PlateEdgeIndex};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
@@ -91,6 +92,7 @@ use super::tilt::tilt_at;
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
 pub use crate::lattice::{node_tile, NodeKey, NODE_SPACING};
+pub use crate::tectonic::{aged, YOUNG_SHARE};
 use crate::tectonic::PLATE_REACH;
 use crate::{hex_to_world, substrate_on};
 
@@ -169,14 +171,24 @@ pub const CHANNEL_HEAD: f64 = 4.0;
 /// trunk is full and everything else is partial.
 pub const CATCHMENT_FULL: f64 = 48.0;
 
-/// How far past the channel head a catchment of `catchment` nodes has grown,
-/// as the square root of its share of the way to a full trunk: the way a
-/// channel's width and depth grow with discharge. None below the head.
-pub fn growth(catchment: f64) -> Option<f64> {
-    if catchment <= CHANNEL_HEAD {
+/// The channel head on rock of `erodibility`: the head's catchment over
+/// it, so a hard rock needs proportionally more water before its sheet
+/// flow gathers into a channel, and a shield's streams begin further from
+/// the divide than a shale plain's.
+pub fn head_on(erodibility: f64) -> f64 {
+    CHANNEL_HEAD / erodibility.max(0.05)
+}
+
+/// How far past the channel head on rock of `erodibility` a catchment of
+/// `catchment` nodes has grown, as the square root of its share of the way
+/// to a full trunk: the way a channel's width and depth grow with
+/// discharge. None below the head.
+pub fn growth(catchment: f64, erodibility: f64) -> Option<f64> {
+    let head = head_on(erodibility);
+    if catchment <= head {
         return None;
     }
-    Some(((catchment - CHANNEL_HEAD) / (CATCHMENT_FULL - CHANNEL_HEAD)).min(1.0).sqrt())
+    Some(((catchment - head) / (CATCHMENT_FULL - head).max(1.0)).min(1.0).sqrt())
 }
 
 /// How much of the basin behind it a full trunk cuts its sill by, per unit
@@ -187,12 +199,13 @@ pub fn growth(catchment: f64) -> Option<f64> {
 pub const SILL_CUT_RATE: f64 = 1.5;
 
 /// The share of the basin behind it a sill is cut by, with `catchment`
-/// nodes of water leaving over it on a plate of `age`: the river's growth
-/// past the channel head at [`SILL_CUT_RATE`] per unit of age, saturating
-/// at the whole. Nothing below the head: a pit that drains little keeps its
-/// lake at any age.
-pub fn sill_share(age: f64, catchment: f64) -> f64 {
-    growth(catchment).map_or(0.0, |g| (SILL_CUT_RATE * age * g).min(1.0))
+/// nodes of water leaving over it on a plate of `age` through rock of
+/// `erodibility`: the river's growth past the channel head at
+/// [`SILL_CUT_RATE`] per unit of age and erodibility, saturating at the
+/// whole. Nothing below the head: a pit that drains little keeps its lake
+/// at any age, and a hard sill holds its lake longer.
+pub fn sill_share(age: f64, catchment: f64, erodibility: f64) -> f64 {
+    growth(catchment, erodibility).map_or(0.0, |g| (SILL_CUT_RATE * age * erodibility * g).min(1.0))
 }
 
 /// The share of its height above base level a full trunk on a fully aged
@@ -200,63 +213,67 @@ pub fn sill_share(age: f64, catchment: f64) -> f64 {
 /// plateau. The rest is the fall that keeps the river flowing.
 pub const RELIEF_SHARE_MAX: f64 = 0.7;
 
-/// What a new plate's rivers have done as a share of an aged plate's, down
-/// and sideways alike: the narrow cut of a young orogen, its plateau
-/// surface largely intact.
-///
-/// Tuning, not yet judged in the viewer.
-pub const YOUNG_SHARE: f64 = 0.5;
-
-/// The aged share: what a plate of `age` has done of an aged plate's work.
-pub fn aged(age: f64) -> f64 {
-    YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)
-}
-
 /// The share of the height above base level a channel of `catchment` nodes
-/// on a plate of `age` has cut: nothing below the channel head, then growing
-/// as the square root of the catchment past it, the way a channel's width
-/// does, to the full share; and with age, from a young plate's share of it
-/// to the whole.
-pub fn relief_share(catchment: f64, age: f64) -> f64 {
-    growth(catchment).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged(age))
+/// on a plate of `age` has cut through rock of `erodibility`: nothing
+/// below the channel head, then growing as the square root of the
+/// catchment past it, the way a channel's width does, to the full share;
+/// with age, from a young plate's share of it to the whole; and by the
+/// rock, the whole in shale and a third of it in basement.
+pub fn relief_share(catchment: f64, age: f64, erodibility: f64) -> f64 {
+    growth(catchment, erodibility).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged(age) * erodibility)
 }
 
-/// The floor a river has cut to at a node, in z-levels: where the routing
-/// cut a sill or a breach, exactly the ground it routed over; on flooded
-/// ground the lakebed, which lies below its base and is not cut; else the
-/// envelope less its share of the height above base level. Dissection cuts
-/// to it and never below; a channel entering a lake grades to the lake's
-/// surface, its base, and never to the bed.
-pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, cut: f64, sill: bool, flooded: bool) -> f64 {
+/// The floor a river has cut to at a node on its own, in z-levels: where
+/// the routing cut a sill or a breach, exactly the ground it routed over;
+/// on flooded ground the lakebed, which lies below its base and is not
+/// cut; else the envelope less its share of the height above base level.
+/// A river is held up by a harder lip downstream, which [`Routing`]
+/// settles over the reach: the floor published is never below the next
+/// floor downstream. Dissection cuts to it and never below; a channel
+/// entering a lake grades to the lake's surface, its base, and never to
+/// the bed.
+pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, cut: f64, sill: bool, flooded: bool) -> f64 {
     if sill || cut > 0.0 {
         return elevation - cut;
     }
     if flooded {
         return elevation;
     }
-    elevation - (elevation - base).max(0.0) * relief_share(catchment, age)
+    elevation - (elevation - base).max(0.0) * relief_share(catchment, age, erodibility)
 }
 
 // ── The surface ─────────────────────────────────────────────────────────────
 
-/// The surface beneath drainage at a position, in z-levels, and the age of
-/// the plate it stands on: the layers summed as the functions they are, the
-/// substrate from the coasts in reach, the tilt, the ranges and the plateau
-/// from the plate outlines in reach, the plate looked up once for all
-/// three. The surface equals the composed tile's elevation at a tile
-/// centre.
-pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> (f64, f64) {
+/// What drainage reads beneath it at a position: the surface in z-levels,
+/// the age of the plate it stands on, and the erodibility of the rock at
+/// the surface.
+#[derive(Clone, Copy, Debug)]
+pub struct Ground {
+    pub surface: f64,
+    pub age: f64,
+    pub erodibility: f64,
+}
+
+/// The ground beneath drainage at a position: the layers summed as the
+/// functions they are, the substrate from the coasts in reach, the tilt,
+/// the ranges and the plateau from the plate outlines in reach, and the
+/// cuesta the rock stands as, the plate looked up once for all of them.
+/// The surface equals the composed tile's elevation at a tile centre.
+pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
-    let Some((plate, distances)) = outlines.at(wx, wy) else { return (base, 0.0) };
+    let Some((plate, distances)) = outlines.at(wx, wy) else {
+        return Ground { surface: base, age: 0.0, erodibility: 1.0 };
+    };
     let relief = outlines.relief_of(plate, &distances, wx, wy).max(0.0);
     let plateau = PLATEAU_RISE * plateau_share_of(plate, &distances).max(0.0);
-    (base + relief + plateau, plate.age)
+    let rock = rock_at(wx, wy, seed, plate.id, plate.age, substrate, relief);
+    Ground { surface: base + relief + plateau + rock.stand, age: plate.age, erodibility: rock.erodibility }
 }
 
 /// The surface of [`ground_at`] alone.
 pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> f64 {
-    ground_at(wx, wy, seed, coasts, outlines).0
+    ground_at(wx, wy, seed, coasts, outlines).surface
 }
 
 // ── Nodes ───────────────────────────────────────────────────────────────────
@@ -363,6 +380,8 @@ pub struct DrainageNode {
     /// The age of the plate this node stands on, 0 to 1 as
     /// `tectonic::Plate::age`.
     pub age: f64,
+    /// The erodibility of the rock at this node, as `lithology::Rock`.
+    pub erodibility: f64,
     /// How far below the envelope the river leaving a cut sill has cut the
     /// ground here: the sill's cut at the sill, and along its outflow the
     /// breach through the rim, to where the ground is no higher. Nothing
@@ -569,8 +588,13 @@ pub struct Routing {
     pub parent: Vec<Option<usize>>,
     /// The plate's age at each node.
     pub age: Vec<f64>,
+    /// The erodibility of the rock at each node.
+    pub erodibility: Vec<f64>,
     /// The cut below the envelope at each node, as `DrainageNode::cut`.
     pub cut: Vec<f64>,
+    /// The floor at each node, as `DrainageNode::floor`: its own, held up
+    /// by any harder lip downstream.
+    pub floor: Vec<f64>,
     index: HashMap<NodeKey, usize>,
     lakes: Vec<RoutedLake>,
     reaches: Vec<RoutedReach>,
@@ -635,8 +659,9 @@ impl Routing {
                     lake,
                     sill,
                     age: self.age[k],
+                    erodibility: self.erodibility[k],
                     cut: self.cut[k],
-                    floor: floor_at(self.elevation[k], self.base[k], self.carried[k], self.age[k], self.cut[k], sill, lake.is_some()),
+                    floor: self.floor[k],
                 },
             );
         }
@@ -669,9 +694,8 @@ impl Routing {
 // ── The event ───────────────────────────────────────────────────────────────
 
 pub struct DrainageEvent {
-    /// Node elevations and plate ages, shared by every window that contains
-    /// a node.
-    nodes: DashMap<NodeKey, (f64, f64)>,
+    /// The ground at each node, shared by every window that contains it.
+    nodes: DashMap<NodeKey, Ground>,
     /// The envelope at points of the fine lattice, shared by every window.
     fine: DashMap<NodeKey, f64>,
 }
@@ -681,8 +705,8 @@ impl DrainageEvent {
         Self { nodes: DashMap::new(), fine: DashMap::new() }
     }
 
-    /// The envelope and the plate's age at a node.
-    fn ground(&self, key: NodeKey, seed: u64, coasts: &Coasts, outlines: &Outlines) -> (f64, f64) {
+    /// The ground at a node.
+    fn ground(&self, key: NodeKey, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
         if let Some(g) = self.nodes.get(&key) {
             return *g;
         }
@@ -699,7 +723,7 @@ impl DrainageEvent {
             return *h;
         }
         let (x, y) = fine_world(key);
-        let h = ground_at(x, y, seed, coasts, outlines).0;
+        let h = ground_at(x, y, seed, coasts, outlines).surface;
         self.fine.insert(key, h);
         h
     }
@@ -898,8 +922,10 @@ impl DrainageEvent {
             .iter()
             .map(|&(i, j)| NEIGHBOURS.map(|(di, dj)| index.get(&(i + di, j + dj)).copied()))
             .collect();
-        let (elevation, age): (Vec<f64>, Vec<f64>) =
-            keys.iter().map(|&k| self.ground(k, seed, coasts, outlines)).unzip();
+        let grounds: Vec<Ground> = keys.iter().map(|&k| self.ground(k, seed, coasts, outlines)).collect();
+        let elevation: Vec<f64> = grounds.iter().map(|g| g.surface).collect();
+        let age: Vec<f64> = grounds.iter().map(|g| g.age).collect();
+        let erodibility: Vec<f64> = grounds.iter().map(|g| g.erodibility).collect();
 
         let mut ground = elevation.clone();
         let mut routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
@@ -910,7 +936,7 @@ impl DrainageEvent {
             // Sills are cut first; the rims of the lakes that survive are
             // then read on the fine lattice, and a lake that falls is cut
             // no further: one cut per basin.
-            let next = match Self::breach(&routing, &mut cut_sills, &age) {
+            let next = match Self::breach(&routing, &mut cut_sills, &age, &erodibility) {
                 Some(breached) => breached,
                 None => {
                     let mut next = ground.clone();
@@ -934,7 +960,57 @@ impl DrainageEvent {
         routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.lake_of, &routing.lakes, &routing.cut, &ground);
         routing.elevation = elevation;
         routing.age = age;
+        routing.erodibility = erodibility;
+        routing.floor = Self::floors(&routing);
         routing
+    }
+
+    /// The floor at every node: its own by [`floor_at`], and never below
+    /// the floor of the land node its water goes to next, so a river above
+    /// a harder lip is held up to the lip and its floor never rises along
+    /// a reach. Walked from each node to the sea once, memoised.
+    fn floors(routing: &Routing) -> Vec<f64> {
+        let n = routing.keys.len();
+        let sills: HashSet<usize> = routing.lakes.iter().filter_map(|l| l.outlet).collect();
+        let own: Vec<f64> = (0..n)
+            .map(|k| {
+                floor_at(
+                    routing.elevation[k],
+                    routing.base[k],
+                    routing.carried[k],
+                    routing.age[k],
+                    routing.erodibility[k],
+                    routing.cut[k],
+                    sills.contains(&k),
+                    routing.lake_of[k].is_some(),
+                )
+            })
+            .collect();
+        let mut floor: Vec<Option<f64>> = vec![None; n];
+        for k in 0..n {
+            if floor[k].is_some() {
+                continue;
+            }
+            let mut path = vec![k];
+            let mut level = f64::NEG_INFINITY;
+            loop {
+                let cur = *path.last().unwrap();
+                if let Some(f) = floor[cur] {
+                    level = f;
+                    path.pop();
+                    break;
+                }
+                match routing.down[cur] {
+                    Some(d) if routing.kind[d] == Kind::Land && routing.lake_of[cur].is_none() => path.push(d),
+                    _ => break,
+                }
+            }
+            for &p in path.iter().rev() {
+                level = own[p].max(level);
+                floor[p] = Some(level);
+            }
+        }
+        floor.into_iter().zip(own).map(|(f, o)| f.unwrap_or(o)).collect()
     }
 
     /// The ground with every spilling lake's sill cut and the breach its
@@ -946,14 +1022,14 @@ impl DrainageEvent {
     /// is not cut again and every sill cut joins it: one cut per basin, so a
     /// pass cuts only the sills of the sub-basins the pass before uncovered.
     /// None when no sill is cut.
-    fn breach(routing: &Routing, cut_sills: &mut HashSet<usize>, age: &[f64]) -> Option<Vec<f64>> {
+    fn breach(routing: &Routing, cut_sills: &mut HashSet<usize>, age: &[f64], erodibility: &[f64]) -> Option<Vec<f64>> {
         let mut ground = routing.elevation.clone();
         let mut cut_any = false;
         for (id, lake) in routing.lakes.iter().enumerate() {
             let Some(sill) = lake.outlet.filter(|s| !cut_sills.contains(s)) else { continue };
             let floor = lake.members.iter().map(|&m| routing.elevation[m]).fold(f64::MAX, f64::min);
             let room = (lake.surface - floor).min(lake.surface - routing.base[sill]);
-            let cut = room * sill_share(age[sill], routing.catchment[sill]);
+            let cut = room * sill_share(age[sill], routing.catchment[sill], erodibility[sill]);
             if cut <= FLAT {
                 continue;
             }
@@ -1301,7 +1377,9 @@ impl DrainageEvent {
             lakes,
             reaches,
             age: vec![0.0; n],
+            erodibility: vec![1.0; n],
             cut: vec![0.0; n],
+            floor: vec![0.0; n],
         }
     }
 }
@@ -1359,17 +1437,17 @@ mod tests {
     /// The share starts at the head, grows with catchment, and saturates.
     #[test]
     fn share_starts_at_the_head_and_saturates() {
-        assert_eq!(relief_share(CHANNEL_HEAD, 1.0), 0.0);
-        assert_eq!(relief_share(1.0, 1.0), 0.0);
+        assert_eq!(relief_share(CHANNEL_HEAD, 1.0, 1.0), 0.0);
+        assert_eq!(relief_share(1.0, 1.0, 1.0), 0.0);
         let mut last = 0.0;
         for i in 0..200 {
             let a = CHANNEL_HEAD + i as f64 * 0.5;
-            let g = relief_share(a, 1.0);
+            let g = relief_share(a, 1.0, 1.0);
             assert!(g >= last && g <= RELIEF_SHARE_MAX, "share {g} at {a}");
             last = g;
         }
-        assert!((relief_share(CATCHMENT_FULL, 1.0) - RELIEF_SHARE_MAX).abs() < 1e-12);
-        assert_eq!(relief_share(10.0 * CATCHMENT_FULL, 1.0), RELIEF_SHARE_MAX);
+        assert!((relief_share(CATCHMENT_FULL, 1.0, 1.0) - RELIEF_SHARE_MAX).abs() < 1e-12);
+        assert_eq!(relief_share(10.0 * CATCHMENT_FULL, 1.0, 1.0), RELIEF_SHARE_MAX);
     }
 
     /// The share grows with the plate's age, from a young plate's share of
@@ -1377,16 +1455,28 @@ mod tests {
     #[test]
     fn share_grows_with_age() {
         for c in [CHANNEL_HEAD + 1.0, CATCHMENT_FULL / 2.0, CATCHMENT_FULL] {
-            let (young, old) = (relief_share(c, 0.0), relief_share(c, 1.0));
+            let (young, old) = (relief_share(c, 0.0, 1.0), relief_share(c, 1.0, 1.0));
             assert!(young > 0.0 && young < old, "share {young} young, {old} old at {c}");
             assert!((young - YOUNG_SHARE * old).abs() < 1e-12);
             let mut last = young;
             for i in 1..=10 {
-                let s = relief_share(c, i as f64 / 10.0);
+                let s = relief_share(c, i as f64 / 10.0, 1.0);
                 assert!(s >= last, "share falls with age at {c}");
                 last = s;
             }
         }
+    }
+
+    /// Hard rock moves the channel head out and cuts less past it: at a
+    /// catchment shale channels, basement does not; at a trunk's, basement
+    /// has cut a third of shale's share; a hard sill holds its lake longer.
+    #[test]
+    fn hard_rock_channels_later_and_cuts_less() {
+        assert!(head_on(0.3) > head_on(1.0));
+        assert!(growth(CHANNEL_HEAD + 1.0, 1.0).is_some() && growth(CHANNEL_HEAD + 1.0, 0.3).is_none());
+        let (soft, hard) = (relief_share(10.0 * CATCHMENT_FULL, 1.0, 1.0), relief_share(10.0 * CATCHMENT_FULL, 1.0, 0.3));
+        assert!((hard - 0.3 * soft).abs() < 1e-12, "hard {hard} for soft {soft}");
+        assert!(sill_share(1.0, CATCHMENT_FULL, 0.3) < sill_share(1.0, CATCHMENT_FULL, 1.0));
     }
 
     /// A node's floor is the routed ground where a sill or a breach was
@@ -1394,12 +1484,14 @@ mod tests {
     /// of the height above base elsewhere, never below base.
     #[test]
     fn the_floor_is_the_cut_the_bed_or_the_share() {
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 7.0, true, false), 13.0);
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 7.0, false, false), 13.0);
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, true), 20.0);
-        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, false);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, true, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, false, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, true), 20.0);
+        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false);
         assert!((floor - (20.0 - 15.0 * RELIEF_SHARE_MAX)).abs() < 1e-12);
-        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 0.0, false, false), 20.0);
-        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 0.0, false, false), 3.0);
+        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 1.0, 0.0, false, false), 20.0);
+        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false), 3.0);
+        let hard = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.3, 0.0, false, false);
+        assert!(hard > floor, "hard rock cut as deep as shale");
     }
 }

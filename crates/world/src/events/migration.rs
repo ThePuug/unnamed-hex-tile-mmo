@@ -105,11 +105,11 @@ pub const CHANNEL_HALF_WIDTH_MIN: f64 = 0.6;
 /// Half-width of a full trunk's channel, in tiles.
 pub const CHANNEL_HALF_WIDTH_MAX: f64 = 3.5;
 
-/// The channel's half-width at `catchment` nodes: nothing below the channel
-/// head, then from the head's width to a trunk's as the catchment grows, the
-/// way a channel's width grows with discharge.
-pub fn channel_half_width(catchment: f64) -> f64 {
-    growth(catchment).map_or(0.0, |g| CHANNEL_HALF_WIDTH_MIN + (CHANNEL_HALF_WIDTH_MAX - CHANNEL_HALF_WIDTH_MIN) * g)
+/// The channel's half-width at `catchment` nodes on rock of `erodibility`:
+/// nothing below the channel head, then from the head's width to a trunk's
+/// as the catchment grows, the way a channel's width grows with discharge.
+pub fn channel_half_width(catchment: f64, erodibility: f64) -> f64 {
+    growth(catchment, erodibility).map_or(0.0, |g| CHANNEL_HALF_WIDTH_MIN + (CHANNEL_HALF_WIDTH_MAX - CHANNEL_HALF_WIDTH_MIN) * g)
 }
 
 // ── The flow line ───────────────────────────────────────────────────────────
@@ -320,16 +320,18 @@ pub fn meander_amplitude(wavelength: f64) -> f64 {
 
 /// How far the river at a node has turned to its banks, 0 to 1: nothing
 /// above the channel head or on flooded ground; else the plate's aged
-/// share by how far the floor's grade over `run` to `floor_down`, the next
-/// floor downstream, lies under the grade a river cuts down at, whole at
-/// the grade of the plains and nothing at a mountain stream's.
+/// share, by the bank's erodibility, by how far the floor's grade over
+/// `run` to `floor_down`, the next floor downstream, lies under the grade
+/// a river cuts down at, whole at the grade of the plains and nothing at a
+/// mountain stream's. A river in shale sweeps its belt; the same river
+/// across basement holds its line.
 pub fn vigour(node: &DrainageNode, floor_down: f64, run: f64) -> f64 {
-    if node.lake.is_some() || growth(node.catchment).is_none() {
+    if node.lake.is_some() || growth(node.catchment, node.erodibility).is_none() {
         return 0.0;
     }
     let grade = (node.floor - floor_down).max(0.0) * RISE / run;
     let g = ((grade - MEANDER_GRADE_FULL) / (MEANDER_GRADE_NONE - MEANDER_GRADE_FULL)).clamp(0.0, 1.0);
-    aged(node.age) * (1.0 - g * g * (3.0 - 2.0 * g))
+    aged(node.age) * node.erodibility * (1.0 - g * g * (3.0 - 2.0 * g))
 }
 
 /// The seed a train grows from, in the flow line's frame: the sine-generated
@@ -935,8 +937,8 @@ pub fn channels(cells: &[&DrainageCell], owns: impl Fn(&DrainageNode) -> bool, s
                         to: n.key,
                         axis: Vec::new(),
                         train: None,
-                        half0: channel_half_width(p.catchment),
-                        half1: channel_half_width(n.catchment),
+                        half0: channel_half_width(p.catchment, p.erodibility),
+                        half1: channel_half_width(n.catchment, n.erodibility),
                         vigour0: vigour_of(p),
                         vigour1: vigour_of(n),
                         entry: if n.catchment > 0.0 { (p.catchment / n.catchment).clamp(0.0, 1.0) } else { 1.0 },
@@ -1013,7 +1015,7 @@ mod tests {
     fn node(wx: f64, wy: f64, key: NodeKey, direction: (f64, f64), catchment: f64, age: f64, lake: Option<usize>) -> DrainageNode {
         DrainageNode {
             key, q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0, direction, catchment, base: 0.0,
-            down: None, lake, sill: false, age, cut: 0.0, floor: 5.0,
+            down: None, lake, sill: false, age, erodibility: 1.0, cut: 0.0, floor: 5.0,
         }
     }
 
@@ -1021,15 +1023,19 @@ mod tests {
     /// catchment, and saturates at a trunk's.
     #[test]
     fn channel_width_starts_at_the_head_and_saturates() {
-        assert_eq!(channel_half_width(CHANNEL_HEAD), 0.0);
-        assert!((channel_half_width(CHANNEL_HEAD + 1e-9) - CHANNEL_HALF_WIDTH_MIN).abs() < 1e-3);
+        assert_eq!(channel_half_width(CHANNEL_HEAD, 1.0), 0.0);
+        assert!((channel_half_width(CHANNEL_HEAD + 1e-9, 1.0) - CHANNEL_HALF_WIDTH_MIN).abs() < 1e-3);
         let mut last = 0.0;
         for i in 0..200 {
-            let w = channel_half_width(CHANNEL_HEAD + i as f64 * 0.5);
+            let w = channel_half_width(CHANNEL_HEAD + i as f64 * 0.5, 1.0);
             assert!(w >= last, "channel narrows");
             last = w;
         }
-        assert_eq!(channel_half_width(10.0 * CATCHMENT_FULL), CHANNEL_HALF_WIDTH_MAX);
+        assert_eq!(channel_half_width(10.0 * CATCHMENT_FULL, 1.0), CHANNEL_HALF_WIDTH_MAX);
+        // On hard rock the head lies further out: no channel yet where
+        // shale has one.
+        assert_eq!(channel_half_width(CHANNEL_HEAD + 1.0, 0.3), 0.0);
+        assert!(channel_half_width(2.0 * CATCHMENT_FULL, 0.3) > 0.0);
     }
 
     /// Over every pair of downslopes, square, backward and missing ones
