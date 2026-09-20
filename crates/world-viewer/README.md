@@ -14,7 +14,9 @@ cargo run --bin world-viewer -- --help
 
 Defaults: centre (0, 0), radius 15000 world units, 8 world units per pixel,
 QOI to `world.qoi` (`--format png` writes `world.png`), views
-`plates,elevation`.
+`plates,elevation`. Renders made for review land under
+`proofs/world-viewer/` at the repo root, ignored by git, the way the
+assets repo keeps its proof sheets.
 
 ## Views
 

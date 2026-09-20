@@ -2,3 +2,4 @@ target/
 .claude/
 rustc-ice-*.txt
 __pycache__/
+proofs/
