@@ -18,26 +18,28 @@ use common_bevy::chunk::ChunkId;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// The band cut for one LoD level: the shaders drop fragments whose ground
-/// distance from `center` lies outside `[inner, outer]`, and over the
-/// transition strip `[outer - fade, outer]` apply `mode`
-/// (`LodTransition as u32`): nothing, a screen-space dither that thins the
-/// level out, or a morph of its vertices onto the coarser level's surface.
-/// Field order is the uniform layout in `terrain_cut.wgsl`; the tail pads
-/// the struct to the uniform stride.
+/// distance from `center` lies outside `[inner, outer]`, and apply `mode`
+/// (`LodTransition as u32`) over the strips at each end — the level
+/// leaving across `[outer - fade_out, outer]` and arriving across
+/// `[inner, inner + fade_in]`: nothing, a screen-space dither, or a morph
+/// of the leaving vertices onto the coarser level's surface. Field order
+/// is the uniform layout in `terrain_cut.wgsl`; the tail pads the struct
+/// to the uniform stride.
 #[derive(ShaderType, Debug, Clone, Copy)]
 pub struct TerrainCut {
     pub center: Vec2,
     pub inner: f32,
     pub outer: f32,
-    pub fade: f32,
+    pub fade_in: f32,
+    pub fade_out: f32,
     pub mode: u32,
-    pub _pad: Vec2,
+    pub _pad: f32,
 }
 
 impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
-        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, mode: 0, _pad: Vec2::ZERO }
+        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade_in: 0.0, fade_out: 0.0, mode: 0, _pad: 0.0 }
     }
 }
 

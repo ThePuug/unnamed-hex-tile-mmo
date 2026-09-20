@@ -514,22 +514,51 @@ pub fn update_terrain_cut(
 
     for (&r, handle) in &terrain_material.by_level {
         let Some(material) = materials.get_mut(handle) else { continue };
-        let (inner, outer) = if forced_radius.0.is_some() {
-            (0.0, f32::MAX)
+        let cut = if forced_radius.0.is_some() {
+            crate::resources::TerrainCut::default()
         } else {
-            common_bevy::summary::cut_window(r, &bands)
+            level_cut(r, &bands, diagnostics.lod_transition)
         };
-        // The outermost band ends at the horizon: no strip, nothing to give
-        // way to.
-        let fade = if outer == f32::MAX { 0.0 } else { common_bevy::summary::transition_wu(r) };
-        material.extension.cut = crate::resources::TerrainCut {
-            center: origin.xz(),
-            inner,
-            outer,
-            fade,
-            mode: diagnostics.lod_transition as u32,
-            ..default()
-        };
+        material.extension.cut = crate::resources::TerrainCut { center: origin.xz(), ..cut };
+    }
+}
+
+/// Level `r`'s cut under a transition mode. Its outer edge is its window's,
+/// one coarse summary past the band edge, and the strip inside it is where
+/// the level leaves; the outermost band ends at the horizon and leaves
+/// nowhere. Its inner edge is where it arrives under the finer level's
+/// strip, and that depends on the mode: a plain cut draws it from one
+/// summary back, so a ray under the finer plate's edge lands on it; a
+/// dither draws it from the strip's start, arriving by the complement of
+/// the finer level's threshold; a morph draws it from the finer level's cut
+/// alone, since the finer surface has become this one there and anything
+/// under the strip could only show through where it stands higher.
+fn level_cut(
+    r: u32,
+    bands: &[common_bevy::summary::Band],
+    mode: crate::plugins::diagnostics::LodTransition,
+) -> crate::resources::TerrainCut {
+    use crate::plugins::diagnostics::LodTransition;
+    use common_bevy::summary::{level_band, summary_width_wu, transition_wu};
+    let (band, outermost) = level_band(r, bands);
+    let (window_inner, window_outer) = band.window();
+    let (outer, fade_out) = if outermost { (f32::MAX, 0.0) } else { (window_outer, transition_wu(r)) };
+    let width = summary_width_wu(r);
+    let finest = band.inner_wu <= 0.0;
+    let (inner, fade_in) = match mode {
+        _ if finest => (0.0, 0.0),
+        LodTransition::Cut => ((band.inner_wu - width).max(0.0), 0.0),
+        LodTransition::Dither => (window_inner, band.inner_wu + width - window_inner),
+        LodTransition::Morph => (band.inner_wu + width, 0.0),
+    };
+    crate::resources::TerrainCut {
+        center: Vec2::ZERO,
+        inner,
+        outer,
+        fade_in,
+        fade_out,
+        mode: mode as u32,
+        _pad: 0.0,
     }
 }
 
@@ -881,6 +910,45 @@ pub fn poll_summary_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a level arrives depends on the mode, and always meets where the
+    /// finer level leaves: a plain cut one summary back under the finer
+    /// plate; a dither fading in over exactly the finer level's strip; a
+    /// morph beginning at the finer level's cut. The finest level arrives
+    /// nowhere and the outermost band leaves nowhere.
+    #[test]
+    fn level_cut_meets_the_finer_level_by_mode() {
+        use crate::plugins::diagnostics::LodTransition;
+        use common_bevy::summary::{compute_active_bands, summary_width_wu, transition_wu};
+        let bands = compute_active_bands(25_000.0);
+        for mode in [LodTransition::Cut, LodTransition::Dither, LodTransition::Morph] {
+            for pair in bands.windows(2) {
+                let (fine, coarse) = (&pair[0], &pair[1]);
+                let f = level_cut(fine.r, &bands, mode);
+                let c = level_cut(coarse.r, &bands, mode);
+                assert!((f.outer - (fine.outer_wu + summary_width_wu(coarse.r))).abs() < 0.01);
+                assert!((f.fade_out - transition_wu(fine.r)).abs() < 0.01);
+                match mode {
+                    LodTransition::Cut => {
+                        assert!((c.inner - (coarse.inner_wu - summary_width_wu(coarse.r))).abs() < 0.01);
+                        assert_eq!(c.fade_in, 0.0);
+                    }
+                    LodTransition::Dither => {
+                        assert!((c.inner - (f.outer - f.fade_out)).abs() < 0.01, "r={} arrives off the strip's start", coarse.r);
+                        assert!((c.inner + c.fade_in - f.outer).abs() < 0.01, "r={} finishes arriving off the cut", coarse.r);
+                    }
+                    LodTransition::Morph => {
+                        assert!((c.inner - f.outer).abs() < 0.01, "r={} arrives off the cut", coarse.r);
+                        assert_eq!(c.fade_in, 0.0);
+                    }
+                }
+            }
+            let first = level_cut(bands[0].r, &bands, mode);
+            assert_eq!((first.inner, first.fade_in), (0.0, 0.0));
+            let last = level_cut(bands.last().unwrap().r, &bands, mode);
+            assert_eq!((last.outer, last.fade_out), (f32::MAX, 0.0));
+        }
+    }
 
     /// Coverage invariant for the LoD band system: every ground point inside
     /// the horizon (a) lies within at least one needed region at its band's

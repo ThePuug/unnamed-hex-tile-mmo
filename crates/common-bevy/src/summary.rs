@@ -151,17 +151,23 @@ pub fn ladder_band(r: u32) -> Band {
     }
 }
 
-/// The cut window for level `r` given the active bands: its band's
-/// `window`, except that the outermost active band has no outer edge —
-/// the horizon lies there and nothing beyond it competes. A level with no
-/// active band (stale regions awaiting eviction, or a ladder truncated by
-/// a shrunken horizon) is confined to its ladder window.
-pub fn cut_window(r: u32, bands: &[Band]) -> (f32, f32) {
+/// Level `r`'s band among the active bands, and whether it is the
+/// outermost — the horizon lies at its outer edge and nothing beyond it
+/// competes. A level with no active band (stale regions awaiting eviction,
+/// or a ladder truncated by a shrunken horizon) gets its ladder band.
+pub fn level_band(r: u32, bands: &[Band]) -> (Band, bool) {
     match bands.iter().position(|b| b.r == r) {
-        Some(i) if i + 1 == bands.len() => (bands[i].window().0, f32::MAX),
-        Some(i) => bands[i].window(),
-        None => ladder_band(r).window(),
+        Some(i) => (bands[i].clone(), i + 1 == bands.len()),
+        None => (ladder_band(r), false),
     }
+}
+
+/// The cut window for level `r` given the active bands: its band's
+/// `window`, with no outer edge for the outermost band.
+pub fn cut_window(r: u32, bands: &[Band]) -> (f32, f32) {
+    let (band, outermost) = level_band(r, bands);
+    let (inner, outer) = band.window();
+    (inner, if outermost { f32::MAX } else { outer })
 }
 
 /// Compute active distance bands from player to `max_distance_wu` (horizontal).
