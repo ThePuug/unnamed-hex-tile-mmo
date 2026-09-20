@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::{prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
-use crate::{components::*, systems::animator::Clip};
+use crate::{components::*, systems::animator::{Clip, Clips}};
 use common_bevy::{
     components::{
         behaviour::Behaviour,
@@ -20,9 +20,9 @@ use common_bevy::{
 
 pub fn setup() {}
 
-/// Plays an actor's scene once it is spawned: every clip its GLB holds, in the
-/// order the asset numbers them (`animator::Clip`), the idle playing, which
-/// the animator switches from.
+/// Plays an actor's scene once it is spawned: every clip its GLB holds, each
+/// found by name (`animator::Clip`), the idle playing, which the animator
+/// switches from.
 pub(crate) fn ready(
     trigger: On<SceneInstanceReady>,
     mut commands: Commands,
@@ -40,19 +40,22 @@ pub(crate) fn ready(
 
             let &typ = query.get(entity).expect("couldn't get entity type");
             let asset = get_asset(typ);
-            // The scene is loaded, so the file it came from is too, and its
-            // animations come in file order: the order the asset numbers them.
-            let clips: Vec<Handle<AnimationClip>> = match gltfs.get(&asset_server.load::<Gltf>(asset.clone())) {
-                Some(gltf) => gltf.animations.clone(),
-                None => (0..3).map(|i| asset_server.load(GltfAssetLabel::Animation(i).from_asset(asset.clone()))).collect(),
+            // The scene is loaded, so the file it came from is too, and it
+            // names its animations.
+            let Some(gltf) = gltfs.get(&asset_server.load::<Gltf>(asset.clone())) else {
+                warn!("{asset} has no Gltf asset loaded; its actor stays unanimated");
+                continue;
             };
-            let (graph, _) = AnimationGraph::from_clips(clips);
+            let (graph, clips) = Clips::from_gltf(gltf);
             let handle = AnimationGraphHandle(graphs.add(graph));
             let mut transitions = AnimationTransitions::new();
-            transitions.play(&mut player, Clip::Idle.node(), Duration::ZERO).set_speed(1.).repeat();
+            if let Some(idle) = clips.node(Clip::Idle) {
+                transitions.play(&mut player, idle, Duration::ZERO).set_speed(1.).repeat();
+            }
             commands.entity(child)
                 .insert(handle)
-                .insert(transitions);
+                .insert(transitions)
+                .insert(clips);
         }
     }
 }
