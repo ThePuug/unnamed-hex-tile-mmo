@@ -27,7 +27,10 @@ use common_bevy::summary_mesh::MeshRegionKey;
 /// outer]` and arriving across `[inner, inner + fade_in]`: nothing, a
 /// screen-space dither, or a morph of the leaving vertices onto the
 /// coarser level's surface. Field order is the uniform layout in
-/// `terrain_cut.wgsl`; the tail pads the struct to the uniform stride.
+/// `terrain_cut.wgsl`; the tail pads the struct to the uniform stride. No
+/// name in an imported shader module may end in a digit or start with an
+/// underscore: the composer rejects any identifier naga's namer would
+/// rewrite.
 #[derive(ShaderType, Debug, Clone, Copy)]
 pub struct TerrainCut {
     pub inner_center: Vec2,
@@ -37,9 +40,9 @@ pub struct TerrainCut {
     pub fade_in: f32,
     pub fade_out: f32,
     pub mode: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
+    pub pad_a: u32,
+    pub pad_b: u32,
+    pub pad_c: u32,
 }
 
 impl Default for TerrainCut {
@@ -53,9 +56,9 @@ impl Default for TerrainCut {
             fade_in: 0.0,
             fade_out: 0.0,
             mode: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+            pad_a: 0,
+            pad_b: 0,
+            pad_c: 0,
         }
     }
 }

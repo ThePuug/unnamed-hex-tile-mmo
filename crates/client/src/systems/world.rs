@@ -1045,6 +1045,27 @@ mod tests {
         }
     }
 
+    /// The cut as the frame computes it at a fresh spawn: no edges placed,
+    /// nothing drawn. The finest level shows from the player out to its
+    /// cut, centred on the player.
+    #[test]
+    fn fresh_spawn_cut_shows_the_finest_level_around_the_player() {
+        use crate::plugins::diagnostics::LodTransition;
+        let origin = Vec3::new(5000.0, 12.0, -3000.0);
+        let bands = horizon_bands(origin, crate::systems::camera::MAX_GAMEPLAY_FOV, 0.0);
+        let mut edges = HashMap::new();
+        advance_edges(&mut edges, &bands, origin.xz(), 0.016, &SummaryMeshes::default());
+        let c = level_cut(0, &bands, LodTransition::Morph, &edges, origin.xz());
+        assert_eq!(c.inner_center, origin.xz());
+        assert_eq!(c.outer_center, origin.xz());
+        assert_eq!(c.inner, 0.0);
+        assert!(c.outer > 100.0 && c.outer < 200.0, "outer {}", c.outer);
+        assert!(c.fade_out > 0.0 && c.fade_out < c.outer);
+        let c1 = level_cut(1, &bands, LodTransition::Morph, &edges, origin.xz());
+        assert_eq!(c1.inner_center, origin.xz());
+        assert!((c1.inner - c.outer).abs() < 0.01);
+    }
+
     /// An edge's circle is centred where the edge is, on both the level
     /// leaving across it and the level arriving; a level's two circles can
     /// have different centres.
