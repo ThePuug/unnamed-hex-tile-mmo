@@ -449,8 +449,12 @@ impl Valleys {
             let t = x / cut.length;
             let at = cut.at(t, envelope);
             let u = if at.belt < VALLEY_HALF_WIDTH { ((d - at.belt) / (VALLEY_HALF_WIDTH - at.belt)).max(0.0) } else { 0.0 };
-            let valley = (at.depth * profile(u, at.erodibility)).min((envelope - at.base).max(0.0));
-            best.valley = best.valley.max(valley);
+            // Past the divide the profile is nothing, and the power it is
+            // raised to costs more than the rest of the visit.
+            if u < 1.0 && at.depth > 0.0 {
+                let valley = (at.depth * profile(u, at.erodibility)).min((envelope - at.base).max(0.0));
+                best.valley = best.valley.max(valley);
+            }
             if d <= at.belt.max(at.half) {
                 let beside = cut.train.as_ref().map_or(d, |m| m.distance(wx, wy));
                 if beside <= at.half {
