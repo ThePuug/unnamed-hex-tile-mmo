@@ -314,3 +314,34 @@ fn outline_lookup_costs() {
     let plates = outlines.plates().count();
     println!("{:>16}: {plates} plates, {segments} segments, {:.0} per plate", "outlines", segments as f64 / plates as f64);
 }
+
+/// What the server pays per far summary: the 7-point sample of scale-243
+/// summaries in a sweep of fresh ground 20–50 km out, as the outermost
+/// band asks for it at login. Marginal cost per sample, and the cells it
+/// deforms on the way.
+#[test]
+#[ignore]
+fn far_band_sample_costs() {
+    let c = composite_full();
+    let scale = 243_i32;
+    let d = scale / 3;
+    let offsets = [(0, 0), (d, 0), (-d, 0), (0, d), (0, -d), (d, -d), (-d, d)];
+    // Summary centres on the scale-243 lattice along a line out from the origin.
+    let mut samples = 0usize;
+    let t = Instant::now();
+    for k in 60..120 {
+        for j in -3..=3 {
+            let (sq, sr) = (k, j);
+            let (cq, cr) = (sq * scale, sr * scale);
+            let mut z = i32::MIN;
+            for (oq, or) in offsets {
+                z = z.max(c.elevation_at(cq + oq, cr + or));
+                samples += 1;
+            }
+            let _ = z;
+        }
+    }
+    let secs = t.elapsed().as_secs_f64();
+    println!("far band: {samples} samples in {secs:.2} s = {:.0} µs/sample", secs * 1e6 / samples as f64);
+    report_metrics(&c, "far band");
+}

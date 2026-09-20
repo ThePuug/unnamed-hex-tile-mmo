@@ -13,12 +13,13 @@ use crate::geometry::flat_top_tile_center;
 
 /// Nested LoD levels: summary scales triple per level.
 
-/// scale = 2r+1 ∈ {1, 3, 9, 27, 81, 243}. Tripling makes the levels nest:
+/// scale = 2r+1 ∈ {1, 3, 9, 27, 81}. Tripling makes the levels nest:
 /// every coarse summary center is also a fine summary center, and
 /// `sample_center_z`'s 7 sample points at d = scale/3 land exactly on the
 /// child level's summary centers (INV-006). Arbitrary integer radii do not
-/// nest — adjacent-band lattices would share no structure at all.
-pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
+/// nest — adjacent-band lattices would share no structure at all. The
+/// ladder ends where its outer edge reaches about one plate (`reach_wu`).
+pub const LOD_LEVELS: [u32; 5] = [0, 1, 4, 13, 40];
 
 /// Camera distance (WU) per tile of summary scale — the band quality knob.
 /// Band threshold: `threshold_horiz(r) = (2r+1)·2·K − CAMERA_DISTANCE`.
@@ -120,8 +121,8 @@ pub fn threshold_horiz(r: u32) -> f32 {
     (scale * 2.0 * BAND_QUALITY_K - common::camera::CAMERA_DISTANCE).max(0.0)
 }
 
-/// The reach: the ground distance the world is drawn to in every direction,
-/// where the ladder ends. Producers on both sides cover to it and the haze
+/// The reach: the ground distance the world is drawn to, where the ladder
+/// ends, about one plate. Producers on both sides cover to it and the haze
 /// completes inside it. A fixed distance, not a camera angle, so what the
 /// camera can see is bounded by the ladder alone and nothing nearer hides
 /// behind an early haze.
