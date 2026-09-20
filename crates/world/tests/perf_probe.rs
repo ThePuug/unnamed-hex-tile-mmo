@@ -175,3 +175,142 @@ fn perf_probe() {
         report_metrics(&c, "dense");
     }
 }
+
+/// What each layer costs, by building the stack one layer at a time and
+/// materialising the same fresh patches through each: the first tile is
+/// the cascade, the patch is the steady state, and a second patch a
+/// flyover's stride away is what moving on costs. The increments between
+/// stacks are each layer's own.
+#[test]
+#[ignore]
+fn layer_costs() {
+    use world::events::drainage::DrainageEvent;
+    use world::events::dissection::DissectionEvent;
+    use world::events::lithology::LithologyEvent;
+    use world::events::migration::MigrationEvent;
+    use world::events::motion::MotionEvent;
+    use world::events::thickening::ThickeningEvent;
+    use world::events::thrusting::ThrustingEvent;
+    let build = |n: usize| -> Composite {
+        let mut c = Composite::new(SEED);
+        let events: Vec<Box<dyn world::events::WorldEvent>> = vec![
+            Box::new(PlateEvent::new()),
+            Box::new(TiltEvent::new()),
+            Box::new(MotionEvent::new()),
+            Box::new(ThrustingEvent::new()),
+            Box::new(ThickeningEvent::new()),
+            Box::new(LithologyEvent::new()),
+            Box::new(DrainageEvent::new()),
+            Box::new(MigrationEvent::new()),
+            Box::new(DissectionEvent::new()),
+        ];
+        for e in events.into_iter().take(n) {
+            c.add_event(e);
+        }
+        c
+    };
+    let names = ["plates", "tilt", "motion", "thrusting", "thickening", "lithology", "drainage", "migration", "dissection"];
+    let (sq, sr) = (-58_204, 4_907);
+    let patch = hexball(sq, sr, 100);
+    let next = hexball(sq + 400, sr - 200, 100);
+    // A summary's samples: sparse, a stride apart, over a wide reach.
+    let sparse: Vec<(i32, i32)> = (0..8).flat_map(|i| (0..8).map(move |j| (sq - 8_000 + i * 2_000, sr - 8_000 + j * 2_000))).collect();
+    println!("{:>10} {:>12} {:>14} {:>14} {:>16}", "stack", "first ms", "patch µs/tile", "next µs/tile", "sparse ms/sample");
+    for n in 1..=9 {
+        let c = build(n);
+        let t = Instant::now();
+        c.tile_at(sq, sr);
+        let first = t.elapsed();
+        let t = Instant::now();
+        for &(q, r) in &patch {
+            c.tile_at(q, r);
+        }
+        let per = t.elapsed().as_secs_f64() * 1e6 / patch.len() as f64;
+        let t = Instant::now();
+        for &(q, r) in &next {
+            c.tile_at(q, r);
+        }
+        let per_next = t.elapsed().as_secs_f64() * 1e6 / next.len() as f64;
+        let c = build(n);
+        let t = Instant::now();
+        for &(q, r) in &sparse {
+            c.tile_at(q, r);
+        }
+        let per_sample = t.elapsed().as_secs_f64() * 1e3 / sparse.len() as f64;
+        println!("{:>10} {:>12.0} {:>14.1} {:>14.1} {:>16.2}", names[n - 1], first.as_secs_f64() * 1e3, per, per_next, per_sample);
+    }
+}
+
+/// What one ground sample is made of: the envelope's functions timed
+/// apart over a patch of the spawn belt, since a routing is thirty
+/// thousand of them.
+#[test]
+#[ignore]
+fn ground_sample_costs() {
+    use world::events::drainage::ground_at;
+    use world::events::lithology::rock_at;
+    use world::events::plates::{substrate_on, Coasts};
+    use world::events::thickening::plateau_share_of;
+    use world::events::thrusting::Outlines;
+    use world::events::tilt::tilt_at;
+    use world::hex_to_world;
+    let (cx, cy) = hex_to_world(-58_204, 4_907);
+    let coasts = Coasts::in_box(cx, cy, 6_000.0, SEED);
+    let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
+    let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
+    let n = pts.len() as f64;
+    let time = |label: &str, f: &dyn Fn(f64, f64) -> f64| {
+        let t = Instant::now();
+        let mut acc = 0.0;
+        for &(x, y) in &pts {
+            acc += f(x, y);
+        }
+        println!("{label:>16}: {:6.2} µs  (sum {acc:.0})", t.elapsed().as_secs_f64() * 1e6 / n);
+    };
+    time("substrate", &|x, y| substrate_on(x, y, &coasts, SEED));
+    time("tilt", &|x, y| tilt_at(x, y, 10.0, SEED));
+    time("outlines.at", &|x, y| outlines.at(x, y).map_or(0.0, |s| s.distances[0]));
+    time("relief_of", &|x, y| outlines.at(x, y).map_or(0.0, |s| outlines.relief_of(&s)));
+    time("plateau", &|x, y| outlines.at(x, y).map_or(0.0, |s| plateau_share_of(s.plate, &s.distances)));
+    time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(x, y, SEED, s.plate.id, s.plate.age, 10.0, 50.0).stand));
+    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines).surface);
+}
+
+/// What `Outlines::at` is made of over the same patch: the warp, the seed
+/// contest, the home plate's distances, and how often the home plate is
+/// not the one and its neighbours are tried.
+#[test]
+#[ignore]
+fn outline_lookup_costs() {
+    use world::events::plates::warp;
+    use world::events::thrusting::Outlines;
+    use world::tectonic::plate_at;
+    use world::hex_to_world;
+    let (cx, cy) = hex_to_world(-58_204, 4_907);
+    let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
+    let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
+    let n = pts.len() as f64;
+    let t = Instant::now();
+    let mut acc = 0.0;
+    for &(x, y) in &pts { acc += warp(x, y, SEED).0; }
+    println!("{:>16}: {:6.2} µs ({acc:.0})", "warp", t.elapsed().as_secs_f64() * 1e6 / n);
+    let t = Instant::now();
+    let mut acc = 0i64;
+    for &(x, y) in &pts { acc += plate_at(x, y, SEED).id.0 as i64; }
+    println!("{:>16}: {:6.2} µs ({acc})", "plate_at", t.elapsed().as_secs_f64() * 1e6 / n);
+    let t = Instant::now();
+    let mut acc = 0.0;
+    let mut swapped = 0;
+    for &(x, y) in &pts {
+        let (wx, wy) = warp(x, y, SEED);
+        let home = plate_at(wx, wy, SEED);
+        let Some(p) = outlines.plate(home.id) else { continue };
+        let (d, inside) = p.distances(wx, wy);
+        acc += d[0];
+        if !inside { swapped += 1 }
+    }
+    println!("{:>16}: {:6.2} µs ({acc:.0}); {swapped} of {} outside the seed's plate", "home distances", t.elapsed().as_secs_f64() * 1e6 / n, pts.len());
+    let segments: usize = outlines.plates().map(|p| p.edges.iter().map(|e| e.segments.len()).sum::<usize>()).sum();
+    let plates = outlines.plates().count();
+    println!("{:>16}: {plates} plates, {segments} segments, {:.0} per plate", "outlines", segments as f64 / plates as f64);
+}

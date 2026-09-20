@@ -84,12 +84,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::chains::{join_at_nodes, Segment};
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
-use crate::tectonic::{edges_of, plate_at, plates_near, PlateId, PLATE_REACH};
+use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, RISE, SEA_MAX_DEPTH};
 use super::index::IndexRegistry;
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
+use super::thickening::ESCARPMENT;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 // ── Sheet geometry ──────────────────────────────────────────────────────────
@@ -224,6 +225,12 @@ pub const OUTLINE_REACH: f64 = 2.0 * PLATE_REACH + PATH_SWING + WARP_SWING;
 
 // ── Outlines ────────────────────────────────────────────────────────────────
 
+/// The distance past which no reader of an outline tells one distance
+/// from another: the longer of a range's end and the escarpment's run,
+/// the reaches the wedges and the plateau saturate over. An edge farther
+/// than this is read by a bound on its distance, never by its chain.
+pub const OUTLINE_FAR: f64 = if ESCARPMENT > RANGE_END { ESCARPMENT } else { RANGE_END };
+
 /// One edge of a plate's outline, as that plate reads it: its chain facing
 /// into the plate, and the convergence share it carries where the plate is
 /// continental and overrides on it, else none.
@@ -237,11 +244,14 @@ pub struct EdgeOutline {
     /// The chain's bounding box, `[x0, y0, x1, y1]`: what a reader across
     /// the plate asks before measuring the chain.
     pub bounds: [f64; 4],
+    /// The straight edge the chain is drawn on, `[x0, y0, x1, y1]`: the
+    /// chain lies within the lattice path's swing of it.
+    pub line: [f64; 4],
 }
 
 impl EdgeOutline {
     /// Distance from a position to the edge, and the side of its nearest
-    /// segment, positive inside the plate.
+    /// segment, positive inside the plate: a walk of the chain.
     pub fn distance(&self, x: f64, y: f64) -> (f64, f64) {
         let mut best = (f64::MAX, 0.0);
         for s in &self.segments {
@@ -251,10 +261,17 @@ impl EdgeOutline {
         best
     }
 
-    /// A lower bound on the distance from a position to the edge: its
-    /// distance to the chain's bounding box, zero inside it.
+    /// A lower bound on the distance from a position to the edge, without
+    /// the chain: the farther of its distance to the chain's bounding box
+    /// and its distance to the straight edge less the swing a chain takes
+    /// off it.
     pub fn at_least(&self, x: f64, y: f64) -> f64 {
-        box_distance(self.bounds, x, y)
+        let [x0, y0, x1, y1] = self.line;
+        let (dx, dy) = (x1 - x0, y1 - y0);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 > 0.0 { (((x - x0) * dx + (y - y0) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let off_line = (x - x0 - t * dx).hypot(y - y0 - t * dy) - PATH_SWING;
+        box_distance(self.bounds, x, y).max(off_line)
     }
 }
 
@@ -281,14 +298,33 @@ impl PlateOutline {
     /// inside the outline: on the inner side of the nearest segment, or on
     /// it. A chain runs through tile centres and lattice nodes, and a
     /// position on it stands in both its plates, which read the same ground
-    /// there; in neither, it would read none.
+    /// there; in neither, it would read none. An edge that carries no
+    /// wedge and stands past [`OUTLINE_FAR`] by its bound is read as that
+    /// bound, never nearer than the truth and past every reach a reader
+    /// tells distances apart over; its chain is walked only when the bound
+    /// leaves it able to be the nearest edge.
     pub fn distances(&self, x: f64, y: f64) -> (Vec<f64>, bool) {
+        let n = self.edges.len();
+        let mut out = vec![0.0; n];
+        let mut bounded = vec![false; n];
         let mut nearest = (f64::MAX, 0.0);
-        let mut out = Vec::with_capacity(self.edges.len());
-        for e in &self.edges {
+        for (i, e) in self.edges.iter().enumerate() {
+            let bound = e.at_least(x, y);
+            if e.converge <= 0.0 && bound >= OUTLINE_FAR {
+                out[i] = bound;
+                bounded[i] = true;
+                continue;
+            }
             let (d, side) = e.distance(x, y);
             if d < nearest.0 { nearest = (d, side) }
-            out.push(d);
+            out[i] = d;
+        }
+        for (i, e) in self.edges.iter().enumerate() {
+            if bounded[i] && out[i] < nearest.0 {
+                let (d, side) = e.distance(x, y);
+                if d < nearest.0 { nearest = (d, side) }
+                out[i] = d;
+            }
         }
         (out, nearest.1 >= 0.0)
     }
@@ -363,6 +399,7 @@ impl Outlines {
                     converge: if carries { converge } else { 0.0 },
                     scree: if carries { scree_profile(sheets_of(converge)) } else { Vec::new() },
                     bounds,
+                    line: [e.x0, e.y0, e.x1, e.y1],
                 });
             }
         }
@@ -416,13 +453,16 @@ impl Outlines {
 
     /// The plate a position stands in, by its outline, with the position's
     /// distance to each of its edges, all read at the position the warp
-    /// carries it to. The nearest seed's plate first, then its neighbours,
-    /// then theirs: a chain swings off its straight edge, so a position
-    /// near an edge can stand across it, and where two corners lie within
-    /// a swing of each other it can stand across two.
+    /// carries it to. The plate of the position's own lattice cell first,
+    /// then its neighbours, then theirs: the outline decides, so the first
+    /// guess need not be the nearest seed's, only usually right, and the
+    /// cell costs no hash where the seed contest costs a score of them. A
+    /// chain swings off its straight edge, so a position near an edge can
+    /// stand across it, and where two corners lie within a swing of each
+    /// other it can stand across two.
     pub fn at(&self, x: f64, y: f64) -> Option<Standing<'_>> {
         let (x, y) = warp(x, y, self.seed);
-        let home = plate_at(x, y, self.seed).id;
+        let home = plate_cell_for(x, y);
         let first = self.plates.get(&home)?;
         let (distances, inside) = first.distances(x, y);
         if inside { return Some(Standing { plate: first, distances, x, y }) }
@@ -681,6 +721,7 @@ impl WorldEvent for ThrustingEvent {
 mod tests {
     use super::*;
     use super::super::plates::{stretch_at, unwarp};
+    use crate::tectonic::plate_at;
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
