@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::{prelude::*, scene::SceneInstanceReady};
+use bevy::{gltf::GltfNode, prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
 use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
@@ -31,6 +31,7 @@ pub(crate) fn ready(
     q_child: Query<&Children>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     gltfs: Res<Assets<Gltf>>,
+    nodes: Res<Assets<GltfNode>>,
 ) {
     let entity = trigger.entity;
     for child in q_child.iter_descendants(entity) {
@@ -44,7 +45,7 @@ pub(crate) fn ready(
                 warn!("{} has no Gltf asset loaded; its actor stays unanimated", get_asset(typ));
                 continue;
             };
-            let (graph, clips) = Clips::from_gltf(gltf);
+            let (graph, clips) = Clips::from_gltf(gltf, &nodes);
             let handle = AnimationGraphHandle(graphs.add(graph));
             let mut transitions = AnimationTransitions::new();
             if let Some(idle) = clips.node(Clip::Idle) {
@@ -58,16 +59,10 @@ pub(crate) fn ready(
     }
 }
 
-/// Exponential decay constant of the facing's easing between headings: a
-/// heading steps by a bearing at a time, and the body turns through it.
-const FACING_EASE: f32 = 15.0;
-
 pub fn update(
     mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>), Without<DeathMarker>>,
     map: Res<Map>,
-    time: Res<Time>,
 ) {
-    let ease = 1.0 - (-FACING_EASE * time.delta_secs()).exp();
     for (&loc, &heading, mut transform0, vis_pos) in &mut query {
         let final_pos = if let Some(vis) = vis_pos {
             // Use VisualPosition for smooth, jitter-free rendering
@@ -78,7 +73,7 @@ pub fn update(
         };
 
         transform0.translation = final_pos;
-        transform0.rotation = transform0.rotation.slerp(heading.into(), ease);
+        transform0.rotation = heading.into();
     }
 }
 
