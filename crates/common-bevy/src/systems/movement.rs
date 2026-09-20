@@ -22,11 +22,15 @@ use crate::{
     resources::map::Map,
 };
 
-/// Gravity acceleration in world units per millisecond squared
-pub const GRAVITY: f32 = 0.005;
+/// Gravity: how fast a fall gathers speed, in world units per millisecond
+/// squared. A fall must outrun a walk down any slope or an entity that
+/// leaves the ground on a hillside floats to its foot, and a slope's
+/// descent has no bound, so no constant fall speed does.
+pub const GRAVITY: f32 = 2.0e-5;
 
-/// Jump ascent multiplier - jumping is 5x faster than falling
-pub const JUMP_ASCENT_MULTIPLIER: f32 = 5.0;
+/// A jump's ascent: its speed in world units per millisecond, held for
+/// `JUMP_DURATION_MS`, then the fall.
+pub const JUMP_ASCENT: f32 = 0.025;
 
 /// Jump duration in milliseconds
 pub const JUMP_DURATION_MS: i16 = 125;
@@ -61,6 +65,20 @@ pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
         (Some(surface), Some((floor, _))) => surface - floor.z > WADE_DEPTH,
         _ => false,
     }
+}
+
+/// How far a fall `fallen_ms` old drops over its next `dt` milliseconds:
+/// the integral of the speed gravity has built, so a fall sliced any way
+/// drops the same.
+pub fn fall(fallen_ms: f32, dt: f32) -> f32 {
+    GRAVITY * (fallen_ms * dt + dt * dt / 2.0)
+}
+
+/// How long a fall `fallen_ms` old takes to drop `height` more, in
+/// milliseconds.
+pub fn fall_time(height: f32, fallen_ms: f32) -> f32 {
+    let v = GRAVITY * fallen_ms;
+    ((v * v + 2.0 * GRAVITY * height.max(0.0)).sqrt() - v) / GRAVITY
 }
 
 /// World height of the standing level over `floor`: one z-level up.
@@ -254,11 +272,12 @@ pub fn calculate_movement(
                 }
                 air -= dt;
                 airtime = Some(air);
-                offset.y += dt as f32 * GRAVITY * JUMP_ASCENT_MULTIPLIER;
+                offset.y += dt as f32 * JUMP_ASCENT;
             } else {
+                // Falling: `air` counts the fall's age below zero.
+                let dy = -fall(-(air as i32) as f32, dt as f32);
                 air = air.saturating_sub(dt);
                 airtime = Some(air);
-                let dy = -(dt as f32) * GRAVITY;
                 let fallen: Qrz = map.convert(Vec3::new(world.x, world.y + dy, world.z));
                 match floor {
                     Some(floor) if fallen.z <= floor.z + 1 => {
@@ -489,6 +508,36 @@ mod tests {
         }
         assert!((whole.position.offset.y - sliced.position.offset.y).abs() < 1e-3);
         assert_eq!(whole.airtime, sliced.airtime);
+    }
+
+    /// A walk down a hillside two levels a tile drops faster than any
+    /// constant fall; gravity gathers speed, so a jump off the top still
+    /// lands on the way down rather than floating to the foot.
+    #[test]
+    fn a_fall_catches_a_slope() {
+        let map = create_test_map();
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        for q in -2..=40 {
+            for r in -3..=3 {
+                map.insert(Qrz { q, r, z: -2 * q.max(0) }, ground);
+            }
+        }
+        let nntree = create_test_nntree();
+        let mut input = MovementInput { airtime: Some(JUMP_DURATION_MS), ..walking(Heading::from_degrees(90.0), true) };
+        let mut landed_at = None;
+        for step in 1..=40 {
+            let out = calculate_movement(input, 50, &map, &nntree);
+            input.position = out.position;
+            input.airtime = out.airtime;
+            if out.airtime.is_none() {
+                landed_at = Some(step * 50);
+                break;
+            }
+        }
+        let landed_at = landed_at.expect("still airborne after two seconds down the slope");
+        assert!(landed_at < 1500, "landed after {landed_at} ms");
+        let where_: Qrz = map.convert(input.position.to_world(&map));
+        assert!(where_.q >= 2, "landed on tile {where_:?}, not down the slope");
     }
 
     /// A rise of two levels is a cliff: the step toward it is refused and

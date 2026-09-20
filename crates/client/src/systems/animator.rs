@@ -14,7 +14,7 @@ use common_bevy::{
     components::{ heading::Heading, position::VisualPosition, * },
     message::{ AbilityType, Do, Event },
     resources::map::Map,
-    systems::movement::{ standing_y, GRAVITY },
+    systems::movement::{ fall_time, standing_y },
 };
 
 /// An actor's clips, each found in its GLB by name: the rest pose, the
@@ -222,12 +222,12 @@ pub fn play_abilities(
     }
 }
 
-/// How long an actor's fall has left, in seconds: it falls at `GRAVITY`
-/// onto the standing level of the tile under it.
-fn time_to_land(world: Vec3, map: &Map) -> Option<f32> {
+/// How long an actor's fall, `fallen_ms` old, has left, in seconds: it
+/// falls onto the standing level of the tile under it.
+fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
     let here: qrz::Qrz = map.convert(world);
     let (floor, _) = map.get_by_qr(here.q, here.r)?;
-    Some(((world.y - standing_y(floor, map)) / GRAVITY).max(0.0) / 1000.0)
+    Some(fall_time(world.y - standing_y(floor, map), fallen_ms) / 1000.0)
 }
 
 pub fn update(
@@ -260,7 +260,9 @@ pub fn update(
                     *jumping = Jumping::start(anim, moments, airtime.step.is_some_and(|ms| ms > 0));
                     continue;
                 }
-                let to_land = (airtime.step == Some(0)).then(|| time_to_land(vis_pos.current(), &map)).flatten();
+                // Falling, the airtime counts the fall's age below zero.
+                let to_land = airtime.step.filter(|&ms| ms <= 0)
+                    .and_then(|ms| time_to_land(vis_pos.current(), -(ms as i32) as f32, &map));
                 let Some(anim) = player.animation_mut(node) else { continue };
                 if jumping.advance(anim, moments, airborne, to_land) {
                     commands.entity(entity).remove::<Jumping>();

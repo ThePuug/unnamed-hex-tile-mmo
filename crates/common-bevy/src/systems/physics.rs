@@ -36,7 +36,7 @@ mod tests {
     use super::*;
     use qrz::Qrz;
     use crate::components::entity_type::{decorator::Decorator, EntityType};
-    use crate::systems::movement::{GRAVITY, JUMP_DURATION_MS, MOVEMENT_SPEED};
+    use crate::systems::movement::{JUMP_ASCENT, JUMP_DURATION_MS, MOVEMENT_SPEED};
 
     fn create_test_map() -> Map {
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
@@ -61,20 +61,24 @@ mod tests {
         Position::new(Qrz { q: 0, r: 0, z: 1 }, Vec3::new(0.0, 5.0, 0.0))
     }
 
+    /// A fall gathers speed: an older fall drops further over the same
+    /// time, and a fall's age counts on below zero.
     #[test]
-    fn gravity_fall_rate() {
+    fn a_fall_gathers_speed() {
         let (map, nntree) = (create_test_map(), create_test_nntree());
-        let (offset, _) = apply(high_up(), Heading::NORTH, false, Some(-100), MOVEMENT_SPEED, 125, &map, &nntree);
-        let expected = 5.0 - GRAVITY * 125.0;
-        assert!((offset.y - expected).abs() < 0.01, "fall is GRAVITY per ms: {} vs {expected}", offset.y);
+        let (fresh, _) = apply(high_up(), Heading::NORTH, false, Some(0), MOVEMENT_SPEED, 125, &map, &nntree);
+        let (old, airtime) = apply(high_up(), Heading::NORTH, false, Some(-100), MOVEMENT_SPEED, 125, &map, &nntree);
+        assert!(fresh.y < 5.0, "a fresh fall drops: {}", fresh.y);
+        assert!(old.y < fresh.y, "an older fall drops further: {} vs {}", old.y, fresh.y);
+        assert_eq!(airtime, Some(-225));
     }
 
     #[test]
     fn jump_ascends_and_counts_down() {
         let (map, nntree) = (create_test_map(), create_test_nntree());
         let (offset, airtime) = apply(standing(), Heading::NORTH, false, Some(JUMP_DURATION_MS), MOVEMENT_SPEED, 125, &map, &nntree);
-        let expected = GRAVITY * 5.0 * 125.0;
-        assert!((offset.y - expected).abs() < 0.01, "ascent is 5 × GRAVITY per ms: {} vs {expected}", offset.y);
+        let expected = JUMP_ASCENT * 125.0;
+        assert!((offset.y - expected).abs() < 0.01, "ascent is JUMP_ASCENT per ms: {} vs {expected}", offset.y);
         assert_eq!(airtime, Some(0));
     }
 
