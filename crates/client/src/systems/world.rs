@@ -322,22 +322,8 @@ pub fn dispatch_summary_tasks(
             (n, k)
         }
         (Some(pos), None) => {
-            #[cfg(feature = "admin")]
-            let max_fov = if flyover.as_ref().map_or(false, |f| f.active) {
-                crate::systems::camera::MAX_FLYOVER_FOV
-            } else {
-                crate::systems::camera::MAX_GAMEPLAY_FOV
-            };
-            #[cfg(not(feature = "admin"))]
-            let max_fov = crate::systems::camera::MAX_GAMEPLAY_FOV;
             let regions = |at: Vec2, margin: f32| {
-                compute_auto_mode_regions(
-                    Vec3::new(at.x, pos.y, at.y),
-                    &loaded_chunks.chunks,
-                    max_fov,
-                    margin,
-                    local_boundary,
-                )
+                compute_auto_mode_regions(at, &loaded_chunks.chunks, margin, local_boundary)
             };
             let mut n = regions(pos.xz(), 0.0);
             let mut k = regions(pos.xz(), BAND_HYSTERESIS_MARGIN);
@@ -490,16 +476,10 @@ pub fn dispatch_summary_tasks(
     }
 }
 
-/// Active bands out to the visual horizon for a camera under `fov` at
-/// `camera_pos` — the player's (or flyover's) ground position; the camera
-/// sits camera_height above it. The horizon is the top-corner ray distance
-/// (see far_ground_wu), the same formula the server and flyover producers
-/// use so the horizons agree. `margin` widens the horizon for the keep set.
-fn horizon_bands(camera_pos: Vec3, fov: f32, margin: f32) -> Vec<common_bevy::summary::Band> {
-    let camera_height_offset = crate::systems::camera::camera_height(fov);
-    let camera_total_height = camera_height_offset + camera_pos.y.max(0.0);
-    let far_ground = common::camera::far_ground_wu(camera_total_height, fov);
-    common_bevy::summary::compute_active_bands(far_ground * (1.0 + margin))
+/// Active bands out to the reach, the same bound the server and flyover
+/// producers cover to. `margin` widens it for the keep set.
+fn horizon_bands(margin: f32) -> Vec<common_bevy::summary::Band> {
+    common_bevy::summary::compute_active_bands(common_bevy::summary::reach_wu() * (1.0 + margin))
 }
 
 /// Time constant of an edge's easing toward the player: a jump — a
@@ -536,15 +516,15 @@ pub fn update_terrain_cut(
 ) {
     let player = || player_query.single().ok().map(|t| t.translation);
     #[cfg(feature = "admin")]
-    let (origin, fov) = match flyover.as_ref().filter(|f| f.active) {
-        Some(f) => (Some(f.world_position), crate::systems::camera::MAX_FLYOVER_FOV),
-        None => (player(), crate::systems::camera::MAX_GAMEPLAY_FOV),
+    let origin = match flyover.as_ref().filter(|f| f.active) {
+        Some(f) => Some(f.world_position),
+        None => player(),
     };
     #[cfg(not(feature = "admin"))]
-    let (origin, fov) = (player(), crate::systems::camera::MAX_GAMEPLAY_FOV);
+    let origin = player();
     let Some(origin) = origin else { return };
 
-    let bands = horizon_bands(origin, fov, 0.0);
+    let bands = horizon_bands(0.0);
     let target = origin.xz();
     if forced_radius.0.is_none() {
         advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
@@ -646,15 +626,14 @@ fn level_cut(
 /// `margin`: hysteresis expansion of each band's annulus (0.0 = crisp band
 /// assignment for building; > 0.0 = widened keep set for eviction).
 fn compute_auto_mode_regions(
-    camera_pos: Vec3,
+    at: Vec2,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
-    fov: f32,
     margin: f32,
     local_boundary_wu: f32,
 ) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
     use common_bevy::summary_mesh::{visible_mesh_regions_in_band, visible_mesh_regions_in_band_ungated};
 
-    let bands = horizon_bands(camera_pos, fov, margin);
+    let bands = horizon_bands(margin);
     let mut all_regions = std::collections::HashSet::new();
 
     // Bands are split at the stream-radius boundary, not assigned to one
@@ -679,8 +658,8 @@ fn compute_auto_mode_regions(
             let gated_outer = band_outer.min(local_boundary_wu);
             let regions = visible_mesh_regions_in_band(
                 band.r,
-                camera_pos.x,
-                camera_pos.z,
+                at.x,
+                at.y,
                 band_inner,
                 gated_outer,
                 loaded_chunks,
@@ -693,8 +672,8 @@ fn compute_auto_mode_regions(
             let inner = band_inner.max(local_boundary_wu);
             let regions = visible_mesh_regions_in_band_ungated(
                 band.r,
-                camera_pos.x,
-                camera_pos.z,
+                at.x,
+                at.y,
                 inner,
                 band_outer,
             );
@@ -1013,7 +992,7 @@ mod tests {
     #[test]
     fn fresh_spawn_cut_shows_the_finest_level_around_the_player() {
         let origin = Vec3::new(5000.0, 12.0, -3000.0);
-        let bands = horizon_bands(origin, crate::systems::camera::MAX_GAMEPLAY_FOV, 0.0);
+        let bands = horizon_bands(0.0);
         let mut edges = HashMap::new();
         advance_edges(&mut edges, &bands, origin.xz(), 0.016, &SummaryMeshes::default());
         let c = level_cut(0, &bands, &edges, origin.xz());
@@ -1152,14 +1131,10 @@ mod tests {
                 calculate_visible_chunks(ChunkId(0, 0), chunk_ring).into_iter().collect();
 
             let cam = Vec3::new(0.0, cam_y, 0.0);
-            let needed = compute_auto_mode_regions(cam, &loaded, fov, 0.0, boundary);
+            let needed = compute_auto_mode_regions(cam.xz(), &loaded, 0.0, boundary);
 
-            // Producer set, from the same horizon formula as the consumer.
-            let far_ground = common::camera::far_ground_wu(
-                crate::systems::camera::camera_height(fov) + cam_y,
-                fov,
-            );
-            let bands = compute_active_bands(far_ground);
+            // Producer set, to the same reach as the consumer.
+            let bands = compute_active_bands(common_bevy::summary::reach_wu());
             let produced = visible_lod_regions(&bands, 0.0, 0.0, boundary);
 
             // (b) Data coverage: needed r>0 regions reaching past the
@@ -1245,7 +1220,7 @@ mod tests {
                 let azr = (az_deg as f32).to_radians();
                 let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
                 let mut d = win_inner.max(2.0);
-                while d < win_outer.min(far_ground - 1.0) {
+                while d < win_outer.min(common_bevy::summary::reach_wu() - 1.0) {
                     let px = d * azr.cos();
                     let pz = d * azr.sin();
                     let circum = mesh_region_extent_wu(band.r) / 3.0_f32.sqrt();

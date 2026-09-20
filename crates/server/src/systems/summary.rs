@@ -48,11 +48,7 @@ pub fn dispatch_summary_tasks(
 
         let (cam_wx, cam_wz) = flat_top_tile_center(q, r, 1.0);
 
-        let cam_h = common::camera::camera_height(common::camera::MAX_GAMEPLAY_FOV)
-            + z.max(0) as f32 * common::camera::RISE;
-        let far_ground = common::camera::far_ground_wu(cam_h, common::camera::MAX_GAMEPLAY_FOV);
-
-        let bands = compute_active_bands(far_ground);
+        let bands = compute_active_bands(common_bevy::summary::reach_wu());
 
         let visible_regions = visible_lod_regions(
             &bands,

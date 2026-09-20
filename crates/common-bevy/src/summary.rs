@@ -120,6 +120,15 @@ pub fn threshold_horiz(r: u32) -> f32 {
     (scale * 2.0 * BAND_QUALITY_K - common::camera::CAMERA_DISTANCE).max(0.0)
 }
 
+/// The reach: the ground distance the world is drawn to in every direction,
+/// where the ladder ends. Producers on both sides cover to it and the haze
+/// completes inside it. A fixed distance, not a camera angle, so what the
+/// camera can see is bounded by the ladder alone and nothing nearer hides
+/// behind an early haze.
+pub fn reach_wu() -> f32 {
+    threshold_horiz(*LOD_LEVELS.last().expect("the ladder has a level"))
+}
+
 /// Level `r`'s band on the ladder, ignoring the horizon: from the finer
 /// level's threshold to its own.
 pub fn ladder_band(r: u32) -> Band {

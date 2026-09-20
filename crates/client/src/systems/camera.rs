@@ -1,4 +1,4 @@
-use bevy::{core_pipeline::prepass::DepthPrepass, prelude::*};
+use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::systems::closeup::CloseupCamera;
 use std::f32::consts::PI;
 
@@ -32,6 +32,26 @@ pub const MAX_FLYOVER_FOV: f32 = 90_f32.to_radians();
 /// Camera height for normal gameplay (convenience alias).
 pub fn gameplay_camera_height() -> f32 {
     camera_height(MAX_GAMEPLAY_FOV)
+}
+
+/// The haze: one colour that distance fades everything toward, and the sky
+/// above the horizon, so the frontier at the reach never shows.
+pub const HAZE_COLOR: Color = Color::linear_rgb(0.72, 0.78, 0.85);
+/// Where the haze completes, as a fraction of the reach: inside it, so the
+/// frontier stands behind full haze.
+const HAZE_END_FRAC: f32 = 0.92;
+/// Where the haze begins, as a fraction of the reach: early, so distance
+/// reads as distance over the whole view.
+const HAZE_START_FRAC: f32 = 0.2;
+
+/// Distance fog to the haze over the reach, for the camera.
+fn haze() -> DistanceFog {
+    let reach = common_bevy::summary::reach_wu();
+    DistanceFog {
+        color: HAZE_COLOR,
+        falloff: FogFalloff::Linear { start: reach * HAZE_START_FRAC, end: reach * HAZE_END_FRAC },
+        ..default()
+    }
 }
 
 /// Camera orbit state: discrete stops, one per heading, and smooth
@@ -106,18 +126,22 @@ pub fn setup(
     mut commands: Commands,
 ) {
     commands.insert_resource(CameraOrbit::default());
+    commands.insert_resource(ClearColor(HAZE_COLOR));
 
     commands.spawn((
         Camera3d::default(),
         Projection::from(PerspectiveProjection {
             fov: DEFAULT_FOV,
             near: 1.0,
-            far: 10000.0,
+            // Culling only: the projection is infinite reverse-z. Past the
+            // reach, so the coarsest band is drawn to its edge.
+            far: common_bevy::summary::reach_wu() * 1.5,
             ..default()
         }),
         Transform::default(),
         Actor,
         VignetteSettings::default(),
+        haze(),
         // Depth first, so the terrain's fragment shader runs once per pixel
         // that shows and never for one another tile covers.
         DepthPrepass,

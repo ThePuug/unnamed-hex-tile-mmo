@@ -679,13 +679,9 @@ fn flyover_summary_dispatch(
     use common_bevy::summary::{compute_active_bands, mesh_region_lattice, sample_center_water, sample_center_z};
     use common_bevy::summary_mesh::{MeshRegionKey, visible_lod_regions};
 
-    // Same horizon formula as compute_auto_mode_regions (consumer side) so
-    // the flyover producer's region set matches what the consumer asks for.
-    let camera_height_offset = camera_height(MAX_FLYOVER_FOV);
-    let camera_total_height = camera_height_offset + pos.y.max(0.0);
-    let far_ground = common::camera::far_ground_wu(camera_total_height, MAX_FLYOVER_FOV);
-
-    let bands = compute_active_bands(far_ground);
+    // The same reach as compute_auto_mode_regions (consumer side) so the
+    // flyover producer's region set matches what the consumer asks for.
+    let bands = compute_active_bands(common_bevy::summary::reach_wu());
     // Producer coverage starts where the flyover's detail chunks end — not
     // at the gameplay stream radius (flyover chunks cover far less).
     let visible_regions =

@@ -23,9 +23,11 @@ use common::camera::RISE;
 /// nothing z-fights against the water.
 pub const SEA_LEVEL_Y: f32 = RISE / 2.0;
 
-/// Half-extent of the water quad. The camera's far plane is 10,000 WU, so a
-/// 30,000 WU square still reaches the horizon at the shallowest view angle.
-const WATER_EXTENT: f32 = 30_000.0;
+/// Side of the water square: past the reach in every direction, so the sea
+/// meets the haze and never its own edge.
+fn water_extent() -> f32 {
+    common_bevy::summary::reach_wu() * 2.5
+}
 
 /// Marker for the water surface entity.
 #[derive(Component)]
@@ -52,7 +54,7 @@ fn setup_water_surface(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Plane3d::default().mesh().size(WATER_EXTENT, WATER_EXTENT));
+    let mesh = meshes.add(Plane3d::default().mesh().size(water_extent(), water_extent()));
 
     let material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.07, 0.26, 0.42, 0.78),
@@ -115,14 +117,14 @@ mod tests {
         );
     }
 
-    /// The quad must outrun the camera's far plane in every direction.
+    /// The quad must outrun the reach in every direction.
     #[test]
-    fn water_extent_covers_far_plane() {
-        const CAMERA_FAR: f32 = 10_000.0;
+    fn water_extent_covers_the_reach() {
+        let reach = common_bevy::summary::reach_wu();
         assert!(
-            WATER_EXTENT / 2.0 > CAMERA_FAR,
-            "water half-extent {} does not reach the far plane {CAMERA_FAR}",
-            WATER_EXTENT / 2.0,
+            water_extent() / 2.0 > reach,
+            "water half-extent {} does not reach the haze at {reach}",
+            water_extent() / 2.0,
         );
     }
 }
