@@ -1038,12 +1038,16 @@ impl DrainageEvent {
             // The flood's path from the deepest node back to the sill, walked
             // within the lake: at a tied rim it leaves by the other rim node.
             // A hump on it goes a hair under the surface, so the lake stays
-            // one lake with its sill where the flood entered.
+            // one lake with its sill where the flood entered. A lake cut to
+            // its floor is no lake: its bed is cut level with the sill, a
+            // flat the river crosses, not a sliver a hair deep that no tile
+            // reads as water but the routing floods.
+            let under = if target > floor + FLAT { UNDER } else { 0.0 };
             let deepest = lake.members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b]));
             let mut cur = deepest;
             while let Some(k) = cur.filter(|&k| routing.lake_of[k] == Some(id)) {
-                if ground[k] > target - UNDER {
-                    ground[k] = target - UNDER;
+                if ground[k] > target - under {
+                    ground[k] = target - under;
                 }
                 cur = routing.parent[k];
             }
