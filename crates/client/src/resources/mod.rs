@@ -1,8 +1,9 @@
 use bevy::{
     prelude::*,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
-    pbr::{ExtendedMaterial, MaterialExtension},
-    render::render_resource::{AsBindGroup, ShaderType},
+    mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexFormat},
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
+    render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError},
     shader::ShaderRef,
 };
 use bimap::BiMap;
@@ -17,21 +18,34 @@ use common_bevy::chunk::ChunkId;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// The band cut for one LoD level: the shaders drop fragments whose ground
-/// distance from `center` lies outside `[inner, outer]`. Field order is the
-/// uniform layout in `terrain.wgsl` and `terrain_prepass.wgsl`.
+/// distance from `center` lies outside `[inner, outer]`, and over the
+/// transition strip `[outer - fade, outer]` apply `mode`
+/// (`LodTransition as u32`): nothing, a screen-space dither that thins the
+/// level out, or a morph of its vertices onto the coarser level's surface.
+/// Field order is the uniform layout in `terrain_cut.wgsl`; the tail pads
+/// the struct to the uniform stride.
 #[derive(ShaderType, Debug, Clone, Copy)]
 pub struct TerrainCut {
     pub center: Vec2,
     pub inner: f32,
     pub outer: f32,
+    pub fade: f32,
+    pub mode: u32,
+    pub _pad: Vec2,
 }
 
 impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
-        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX }
+        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, mode: 0, _pad: Vec2::ZERO }
     }
 }
+
+/// The coarser level's surface at a terrain vertex: normal xyz, height w in
+/// the mesh's frame. The vertex shaders morph position and normal onto it
+/// across the transition strip.
+pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
+    MeshVertexAttribute::new("Terrain_CoarseSurface", 0x7e88_a1c0, VertexFormat::Float32x4);
 
 /// Terrain material extension: elevation colour in the fragment shader,
 /// grass over the ramp's green band and scree over its mountain band on
@@ -75,10 +89,31 @@ impl MaterialExtension for TerrainExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/terrain.wgsl".into()
     }
-    /// Depth-only passes (shadow maps) apply the cut too, so a plate the
-    /// main pass drops casts no shadow onto the plate that replaces it.
+    /// Depth-only passes (shadow maps) morph and cut too, so a plate the
+    /// main pass drops casts no shadow onto the plate that replaces it and
+    /// the depth the main pass tests against is the surface it draws.
+    fn prepass_vertex_shader() -> ShaderRef {
+        "shaders/terrain_prepass_vertex.wgsl".into()
+    }
     fn prepass_fragment_shader() -> ShaderRef {
         "shaders/terrain_prepass.wgsl".into()
+    }
+    /// One vertex layout for every pass, the locations both vertex shaders
+    /// declare: Bevy's own layouts differ between the main pass and the
+    /// prepass and leave out the coarse surface.
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.vertex.buffers = vec![layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
+            Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
+            ATTRIBUTE_COARSE_SURFACE.at_shader_location(3),
+        ])?];
+        Ok(())
     }
 }
 
@@ -252,6 +287,7 @@ pub struct SummaryMeshState {
     /// without a rebuild (flyover stash/restore).
     pub base_positions: Vec<[f32; 3]>,
     pub base_normals: Vec<[f32; 3]>,
+    pub base_coarse: Vec<[f32; 4]>,
     pub base_indices: Vec<u32>,
     pub base_tri_count: u32,
     /// The water standing over the region, built with the ground and drawn
@@ -276,6 +312,7 @@ pub struct WaterGeometry {
 pub struct SummaryMeshBuildResult {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
+    pub coarse: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,

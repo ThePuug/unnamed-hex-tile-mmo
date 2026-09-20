@@ -11,18 +11,25 @@
 //! closes the horizon and unbuilt ground, and once the neighbour exists it
 //! hangs under a closed surface where nothing can see it.
 
+//! Every vertex also carries the coarser level's surface at its position —
+//! height and normal, as that level draws them — so the renderer can morph
+//! the finer surface onto the coarser one across the transition strip and
+//! the two meet without a step at the cut.
+
 use std::collections::{HashMap, HashSet};
 
-use bevy::math::{Vec2, Vec3};
+use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::{
     chunk::{self, ChunkId},
     geometry::flat_top_tile_center,
     summary::{
-        Band, canonical_vertex_id, level_depth_bias, mesh_region_lattice, summary_lattice,
+        Band, SummaryLattice, canonical_vertex_id, coarser_level, level_depth_bias,
+        mesh_region_lattice, summary_lattice,
     },
     surface::{
-        CORNER_NEIGHBOURS, centre_normal, corner_normal, corner_offsets, corner_z, height_y,
+        CORNER_NEIGHBOURS, centre_normal, corner_normal, corner_offsets, corner_z, fan_weights,
+        height_y,
     },
 };
 
@@ -40,6 +47,10 @@ pub struct MeshRegionKey {
 pub struct SummaryMeshResult {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
+    /// Per vertex, the coarser level's surface at it, in this mesh's frame:
+    /// normal xyz, height w. The vertex's own normal and height at the
+    /// coarsest level, which has nothing to morph onto.
+    pub coarse: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
     /// World-space origin of this mesh region (for Transform).
@@ -53,20 +64,100 @@ pub const MESH_REGION_CELLS: u32 = 271;
 /// to cover the relief between a built region and the ground beside it.
 pub const CURTAIN_DEPTH_WU: f32 = 24.0;
 
+/// A cell's fan as its level draws it: the centre in world XZ, centre and
+/// corner heights in world Y before the level's depth bias, and the vertex
+/// normals. Corners are the mean of the three cells meeting there.
+pub struct Fan {
+    pub centre: Vec2,
+    pub centre_y: f32,
+    pub corner_y: [f32; 6],
+    pub centre_n: Vec3,
+    pub corner_n: [Vec3; 6],
+}
+
+/// The fan of `cell` on `lattice` from a height lookup over it. None while
+/// the cell or one of its six neighbours is absent: a corner with a cell
+/// missing would not be the corner the neighbour draws.
+pub fn cell_fan(
+    lattice: &SummaryLattice,
+    cell: (i32, i32),
+    height: impl Fn(i32, i32) -> Option<i32>,
+) -> Option<Fan> {
+    let offsets = corner_offsets(lattice.scale as f32);
+    let centre_of = |c: (i32, i32)| -> Vec2 {
+        let (cq, cr) = lattice.cell_center(c);
+        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+        Vec2::new(wx, wz)
+    };
+    let centre_3d = |c: (i32, i32)| -> Option<Vec3> {
+        let p = centre_of(c);
+        Some(Vec3::new(p.x, height_y(height(c.0, c.1)? as f32), p.y))
+    };
+    let z = height(cell.0, cell.1)?;
+    let centre = centre_of(cell);
+    let centre_y = height_y(z as f32);
+    let mut corner_y = [0.0; 6];
+    let mut corner_n = [Vec3::Y; 6];
+    let mut corner_pos = [Vec3::ZERO; 6];
+    for i in 0..6 {
+        let [a, b] = CORNER_NEIGHBOURS[i];
+        let na = (cell.0 + a.0, cell.1 + a.1);
+        let nb = (cell.0 + b.0, cell.1 + b.1);
+        let cz = corner_z([Some(z), Some(height(na.0, na.1)?), Some(height(nb.0, nb.1)?)])?;
+        corner_y[i] = height_y(cz);
+        corner_pos[i] = Vec3::new(centre.x + offsets[i].x, corner_y[i], centre.y + offsets[i].y);
+        corner_n[i] = corner_normal([centre_3d(cell), centre_3d(na), centre_3d(nb)]);
+    }
+    let centre_n = centre_normal(Vec3::new(centre.x, centre_y, centre.y), corner_pos);
+    Some(Fan { centre, centre_y, corner_y, centre_n, corner_n })
+}
+
+/// The coarser level's surface, read at the finer level's vertices: the
+/// fan under the point, its height and vertex normals interpolated by the
+/// fan's own weights, so a vertex morphed onto it lands where that level's
+/// triangles are drawn. Fans are read once per cell across a build.
+struct CoarseSurface<'a> {
+    lattice: SummaryLattice,
+    height: &'a dyn Fn(i32, i32) -> Option<i32>,
+    fans: HashMap<(i32, i32), Option<Fan>>,
+}
+
+impl CoarseSurface<'_> {
+    /// Height (world Y, before any bias) and normal at world `xz`. None
+    /// while a cell the fan reads is absent.
+    fn at(&mut self, xz: Vec2) -> Option<(f32, Vec3)> {
+        let cell = self.lattice.cell_at(xz);
+        let (lattice, height) = (&self.lattice, self.height);
+        let fan = self
+            .fans
+            .entry(cell)
+            .or_insert_with(|| cell_fan(lattice, cell, height))
+            .as_ref()?;
+        let ((i, j), w) = fan_weights(xz, fan.centre, lattice.scale as f32);
+        let y = w.x * fan.centre_y + w.y * fan.corner_y[i] + w.z * fan.corner_y[j];
+        let n = w.x * fan.centre_n + w.y * fan.corner_n[i] + w.z * fan.corner_n[j];
+        Some((y, n.normalize_or(Vec3::Y)))
+    }
+}
+
 /// Build a mesh region at `radius` from a height lookup over that level's
 /// lattice: `height(sq, sr)` is the cell's z, or None while its data is
-/// absent. At r = 0 the lattice coordinates are tile coordinates.
+/// absent. At r = 0 the lattice coordinates are tile coordinates. `coarse`
+/// is the same lookup over the next coarser level, which every vertex's
+/// morph target is read from; None at the coarsest level.
 
 /// Built only once every cell of the region and of the ring around it has a
-/// height — the ring is what the perimeter corners are made of — and then
-/// final: heights are durable, so nothing a built region depends on ever
-/// changes. Returns None until then. Producers cover one region ring more
-/// than consumers build (`visible_lod_regions`), so a needed region's ring
-/// always arrives.
+/// height — the ring is what the perimeter corners are made of — and every
+/// coarser cell under a vertex and around it has one, and then final:
+/// heights are durable, so nothing a built region depends on ever changes.
+/// Returns None until then. Producers cover one region ring more than
+/// consumers build, and the coarser level over every band
+/// (`visible_lod_regions`), so what a needed region waits on always arrives.
 pub fn build_summary_mesh_region(
     radius: u32,
     region_key: MeshRegionKey,
     height: &dyn Fn(i32, i32) -> Option<i32>,
+    coarse: Option<&dyn Fn(i32, i32) -> Option<i32>>,
 ) -> Option<SummaryMeshResult> {
     let lattice = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -92,62 +183,63 @@ pub fn build_summary_mesh_region(
     }
 
     let bias = level_depth_bias(radius);
-    let outer_radius = lattice.scale as f32;
-    let offsets = corner_offsets(outer_radius);
-    let centre_of = |cell: (i32, i32)| -> Vec2 {
-        let (cq, cr) = lattice.cell_center(cell);
-        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
-        Vec2::new(wx, wz)
-    };
-    let centre_3d = |cell: (i32, i32)| -> Option<Vec3> {
-        let z = *heights.get(&cell)?;
-        let c = centre_of(cell);
-        Some(Vec3::new(c.x, height_y(z as f32) - bias, c.y))
+    let offsets = corner_offsets(lattice.scale as f32);
+    let mut coarse = coarse.map(|height| CoarseSurface {
+        lattice: summary_lattice(coarser_level(radius).expect("a level with a coarser one")),
+        height,
+        fans: HashMap::new(),
+    });
+    // The morph target of a vertex at `p` with normal `n`: the coarser
+    // surface there in this level's frame, or the vertex itself.
+    let mut target = |p: Vec3, n: Vec3| -> Option<(f32, Vec3)> {
+        match coarse.as_mut() {
+            Some(c) => c.at(p.xz()).map(|(y, n)| (y - bias, n)),
+            None => Some((p.y, n)),
+        }
     };
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut coarse_attr: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let mut corner_index: HashMap<(i32, i32), u32> = HashMap::new();
 
-    let push = |positions: &mut Vec<[f32; 3]>, normals: &mut Vec<[f32; 3]>, p: Vec3, n: Vec3| -> u32 {
+    let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3)| -> u32 {
         let v = p - mesh_origin;
+        let (ty, tn) = target;
         positions.push([v.x, v.y, v.z]);
         normals.push([n.x, n.y, n.z]);
+        coarse_attr.push([tn.x, tn.y, tn.z, ty - mesh_origin.y]);
         (positions.len() - 1) as u32
     };
 
     for &cell in &region_cells {
-        let z = heights[&cell];
-        let centre = centre_of(cell);
-        let centre_y = height_y(z as f32) - bias;
+        let fan = cell_fan(&lattice, cell, |q, r| heights.get(&(q, r)).copied())
+            .expect("region and ring heights are present");
 
         let mut corner_pos = [Vec3::ZERO; 6];
+        let mut corner_target = [(0.0, Vec3::Y); 6];
         let mut corner_idx = [0u32; 6];
         for i in 0..6 {
-            let [a, b] = CORNER_NEIGHBOURS[i];
-            let na = (cell.0 + a.0, cell.1 + a.1);
-            let nb = (cell.0 + b.0, cell.1 + b.1);
-            let cz = corner_z([Some(z), heights.get(&na).copied(), heights.get(&nb).copied()])
-                .expect("owner cell is present");
-            let p = Vec3::new(centre.x + offsets[i].x, height_y(cz) - bias, centre.y + offsets[i].y);
+            let p = Vec3::new(fan.centre.x + offsets[i].x, fan.corner_y[i] - bias, fan.centre.y + offsets[i].y);
             corner_pos[i] = p;
+            corner_target[i] = target(p, fan.corner_n[i])?;
             let id = canonical_vertex_id(cell.0, cell.1, i);
-            corner_idx[i] = *corner_index.entry(id).or_insert_with(|| {
-                let n = corner_normal([centre_3d(cell), centre_3d(na), centre_3d(nb)]);
-                push(&mut positions, &mut normals, p, n)
-            });
+            corner_idx[i] = *corner_index
+                .entry(id)
+                .or_insert_with(|| push(p, fan.corner_n[i], corner_target[i]));
         }
 
-        let centre_pos = Vec3::new(centre.x, centre_y, centre.y);
-        let ci = push(&mut positions, &mut normals, centre_pos, centre_normal(centre_pos, corner_pos));
+        let centre_pos = Vec3::new(fan.centre.x, fan.centre_y - bias, fan.centre.y);
+        let ci = push(centre_pos, fan.centre_n, target(centre_pos, fan.centre_n)?);
         for i in 0..6 {
             let j = (i + 1) % 6;
             indices.extend([ci, corner_idx[j], corner_idx[i]]);
         }
 
         // Curtains under edges facing the ring: cells this mesh does not build.
-        // (i, i+1) faces the first neighbour listed for corner i.
+        // (i, i+1) faces the first neighbour listed for corner i. A curtain
+        // hangs from its corners' targets too, so it follows a morphed edge.
         for i in 0..6 {
             let d = CORNER_NEIGHBOURS[i][0];
             let facing = (cell.0 + d.0, cell.1 + d.1);
@@ -159,10 +251,11 @@ pub fn build_summary_mesh_region(
             let (bot0, bot1) = (top0 - Vec3::Y * CURTAIN_DEPTH_WU, top1 - Vec3::Y * CURTAIN_DEPTH_WU);
             let outward = (top1 - top0).normalize_or_zero().cross(Vec3::NEG_Y).normalize_or_zero();
             let n = if outward.length_squared() > 0.5 { outward } else { Vec3::Z };
-            let base = positions.len() as u32;
-            for p in [top0, top1, bot1, bot0] {
-                push(&mut positions, &mut normals, p, n);
-            }
+            let (ty0, ty1) = (corner_target[i].0, corner_target[j].0);
+            let base = push(top0, n, (ty0, n));
+            push(top1, n, (ty1, n));
+            push(bot1, n, (ty1 - CURTAIN_DEPTH_WU, n));
+            push(bot0, n, (ty0 - CURTAIN_DEPTH_WU, n));
             indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
@@ -171,6 +264,7 @@ pub fn build_summary_mesh_region(
         tri_count: indices.len() as u32 / 3,
         positions,
         normals,
+        coarse: coarse_attr,
         indices,
         mesh_origin,
     })
@@ -256,10 +350,12 @@ pub fn build_water_mesh_region(
         }
     }
 
+    // Water does not morph: it is drawn with a plain material and no cut.
     SummaryMeshResult {
         tri_count: indices.len() as u32 / 3,
         positions,
         normals,
+        coarse: Vec::new(),
         indices,
         mesh_origin,
     }
@@ -415,10 +511,12 @@ pub fn visible_lod_regions(
     cam_wz: f32,
     local_boundary_wu: f32,
 ) -> HashSet<MeshRegionKey> {
+    use crate::summary::{mesh_region_extent_wu, mesh_region_spacing_wu, summary_width_wu};
+    let circum = |r: u32| mesh_region_extent_wu(r) / 3.0_f32.sqrt();
     let mut out = HashSet::new();
     for band in bands {
-        let half_extent = 0.5 * crate::summary::mesh_region_extent_wu(band.r);
-        let ring = crate::summary::mesh_region_spacing_wu(band.r);
+        let half_extent = 0.5 * mesh_region_extent_wu(band.r);
+        let ring = mesh_region_spacing_wu(band.r);
         // Footprint-overlap enumeration over the level's window (matches
         // the consumer): every region whose footprint touches the window
         // is produced, so the strip the cut keeps past the band edge has
@@ -427,12 +525,30 @@ pub fn visible_lod_regions(
         // boundary.
         let (win_inner, win_outer) = band.window();
         let outer = win_outer + half_extent + ring;
-        // Skip bands whose regions and rings cannot reach past the local
-        // boundary — those are fully consumer-owned (Map-computed).
-        if outer <= local_boundary_wu { continue; }
-        let inner = (win_inner - half_extent).max(local_boundary_wu) - ring;
+        // A band whose regions and rings cannot reach past the local
+        // boundary is fully consumer-owned (Map-computed).
+        if outer > local_boundary_wu {
+            let inner = (win_inner - half_extent).max(local_boundary_wu) - ring;
+            out.extend(visible_mesh_regions_in_band_ungated(
+                band.r, cam_wx, cam_wz, inner.max(0.0), outer,
+            ));
+        }
+
+        // The coarser level over the band: a region built at this level
+        // reads, for its morph targets, the coarser cell under each of its
+        // vertices and that cell's ring. A region's centre lies up to half
+        // its extent past the window and its vertices a circumradius past
+        // that; the cell under a vertex reaches its outer radius past it,
+        // its ring one summary more, and the region holding the cell a
+        // circumradius again.
+        let Some(c) = coarser_level(band.r) else { continue };
+        let cell_reach = summary_lattice(c).scale as f32 + summary_width_wu(c);
+        let reach = half_extent + circum(band.r) + cell_reach + circum(c);
+        let outer_c = win_outer + reach;
+        if outer_c <= local_boundary_wu { continue; }
+        let inner_c = (win_inner - reach).max(local_boundary_wu) - mesh_region_spacing_wu(c);
         out.extend(visible_mesh_regions_in_band_ungated(
-            band.r, cam_wx, cam_wz, inner.max(0.0), outer,
+            c, cam_wx, cam_wz, inner_c.max(0.0), outer_c,
         ));
     }
     out
@@ -499,7 +615,7 @@ mod tests {
 
     #[test]
     fn build_returns_none_when_no_data() {
-        assert!(build_summary_mesh_region(1, REGION, &|_, _| None).is_none());
+        assert!(build_summary_mesh_region(1, REGION, &|_, _| None, None).is_none());
     }
 
     /// Water is a flat fan over each flooded cell at its surface, half a
@@ -542,7 +658,7 @@ mod tests {
 
     #[test]
     fn flat_region_is_fans_plus_perimeter_curtains() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5)).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
         let fans = fan_vertices(&result);
         let y = fans[0].0.y;
@@ -552,7 +668,7 @@ mod tests {
 
     #[test]
     fn shared_corners_are_single_vertices() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5)).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
     }
 
@@ -560,9 +676,71 @@ mod tests {
     fn build_waits_for_every_cell_of_region_and_ring() {
         let region_lat = mesh_region_lattice();
         let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &hole).is_none(), "built with a cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &hole, None).is_none(), "built with a cell missing");
         let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &no_ring).is_none(), "built with the ring missing");
+        assert!(build_summary_mesh_region(1, REGION, &no_ring, None).is_none(), "built with the ring missing");
+    }
+
+    #[test]
+    fn build_waits_for_the_coarser_cells_under_it() {
+        let flat = |_: i32, _: i32| Some(5);
+        // The coarser cell under the region's centre is absent.
+        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole)).is_none(), "built with a coarser cell missing");
+        // A ring cell of the coarser cell at the region's edge is absent: the
+        // region's cells reach 9 fine cells out, three coarse cells, whose
+        // ring is the fourth.
+        let far = |q: i32, _: i32| (q != 4).then_some(5);
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far)).is_none(), "built with a coarser ring cell missing");
+    }
+
+    /// Without a coarser level a vertex's target is itself: the morph is a
+    /// no-op and the coarsest level never moves.
+    #[test]
+    fn coarse_target_is_the_vertex_itself_at_the_coarsest_level() {
+        let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
+        let result = build_summary_mesh_region(1, REGION, &field, None).unwrap();
+        for ((p, n), c) in result.positions.iter().zip(&result.normals).zip(&result.coarse) {
+            assert!((c[3] - p[1]).abs() < 1e-5, "target height {} is not the vertex's {}", c[3], p[1]);
+            assert!((Vec3::from_array(*n) - Vec3::new(c[0], c[1], c[2])).length() < 1e-5);
+        }
+    }
+
+    /// Over flat coarser ground every target is that ground, in this
+    /// level's frame, whatever the fine relief; and where the coarser field
+    /// varies, a fine vertex at a coarser cell's centre — every coarser
+    /// centre is one, since levels nest — targets exactly that cell's height.
+    #[test]
+    fn coarse_targets_lie_on_the_coarser_surface() {
+        let fine = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
+        let flat = |_: i32, _: i32| Some(20);
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat)).unwrap();
+        let want = height_y(20.0) - level_depth_bias(1);
+        // Fan vertices only: a curtain keeps its own normal and hangs from
+        // its corners' targets.
+        for (c, n) in result.coarse.iter().zip(&result.normals).filter(|(_, n)| n[1].abs() > 1e-3) {
+            assert!((c[3] - want).abs() < 1e-4, "target {} off flat coarser ground at {want}", c[3]);
+            assert!((c[1] - 1.0).abs() < 1e-5, "flat coarser ground has a leaning normal");
+        }
+        assert!(result.positions.iter().any(|p| (p[1] - want).abs() > 0.5), "the fine relief is flat");
+
+        let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse)).unwrap();
+        let coarse_lat = summary_lattice(4);
+        let mut centres = 0;
+        for (p, c) in result.positions.iter().zip(&result.coarse) {
+            let w = Vec3::from_array(*p) + result.mesh_origin;
+            let cell = coarse_lat.cell_at(w.xz());
+            let (cq, cr) = coarse_lat.cell_center(cell);
+            let (cx, cz) = flat_top_tile_center(cq, cr, 1.0);
+            if (w.x - cx).abs() > 1e-3 || (w.z - cz).abs() > 1e-3 {
+                continue;
+            }
+            centres += 1;
+            let want = height_y(coarse(cell.0, cell.1).unwrap() as f32) - level_depth_bias(1);
+            assert!((c[3] - want).abs() < 1e-4, "target {} at coarser centre {cell:?} (want {want})", c[3]);
+        }
+        assert!(centres > 0, "no fine vertex sits on a coarser centre");
     }
 
     #[test]
@@ -570,8 +748,8 @@ mod tests {
         // A varying field: every vertex the two regions both place must be
         // at the same height, or the seam between them opens.
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let a = build_summary_mesh_region(1, REGION, &field).unwrap();
-        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field).unwrap();
+        let a = build_summary_mesh_region(1, REGION, &field, None).unwrap();
+        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None).unwrap();
         let av = fan_vertices(&a);
         let mut shared = 0;
         for (pb, _) in fan_vertices(&b) {
@@ -591,7 +769,7 @@ mod tests {
         // shares its vertices (no vertex duplicated among the fans), and the
         // fan normals at the cliff lean over.
         let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
-        let result = build_summary_mesh_region(1, REGION, &field).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &field, None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
         let leaning = fan_vertices(&result).iter().filter(|(_, n)| n.y < 0.7).count();
         assert!(leaning > 0, "a 20-step cliff produced no steep normals");

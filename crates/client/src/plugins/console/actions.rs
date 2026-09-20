@@ -14,6 +14,7 @@ pub enum DevConsoleAction {
     ToggleFixedLighting,
     ToggleMsaa,
     ToggleShadowFilter,
+    CycleLodTransition,
 
     // Top-level toggles
     ToggleMetricsOverlay,
@@ -94,6 +95,11 @@ pub fn execute_console_actions(
                     *msaa = if diagnostics_state.msaa_off { Msaa::Off } else { Msaa::Sample4 };
                 }
                 info!("MSAA: {}", if diagnostics_state.msaa_off { "OFF" } else { "4x" });
+            }
+            DevConsoleAction::CycleLodTransition => {
+                // Read by the terrain cut upload every frame; nothing rebuilds.
+                diagnostics_state.lod_transition = diagnostics_state.lod_transition.next();
+                info!("LoD transition: {}", diagnostics_state.lod_transition.label());
             }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;

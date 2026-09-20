@@ -457,6 +457,7 @@ pub fn dispatch_summary_tasks(
                     mesh_origin,
                     base_positions: Vec::new(),
                     base_normals: Vec::new(),
+                    base_coarse: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
                     base_water: Default::default(),
@@ -485,15 +486,17 @@ fn horizon_bands(camera_pos: Vec3, fov: f32, margin: f32) -> Vec<common_bevy::su
     common_bevy::summary::compute_active_bands(far_ground * (1.0 + margin))
 }
 
-/// Upload the band cut: the player's ground position and each level's
-/// window. Regions are built whole and the shaders drop fragments outside
-/// the window, so band edges follow the player every frame with no rebuild
-/// and adjacent levels overlap by one coarse summary, never a region.
-/// A forced debug radius lifts the cut.
+/// Upload the band cut: the player's ground position, each level's window,
+/// and the transition over the strip inside its outer edge. Regions are
+/// built whole and the shaders drop fragments outside the window, so band
+/// edges follow the player every frame with no rebuild and adjacent levels
+/// overlap by the strip, never a region. A forced debug radius lifts the
+/// cut.
 pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
     forced_radius: Res<ForcedSummaryRadius>,
+    diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
     player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
@@ -516,10 +519,16 @@ pub fn update_terrain_cut(
         } else {
             common_bevy::summary::cut_window(r, &bands)
         };
+        // The outermost band ends at the horizon: no strip, nothing to give
+        // way to.
+        let fade = if outer == f32::MAX { 0.0 } else { common_bevy::summary::transition_wu(r) };
         material.extension.cut = crate::resources::TerrainCut {
             center: origin.xz(),
             inner,
             outer,
+            fade,
+            mode: diagnostics.lod_transition as u32,
+            ..default()
         };
     }
 }
@@ -599,9 +608,11 @@ fn compute_auto_mode_regions(
 /// tile z straight from the Map. r>0 reads the SummaryCache (server- or
 /// flyover-fed) and falls back to sampling the Map with the same 7-sample
 /// rule every producer uses — Map z and server elevation agree by
-/// construction, so the value is the same whichever side computed it. Until
-/// every cell and ring cell has data the build yields nothing, and the
-/// region is re-dispatched as data streams in.
+/// construction, so the value is the same whichever side computed it. The
+/// next coarser level, which the morph targets read, comes through the
+/// same lookup at its own radius. Until every cell and ring cell has data
+/// the build yields nothing, and the region is re-dispatched as data
+/// streams in.
 fn collect_and_build_summary_mesh(
     radius: u32,
     region_key: common_bevy::summary_mesh::MeshRegionKey,
@@ -611,6 +622,7 @@ fn collect_and_build_summary_mesh(
     let empty = SummaryMeshBuildResult {
         positions: Vec::new(),
         normals: Vec::new(),
+        coarse: Vec::new(),
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
@@ -628,49 +640,59 @@ fn collect_and_build_summary_mesh(
         result
     };
 
+    // The builder also reads the ring of cells around the region, which
+    // belong to neighbouring regions, and the coarser level's cells under
+    // it: cache lookups are per region, memoised across the build.
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let regions: std::cell::RefCell<
+        std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, Option<std::sync::Arc<crate::resources::RegionData>>>,
+    > = Default::default();
+    let cached = |level: u32, sq: i32, sr: i32| -> Option<(i32, Option<i32>)> {
+        let (mn, mm) = region_lat.cell_id(sq, sr);
+        let key = common_bevy::summary_mesh::MeshRegionKey { r: level, mn, mm };
+        regions
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| cache.get_region(&key))
+            .as_ref()
+            .and_then(|d| d.cells.get(&(sq, sr)).copied())
+    };
+    // A level's heights: the tile's own at r = 0, else the cached summary
+    // or the same seven samples over the map's tiles.
+    let level_z = |level: u32| {
+        move |sq: i32, sr: i32| -> Option<i32> {
+            if level == 0 {
+                return tile_z(sq, sr);
+            }
+            if let Some((z, _)) = cached(level, sq, sr) {
+                return Some(z);
+            }
+            common_bevy::summary::sample_center_z_opt(level, sq, sr, tile_z)
+        }
+    };
+    let height = level_z(radius);
+    let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
+    let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
+
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
-        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &tile_z)
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse)
             .as_ref()
             .map_or(empty, |smr| with_water(smr, &tile_water));
     }
 
-    // The builder also reads the ring of cells around the region, which
-    // belong to neighbouring regions: cache lookups are per region, memoised
-    // across the build.
-    let region_lat = common_bevy::summary::mesh_region_lattice();
-    let regions: std::cell::RefCell<
-        std::collections::HashMap<(i32, i32), Option<std::sync::Arc<crate::resources::RegionData>>>,
-    > = Default::default();
-    let cached = |sq: i32, sr: i32| -> Option<(i32, Option<i32>)> {
-        let (mn, mm) = region_lat.cell_id(sq, sr);
-        regions
-            .borrow_mut()
-            .entry((mn, mm))
-            .or_insert_with(|| {
-                cache.get_region(&common_bevy::summary_mesh::MeshRegionKey { r: radius, mn, mm })
-            })
-            .as_ref()
-            .and_then(|d| d.cells.get(&(sq, sr)).copied())
-    };
-    let summary_z = |sq: i32, sr: i32| -> Option<i32> {
-        if let Some((z, _)) = cached(sq, sr) {
-            return Some(z);
-        }
-        common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)
-    };
     // Water follows the height's provenance: the cached surface where the
     // cell was sent, else the same seven samples over the map's tiles, and
     // nothing where the tiles are not all there.
     let summary_water = |sq: i32, sr: i32| -> Option<i32> {
-        if let Some((_, water)) = cached(sq, sr) {
+        if let Some((_, water)) = cached(radius, sq, sr) {
             return water;
         }
         common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)?;
         common_bevy::summary::sample_center_water(radius, sq, sr, |q, r| map.water_at(q, r))
     };
 
-    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &summary_z)
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse)
         .as_ref()
         .map_or(empty, |smr| with_water(smr, &summary_water))
 }
@@ -679,6 +701,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
     SummaryMeshBuildResult {
         positions: smr.positions.clone(),
         normals: smr.normals.clone(),
+        coarse: smr.coarse.clone(),
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
@@ -686,10 +709,12 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
     }
 }
 
-/// Build a Bevy Mesh from raw geometry buffers.
+/// Build a Bevy Mesh from raw geometry buffers. `coarse` is the ground's
+/// morph target per vertex; the water carries none.
 fn build_bevy_mesh(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
+    coarse: Option<&[[f32; 4]]>,
     indices: &[u32],
 ) -> Mesh {
     use bevy::render::render_resource::PrimitiveTopology;
@@ -700,7 +725,7 @@ fn build_bevy_mesh(
     let norms: Vec<Vec3> = normals.iter().map(|n| Vec3::from_array(*n)).collect();
     let vert_count = verts.len();
 
-    Mesh::new(
+    let mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
@@ -710,7 +735,11 @@ fn build_bevy_mesh(
         (0..vert_count).map(|_| [0.0f32, 0.0]).collect::<Vec<[f32; 2]>>(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
-    .with_inserted_indices(Indices::U32(indices.to_vec()))
+    .with_inserted_indices(Indices::U32(indices.to_vec()));
+    match coarse {
+        Some(coarse) => mesh.with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec()),
+        None => mesh,
+    }
 }
 
 /// Poll completed summary mesh tasks, upload their meshes, spawn/update
@@ -739,6 +768,7 @@ pub fn poll_summary_meshes(
                 state.mesh_origin = result.mesh_origin;
                 state.base_positions = result.positions;
                 state.base_normals = result.normals;
+                state.base_coarse = result.coarse;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.base_water = result.water;
@@ -761,6 +791,7 @@ pub fn poll_summary_meshes(
         key: common_bevy::summary_mesh::MeshRegionKey,
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
+        coarse: Vec<[f32; 4]>,
         indices: Vec<u32>,
         tri_count: u32,
         water: crate::resources::WaterGeometry,
@@ -774,6 +805,7 @@ pub fn poll_summary_meshes(
                 key,
                 positions: state.base_positions.clone(),
                 normals: state.base_normals.clone(),
+                coarse: state.base_coarse.clone(),
                 indices: state.base_indices.clone(),
                 tri_count: state.base_tri_count,
                 water: state.base_water.clone(),
@@ -787,7 +819,7 @@ pub fn poll_summary_meshes(
             continue;
         }
 
-        let mesh = build_bevy_mesh(&build.positions, &build.normals, &build.indices);
+        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.indices);
         let mesh_handle = meshes.add(mesh);
 
         let state = summary_meshes.states.get_mut(&build.key).unwrap();
@@ -816,7 +848,7 @@ pub fn poll_summary_meshes(
         };
 
         if !build.water.indices.is_empty() {
-            let water = build_bevy_mesh(&build.water.positions, &build.water.normals, &build.water.indices);
+            let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &build.water.indices);
             commands.entity(entity).with_child((
                 Mesh3d(meshes.add(water)),
                 MeshMaterial3d(water_material.0.clone()),
@@ -933,6 +965,47 @@ mod tests {
                          {k:?} (reach {n_reach:.1}) is neither produced nor inside the Map \
                          — the region could never be built"
                     );
+                }
+            }
+
+            // (d) A region's morph targets read the coarser cell under each
+            // vertex and its ring, so every coarser region whose cells can
+            // lie within that reach of a needed region must be produced or
+            // sample wholly inside the loaded tiles.
+            for k in &needed {
+                let Some(c) = common_bevy::summary::coarser_level(k.r) else { continue };
+                let (kx, kz) = region_center_world(k);
+                let circum = |r: u32| mesh_region_extent_wu(r) / 3.0_f32.sqrt();
+                let cell_reach = common_bevy::summary::summary_lattice(c).scale as f32
+                    + common_bevy::summary::summary_width_wu(c);
+                let reach = circum(k.r) + cell_reach;
+                let coarse_lat = common_bevy::summary::mesh_region_lattice();
+                let coarse_sum = common_bevy::summary::summary_lattice(c);
+                // Every coarser region whose circumcircle meets the reach.
+                let span = (reach + circum(c)) / common_bevy::summary::mesh_region_spacing_wu(c);
+                let n = span.ceil() as i32 + 1;
+                let (ksq, ksr) = coarse_sum.cell_id(
+                    (kx as f64 / 1.5).round() as i32,
+                    ((kz as f64 - (kx as f64 / 1.5) * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt()).round() as i32,
+                );
+                let (kmn, kmm) = coarse_lat.cell_id(ksq, ksr);
+                for dn in -n..=n {
+                    for dm in -n..=n {
+                        let cr = common_bevy::summary_mesh::MeshRegionKey { r: c, mn: kmn + dn, mm: kmm + dm };
+                        let (cx, cz) = region_center_world(&cr);
+                        let dist = ((cx - kx).powi(2) + (cz - kz).powi(2)).sqrt();
+                        if dist > reach + circum(c) {
+                            continue;
+                        }
+                        let c_reach = (cx * cx + cz * cz).sqrt() + circum(c)
+                            + common_bevy::summary::summary_width_wu(c);
+                        assert!(
+                            produced.contains(&cr) || c_reach <= boundary,
+                            "[fov={fov:.2} y={cam_y} b={boundary}] coarser region {cr:?} under \
+                             needed {k:?} (reach {c_reach:.1}) is neither produced nor inside \
+                             the Map — the region could never be built"
+                        );
+                    }
                 }
             }
 

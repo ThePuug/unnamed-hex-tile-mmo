@@ -11,7 +11,7 @@ use bevy::{
 use bevy::render::diagnostic::*;
 use bevy_egui::EguiPlugin;
 
-pub use config::DiagnosticsState;
+pub use config::{DiagnosticsState, LodTransition};
 
 pub struct DiagnosticsPlugin;
 

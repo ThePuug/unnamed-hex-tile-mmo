@@ -159,6 +159,9 @@ fn handle_video_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
         action_writer.write(DevConsoleAction::ToggleShadowFilter);
         consumed = Some(KeyCode::Numpad2);
+    } else if keyboard.just_pressed(KeyCode::Numpad3) {
+        action_writer.write(DevConsoleAction::CycleLodTransition);
+        consumed = Some(KeyCode::Numpad3);
     }
 
     if let Some(key) = consumed {

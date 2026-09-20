@@ -32,6 +32,12 @@ pub const BAND_QUALITY_K: f32 = 119.75;
 /// Hex outer radius (vertex-to-vertex half-diameter) in world units.
 const HEX_OUTER_RADIUS: f32 = 1.0;
 
+/// Width of the transition at a level's outer edge, in summaries of the
+/// coarser level: the strip, ending at the level's cut, over which its
+/// surface dissolves into or morphs onto the coarser one. The coarser
+/// plate extends back under the whole strip.
+pub const TRANSITION_SUMMARIES: f32 = 4.0;
+
 /// Render-only depth bias per LoD level (WU). Adjacent levels overlap by
 /// `edge_overlap_wu` at each band edge; on flat terrain their surfaces there
 /// would be exactly coplanar — nested sampling produces equal center_z —
@@ -106,13 +112,23 @@ pub fn coarser_level(r: u32) -> Option<u32> {
     LOD_LEVELS.iter().copied().find(|&l| l > r)
 }
 
-/// How far a level's plates extend past its band edges, `(inner, outer)`:
-/// one summary of the coarser level meeting each edge. Adjacent levels
-/// overlap by exactly that much, wide enough that a ray under the higher
-/// plate's cut edge lands on the lower plate. The coarsest level has
-/// nothing beyond its outer edge.
+/// Width of the transition strip at level `r`'s outer edge, in world
+/// units: zero at the coarsest level, whose outer edge is the horizon.
+pub fn transition_wu(r: u32) -> f32 {
+    coarser_level(r).map_or(0.0, |c| TRANSITION_SUMMARIES * summary_width_wu(c))
+}
+
+/// How far a level's plates extend past its band edges, `(inner, outer)`.
+/// Outer: one summary of the coarser level, wide enough that a ray under
+/// this plate's cut edge lands on the coarser plate. Inner: back under the
+/// finer level's transition strip, which ends one summary of this level
+/// past the edge, so this plate lies under all of it. The coarsest level
+/// has nothing beyond its outer edge.
 pub fn edge_overlap_wu(r: u32) -> (f32, f32) {
-    (summary_width_wu(r), coarser_level(r).map_or(0.0, summary_width_wu))
+    (
+        (TRANSITION_SUMMARIES - 1.0) * summary_width_wu(r),
+        coarser_level(r).map_or(0.0, summary_width_wu),
+    )
 }
 
 /// Ground distance from the player at which level `r`'s band ends. At
@@ -280,6 +296,16 @@ impl SummaryLattice {
     /// Center tile of a summary at lattice coordinates (sq, sr).
     pub fn cell_center(&self, id: (i32, i32)) -> (i32, i32) {
         (id.0 * self.scale, id.1 * self.scale)
+    }
+
+    /// The cell whose rendered hex is under world `xz`. The hexes tile the
+    /// plane, so there is exactly one; the lattice is the tile grid scaled
+    /// by `scale`, so the tile grid's own conversion at that radius finds it.
+    pub fn cell_at(&self, xz: bevy::math::Vec2) -> (i32, i32) {
+        use qrz::Convert;
+        let scaled: qrz::Map<()> = qrz::Map::new(self.scale as f32, 1.0, qrz::HexOrientation::FlatTop);
+        let cell = scaled.convert(bevy::math::Vec3::new(xz.x, 0.0, xz.y));
+        (cell.q, cell.r)
     }
 
     /// Summary-lattice cell ID for a tile at (q, r).
@@ -662,23 +688,60 @@ mod tests {
     // ── window / cut tests ──
 
     #[test]
-    fn windows_overlap_by_one_coarse_summary_at_each_edge() {
+    fn fine_window_ends_one_coarse_summary_past_the_edge() {
         let bands = compute_active_bands(25_000.0);
         for pair in bands.windows(2) {
             let (fine, coarse) = (&pair[0], &pair[1]);
             let (_, fine_outer) = fine.window();
-            let (coarse_inner, _) = coarse.window();
             let expected = summary_width_wu(coarse.r);
             assert!(
                 (fine_outer - fine.outer_wu - expected).abs() < 0.01,
                 "r={} extends past its outer edge by {} (want {expected})",
                 fine.r, fine_outer - fine.outer_wu
             );
+        }
+    }
+
+    /// The transition strip ends at the finer level's cut and the coarser
+    /// plate begins exactly where the strip does, so every fragment the
+    /// strip dissolves has the coarser plate behind it.
+    #[test]
+    fn coarse_window_starts_where_the_transition_strip_does() {
+        let bands = compute_active_bands(25_000.0);
+        for pair in bands.windows(2) {
+            let (fine, coarse) = (&pair[0], &pair[1]);
+            let (_, fine_outer) = fine.window();
+            let (coarse_inner, _) = coarse.window();
+            let strip = transition_wu(fine.r);
+            assert!(strip > 2.0 * summary_width_wu(coarse.r), "strip narrower than the old overlap");
             assert!(
-                (coarse.inner_wu - coarse_inner - expected).abs() < 0.01,
-                "r={} extends past its inner edge by {} (want {expected})",
-                coarse.r, coarse.inner_wu - coarse_inner
+                (fine_outer - strip - coarse_inner).abs() < 0.01,
+                "r={} strip starts at {} but r={} begins at {coarse_inner}",
+                fine.r, fine_outer - strip, coarse.r
             );
+        }
+    }
+
+    #[test]
+    fn transition_is_absent_at_the_coarsest_level() {
+        assert_eq!(transition_wu(*LOD_LEVELS.last().unwrap()), 0.0);
+    }
+
+    #[test]
+    fn cell_at_agrees_with_cell_centres_and_tiles_the_plane() {
+        for r in [0u32, 1, 4, 13] {
+            let lat = SummaryLattice::new(r);
+            for &cell in &[(0, 0), (3, -1), (-2, 5), (7, 7)] {
+                let (cq, cr) = lat.cell_center(cell);
+                let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+                assert_eq!(lat.cell_at(bevy::math::Vec2::new(wx, wz)), cell);
+                // Just inside every corner is still this cell.
+                let radius = lat.scale as f32;
+                for o in crate::surface::corner_offsets(radius) {
+                    let p = bevy::math::Vec2::new(wx, wz) + o * 0.999;
+                    assert_eq!(lat.cell_at(p), cell, "r={r} corner {o:?}");
+                }
+            }
         }
     }
 

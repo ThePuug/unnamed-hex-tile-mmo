@@ -617,11 +617,13 @@ pub fn update_metrics_overlay(
                         // Hex-native LoD stats: per-tier breakdown
                         const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         const LOD_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
-                        // Total row
+                        // Total row, with the transition in force at the band
+                        // edges so a capture says which one the GPU rows cost.
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "LoD"), COLOR_DIM);
                             s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(total_tris as f64)), COLOR_DIM);
                             s.half(&format!("{:>4}chk", LOD_CT.fmt(mesh_count as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", state.lod_transition.label()), COLOR_DIM);
                         });
                         // Per-band rows
                         for (&r, &(band_tris, band_count)) in &tri_stats.per_band {
