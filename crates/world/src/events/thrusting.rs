@@ -85,6 +85,7 @@ use std::collections::{HashMap, HashSet};
 use crate::chains::{join_at_nodes, Segment};
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_at, plates_near, PlateId, PLATE_REACH};
+use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, RISE, SEA_MAX_DEPTH};
 use super::index::IndexRegistry;
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
@@ -216,9 +217,10 @@ pub const RANGE_END: f64 = RANGE_SPACING;
 
 /// The farthest a plate's outline lies from a position standing in the
 /// plate, in world units: the plate's reach from its seed twice over, plus
-/// the swing a chain takes off its straight edge. What every reader of
-/// outlines has to be able to see from a tile.
-pub const OUTLINE_REACH: f64 = 2.0 * PLATE_REACH + PATH_SWING;
+/// the swing a chain takes off its straight edge, plus the warp the
+/// position reads it through. What every reader of outlines has to be
+/// able to see from a tile.
+pub const OUTLINE_REACH: f64 = 2.0 * PLATE_REACH + PATH_SWING + WARP_SWING;
 
 // ── Outlines ────────────────────────────────────────────────────────────────
 
@@ -302,8 +304,18 @@ impl PlateOutline {
     }
 }
 
+/// Where a position stands: the plate whose outline holds it, its distance
+/// to each of that plate's edges, and the position the outline was read
+/// at, the tile's carried by the warp.
+pub struct Standing<'a> {
+    pub plate: &'a PlateOutline,
+    pub distances: Vec<f64>,
+    pub x: f64,
+    pub y: f64,
+}
+
 /// The outlines of every plate a set of tiles can stand in, built from the
-/// resolved edges the motion layer published.
+/// resolved edges the motion layer published, read through the warp.
 pub struct Outlines {
     plates: HashMap<PlateId, PlateOutline>,
     /// Every edge that carries a wedge, as its plate, its index in that
@@ -403,21 +415,23 @@ impl Outlines {
     }
 
     /// The plate a position stands in, by its outline, with the position's
-    /// distance to each of its edges. The nearest seed's plate first, then
-    /// its neighbours, then theirs: a chain swings off its straight edge, so
-    /// a position near an edge can stand across it, and where two corners
-    /// lie within a swing of each other it can stand across two.
-    pub fn at(&self, x: f64, y: f64) -> Option<(&PlateOutline, Vec<f64>)> {
+    /// distance to each of its edges, all read at the position the warp
+    /// carries it to. The nearest seed's plate first, then its neighbours,
+    /// then theirs: a chain swings off its straight edge, so a position
+    /// near an edge can stand across it, and where two corners lie within
+    /// a swing of each other it can stand across two.
+    pub fn at(&self, x: f64, y: f64) -> Option<Standing<'_>> {
+        let (x, y) = warp(x, y, self.seed);
         let home = plate_at(x, y, self.seed).id;
         let first = self.plates.get(&home)?;
-        let (d, inside) = first.distances(x, y);
-        if inside { return Some((first, d)) }
+        let (distances, inside) = first.distances(x, y);
+        if inside { return Some(Standing { plate: first, distances, x, y }) }
         let mut tried = vec![home];
         for e in &first.edges {
             let Some(p) = self.plates.get(&e.neighbour) else { continue };
             tried.push(p.id);
-            let (d, inside) = p.distances(x, y);
-            if inside { return Some((p, d)) }
+            let (distances, inside) = p.distances(x, y);
+            if inside { return Some(Standing { plate: p, distances, x, y }) }
         }
         for e in &first.edges {
             let Some(p) = self.plates.get(&e.neighbour) else { continue };
@@ -425,8 +439,8 @@ impl Outlines {
                 if tried.contains(&e.neighbour) { continue }
                 let Some(p) = self.plates.get(&e.neighbour) else { continue };
                 tried.push(p.id);
-                let (d, inside) = p.distances(x, y);
-                if inside { return Some((p, d)) }
+                let (distances, inside) = p.distances(x, y);
+                if inside { return Some(Standing { plate: p, distances, x, y }) }
             }
         }
         None
@@ -436,15 +450,14 @@ impl Outlines {
     /// scree that come to rest on it from its neighbours' wedges. Nothing
     /// on an oceanic plate, whose edges carry no convergence, but the toes.
     pub fn relief(&self, x: f64, y: f64) -> f64 {
-        let Some((plate, distances)) = self.at(x, y) else { return 0.0 };
-        self.relief_of(plate, &distances, x, y)
+        self.at(x, y).map_or(0.0, |at| self.relief_of(&at))
     }
 
-    /// [`Outlines::relief`] for the plate and distances [`Outlines::at`]
-    /// found, so a caller reading several layers at one position looks the
-    /// plate up once.
-    pub fn relief_of(&self, plate: &PlateOutline, distances: &[f64], x: f64, y: f64) -> f64 {
-        RANGE_RISE * Self::wedges_of(plate, distances).max(self.toes_on(plate, x, y))
+    /// [`Outlines::relief`] where [`Outlines::at`] found a position
+    /// standing, so a caller reading several layers at one position looks
+    /// the plate up once.
+    pub fn relief_of(&self, at: &Standing) -> f64 {
+        RANGE_RISE * Self::wedges_of(at.plate, &at.distances).max(self.toes_on(at.plate, at.x, at.y))
     }
 
     /// The strongest wedge of the convergent edges of a plate at a position
@@ -667,6 +680,7 @@ impl WorldEvent for ThrustingEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::plates::{stretch_at, unwarp};
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
@@ -784,11 +798,14 @@ mod tests {
     /// The ranges' relief is continuous across every front and around every
     /// corner of one: the frontal scree comes to rest across the front, and
     /// no step stands anywhere steeper than the scree and a range's end
-    /// together can make.
+    /// together can make, stretched by the warp the position reads it
+    /// through. Every position is where a tile stands to read the point
+    /// on the chain: the chain's point unwarped.
     #[test]
     fn scree_comes_to_rest_across_the_front() {
         let outlines = Outlines::in_box(BELT.0, BELT.1, 30_000.0, S);
         let steepest = REPOSE_GRADE + RANGE_RISE * 1.5 / RANGE_END;
+        let steepest_at = |x: f64, y: f64| steepest * stretch_at(x, y, S).0;
         let (mut fronts, mut toes) = (0, 0);
         for plate in outlines.plates() {
             for e in plate.edges.iter().filter(|e| e.converge > 0.0) {
@@ -799,22 +816,24 @@ mod tests {
                 fronts += 1;
                 // Across the front along the plate-facing normal, finely:
                 // scree that reaches the front rests past it too.
+                let (mx, my) = unwarp(mx, my, S);
                 let at = |t: f64| outlines.relief(mx + s.nx * t, my + s.ny * t);
                 if scree_at(&e.scree, -10.0) > 0.0 {
                     toes += 1;
-                    assert!(at(-10.0) > 0.0, "no scree rests across the front of {:?}", plate.id);
+                    assert!(at(-20.0) > 0.0, "no scree rests across the front of {:?}", plate.id);
                 }
                 let step = 2.0;
                 let mut t = -400.0;
                 while t < 400.0 {
                     let jump = (at(t + step) - at(t)).abs();
-                    assert!(jump <= steepest * step + 1e-6, "a step of {jump} across the front of {:?} at {t}", plate.id);
+                    let bound = steepest_at(mx + s.nx * t, my + s.ny * t) * step;
+                    assert!(jump <= bound + 1e-6, "a step of {jump} across the front of {:?} at {t}", plate.id);
                     t += step;
                 }
                 // Around the corner the front ends at, where the toe caps,
                 // coarsely: a step there is a range's end or a toe, tens of
                 // levels, not a chord's error.
-                let (cx, cy) = (e.segments[0].x0, e.segments[0].y0);
+                let (cx, cy) = unwarp(e.segments[0].x0, e.segments[0].y0, S);
                 let step = 6.0;
                 let n = (240.0 / step) as i32;
                 for i in -n..=n {
@@ -824,7 +843,8 @@ mod tests {
                         let east = outlines.relief(x + step, y);
                         let north = outlines.relief(x, y + step);
                         let jump = (east - here).abs().max((north - here).abs());
-                        assert!(jump <= steepest * step + 1e-6, "a step of {jump} at a corner of {:?}, {i} {j} from it", plate.id);
+                        let bound = steepest_at(x, y) * step;
+                        assert!(jump <= bound + 1e-6, "a step of {jump} at a corner of {:?}, {i} {j} from it", plate.id);
                     }
                 }
             }
@@ -841,11 +861,11 @@ mod tests {
         for i in 0..80 {
             for j in 0..80 {
                 let (x, y) = (i as f64 * 500.0 - 20_000.0, j as f64 * 500.0 - 20_000.0);
-                let (plate, _) = outlines.at(x, y).expect("a position with no plate");
-                if plate.id != plate_at(x, y, S).id { swapped += 1 }
-                let inside: Vec<PlateId> = outlines.plates().filter(|p| p.distances(x, y).1).map(|p| p.id).collect();
+                let at = outlines.at(x, y).expect("a position with no plate");
+                if at.plate.id != plate_at(at.x, at.y, S).id { swapped += 1 }
+                let inside: Vec<PlateId> = outlines.plates().filter(|p| p.distances(at.x, at.y).1).map(|p| p.id).collect();
                 assert_eq!(inside.len(), 1, "position ({x}, {y}) inside {inside:?}");
-                assert_eq!(inside[0], plate.id);
+                assert_eq!(inside[0], at.plate.id);
             }
         }
         assert!(swapped > 0, "no position stood across a chain from its seed's plate");

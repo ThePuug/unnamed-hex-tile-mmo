@@ -21,7 +21,7 @@ use world::events::dissection::Valleys;
 use world::events::drainage::{surface_at, DrainageIndex, NODE_SPACING};
 use world::events::lithology::{rock_on, Rock};
 use world::events::migration::ChannelIndex;
-use world::events::plates::{Coasts, PlateEdgeIndex};
+use world::events::plates::{unwarp, Coasts, PlateEdgeIndex};
 use world::lattice::node_world;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -396,7 +396,7 @@ fn main() {
                             let (mx, my) = s.mid();
                             let (dx, dy) = (over.wx - mx, over.wy - my);
                             let l = dx.hypot(dy).max(1.0);
-                            let chain: Vec<(f64, f64)> = s.edge.chain.iter().map(|n| node_world(*n)).collect();
+                            let chain = drawn_chain(&s.edge.chain, cli.seed);
                             (chain, (dx / l, dy / l), (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0))
                         })
                         .collect()
@@ -533,8 +533,8 @@ fn main() {
     };
 
     if needs_boundaries {
-        // Each edge is drawn along its chain on the lattice, which is the
-        // edge the layers above read.
+        // Each edge is drawn along its chain, where the layers above read
+        // it through the warp.
         for seg in &boundaries {
             let rgb = boundary_color(seg);
             let strong = (seg.convergence.abs() / BOUNDARY_FULL_SCALE).clamp(0.0, 1.0);
@@ -544,10 +544,8 @@ fn main() {
             } else {
                 0
             };
-            for w in seg.edge.chain.windows(2) {
-                let (x0, y0) = node_world(w[0]);
-                let (x1, y1) = node_world(w[1]);
-                draw_line(&mut buf, x0, y0, x1, y1, hw, dash, rgb);
+            for w in drawn_chain(&seg.edge.chain, seed).windows(2) {
+                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, hw, dash, rgb);
             }
             // Vergence tick from the edge's midpoint toward the plate going
             // under. White so the side reads independently of the edge's hue.
@@ -678,16 +676,14 @@ fn main() {
     }
 
     if layers.contains(&Layer::Edges) {
-        // A coast in white, an interior edge in grey, each along its chain;
-        // a dot at every plate seed.
+        // A coast in white, an interior edge in grey, each along its chain
+        // where a tile reads it; a dot at every plate seed.
         let dot_r = (4.0 / scale).max(2.0) as i32;
         let mut seeds: std::collections::HashSet<world::tectonic::PlateId> = std::collections::HashSet::new();
         for e in &edges {
             let rgb = if e.is_coast() { [240, 240, 240] } else { [140, 140, 140] };
-            for w in e.chain.windows(2) {
-                let (x0, y0) = node_world(w[0]);
-                let (x1, y1) = node_world(w[1]);
-                draw_line(&mut buf, x0, y0, x1, y1, 0, 0, rgb);
+            for w in drawn_chain(&e.chain, seed).windows(2) {
+                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, 0, 0, rgb);
             }
             for p in [&e.a, &e.b] {
                 if seeds.insert(p.id) {
@@ -706,6 +702,23 @@ fn main() {
 /// Encode an RGB buffer in the requested format. The default output name
 /// follows the format, so `world.qoi` and `world.png` never hold the other's
 /// bytes.
+/// A chain as a tile sees it: each segment in eight, every point moved to
+/// where a tile stands to read it, since the layers read the chain through
+/// the plate layer's warp and the drawn line has to lie on what they draw.
+fn drawn_chain(chain: &[world::lattice::NodeKey], seed: u64) -> Vec<(f64, f64)> {
+    let mut out = Vec::with_capacity(8 * chain.len());
+    for (i, w) in chain.windows(2).enumerate() {
+        let (x0, y0) = node_world(w[0]);
+        let (x1, y1) = node_world(w[1]);
+        let last = if i + 2 == chain.len() { 8 } else { 7 };
+        for k in 0..=last {
+            let t = k as f64 / 8.0;
+            out.push(unwarp(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, seed));
+        }
+    }
+    out
+}
+
 fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
     let output = cli.output.clone().unwrap_or_else(|| match cli.format.as_str() {
         "png" => "world.png".to_string(),

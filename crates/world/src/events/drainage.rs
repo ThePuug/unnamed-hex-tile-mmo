@@ -262,13 +262,13 @@ pub struct Ground {
 pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
-    let Some((plate, distances)) = outlines.at(wx, wy) else {
+    let Some(at) = outlines.at(wx, wy) else {
         return Ground { surface: base, age: 0.0, erodibility: 1.0 };
     };
-    let relief = outlines.relief_of(plate, &distances, wx, wy).max(0.0);
-    let plateau = PLATEAU_RISE * plateau_share_of(plate, &distances).max(0.0);
-    let rock = rock_at(wx, wy, seed, plate.id, plate.age, substrate, relief);
-    Ground { surface: base + relief + plateau + rock.stand, age: plate.age, erodibility: rock.erodibility }
+    let relief = outlines.relief_of(&at).max(0.0);
+    let plateau = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances).max(0.0);
+    let rock = rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, relief);
+    Ground { surface: base + relief + plateau + rock.stand, age: at.plate.age, erodibility: rock.erodibility }
 }
 
 /// The surface of [`ground_at`] alone.
@@ -1439,6 +1439,7 @@ impl WorldEvent for DrainageEvent {
         let edge_cells = scope.source_cells::<PlateEdgeIndex>();
         let coasts = Coasts::new(
             &scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(),
+            scope.seed(),
         );
         let routing = self.route(scope.lattice(), scope.cell(), scope.seed(), &coasts, &outlines);
         scope.publish::<DrainageIndex>(routing.owned_cell());

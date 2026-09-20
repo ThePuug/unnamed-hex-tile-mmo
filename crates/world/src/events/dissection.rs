@@ -556,7 +556,7 @@ impl Valleys {
 /// in, keeping the channels within a valley's reach of the cell's ground.
 pub fn valleys_of(scope: &CellScope) -> Valleys {
     let edge_cells = scope.source_cells::<PlateEdgeIndex>();
-    let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default());
+    let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(), scope.seed());
     let envelope = Envelope::new(scope.seed(), coasts, outlines_of(scope));
     let drainage_cells = scope.source_cells::<DrainageIndex>();
     let channel_cells = scope.source_cells::<ChannelIndex>();

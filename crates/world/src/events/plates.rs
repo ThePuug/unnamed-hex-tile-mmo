@@ -14,6 +14,19 @@
 //! plate, and holds past that. Interior relief is a noise height scaled by
 //! the rise, so it varies the interior and never moves the shoreline.
 //!
+//! **Every edge is read through a warp.** A tile measures its distance to a
+//! chain not from where it stands but from where a smooth displacement
+//! field carries it, so every outline a reader measures, the coasts, the
+//! fronts, the plateau's edges, bends the same way at once and never at a
+//! corner: the bays and headlands are in the field, and the chains stay
+//! the straight-run edges the graph draws. Every reader of a chain reads
+//! through the warp and nothing else does: a field has its own
+//! coordinates and a node its own position. The warp stretches a distance
+//! by its gradient, and a range's slope is a distance's slope, so a
+//! range reads steeper where the field squeezes and gentler where it
+//! pulls; the amplitudes are the dial. It never folds: a fold would draw
+//! a coast twice, and a test holds the field short of one.
+//!
 //! # The window
 //!
 //! `deform` publishes the edges whose midpoints lie in the cell: every plate
@@ -53,8 +66,9 @@ pub const COAST_REACH: f64 = 0.5 * PLATE_SPACING;
 pub const EDGE_REACH: f64 = 10_000.0;
 
 /// The farthest an edge's influence reaches from its midpoint: its chain,
-/// and the substrate's ramp from the coast the chain draws.
-pub const EDGE_INFLUENCE: f64 = EDGE_REACH + COAST_REACH;
+/// the substrate's ramp from the coast the chain draws, and the warp a
+/// tile reads it through.
+pub const EDGE_INFLUENCE: f64 = EDGE_REACH + COAST_REACH + WARP_SWING;
 
 /// Cell scale of every layer that publishes or reads the plate graph: one
 /// ring holds every edge whose chain or shore reaches a tile of the cell, and
@@ -68,6 +82,72 @@ pub const GRAPH_CELL_SCALE: u32 = {
 /// Bucket of the coast grid: two node spacings, so a chain segment spans a
 /// bucket or two and a search from the shore stops within a ring.
 const COAST_BUCKET: f64 = 2.0 * NODE_SPACING as f64;
+
+// ── The warp ────────────────────────────────────────────────────────────────
+
+/// The warp's octaves, each a wavelength and an amplitude in world units:
+/// a gulf's and a bay's. The amplitude over the wavelength is what the
+/// warp stretches a distance by.
+pub const WARP_OCTAVES: [(f64, f64); 2] = [(8_000.0, 700.0), (2_500.0, 180.0)];
+
+/// The farthest the warp carries a position: the amplitudes summed. Every
+/// reach that folds a chain grows by it.
+pub const WARP_SWING: f64 = WARP_OCTAVES[0].1 + WARP_OCTAVES[1].1;
+
+const WARP_SEED_X: u64 = 0x7761_7270_0000_0001;
+const WARP_SEED_Y: u64 = 0x7761_7270_0000_0002;
+
+/// The position a tile at `(wx, wy)` reads its edges at: the tile carried
+/// by the warp.
+pub fn warp(wx: f64, wy: f64, seed: u64) -> (f64, f64) {
+    let (mut dx, mut dy) = (0.0, 0.0);
+    for (k, (wavelength, amplitude)) in WARP_OCTAVES.iter().enumerate() {
+        let k = k as u64;
+        dx += amplitude * simplex_2d(wx / wavelength, wy / wavelength, seed ^ WARP_SEED_X ^ k);
+        dy += amplitude * simplex_2d(wx / wavelength, wy / wavelength, seed ^ WARP_SEED_Y ^ k);
+    }
+    (wx + dx, wy + dy)
+}
+
+/// The warp's Jacobian at a position, by finite differences:
+/// `[[dpx/dx, dpx/dy], [dpy/dx, dpy/dy]]`.
+fn jacobian(wx: f64, wy: f64, seed: u64) -> [[f64; 2]; 2] {
+    let h = 0.5;
+    let (ex, ey) = warp(wx + h, wy, seed);
+    let (wx0, wy0) = warp(wx - h, wy, seed);
+    let (nx, ny) = warp(wx, wy + h, seed);
+    let (sx, sy) = warp(wx, wy - h, seed);
+    [[(ex - wx0) / (2.0 * h), (nx - sx) / (2.0 * h)], [(ey - wy0) / (2.0 * h), (ny - sy) / (2.0 * h)]]
+}
+
+/// The most and the least the warp stretches a distance at a position, as
+/// factors: the singular values of its Jacobian. A range there reads its
+/// slope multiplied by something between them.
+pub fn stretch_at(wx: f64, wy: f64, seed: u64) -> (f64, f64) {
+    let [[a, b], [c, d]] = jacobian(wx, wy, seed);
+    let s1 = (a * a + b * b + c * c + d * d) / 2.0;
+    let s2 = ((a * a + b * b - c * c - d * d).powi(2) / 4.0 + (a * c + b * d).powi(2)).sqrt();
+    ((s1 + s2).sqrt(), (s1 - s2).max(0.0).sqrt())
+}
+
+/// The position the warp carries to `(wx, wy)`, to within a hair: where a
+/// tile stands to read a chain point there, which is where a view draws
+/// it. Newton's walk on the warp, which the no-fold bound keeps
+/// invertible.
+pub fn unwarp(wx: f64, wy: f64, seed: u64) -> (f64, f64) {
+    let (mut x, mut y) = (wx, wy);
+    for _ in 0..8 {
+        let (px, py) = warp(x, y, seed);
+        let (rx, ry) = (px - wx, py - wy);
+        if rx.hypot(ry) < 1e-6 { break }
+        let [[a, b], [c, d]] = jacobian(x, y, seed);
+        let det = a * d - b * c;
+        if det.abs() < 1e-9 { break }
+        x -= (d * rx - b * ry) / det;
+        y -= (a * ry - c * rx) / det;
+    }
+    (x, y)
+}
 
 /// Interior relief as a share of the continental rise: enough to vary the
 /// interior, never enough to reach the datum.
@@ -127,14 +207,15 @@ impl EventIndex for PlateEdgeIndex {
 // ── Coasts ──────────────────────────────────────────────────────────────────
 
 /// The coasts a set of tiles can see: every coast chain's segments, facing
-/// the land, bucketed for a nearest search.
+/// the land, bucketed for a nearest search, read through the warp.
 pub struct Coasts {
     grid: SegmentGrid,
+    seed: u64,
 }
 
 impl Coasts {
     /// The coasts among a set of edges.
-    pub fn new(edges: &[Edge]) -> Self {
+    pub fn new(edges: &[Edge], seed: u64) -> Self {
         let mut segments = Vec::new();
         let mut nodes = Vec::new();
         for e in edges.iter().filter(|e| e.is_coast()) {
@@ -148,13 +229,13 @@ impl Coasts {
             }
         }
         join_at_nodes(&mut segments, &nodes);
-        Self { grid: SegmentGrid::new(segments, COAST_BUCKET) }
+        Self { grid: SegmentGrid::new(segments, COAST_BUCKET), seed }
     }
 
     /// The coasts within reach of every position in a square box: what a
     /// view or a probe builds once, since the event reads them from the index.
     pub fn in_box(cx: f64, cy: f64, half: f64, seed: u64) -> Self {
-        let radius = half * std::f64::consts::SQRT_2 + COAST_REACH;
+        let radius = half * std::f64::consts::SQRT_2 + COAST_REACH + WARP_SWING;
         let mut seen: HashSet<(PlateId, PlateId)> = HashSet::new();
         let mut edges = Vec::new();
         for p in plates_near(cx, cy, radius, seed) {
@@ -164,13 +245,19 @@ impl Coasts {
                 }
             }
         }
-        Self::new(&edges)
+        Self::new(&edges, seed)
     }
 
-    /// Distance to the nearest coast within the substrate's reach, and
-    /// whether the position lies on the land side of it.
-    pub fn shore(&self, x: f64, y: f64) -> Option<(f64, bool)> {
-        self.grid.nearest(x, y, COAST_REACH).map(|n| (n.distance, n.side > 0.0))
+    /// How far up the substrate's ramp a position stands, as a share of
+    /// [`COAST_REACH`], and whether on the land side: the nearest coast in
+    /// reach of the position the warp carries it to, and past the reach of
+    /// every coast the plate it lies in decides which flat it is on.
+    pub fn shore(&self, x: f64, y: f64) -> (f64, bool) {
+        let (x, y) = warp(x, y, self.seed);
+        match self.grid.nearest(x, y, COAST_REACH) {
+            Some(n) => ((n.distance / COAST_REACH).clamp(0.0, 1.0), n.side > 0.0),
+            None => (1.0, plate_at(x, y, self.seed).continental),
+        }
     }
 
     pub fn segments(&self) -> &[Segment] {
@@ -194,13 +281,9 @@ fn interior_relief(wx: f64, wy: f64, seed: u64) -> f64 {
 /// scaled by that rise; on the sea side it falls to the abyssal depth over
 /// the same reach. The shelf exponent holds the near-shore floor shallow and
 /// the land branch takes its reciprocal, so neither side flattens at the
-/// datum. Past the reach the plate the position lies in decides which flat
-/// it is on.
+/// datum.
 pub fn substrate_on(wx: f64, wy: f64, coasts: &Coasts, seed: u64) -> f64 {
-    let (frac, land) = match coasts.shore(wx, wy) {
-        Some((d, land)) => ((d / COAST_REACH).clamp(0.0, 1.0), land),
-        None => (1.0, plate_at(wx, wy, seed).continental),
-    };
+    let (frac, land) = coasts.shore(wx, wy);
     if land {
         let rise = CONTINENT_MAX_RISE * frac.powf(CONTINENT_RISE_EXPONENT);
         rise * (1.0 + RELIEF_SHARE * interior_relief(wx, wy, seed))
@@ -280,7 +363,7 @@ impl WorldEvent for PlateEvent {
             .read::<PlateEdgeIndex>()
             .map(|idx| idx.edges_in(&cells))
             .unwrap_or_default();
-        Box::new(Coasts::new(&edges))
+        Box::new(Coasts::new(&edges, scope.seed()))
     }
 
     fn query(
@@ -338,14 +421,37 @@ mod tests {
                 let (x, y) = (cx - 30_000.0 + i as f64 * 500.0, cy - 30_000.0 + j as f64 * 500.0);
                 let z = substrate_on(x, y, &coasts, S);
                 match coasts.shore(x, y) {
-                    Some((d, true)) => { assert!(z >= 0.0, "land below the datum {z} at {d:.0} from the coast"); land += 1 }
-                    Some((d, false)) => { assert!(z <= 0.0, "sea above the datum {z} at {d:.0} from the coast"); sea += 1 }
-                    None => assert!(z >= CONTINENT_MAX_RISE * (1.0 - RELIEF_SHARE) - 1e-9 || (z + SEA_MAX_DEPTH).abs() < 1e-9),
+                    (d, true) if d < 1.0 => { assert!(z >= 0.0, "land below the datum {z} at {d:.2} of the reach"); land += 1 }
+                    (d, false) if d < 1.0 => { assert!(z <= 0.0, "sea above the datum {z} at {d:.2} of the reach"); sea += 1 }
+                    _ => assert!(z >= CONTINENT_MAX_RISE * (1.0 - RELIEF_SHARE) - 1e-9 || (z + SEA_MAX_DEPTH).abs() < 1e-9),
                 }
                 assert!(z >= -SEA_MAX_DEPTH - 1e-9 && z <= CONTINENT_MAX_RISE * (1.0 + RELIEF_SHARE) + 1e-9, "substrate {z} out of range");
             }
         }
         assert!(land > 100 && sea > 100, "{land} land, {sea} sea samples near a coast");
+    }
+
+    /// The warp carries no position past its swing, never folds, and its
+    /// inverse lands within a hair.
+    #[test]
+    fn the_warp_is_bounded_and_invertible() {
+        let (mut farthest, mut stretch, mut shrink) = (0.0f64, 0.0f64, f64::MAX);
+        for i in 0..200 {
+            for j in 0..200 {
+                let (x, y) = (i as f64 * 137.0 - 13_000.0, j as f64 * 113.0 - 11_000.0);
+                let (px, py) = warp(x, y, S);
+                farthest = farthest.max((px - x).hypot(py - y));
+                let (most, least) = stretch_at(x, y, S);
+                stretch = stretch.max(most);
+                shrink = shrink.min(least);
+                let (ux, uy) = unwarp(px, py, S);
+                assert!((ux - x).hypot(uy - y) < 0.01, "unwarp misses by {} at ({x}, {y})", (ux - x).hypot(uy - y));
+            }
+        }
+        assert!(farthest <= WARP_SWING, "the warp carried a position {farthest:.0}, past WARP_SWING");
+        assert!(farthest > 0.5 * WARP_SWING, "WARP_SWING is slack: the farthest carry is {farthest:.0}");
+        assert!(shrink > 0.15, "the warp folds: a distance shrinks to {shrink:.3} of itself");
+        assert!(stretch < 3.0, "the warp stretches a distance {stretch:.2} times");
     }
 
     /// The edges a cell owns are exactly those whose midpoints lie in it,

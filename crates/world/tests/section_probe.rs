@@ -24,9 +24,9 @@ fn section() {
         let (q, r) = world_to_hex(wx, wy);
         let view = c.tile_at(q, r);
         let relief = outlines.relief(wx, wy);
-        let plate = outlines.at(wx, wy).map(|(p, d)| {
-            let ds: Vec<String> = p.edges.iter().zip(&d).map(|(e, d)| format!("{}{:.0}", if e.converge > 0.0 { "*" } else { "" }, d)).collect();
-            format!("{:?} [{}]", p.id, ds.join(" "))
+        let plate = outlines.at(wx, wy).map(|at| {
+            let ds: Vec<String> = at.plate.edges.iter().zip(&at.distances).map(|(e, d)| format!("{}{:.0}", if e.converge > 0.0 { "*" } else { "" }, d)).collect();
+            format!("{:?} [{}]", at.plate.id, ds.join(" "))
         }).unwrap_or_default();
         let water = c.water_at(q, r).map(|w| format!("{w}")).unwrap_or_default();
         println!("{:8.0} {:10.0} {:10.0} {:8.1} {:8.1} {:>8}  {plate}", t * len, wx, wy, view.elevation, relief, water);

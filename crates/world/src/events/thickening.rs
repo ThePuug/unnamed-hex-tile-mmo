@@ -73,8 +73,8 @@ pub const ESCARPMENT: f64 = 2.0 * RANGE_SPACING;
 /// a plate that overrides nowhere, and on an oceanic plate, whose edges
 /// carry no convergence.
 pub fn plateau_share(outlines: &Outlines, wx: f64, wy: f64) -> f64 {
-    let Some((plate, distances)) = outlines.at(wx, wy) else { return 0.0 };
-    plateau_share_of(plate, &distances)
+    let Some(at) = outlines.at(wx, wy) else { return 0.0 };
+    plateau_share_of(at.plate, &at.distances)
 }
 
 /// [`plateau_share`] for the plate and distances `Outlines::at` found, so a
@@ -173,7 +173,8 @@ mod tests {
                 let (x, y) = (i as f64 * 500.0 - 30_000.0, j as f64 * 500.0 - 30_000.0);
                 let share = plateau_share(&outlines, x, y);
                 assert!((0.0..=1.0).contains(&share), "share {share} at ({x}, {y})");
-                let Some((plate, _)) = outlines.at(x, y) else { continue };
+                let Some(at) = outlines.at(x, y) else { continue };
+                let plate = at.plate;
                 let strongest = plate.edges.iter().map(|e| e.converge).fold(0.0, f64::max);
                 assert!(share <= strongest + 1e-12, "share {share} past the strongest edge at ({x}, {y})");
                 if !plate.continental { assert_eq!(share, 0.0); oceanic += 1 }

@@ -25,7 +25,7 @@ assets repo keeps its proof sheets.
 | `plates` | plate index | the substrate on its own ramp, from the coasts under the viewport; sea level the only edge in it |
 | `age` | plate field | each plate's age as a grey ramp, black new, white aged: which plates keep their lakes and which are drained |
 | `elevation` | composite | the composed surface on the terrain shader's ramp, slope-shaded |
-| `plate-edges` | plate index | every edge of the plate graph along its chain, coasts white and interior edges grey, a dot at each seed |
+| `plate-edges` | plate index | every edge of the plate graph along its chain, drawn where a tile reads it through the warp, coasts white and interior edges grey, a dot at each seed |
 | `boundaries` | motion index | each edge along its chain: hue by regime, width by convergence, a tick toward the plate going under |
 | `tilt` | tilt field | the potential as a diverging ramp, arrows downslope |
 | `thickening-field` | thickening field | the plateau on the substrate, hillshaded; builds the coasts and plate outlines under the viewport itself |

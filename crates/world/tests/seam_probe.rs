@@ -122,7 +122,7 @@ fn fine_seams_in_the_belt_window() {
             let thick = world::events::thickening::thickening_on(wx, wy, &outlines).max(0.0);
             let plateau = base + thick;
             let cut = valleys.cut_at(wx, wy, plateau + relief);
-            let room = outlines.at(wx, wy).map_or("none".to_string(), |(p, _)| format!("{:?}", p.id));
+            let room = outlines.at(wx, wy).map_or("none".to_string(), |at| format!("{:?}", at.plate.id));
             println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  cut {cut:>7.1}  plate {room}  sum {:.1}  composite {:.1}", plateau + relief - cut, c.tile_at(q, r).elevation);
 
         }

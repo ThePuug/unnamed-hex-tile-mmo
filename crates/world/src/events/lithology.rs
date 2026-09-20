@@ -272,9 +272,9 @@ pub fn off_plate() -> Ground {
 /// a probe built: what the event's own query reads through its cell.
 pub fn rock_on(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
-    let Some((plate, distances)) = outlines.at(wx, wy) else { return off_plate() };
-    let relief = outlines.relief_of(plate, &distances, wx, wy).max(0.0);
-    rock_at(wx, wy, seed, plate.id, plate.age, substrate, relief)
+    let Some(at) = outlines.at(wx, wy) else { return off_plate() };
+    let relief = outlines.relief_of(&at).max(0.0);
+    rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, relief)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ impl WorldEvent for LithologyEvent {
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         let edge_cells = scope.source_cells::<PlateEdgeIndex>();
-        let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default());
+        let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(), scope.seed());
         Box::new(Reach { coasts, outlines: outlines_of(scope) })
     }
 
