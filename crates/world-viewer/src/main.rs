@@ -18,7 +18,7 @@ use world::events::Composite;
 use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateBoundaryIndex};
 use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
 use world::events::dissection::Valleys;
-use world::events::drainage::{surface_at, DrainageIndex, NODE_SPACING};
+use world::events::drainage::{surface_at, DrainageIndex};
 use world::events::lithology::{rock_on, Rock};
 use world::events::migration::ChannelIndex;
 use world::events::plates::{unwarp, Coasts, PlateEdgeIndex};
@@ -28,7 +28,7 @@ use world::lattice::node_world;
 enum Layer {
     /// Plate index: the substrate from the coasts under the viewport, coloured by elevation against sea level.
     Plates,
-    /// Plate field: each plate's age as a grey ramp, black new, white aged: which plates keep their lakes and which are drained.
+    /// Plate field: each plate's age as a grey ramp, black new, white aged: how far erosion has carried each plate.
     Age,
     /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
@@ -53,8 +53,6 @@ enum Layer {
     Fronts,
     /// Drainage index: every reach as its node chain, width by catchment.
     Reaches,
-    /// Drainage index: flooded nodes at their surface, outlets marked.
-    Lakes,
     /// Channel index: every channel as its train across its flow line, or
     /// the line where it holds it, width by catchment.
     Channels,
@@ -75,7 +73,6 @@ const LAYERS: &[(&str, Layer)] = &[
     ("water-field", Layer::WaterField),
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
-    ("drainage-lakes", Layer::Lakes),
     ("channels", Layer::Channels),
 ];
 
@@ -338,47 +335,29 @@ fn main() {
     };
 
     // A reach as its node positions plus the node it joins, and the catchment
-    // at its last node; a lake as its node positions and its outlet.
-    let needs_drainage = layers.contains(&Layer::Reaches) || layers.contains(&Layer::Lakes);
-    let (reaches, lakes): (Vec<(Vec<(f64, f64)>, f64)>, Vec<(Vec<(f64, f64)>, Option<(f64, f64)>)>) =
-        if needs_drainage {
-            composite.with_indexes(|indexes| {
-                indexes
-                    .get::<DrainageIndex>()
-                    .map(|idx| {
-                        let at = |k: &(i32, i32)| idx.node(*k).map(|n| (n.wx, n.wy));
-                        let reaches = idx
-                            .cells
-                            .values()
-                            .flat_map(|c| c.reaches.iter())
-                            .map(|reach| {
-                                let mut pts: Vec<(f64, f64)> =
-                                    reach.nodes.iter().filter_map(at).collect();
-                                pts.extend(reach.joins.as_ref().and_then(at));
-                                let catchment = reach
-                                    .nodes
-                                    .last()
-                                    .and_then(|k| idx.node(*k))
-                                    .map_or(1.0, |n| n.catchment);
-                                (pts, catchment)
-                            })
-                            .collect();
-                        let lakes = idx
-                            .cells
-                            .values()
-                            .flat_map(|c| c.lakes.iter())
-                            .map(|lake| {
-                                (lake.nodes.iter().filter_map(at).collect(),
-                                 lake.outlet.as_ref().and_then(at))
-                            })
-                            .collect();
-                        (reaches, lakes)
-                    })
-                    .unwrap_or_default()
-            })
-        } else {
-            (vec![], vec![])
-        };
+    // at its last node.
+    let reaches: Vec<(Vec<(f64, f64)>, f64)> = if layers.contains(&Layer::Reaches) {
+        composite.with_indexes(|indexes| {
+            indexes
+                .get::<DrainageIndex>()
+                .map(|idx| {
+                    let at = |k: &(i32, i32)| idx.node(*k).map(|n| (n.wx, n.wy));
+                    idx.cells
+                        .values()
+                        .flat_map(|c| c.reaches.iter())
+                        .map(|reach| {
+                            let mut pts: Vec<(f64, f64)> = reach.nodes.iter().filter_map(at).collect();
+                            pts.extend(reach.joins.as_ref().and_then(at));
+                            let catchment = reach.nodes.last().and_then(|k| idx.node(*k)).map_or(1.0, |n| n.catchment);
+                            (pts, catchment)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    } else {
+        vec![]
+    };
 
     // Every convergent edge the deformed cells resolved, for the overlay:
     // its chain, the way onto the overriding plate, and its convergence.
@@ -580,24 +559,6 @@ fn main() {
         );
     }
 
-
-    if layers.contains(&Layer::Lakes) {
-        // A node stands for the ground half a spacing around it.
-        let r = (NODE_SPACING as f64 * 0.5 / scale).round().max(1.0) as i32;
-        for (pts, outlet) in &lakes {
-            for &(x, y) in pts {
-                draw_dot(&mut buf, x, y, r, [70, 120, 230]);
-            }
-            if let Some((x, y)) = outlet {
-                draw_dot(&mut buf, *x, *y, (r / 3).max(1), [255, 255, 255]);
-            }
-        }
-        log::info!(
-            "Lakes: {} over {} flooded nodes; white dot = outlet, none = spill beyond the window",
-            lakes.len(),
-            lakes.iter().map(|l| l.0.len()).sum::<usize>()
-        );
-    }
 
     if layers.contains(&Layer::Channels) {
         // Each channel along its train, or its flow line where the river
@@ -823,7 +784,7 @@ fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
 }
 
 /// The dissected ground hillshaded in grey, and every surface standing over
-/// it in blue, darker with depth: the sea, the lakes, and the channels.
+/// it in blue, darker with depth: the sea and the channels.
 /// Routes the drainage cells under the viewport as the event's prepare does.
 fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
@@ -845,7 +806,7 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
         let cuts = valleys.cuts_at(x, y, envelope);
         let ground = envelope - cuts.valley - cuts.channel;
         let water = valleys
-            .surface_at(x, y, envelope, ground, cuts)
+            .surface_at(ground, cuts)
             .map(|s| s.round())
             .filter(|s| *s > ground.round());
         (ground, water)

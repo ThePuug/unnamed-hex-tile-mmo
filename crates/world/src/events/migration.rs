@@ -385,7 +385,7 @@ pub fn meander_amplitude(wavelength: f64) -> f64 {
 /// mountain stream's. A river in shale sweeps its belt; the same river
 /// across basement holds its line.
 pub fn vigour(node: &DrainageNode, floor_down: f64, run: f64) -> f64 {
-    if node.lake.is_some() || growth(node.catchment, node.erodibility).is_none() {
+    if node.flooded || growth(node.catchment, node.erodibility).is_none() {
         return 0.0;
     }
     let grade = (node.floor - floor_down).max(0.0) * RISE / run;
@@ -699,8 +699,8 @@ pub fn channels(cells: &[&DrainageCell], owns: impl Fn(&DrainageNode) -> bool, s
     let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
     // The next floor downstream is the node's own base level where its
     // downstream node is unpublished, the sea or the window's edge, and
-    // never under that base: a river entering a lake grades to the lake's
-    // surface, not to the lakebed beneath it.
+    // never under that base: a river entering closed ground grades to the
+    // fill, not to the floor beneath it.
     let vigour_of = |n: &DrainageNode| {
         let (floor_down, run) = match n.down.and_then(node) {
             Some(d) => (d.floor, (d.wx - n.wx).hypot(d.wy - n.wy)),
@@ -797,10 +797,10 @@ mod tests {
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
-    fn node(wx: f64, wy: f64, key: NodeKey, direction: (f64, f64), catchment: f64, age: f64, lake: Option<usize>) -> DrainageNode {
+    fn node(wx: f64, wy: f64, key: NodeKey, direction: (f64, f64), catchment: f64, age: f64, flooded: bool) -> DrainageNode {
         DrainageNode {
-            key, q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0, direction, catchment, base: 0.0,
-            down: None, lake, sill: false, age, erodibility: 1.0, cut: 0.0, floor: 5.0,
+            key, q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0, flooded, direction, catchment, base: 0.0,
+            down: None, age, erodibility: 1.0, floor: 5.0,
         }
     }
 
@@ -840,7 +840,7 @@ mod tests {
             .collect();
         for &da in &bearings {
             for &db in &bearings {
-                let (p, n) = (node(0.0, 0.0, (0, 0), da, 10.0, 1.0, None), node(l, 0.0, (1, 0), db, 10.0, 1.0, None));
+                let (p, n) = (node(0.0, 0.0, (0, 0), da, 10.0, 1.0, false), node(l, 0.0, (1, 0), db, 10.0, 1.0, false));
                 let line = flow_line(&p, &n);
                 assert_eq!(line.len(), AXIS_STEPS + 1);
                 assert_eq!(line[0], (0.0, 0.0));
@@ -868,8 +868,8 @@ mod tests {
     fn a_train_joins_its_nodes_and_grows_with_its_vigour() {
         let l = NODE_SPACING as f64;
         let (p, n) = (
-            node(0.0, 0.0, (0, 0), (1.0, 0.0), CATCHMENT_FULL, 1.0, None),
-            node(l, 0.0, (1, 0), (1.0, 0.0), CATCHMENT_FULL, 1.0, None),
+            node(0.0, 0.0, (0, 0), (1.0, 0.0), CATCHMENT_FULL, 1.0, false),
+            node(l, 0.0, (1, 0), (1.0, 0.0), CATCHMENT_FULL, 1.0, false),
         );
         let axis = Axis::new(flow_line(&p, &n));
         assert!((axis.length() - l).abs() < 1e-9);
@@ -942,10 +942,10 @@ mod tests {
     fn vigour_falls_with_grade_and_grows_with_age() {
         let run = NODE_SPACING as f64;
         let down = |n: &DrainageNode, grade: f64| n.floor - grade * run / RISE;
-        let at = |catchment: f64, age: f64, lake: Option<usize>| node(0.0, 0.0, (0, 0), (1.0, 0.0), catchment, age, lake);
-        let trunk = at(CATCHMENT_FULL, 1.0, None);
-        assert_eq!(vigour(&at(CHANNEL_HEAD, 1.0, None), 0.0, run), 0.0);
-        assert_eq!(vigour(&at(CATCHMENT_FULL, 1.0, Some(0)), 0.0, run), 0.0);
+        let at = |catchment: f64, age: f64, flooded: bool| node(0.0, 0.0, (0, 0), (1.0, 0.0), catchment, age, flooded);
+        let trunk = at(CATCHMENT_FULL, 1.0, false);
+        assert_eq!(vigour(&at(CHANNEL_HEAD, 1.0, false), 0.0, run), 0.0);
+        assert_eq!(vigour(&at(CATCHMENT_FULL, 1.0, true), 0.0, run), 0.0);
         assert!((vigour(&trunk, down(&trunk, MEANDER_GRADE_FULL), run) - 1.0).abs() < 1e-12);
         assert!((vigour(&trunk, down(&trunk, 0.0), run) - 1.0).abs() < 1e-12);
         assert_eq!(vigour(&trunk, down(&trunk, MEANDER_GRADE_NONE), run), 0.0);
@@ -956,15 +956,14 @@ mod tests {
             assert!(v <= last, "vigour rises with grade at {grade}");
             last = v;
         }
-        let young = at(CATCHMENT_FULL, 0.0, None);
+        let young = at(CATCHMENT_FULL, 0.0, false);
         let v = vigour(&young, down(&young, 0.0), run);
         assert!(v > 0.0 && v < 1.0 && (v - YOUNG_SHARE).abs() < 1e-12, "a young plate's vigour {v}");
     }
 
     /// A routed cell's channels: one from every land node with a downstream
-    /// node, none from a flooded node off its lake's throat, each owned by
-    /// the cell its start node lies in, its flow line running from the
-    /// start node to the end node.
+    /// node, none from closed ground, each owned by the cell its start node
+    /// lies in, its flow line running from the start node to the end node.
     #[test]
     fn a_cell_publishes_the_channels_starting_in_it() {
         use super::super::drainage::{DrainageEvent, DrainageIndex};
@@ -986,8 +985,7 @@ mod tests {
         assert!(!all.is_empty() && !owned.is_empty() && owned.len() < all.len());
         let from: HashSet<NodeKey> = all.iter().map(|c| c.from).collect();
         for n in published.nodes.values().filter(|n| n.down.map_or(false, |d| published.nodes.contains_key(&d))) {
-            let on_throat = published.reaches.iter().any(|r| r.nodes.contains(&n.key));
-            assert_eq!(from.contains(&n.key), n.lake.is_none() || on_throat, "channel from {:?}, lake {:?}", n.key, n.lake);
+            assert_eq!(from.contains(&n.key), !n.flooded, "channel from {:?}, flooded {}", n.key, n.flooded);
         }
         for ch in &all {
             let (p, n) = (&published.nodes[&ch.from], &published.nodes[&ch.to]);

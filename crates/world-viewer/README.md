@@ -23,7 +23,7 @@ assets repo keeps its proof sheets.
 | View | Reads | Draws |
 |------|-------|-------|
 | `plates` | plate index | the substrate on its own ramp, from the coasts under the viewport; sea level the only edge in it |
-| `age` | plate field | each plate's age as a grey ramp, black new, white aged: which plates keep their lakes and which are drained |
+| `age` | plate field | each plate's age as a grey ramp, black new, white aged: how far erosion has carried each plate |
 | `elevation` | composite | the composed surface on the terrain shader's ramp, slope-shaded |
 | `plate-edges` | plate index | every edge of the plate graph along its chain, drawn where a tile reads it through the warp, coasts white and interior edges grey, a dot at each seed |
 | `boundaries` | motion index | each edge along its chain: hue by regime, width by convergence, a tick toward the plate going under |
@@ -31,10 +31,9 @@ assets repo keeps its proof sheets.
 | `thickening-field` | thickening field | the plateau on the substrate, hillshaded; builds the coasts and plate outlines under the viewport itself |
 | `lithology-field` | lithology field | the rock at the surface by kind, shale grey, sandstone tan, limestone pale, basement red, the cuestas hillshaded; logs the shares of the land in view |
 | `dissection-field` | dissection field | the cut on its own, hillshaded, every valley a depression in a flat sheet; routes the drainage cells under the viewport itself |
-| `water-field` | dissection field | the dissected ground hillshaded, and every surface standing over it in blue, darker with depth: the sea, the lakes, the channels; rounded to steps as a tile reads it |
+| `water-field` | dissection field | the dissected ground hillshaded, and every surface standing over it in blue, darker with depth: the sea and the channels; rounded to steps as a tile reads it |
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |
 | `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
-| `drainage-lakes` | drainage index | flooded nodes at their surface, a white dot at each outlet |
 | `channels` | channel index | every channel as its train across its flow line, paler where the river holds the line, width by catchment |
 
 Views stack bottom to top in the order given: fills first, markers as
@@ -67,8 +66,7 @@ order are the framework's; a view sees the registry and the tiles.
 - An event gets a view for each product it publishes, before the event is
   judged. The viewer is how a layer is judged.
 - A second view of the same product is added only when it answers a question
-  the first cannot. Reaches and lakes are two questions about the drainage
-  index and get two views. The doc comment on the view names the question.
+  the first cannot. The doc comment on the view names the question.
 - A composite view exists per composed tile quantity. Elevation is one; tags
   get one the day a layer writes a tag.
 - When a product is deleted, its view is deleted in the same commit.
