@@ -36,16 +36,34 @@
 //! nothing else beneath. Node elevations are memoised across windows, so each
 //! node is evaluated once however many windows contain it.
 //!
-//! # Closed ground
+//! # Closed ground and the sill
 //!
 //! The flood fills every pit to its rim, so water routes over closed
 //! ground toward the rim and out, and catchment carries through: a basin
-//! swallows no river. But the flooded nodes carry no channel and no water:
-//! a reach ends where it enters closed ground, and the rim's low node is
-//! the head of the reach leaving, carrying the whole basin's water. What
-//! stands in a basin, a lake and the sill its outlet cuts, is unbuilt: the
-//! design that read each basin on a finer lattice to find its rim and its
-//! shore scanned the basin's floor, and is gone.
+//! swallows no river. The flooded nodes carry no channel and no water: a
+//! reach ends where it enters closed ground, and the rim's low node, the
+//! sill, is the head of the reach leaving, carrying the whole basin's
+//! water. Basins are geologically brief: the water leaving cuts the sill,
+//! so a young orogen is basin country and an old one is drained through
+//! gorges. A plate carries an age, and each basin's sill is cut by that
+//! age and the square root of the catchment leaving over it, the growth
+//! law a valley's depth follows, no deeper than the basin behind it or the
+//! base level beneath it. The ground down the outflow from the sill is
+//! graded from the cut sill to the first ground no higher, the breach
+//! through the rim, so the river leaves over a lip and falls. Across the
+//! drained floor the flood's path from the deepest node to the sill goes a
+//! hair under the new fill, so the floor drains as one basin instead of a
+//! chain of sub-basins; a pocket off that path is a basin of its own. A
+//! basin left shallower than its river's channel drains outright: the
+//! river runs through its floor. The window is routed again over the cut
+//! ground while a routing cuts any sill, so base levels and the reach
+//! leaving each basin agree with every cut, and a sill cut once is not cut
+//! again: one cut per basin. A basin spilling past the window has no
+//! outlet and no cut. Nothing here moves ground: the envelope is published
+//! as the elevation and the breach as a cut beside it, and dissection
+//! removes the ground. What stands in a basin the cut leaves, a lake and
+//! its shore, is unbuilt: the design that read each rim on a finer lattice
+//! scanned the basin's floor, and a shore wants drawing from the rim.
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -75,6 +93,23 @@ pub const DRAINAGE_CELL_SCALE: u32 = (PLATE_REACH / RING_CLEARANCE) as u32 + 1;
 
 /// Two levels closer than this are one flat.
 const FLAT: f64 = 1e-9;
+
+/// How many times a window is routed again over its cut sills. A drained
+/// basin's floor holds sub-basins, each under the same rule, so each pass
+/// cuts the sills the pass before uncovered; the ground only falls, so the
+/// passes converge, and the cap bounds the cost of a deep nest.
+const ROUTING_PASSES: usize = 8;
+
+/// The least depth a basin keeps once its sill is cut, in z-levels: a
+/// river's channel. A basin shallower than the channel the river leaving
+/// it has cut is no basin, the river runs through its floor, so the sill
+/// is cut to the floor instead of leaving a sliver of closed ground.
+pub const REMNANT_MIN: f64 = 3.0;
+
+/// How far under the new fill a hump on the flood's path across a basin
+/// is cut: a hair, enough that the routing floods it and the basin stays
+/// one basin, and too little for a tile to read.
+const UNDER: f64 = 1e-6;
 
 const SIXTY: f64 = std::f64::consts::PI / 3.0;
 
@@ -113,6 +148,21 @@ pub fn growth(catchment: f64, erodibility: f64) -> Option<f64> {
     Some(((catchment - head) / (CATCHMENT_FULL - head).max(1.0)).min(1.0).sqrt())
 }
 
+/// How much of the basin behind it a full trunk cuts its sill by, per unit
+/// of its plate's age. Above one, so a plate is drained before it is fully
+/// aged, and what an aged plate keeps are the basins that drain little.
+pub const SILL_CUT_RATE: f64 = 1.5;
+
+/// The share of the basin behind it a sill is cut by, with `catchment`
+/// nodes of water leaving over it on a plate of `age` through rock of
+/// `erodibility`: the river's growth past the channel head at
+/// [`SILL_CUT_RATE`] per unit of age and erodibility, saturating at the
+/// whole. Nothing below the head: a pit that drains little keeps its rim
+/// at any age, and a hard sill holds longer.
+pub fn sill_share(age: f64, catchment: f64, erodibility: f64) -> f64 {
+    growth(catchment, erodibility).map_or(0.0, |g| (SILL_CUT_RATE * age * erodibility * g).min(1.0))
+}
+
 /// The share of its height above base level a full trunk on a fully aged
 /// plate has removed: the Grand Canyon's 1.6 km cut through a 2.3 km
 /// plateau. The rest is the fall that keeps the river flowing.
@@ -128,13 +178,17 @@ pub fn relief_share(catchment: f64, age: f64, erodibility: f64) -> f64 {
     growth(catchment, erodibility).map_or(0.0, |g| RELIEF_SHARE_MAX * g * aged(age) * erodibility)
 }
 
-/// The floor a river has cut to at a node on its own, in z-levels: on
-/// closed ground the ground itself, which lies under its base and carries
-/// no channel; else the envelope less its share of the height above base
-/// level. A river is held up by a harder lip downstream, which [`Routing`]
-/// settles over the reach: the floor published is never below the next
-/// floor downstream. Dissection cuts to it and never below.
-pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, flooded: bool) -> f64 {
+/// The floor a river has cut to at a node on its own, in z-levels: where
+/// the routing cut a sill or a breach, exactly the ground it routed over;
+/// on closed ground the ground itself, which lies under its base and
+/// carries no channel; else the envelope less its share of the height
+/// above base level. A river is held up by a harder lip downstream, which
+/// [`Routing`] settles over the reach: the floor published is never below
+/// the next floor downstream. Dissection cuts to it and never below.
+pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, cut: f64, sill: bool, flooded: bool) -> f64 {
+    if sill || cut > 0.0 {
+        return elevation - cut;
+    }
     if flooded {
         return elevation;
     }
@@ -274,11 +328,20 @@ pub struct DrainageNode {
     pub base: f64,
     /// The node taking the larger share of this one's water. None at a sink.
     pub down: Option<NodeKey>,
+    /// This node is a basin's outlet: the sill whose height, less its cut,
+    /// is the basin's fill. Dissection cuts exactly `cut` here, so the
+    /// basin keeps the fill the routing gave it.
+    pub sill: bool,
     /// The age of the plate this node stands on, 0 to 1 as
     /// `tectonic::Plate::age`.
     pub age: f64,
     /// The erodibility of the rock at this node, as `lithology::Rock`.
     pub erodibility: f64,
+    /// How far below the envelope the river leaving a cut sill has cut the
+    /// ground here: the sill's cut at the sill, and along its outflow the
+    /// breach through the rim, to where the ground is no higher. Nothing
+    /// elsewhere. A floor is never above the envelope less this.
+    pub cut: f64,
     /// The floor the river has cut to here, as [`floor_at`] gives it: what
     /// dissection cuts down to at the node, and what the grade of a reach
     /// is read from.
@@ -398,6 +461,15 @@ impl PartialOrd for Pending {
     }
 }
 
+/// A basin as the flood fills it: its flooded nodes at one fill, and the
+/// rim node its water leaves over, or none when the spill lies beyond the
+/// window.
+struct RoutedBasin {
+    members: Vec<usize>,
+    surface: f64,
+    outlet: Option<usize>,
+}
+
 struct RoutedReach {
     nodes: Vec<usize>,
     end: Terminus,
@@ -408,9 +480,9 @@ struct RoutedReach {
 pub struct Routing {
     pub keys: Vec<NodeKey>,
     pub owned: Vec<bool>,
-    /// The envelope at each node.
+    /// The envelope at each node, before any cut.
     pub elevation: Vec<f64>,
-    /// The flood's fill at each node: the envelope, or the level closed
+    /// The flood's fill at each node: the cut ground, or the level closed
     /// ground fills to.
     pub surface: Vec<f64>,
     pub kind: Vec<Kind>,
@@ -426,8 +498,9 @@ pub struct Routing {
     /// any node above it on its reach.
     pub carried: Vec<f64>,
     /// Base level at each node: the fill of the first closed ground down
-    /// the larger share's path, or sea level.
+    /// the larger share's path, a cut node's ground, or sea level.
     pub base: Vec<f64>,
+    pub basin_of: Vec<Option<usize>>,
     /// The node each one was flooded from: the flood's path, which across
     /// closed ground is the lowest route to the rim.
     pub parent: Vec<Option<usize>>,
@@ -435,10 +508,13 @@ pub struct Routing {
     pub age: Vec<f64>,
     /// The erodibility of the rock at each node.
     pub erodibility: Vec<f64>,
+    /// The cut below the envelope at each node, as `DrainageNode::cut`.
+    pub cut: Vec<f64>,
     /// The floor at each node, as `DrainageNode::floor`: its own, held up
     /// by any harder lip downstream.
     pub floor: Vec<f64>,
     index: HashMap<NodeKey, usize>,
+    basins: Vec<RoutedBasin>,
     reaches: Vec<RoutedReach>,
 }
 
@@ -448,8 +524,11 @@ impl Routing {
     }
 
     /// The cell's own share of the window: its nodes and its runs of every
-    /// reach.
+    /// reach. Every basin in the window says which node is its sill, not
+    /// only the owned ones: a sill is owned by whichever cell holds the rim
+    /// node, and that cell may own no flooded node of the basin it drains.
     pub fn owned_cell(&self) -> DrainageCell {
+        let sills: HashSet<usize> = self.basins.iter().filter_map(|b| b.outlet).collect();
         let mut nodes = HashMap::new();
         for k in 0..self.keys.len() {
             if !self.owned[k] || matches!(self.kind[k], Kind::Sea | Kind::Edge) {
@@ -472,8 +551,10 @@ impl Routing {
                     catchment: self.carried[k],
                     base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
+                    sill: sills.contains(&k),
                     age: self.age[k],
                     erodibility: self.erodibility[k],
+                    cut: self.cut[k],
                     floor: self.floor[k],
                 },
             );
@@ -529,7 +610,9 @@ impl DrainageEvent {
     }
 
     /// Route the window of `cell`: every node in the cell and its ring, on
-    /// the surface the fronts in reach complete.
+    /// the surface the fronts in reach complete; then again over the ground
+    /// with the breaches, while a routing cuts any sill, so base levels and
+    /// the reach leaving each basin agree with every cut sill.
     pub fn route(&self, lattice: &HexLattice, cell: CellId, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Routing {
         // ── Nodes in the window, in key order ──
         let centre = lattice.cell_center(cell);
@@ -563,9 +646,24 @@ impl DrainageEvent {
             .collect();
         let grounds: Vec<Ground> = keys.iter().map(|&k| self.ground(k, seed, coasts, outlines)).collect();
         let elevation: Vec<f64> = grounds.iter().map(|g| g.surface).collect();
-        let mut routing = Self::route_over(keys, owned, index, &nbrs, elevation);
-        routing.age = grounds.iter().map(|g| g.age).collect();
-        routing.erodibility = grounds.iter().map(|g| g.erodibility).collect();
+        let age: Vec<f64> = grounds.iter().map(|g| g.age).collect();
+        let erodibility: Vec<f64> = grounds.iter().map(|g| g.erodibility).collect();
+
+        let mut ground = elevation.clone();
+        let mut routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
+        let mut cut_sills: HashSet<usize> = HashSet::new();
+        for _ in 0..ROUTING_PASSES {
+            let Some(breached) = Self::breach(&routing, &mut cut_sills, &age, &erodibility) else { break };
+            ground = breached;
+            routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
+        }
+        routing.cut = elevation.iter().zip(&ground).map(|(e, g)| e - g).collect();
+        // A cut node is a fixed floor, so base levels are read again with
+        // the cuts known.
+        routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.surface, &routing.cut, &ground);
+        routing.elevation = elevation;
+        routing.age = age;
+        routing.erodibility = erodibility;
         routing.floor = Self::floors(&routing);
         routing
     }
@@ -576,6 +674,7 @@ impl DrainageEvent {
     /// a reach. Walked from each node to the sea once, memoised.
     fn floors(routing: &Routing) -> Vec<f64> {
         let n = routing.keys.len();
+        let sills: HashSet<usize> = routing.basins.iter().filter_map(|b| b.outlet).collect();
         let own: Vec<f64> = (0..n)
             .map(|k| {
                 floor_at(
@@ -584,6 +683,8 @@ impl DrainageEvent {
                     routing.carried[k],
                     routing.age[k],
                     routing.erodibility[k],
+                    routing.cut[k],
+                    sills.contains(&k),
                     routing.kind[k] == Kind::Basin,
                 )
             })
@@ -615,12 +716,71 @@ impl DrainageEvent {
         floor.into_iter().zip(own).map(|(f, o)| f.unwrap_or(o)).collect()
     }
 
+    /// The ground with every spilling basin's sill cut and the breach its
+    /// outflow has made: the sill by its plate's age and the catchment
+    /// leaving over it, no deeper than the basin behind it or the base level
+    /// below it; every hump on the flood's path across the basin cut to the
+    /// sill; and the ground down the outflow graded from the sill to the
+    /// first node no higher. A sill in `cut_sills`, cut by an earlier pass,
+    /// is not cut again and every sill cut joins it: one cut per basin, so a
+    /// pass cuts only the sills of the sub-basins the pass before uncovered.
+    /// None when no sill is cut.
+    fn breach(routing: &Routing, cut_sills: &mut HashSet<usize>, age: &[f64], erodibility: &[f64]) -> Option<Vec<f64>> {
+        let mut ground = routing.elevation.clone();
+        let mut cut_any = false;
+        for (id, basin) in routing.basins.iter().enumerate() {
+            let Some(sill) = basin.outlet.filter(|s| !cut_sills.contains(s)) else { continue };
+            let floor = basin.members.iter().map(|&m| routing.elevation[m]).fold(f64::MAX, f64::min);
+            let room = (basin.surface - floor).min(basin.surface - routing.base[sill]);
+            let cut = room * sill_share(age[sill], routing.catchment[sill], erodibility[sill]);
+            if cut <= FLAT {
+                continue;
+            }
+            let cut = if room - cut < REMNANT_MIN { room } else { cut };
+            let target = basin.surface - cut;
+            // The flood's path from the deepest node back to the sill, walked
+            // within the basin: at a tied rim it leaves by the other rim
+            // node. A hump on it goes a hair under the fill, so the basin
+            // stays one basin with its sill where the flood entered. A basin
+            // cut to its floor is no basin: its bed is cut level with the
+            // sill, a flat the river crosses, not a sliver a hair deep.
+            let under = if target > floor + FLAT { UNDER } else { 0.0 };
+            let deepest = basin.members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b]));
+            let mut cur = deepest;
+            while let Some(k) = cur.filter(|&k| routing.basin_of[k] == Some(id)) {
+                if ground[k] > target - under {
+                    ground[k] = target - under;
+                }
+                cur = routing.parent[k];
+            }
+            // Beyond the sill the breach grades down to the first ground no
+            // higher than the cut sill, so the river leaves over a lip and
+            // falls, and a flat floor at the fill never stands past it.
+            ground[sill] = target;
+            cut_sills.insert(sill);
+            let mut ramp = Vec::new();
+            let mut cur = routing.down[sill];
+            while let Some(k) = cur.filter(|&k| ground[k] > target) {
+                ramp.push(k);
+                cur = routing.down[k];
+            }
+            let end = cur.map_or(target, |e| ground[e]);
+            for (i, &k) in ramp.iter().enumerate() {
+                ground[k] = ground[k].min(target + (end - target) * (i + 1) as f64 / (ramp.len() + 1) as f64);
+            }
+            cut_any = true;
+        }
+        cut_any.then_some(ground)
+    }
+
     /// Base level at each node: what a river there cuts toward and never
     /// below. Down each node's larger share, the first fixed level: the
     /// fill of closed ground, since a river reaching it has nothing to cut
-    /// toward below the rim; or the sea; water leaving the window is read
-    /// as reaching the sea.
-    fn base_levels(down: &[Option<usize>], kind: &[Kind], surface: &[f64]) -> Vec<f64> {
+    /// toward below the rim; a cut node's ground, since the breach holds
+    /// its floor and a tributary joining it can cut no lower; or the sea;
+    /// water leaving the window is read as reaching the sea. A node's own
+    /// floor is not its base.
+    fn base_levels(down: &[Option<usize>], kind: &[Kind], surface: &[f64], cut: &[f64], ground: &[f64]) -> Vec<f64> {
         let n = down.len();
         let mut base: Vec<Option<f64>> = vec![None; n];
         for k in 0..n {
@@ -630,6 +790,11 @@ impl DrainageEvent {
             let mut path = vec![k];
             let level = loop {
                 let cur = *path.last().unwrap();
+                if cur != k && cut[cur] > 0.0 {
+                    // Its own base lies further down: it is not on this path.
+                    path.pop();
+                    break ground[cur];
+                }
                 if let Some(b) = base[cur] {
                     break b;
                 }
@@ -649,8 +814,8 @@ impl DrainageEvent {
     }
 
     /// Route the window's nodes over `elevation`: the flood, every node's
-    /// outflow, catchment, base level and reaches. Publishes no age and no
-    /// floor; `route` sets both.
+    /// outflow, catchment, basins, base level and reaches. Publishes no
+    /// age, no cut and no floor; `route` sets them.
     fn route_over(
         keys: Vec<NodeKey>,
         owned: Vec<bool>,
@@ -789,7 +954,36 @@ impl DrainageEvent {
             }
         }
 
-        let base = Self::base_levels(&down, &kind, &surface);
+        // ── Basins: flooded nodes at one fill, connected ──
+        let mut basin_of: Vec<Option<usize>> = vec![None; n];
+        let mut basins: Vec<RoutedBasin> = Vec::new();
+        for k in 0..n {
+            if kind[k] != Kind::Basin || basin_of[k].is_some() {
+                continue;
+            }
+            let id = basins.len();
+            let mut members = Vec::new();
+            let mut stack = vec![k];
+            basin_of[k] = Some(id);
+            while let Some(a) = stack.pop() {
+                members.push(a);
+                for m in nbrs[a].into_iter().flatten() {
+                    if kind[m] == Kind::Basin && basin_of[m].is_none() && (surface[m] - surface[a]).abs() < FLAT {
+                        basin_of[m] = Some(id);
+                        stack.push(m);
+                    }
+                }
+            }
+            members.sort_unstable();
+            let outlet = members
+                .iter()
+                .filter_map(|&a| parent[a])
+                .find(|&p| kind[p] != Kind::Basin)
+                .filter(|&p| kind[p] != Kind::Edge);
+            basins.push(RoutedBasin { members, surface: surface[k], outlet });
+        }
+
+        let base = Self::base_levels(&down, &kind, &surface, &vec![0.0; n], &elevation);
 
         // ── Reaches: a head is a source, a confluence, or a basin's rim ──
         let mut land_in = vec![0u32; n];
@@ -853,11 +1047,14 @@ impl DrainageEvent {
             catchment,
             carried,
             base,
+            basin_of,
             parent,
             index,
+            basins,
             reaches,
             age: vec![0.0; n],
             erodibility: vec![1.0; n],
+            cut: vec![0.0; n],
             floor: vec![0.0; n],
         }
     }
@@ -956,18 +1153,22 @@ mod tests {
         assert!(growth(CHANNEL_HEAD + 1.0, 1.0).is_some() && growth(CHANNEL_HEAD + 1.0, 0.3).is_none());
         let (soft, hard) = (relief_share(10.0 * CATCHMENT_FULL, 1.0, 1.0), relief_share(10.0 * CATCHMENT_FULL, 1.0, 0.3));
         assert!((hard - 0.3 * soft).abs() < 1e-12, "hard {hard} for soft {soft}");
+        assert!(sill_share(1.0, CATCHMENT_FULL, 0.3) < sill_share(1.0, CATCHMENT_FULL, 1.0));
     }
 
-    /// A node's floor is the ground on closed ground, and the envelope less
-    /// its share of the height above base elsewhere, never below base.
+    /// A node's floor is the routed ground where a sill or a breach was
+    /// cut, the ground on closed ground, and the envelope less its share
+    /// of the height above base elsewhere, never below base.
     #[test]
-    fn the_floor_is_the_ground_or_the_share() {
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, true), 20.0);
-        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, false);
+    fn the_floor_is_the_cut_the_ground_or_the_share() {
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, true, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, false, false), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, true), 20.0);
+        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false);
         assert!((floor - (20.0 - 15.0 * RELIEF_SHARE_MAX)).abs() < 1e-12);
-        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 1.0, false), 20.0);
-        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, false), 3.0);
-        let hard = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.3, false);
+        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 1.0, 0.0, false, false), 20.0);
+        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false), 3.0);
+        let hard = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.3, 0.0, false, false);
         assert!(hard > floor, "hard rock cut as deep as shale");
     }
 }

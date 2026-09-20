@@ -16,9 +16,14 @@
 //! dissected plateau, and a belt with a trunk river through it has a gorge.
 //!
 //! A river cuts toward its base level and never below it: the sea, or the
-//! fill of the closed ground it ends in, which is never cut. A valley
-//! interpolates its depth between its nodes, so a ridge between them the
-//! lattice did not sample stands. The floor at a node is what drainage
+//! fill of the closed ground it ends in, which is never cut. A basin's
+//! sill is cut by exactly what drainage published, the sill's height less
+//! the basin's fill, since the sill holds the fill; along the breach past
+//! it the floor is never above the cut sill, so the outlet is a gorge
+//! through the rim until the valley's own floor is lower. A breach cuts to
+//! the straight floor between its nodes, so the gorge is cut through any
+//! ridge the lattice did not sample; every other valley interpolates its
+//! depth and such a ridge stands. The floor at a node is what drainage
 //! published for it: the envelope less a share of its height above base
 //! level, the share saturating below one so a graded trunk keeps the fall
 //! that keeps it flowing, and growing with the plate's age from a young
@@ -102,11 +107,12 @@ pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
 
 /// The depth of the channel slot below the valley floor at a node: nothing
 /// below the channel head and nothing on closed ground, which carries no
-/// channel; otherwise from the head's depth to a trunk's as the catchment
-/// grows. Cut below base level too: a channel reaching the sea is under
-/// it.
+/// channel, except at a hump the drained floor's path has cut, which
+/// keeps the river's slot through it; otherwise from the head's depth to
+/// a trunk's as the catchment grows. Cut below base level too: a channel
+/// reaching the sea is under it.
 pub fn channel_depth(node: &DrainageNode) -> f64 {
-    if node.flooded {
+    if node.flooded && node.cut <= 0.0 {
         return 0.0;
     }
     growth(node.catchment, node.erodibility).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
@@ -139,6 +145,10 @@ struct Cut {
     env1: f64,
     floor0: f64,
     floor1: f64,
+    /// The floor runs straight between the ends and the envelope is cut
+    /// down to it: a breach, at a sill or along the river leaving one.
+    /// Elsewhere the depth is interpolated and an unsampled ridge stands.
+    graded: bool,
     base0: f64,
     base1: f64,
     half0: f64,
@@ -188,7 +198,11 @@ impl Cut {
         let lerp = |a: f64, b: f64| a + t * (b - a);
         let vigour = lerp(self.vigour0, self.vigour1);
         let half = lerp(self.half0, self.half1);
-        let depth = lerp(self.env0 - self.floor0, self.env1 - self.floor1) + vigour * (envelope - lerp(self.env0, self.env1));
+        let depth = if self.graded {
+            (envelope - lerp(self.floor0, self.floor1)).max(0.0)
+        } else {
+            lerp(self.env0 - self.floor0, self.env1 - self.floor1) + vigour * (envelope - lerp(self.env0, self.env1))
+        };
         let reach = self.train.as_ref().map_or(0.0, |m| m.amplitude);
         At {
             depth,
@@ -246,6 +260,7 @@ impl Valleys {
                 env1: n.elevation,
                 floor0: p.floor,
                 floor1: n.floor,
+                graded: p.sill || n.sill || p.cut > 0.0 || n.cut > 0.0,
                 base0: p.base,
                 base1: n.base,
                 half0: ch.half0,
@@ -333,10 +348,11 @@ impl Valleys {
     /// profiled across it from the edge of its belt, the deepest; and of
     /// every channel the position lies in, the deepest slot, whichever
     /// valley's wall it crosses, so a tributary keeps its channel down the
-    /// wall of a trunk's deeper valley. A valley interpolates its depth
-    /// between its nodes and never cuts below the base level it drains to;
-    /// its channel, a slot of the segment's half-width and depth along its
-    /// train, cuts on below it.
+    /// wall of a trunk's deeper valley. A breach cuts to the straight floor
+    /// between its nodes, through any ridge between them; any other valley
+    /// interpolates its depth. A valley never cuts below the base level it
+    /// drains to; its channel, a slot of the segment's half-width and depth
+    /// along its train, cuts on below it.
     ///
     /// Every sub-segment in reach reads on its own and the deepest stands,
     /// which keeps the cut continuous: the nearest point on a bent line
@@ -521,7 +537,7 @@ mod tests {
     fn channel_depth_starts_at_the_head_and_saturates() {
         let node = |catchment: f64, flooded: bool| DrainageNode {
             key: (0, 0), q: 0, r: 0, wx: 0.0, wy: 0.0, elevation: 10.0, surface: 10.0, flooded,
-            direction: (1.0, 0.0), catchment, base: 0.0, down: None, age: 1.0, erodibility: 1.0, floor: 5.0,
+            direction: (1.0, 0.0), catchment, base: 0.0, down: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
         };
         assert_eq!(channel_depth(&node(CHANNEL_HEAD, false)), 0.0);
         assert!((channel_depth(&node(CHANNEL_HEAD + 1e-9, false)) - CHANNEL_DEPTH_MIN).abs() < 1e-3);
@@ -536,10 +552,12 @@ mod tests {
     }
 
     /// On a routed cell, the floor along every reach never rises, closed
-    /// ground is never cut, no valley cut at a tile exceeds the envelope's
-    /// height above sea level, and no slot is deeper than a trunk's.
+    /// ground is cut only where the drained floor's path was, a sill is
+    /// cut exactly what drainage published and the breach below it never
+    /// rises, no valley cut at a tile exceeds the envelope's height above
+    /// sea level, and no slot is deeper than a trunk's.
     #[test]
-    fn floors_never_rise_and_closed_ground_is_uncut() {
+    fn floors_never_rise_and_sills_are_cut_as_published() {
         let (published, valleys) = spawn_valleys();
         assert!(!published.reaches.is_empty());
         let mut cut_nodes = 0;
@@ -557,9 +575,26 @@ mod tests {
         }
         assert!(cut_nodes > 0, "no node in the spawn cell carries a channel");
         for n in published.nodes.values().filter(|n| n.flooded) {
-            assert_eq!(depth_at(n), 0.0, "closed ground cut at {:?}", n.key);
-            assert_eq!(channel_depth(n), 0.0, "a channel on closed ground at {:?}", n.key);
+            assert_eq!(depth_at(n), n.cut, "closed ground cut past its hump at {:?}", n.key);
         }
+        let (mut sills, mut cut_sills) = (0, 0);
+        for outlet in published.nodes.values().filter(|n| n.sill) {
+            sills += 1;
+            assert_eq!(depth_at(outlet), outlet.cut, "a sill cut past what drainage published at {:?}", outlet.key);
+            if outlet.cut > 0.0 { cut_sills += 1 }
+            let mut last = outlet.elevation - outlet.cut;
+            let mut next = outlet.down.and_then(|d| published.nodes.get(&d));
+            while let Some(n) = next {
+                if n.flooded { break }
+                let f = n.elevation - depth_at(n);
+                assert!(f <= last + 1e-9, "a floor rising past a sill at {:?}", n.key);
+                if n.cut == 0.0 { break }
+                last = f;
+                next = n.down.and_then(|d| published.nodes.get(&d));
+            }
+        }
+        assert!(sills > 0, "no basin in the spawn cell drains through a sill the cell owns");
+        assert!(cut_sills > 0, "no sill in the spawn cell is cut");
         for n in published.nodes.values() {
             let (x, y) = node_world(n.key);
             let cuts = valleys.cuts_at(x + 100.0, y + 60.0, n.elevation);
@@ -579,14 +614,14 @@ mod tests {
         let (published, valleys) = spawn_valleys();
         let mut channelled = 0;
         for n in published.nodes.values() {
-            if channel_depth(n) <= 0.0 || n.down.map_or(true, |d| !published.nodes.contains_key(&d)) {
+            if channel_depth(n) <= 0.0 || n.sill || n.down.map_or(true, |d| !published.nodes.contains_key(&d)) {
                 continue;
             }
             channelled += 1;
             let (x, y) = node_world(n.key);
             let at = valleys.cuts_at(x, y, n.elevation);
             assert!(at.channel >= channel_depth(n) - 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
-            assert!(at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
+            assert!(n.flooded || at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
             // Past the widest belt any train sweeps, square off the flow
             // line at the node, no slot of this channel is cut; one there
             // is another channel's, interpolated short of its own node.

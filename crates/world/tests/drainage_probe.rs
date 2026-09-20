@@ -329,8 +329,8 @@ fn cost() {
 }
 
 /// Base level is the fill of the first closed ground down a node's larger
-/// share, or the sea: what dissection cuts toward, published because only
-/// the routing knows the path.
+/// share, a cut node's floor, or the sea: what dissection cuts toward,
+/// published because only the routing knows the path.
 #[test]
 fn base_level_is_the_first_basin_downstream_or_the_sea() {
     let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
@@ -340,6 +340,9 @@ fn base_level_is_the_first_basin_downstream_or_the_sea() {
         if !matches!(routing.kind[k], Kind::Land | Kind::Basin) { continue }
         let mut cur = k;
         let expected = loop {
+            if cur != k && routing.cut[cur] > 0.0 {
+                break routing.elevation[cur] - routing.cut[cur];
+            }
             if routing.kind[cur] == Kind::Basin {
                 break routing.surface[cur];
             }

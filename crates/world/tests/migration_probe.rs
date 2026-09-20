@@ -16,7 +16,7 @@ const SEED: u64 = 0x9E3779B97F4A7C15;
 fn node(wx: f64, key: (i32, i32), catchment: f64) -> DrainageNode {
     DrainageNode {
         key, q: 0, r: 0, wx, wy: 0.0, elevation: 10.0, surface: 10.0, flooded: false, direction: (1.0, 0.0), catchment, base: 0.0,
-        down: None, age: 1.0, erodibility: 1.0, floor: 5.0,
+        down: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
     }
 }
 

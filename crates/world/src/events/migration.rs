@@ -800,7 +800,7 @@ mod tests {
     fn node(wx: f64, wy: f64, key: NodeKey, direction: (f64, f64), catchment: f64, age: f64, flooded: bool) -> DrainageNode {
         DrainageNode {
             key, q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0, flooded, direction, catchment, base: 0.0,
-            down: None, age, erodibility: 1.0, floor: 5.0,
+            down: None, sill: false, age, erodibility: 1.0, cut: 0.0, floor: 5.0,
         }
     }
 
