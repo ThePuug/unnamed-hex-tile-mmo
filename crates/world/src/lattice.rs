@@ -1,10 +1,19 @@
 //! The world lattice — the hex node lattice every outline is drawn on.
 //!
-//! Coasts, plate edges, belt fronts and channels are chains of nodes on one
-//! lattice, coarser than the tiles and aligned with them, so every bend in
-//! the world is 60° or 120° and a river mouth, a front's end and a coast's
-//! corner can share a vertex. Elevation is not on the lattice: heights are
-//! continuous functions of distance to the chains.
+//! Coasts, plate edges and belt fronts are chains of nodes on one lattice,
+//! coarser than the tiles and aligned with them, so every bend in an
+//! outline is 60° or 120° and a front's end and a coast's corner can share
+//! a vertex. Elevation is not on the lattice: heights are continuous
+//! functions of distance to the chains.
+//!
+//! Drainage's nodes are keyed by the same lattice but do not stand on it:
+//! each stands on its site, the lattice point displaced by a hash of the
+//! key. The key is what the graph is made of, six neighbours by offset and
+//! the same in every window, and nothing searches for a node; the site is
+//! what its water sees, so the six neighbours of a node face six irregular
+//! directions and different ones at every node, and a stream on a tilt
+//! takes a different one at each step instead of the same lattice axis
+//! forever, which combs a plain.
 //!
 //! A straight line between two nodes is drawn as runs along the lattice's
 //! directions. An outline holds a run for [`RUN_MIN`] nodes before it turns
@@ -13,7 +22,8 @@
 //! nodes is a pure function of the two, and the same from either end, which
 //! is what lets two cells draw one edge and agree on every node of it.
 
-use crate::{hex_to_world, world_to_hex};
+use crate::noise::hash_channel_f64;
+use crate::{hex_to_world, world_to_hex, SQRT_3};
 
 /// A node's lattice coordinates. Its tile is `(i × NODE_SPACING, j × NODE_SPACING)`.
 pub type NodeKey = (i32, i32);
@@ -44,8 +54,51 @@ const SIN_60: f64 = 0.866_025_403_784_438_6;
 /// so consecutive entries bound one facet.
 pub const DIRECTIONS: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
 
+/// How far a node's site is displaced from its lattice point, as a share
+/// of the spacing along each axis: enough that no two nodes' neighbours
+/// face the same directions, and little enough that a node's six
+/// neighbours stay its nearest six.
+pub const NODE_JITTER: f64 = 0.2;
+
+/// The farthest a site lies from its lattice point, in world units: the
+/// displacement along both axes at once. Every reach that holds a node's
+/// neighbour a spacing away grows by twice this.
+pub const NODE_SWING: f64 = NODE_JITTER * NODE_SPACING as f64 * SQRT_3;
+
+const SITE_Q: u64 = 0x7369_7465_0000_0001;
+const SITE_R: u64 = 0x7369_7465_0000_0002;
+const SITE_SEED: u64 = 0x6c61_7474_6963_6500;
+
 pub fn node_tile(key: NodeKey) -> (i32, i32) {
     (key.0 * NODE_SPACING, key.1 * NODE_SPACING)
+}
+
+/// The tile drainage's node stands on: its lattice point displaced by
+/// [`NODE_JITTER`] of the spacing along each axis, by a hash of the key
+/// alone, so the lattice is one lattice in every world.
+pub fn node_site(key: NodeKey) -> (i32, i32) {
+    let (q, r) = node_tile(key);
+    let swing = NODE_JITTER * NODE_SPACING as f64;
+    let dq = (hash_channel_f64(key.0 as i64, key.1 as i64, SITE_SEED, SITE_Q) * 2.0 - 1.0) * swing;
+    let dr = (hash_channel_f64(key.0 as i64, key.1 as i64, SITE_SEED, SITE_R) * 2.0 - 1.0) * swing;
+    (q + dq.round() as i32, r + dr.round() as i32)
+}
+
+/// A node's site in world units.
+pub fn site_world(key: NodeKey) -> (f64, f64) {
+    let (q, r) = node_site(key);
+    hex_to_world(q, r)
+}
+
+/// The node whose site is a tile, if it is one: the key the tile's lattice
+/// cell names, or one of its neighbours, since a site strays under half a
+/// spacing.
+pub fn site_at(q: i32, r: i32) -> Option<NodeKey> {
+    let s = NODE_SPACING as f64;
+    let home = hex_round(q as f64 / s, r as f64 / s);
+    std::iter::once(home)
+        .chain(DIRECTIONS.iter().map(|(di, dj)| (home.0 + di, home.1 + dj)))
+        .find(|&key| node_site(key) == (q, r))
 }
 
 /// A node's position in world units.

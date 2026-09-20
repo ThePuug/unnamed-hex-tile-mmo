@@ -80,7 +80,7 @@ use super::thrusting::{outlines_of, Outlines};
 use super::tilt::tilt_at;
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
-pub use crate::lattice::{node_tile, NodeKey, NODE_SPACING};
+pub use crate::lattice::{node_site, site_at, site_world, NodeKey, NODE_SPACING, NODE_SWING};
 pub use crate::tectonic::{aged, YOUNG_SHARE};
 use crate::tectonic::PLATE_REACH;
 use crate::{hex_to_world, substrate_on};
@@ -110,8 +110,6 @@ pub const REMNANT_MIN: f64 = 3.0;
 /// is cut: a hair, enough that the routing floods it and the basin stays
 /// one basin, and too little for a tile to read.
 const UNDER: f64 = 1e-6;
-
-const SIXTY: f64 = std::f64::consts::PI / 3.0;
 
 // ── Catchment ───────────────────────────────────────────────────────────────
 
@@ -232,32 +230,55 @@ pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outli
 // ── Nodes ───────────────────────────────────────────────────────────────────
 
 
-/// The steepest of the six facets around a node on the water surface: the
-/// downslope angle in world space, the index of the facet's first edge, and
-/// the share of the flow its second edge takes. None where nothing descends.
+/// The steepest of the facets around a node on the water surface: the
+/// downslope angle in world space, the two neighbours whose facet it lies
+/// in, first then second in angular order, and the share of the flow the
+/// second takes. None where nothing descends.
 ///
-/// A facet is the plane through the node and two consecutive neighbours. Its
-/// steepest descent is used when it points into the facet; when it points
-/// outside, the flow runs down the nearer edge instead, at that edge's slope.
+/// A facet is the plane through the node and two neighbours consecutive in
+/// angle around it, as their sites lie. Its steepest descent is used when
+/// it points into the facet; when it points outside, the flow runs down
+/// the nearer edge instead, at that edge's slope.
 fn steepest_facet(
     nbrs: &[Option<usize>; 6],
     k: usize,
+    site: &[(f64, f64)],
     surface: &[f64],
-) -> Option<(f64, usize, f64)> {
+) -> Option<(f64, usize, usize, f64)> {
     use std::f64::consts::PI;
-    let s = NODE_SPACING as f64;
-    let z0 = surface[k];
-    let mut best: Option<(f64, f64, usize, f64)> = None;
-    for e in 0..6 {
-        let (Some(a), Some(b)) = (nbrs[e], nbrs[(e + 1) % 6]) else { continue };
-        let (za, zb) = ((surface[a] - z0) / s, (surface[b] - z0) / s);
-        let ta = e as f64 * SIXTY;
-        let tb = ta + SIXTY;
-        // Gradient g of the plane with e_a·g = za and e_b·g = zb.
-        let (ca, sa, cb, sb) = (ta.cos(), ta.sin(), tb.cos(), tb.sin());
-        let det = ca * sb - sa * cb;
-        let gx = (za * sb - zb * sa) / det;
-        let gy = (ca * zb - cb * za) / det;
+    let (x0, y0, z0) = (site[k].0, site[k].1, surface[k]);
+    // The neighbours present, by angle around the node.
+    let mut around: Vec<(f64, usize, f64, f64)> = nbrs
+        .iter()
+        .flatten()
+        .map(|&m| {
+            let (dx, dy) = (site[m].0 - x0, site[m].1 - y0);
+            (dy.atan2(dx), m, dx, dy)
+        })
+        .collect();
+    around.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let count = around.len();
+    if count < 2 {
+        return None;
+    }
+    let mut best: Option<(f64, f64, usize, usize, f64)> = None;
+    for e in 0..count {
+        let (ta, a, ax, ay) = around[e];
+        let (tb, b, bx, by) = around[(e + 1) % count];
+        // The facet spans from a round to b; past the last neighbour it
+        // wraps to the first, a wedge wider than any other.
+        let width = (tb - ta).rem_euclid(2.0 * PI);
+        if width <= 0.0 || width >= PI {
+            continue;
+        }
+        let (za, zb) = (surface[a] - z0, surface[b] - z0);
+        // Gradient g of the plane with d_a·g = za and d_b·g = zb.
+        let det = ax * by - ay * bx;
+        if det.abs() < 1e-9 {
+            continue;
+        }
+        let gx = (za * by - zb * ay) / det;
+        let gy = (ax * zb - bx * za) / det;
         let mut slope = gx.hypot(gy);
         if slope <= 0.0 {
             continue;
@@ -270,20 +291,20 @@ fn steepest_facet(
         if rho < 0.0 {
             rho = 0.0;
             angle = ta;
-            slope = -za;
-        } else if rho > SIXTY {
-            rho = SIXTY;
+            slope = -za / ax.hypot(ay);
+        } else if rho > width {
+            rho = width;
             angle = tb;
-            slope = -zb;
+            slope = -zb / bx.hypot(by);
         }
         if slope <= 0.0 {
             continue;
         }
         if best.map_or(true, |(bs, ..)| slope > bs) {
-            best = Some((slope, angle, e, rho / SIXTY));
+            best = Some((slope, angle, a, b, rho / width));
         }
     }
-    best.map(|(_, angle, edge, share)| (angle, edge, share))
+    best.map(|(_, angle, a, b, share)| (angle, a, b, share))
 }
 
 // ── What a cell publishes ───────────────────────────────────────────────────
@@ -375,7 +396,7 @@ impl DrainageIndex {
 
     /// The node, from whichever cell owns it. One lookup, never a scan.
     pub fn node(&self, key: NodeKey) -> Option<&DrainageNode> {
-        let (q, r) = node_tile(key);
+        let (q, r) = node_site(key);
         self.cells.get(&Self::lattice().cell_id(q, r))?.nodes.get(&key)
     }
 
@@ -407,12 +428,10 @@ impl EventIndex for DrainageIndex {
 
     /// Downstream: the one tile this node's water goes to next.
     fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)> {
-        if q % NODE_SPACING != 0 || r % NODE_SPACING != 0 {
-            return Vec::new();
-        }
-        self.node((q / NODE_SPACING, r / NODE_SPACING))
+        site_at(q, r)
+            .and_then(|key| self.node(key))
             .and_then(|n| n.down)
-            .map(|d| vec![node_tile(d)])
+            .map(|d| vec![node_site(d)])
             .unwrap_or_default()
     }
 
@@ -534,7 +553,7 @@ impl Routing {
             if !self.owned[k] || matches!(self.kind[k], Kind::Sea | Kind::Edge) {
                 continue;
             }
-            let (q, r) = node_tile(self.keys[k]);
+            let (q, r) = node_site(self.keys[k]);
             let (wx, wy) = hex_to_world(q, r);
             nodes.insert(
                 self.keys[k],
@@ -602,7 +621,7 @@ impl DrainageEvent {
         if let Some(g) = self.nodes.get(&key) {
             return *g;
         }
-        let (q, r) = node_tile(key);
+        let (q, r) = node_site(key);
         let (wx, wy) = hex_to_world(q, r);
         let g = ground_at(wx, wy, seed, coasts, outlines);
         self.nodes.insert(key, g);
@@ -626,7 +645,7 @@ impl DrainageEvent {
         let mut owned: Vec<bool> = Vec::new();
         for i in i0..=i1 {
             for j in j0..=j1 {
-                let tile = (i * s, j * s);
+                let tile = node_site((i, j));
                 if hex_distance(tile, centre) > reach {
                     continue;
                 }
@@ -868,12 +887,9 @@ impl DrainageEvent {
 
         // ── Outflow: the true downslope of the water surface, split between the
         //    two neighbours bracketing it; flats follow the flood ──
+        let site: Vec<(f64, f64)> = keys.iter().map(|&k| site_world(k)).collect();
         let unit = |from: usize, to: usize| -> (f64, f64) {
-            let (fq, fr) = node_tile(keys[from]);
-            let (tq, tr) = node_tile(keys[to]);
-            let (fx, fy) = hex_to_world(fq, fr);
-            let (tx, ty) = hex_to_world(tq, tr);
-            let (dx, dy) = (tx - fx, ty - fy);
+            let (dx, dy) = (site[to].0 - site[from].0, site[to].1 - site[from].1);
             let len = dx.hypot(dy);
             (dx / len, dy / len)
         };
@@ -889,12 +905,10 @@ impl DrainageEvent {
                     }
                 }
                 Kind::Land => {
-                    let facet = steepest_facet(&nbrs[k], k, &surface);
+                    let facet = steepest_facet(&nbrs[k], k, &site, &surface);
                     match facet {
-                        Some((angle, edge, share_next)) => {
+                        Some((angle, a, b, share_next)) => {
                             direction[k] = (angle.cos(), angle.sin());
-                            let a = nbrs[k][edge].unwrap();
-                            let b = nbrs[k][(edge + 1) % 6].unwrap();
                             // Only a lower neighbour may receive: the facet
                             // descends between them, but a share sent uphill
                             // would loop.
@@ -1070,8 +1084,9 @@ impl WorldEvent for DrainageEvent {
     fn name(&self) -> &str { "drainage" }
     fn scale(&self) -> u32 { DRAINAGE_CELL_SCALE }
 
-    /// A node publishes its own downstream link, which reaches one spacing.
-    fn max_influence(&self) -> u32 { NODE_SPACING as u32 }
+    /// A node publishes its own downstream link, which reaches one spacing
+    /// and the swing of both sites.
+    fn max_influence(&self) -> u32 { (NODE_SPACING as f64 + 2.0 * NODE_SWING).ceil() as u32 }
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<DrainageIndex>();

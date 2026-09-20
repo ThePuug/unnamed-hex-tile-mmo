@@ -88,7 +88,7 @@ use crate::chains::{Segment, SegmentGrid};
 use super::drainage::{aged, growth, DrainageCell, DrainageIndex, DrainageNode};
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
-use crate::lattice::{node_tile, NodeKey, NODE_SPACING};
+use crate::lattice::{node_site, site_at, NodeKey, NODE_SPACING, NODE_SWING};
 use crate::noise::{hash_channel, hash_channel_f64};
 use crate::RISE;
 
@@ -132,9 +132,10 @@ pub const AXIS_SWING: f64 = NODE_SPACING as f64 / 4.0;
 pub const AXIS_STEPS: usize = 24;
 
 /// The farthest a segment's ground lies from its start node: the far node
-/// a spacing away, the flow line's swing beyond the chord, and the valley
-/// dissection reads beside it. What one ring of cells has to cover.
-pub const CHANNEL_REACH: f64 = NODE_SPACING as f64 + AXIS_SWING + VALLEY_HALF_WIDTH;
+/// a spacing and both sites' swing away, the flow line's swing beyond the
+/// chord, and the valley dissection reads beside it. What one ring of
+/// cells has to cover.
+pub const CHANNEL_REACH: f64 = NODE_SPACING as f64 + 2.0 * NODE_SWING + AXIS_SWING + VALLEY_HALF_WIDTH;
 
 /// Cell scale, derived: one ring covers a segment's reach from its start
 /// node.
@@ -668,20 +669,17 @@ impl EventIndex for ChannelIndex {
         cell_ids
             .iter()
             .filter_map(|id| self.cells.get(id))
-            .flat_map(|c| c.channels.iter().map(|ch| node_tile(ch.from)))
+            .flat_map(|c| c.channels.iter().map(|ch| node_site(ch.from)))
             .collect()
     }
 
     /// Downstream: the tile of the node a channel starting here ends at.
     fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)> {
-        if q % NODE_SPACING != 0 || r % NODE_SPACING != 0 {
-            return Vec::new();
-        }
-        let key = (q / NODE_SPACING, r / NODE_SPACING);
+        let Some(key) = site_at(q, r) else { return Vec::new() };
         self.cells
             .get(&Self::lattice().cell_id(q, r))
             .and_then(|c| c.channels.iter().find(|ch| ch.from == key))
-            .map(|ch| vec![node_tile(ch.to)])
+            .map(|ch| vec![node_site(ch.to)])
             .unwrap_or_default()
     }
 

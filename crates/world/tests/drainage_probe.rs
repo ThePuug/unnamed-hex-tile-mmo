@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use common::HexLattice;
 use world::events::drainage::{
-    node_tile, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
+    node_site, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
 };
 use world::events::motion::MotionEvent;
 use world::events::lithology::LithologyEvent;
@@ -70,7 +70,7 @@ fn nodes_sit_on_the_composed_surface() {
     let mut worst = 0.0f64;
     let mut checked = 0;
     for (k, &key) in routing.keys.iter().enumerate().step_by(211) {
-        let (q, r) = node_tile(key);
+        let (q, r) = node_site(key);
         worst = worst.max((c.tile_at(q, r).elevation - routing.elevation[k]).abs());
         checked += 1;
     }
@@ -224,7 +224,7 @@ fn continents_drain_down_their_tilt() {
             continue;
         }
         channels += 1;
-        let (q, r) = node_tile(routing.keys[k]);
+        let (q, r) = node_site(routing.keys[k]);
         let (wx, wy) = hex_to_world(q, r);
         let (dx, dy) = routing.direction[k];
         let gx = potential(wx + h, wy, SEED) - potential(wx - h, wy, SEED);

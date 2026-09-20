@@ -85,7 +85,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crate::chains::{Segment, SegmentGrid};
-use crate::lattice::{hex_distance, node_tile, NodeKey, NODE_SPACING};
+use crate::lattice::{hex_distance, node_site, NodeKey, NODE_SPACING, NODE_SWING};
 use crate::{hex_to_world, world_to_hex};
 use super::drainage::{growth, DrainageCell, DrainageEvent, DrainageIndex, DrainageNode};
 pub use super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
@@ -107,12 +107,11 @@ pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
 
 /// The depth of the channel slot below the valley floor at a node: nothing
 /// below the channel head and nothing on closed ground, which carries no
-/// channel, except at a hump the drained floor's path has cut, which
-/// keeps the river's slot through it; otherwise from the head's depth to
-/// a trunk's as the catchment grows. Cut below base level too: a channel
-/// reaching the sea is under it.
+/// channel; otherwise from the head's depth to a trunk's as the catchment
+/// grows. Cut below base level too: a channel reaching the sea is under
+/// it.
 pub fn channel_depth(node: &DrainageNode) -> f64 {
-    if node.flooded && node.cut <= 0.0 {
+    if node.flooded {
         return 0.0;
     }
     growth(node.catchment, node.erodibility).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
@@ -420,10 +419,10 @@ pub fn valleys_of(scope: &CellScope) -> Valleys {
         return Valleys::new(&[], &[], |_| true);
     };
     let centre = scope.lattice().cell_center(scope.cell());
-    let keep_within = scope.lattice().radius as i32 + NODE_SPACING + (VALLEY_HALF_WIDTH + AXIS_SWING).ceil() as i32;
+    let keep_within = scope.lattice().radius as i32 + NODE_SPACING + (2.0 * NODE_SWING + VALLEY_HALF_WIDTH + AXIS_SWING).ceil() as i32;
     let cells = drainage.cells_in(&drainage_cells);
     let drawn: Vec<&Channel> = channels.cells_in(&channel_cells).iter().flat_map(|c| c.channels.iter()).collect();
-    Valleys::new(&cells, &drawn, |key| hex_distance(node_tile(key), centre) <= keep_within)
+    Valleys::new(&cells, &drawn, |key| hex_distance(node_site(key), centre) <= keep_within)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -477,7 +476,7 @@ impl WorldEvent for DissectionEvent {
 mod tests {
     use super::*;
     use super::super::migration::{meander_amplitude, CHANNEL_HALF_WIDTH_MAX, MEANDER_WAVELENGTH};
-    use crate::lattice::node_world;
+
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
@@ -596,7 +595,7 @@ mod tests {
         assert!(sills > 0, "no basin in the spawn cell drains through a sill the cell owns");
         assert!(cut_sills > 0, "no sill in the spawn cell is cut");
         for n in published.nodes.values() {
-            let (x, y) = node_world(n.key);
+            let (x, y) = (n.wx, n.wy);
             let cuts = valleys.cuts_at(x + 100.0, y + 60.0, n.elevation);
             assert!(cuts.valley >= 0.0 && cuts.valley <= n.elevation.max(0.0) + 1e-9, "valley {} at {:?}", cuts.valley, n.key);
             assert!(cuts.channel >= 0.0 && cuts.channel <= CHANNEL_DEPTH_MAX, "slot {} at {:?}", cuts.channel, n.key);
@@ -618,7 +617,7 @@ mod tests {
                 continue;
             }
             channelled += 1;
-            let (x, y) = node_world(n.key);
+            let (x, y) = (n.wx, n.wy);
             let at = valleys.cuts_at(x, y, n.elevation);
             assert!(at.channel >= channel_depth(n) - 1e-9, "channel {} for {} at {:?}", at.channel, channel_depth(n), n.key);
             assert!(n.flooded || at.valley >= depth_at(n) - 1e-9, "a shallower valley than the node's own at {:?}", n.key);
@@ -641,7 +640,7 @@ mod tests {
         let (published, valleys) = spawn_valleys();
         let (mut rivers, mut basins, mut dry) = (0, 0, 0);
         for n in published.nodes.values() {
-            let (x, y) = node_world(n.key);
+            let (x, y) = (n.wx, n.wy);
             let cuts = valleys.cuts_at(x, y, n.elevation);
             let ground = n.elevation - cuts.valley - cuts.channel;
             let water = valleys.surface_at(ground, cuts);
