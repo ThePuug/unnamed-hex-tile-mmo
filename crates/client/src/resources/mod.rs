@@ -17,31 +17,57 @@ use dashmap::DashMap;
 use common_bevy::chunk::ChunkId;
 use common_bevy::summary_mesh::MeshRegionKey;
 
-/// The band cut for one LoD level: the shaders drop fragments whose ground
-/// distance from `center` lies outside `[inner, outer]`, and apply `mode`
-/// (`LodTransition as u32`) over the strips at each end — the level
-/// leaving across `[outer - fade_out, outer]` and arriving across
-/// `[inner, inner + fade_in]`: nothing, a screen-space dither, or a morph
-/// of the leaving vertices onto the coarser level's surface. Field order
-/// is the uniform layout in `terrain_cut.wgsl`; the tail pads the struct
-/// to the uniform stride.
+/// The band cut for one LoD level: two circles on the ground, the inner
+/// one shared with the finer level and the outer with the coarser, each
+/// with its own centre since an edge follows the player only as fast as
+/// both its levels are on screen (`EdgeCenters`). The shaders drop
+/// fragments inside `inner` of `inner_center` or beyond `outer` of
+/// `outer_center`, and apply `mode` (`LodTransition as u32`) over the
+/// strips at each end — the level leaving across `[outer - fade_out,
+/// outer]` and arriving across `[inner, inner + fade_in]`: nothing, a
+/// screen-space dither, or a morph of the leaving vertices onto the
+/// coarser level's surface. Field order is the uniform layout in
+/// `terrain_cut.wgsl`; the tail pads the struct to the uniform stride.
 #[derive(ShaderType, Debug, Clone, Copy)]
 pub struct TerrainCut {
-    pub center: Vec2,
+    pub inner_center: Vec2,
+    pub outer_center: Vec2,
     pub inner: f32,
     pub outer: f32,
     pub fade_in: f32,
     pub fade_out: f32,
     pub mode: u32,
-    pub _pad: f32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
-        Self { center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade_in: 0.0, fade_out: 0.0, mode: 0, _pad: 0.0 }
+        Self {
+            inner_center: Vec2::ZERO,
+            outer_center: Vec2::ZERO,
+            inner: 0.0,
+            outer: f32::MAX,
+            fade_in: 0.0,
+            fade_out: 0.0,
+            mode: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        }
     }
 }
+
+/// Where each band edge is drawn: the centre of the circle the finer
+/// level's cut and the coarser level's arrival share, keyed by the finer
+/// level. It follows the player only as fast as both levels are on screen
+/// around where it would go, and eases when it moves, so a plate is never
+/// cut before the plate replacing it is drawn and the seam never jumps.
+/// The keep set holds both levels' regions around a lagging centre.
+#[derive(Resource, Default)]
+pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 
 /// The coarser level's surface at a terrain vertex: normal xyz, height w in
 /// the mesh's frame. The vertex shaders morph position and normal onto it

@@ -112,6 +112,11 @@ pub fn coarser_level(r: u32) -> Option<u32> {
     LOD_LEVELS.iter().copied().find(|&l| l > r)
 }
 
+/// The next finer level of the ladder, if `r` is not the finest.
+pub fn finer_level(r: u32) -> Option<u32> {
+    LOD_LEVELS.iter().copied().filter(|&l| l < r).last()
+}
+
 /// Width of the transition strip at level `r`'s outer edge, in world
 /// units: zero at the coarsest level, whose outer edge is the horizon.
 pub fn transition_wu(r: u32) -> f32 {
@@ -143,10 +148,9 @@ pub fn threshold_horiz(r: u32) -> f32 {
 /// Level `r`'s band on the ladder, ignoring the horizon: from the finer
 /// level's threshold to its own.
 pub fn ladder_band(r: u32) -> Band {
-    let finer = LOD_LEVELS.iter().copied().filter(|&l| l < r).last();
     Band {
         r,
-        inner_wu: finer.map_or(0.0, threshold_horiz),
+        inner_wu: finer_level(r).map_or(0.0, threshold_horiz),
         outer_wu: threshold_horiz(r),
     }
 }

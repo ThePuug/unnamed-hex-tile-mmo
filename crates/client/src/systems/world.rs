@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f32::consts::PI;
 
 use bevy::{
@@ -253,8 +254,10 @@ pub fn dispatch_summary_tasks(
     forced_radius: Res<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
+    edges: Res<crate::resources::EdgeCenters>,
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
     mut last_eval_pos: Local<Option<Vec3>>,
+    mut last_eval_edges: Local<HashMap<u32, Vec2>>,
     mut backlog: Local<bool>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
@@ -275,15 +278,21 @@ pub fn dispatch_summary_tasks(
         (None, Some(_)) => true,
         _ => false,
     };
+    // A lagging edge catching up sweeps its own sets across the ground, so
+    // it re-evaluates as the player does.
+    let edge_moved = edges.0.iter().any(|(r, c)| {
+        last_eval_edges.get(r).map_or(true, |p| p.distance_squared(*c) >= REEVAL_MOVE_WU * REEVAL_MOVE_WU)
+    });
     // A run that exhausted its budget leaves a backlog, picked up next frame.
     let data_changed = map_changed || cache_changed;
-    if !data_changed && !moved && !*backlog {
+    if !data_changed && !moved && !edge_moved && !*backlog {
         return;
     }
     *backlog = false;
     if let Some(pos) = camera_pos {
         *last_eval_pos = Some(pos);
     }
+    *last_eval_edges = edges.0.clone();
     let _t = client_timers.0.scope("sum_disp");
 
     // Local-data boundary: the largest circle inside guaranteed chunk
@@ -321,20 +330,27 @@ pub fn dispatch_summary_tasks(
             };
             #[cfg(not(feature = "admin"))]
             let max_fov = crate::systems::camera::MAX_GAMEPLAY_FOV;
-            let n = compute_auto_mode_regions(
-                pos,
-                &loaded_chunks.chunks,
-                max_fov,
-                0.0,
-                local_boundary,
-            );
-            let mut k = compute_auto_mode_regions(
-                pos,
-                &loaded_chunks.chunks,
-                max_fov,
-                BAND_HYSTERESIS_MARGIN,
-                local_boundary,
-            );
+            let regions = |at: Vec2, margin: f32| {
+                compute_auto_mode_regions(
+                    Vec3::new(at.x, pos.y, at.y),
+                    &loaded_chunks.chunks,
+                    max_fov,
+                    margin,
+                    local_boundary,
+                )
+            };
+            let mut n = regions(pos.xz(), 0.0);
+            let mut k = regions(pos.xz(), BAND_HYSTERESIS_MARGIN);
+            // An edge lagging the player draws both its levels around its
+            // own centre until it catches up: what it waits on is built,
+            // and what it shows survives.
+            for centre in edges.0.values() {
+                if centre.distance_squared(pos.xz()) < 1e-4 {
+                    continue;
+                }
+                n.extend(regions(*centre, 0.0));
+                k.extend(regions(*centre, BAND_HYSTERESIS_MARGIN));
+            }
             k.extend(n.iter().copied());
             (n, k)
         }
@@ -486,17 +502,37 @@ fn horizon_bands(camera_pos: Vec3, fov: f32, margin: f32) -> Vec<common_bevy::su
     common_bevy::summary::compute_active_bands(far_ground * (1.0 + margin))
 }
 
-/// Upload the band cut: the player's ground position, each level's window,
-/// and the transition over the strip inside its outer edge. Regions are
-/// built whole and the shaders drop fragments outside the window, so band
-/// edges follow the player every frame with no rebuild and adjacent levels
-/// overlap by the strip, never a region. A forced debug radius lifts the
-/// cut.
+/// Time constant of an edge's easing toward the player: a jump — a
+/// teleport, or the catch-up after a wait for data — settles within about
+/// half a second, sweeping the strip across the ground, and a walk lags by
+/// a step.
+const EDGE_EASE_S: f32 = 0.15;
+
+/// Points around an edge's circle at which both levels must be on screen
+/// before the edge moves there. Two degrees apart: closer than any region
+/// is wide at the distance of any edge.
+const EDGE_SAMPLES: u32 = 180;
+
+/// How far behind the player an edge may fall, as a fraction of its
+/// radius, before it snaps to the player: a teleport, or a wait for data
+/// that outlasts a walk. Beyond it the plate the edge holds is far from
+/// where its level is due, and for the finest level its tiles may be gone.
+const EDGE_MAX_LAG: f32 = 0.5;
+
+/// Upload the band cut: each edge's centre, each level's window, and the
+/// transition over the strips at its edges. Regions are built whole and
+/// the shaders drop fragments outside the window, so band edges follow
+/// the player with no rebuild and adjacent levels overlap by the strip,
+/// never a region. An edge moves only where both its levels are drawn,
+/// and eases when it does. A forced debug radius lifts the cut.
 pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
     forced_radius: Res<ForcedSummaryRadius>,
     diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
+    summary_meshes: Res<SummaryMeshes>,
+    mut edges: ResMut<crate::resources::EdgeCenters>,
+    time: Res<Time>,
     player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
@@ -511,16 +547,68 @@ pub fn update_terrain_cut(
     let Some(origin) = origin else { return };
 
     let bands = horizon_bands(origin, fov, 0.0);
+    let target = origin.xz();
+    if forced_radius.0.is_none() {
+        advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
+    }
 
     for (&r, handle) in &terrain_material.by_level {
         let Some(material) = materials.get_mut(handle) else { continue };
-        let cut = if forced_radius.0.is_some() {
+        material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {
-            level_cut(r, &bands, diagnostics.lod_transition)
+            level_cut(r, &bands, diagnostics.lod_transition, &edges.0, target)
         };
-        material.extension.cut = crate::resources::TerrainCut { center: origin.xz(), ..cut };
     }
+}
+
+/// Ease each active edge's centre toward `target`, as far as both its
+/// levels are on screen around where it would go: an edge never cuts a
+/// plate before the plate replacing it is drawn. The step is the distance
+/// left, scaled by the frame over `EDGE_EASE_S`, so a jump plays out as a
+/// sweep. An edge is keyed by its finer level; the outermost band's outer
+/// edge is the horizon and has none.
+fn advance_edges(
+    edges: &mut HashMap<u32, Vec2>,
+    bands: &[common_bevy::summary::Band],
+    target: Vec2,
+    dt: f32,
+    meshes: &SummaryMeshes,
+) {
+    let paired = bands.len().saturating_sub(1);
+    edges.retain(|r, _| bands[..paired].iter().any(|b| b.r == *r));
+    for pair in bands.windows(2) {
+        let (fine, coarse) = (&pair[0], &pair[1]);
+        let radius = fine.window().1;
+        let centre = edges.entry(fine.r).or_insert(target);
+        let lag = centre.distance(target);
+        if lag < 1e-2 || lag > EDGE_MAX_LAG * radius {
+            *centre = target;
+            continue;
+        }
+        let next = centre.lerp(target, (dt / EDGE_EASE_S).min(1.0));
+        if edge_is_drawn(next, radius, fine.r, coarse.r, meshes) {
+            *centre = next;
+        }
+    }
+}
+
+/// Whether both levels are on screen all around the circle: under each of
+/// `EDGE_SAMPLES` points on it, the region at the finer level and the
+/// region at the coarser level have entities.
+fn edge_is_drawn(centre: Vec2, radius: f32, fine: u32, coarse: u32, meshes: &SummaryMeshes) -> bool {
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let lattices = [fine, coarse].map(common_bevy::summary::summary_lattice);
+    (0..EDGE_SAMPLES).all(|i| {
+        let a = i as f32 / EDGE_SAMPLES as f32 * std::f32::consts::TAU;
+        let p = centre + Vec2::new(a.cos(), a.sin()) * radius;
+        lattices.iter().all(|lat| {
+            let (sq, sr) = lat.cell_at(p);
+            let (mn, mm) = region_lat.cell_id(sq, sr);
+            let key = common_bevy::summary_mesh::MeshRegionKey { r: lat.radius, mn, mm };
+            meshes.states.get(&key).is_some_and(|s| s.entity.is_some())
+        })
+    })
 }
 
 /// Level `r`'s cut under a transition mode. Its outer edge is its window's,
@@ -532,14 +620,18 @@ pub fn update_terrain_cut(
 /// dither draws it from the strip's start, arriving by the complement of
 /// the finer level's threshold; a morph draws it from the finer level's cut
 /// alone, since the finer surface has become this one there and anything
-/// under the strip could only show through where it stands higher.
+/// under the strip could only show through where it stands higher. Each
+/// circle is centred where its edge is (`edges`), or on the player where
+/// the edge has not been placed.
 fn level_cut(
     r: u32,
     bands: &[common_bevy::summary::Band],
     mode: crate::plugins::diagnostics::LodTransition,
+    edges: &HashMap<u32, Vec2>,
+    target: Vec2,
 ) -> crate::resources::TerrainCut {
     use crate::plugins::diagnostics::LodTransition;
-    use common_bevy::summary::{level_band, summary_width_wu, transition_wu};
+    use common_bevy::summary::{finer_level, level_band, summary_width_wu, transition_wu};
     let (band, outermost) = level_band(r, bands);
     let (window_inner, window_outer) = band.window();
     let (outer, fade_out) = if outermost { (f32::MAX, 0.0) } else { (window_outer, transition_wu(r)) };
@@ -551,14 +643,16 @@ fn level_cut(
         LodTransition::Dither => (window_inner, band.inner_wu + width - window_inner),
         LodTransition::Morph => (band.inner_wu + width, 0.0),
     };
+    let centre_of = |edge: Option<u32>| edge.and_then(|e| edges.get(&e)).copied().unwrap_or(target);
     crate::resources::TerrainCut {
-        center: Vec2::ZERO,
+        inner_center: centre_of(finer_level(r)),
+        outer_center: centre_of(Some(r)),
         inner,
         outer,
         fade_in,
         fade_out,
         mode: mode as u32,
-        _pad: 0.0,
+        ..default()
     }
 }
 
@@ -921,11 +1015,12 @@ mod tests {
         use crate::plugins::diagnostics::LodTransition;
         use common_bevy::summary::{compute_active_bands, summary_width_wu, transition_wu};
         let bands = compute_active_bands(25_000.0);
+        let (edges, target) = (HashMap::new(), Vec2::ZERO);
         for mode in [LodTransition::Cut, LodTransition::Dither, LodTransition::Morph] {
             for pair in bands.windows(2) {
                 let (fine, coarse) = (&pair[0], &pair[1]);
-                let f = level_cut(fine.r, &bands, mode);
-                let c = level_cut(coarse.r, &bands, mode);
+                let f = level_cut(fine.r, &bands, mode, &edges, target);
+                let c = level_cut(coarse.r, &bands, mode, &edges, target);
                 assert!((f.outer - (fine.outer_wu + summary_width_wu(coarse.r))).abs() < 0.01);
                 assert!((f.fade_out - transition_wu(fine.r)).abs() < 0.01);
                 match mode {
@@ -943,11 +1038,95 @@ mod tests {
                     }
                 }
             }
-            let first = level_cut(bands[0].r, &bands, mode);
+            let first = level_cut(bands[0].r, &bands, mode, &edges, target);
             assert_eq!((first.inner, first.fade_in), (0.0, 0.0));
-            let last = level_cut(bands.last().unwrap().r, &bands, mode);
+            let last = level_cut(bands.last().unwrap().r, &bands, mode, &edges, target);
             assert_eq!((last.outer, last.fade_out), (f32::MAX, 0.0));
         }
+    }
+
+    /// An edge's circle is centred where the edge is, on both the level
+    /// leaving across it and the level arriving; a level's two circles can
+    /// have different centres.
+    #[test]
+    fn level_cut_centres_each_circle_on_its_edge() {
+        use crate::plugins::diagnostics::LodTransition;
+        use common_bevy::summary::compute_active_bands;
+        let bands = compute_active_bands(25_000.0);
+        let target = Vec2::new(100.0, 50.0);
+        let mut edges = HashMap::new();
+        edges.insert(bands[1].r, Vec2::new(90.0, 50.0));
+        let fine = level_cut(bands[1].r, &bands, LodTransition::Morph, &edges, target);
+        let coarse = level_cut(bands[2].r, &bands, LodTransition::Morph, &edges, target);
+        assert_eq!(fine.inner_center, target, "an edge not yet placed sits on the player");
+        assert_eq!(fine.outer_center, Vec2::new(90.0, 50.0));
+        assert_eq!(coarse.inner_center, fine.outer_center, "the two levels share the edge's circle");
+        assert_eq!(coarse.outer_center, target);
+    }
+
+    /// An edge moves toward the player only where both levels are drawn
+    /// around its next position, and by a step that eases in.
+    #[test]
+    fn edge_advances_only_where_both_levels_are_drawn() {
+        use common_bevy::summary::compute_active_bands;
+        let bands = compute_active_bands(25_000.0);
+        let (fine, coarse) = (bands[0].r, bands[1].r);
+        let radius = bands[0].window().1;
+        let mut meshes = SummaryMeshes::default();
+        let target = Vec2::new(40.0, 0.0);
+        let mut edges = HashMap::new();
+        edges.insert(fine, Vec2::ZERO);
+
+        // Nothing drawn: the edge holds.
+        advance_edges(&mut edges, &bands, target, 0.05, &meshes);
+        assert_eq!(edges[&fine], Vec2::ZERO);
+
+        // Every region of both levels the circle could touch is drawn: the
+        // edge steps toward the player, part of the way.
+        let region_lat = common_bevy::summary::mesh_region_lattice();
+        for r in [fine, coarse] {
+            let lat = common_bevy::summary::summary_lattice(r);
+            for x in -60..=60 {
+                for z in -60..=60 {
+                    let p = Vec2::new(x as f32 * 3.0, z as f32 * 3.0);
+                    let (sq, sr) = lat.cell_at(p);
+                    let (mn, mm) = region_lat.cell_id(sq, sr);
+                    let key = common_bevy::summary_mesh::MeshRegionKey { r, mn, mm };
+                    meshes.states.entry(key).or_insert_with(|| SummaryMeshState {
+                        task: None,
+                        entity: Some(Entity::from_raw_u32(1).unwrap()),
+                        mesh_handle: None,
+                        tri_count: 0,
+                        mesh_origin: Vec3::ZERO,
+                        base_positions: Vec::new(),
+                        base_normals: Vec::new(),
+                        base_coarse: Vec::new(),
+                        base_indices: Vec::new(),
+                        base_tri_count: 0,
+                        base_water: Default::default(),
+                        waiting: false,
+                    });
+                }
+            }
+        }
+        assert!(edge_is_drawn(Vec2::ZERO, radius, fine, coarse, &meshes));
+        advance_edges(&mut edges, &bands, target, 0.05, &meshes);
+        let moved = edges[&fine];
+        assert!(moved.x > 0.0 && moved.x < target.x, "eased partway: {moved:?}");
+
+        // One coarse region under the circle gone: the edge holds again.
+        let p = Vec2::new(radius, 0.0) + moved;
+        let lat = common_bevy::summary::summary_lattice(coarse);
+        let (sq, sr) = lat.cell_at(p);
+        let (mn, mm) = region_lat.cell_id(sq, sr);
+        meshes.states.get_mut(&common_bevy::summary_mesh::MeshRegionKey { r: coarse, mn, mm }).unwrap().entity = None;
+        advance_edges(&mut edges, &bands, target, 0.05, &meshes);
+        assert_eq!(edges[&fine], moved);
+
+        // Left too far behind, it snaps to the player whatever is drawn.
+        let far = Vec2::new(radius, 0.0);
+        advance_edges(&mut edges, &bands, far, 0.05, &meshes);
+        assert_eq!(edges[&fine], far);
     }
 
     /// Coverage invariant for the LoD band system: every ground point inside
