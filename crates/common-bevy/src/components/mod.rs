@@ -190,6 +190,23 @@ pub struct AirTime {
     pub step: Option<i16>,
 }
 
+/// A player's turn state, confirmed with the position: the heading and the
+/// milliseconds since it last stepped, saturating at the repeat interval.
+/// Server authority, mirrored into `Heading` for everything that reads the
+/// facing; the local player replays its open inputs from it into `Heading`.
+#[derive(Clone, Component, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Turn {
+    pub heading: heading::Heading,
+    pub since_step_ms: u16,
+}
+
+impl Default for Turn {
+    /// Rested: the first press steps at once.
+    fn default() -> Self {
+        Turn { heading: heading::Heading::default(), since_step_ms: crate::systems::movement::TURN_REPEAT_MS }
+    }
+}
+
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 

@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::components::*;
 use common_bevy::{
-    components::{ position::VisualPosition, * },
+    components::{ heading::Heading, position::VisualPosition, * },
     message::{ AbilityType, Do, Event },
 };
 
@@ -65,12 +65,15 @@ pub fn play_abilities(
 }
 
 pub fn update(
-    query: Query<(Entity, &AirTime, &Animates, &VisualPosition)>,
+    query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
 ) {
-    for (_entity, &airtime, &animates, vis_pos) in &query {
+    for (_entity, &airtime, &animates, vis_pos, &heading) in &query {
         // Entity is moving if VisualPosition is actively interpolating
-        let is_moving = !vis_pos.is_complete() && vis_pos.from.distance_squared(vis_pos.to) > 0.001;
+        let travel = vis_pos.to - vis_pos.from;
+        let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
+        // Walking against the facing plays the walk in reverse.
+        let speed = if travel.xz().dot(heading.to_world_dir()) < 0.0 { -1. } else { 1. };
 
         let (mut player, mut transitions) = q_anim.get_mut(animates.0).unwrap();
         // A one-shot holds the actor until it ends.
@@ -83,7 +86,9 @@ pub fn update(
         }
         if is_moving || airtime.step.is_some() {
             if main != Some(Clip::Walk.node()) {
-                transitions.play(&mut player, Clip::Walk.node(), SETTLE).set_speed(1.).repeat();
+                transitions.play(&mut player, Clip::Walk.node(), SETTLE).set_speed(speed).repeat();
+            } else if let Some(walk) = player.animation_mut(Clip::Walk.node()) {
+                walk.set_speed(speed);
             }
         } else if main != Some(Clip::Idle.node()) {
             transitions.play(&mut player, Clip::Idle.node(), SETTLE).set_speed(1.).repeat();

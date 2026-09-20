@@ -1,5 +1,6 @@
-//! Movement physics as pure functions: a position, a heading, whether the
-//! entity moves, and a duration in, a position and airborne state out.
+//! Movement physics as pure functions: a position, a heading, the held
+//! keys and a duration in; a position, heading, turn clock and airborne
+//! state out.
 //!
 //! The result does not depend on how a duration is split across calls.
 //! Every sub-step is linear in time and the ground height is a function of
@@ -36,6 +37,11 @@ pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 
 /// Base movement speed in world units per millisecond
 pub const MOVEMENT_SPEED: f32 = 0.0075;
+
+/// Milliseconds of input time between steps of a held turn key, and the
+/// least time between any two steps: a tap after a rest turns at once, and a
+/// hammered key turns no faster than a held one.
+pub const TURN_REPEAT_MS: u16 = 80;
 
 /// Ledge grab threshold in world units
 /// Set to 0.0 to disable ledge grabbing
@@ -78,9 +84,17 @@ pub fn surface_y(world_xz: Vec2, floor: Qrz, map: &Map) -> f32 {
 #[derive(Clone, Copy, Debug)]
 pub struct MovementInput {
     pub position: Position,
-    /// The direction a move travels along.
+    /// The facing, and the direction a forward move travels along.
     pub heading: Heading,
     pub moving: bool,
+    /// The move travels opposite the heading.
+    pub back: bool,
+    /// Bearings the heading steps per repeat: -1 counter-clockwise, 0, 1
+    /// clockwise.
+    pub turn: i8,
+    /// Milliseconds since the heading last stepped, at most
+    /// [`TURN_REPEAT_MS`].
+    pub since_step_ms: u16,
     /// Some(positive) = ascending, Some(negative or zero) = falling, None = grounded
     pub airtime: Option<i16>,
     /// World units per millisecond
@@ -90,6 +104,8 @@ pub struct MovementInput {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MovementOutput {
     pub position: Position,
+    pub heading: Heading,
+    pub since_step_ms: u16,
     pub airtime: Option<i16>,
 }
 
@@ -190,7 +206,9 @@ fn walk(
 /// Advance `input` by `dt0` milliseconds in sub-steps of at most
 /// [`PHYSICS_TIMESTEP_MS`]. The tile stays `input.position.tile`; the offset
 /// may leave it, and the caller re-bases when the world position crosses
-/// into another tile.
+/// into another tile. A held turn key steps the heading when the turn clock
+/// fills, and the walk is split there, so the part before a step runs on
+/// the old heading and the part after on the new whatever the partition.
 pub fn calculate_movement(
     input: MovementInput,
     mut dt0: i16,
@@ -201,11 +219,20 @@ pub fn calculate_movement(
     let px0: Vec3 = map.convert(tile);
     let mut offset = input.position.offset;
     let mut airtime = input.airtime;
-    let dir = input.heading.to_world_dir();
+    let mut heading = input.heading;
+    let mut since_step_ms = input.since_step_ms;
 
     while dt0 > 0 {
         let mut dt = dt0.min(PHYSICS_TIMESTEP_MS);
+        if input.turn != 0 {
+            if since_step_ms >= TURN_REPEAT_MS {
+                heading = heading.turned(input.turn as i32);
+                since_step_ms = 0;
+            }
+            dt = dt.min((TURN_REPEAT_MS - since_step_ms) as i16);
+        }
         dt0 -= dt;
+        let dir = if input.back { heading.reversed() } else { heading }.to_world_dir();
 
         let world = px0 + offset;
         let here: Qrz = map.convert(world);
@@ -243,6 +270,9 @@ pub fn calculate_movement(
             }
         }
 
+        // After the apex split, which may have shortened the sub-step.
+        since_step_ms = (since_step_ms + dt as u16).min(TURN_REPEAT_MS);
+
         if input.moving {
             let moved = walk(
                 (px0 + offset).xz(), dir, input.movement_speed * dt as f32,
@@ -265,6 +295,8 @@ pub fn calculate_movement(
 
     MovementOutput {
         position: Position::new(tile, offset),
+        heading,
+        since_step_ms,
         airtime,
     }
 }
@@ -295,9 +327,88 @@ mod tests {
             position: Position::at_tile(Qrz { q: 0, r: 0, z: 1 }),
             heading,
             moving,
+            back: false,
+            turn: 0,
+            since_step_ms: TURN_REPEAT_MS,
             airtime: None,
             movement_speed: MOVEMENT_SPEED,
         }
+    }
+
+    /// `input` carried on by `out`: position, heading and clock.
+    fn carried(input: MovementInput, out: &MovementOutput) -> MovementInput {
+        MovementInput { position: out.position, heading: out.heading, since_step_ms: out.since_step_ms, ..input }
+    }
+
+    #[test]
+    fn a_tap_turns_at_once_and_a_held_key_repeats() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let held = MovementInput { turn: 1, ..walking(Heading::NORTH, false) };
+        let tap = calculate_movement(held, 1, &map, &nntree);
+        assert_eq!(tap.heading, Heading::NORTH.turned(1), "a rested key steps on the first millisecond");
+        let long = calculate_movement(held, TURN_REPEAT_MS as i16 * 2 + 10, &map, &nntree);
+        assert_eq!(long.heading, Heading::NORTH.turned(3), "then once per repeat");
+        let left = calculate_movement(MovementInput { turn: -1, ..held }, 1, &map, &nntree);
+        assert_eq!(left.heading, Heading::NORTH.turned(-1));
+    }
+
+    #[test]
+    fn a_hammered_key_turns_no_faster_than_a_held_one() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let mut input = MovementInput { turn: 1, ..walking(Heading::NORTH, false) };
+        let (mut steps, mut elapsed) = (0, 0);
+        while elapsed < 800 {
+            for turn in [1, 0] {
+                let out = calculate_movement(MovementInput { turn, ..input }, 10, &map, &nntree);
+                if out.heading != input.heading { steps += 1; }
+                input = carried(input, &out);
+                elapsed += 10;
+            }
+        }
+        assert_eq!(steps, 800 / TURN_REPEAT_MS as i32, "one step per repeat of input time");
+    }
+
+    /// A turn while walking bends the path at the step, and the bend lands
+    /// on the same millisecond however the time is sliced.
+    #[test]
+    fn turning_while_walking_is_partition_independent() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let input = MovementInput { turn: -1, since_step_ms: 30, ..walking(Heading::from_slot(6), true) };
+        let whole = calculate_movement(input, 300, &map, &nntree);
+        assert_ne!(whole.heading, input.heading);
+        assert!(whole.position.offset.xz().length() > 0.0);
+        for dt in [7, 50, 125] {
+            let mut sliced = input;
+            let mut out = whole;
+            let mut left = 300;
+            while left > 0 {
+                let step = dt.min(left);
+                out = calculate_movement(sliced, step, &map, &nntree);
+                sliced = carried(sliced, &out);
+                left -= step;
+            }
+            assert_eq!(out.heading, whole.heading, "slice {dt}");
+            assert_eq!(out.since_step_ms, whole.since_step_ms, "slice {dt}");
+            assert!(out.position.offset.distance(whole.position.offset) < 1e-3, "slice {dt}: {:?} vs {:?}", out.position.offset, whole.position.offset);
+        }
+    }
+
+    #[test]
+    fn walking_back_travels_opposite_the_heading_and_keeps_it() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let east = Heading::from_degrees(90.0);
+        let forward = calculate_movement(walking(east, true), 100, &map, &nntree);
+        let back = calculate_movement(MovementInput { back: true, ..walking(east, true) }, 100, &map, &nntree);
+        assert!((forward.position.offset.xz() + back.position.offset.xz()).length() < 1e-4, "{:?} vs {:?}", forward.position.offset, back.position.offset);
+        assert_eq!(back.heading, east);
     }
 
     #[test]

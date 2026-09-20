@@ -7,9 +7,11 @@ use crate::{
     systems::movement,
 };
 
-/// Advance an entity by `dt` milliseconds: the new offset from
-/// `position.tile` and the new airborne state. A thin wrapper over
-/// `movement::calculate_movement`, the canonical physics.
+/// Advance an entity that walks its heading by `dt` milliseconds: the new
+/// offset from `position.tile` and the new airborne state. A thin wrapper
+/// over `movement::calculate_movement`, the canonical physics, for NPCs,
+/// whose heading is set by their behaviour; a player's keys go through
+/// `calculate_movement` itself, which turns and backs.
 #[allow(clippy::too_many_arguments)]
 pub fn apply(
     position: Position,
@@ -21,7 +23,10 @@ pub fn apply(
     map: &Map,
     nntree: &NNTree,
 ) -> (Vec3, Option<i16>) {
-    let input = movement::MovementInput { position, heading, moving, airtime, movement_speed };
+    let input = movement::MovementInput {
+        position, heading, moving, back: false, turn: 0,
+        since_step_ms: movement::TURN_REPEAT_MS, airtime, movement_speed,
+    };
     let output = movement::calculate_movement(input, dt, map, nntree);
     (output.position.offset, output.airtime)
 }

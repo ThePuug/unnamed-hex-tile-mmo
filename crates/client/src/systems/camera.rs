@@ -8,11 +8,11 @@ use common_bevy::{
     resources::map::Map,
 };
 
-/// Orbit stops: one per heading, so forward is always a heading.
+/// Orbit stops: one per heading, so the camera can stand behind any.
 pub const ORBIT_STOPS: usize = HEADING_SLOTS as usize;
 /// Angular separation between orbit stops.
 const ORBIT_STEP: f32 = 2.0 * PI / ORBIT_STOPS as f32;
-/// Seconds between steps while a turn key is held.
+/// Seconds between steps while a flyover turn key is held.
 const ORBIT_REPEAT_SECS: f32 = 0.08;
 /// Exponential decay constant for orbit interpolation (~0.25s to settle)
 const INTERPOLATION_SPEED: f32 = 12.0;
@@ -34,7 +34,9 @@ pub fn gameplay_camera_height() -> f32 {
     camera_height(MAX_GAMEPLAY_FOV)
 }
 
-/// Camera orbit state: discrete stops, one per heading, and smooth interpolation.
+/// Camera orbit state: discrete stops, one per heading, and smooth
+/// interpolation. In gameplay the target stop follows the player's heading;
+/// flyover steps it by key.
 #[derive(Resource)]
 pub struct CameraOrbit {
     /// Current interpolated angle (radians, 0 = behind player facing north)
@@ -61,6 +63,11 @@ impl CameraOrbit {
     /// and a bearing clockwise, so the stop index counts down from north.
     pub fn forward(&self) -> Heading {
         Heading::from_slot(((ORBIT_STOPS - self.target_index) % ORBIT_STOPS) as u8)
+    }
+
+    /// Stand behind `heading`.
+    pub fn follow(&mut self, heading: Heading) {
+        self.target_index = (ORBIT_STOPS - heading.slot() as usize) % ORBIT_STOPS;
     }
 
     /// One step on the first call while held, then one every ORBIT_REPEAT_SECS.
@@ -121,12 +128,14 @@ pub fn update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    actor: Query<&Transform, (With<Actor>, Without<Camera3d>)>,
+    actor: Query<(&Transform, &Heading), (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
     time: Res<Time>,
 ) {
-    // Camera rotation is driven by movement input (update_keybits in input.rs).
-    // No dedicated rotation keys.
+    // The orbit follows the predicted heading; no key moves the camera.
+    if let Ok((_, heading)) = actor.single() {
+        orbit.follow(*heading);
+    }
 
     // Smooth interpolation toward target
     let target = orbit.target_angle();
@@ -138,7 +147,7 @@ pub fn update(
         orbit.current = target;
     }
 
-    if let Ok(a_transform) = actor.single() {
+    if let Ok((a_transform, _)) = actor.single() {
         if let Ok((c_projection, mut c_transform)) = camera.single_mut() {
             // Zoom controls (perspective FOV)
             if let Projection::Perspective(c_perspective) = c_projection.into_inner() {

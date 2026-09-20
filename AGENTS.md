@@ -143,18 +143,21 @@ authority; `VisualPosition` is rendering interpolation only.
 leave the tile, and `server::systems::actor::update` re-bases when it does.
 Movement is `Heading` (24 bearings) × speed × dt in
 `movement::calculate_movement()`, the canonical physics; `physics::apply()` is
-a thin wrapper. The result must not depend on how dt is partitioned — no
-per-call smoothing, no per-step constant unscaled by dt — because the client
-replays in different slices what the server applied.
+a thin wrapper for NPCs. Turning is physics too: a held turn key steps the
+heading once per `TURN_REPEAT_MS` of input time inside the same loop, with
+`Turn` carrying the clock, so the wire carries keys and never a heading. The
+result must not depend on how dt is partitioned — no per-call smoothing, no
+per-step constant unscaled by dt — because the client replays in different
+slices what the server applied.
 
 **Client-side prediction.** `InputQueue` distinguishes local from remote
-players. `input::update_keybits` pushes a new `seq` at the front on any key or
-heading change, `input::tick` attributes the fixed tick to the front and puts
-it on the wire, the server's `input::apply` runs exactly that dt and answers
-`Event::Confirm` with its `Position` when the seq closes, and
-`input::do_confirm` pops the back by `seq` and adopts it.
-`movement::predict_local_player` replays the queue from `Position` into
-`VisualPosition`. Remote entities run the same physics in
+players. `input::update_keybits` pushes a new `seq` at the front on any key
+change, `input::tick` attributes the fixed tick to the front and puts it on
+the wire, the server's `input::apply` runs exactly that dt and answers
+`Event::Confirm` with its `Position` and `Turn` when the seq closes, and
+`input::do_confirm` pops the back by `seq` and adopts them.
+`movement::predict_local_player` replays the queue from `Position` and `Turn`
+into `VisualPosition` and `Heading`. Remote entities run the same physics in
 `movement::simulate_remote` from their last `MovementIntent`.
 
 **Network events.** `Try` (client→server) → server validates → `Do`

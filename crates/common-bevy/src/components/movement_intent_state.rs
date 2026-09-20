@@ -10,6 +10,7 @@ pub struct MovementIntentState {
     pub last_tick: Position,
     pub sent_heading: Heading,
     pub sent_moving: bool,
+    pub sent_back: bool,
     pub sent_tile: Qrz,
     pub sent_airborne: bool,
 }

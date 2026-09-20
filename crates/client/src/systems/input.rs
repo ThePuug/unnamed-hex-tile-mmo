@@ -1,17 +1,17 @@
 //! Keyboard to input messages. The client owns the clock for its own
 //! movement: every fixed tick it attributes the elapsed time to the open
-//! input and sends it, and every change of keys or heading opens a new one.
+//! input and sends it, and every change of keys opens a new one. Only keys
+//! cross the wire; the heading is what the server makes of them.
 
 use bevy::prelude::*;
 
-use crate::systems::camera::CameraOrbit;
 use crate::*;
 use common_bevy::{
     components::{
         keybits::*,
         position::Position,
         target::Target,
-        AirTime,
+        AirTime, Turn,
     },
     message::{AbilityType, Event, *},
     resources::*,
@@ -31,13 +31,9 @@ pub const INPUT_ROLL_MS: u128 = 1000;
 /// Milliseconds of an open input accumulated before they go on the wire.
 pub const INPUT_SEND_MS: u16 = 50;
 
-/// Slots a backward diagonal turns away from straight back: 45°.
-const BACK_DIAGONAL_SLOTS: i32 = 3;
-
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
-    mut camera_orbit: ResMut<CameraOrbit>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
@@ -99,47 +95,12 @@ pub fn update_keybits(
         writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Far }});
     }
 
-    let mut keybits = KeyBits { heading: keybits0.heading, ..default() };
+    let mut keybits = KeyBits::default();
     keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
-
-    // Shift hands the arrows to camera panning.
-    let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if !shift_pressed && keyboard.any_pressed([KEYCODE_UP, KEYCODE_DOWN, KEYCODE_LEFT, KEYCODE_RIGHT]) {
-        let up = keyboard.pressed(KEYCODE_UP);
-        let down = keyboard.pressed(KEYCODE_DOWN);
-        let left = keyboard.pressed(KEYCODE_LEFT);
-        let right = keyboard.pressed(KEYCODE_RIGHT);
-
-        // Left and right step the camera, alone or with Up; a backward
-        // diagonal holds it. Forward is whatever stop the camera lands on.
-        let turning = !(down && !up);
-        if turning && left && !right {
-            camera_orbit.step_ccw(dt.delta_secs());
-        } else if turning && right && !left {
-            camera_orbit.step_cw(dt.delta_secs());
-        } else {
-            camera_orbit.release();
-        }
-
-        let forward = camera_orbit.forward();
-        let heading = if up && !down {
-            Some(forward)
-        } else if down && !up {
-            let back = forward.reversed();
-            Some(if left && !right { back.turned(BACK_DIAGONAL_SLOTS) }
-                else if right && !left { back.turned(-BACK_DIAGONAL_SLOTS) }
-                else { back })
-        } else {
-            None
-        };
-
-        if let Some(heading) = heading {
-            keybits.set_pressed([KB_MOVE], true);
-            keybits.heading = heading;
-        }
-    } else {
-        camera_orbit.release();
-    }
+    keybits.set_pressed([KB_FORWARD], keyboard.pressed(KEYCODE_UP));
+    keybits.set_pressed([KB_BACK], keyboard.pressed(KEYCODE_DOWN));
+    keybits.set_pressed([KB_LEFT], keyboard.pressed(KEYCODE_LEFT));
+    keybits.set_pressed([KB_RIGHT], keyboard.pressed(KEYCODE_RIGHT));
 
     // A new input opens when the keys change, or after INPUT_ROLL_MS so the
     // server confirms at least that often.
@@ -197,16 +158,16 @@ pub fn tick(
     }
 }
 
-/// Adopts the server's position for a closed input and drops it from the
-/// queue. Prediction then replays only what is still open, from exactly
-/// where the server left the entity.
+/// Adopts the server's position and turn state for a closed input and drops
+/// it from the queue. Prediction then replays only what is still open, from
+/// exactly where the server left the entity.
 pub fn do_confirm(
     mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Position, &mut AirTime)>,
+    mut query: Query<(&mut Position, &mut AirTime, &mut Turn)>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Confirm { ent, seq, position, airtime } } = message else { continue };
+        let Do { event: Event::Confirm { ent, seq, position, airtime, turn } } = message else { continue };
         let (ent, seq) = (*ent, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { panic!("no {ent} in buffers") };
 
@@ -219,9 +180,10 @@ pub fn do_confirm(
         let Event::Input { seq: seq0, .. } = removed else { panic!("not input") };
         assert!(seq == seq0, "Seq mismatch: expected {seq0}, got {seq}");
 
-        if let Ok((mut pos, mut air)) = query.get_mut(ent) {
+        if let Ok((mut pos, mut air, mut turn0)) = query.get_mut(ent) {
             *pos = *position;
             air.state = *airtime;
+            *turn0 = *turn;
         }
 
         if buffer.queue.len() > 5 {

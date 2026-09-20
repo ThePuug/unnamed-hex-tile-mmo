@@ -114,12 +114,12 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
             }
 
-            Do { event: Event::Confirm { ent, seq, position, airtime } } => {
+            Do { event: Event::Confirm { ent, seq, position, airtime, turn } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                do_writer.write(Do { event: Event::Confirm { ent, seq, position, airtime } });
+                do_writer.write(Do { event: Event::Confirm { ent, seq, position, airtime, turn } });
             }
             Do { event: Event::Despawn { ent } } => {
                 // Check if this is the local player (has InputQueue)
@@ -291,10 +291,10 @@ pub fn write_do(
         network_metrics.record_received(message_type, serialized.len());
 
         match message {
-            Do { event: Event::MovementIntent { ent, position, heading, moving, airtime } } => {
+            Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } } => {
                 // An intent for an entity not yet spawned is dropped: the next one repairs it.
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, airtime } });
+                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } });
             }
             Do { event: Event::Displace { ent, destination, duration_ms } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };

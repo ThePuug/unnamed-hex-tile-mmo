@@ -13,7 +13,7 @@ use common_bevy::{
     message::{Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::{movement::{JUMP_DURATION_MS, MOVEMENT_SPEED}, physics},
+    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
 };
 use crate::{network::ServerNet, systems::stagger::Knockback, *};
 
@@ -171,13 +171,14 @@ pub fn try_input(
 
 /// Applies accepted inputs to physics in arrival order. The queue holds one
 /// entry, the open input (INV-002); a message with the next sequence closes
-/// it, confirming the position it left the entity at, and replaces it in
-/// place. A dead player's inputs keep the sequence moving but do not move it.
+/// it, confirming the position and turn state it left the entity at, and
+/// replaces it in place. A dead player's inputs keep the sequence moving but
+/// do not move it.
 pub fn apply(
     mut reader: MessageReader<Do>,
     mut commands: Commands,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Heading, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>)>,
+    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
@@ -185,7 +186,7 @@ pub fn apply(
         let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
-        let Ok((mut heading, mut position, mut airtime, attrs, dead)) = query.get_mut(ent) else { continue };
+        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead)) = query.get_mut(ent) else { continue };
         let Some(front) = buffer.queue.front_mut() else {
             panic!("Queue invariant violation: entity {ent} has empty queue");
         };
@@ -194,7 +195,7 @@ pub fn apply(
         if seq == seq0.wrapping_add(1) {
             // Through commands: a reader and a writer of `Do` in one system is a
             // conflicting access (B0002).
-            commands.write_message(Do { event: Event::Confirm { ent, seq: *seq0, position: *position, airtime: airtime.state } });
+            commands.write_message(Do { event: Event::Confirm { ent, seq: *seq0, position: *position, airtime: airtime.state, turn: *turn } });
             *front = Event::Input { ent, key_bits, dt, seq };
         } else if seq == *seq0 {
             *dt0 = dt0.saturating_add(dt);
@@ -206,17 +207,27 @@ pub fn apply(
             continue;
         }
 
-        let moving = key_bits.is_pressed(KB_MOVE);
-        if moving && *heading != key_bits.heading {
-            *heading = key_bits.heading;
-        }
         if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() {
             airtime.state = Some(JUMP_DURATION_MS);
         }
         let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
-        let (offset, air) = physics::apply(*position, *heading, moving, airtime.state, movement_speed, dt as i16, &map, &nntree);
-        position.offset = offset;
-        airtime.state = air;
+        let out = calculate_movement(MovementInput {
+            position: *position,
+            heading: turn.heading,
+            moving: key_bits.moving(),
+            back: key_bits.back(),
+            turn: key_bits.turn(),
+            since_step_ms: turn.since_step_ms,
+            airtime: airtime.state,
+            movement_speed,
+        }, dt as i16, &map, &nntree);
+        position.offset = out.position.offset;
+        airtime.state = out.airtime;
+        turn.since_step_ms = out.since_step_ms;
+        if turn.heading != out.heading {
+            turn.heading = out.heading;
+            *heading = out.heading;
+        }
     }
 }
 
@@ -245,11 +256,16 @@ pub fn broadcast_movement_intent(
 
         let here = position.to_world(&map).xz();
         let there = state.last_tick.to_world(&map).xz();
-        let moving = here.distance_squared(there) > 1e-8;
+        let step = here - there;
+        let moving = step.length_squared() > 1e-8;
+        // A walk keeps a non-negative component along its direction, a slide
+        // included, so the sign against the heading says which way it went.
+        let back = moving && step.dot(heading.to_world_dir()) < 0.0;
         let airborne = airtime.state.is_some();
         state.last_tick = *position;
 
         let changed = moving != state.sent_moving
+            || back != state.sent_back
             || *heading != state.sent_heading
             || airborne != state.sent_airborne
             || (moving && **loc != state.sent_tile);
@@ -257,6 +273,7 @@ pub fn broadcast_movement_intent(
             continue;
         }
         state.sent_moving = moving;
+        state.sent_back = back;
         state.sent_heading = *heading;
         state.sent_airborne = airborne;
         state.sent_tile = **loc;
@@ -266,6 +283,7 @@ pub fn broadcast_movement_intent(
             position: *position,
             heading: *heading,
             moving,
+            back,
             airtime: airtime.state,
         }});
     }
@@ -392,7 +410,7 @@ mod tests {
     use super::*;
 
     fn moving() -> KeyBits {
-        KeyBits { key_bits: KB_MOVE, heading: Heading::from_slot(3), accumulator: 0 }
+        KeyBits { key_bits: KB_FORWARD, accumulator: 0 }
     }
 
     #[test]

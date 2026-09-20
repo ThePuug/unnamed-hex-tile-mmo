@@ -30,7 +30,7 @@ pub enum Event {
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     /// Server → Client: input `seq` closed with the entity here. The client
     /// adopts the position and replays only the inputs still open.
-    Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16> },
+    Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16>, turn: Turn },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
     /// Entity died (Try event - server-internal only)
@@ -71,7 +71,7 @@ pub enum Event {
     SetTierLock { ent: Entity, tier: RangeTier },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
-    MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, airtime: Option<i16> },
+    MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16> },
     /// Server → Client: the entity slides to a standing-height tile under an
     /// ability (lunge, knockback), arriving after `duration_ms`.
     Displace { ent: Entity, destination: Qrz, duration_ms: u16 },

@@ -125,6 +125,7 @@ pub fn do_spawn(
                         AirTime { state: Some(0), step: None },
                         NearestNeighbor::new(ent, loc),
                         Heading::default(),
+                        Turn::default(),
                         KeyBits::default(),
                         Visibility::default(),
                         Physics::default(),

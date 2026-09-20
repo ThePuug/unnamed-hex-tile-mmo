@@ -16,12 +16,12 @@ use common_bevy::{
         heading::Heading,
         keybits::*,
         position::{Position, VisualPosition},
-        ActorAttributes, AirTime, Loc,
+        ActorAttributes, AirTime, Loc, Turn,
     },
     message::{Component, Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::{movement::{JUMP_DURATION_MS, MOVEMENT_SPEED}, physics},
+    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
@@ -41,11 +41,12 @@ const DRIFT_LIMIT_TILES: f32 = 1.5;
 const LOC_SETTLE_SECS: f32 = 0.125;
 
 /// Replays the local player's open inputs from its confirmed position and
-/// points the visual at the result. `Position` is never written here; it is
-/// the confirmed state.
+/// turn state, and points the visual and `Heading` at the result.
+/// `Position` and `Turn` are never written here; they are the confirmed
+/// state.
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
-    mut query: Query<(&Position, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -54,18 +55,25 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, mut heading, mut airtime, mut visual, attrs)) = query.get_mut(ent) else { continue; };
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs)) = query.get_mut(ent) else { continue; };
         let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
 
         let (mut offset, mut air) = (position.offset, airtime.state);
-        let mut facing = *heading;
+        let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
         for input in buffer.queue.iter().rev() {
             let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
-            let moving = key_bits.is_pressed(KB_MOVE);
-            if moving { facing = key_bits.heading; }
             if key_bits.is_pressed(KB_JUMP) && air.is_none() { air = Some(JUMP_DURATION_MS); }
-            let from = Position::new(position.tile, offset);
-            (offset, air) = physics::apply(from, facing, moving, air, movement_speed, *dt as i16, &map, &nntree);
+            let out = calculate_movement(MovementInput {
+                position: Position::new(position.tile, offset),
+                heading: facing,
+                moving: key_bits.moving(),
+                back: key_bits.back(),
+                turn: key_bits.turn(),
+                since_step_ms,
+                airtime: air,
+                movement_speed,
+            }, *dt as i16, &map, &nntree);
+            (offset, air, facing, since_step_ms) = (out.position.offset, out.airtime, out.heading, out.since_step_ms);
         }
 
         if *heading != facing { *heading = facing; }
@@ -96,10 +104,19 @@ pub fn simulate_remote(
         motion.residual_us %= 1000;
         if dt > 0 {
             let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
-            let (offset, air) = physics::apply(*position, *heading, motion.moving, airtime.state, movement_speed, dt as i16, &map, &nntree);
-            position.offset = offset;
-            airtime.state = air;
-            airtime.step = air;
+            let out = calculate_movement(MovementInput {
+                position: *position,
+                heading: *heading,
+                moving: motion.moving,
+                back: motion.back,
+                turn: 0,
+                since_step_ms: TURN_REPEAT_MS,
+                airtime: airtime.state,
+                movement_speed,
+            }, dt as i16, &map, &nntree);
+            position.offset = out.position.offset;
+            airtime.state = out.airtime;
+            airtime.step = out.airtime;
         }
         visual.interpolate_toward(position.to_world(&map), tick * VISUAL_TICKS);
     }
@@ -125,7 +142,7 @@ pub fn apply_intent(
     buffers: Res<InputQueues>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::MovementIntent { ent, position, heading, moving, airtime } } = message else { continue };
+        let Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } } = message else { continue };
         let ent = *ent;
         if buffers.get(&ent).is_some() { continue; }
         let Ok((mut position0, mut heading0, mut airtime0, motion)) = query.get_mut(ent) else { continue; };
@@ -133,8 +150,8 @@ pub fn apply_intent(
         if *heading0 != *heading { *heading0 = *heading; }
         airtime0.state = *airtime;
         match motion {
-            Some(mut motion) => motion.moving = *moving,
-            None => { commands.entity(ent).insert(RemoteMotion { moving: *moving, residual_us: 0 }); }
+            Some(mut motion) => { motion.moving = *moving; motion.back = *back; }
+            None => { commands.entity(ent).insert(RemoteMotion { moving: *moving, back: *back, residual_us: 0 }); }
         }
     }
 }
