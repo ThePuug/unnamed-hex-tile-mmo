@@ -37,8 +37,13 @@ pub struct SynergyGlow;
 #[derive(Component)]
 pub struct CooldownOverlay;
 
+/// Side of an ability slot and its border, in px; the compass beside the
+/// bar takes the same.
+const SLOT_PX: f32 = 80.;
+const SLOT_BORDER_PX: f32 = 3.;
+
 /// Setup action bar UI below resource bars
-/// Creates 4 ability slots (Q, W, E, R)
+/// Creates 4 ability slots (Q, W, E, R), and the compass beside them
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, Added<Camera3d>>,
@@ -82,9 +87,9 @@ pub fn setup(
                 // Spawn ability slot
                 parent.spawn((
         Node {
-            width: Val::Px(80.),
-            height: Val::Px(80.),
-            border: UiRect::all(Val::Px(3.)),
+            width: Val::Px(SLOT_PX),
+            height: Val::Px(SLOT_PX),
+            border: UiRect::all(Val::Px(SLOT_BORDER_PX)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
@@ -202,6 +207,8 @@ pub fn setup(
         ));
     });  // Close .with_children from line 97 (slot children)
             }  // Close for loop from line 82
+
+            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }

@@ -51,67 +51,68 @@ pub fn setup(
             Info::DistanceIndicator,
         ));
 
-        // Compass container - circular with gold border, rotates with camera
-        parent.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(12.),
-                left: Val::Percent(50.),
-                width: Val::Px(100.),
-                height: Val::Px(100.),
-                border: UiRect::all(Val::Px(4.0)),
-                border_radius: BorderRadius::all(Val::Percent(50.)),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.7)),
-            BorderColor::all(Color::srgb(0.85, 0.65, 0.13)),
-            UiTransform::default(),
-            CompassContainer,
-        ))
-        .with_children(|parent| {
-            // Content area is 92x92 after 4px border on each side
-            let content = 92.0_f32;
-            let center = content / 2.0;
-            let diameter = 72.0_f32;
+    });
+}
 
-            // 3 full-diameter lines through center, rotated 30° for pointy-top hex directions
-            let line_w = 2.0_f32;
-            for angle_deg in [30.0_f32, 90.0, 150.0] {
-                parent.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(center - line_w / 2.0),
-                        top: Val::Px(center - diameter / 2.0),
-                        width: Val::Px(line_w),
-                        height: Val::Px(diameter),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.7, 0.7, 0.7)),
-                    UiTransform {
-                        rotation: Rot2::radians(angle_deg.to_radians()),
-                        ..default()
-                    },
-                ));
-            }
+/// The compass: a gold-ringed disc of `size` px with a `border` px ring,
+/// its three hex axes and a red N, counter-rotated to the camera by
+/// `update_compass`. Spawned as a child of whatever lays it out.
+pub fn spawn_compass(parent: &mut ChildSpawnerCommands, size: f32, border: f32) {
+    parent.spawn((
+        Node {
+            width: Val::Px(size),
+            height: Val::Px(size),
+            border: UiRect::all(Val::Px(border)),
+            border_radius: BorderRadius::all(Val::Percent(50.)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.7)),
+        BorderColor::all(Color::srgb(0.85, 0.65, 0.13)),
+        UiTransform::default(),
+        CompassContainer,
+    ))
+    .with_children(|parent| {
+        let content = size - 2.0 * border;
+        let center = content / 2.0;
+        let diameter = content * 0.8;
 
-            // Red "N" label at true north (top of compass)
-            let font_size = 16.0_f32;
+        // 3 full-diameter lines through center, rotated 30° for pointy-top hex directions
+        let line_w = 2.0_f32;
+        for angle_deg in [30.0_f32, 90.0, 150.0] {
             parent.spawn((
-                Text::new("N"),
-                TextFont {
-                    font_size,
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.2, 0.2)),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(center - font_size / 2.0 + 1.0),
-                    top: Val::Px(2.0),
+                    left: Val::Px(center - line_w / 2.0),
+                    top: Val::Px(center - diameter / 2.0),
+                    width: Val::Px(line_w),
+                    height: Val::Px(diameter),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.7, 0.7, 0.7)),
+                UiTransform {
+                    rotation: Rot2::radians(angle_deg.to_radians()),
                     ..default()
                 },
             ));
-        });
+        }
+
+        // Red "N" label at true north (top of compass)
+        let font_size = 16.0_f32;
+        parent.spawn((
+            Text::new("N"),
+            TextFont {
+                font_size,
+                ..default()
+            },
+            TextColor(Color::srgb(1.0, 0.2, 0.2)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(center - font_size / 2.0 + 1.0),
+                top: Val::Px(2.0),
+                ..default()
+            },
+        ));
     });
 }
 
