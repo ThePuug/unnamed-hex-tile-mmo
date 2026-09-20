@@ -388,12 +388,8 @@ pub fn visible_mesh_regions_in_band(
     let cam_sr = (cam_r / summary_lat.scale as f64).round() as i32;
     let cam_region = region_lat.cell_id(cam_sq, cam_sr);
 
-    // Search radius in mesh-region lattice units. Conservative estimate.
-    let region_extent = crate::summary::mesh_region_extent_wu(r).max(1.0);
-    let search_radius = ((outer_wu / region_extent) as i32 + 2).min(60);
-
+    let sr = search_steps(r, outer_wu);
     let mut regions = HashSet::new();
-    let sr = search_radius;
     for dn in -sr..=sr {
         let dm_min = (-sr).max(-dn - sr);
         let dm_max = sr.min(-dn + sr);
@@ -439,6 +435,15 @@ pub fn visible_mesh_regions_in_band(
     regions
 }
 
+/// Lattice steps a region search must reach from the camera's region to
+/// hold every region whose centre lies within `outer_wu`: a region at k
+/// steps is at least k · spacing · √3/2 away, the lattice's inradius
+/// direction, and the camera stands anywhere in its own region.
+fn search_steps(r: u32, outer_wu: f32) -> i32 {
+    let step = crate::summary::mesh_region_spacing_wu(r) * 3.0_f32.sqrt() / 2.0;
+    ((outer_wu / step).ceil() as i32 + 2).min(60)
+}
+
 /// Like `visible_mesh_regions_in_band` but without the loaded-chunk gate.
 /// Used for remote summary bands where data comes from server, not local tiles.
 pub fn visible_mesh_regions_in_band_ungated(
@@ -457,11 +462,8 @@ pub fn visible_mesh_regions_in_band_ungated(
     let cam_sr = (cam_r / summary_lat.scale as f64).round() as i32;
     let cam_region = region_lat.cell_id(cam_sq, cam_sr);
 
-    let region_extent = crate::summary::mesh_region_extent_wu(r).max(1.0);
-    let search_radius = ((outer_wu / region_extent) as i32 + 2).min(60);
-
+    let sr = search_steps(r, outer_wu);
     let mut regions = HashSet::new();
-    let sr = search_radius;
     for dn in -sr..=sr {
         let dm_min = (-sr).max(-dn - sr);
         let dm_max = sr.min(-dn + sr);
@@ -611,6 +613,32 @@ mod tests {
     fn mesh_region_contains_271_summaries() {
         let region_lat = mesh_region_lattice();
         assert_eq!(region_lat.tiles_in_cell((0, 0)).count(), MESH_REGION_CELLS as usize);
+    }
+
+    /// Every region whose centre lies in the range is enumerated: the
+    /// search reaches as many lattice steps as the range can hold along the
+    /// lattice's shortest direction, at every level.
+    #[test]
+    fn region_search_reaches_every_centre_in_range() {
+        let region_lat = mesh_region_lattice();
+        for r in [0u32, 1, 4, 13, 40] {
+            let summary_lat = summary_lattice(r);
+            let outer = 10.4 * crate::summary::mesh_region_spacing_wu(r);
+            let cam = (37.0, -91.0);
+            let found = visible_mesh_regions_in_band_ungated(r, cam.0, cam.1, 0.0, outer);
+            let mut expected = 0;
+            for mn in -40..=40 {
+                for mm in -40..=40 {
+                    let (scq, scr) = summary_lat.cell_center(region_lat.cell_center((mn, mm)));
+                    let (x, z) = flat_top_tile_center(scq, scr, 1.0);
+                    if ((x - cam.0).powi(2) + (z - cam.1).powi(2)).sqrt() <= outer {
+                        expected += 1;
+                        assert!(found.contains(&MeshRegionKey { r, mn, mm }), "r={r} region ({mn},{mm}) in range but not found");
+                    }
+                }
+            }
+            assert_eq!(found.len(), expected, "r={r}");
+        }
     }
 
     #[test]
