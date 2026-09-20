@@ -59,10 +59,16 @@ pub(crate) fn ready(
     }
 }
 
+/// Exponential decay constant of the facing's easing between headings: a
+/// heading steps by a bearing at a time, and the body turns through it.
+const FACING_EASE: f32 = 15.0;
+
 pub fn update(
     mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>), Without<DeathMarker>>,
     map: Res<Map>,
+    time: Res<Time>,
 ) {
+    let ease = 1.0 - (-FACING_EASE * time.delta_secs()).exp();
     for (&loc, &heading, mut transform0, vis_pos) in &mut query {
         let final_pos = if let Some(vis) = vis_pos {
             // Use VisualPosition for smooth, jitter-free rendering
@@ -73,7 +79,7 @@ pub fn update(
         };
 
         transform0.translation = final_pos;
-        transform0.rotation = heading.into();
+        transform0.rotation = transform0.rotation.slerp(heading.into(), ease);
     }
 }
 
