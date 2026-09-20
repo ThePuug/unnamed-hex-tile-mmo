@@ -22,11 +22,8 @@ use common_bevy::summary_mesh::MeshRegionKey;
 /// with its own centre since an edge follows the player only as fast as
 /// both its levels are on screen (`EdgeCenters`). The shaders drop
 /// fragments inside `inner` of `inner_center` or beyond `outer` of
-/// `outer_center`, and apply `mode` (`LodTransition as u32`) over the
-/// strips at each end — the level leaving across `[outer - fade_out,
-/// outer]` and arriving across `[inner, inner + fade_in]`: nothing, a
-/// screen-space dither, or a morph of the leaving vertices onto the
-/// coarser level's surface. Field order is the uniform layout in
+/// `outer_center`, and morph the vertices across `[outer - fade, outer]`
+/// onto the coarser level's surface. Field order is the uniform layout in
 /// `terrain_cut.wgsl`; the tail pads the struct to the uniform stride. No
 /// name in an imported shader module may end in a digit or start with an
 /// underscore: the composer rejects any identifier naga's namer would
@@ -37,29 +34,14 @@ pub struct TerrainCut {
     pub outer_center: Vec2,
     pub inner: f32,
     pub outer: f32,
-    pub fade_in: f32,
-    pub fade_out: f32,
-    pub mode: u32,
-    pub pad_a: u32,
-    pub pad_b: u32,
-    pub pad_c: u32,
+    pub fade: f32,
+    pub pad: f32,
 }
 
 impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
-        Self {
-            inner_center: Vec2::ZERO,
-            outer_center: Vec2::ZERO,
-            inner: 0.0,
-            outer: f32::MAX,
-            fade_in: 0.0,
-            fade_out: 0.0,
-            mode: 0,
-            pad_a: 0,
-            pad_b: 0,
-            pad_c: 0,
-        }
+        Self { inner_center: Vec2::ZERO, outer_center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, pad: 0.0 }
     }
 }
 

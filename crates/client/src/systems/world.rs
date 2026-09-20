@@ -519,17 +519,15 @@ const EDGE_SAMPLES: u32 = 180;
 /// where its level is due, and for the finest level its tiles may be gone.
 const EDGE_MAX_LAG: f32 = 0.5;
 
-/// Upload the band cut: each edge's centre, each level's window, and the
-/// transition over the strips at its edges. Regions are built whole and
-/// the shaders drop fragments outside the window, so band edges follow
-/// the player with no rebuild and adjacent levels overlap by the strip,
-/// never a region. An edge moves only where both its levels are drawn,
-/// and eases when it does. A forced debug radius lifts the cut.
+/// Upload the band cut: each edge's centre, each level's band, and the
+/// morph strip inside its outer edge. Regions are built whole and the
+/// shaders drop fragments outside the band, so band edges follow the
+/// player with no rebuild. An edge moves only where both its levels are
+/// drawn, and eases when it does. A forced debug radius lifts the cut.
 pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
     forced_radius: Res<ForcedSummaryRadius>,
-    diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
     summary_meshes: Res<SummaryMeshes>,
     mut edges: ResMut<crate::resources::EdgeCenters>,
     time: Res<Time>,
@@ -557,7 +555,7 @@ pub fn update_terrain_cut(
         material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {
-            level_cut(r, &bands, diagnostics.lod_transition, &edges.0, target)
+            level_cut(r, &bands, &edges.0, target)
         };
     }
 }
@@ -579,7 +577,7 @@ fn advance_edges(
     edges.retain(|r, _| bands[..paired].iter().any(|b| b.r == *r));
     for pair in bands.windows(2) {
         let (fine, coarse) = (&pair[0], &pair[1]);
-        let radius = fine.window().1;
+        let radius = fine.outer_wu;
         let centre = edges.entry(fine.r).or_insert(target);
         let lag = centre.distance(target);
         if lag < 1e-2 || lag > EDGE_MAX_LAG * radius {
@@ -611,48 +609,30 @@ fn edge_is_drawn(centre: Vec2, radius: f32, fine: u32, coarse: u32, meshes: &Sum
     })
 }
 
-/// Level `r`'s cut under a transition mode. Its outer edge is its window's,
-/// one coarse summary past the band edge, and the strip inside it is where
-/// the level leaves; the outermost band ends at the horizon and leaves
-/// nowhere. Its inner edge is where it arrives under the finer level's
-/// strip, and that depends on the mode: a plain cut draws it from one
-/// summary back, so a ray under the finer plate's edge lands on it; a
-/// dither draws it from the strip's start, arriving by the complement of
-/// the finer level's threshold; a morph draws it from the finer level's cut
-/// alone, since the finer surface has become this one there and anything
-/// under the strip could only show through where it stands higher. Each
-/// circle is centred where its edge is (`edges`), or on the player where
-/// the edge has not been placed.
+/// Level `r`'s cut: its band, with the morph strip inside its outer edge.
+/// The outermost band ends at the horizon and morphs nowhere. The level
+/// begins exactly where the finer one ends, since the finer surface has
+/// become this one there; anything drawn under the finer level's strip
+/// could only show through where it stands higher. Each circle is centred
+/// where its edge is (`edges`), or on the player where the edge has not
+/// been placed.
 fn level_cut(
     r: u32,
     bands: &[common_bevy::summary::Band],
-    mode: crate::plugins::diagnostics::LodTransition,
     edges: &HashMap<u32, Vec2>,
     target: Vec2,
 ) -> crate::resources::TerrainCut {
-    use crate::plugins::diagnostics::LodTransition;
-    use common_bevy::summary::{finer_level, level_band, summary_width_wu, transition_wu};
+    use common_bevy::summary::{finer_level, level_band, transition_wu};
     let (band, outermost) = level_band(r, bands);
-    let (window_inner, window_outer) = band.window();
-    let (outer, fade_out) = if outermost { (f32::MAX, 0.0) } else { (window_outer, transition_wu(r)) };
-    let width = summary_width_wu(r);
-    let finest = band.inner_wu <= 0.0;
-    let (inner, fade_in) = match mode {
-        _ if finest => (0.0, 0.0),
-        LodTransition::Cut => ((band.inner_wu - width).max(0.0), 0.0),
-        LodTransition::Dither => (window_inner, band.inner_wu + width - window_inner),
-        LodTransition::Morph => (band.inner_wu + width, 0.0),
-    };
+    let (outer, fade) = if outermost { (f32::MAX, 0.0) } else { (band.outer_wu, transition_wu(r)) };
     let centre_of = |edge: Option<u32>| edge.and_then(|e| edges.get(&e)).copied().unwrap_or(target);
     crate::resources::TerrainCut {
         inner_center: centre_of(finer_level(r)),
         outer_center: centre_of(Some(r)),
-        inner,
+        inner: band.inner_wu,
         outer,
-        fade_in,
-        fade_out,
-        mode: mode as u32,
-        ..default()
+        fade,
+        pad: 0.0,
     }
 }
 
@@ -682,15 +662,15 @@ fn compute_auto_mode_regions(
     // chunk-fed) AND an ungated segment (server/flyover-fed). Assigning the
     // whole band to one side left its other segment with no regions at all.
     for band in &bands {
-        // Footprint-overlap enumeration over the level's window: a region
-        // is built if its FOOTPRINT overlaps the window, not just its
-        // center, so every fragment the cut keeps has geometry behind it.
-        // Regions are up to mesh_region_extent_wu(r) across — center-only
-        // membership left crescents near every band boundary covered by
-        // neither level. Regions are built whole; the shader cut
-        // (`update_terrain_cut`) is what confines a level to its window.
+        // Footprint-overlap enumeration over the band: a region is built
+        // if its FOOTPRINT overlaps the band, not just its center, so every
+        // fragment the cut keeps has geometry behind it. Regions are up to
+        // mesh_region_extent_wu(r) across — center-only membership left
+        // crescents near every band boundary covered by neither level.
+        // Regions are built whole; the shader cut (`update_terrain_cut`)
+        // is what confines a level to its band.
         let half_extent = 0.5 * common_bevy::summary::mesh_region_extent_wu(band.r);
-        let (win_inner, win_outer) = band.window();
+        let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
         let band_inner = (win_inner * (1.0 - margin) - half_extent).max(0.0);
         let band_outer = win_outer * (1.0 + margin) + half_extent;
 
@@ -1005,44 +985,26 @@ pub fn poll_summary_meshes(
 mod tests {
     use super::*;
 
-    /// Where a level arrives depends on the mode, and always meets where the
-    /// finer level leaves: a plain cut one summary back under the finer
-    /// plate; a dither fading in over exactly the finer level's strip; a
-    /// morph beginning at the finer level's cut. The finest level arrives
-    /// nowhere and the outermost band leaves nowhere.
+    /// A level begins exactly where the finer one ends, with the morph
+    /// strip inside the finer one's edge. The finest level begins at the
+    /// player and the outermost band ends at the horizon, morphing nowhere.
     #[test]
-    fn level_cut_meets_the_finer_level_by_mode() {
-        use crate::plugins::diagnostics::LodTransition;
-        use common_bevy::summary::{compute_active_bands, summary_width_wu, transition_wu};
+    fn level_cut_meets_the_finer_level_at_its_edge() {
+        use common_bevy::summary::{compute_active_bands, transition_wu};
         let bands = compute_active_bands(25_000.0);
         let (edges, target) = (HashMap::new(), Vec2::ZERO);
-        for mode in [LodTransition::Cut, LodTransition::Dither, LodTransition::Morph] {
-            for pair in bands.windows(2) {
-                let (fine, coarse) = (&pair[0], &pair[1]);
-                let f = level_cut(fine.r, &bands, mode, &edges, target);
-                let c = level_cut(coarse.r, &bands, mode, &edges, target);
-                assert!((f.outer - (fine.outer_wu + summary_width_wu(coarse.r))).abs() < 0.01);
-                assert!((f.fade_out - transition_wu(fine.r)).abs() < 0.01);
-                match mode {
-                    LodTransition::Cut => {
-                        assert!((c.inner - (coarse.inner_wu - summary_width_wu(coarse.r))).abs() < 0.01);
-                        assert_eq!(c.fade_in, 0.0);
-                    }
-                    LodTransition::Dither => {
-                        assert!((c.inner - (f.outer - f.fade_out)).abs() < 0.01, "r={} arrives off the strip's start", coarse.r);
-                        assert!((c.inner + c.fade_in - f.outer).abs() < 0.01, "r={} finishes arriving off the cut", coarse.r);
-                    }
-                    LodTransition::Morph => {
-                        assert!((c.inner - f.outer).abs() < 0.01, "r={} arrives off the cut", coarse.r);
-                        assert_eq!(c.fade_in, 0.0);
-                    }
-                }
-            }
-            let first = level_cut(bands[0].r, &bands, mode, &edges, target);
-            assert_eq!((first.inner, first.fade_in), (0.0, 0.0));
-            let last = level_cut(bands.last().unwrap().r, &bands, mode, &edges, target);
-            assert_eq!((last.outer, last.fade_out), (f32::MAX, 0.0));
+        for pair in bands.windows(2) {
+            let (fine, coarse) = (&pair[0], &pair[1]);
+            let f = level_cut(fine.r, &bands, &edges, target);
+            let c = level_cut(coarse.r, &bands, &edges, target);
+            assert_eq!(f.outer, fine.outer_wu);
+            assert!((f.fade - transition_wu(fine.r)).abs() < 0.01);
+            assert!(f.fade < f.outer - f.inner);
+            assert_eq!(c.inner, f.outer, "r={} begins off r={}'s edge", coarse.r, fine.r);
         }
+        assert_eq!(level_cut(bands[0].r, &bands, &edges, target).inner, 0.0);
+        let last = level_cut(bands.last().unwrap().r, &bands, &edges, target);
+        assert_eq!((last.outer, last.fade), (f32::MAX, 0.0));
     }
 
     /// The cut as the frame computes it at a fresh spawn: no edges placed,
@@ -1050,20 +1012,19 @@ mod tests {
     /// cut, centred on the player.
     #[test]
     fn fresh_spawn_cut_shows_the_finest_level_around_the_player() {
-        use crate::plugins::diagnostics::LodTransition;
         let origin = Vec3::new(5000.0, 12.0, -3000.0);
         let bands = horizon_bands(origin, crate::systems::camera::MAX_GAMEPLAY_FOV, 0.0);
         let mut edges = HashMap::new();
         advance_edges(&mut edges, &bands, origin.xz(), 0.016, &SummaryMeshes::default());
-        let c = level_cut(0, &bands, LodTransition::Morph, &edges, origin.xz());
+        let c = level_cut(0, &bands, &edges, origin.xz());
         assert_eq!(c.inner_center, origin.xz());
         assert_eq!(c.outer_center, origin.xz());
         assert_eq!(c.inner, 0.0);
         assert!(c.outer > 100.0 && c.outer < 200.0, "outer {}", c.outer);
-        assert!(c.fade_out > 0.0 && c.fade_out < c.outer);
-        let c1 = level_cut(1, &bands, LodTransition::Morph, &edges, origin.xz());
+        assert!(c.fade > 0.0 && c.fade < c.outer);
+        let c1 = level_cut(1, &bands, &edges, origin.xz());
         assert_eq!(c1.inner_center, origin.xz());
-        assert!((c1.inner - c.outer).abs() < 0.01);
+        assert_eq!(c1.inner, c.outer);
     }
 
     /// An edge's circle is centred where the edge is, on both the level
@@ -1071,14 +1032,13 @@ mod tests {
     /// have different centres.
     #[test]
     fn level_cut_centres_each_circle_on_its_edge() {
-        use crate::plugins::diagnostics::LodTransition;
         use common_bevy::summary::compute_active_bands;
         let bands = compute_active_bands(25_000.0);
         let target = Vec2::new(100.0, 50.0);
         let mut edges = HashMap::new();
         edges.insert(bands[1].r, Vec2::new(90.0, 50.0));
-        let fine = level_cut(bands[1].r, &bands, LodTransition::Morph, &edges, target);
-        let coarse = level_cut(bands[2].r, &bands, LodTransition::Morph, &edges, target);
+        let fine = level_cut(bands[1].r, &bands, &edges, target);
+        let coarse = level_cut(bands[2].r, &bands, &edges, target);
         assert_eq!(fine.inner_center, target, "an edge not yet placed sits on the player");
         assert_eq!(fine.outer_center, Vec2::new(90.0, 50.0));
         assert_eq!(coarse.inner_center, fine.outer_center, "the two levels share the edge's circle");
@@ -1092,7 +1052,7 @@ mod tests {
         use common_bevy::summary::compute_active_bands;
         let bands = compute_active_bands(25_000.0);
         let (fine, coarse) = (bands[0].r, bands[1].r);
-        let radius = bands[0].window().1;
+        let radius = bands[0].outer_wu;
         let mut meshes = SummaryMeshes::default();
         let target = Vec2::new(40.0, 0.0);
         let mut edges = HashMap::new();
@@ -1280,11 +1240,10 @@ mod tests {
             // (a) Geometric coverage: every ground point inside a level's
             // window — what the cut lets that level show — must lie within
             // some needed region of that level (region circumradius =
-            // extent/sqrt(3)). Windows overlap at band edges, so a point
-            // there is checked against both levels.
+            // extent/sqrt(3)).
             for (az_deg, band) in (0..360).step_by(5).flat_map(|az| bands.iter().map(move |b| (az, b))) {
                 let azr = (az_deg as f32).to_radians();
-                let (win_inner, win_outer) = band.window();
+                let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
                 let mut d = win_inner.max(2.0);
                 while d < win_outer.min(far_ground - 1.0) {
                     let px = d * azr.cos();

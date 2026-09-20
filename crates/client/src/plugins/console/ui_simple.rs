@@ -194,17 +194,6 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
-                        Text::new(format!(
-                            "3. Cycle LoD Transition     [{}]",
-                            diagnostics_state.lod_transition.label()
-                        )),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(state_color(
-                            diagnostics_state.lod_transition != crate::plugins::diagnostics::LodTransition::Cut,
-                        )),
-                    ));
-
-                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));

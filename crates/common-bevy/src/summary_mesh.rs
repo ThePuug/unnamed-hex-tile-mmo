@@ -519,13 +519,12 @@ pub fn visible_lod_regions(
     for band in bands {
         let half_extent = 0.5 * mesh_region_extent_wu(band.r);
         let ring = mesh_region_spacing_wu(band.r);
-        // Footprint-overlap enumeration over the level's window (matches
-        // the consumer): every region whose footprint touches the window
-        // is produced, so the strip the cut keeps past the band edge has
-        // data. Center-only membership left regions centered just outside
-        // an edge to neither band — un-rendered crescents at every level
-        // boundary.
-        let (win_inner, win_outer) = band.window();
+        // Footprint-overlap enumeration over the band (matches the
+        // consumer): every region whose footprint touches the band is
+        // produced. Center-only membership left regions centered just
+        // outside an edge to neither band — un-rendered crescents at every
+        // level boundary.
+        let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
         let outer = win_outer + half_extent + ring;
         // A band whose regions and rings cannot reach past the local
         // boundary is fully consumer-owned (Map-computed).

@@ -33,17 +33,15 @@ pub const BAND_QUALITY_K: f32 = 119.75;
 const HEX_OUTER_RADIUS: f32 = 1.0;
 
 /// Width of the transition at a level's outer edge, in summaries of the
-/// coarser level: the strip, ending at the level's cut, over which its
-/// surface dissolves into or morphs onto the coarser one. The coarser
-/// plate extends back under the whole strip.
+/// coarser level: the strip inside the band edge over which the level's
+/// surface morphs onto the coarser one, meeting it at the edge.
 pub const TRANSITION_SUMMARIES: f32 = 4.0;
 
-/// Render-only depth bias per LoD level (WU). Adjacent levels overlap by
-/// `edge_overlap_wu` at each band edge; on flat terrain their surfaces there
-/// would be exactly coplanar — nested sampling produces equal center_z —
-/// and z-fight. Coarser levels sink slightly so the finer plate always
-/// wins. A tenth of one z-step per level: invisible, but well outside
-/// depth-buffer noise.
+/// Render-only depth bias per LoD level (WU). At a band edge the finer
+/// surface has morphed onto the coarser one, so the two are exactly
+/// coplanar along the seam and would z-fight. Coarser levels sink slightly
+/// so the finer plate always wins. A tenth of one z-step per level:
+/// invisible, but well outside depth-buffer noise.
 pub const LEVEL_DEPTH_BIAS_WU: f32 = 0.08;
 
 /// Depth bias for a summary radius: rank of the level in LOD_LEVELS.
@@ -92,16 +90,6 @@ pub struct Band {
     pub outer_wu: f32,
 }
 
-impl Band {
-    /// The band widened by `edge_overlap_wu`: the ground this level renders,
-    /// and the range regions are enumerated against so every fragment the
-    /// cut keeps has geometry behind it.
-    pub fn window(&self) -> (f32, f32) {
-        let (inner, outer) = edge_overlap_wu(self.r);
-        ((self.inner_wu - inner).max(0.0), self.outer_wu + outer)
-    }
-}
-
 /// Flat-to-flat width of one summary at level `r`, in world units.
 pub fn summary_width_wu(r: u32) -> f32 {
     (2 * r + 1) as f32 * HEX_OUTER_RADIUS * 3.0_f32.sqrt()
@@ -117,23 +105,10 @@ pub fn finer_level(r: u32) -> Option<u32> {
     LOD_LEVELS.iter().copied().filter(|&l| l < r).last()
 }
 
-/// Width of the transition strip at level `r`'s outer edge, in world
+/// Width of the transition strip inside level `r`'s outer edge, in world
 /// units: zero at the coarsest level, whose outer edge is the horizon.
 pub fn transition_wu(r: u32) -> f32 {
     coarser_level(r).map_or(0.0, |c| TRANSITION_SUMMARIES * summary_width_wu(c))
-}
-
-/// How far a level's plates extend past its band edges, `(inner, outer)`.
-/// Outer: one summary of the coarser level, wide enough that a ray under
-/// this plate's cut edge lands on the coarser plate. Inner: back under the
-/// finer level's transition strip, which ends one summary of this level
-/// past the edge, so this plate lies under all of it. The coarsest level
-/// has nothing beyond its outer edge.
-pub fn edge_overlap_wu(r: u32) -> (f32, f32) {
-    (
-        (TRANSITION_SUMMARIES - 1.0) * summary_width_wu(r),
-        coarser_level(r).map_or(0.0, summary_width_wu),
-    )
 }
 
 /// Ground distance from the player at which level `r`'s band ends. At
@@ -164,14 +139,6 @@ pub fn level_band(r: u32, bands: &[Band]) -> (Band, bool) {
         Some(i) => (bands[i].clone(), i + 1 == bands.len()),
         None => (ladder_band(r), false),
     }
-}
-
-/// The cut window for level `r` given the active bands: its band's
-/// `window`, with no outer edge for the outermost band.
-pub fn cut_window(r: u32, bands: &[Band]) -> (f32, f32) {
-    let (band, outermost) = level_band(r, bands);
-    let (inner, outer) = band.window();
-    (inner, if outermost { f32::MAX } else { outer })
 }
 
 /// Compute active distance bands from player to `max_distance_wu` (horizontal).
@@ -695,45 +662,20 @@ mod tests {
         assert!((prev_outer - 25_000.0).abs() < 0.01, "bands must reach the horizon");
     }
 
-    // ── window / cut tests ──
+    // ── transition tests ──
 
+    /// The strip lies inside its band, wider than one summary of the
+    /// coarser level, so the morph has room to leave the relief before the
+    /// edge; the coarsest level has no edge to leave across.
     #[test]
-    fn fine_window_ends_one_coarse_summary_past_the_edge() {
+    fn transition_strip_lies_inside_the_band() {
         let bands = compute_active_bands(25_000.0);
         for pair in bands.windows(2) {
             let (fine, coarse) = (&pair[0], &pair[1]);
-            let (_, fine_outer) = fine.window();
-            let expected = summary_width_wu(coarse.r);
-            assert!(
-                (fine_outer - fine.outer_wu - expected).abs() < 0.01,
-                "r={} extends past its outer edge by {} (want {expected})",
-                fine.r, fine_outer - fine.outer_wu
-            );
-        }
-    }
-
-    /// The transition strip ends at the finer level's cut and the coarser
-    /// plate begins exactly where the strip does, so every fragment the
-    /// strip dissolves has the coarser plate behind it.
-    #[test]
-    fn coarse_window_starts_where_the_transition_strip_does() {
-        let bands = compute_active_bands(25_000.0);
-        for pair in bands.windows(2) {
-            let (fine, coarse) = (&pair[0], &pair[1]);
-            let (_, fine_outer) = fine.window();
-            let (coarse_inner, _) = coarse.window();
             let strip = transition_wu(fine.r);
-            assert!(strip > 2.0 * summary_width_wu(coarse.r), "strip narrower than the old overlap");
-            assert!(
-                (fine_outer - strip - coarse_inner).abs() < 0.01,
-                "r={} strip starts at {} but r={} begins at {coarse_inner}",
-                fine.r, fine_outer - strip, coarse.r
-            );
+            assert!(strip > summary_width_wu(coarse.r));
+            assert!(strip < fine.outer_wu - fine.inner_wu, "r={} strip wider than its band", fine.r);
         }
-    }
-
-    #[test]
-    fn transition_is_absent_at_the_coarsest_level() {
         assert_eq!(transition_wu(*LOD_LEVELS.last().unwrap()), 0.0);
     }
 
@@ -756,41 +698,30 @@ mod tests {
     }
 
     #[test]
-    fn window_never_starts_before_the_player() {
-        assert_eq!(compute_active_bands(25_000.0)[0].window().0, 0.0);
-        assert_eq!(ladder_band(0).window().0, 0.0);
+    fn bands_start_at_the_player() {
+        assert_eq!(compute_active_bands(25_000.0)[0].inner_wu, 0.0);
+        assert_eq!(ladder_band(0).inner_wu, 0.0);
     }
 
     #[test]
-    fn coarsest_level_has_no_outer_overlap() {
-        let coarsest = *LOD_LEVELS.last().unwrap();
-        assert_eq!(coarser_level(coarsest), None);
-        assert_eq!(edge_overlap_wu(coarsest).1, 0.0);
-        let band = ladder_band(coarsest);
-        assert_eq!(band.window().1, band.outer_wu);
-    }
-
-    #[test]
-    fn cut_window_is_unbounded_only_for_the_outermost_band() {
+    fn level_band_marks_only_the_outermost_band() {
         let bands = compute_active_bands(25_000.0);
         assert!(bands.len() >= 3, "test needs several bands");
         for (i, band) in bands.iter().enumerate() {
-            let (inner, outer) = cut_window(band.r, &bands);
-            assert_eq!(inner, band.window().0);
-            if i + 1 == bands.len() {
-                assert_eq!(outer, f32::MAX);
-            } else {
-                assert_eq!(outer, band.window().1);
-            }
+            let (b, outermost) = level_band(band.r, &bands);
+            assert_eq!(b.outer_wu, band.outer_wu);
+            assert_eq!(outermost, i + 1 == bands.len());
         }
     }
 
     #[test]
-    fn cut_window_confines_an_inactive_level_to_its_ladder_band() {
+    fn level_band_confines_an_inactive_level_to_its_ladder_band() {
         let bands = compute_active_bands(1_000.0);
         let beyond = *LOD_LEVELS.last().unwrap();
         assert!(bands.iter().all(|b| b.r != beyond));
-        assert_eq!(cut_window(beyond, &bands), ladder_band(beyond).window());
+        let (b, outermost) = level_band(beyond, &bands);
+        assert_eq!((b.inner_wu, b.outer_wu), (ladder_band(beyond).inner_wu, ladder_band(beyond).outer_wu));
+        assert!(!outermost);
     }
 
     #[test]
