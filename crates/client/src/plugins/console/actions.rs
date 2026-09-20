@@ -12,6 +12,7 @@ pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,
     ToggleFixedLighting,
+    ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
 
@@ -77,6 +78,10 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleFixedLighting => {
                 diagnostics_state.fixed_lighting_enabled = !diagnostics_state.fixed_lighting_enabled;
                 info!("Fixed lighting: {}", if diagnostics_state.fixed_lighting_enabled { "ON" } else { "OFF" });
+            }
+            DevConsoleAction::ToggleCameraEnvelope => {
+                diagnostics_state.camera_envelope_off = !diagnostics_state.camera_envelope_off;
+                info!("Camera envelope: {}", if diagnostics_state.camera_envelope_off { "LIFTED" } else { "ON" });
             }
             DevConsoleAction::ToggleShadowFilter => {
                 diagnostics_state.hard_shadows = !diagnostics_state.hard_shadows;

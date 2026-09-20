@@ -10,6 +10,9 @@ pub struct DiagnosticsState {
     /// The sun's shadows are filtered by the hardware's 2×2 tap instead of
     /// the Gaussian.
     pub hard_shadows: bool,
+    /// The camera goes straight to its wanted pose, showing whatever the
+    /// envelope would have hidden.
+    pub camera_envelope_off: bool,
 }
 
 impl Default for DiagnosticsState {
@@ -20,6 +23,7 @@ impl Default for DiagnosticsState {
             metrics_overlay_visible: false,
             msaa_off: false,
             hard_shadows: false,
+            camera_envelope_off: false,
         }
     }
 }

@@ -589,6 +589,37 @@ fn edge_is_drawn(centre: Vec2, radius: f32, fine: u32, coarse: u32, meshes: &Sum
     })
 }
 
+/// Whether the ground at a point is drawn: the region of the level the cut
+/// shows there has an entity. What the camera's envelope reads, and the
+/// same test an edge makes before it moves.
+pub struct DrawnGround<'a> {
+    /// Each level's cut, finest first; the first that holds a point shows it.
+    cuts: Vec<(u32, crate::resources::TerrainCut)>,
+    region_lat: common::HexLattice,
+    meshes: &'a SummaryMeshes,
+}
+
+impl<'a> DrawnGround<'a> {
+    /// The cut as the frame draws it around `origin`, the player's ground
+    /// position, with the edges where they stand.
+    pub fn new(origin: Vec2, edges: &HashMap<u32, Vec2>, meshes: &'a SummaryMeshes) -> Self {
+        let bands = horizon_bands(0.0);
+        let cuts = bands.iter().map(|b| (b.r, level_cut(b.r, &bands, edges, origin))).collect();
+        Self { cuts, region_lat: common_bevy::summary::mesh_region_lattice(), meshes }
+    }
+
+    pub fn at(&self, p: Vec2) -> bool {
+        let shown = self.cuts.iter().find(|(_, c)| {
+            p.distance(c.inner_center) >= c.inner && p.distance(c.outer_center) < c.outer
+        });
+        let Some(&(r, _)) = shown else { return false };
+        let (sq, sr) = common_bevy::summary::summary_lattice(r).cell_at(p);
+        let (mn, mm) = self.region_lat.cell_id(sq, sr);
+        let key = common_bevy::summary_mesh::MeshRegionKey { r, mn, mm };
+        self.meshes.states.get(&key).is_some_and(|s| s.entity.is_some())
+    }
+}
+
 /// Level `r`'s cut: its band, with the morph strip inside its outer edge.
 /// The outermost band ends at the horizon and morphs nowhere. The level
 /// begins exactly where the finer one ends, since the finer surface has

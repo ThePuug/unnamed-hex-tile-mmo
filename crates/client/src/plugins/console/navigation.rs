@@ -140,6 +140,9 @@ fn handle_terrain_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
         action_writer.write(DevConsoleAction::ToggleFixedLighting);
         consumed = Some(KeyCode::Numpad2);
+    } else if keyboard.just_pressed(KeyCode::Numpad3) {
+        action_writer.write(DevConsoleAction::ToggleCameraEnvelope);
+        consumed = Some(KeyCode::Numpad3);
     }
 
     if let Some(key) = consumed {

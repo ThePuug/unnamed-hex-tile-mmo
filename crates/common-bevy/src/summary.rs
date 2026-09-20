@@ -24,10 +24,10 @@ pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
 /// Band threshold: `threshold_horiz(r) = (2r+1)·2·K − CAMERA_DISTANCE`.
 
 /// Anchored so the scale-3 band's outer edge lands exactly on
-/// FIXED_STREAM_RADIUS_WU (598.5): 3·2K − 120 = 598.5 → K = 119.75.
+/// FIXED_STREAM_RADIUS_WU: 3·2K − CAMERA_DISTANCE = FIXED_STREAM_RADIUS_WU.
 /// The ownership boundary (client Map vs server summaries) then coincides
 /// with a band boundary — no band ever has mixed provenance.
-pub const BAND_QUALITY_K: f32 = 119.75;
+pub const BAND_QUALITY_K: f32 = (crate::chunk::FIXED_STREAM_RADIUS_WU + common::camera::CAMERA_DISTANCE) / 6.0;
 
 /// Hex outer radius (vertex-to-vertex half-diameter) in world units.
 const HEX_OUTER_RADIUS: f32 = 1.0;

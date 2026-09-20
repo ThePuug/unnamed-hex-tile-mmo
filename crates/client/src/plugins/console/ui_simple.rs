@@ -164,6 +164,15 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new(format!(
+                            "3. Toggle Camera Envelope   [{}]",
+                            if diagnostics_state.camera_envelope_off { "Lifted" } else { "On" }
+                        )),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(!diagnostics_state.camera_envelope_off)),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));

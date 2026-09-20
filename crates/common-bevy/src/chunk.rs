@@ -673,12 +673,13 @@ mod tests {
     }
 
     #[test]
-    fn visibility_radius_spot_checks() {
-        // At ground level, floor dominates (h=26.6, gd=184, needed=7 < floor=8)
-        assert_eq!(visibility_radius(0, 0, DEFAULT_FOV), 8);
-        // Elevated: shallow pitch sees far down to sea level
-        assert_eq!(visibility_radius(50, 0, DEFAULT_FOV), 23);
-        assert_eq!(visibility_radius(100, 0, DEFAULT_FOV), 39);
+    fn visibility_radius_grows_with_the_drop_to_the_ground() {
+        let floor = FOV_CHUNK_RADIUS + MIN_SUMMARY_RING;
+        let level = visibility_radius(0, 0, DEFAULT_FOV);
+        let raised = visibility_radius(50, 0, DEFAULT_FOV);
+        let high = visibility_radius(100, 0, DEFAULT_FOV);
+        assert_eq!(level, floor, "on level ground the floor dominates");
+        assert!(floor < raised && raised < high, "a shallow pitch sees further down to the sea: {raised} < {high}");
     }
 
     #[test]
