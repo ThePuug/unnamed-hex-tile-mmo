@@ -71,14 +71,17 @@ pub fn cell_corner_zs(
     })
 }
 
-/// Height (world Y) of the fan surface under `p`, for a cell centred at
-/// `centre` with the given outer radius, centre height and corner heights.
-/// `p` is assumed inside the cell; a point exactly on an edge yields the same
-/// height from either side because the edge is shared.
-pub fn fan_height(p: Vec2, centre: Vec2, outer_radius: f32, centre_y: f32, corner_y: [f32; 6]) -> f32 {
+/// The fan triangle under `p` and its weights, for a cell centred at
+/// `centre` with the given outer radius: the corners `(i, j)` it spans and
+/// the weights `(centre, i, j)` that place `p` in it. Any per-vertex
+/// quantity — height, normal — interpolates across the fan by these
+/// weights, as the rasterizer interpolates the drawn triangle. `p` is
+/// assumed inside the cell; a point exactly on an edge weighs the same from
+/// either side because the edge is shared.
+pub fn fan_weights(p: Vec2, centre: Vec2, outer_radius: f32) -> ((usize, usize), Vec3) {
     let d = p - centre;
     if d.length_squared() < 1e-12 {
-        return centre_y;
+        return ((0, 1), Vec3::X);
     }
     // Corners sit at -60°, 0°, 60°, … from the +x axis (E is corner 1), so
     // the sector from corner i to corner i+1 starts at (i-1)·60°.
@@ -87,11 +90,18 @@ pub fn fan_height(p: Vec2, centre: Vec2, outer_radius: f32, centre_y: f32, corne
     let j = (i + 1) % 6;
     let offsets = corner_offsets(outer_radius);
     let (a, b) = (offsets[i], offsets[j]);
-    // d = u·a + v·b; height is the same combination of the corner rises.
+    // d = u·a + v·b.
     let det = a.x * b.y - a.y * b.x;
     let u = (d.x * b.y - d.y * b.x) / det;
     let v = (a.x * d.y - a.y * d.x) / det;
-    centre_y + u * (corner_y[i] - centre_y) + v * (corner_y[j] - centre_y)
+    ((i, j), Vec3::new(1.0 - u - v, u, v))
+}
+
+/// Height (world Y) of the fan surface under `p`, for a cell centred at
+/// `centre` with the given outer radius, centre height and corner heights.
+pub fn fan_height(p: Vec2, centre: Vec2, outer_radius: f32, centre_y: f32, corner_y: [f32; 6]) -> f32 {
+    let ((i, j), w) = fan_weights(p, centre, outer_radius);
+    w.x * centre_y + w.y * corner_y[i] + w.z * corner_y[j]
 }
 
 /// Height (world Y) of the tile surface at world `xz`, standing on `floor`:
@@ -189,6 +199,22 @@ mod tests {
             let y = fan_height(Vec2::new(x, z), Vec2::ZERO, 1.0, height_y(5.0), corners);
             assert!((y - height_y(5.0)).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn fan_weights_are_barycentric_and_pick_the_sector_under_the_point() {
+        let offsets = corner_offsets(1.0);
+        for (i, o) in offsets.iter().enumerate() {
+            let j = (i + 1) % 6;
+            // A point a third of the way to each of corner i, corner j and
+            // the centre lies in sector (i, j) with equal weights.
+            let p = (*o + offsets[j]) / 3.0;
+            let ((si, sj), w) = fan_weights(p, Vec2::ZERO, 1.0);
+            assert_eq!((si, sj), (i, j));
+            assert!((w.x + w.y + w.z - 1.0).abs() < 1e-5);
+            assert!((w - Vec3::splat(1.0 / 3.0)).length() < 1e-5, "sector {i}: {w:?}");
+        }
+        assert_eq!(fan_weights(Vec2::ZERO, Vec2::ZERO, 1.0).1, Vec3::X);
     }
 
     #[test]
