@@ -9,15 +9,15 @@
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
 
-/// Haven location — world coordinates (-55750, 4250) → hex (-58204, 4907).
+/// Haven location, in hex coordinates.
 ///
-/// Sited at the foot of a belt on a continental plate: flat ground, one
-/// z-level of relief within ten tiles and never more than a one-z step
-/// within a hundred, with the ranges in view and no water within twelve
-/// hundred tiles. The z is a placeholder — the server resolves the real one
-/// from the terrain at startup, because elevation is generated, not
-/// authored.
-pub const HAVEN_LOCATION: Qrz = Qrz { q: -58204, r: 4907, z: 0 };
+/// Sited on the brink of a belt's plateau on a continental plate: the
+/// front falls away to the plain some 460 z-levels below over the next
+/// 350 tiles in the -r direction, the plateau top lies a dozen levels up
+/// behind, and no water stands within three hundred tiles. The z is a
+/// placeholder — the server resolves the real one from the terrain at
+/// startup, because elevation is generated, not authored.
+pub const HAVEN_LOCATION: Qrz = Qrz { q: -58244, r: 5445, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 
