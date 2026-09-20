@@ -141,18 +141,23 @@ fn cells_around(id: PlateId, rings: i32) -> Vec<PlateId> {
     out
 }
 
-/// The plate a position lies in: the nearest seed.
+/// The plate a position lies in: the nearest seed. The home cell's seed
+/// lies within half a spacing and the jitter of the position, and a
+/// cell's seed in the second ring's row lies at least a row's height
+/// twice over less the jitter away, farther than that, so the contest is
+/// over the home cell and two rings, on the seeds alone; the winner is
+/// built once.
 pub fn plate_at(wx: f64, wy: f64, seed: u64) -> Plate {
     let home = plate_cell_for(wx, wy);
-    let mut best: Option<(f64, Plate)> = None;
-    for id in cells_around(home, 3) {
-        let p = plate(id, seed);
-        let d = (p.wx - wx).hypot(p.wy - wy);
+    let mut best: Option<(f64, PlateId)> = None;
+    for id in cells_around(home, 2) {
+        let (sx, sy) = seed_point(id, seed);
+        let d = (sx - wx).hypot(sy - wy);
         if best.map_or(true, |(bd, _)| d < bd) {
-            best = Some((d, p));
+            best = Some((d, id));
         }
     }
-    best.expect("a lattice cell has neighbours").1
+    plate(best.expect("a lattice cell has neighbours").1, seed)
 }
 
 /// Every plate whose ground can reach within `radius` of a position: seeds
