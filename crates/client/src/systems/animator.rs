@@ -48,6 +48,12 @@ impl Clip {
     }
 }
 
+/// The actor's GLB, held from spawn so the root asset — which names the
+/// animations — is loaded and kept by the time its scene is ready; loaded
+/// by its scene label alone, nothing holds the root and it can be gone.
+#[derive(Component)]
+pub struct Rig(pub Handle<Gltf>);
+
 /// The node in an actor's animation graph for each clip its asset holds,
 /// on the entity with its `AnimationPlayer`; a clip the asset lacks has
 /// no node.

@@ -19,7 +19,7 @@ use common_bevy::{
 };
 
 use crate::systems::{
-    actor,
+    actor, animator,
     character_panel::{CharacterPanelState, PanelTab},
     equipment_panel::CloseupView,
 };
@@ -111,6 +111,7 @@ pub fn spawn_figure(
             typ,
             equipment,
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),
+            animator::Rig(asset_server.load(actor::get_asset(typ))),
             Transform {
                 translation: STAGE,
                 scale: Vec3::splat(map.radius()),

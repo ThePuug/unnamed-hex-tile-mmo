@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::{prelude::*, scene::SceneInstanceReady};
 use qrz::Convert;
 
-use crate::{components::*, systems::animator::{Clip, Clips}};
+use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
 use common_bevy::{
     components::{
         behaviour::Behaviour,
@@ -26,11 +26,10 @@ pub fn setup() {}
 pub(crate) fn ready(
     trigger: On<SceneInstanceReady>,
     mut commands: Commands,
-    query: Query<&EntityType>,
+    query: Query<(&EntityType, &Rig)>,
     mut q_player: Query<&mut AnimationPlayer>,
     q_child: Query<&Children>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    asset_server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
 ) {
     let entity = trigger.entity;
@@ -38,12 +37,11 @@ pub(crate) fn ready(
         if let Ok(mut player) = q_player.get_mut(child) {
             commands.entity(entity).insert(Animates(child));
 
-            let &typ = query.get(entity).expect("couldn't get entity type");
-            let asset = get_asset(typ);
-            // The scene is loaded, so the file it came from is too, and it
-            // names its animations.
-            let Some(gltf) = gltfs.get(&asset_server.load::<Gltf>(asset.clone())) else {
-                warn!("{asset} has no Gltf asset loaded; its actor stays unanimated");
+            let (&typ, rig) = query.get(entity).expect("couldn't get entity type");
+            // The scene came from the file the rig holds, which names its
+            // animations.
+            let Some(gltf) = gltfs.get(&rig.0) else {
+                warn!("{} has no Gltf asset loaded; its actor stays unanimated", get_asset(typ));
                 continue;
             };
             let (graph, clips) = Clips::from_gltf(gltf);
@@ -119,7 +117,10 @@ pub fn do_spawn(
                         // All actors need Behaviour::Controlled on client for movement interpolation
                         // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
                         Behaviour::Controlled,
-                        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                        (
+                            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                            Rig(asset_server.load(get_asset(EntityType::Actor(desc)))),
+                        ),
                         Transform {
                             translation: spawn_world,
                             scale: Vec3::ONE * map.radius(),
