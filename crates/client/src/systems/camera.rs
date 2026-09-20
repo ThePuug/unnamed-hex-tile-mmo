@@ -81,8 +81,9 @@ pub fn gameplay_camera_height() -> f32 {
     camera_height(MAX_GAMEPLAY_FOV)
 }
 
-/// The haze: one colour that distance fades everything toward, and the sky
-/// above the horizon, so the frontier at the reach never shows.
+/// The haze at noon: one colour that distance fades everything toward, and
+/// the sky above the horizon, so the frontier at the reach never shows.
+/// `world::update` lights it by the sun and moon through the day.
 pub const HAZE_COLOR: Color = Color::linear_rgb(0.72, 0.78, 0.85);
 /// Where the haze completes, as a fraction of the reach: inside it, so the
 /// frontier stands behind full haze.

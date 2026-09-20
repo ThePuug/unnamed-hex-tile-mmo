@@ -2,16 +2,73 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 
 use bevy::{
+    color::ColorToComponents,
     math::ops::*,
+    pbr::DistanceFog,
     prelude::*,
     tasks::{block_on, futures_lite::future},
 };
-use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
+use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 
 pub const TILE_SIZE: f32 = 1.;
 
+/// Illuminance of the sun at noon and of the moon when full, in lux. Their
+/// ratio is what the haze dims by at night.
+const SUN_ILLUMINANCE: f32 = 10_000.;
+const MOON_ILLUMINANCE: f32 = 200.;
+
+/// The sun's and the moon's discs in the sky, unlit and unfogged, held
+/// `disc_distance_wu` from the camera in their light's direction.
+#[derive(Component)]
+pub enum Disc { Sun, Moon }
+
+/// Past the frontier, so the ground hides a disc as it sets, and inside
+/// the culling far plane.
+fn disc_distance_wu() -> f32 {
+    common_bevy::summary::reach_wu() * 1.25
+}
+/// Apparent diameter of either disc: four times the true half-degree,
+/// which is a dot in the frame.
+const DISC_ANGULAR_DIAMETER: f32 = 2_f32.to_radians();
+/// A disc over the sky's brightness: the sky is the same light scattered,
+/// so at one the sun's disc would sink into it, and the moon's rises and
+/// sets into the sun's sky.
+const DISC_BRIGHTNESS: f32 = 4.0;
+
+/// When the sun and the moon rise and set, as fractions of the day from
+/// midnight: a sixteen-hour day, and a moon up from two hours before
+/// sunset to two after sunrise so that some light is always up.
+const SUNRISE: f32 = 4. / 24.;
+const SUNSET: f32 = 20. / 24.;
+const MOONRISE: f32 = 18. / 24.;
+const MOONSET: f32 = 6. / 24.;
+
+/// A body's orbit angle at day fraction `t`: zero as it rises, π/2 at
+/// its zenith, π as it sets, 3π/2 at its nadir. The half above the
+/// horizon takes the time from `rise` to `set` and the half below the
+/// rest, so the sun's long day is its slow sweep.
+fn orbit(t: f32, rise: f32, set: f32) -> f32 {
+    let up = (set - rise).rem_euclid(1.);
+    let since_rise = (t - rise).rem_euclid(1.);
+    if since_rise < up { PI * since_rise / up } else { PI + PI * (since_rise - up) / (1. - up) }
+}
+
+/// Unit direction to a body at orbit angle `a`: rising on −x, setting on
+/// +x, its whole circle leaning `tilt` toward +z.
+fn toward(a: f32, tilt: f32) -> Vec3 {
+    Vec3::new(-cos(a), sin(a), tilt).normalize()
+}
+
+/// A body's light at orbit angle `a`, none below the horizon and full
+/// from a fifth of the way up its arc: the ground brightens fast after
+/// the rise and dims fast before the set.
+fn daylight(a: f32) -> f32 {
+    if a <= PI { 1. - cos(a).powf(16.) } else { 0. }
+}
+
 use crate::{
     plugins::diagnostics::DiagnosticsState,
+    systems::camera::HAZE_COLOR,
     resources::{
         ForcedSummaryRadius, LodTriangleStats, LoadedChunks,
         Server, SummaryMesh, SummaryMeshBuildResult, SummaryMeshState, SummaryMeshes,
@@ -28,7 +85,11 @@ use common_bevy::{
     systems::*,
 };
 
-pub fn setup(mut commands: Commands) {
+pub fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.insert_resource(
         GlobalAmbientLight {
             color: Color::WHITE,
@@ -50,6 +111,17 @@ pub fn setup(mut commands: Commands) {
             ..default()},
         Transform::default(),
         Moon::default()));
+
+    let disc = meshes.add(Circle::new(disc_distance_wu() * (DISC_ANGULAR_DIAMETER / 2.).tan()).mesh().resolution(48));
+    for which in [Disc::Sun, Disc::Moon] {
+        commands.spawn((
+            Mesh3d(disc.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial { unlit: true, fog_enabled: false, ..default() })),
+            Transform::default(),
+            NotShadowCaster,
+            NotShadowReceiver,
+            which));
+    }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -147,6 +219,10 @@ pub fn update(
     mut q_sun: Query<(&mut DirectionalLight, &mut Transform, &mut CascadeShadowConfig), (With<Sun>,Without<Moon>)>,
     mut q_moon: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>,Without<Sun>)>,
     mut a_light: ResMut<GlobalAmbientLight>,
+    mut clear: ResMut<ClearColor>,
+    mut q_camera: Query<(&GlobalTransform, &mut DistanceFog)>,
+    mut q_discs: Query<(&Disc, &mut Transform, &mut Visibility, &MeshMaterial3d<StandardMaterial>), (Without<Sun>, Without<Moon>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
@@ -163,38 +239,50 @@ pub fn update(
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
-    let mut s_rad_d = dtd * 2. * PI;
-    let s_rad_y = dty * 2. * PI;
-
-    // days are longer than nights
-    s_rad_d = s_rad_d.clamp(PI/3., 5.*PI/3.);
-
-    let s_illuminance = 1.-cos(0.75*s_rad_d + 3.*PI/4.).powf(16.);
+    let s_orbit = orbit(dtd, SUNRISE, SUNSET);
+    let s_toward = toward(s_orbit, cos(dty * 2. * PI));
+    let s_illuminance = daylight(s_orbit);
     s_light.color = Color::linear_rgb(1., s_illuminance, s_illuminance);
-    s_light.illuminance = 10_000.*s_illuminance;
+    s_light.illuminance = SUN_ILLUMINANCE*s_illuminance;
     // Greatly increased ambient light to soften shadows during day (800 vs 100)
     a_light.brightness = 800.*s_illuminance;
     // Add sky-like blue tint to ambient light during day
     a_light.color = Color::linear_rgb(0.7 + 0.3*s_illuminance, 0.8 + 0.2*s_illuminance, 1.0);
-    s_transform.translation.x = 1_000.*cos(0.75*s_rad_d + 3.*PI/4.);
-    s_transform.translation.y = 1_000.*sin(0.75*s_rad_d + 3.*PI/4.).powf(2.);
-    s_transform.translation.z = 1_000.*cos(s_rad_y);
-    s_transform.look_at(Vec3::ZERO, Vec3::Y);
+    *s_transform = Transform::from_translation(s_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
     // moon
     let (mut m_light, mut m_transform) = q_moon.single_mut().expect("no result in q_moon");
-    let mut m_rad_d = dtd * 2. * PI;
-    let m_rad_m = dtm * 2. * PI;
+    let m_orbit = orbit(dtd, MOONRISE, MOONSET);
+    let m_toward = toward(m_orbit, 0.);
+    let m_phase = 0.1 + 0.9*cos(dtm * PI).powf(2.);
+    m_light.illuminance = MOON_ILLUMINANCE * m_phase * daylight(m_orbit);
+    *m_transform = Transform::from_translation(m_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
-    // overlap sun cycle by PI/6 to avoid no lightsource at dusk/dawn
-    if PI/2. < m_rad_d && m_rad_d < 3.*PI/2. { m_rad_d = 3.*PI/2. };
+    // The haze is the sky, and the sky is the sun's light scattered, so it
+    // carries the sun's colour and brightness, and the moon's share at
+    // night: neither sky nor fog stays daylight-grey over a dark ground.
+    let sun = s_light.color.to_linear().to_vec3() * s_illuminance;
+    let moon = m_light.color.to_linear().to_vec3() * (m_light.illuminance / SUN_ILLUMINANCE);
+    let haze = Color::from(LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (sun + moon)));
+    clear.0 = haze;
+    let (camera, mut fog) = q_camera.single_mut().expect("no result in q_camera");
+    fog.color = haze;
 
-    m_light.illuminance = 200.                  // max illuminance at full moon
-        *(0.1+0.9*cos(0.5*m_rad_m).powf(2.))    // phase moon through month
-        *(1.-cos(m_rad_d+3.*PI/2.).powf(16.));  // moon rise/fall
-    m_transform.translation.x = 1_000.*cos(m_rad_d+3.*PI/2.);
-    m_transform.translation.y = 1_000.*sin(m_rad_d+3.*PI/2.).powf(2.);
-    m_transform.look_at(Vec3::ZERO, Vec3::Y);
+    // Each disc faces the camera from its body's direction, in its light's
+    // colour, and hides once wholly below the horizon: the ground occludes
+    // it there, but the sea is translucent and would let it through.
+    let camera = camera.translation();
+    let set = -(DISC_ANGULAR_DIAMETER / 2.).sin();
+    for (disc, mut transform, mut visibility, material) in &mut q_discs {
+        let (toward, color) = match disc {
+            Disc::Sun => (s_toward, s_light.color.to_linear() * DISC_BRIGHTNESS),
+            Disc::Moon => (m_toward, m_light.color.to_linear() * (m_phase * DISC_BRIGHTNESS)),
+        };
+        transform.translation = camera + toward * disc_distance_wu();
+        transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
+        *visibility = if toward.y > set { Visibility::Inherited } else { Visibility::Hidden };
+        if let Some(material) = materials.get_mut(&material.0) { material.base_color = color.into(); }
+    }
 
     // Anchor cascade shadow distance to the atmospheric fade start.
     // The shader fades terrain to horizon haze at 80% of the loading radius,
@@ -994,6 +1082,29 @@ pub fn poll_summary_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sun is above the horizon exactly from sunrise to sunset, its
+    /// orbit runs on without a break through both, and its day sweep is
+    /// the slow one.
+    #[test]
+    fn the_sun_orbits_slowly_by_day_and_fast_by_night() {
+        // Half-minute samples, so none lands on a rise or a set.
+        let step = 1. / 1440.;
+        let mut prev = orbit(1. - step / 2., SUNRISE, SUNSET);
+        for minute in 0..1440 {
+            let t = (minute as f32 + 0.5) * step;
+            let a = orbit(t, SUNRISE, SUNSET);
+            let up = (SUNRISE..SUNSET).contains(&t);
+            assert_eq!(toward(a, 0.).y > 0., up, "t={t} a={a}");
+            let advance = (a - prev).rem_euclid(2. * PI);
+            assert!(advance > 0. && advance < 0.1, "t={t} advance={advance}");
+            assert_eq!(daylight(a) > 0., up, "t={t}");
+            prev = a;
+        }
+        let day_rate = orbit(SUNRISE + step, SUNRISE, SUNSET) - orbit(SUNRISE, SUNRISE, SUNSET);
+        let night_rate = orbit(SUNSET + step, SUNRISE, SUNSET) - orbit(SUNSET, SUNRISE, SUNSET);
+        assert!(day_rate < night_rate, "{day_rate} vs {night_rate}");
+    }
 
     /// A level begins exactly where the finer one ends, with the morph
     /// strip inside the finer one's edge. The finest level begins at the
