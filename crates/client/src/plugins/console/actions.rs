@@ -11,7 +11,9 @@ use common_bevy::components::behaviour::Behaviour;
 pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,
-    ToggleFixedLighting,
+    /// Hold the lighting clock at an hour of the day, in ms.
+    SetLightingTime(u128),
+    SyncLightingClock,
     ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
@@ -44,7 +46,10 @@ pub fn execute_console_actions(
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut camera_msaa: Query<&mut Msaa, With<Camera>>,
     world_camera: Query<Entity, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
+    time: Res<Time>,
+    server: Res<crate::resources::Server>,
 ) {
+    let game = server.current_time(time.elapsed().as_millis());
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
@@ -75,9 +80,13 @@ pub fn execute_console_actions(
 
                 info!("Grid overlay: {}", if diagnostics_state.grid_visible { "ON" } else { "OFF" });
             }
-            DevConsoleAction::ToggleFixedLighting => {
-                diagnostics_state.fixed_lighting_enabled = !diagnostics_state.fixed_lighting_enabled;
-                info!("Fixed lighting: {}", if diagnostics_state.fixed_lighting_enabled { "ON" } else { "OFF" });
+            DevConsoleAction::SetLightingTime(ms_of_day) => {
+                diagnostics_state.lighting.hold(game, *ms_of_day);
+                info!("Lighting clock: held at {}", diagnostics_state.lighting.held_at().unwrap_or_default());
+            }
+            DevConsoleAction::SyncLightingClock => {
+                diagnostics_state.lighting.sync();
+                info!("Lighting clock: game time");
             }
             DevConsoleAction::ToggleCameraEnvelope => {
                 diagnostics_state.camera_envelope_off = !diagnostics_state.camera_envelope_off;

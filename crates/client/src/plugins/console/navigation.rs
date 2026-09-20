@@ -33,10 +33,10 @@ pub fn handle_console_input(
     #[cfg(feature = "admin")]
     let uses_escape_back = matches!(
         console.current_menu,
-        MenuPath::GotoInput | MenuPath::SummaryRadius
+        MenuPath::GotoInput | MenuPath::SummaryRadius | MenuPath::LightingTime
     );
     #[cfg(not(feature = "admin"))]
-    let uses_escape_back = false;
+    let uses_escape_back = matches!(console.current_menu, MenuPath::LightingTime);
 
     let back_pressed = if uses_escape_back {
         keyboard.just_pressed(KeyCode::Escape)
@@ -55,6 +55,9 @@ pub fn handle_console_input(
             #[cfg(feature = "admin")]
             if matches!(console.current_menu, MenuPath::SummaryRadius) {
                 console.summary_radius_buf.clear();
+            }
+            if matches!(console.current_menu, MenuPath::LightingTime) {
+                console.lighting_time_buf.clear();
             }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
@@ -75,7 +78,8 @@ pub fn handle_console_input(
             #[cfg(not(feature = "admin"))]
             handle_root_menu(&mut keyboard, &mut console, &mut action_writer);
         }
-        MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut action_writer),
+        MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
+        MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer),
         MenuPath::Video => handle_video_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::Flyover => handle_flyover_menu(&mut keyboard, &mut console, &mut action_writer, &flyover),
@@ -130,6 +134,7 @@ fn handle_root_menu(
 
 fn handle_terrain_menu(
     keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
     let mut consumed = None;
@@ -138,7 +143,9 @@ fn handle_terrain_menu(
         action_writer.write(DevConsoleAction::ToggleGrid);
         consumed = Some(KeyCode::Numpad1);
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
-        action_writer.write(DevConsoleAction::ToggleFixedLighting);
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::LightingTime;
+        console.lighting_time_buf.clear();
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) {
         action_writer.write(DevConsoleAction::ToggleCameraEnvelope);
@@ -149,6 +156,57 @@ fn handle_terrain_menu(
         keyboard.clear_just_pressed(key);
     }
 }
+
+/// Digits typed into the lighting hour; Enter holds the clock there, or
+/// with nothing typed returns it to game time.
+fn handle_lighting_time(
+    keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    use crate::plugins::diagnostics::LightingClock;
+
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
+        keyboard.clear_just_pressed(KeyCode::Enter);
+        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
+        let buf = console.lighting_time_buf.trim().to_string();
+        if buf.is_empty() {
+            action_writer.write(DevConsoleAction::SyncLightingClock);
+        } else if let Some(ms_of_day) = LightingClock::parse_time(&buf) {
+            action_writer.write(DevConsoleAction::SetLightingTime(ms_of_day));
+        } else {
+            info!("Lighting time: invalid input '{buf}'");
+            return;
+        }
+        console.lighting_time_buf.clear();
+        console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
+        return;
+    }
+
+    for &(key, ch) in DIGIT_KEYS {
+        if keyboard.just_pressed(key) {
+            console.lighting_time_buf.push(ch);
+            keyboard.clear_just_pressed(key);
+        }
+    }
+
+    if keyboard.just_pressed(KeyCode::Backspace) {
+        console.lighting_time_buf.pop();
+        keyboard.clear_just_pressed(KeyCode::Backspace);
+    }
+}
+
+/// Digit keys, numpad and top row, and the digit each types.
+const DIGIT_KEYS: &[(KeyCode, char)] = &[
+    (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
+    (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
+    (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
+    (KeyCode::Digit9, '9'),
+    (KeyCode::Numpad0, '0'), (KeyCode::Numpad1, '1'), (KeyCode::Numpad2, '2'),
+    (KeyCode::Numpad3, '3'), (KeyCode::Numpad4, '4'), (KeyCode::Numpad5, '5'),
+    (KeyCode::Numpad6, '6'), (KeyCode::Numpad7, '7'), (KeyCode::Numpad8, '8'),
+    (KeyCode::Numpad9, '9'),
+];
 
 fn handle_video_menu(
     keyboard: &mut ButtonInput<KeyCode>,
@@ -333,19 +391,7 @@ fn handle_summary_radius(
         return;
     }
 
-    // Digit keys (numpad + top row)
-    let digit_keys: &[(KeyCode, char)] = &[
-        (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
-        (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
-        (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
-        (KeyCode::Digit9, '9'),
-        (KeyCode::Numpad0, '0'), (KeyCode::Numpad1, '1'), (KeyCode::Numpad2, '2'),
-        (KeyCode::Numpad3, '3'), (KeyCode::Numpad4, '4'), (KeyCode::Numpad5, '5'),
-        (KeyCode::Numpad6, '6'), (KeyCode::Numpad7, '7'), (KeyCode::Numpad8, '8'),
-        (KeyCode::Numpad9, '9'),
-    ];
-
-    for &(key, ch) in digit_keys {
+    for &(key, ch) in DIGIT_KEYS {
         if keyboard.just_pressed(key) {
             console.summary_radius_buf.push(ch);
             keyboard.clear_just_pressed(key);

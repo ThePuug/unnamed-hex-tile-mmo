@@ -154,13 +154,14 @@ pub fn update_console_menu(
                         TextColor(state_color(diagnostics_state.grid_visible)),
                     ));
 
+                    let held = diagnostics_state.lighting.held_at();
                     parent.spawn((
                         Text::new(format!(
-                            "2. Toggle Fixed Lighting    [{}]",
-                            if diagnostics_state.fixed_lighting_enabled { "Fixed" } else { "Dynamic" }
+                            "2. Lighting Time            [{}]",
+                            held.clone().map_or("Game time".to_string(), |at| format!("Held {at}"))
                         )),
                         TextFont { font_size: 16.0, ..default() },
-                        TextColor(state_color(diagnostics_state.fixed_lighting_enabled)),
+                        TextColor(state_color(held.is_some())),
                     ));
 
                     parent.spawn((
@@ -172,6 +173,7 @@ pub fn update_console_menu(
                         TextColor(state_color(!diagnostics_state.camera_envelope_off)),
                     ));
 
+
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
@@ -179,6 +181,39 @@ pub fn update_console_menu(
 
                     parent.spawn((
                         Text::new("0. Back to Main Menu"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                MenuPath::LightingTime => {
+                    let current = diagnostics_state.lighting.held_at().map_or("Game time".to_string(), |at| format!("Held {at}"));
+                    parent.spawn((
+                        Text::new(format!("Current: {current}")),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.8, 1.0)),
+                    ));
+
+                    let buf = &console.lighting_time_buf;
+                    let display = if buf.is_empty() { "_" } else { buf };
+                    parent.spawn((
+                        Text::new(format!("Time = {display}")),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.4)),
+                    ));
+
+                    parent.spawn((
+                        Text::new("Enter HHMM or HH, press Enter (empty = game time)"),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: 8.0, ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("Esc. Back"),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));

@@ -46,6 +46,8 @@ pub struct DevConsole {
     pub goto_input: Option<GotoInputState>,
     /// Text buffer for summary radius input (when in SummaryRadius menu)
     pub summary_radius_buf: String,
+    /// Text buffer for the lighting hour (when in LightingTime menu)
+    pub lighting_time_buf: String,
 }
 
 impl Default for DevConsole {
@@ -56,6 +58,7 @@ impl Default for DevConsole {
             history: Vec::new(),
             goto_input: None,
             summary_radius_buf: String::new(),
+            lighting_time_buf: String::new(),
         }
     }
 }
@@ -65,6 +68,7 @@ impl Default for DevConsole {
 pub enum MenuPath {
     Root,
     Terrain,
+    LightingTime,
     Video,
     #[cfg(feature = "admin")]
     Flyover,
@@ -81,6 +85,7 @@ impl MenuPath {
         match self {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
+            MenuPath::LightingTime => "Lighting Time",
             MenuPath::Video => "Video Settings",
             #[cfg(feature = "admin")]
             MenuPath::Flyover => "Flyover Camera",

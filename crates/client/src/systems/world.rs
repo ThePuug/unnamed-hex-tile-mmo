@@ -227,13 +227,8 @@ pub fn update(
     diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
 ) {
-    let dt = server.current_time(time.elapsed().as_millis());
-    // Use fixed lighting at 9 AM if enabled, otherwise dynamic cycle
-    let dtd = if diagnostics_state.fixed_lighting_enabled {
-        0.375 // 9 hours / 24 hours = 0.375
-    } else {
-        (dt % DAY_MS) as f32 / DAY_MS as f32
-    };
+    let dt = diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis()));
+    let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
     let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
 
