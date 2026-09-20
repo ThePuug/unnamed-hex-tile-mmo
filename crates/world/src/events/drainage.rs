@@ -728,9 +728,11 @@ impl DrainageEvent {
         h
     }
 
-    /// Where a lake really spills, read on the fine lattice: from its
-    /// deepest node outward, the way over the lowest ground reaches every
-    /// point the water could stand on, and the water is away when it
+    /// Where a lake really spills, read on the fine lattice: from every
+    /// node of it outward, since a ridge the nodes never sampled can part
+    /// one member's basin from the rest and the water stands in both, the
+    /// way over the lowest ground reaches every point the water could
+    /// stand on, and the water is away when it
     /// reaches the cell of a node lower than the way's highest point that
     /// does not drain back into the lake, or the sea. The height of that
     /// highest point is the spill; the way is closed when it can go no
@@ -742,24 +744,27 @@ impl DrainageEvent {
     /// way crosses to it; and the extent, the fine points reached under
     /// the spill or, closed, under the surface: where the lake's water
     /// stands at the tile level. None for the extent when the way was too
-    /// long to follow.
+    /// long to follow. Not `resolving`, no leak is looked for and the
+    /// extent is the lake's as the nodes hold it.
     fn fine_spill(
         &self,
         routing: &Routing,
         id: usize,
+        resolving: bool,
         seed: u64,
         coasts: &Coasts,
         outlines: &Outlines,
     ) -> (Option<(f64, Vec<usize>)>, Option<Vec<NodeKey>>) {
         let lake = &routing.lakes[id];
-        let Some(deepest) = lake.members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b])) else { return (None, None) };
-        let (i, j) = routing.keys[deepest];
-        let start = (i * FINE, j * FINE);
+        if lake.members.is_empty() { return (None, None) }
         let mut reached: HashMap<NodeKey, f64> = HashMap::new();
         let mut parent: HashMap<NodeKey, NodeKey> = HashMap::new();
         let mut heap: BinaryHeap<FinePending> = BinaryHeap::new();
-        reached.insert(start, routing.elevation[deepest]);
-        heap.push(FinePending { level: routing.elevation[deepest], point: start });
+        for &m in &lake.members {
+            let (i, j) = routing.keys[m];
+            reached.insert((i * FINE, j * FINE), routing.elevation[m]);
+            heap.push(FinePending { level: routing.elevation[m], point: (i * FINE, j * FINE) });
+        }
         let drains_back = |mut k: usize| loop {
             if routing.lake_of[k] == Some(id) {
                 return true;
@@ -784,11 +789,12 @@ impl DrainageEvent {
             }
             let (x, y) = fine_world(point);
             let node = routing.index_of(crate::lattice::nearest_node(x, y));
-            let away = match node {
-                None => true,
-                Some(k) => routing.lake_of[k] != Some(id) && (routing.kind[k] == Kind::Sea || (routing.elevation[k] <= level && !drains_back(k))),
-            };
-            if away && point != start {
+            let away = resolving
+                && match node {
+                    None => true,
+                    Some(k) => routing.lake_of[k] != Some(id) && (routing.kind[k] == Kind::Sea || (routing.elevation[k] <= level && !drains_back(k))),
+                };
+            if away {
                 let mut crossed: Vec<usize> = Vec::new();
                 let mut cur = point;
                 loop {
@@ -853,7 +859,7 @@ impl DrainageEvent {
             if held.contains(&sign) {
                 continue;
             }
-            let (leak, extent) = self.fine_spill(routing, id, seed, coasts, outlines);
+            let (leak, extent) = self.fine_spill(routing, id, true, seed, coasts, outlines);
             match extent {
                 Some(extent) => {
                     extents.insert(routing.keys[deepest], extent);
@@ -949,7 +955,25 @@ impl DrainageEvent {
             ground = next;
             routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
         }
-        // A lake the fine lattice read stands over the extent it found.
+        // A lake the fine lattice read stands over the extent it found. One
+        // the last routing made, past the passes or by a breach, is read as
+        // it stands: a stale extent under its deepest node's key would be a
+        // smaller lake's, and its water would stand short of its nodes.
+        let mut fresh: Vec<(usize, Option<Vec<NodeKey>>)> = Vec::new();
+        for (id, lake) in routing.lakes.iter().enumerate() {
+            let Some(deepest) = lake.members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b])) else { continue };
+            if lake.surface - routing.elevation[deepest] < REMNANT_MIN || held.contains(&(routing.keys[deepest], lake.surface.to_bits())) {
+                continue;
+            }
+            fresh.push((id, self.fine_spill(&routing, id, false, seed, coasts, outlines).1));
+        }
+        for (id, extent) in fresh {
+            let deepest = routing.lakes[id].members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b])).unwrap();
+            match extent {
+                Some(e) => { extents.insert(routing.keys[deepest], e); }
+                None => { extents.remove(&routing.keys[deepest]); }
+            }
+        }
         for lake in routing.lakes.iter_mut() {
             let Some(deepest) = lake.members.iter().copied().min_by(|&a, &b| routing.elevation[a].total_cmp(&routing.elevation[b])) else { continue };
             lake.extent = extents.get(&routing.keys[deepest]).cloned().unwrap_or_default();
