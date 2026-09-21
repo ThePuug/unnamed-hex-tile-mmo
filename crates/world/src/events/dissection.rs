@@ -16,7 +16,7 @@
 //! dissected plateau, and a belt with a trunk river through it has a gorge.
 //!
 //! A river cuts toward its base level and never below it: the sea, or the
-//! fill of the closed ground it ends in, which is never cut. A basin's
+//! pit of the closed ground it runs down into. A basin's
 //! sill is cut by exactly what drainage published, the sill's height less
 //! the basin's fill, since the sill holds the fill; along the breach past
 //! it the floor is never above the cut sill, so the outlet is a gorge
@@ -50,9 +50,8 @@
 //! flow line where it does not. Water stands in it to the floor, so the
 //! slot is what keeps a river below its banks. The slot is cut below base
 //! level too, where the valley stops: a channel reaching the sea runs
-//! under it, and one entering closed ground shallows to nothing at the
-//! flooded node. A river ends at its reach's last land node, so a channel
-//! stops short of the shore by up to one spacing. Unbuilt.
+//! under it, and one entering closed ground runs on down to the basin's
+//! pit and ends there.
 //!
 //! Where the river meanders it has swept a belt and planed it: the floor
 //! is level across the belt the train reaches over, by the channel's
@@ -106,14 +105,10 @@ pub const CHANNEL_DEPTH_MIN: f64 = 1.0;
 pub const CHANNEL_DEPTH_MAX: f64 = 3.0;
 
 /// The depth of the channel slot below the valley floor at a node: nothing
-/// below the channel head and nothing on closed ground, which carries no
-/// channel; otherwise from the head's depth to a trunk's as the catchment
-/// grows. Cut below base level too: a channel reaching the sea is under
-/// it.
+/// below the channel head; otherwise from the head's depth to a trunk's as
+/// the catchment grows. Cut below base level too: a channel reaching the
+/// sea is under it.
 pub fn channel_depth(node: &DrainageNode) -> f64 {
-    if node.flooded {
-        return 0.0;
-    }
     growth(node.catchment, node.erodibility).map_or(0.0, |g| CHANNEL_DEPTH_MIN + (CHANNEL_DEPTH_MAX - CHANNEL_DEPTH_MIN) * g)
 }
 
@@ -547,14 +542,14 @@ mod tests {
             last = d;
         }
         assert_eq!(channel_depth(&node(10.0 * CATCHMENT_FULL, false)), CHANNEL_DEPTH_MAX);
-        assert_eq!(channel_depth(&node(10.0 * CATCHMENT_FULL, true)), 0.0, "a channel cut into closed ground");
+        assert_eq!(channel_depth(&node(10.0 * CATCHMENT_FULL, true)), CHANNEL_DEPTH_MAX, "closed ground carries its river's channel");
     }
 
-    /// On a routed cell, the floor along every reach never rises, closed
-    /// ground is cut only where the drained floor's path was, a sill is
-    /// cut exactly what drainage published and the breach below it never
-    /// rises, no valley cut at a tile exceeds the envelope's height above
-    /// sea level, and no slot is deeper than a trunk's.
+    /// On a routed cell, the floor along every reach never rises, a hump
+    /// on a drained floor's path is cut exactly what the routing cut, a
+    /// sill is cut exactly what drainage published and the breach below it
+    /// never rises, no valley cut at a tile exceeds the envelope's height
+    /// above sea level, and no slot is deeper than a trunk's.
     #[test]
     fn floors_never_rise_and_sills_are_cut_as_published() {
         let (published, valleys) = spawn_valleys();
@@ -564,7 +559,6 @@ mod tests {
             let mut last = f64::MAX;
             for key in &reach.nodes {
                 let n = &published.nodes[key];
-                assert!(!n.flooded, "a reach runs over closed ground at {key:?}");
                 let floor = n.elevation - depth_at(n);
                 assert!(floor >= n.base - 1e-9, "a floor below base level at {key:?}");
                 assert!(floor <= last + 1e-9, "a floor rising downstream at {key:?}");
@@ -573,8 +567,8 @@ mod tests {
             }
         }
         assert!(cut_nodes > 0, "no node in the spawn cell carries a channel");
-        for n in published.nodes.values().filter(|n| n.flooded) {
-            assert_eq!(depth_at(n), n.cut, "closed ground cut past its hump at {:?}", n.key);
+        for n in published.nodes.values().filter(|n| n.flooded && n.cut > 0.0) {
+            assert_eq!(depth_at(n), n.cut, "a hump on a drained floor cut past what the routing cut at {:?}", n.key);
         }
         let (mut sills, mut cut_sills) = (0, 0);
         for outlet in published.nodes.values().filter(|n| n.sill) {

@@ -38,12 +38,14 @@
 //!
 //! # Closed ground and the sill
 //!
-//! The flood fills every pit to its rim, so water routes over closed
-//! ground toward the rim and out, and catchment carries through: a basin
-//! swallows no river. The flooded nodes carry no channel and no water: a
-//! reach ends where it enters closed ground, and the rim's low node, the
-//! sill, is the head of the reach leaving, carrying the whole basin's
-//! water. Basins are geologically brief: the water leaving cuts the sill,
+//! The flood fills every pit to its rim, so catchment carries through
+//! closed ground and out over its rim: a basin swallows no river. Inside
+//! the basin the water runs on over the ground itself, not the fill, so a
+//! river entering closed ground runs down to the basin's lowest node, the
+//! pit, and ends there; the pit's water leaves over the rim's low node,
+//! the sill, which is the head of the reach leaving, carrying the whole
+//! basin's water. No lake stands over the basin: what it holds is its
+//! rivers, run to its floor. Basins are geologically brief: the water leaving cuts the sill,
 //! so a young orogen is basin country and an old one is drained through
 //! gorges. A plate carries an age, and each basin's sill is cut by that
 //! age and the square root of the catchment leaving over it, the growth
@@ -61,9 +63,8 @@
 //! again: one cut per basin. A basin spilling past the window has no
 //! outlet and no cut. Nothing here moves ground: the envelope is published
 //! as the elevation and the breach as a cut beside it, and dissection
-//! removes the ground. What stands in a basin the cut leaves, a lake and
-//! its shore, is unbuilt: the design that read each rim on a finer lattice
-//! scanned the basin's floor, and a shore wants drawing from the rim.
+//! removes the ground. The water that would stand in a basin, a lake and
+//! its shore, is unbuilt.
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -178,17 +179,14 @@ pub fn relief_share(catchment: f64, age: f64, erodibility: f64) -> f64 {
 
 /// The floor a river has cut to at a node on its own, in z-levels: where
 /// the routing cut a sill or a breach, exactly the ground it routed over;
-/// on closed ground the ground itself, which lies under its base and
-/// carries no channel; else the envelope less its share of the height
-/// above base level. A river is held up by a harder lip downstream, which
-/// [`Routing`] settles over the reach: the floor published is never below
-/// the next floor downstream. Dissection cuts to it and never below.
-pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, cut: f64, sill: bool, flooded: bool) -> f64 {
+/// else the envelope less its share of the height above base level, which
+/// on closed ground is the pit's, so a river runs down into a basin as it
+/// runs down to the sea. A river is held up by a harder lip downstream,
+/// which [`Routing`] settles over the reach: the floor published is never
+/// below the next floor downstream. Dissection cuts to it and never below.
+pub fn floor_at(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, cut: f64, sill: bool) -> f64 {
     if sill || cut > 0.0 {
         return elevation - cut;
-    }
-    if flooded {
-        return elevation;
     }
     elevation - (elevation - base).max(0.0) * relief_share(catchment, age, erodibility)
 }
@@ -315,7 +313,8 @@ pub enum Terminus {
     /// Into another reach: a confluence, or the same channel in the next cell.
     Continues,
     Sea,
-    /// Into closed ground, which carries no channel.
+    /// At the lowest node of closed ground, the pit: the water gathers
+    /// there and leaves over the sill, but the river ends.
     Basin,
     /// Off the edge of the window that routed it. The neighbouring cell's
     /// window reaches further.
@@ -333,19 +332,20 @@ pub struct DrainageNode {
     pub elevation: f64,
     /// The flood's fill: the ground, or the level closed ground fills to.
     pub surface: f64,
-    /// The node lies on closed ground under the fill: it is routed over
-    /// toward the rim and carries no channel.
+    /// The node lies on closed ground under the fill: its water runs down
+    /// the ground to the basin's pit and leaves over the rim from there.
     pub flooded: bool,
     /// The true downslope at this node, a unit vector in world space. Across
-    /// closed ground it points along the flood's path to the rim.
+    /// closed ground it is the ground's own, down to the pit; at the pit it
+    /// points along the flood's path toward the rim.
     pub direction: (f64, f64),
     /// Water draining through this one, itself included, in nodes, fractional
     /// because a node's water splits, and never less than at any node above
     /// it on its reach: what its channel is cut by.
     pub catchment: f64,
-    /// Base level, in z-levels: the fill of the first closed ground down
-    /// the larger share's path, or sea level. What a river here cuts toward
-    /// and never below.
+    /// Base level, in z-levels: the pit of the first closed ground down the
+    /// larger share's path, or sea level. What a river here cuts toward and
+    /// never below.
     pub base: f64,
     /// The node taking the larger share of this one's water. None at a sink.
     pub down: Option<NodeKey>,
@@ -373,7 +373,8 @@ pub struct DrainageNode {
 #[derive(Clone, Debug)]
 pub struct Reach {
     pub nodes: Vec<NodeKey>,
-    /// The node the last one drains to. None at a sink.
+    /// The node the last one drains to. None at a sink, the pit of closed
+    /// ground included: its water leaves over the sill, the river does not.
     pub joins: Option<NodeKey>,
     pub end: Terminus,
 }
@@ -449,8 +450,8 @@ pub enum Kind {
     /// A land node with a neighbour outside the window: an exit.
     Edge,
     Land,
-    /// Closed ground under the flood's fill: routed over the fill toward
-    /// the rim, carrying no channel.
+    /// Closed ground under the flood's fill: its water runs down the
+    /// ground to the basin's pit, and leaves over the rim from there.
     Basin,
 }
 
@@ -590,9 +591,12 @@ impl Routing {
                 if (!self.owned[k] || last) && !run.is_empty() {
                     let tail = *run.last().unwrap();
                     let end = if last && tail == k { reach.end } else { Terminus::Continues };
+                    // The pit's water leaves over the sill, but the river
+                    // ends at the pit: nothing is drawn from it.
+                    let joins = if end == Terminus::Basin { None } else { self.down[tail].map(|d| self.keys[d]) };
                     reaches.push(Reach {
                         nodes: run.iter().map(|&m| self.keys[m]).collect(),
-                        joins: self.down[tail].map(|d| self.keys[d]),
+                        joins,
                         end,
                     });
                     run.clear();
@@ -679,7 +683,7 @@ impl DrainageEvent {
         routing.cut = elevation.iter().zip(&ground).map(|(e, g)| e - g).collect();
         // A cut node is a fixed floor, so base levels are read again with
         // the cuts known.
-        routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.surface, &routing.cut, &ground);
+        routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.cut, &ground);
         routing.elevation = elevation;
         routing.age = age;
         routing.erodibility = erodibility;
@@ -704,7 +708,6 @@ impl DrainageEvent {
                     routing.erodibility[k],
                     routing.cut[k],
                     sills.contains(&k),
-                    routing.kind[k] == Kind::Basin,
                 )
             })
             .collect();
@@ -722,8 +725,11 @@ impl DrainageEvent {
                     path.pop();
                     break;
                 }
+                // The lip rule runs down a reach, and a reach ends at the
+                // pit: the pit's own link, to the sill its water leaves
+                // over, is not walked.
                 match routing.down[cur] {
-                    Some(d) if routing.kind[d] == Kind::Land && routing.kind[cur] != Kind::Basin => path.push(d),
+                    Some(d) if matches!(routing.kind[d], Kind::Land | Kind::Basin) && !(routing.kind[cur] == Kind::Basin && routing.kind[d] != Kind::Basin) => path.push(d),
                     _ => break,
                 }
             }
@@ -794,12 +800,12 @@ impl DrainageEvent {
 
     /// Base level at each node: what a river there cuts toward and never
     /// below. Down each node's larger share, the first fixed level: the
-    /// fill of closed ground, since a river reaching it has nothing to cut
-    /// toward below the rim; a cut node's ground, since the breach holds
-    /// its floor and a tributary joining it can cut no lower; or the sea;
-    /// water leaving the window is read as reaching the sea. A node's own
-    /// floor is not its base.
-    fn base_levels(down: &[Option<usize>], kind: &[Kind], surface: &[f64], cut: &[f64], ground: &[f64]) -> Vec<f64> {
+    /// pit of closed ground, the lowest node the river reaching it runs
+    /// down to; a cut node's ground, since the breach holds its floor and
+    /// a tributary joining it can cut no lower; or the sea; water leaving
+    /// the window is read as reaching the sea. A node's own floor is not
+    /// its base.
+    fn base_levels(down: &[Option<usize>], kind: &[Kind], cut: &[f64], ground: &[f64]) -> Vec<f64> {
         let n = down.len();
         let mut base: Vec<Option<f64>> = vec![None; n];
         for k in 0..n {
@@ -817,8 +823,10 @@ impl DrainageEvent {
                 if let Some(b) = base[cur] {
                     break b;
                 }
-                if kind[cur] == Kind::Basin {
-                    break surface[cur];
+                // A flooded node whose water leaves closed ground is the
+                // pit; the others run on down to it.
+                if kind[cur] == Kind::Basin && down[cur].map_or(true, |d| kind[d] != Kind::Basin) {
+                    break ground[cur];
                 }
                 match down[cur] {
                     Some(d) if !matches!(kind[d], Kind::Sea | Kind::Edge) => path.push(d),
@@ -899,9 +907,48 @@ impl DrainageEvent {
             match kind[k] {
                 Kind::Sea | Kind::Edge => {}
                 Kind::Basin => {
-                    if let Some(p) = parent[k] {
-                        direction[k] = unit(k, p);
-                        flow[k].push((p, 1.0));
+                    // Over closed ground the water runs down the ground
+                    // itself: a neighbour lower than a flooded node is under
+                    // the same fill, so this never leaves the basin. Where
+                    // none is lower the node is the pit, and its water
+                    // leaves over the rim node the flood came in by, the
+                    // sill: one link, so the flow never loops through the
+                    // basin.
+                    let lower = |m: usize| elevation[m] < elevation[k] - FLAT;
+                    let facet = steepest_facet(&nbrs[k], k, &site, &elevation);
+                    match facet {
+                        Some((angle, a, b, share_next)) if lower(a) || lower(b) => {
+                            direction[k] = (angle.cos(), angle.sin());
+                            match (lower(a), lower(b)) {
+                                (true, true) => {
+                                    flow[k].push((a, 1.0 - share_next));
+                                    flow[k].push((b, share_next));
+                                }
+                                (true, false) => flow[k].push((a, 1.0)),
+                                _ => flow[k].push((b, 1.0)),
+                            }
+                        }
+                        _ => {
+                            let lowest = nbrs[k].into_iter().flatten().filter(|&m| lower(m)).min_by(|&a, &b| elevation[a].total_cmp(&elevation[b]));
+                            match lowest {
+                                Some(m) => {
+                                    direction[k] = unit(k, m);
+                                    flow[k].push((m, 1.0));
+                                }
+                                None => {
+                                    let mut exit = parent[k];
+                                    while let Some(x) = exit.filter(|&x| kind[x] == Kind::Basin) {
+                                        exit = parent[x];
+                                    }
+                                    if let Some(p) = parent[k] {
+                                        direction[k] = unit(k, p);
+                                    }
+                                    if let Some(x) = exit.filter(|&x| kind[x] != Kind::Edge) {
+                                        flow[k].push((x, 1.0));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Kind::Land => {
@@ -997,21 +1044,23 @@ impl DrainageEvent {
             basins.push(RoutedBasin { members, surface: surface[k], outlet });
         }
 
-        let base = Self::base_levels(&down, &kind, &surface, &vec![0.0; n], &elevation);
+        let base = Self::base_levels(&down, &kind, &vec![0.0; n], &elevation);
 
-        // ── Reaches: a head is a source, a confluence, or a basin's rim ──
-        let mut land_in = vec![0u32; n];
-        let mut basin_in = vec![false; n];
+        // ── Reaches: a head is a source, a confluence, or a basin's sill;
+        //    a reach runs through closed ground to its pit and ends there ──
+        let pit = |k: usize| kind[k] == Kind::Basin && down[k].map_or(true, |d| kind[d] != Kind::Basin);
+        let mut inflow = vec![0u32; n];
+        let mut from_pit = vec![false; n];
         for k in 0..n {
             if let Some(d) = down[k] {
                 match kind[k] {
-                    Kind::Land => land_in[d] += 1,
-                    Kind::Basin => basin_in[d] = true,
+                    Kind::Basin if pit(k) => from_pit[d] = true,
+                    Kind::Land | Kind::Basin => inflow[d] += 1,
                     _ => {}
                 }
             }
         }
-        let head = |k: usize| kind[k] == Kind::Land && (land_in[k] != 1 || basin_in[k]);
+        let head = |k: usize| matches!(kind[k], Kind::Land | Kind::Basin) && (inflow[k] != 1 || from_pit[k]);
         let mut reaches = Vec::new();
         for k in 0..n {
             if !head(k) {
@@ -1020,12 +1069,14 @@ impl DrainageEvent {
             let mut nodes = vec![k];
             let mut cur = k;
             let end = loop {
+                if pit(cur) {
+                    break Terminus::Basin;
+                }
                 let Some(d) = down[cur] else { break Terminus::Edge };
                 match kind[d] {
                     Kind::Sea => break Terminus::Sea,
                     Kind::Edge => break Terminus::Edge,
-                    Kind::Basin => break Terminus::Basin,
-                    Kind::Land => {
+                    Kind::Land | Kind::Basin => {
                         if head(d) {
                             break Terminus::Continues;
                         }
@@ -1172,18 +1223,17 @@ mod tests {
     }
 
     /// A node's floor is the routed ground where a sill or a breach was
-    /// cut, the ground on closed ground, and the envelope less its share
-    /// of the height above base elsewhere, never below base.
+    /// cut, and the envelope less its share of the height above base
+    /// elsewhere, never below base.
     #[test]
-    fn the_floor_is_the_cut_the_ground_or_the_share() {
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, true, false), 13.0);
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, false, false), 13.0);
-        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, true), 20.0);
-        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false);
+    fn the_floor_is_the_cut_or_the_share() {
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, true), 13.0);
+        assert_eq!(floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 7.0, false), 13.0);
+        let floor = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false);
         assert!((floor - (20.0 - 15.0 * RELIEF_SHARE_MAX)).abs() < 1e-12);
-        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 1.0, 0.0, false, false), 20.0);
-        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false, false), 3.0);
-        let hard = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.3, 0.0, false, false);
+        assert_eq!(floor_at(20.0, 5.0, CHANNEL_HEAD, 1.0, 1.0, 0.0, false), 20.0);
+        assert_eq!(floor_at(3.0, 5.0, CATCHMENT_FULL, 1.0, 1.0, 0.0, false), 3.0);
+        let hard = floor_at(20.0, 5.0, CATCHMENT_FULL, 1.0, 0.3, 0.0, false);
         assert!(hard > floor, "hard rock cut as deep as shale");
     }
 }

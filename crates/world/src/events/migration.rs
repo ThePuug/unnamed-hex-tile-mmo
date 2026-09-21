@@ -959,9 +959,9 @@ mod tests {
         assert!(v > 0.0 && v < 1.0 && (v - YOUNG_SHARE).abs() < 1e-12, "a young plate's vigour {v}");
     }
 
-    /// A routed cell's channels: one from every land node with a downstream
-    /// node, none from closed ground, each owned by the cell its start node
-    /// lies in, its flow line running from the start node to the end node.
+    /// A routed cell's channels: one from every node with a downstream
+    /// node but a basin's pit, each owned by the cell its start node lies
+    /// in, its flow line running from the start node to the end node.
     #[test]
     fn a_cell_publishes_the_channels_starting_in_it() {
         use super::super::drainage::{DrainageEvent, DrainageIndex};
@@ -982,8 +982,11 @@ mod tests {
         let owned = channels(&[&published], |p| fine.cell_id(p.q, p.r) == own, S);
         assert!(!all.is_empty() && !owned.is_empty() && owned.len() < all.len());
         let from: HashSet<NodeKey> = all.iter().map(|c| c.from).collect();
+        // Every node with its next node in the cell starts a channel, but a
+        // basin's pit: its water leaves over the sill, and the river ends.
         for n in published.nodes.values().filter(|n| n.down.map_or(false, |d| published.nodes.contains_key(&d))) {
-            assert_eq!(from.contains(&n.key), !n.flooded, "channel from {:?}, flooded {}", n.key, n.flooded);
+            let pit = n.flooded && !published.nodes[&n.down.unwrap()].flooded;
+            assert_eq!(from.contains(&n.key), !pit, "channel from {:?}, pit {pit}", n.key);
         }
         for ch in &all {
             let (p, n) = (&published.nodes[&ch.from], &published.nodes[&ch.to]);

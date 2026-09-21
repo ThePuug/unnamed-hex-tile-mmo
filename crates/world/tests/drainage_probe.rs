@@ -78,7 +78,8 @@ fn nodes_sit_on_the_composed_surface() {
     assert!(worst < 1e-9, "the surface drainage routes on is not the composite's: {worst}");
 }
 
-/// Every land node reaches the sea or the window's edge, and never loops.
+/// Every land node reaches the sea or the window's edge, or the pit of a
+/// basin spilling past it, and never loops.
 #[test]
 fn every_land_node_drains_to_a_sink() {
     let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
@@ -98,6 +99,9 @@ fn every_land_node_drains_to_a_sink() {
         match routing.kind[cur] {
             Kind::Sea => to_sea += 1,
             Kind::Edge => to_edge += 1,
+            // The pit of a basin spilling past the window: its water leaves
+            // by a rim the window cannot see.
+            Kind::Basin => to_edge += 1,
             other => panic!("node {:?} ends on a {other:?} node", routing.keys[k]),
         }
     }
@@ -154,10 +158,10 @@ fn the_index_holds_the_owned_share_only() {
                 assert!(entry.nodes.contains_key(key), "reach names unpublished node {key:?}");
             }
         }
-        for reach in &entry.reaches {
-            for key in &reach.nodes {
-                assert!(!entry.nodes[key].flooded, "reach runs over closed ground at {key:?}");
-            }
+        // A reach ending at a pit ends: nothing is drawn on from it.
+        for reach in entry.reaches.iter().filter(|r| r.end == Terminus::Basin) {
+            assert!(entry.nodes[reach.nodes.last().unwrap()].flooded, "a reach ends in a basin off closed ground");
+            assert!(reach.joins.is_none(), "a river drawn on from a pit");
         }
         println!(
             "cell {cell:?}: {} nodes, {} reaches, {} on closed ground",
@@ -328,11 +332,11 @@ fn cost() {
     );
 }
 
-/// Base level is the fill of the first closed ground down a node's larger
+/// Base level is the pit of the first closed ground down a node's larger
 /// share, a cut node's floor, or the sea: what dissection cuts toward,
 /// published because only the routing knows the path.
 #[test]
-fn base_level_is_the_first_basin_downstream_or_the_sea() {
+fn base_level_is_the_first_pit_downstream_or_the_sea() {
     let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
     let n = routing.keys.len();
     let (mut basins, mut seas) = (0, 0);
@@ -343,8 +347,9 @@ fn base_level_is_the_first_basin_downstream_or_the_sea() {
             if cur != k && routing.cut[cur] > 0.0 {
                 break routing.elevation[cur] - routing.cut[cur];
             }
-            if routing.kind[cur] == Kind::Basin {
-                break routing.surface[cur];
+            let pit = routing.kind[cur] == Kind::Basin && routing.down[cur].map_or(true, |d| routing.kind[d] != Kind::Basin);
+            if pit {
+                break routing.elevation[cur] - routing.cut[cur];
             }
             match routing.down[cur] {
                 Some(d) if matches!(routing.kind[d], Kind::Land | Kind::Basin) => cur = d,
@@ -353,9 +358,10 @@ fn base_level_is_the_first_basin_downstream_or_the_sea() {
         };
         if expected > 0.0 { basins += 1 } else { seas += 1 }
         assert!((routing.base[k] - expected).abs() < 1e-9, "base {} against {expected} at {:?}", routing.base[k], routing.keys[k]);
-        assert!(routing.elevation[k] >= routing.base[k] - 1e-9 || routing.kind[k] == Kind::Basin, "ground below its base at {:?}", routing.keys[k]);
+        assert!(routing.elevation[k] - routing.cut[k] >= routing.base[k] - 1e-9, "ground below its base at {:?}", routing.keys[k]);
     }
     println!("{basins} nodes drain to closed ground, {seas} to the sea or the window's edge");
     assert!(seas > 0);
 }
+
 
