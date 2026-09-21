@@ -149,6 +149,13 @@ struct Cli {
 
     #[arg(long, default_value = "plates,elevation", help = layer_help())]
     layers: String,
+
+    /// Render as the client draws a distance band: summaries of this
+    /// radius (0 is the tiles; the ladder is 1, 4, 13, 40), each read from
+    /// its seven sample tiles through the whole stack, in place of the
+    /// views, with the cost logged. What a band costs, and what survives it.
+    #[arg(long)]
+    lod: Option<u32>,
 }
 
 // ── Color helpers ──
@@ -247,6 +254,14 @@ fn main() {
         height
     );
 
+
+    if let Some(r) = cli.lod {
+        let t = Instant::now();
+        let buf = render_summaries(&cli, w, h, scale, r);
+        log::info!("LoD: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
+        save(&cli, &buf, width, height);
+        return;
+    }
 
     if let Some(&view) = layers.iter().find(|l| l.is_whole_image()) {
         if layers.len() > 1 {
@@ -838,6 +853,75 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
             }
         }).collect::<Vec<u8>>()
     }).collect()
+}
+
+/// The viewport as one of the client's distance bands draws it: summaries
+/// of radius `r`, each the height and water the seven-sample rule selects
+/// from tiles read through the whole stack, on the elevation ramp with
+/// water in blue by depth. What the band costs is logged: the first tile,
+/// which opens the cells, and then the summaries, each seven tiles.
+fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8> {
+    use common::summary::{sample_center_water, sample_center_z, scale as summary_scale};
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let s = summary_scale(r) as f64;
+    // The summary lattice is the tile grid scaled by the summary's width, so
+    // the tile conversion at that scale finds a pixel's summary.
+    let cell_of = |wx: f64, wy: f64| world::world_to_hex(wx / s, wy / s);
+    let mut cells: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+    for py in 0..h {
+        for px in 0..w {
+            cells.insert(cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale));
+        }
+    }
+    let cells: Vec<(i32, i32)> = cells.into_iter().collect();
+    let composite = Composite::standard(cli.seed);
+    let composite = &composite;
+
+    let t = Instant::now();
+    let (sq, sr) = cells[0];
+    composite.tile_at(sq * s as i32, sr * s as i32);
+    let first = t.elapsed();
+    let t = Instant::now();
+    let summaries: HashMap<(i32, i32), (i32, Option<i32>)> = cells
+        .par_iter()
+        .map(|&(sq, sr)| {
+            let z = sample_center_z(r, sq, sr, |q, rr| composite.elevation_at(q, rr));
+            let water = sample_center_water(r, sq, sr, |q, rr| composite.water_at(q, rr));
+            ((sq, sr), (z, water))
+        })
+        .collect();
+    let took = t.elapsed();
+    let wet = summaries.values().filter(|(_, w)| w.is_some()).count();
+    log::info!(
+        "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
+        summaries.len(),
+        wet,
+        summaries.len() * 7,
+        first.as_secs_f64() * 1e3,
+        took.as_secs_f64(),
+        took.as_secs_f64() * 1e6 / summaries.len() as f64,
+        took.as_secs_f64() * 1e6 / (summaries.len() * 7) as f64
+    );
+
+    let summaries = &summaries;
+    (0..h)
+        .into_par_iter()
+        .flat_map(|py| {
+            (0..w)
+                .flat_map(move |px| {
+                    let (z, water) = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
+                    let c = match water {
+                        // Depth on the water field's blue ramp: pale at a
+                        // step deep, deep blue at 30.
+                        Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - z) as f64 / 30.0).clamp(0.0, 1.0)),
+                        None => orogen_ramp(z as f64),
+                    };
+                    [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
+                })
+                .collect::<Vec<u8>>()
+        })
+        .collect()
 }
 
 /// The plateau on the substrate, hillshaded, so the thickening's shape reads

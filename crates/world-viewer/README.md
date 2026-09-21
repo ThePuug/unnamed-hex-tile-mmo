@@ -40,6 +40,16 @@ Views stack bottom to top in the order given: fills first, markers as
 overdraw. A field view paints every pixel and cannot stack; asking for one
 with anything else is an error, never a silent drop.
 
+`--lod <r>` renders the viewport as the client draws a distance band
+instead of the views: summaries of radius `r` (the ladder is 1, 4, 13, 40;
+0 is the tiles), each the height and water the seven-sample rule selects
+from tiles read through the whole stack, on the elevation ramp with water
+in blue by depth. It logs what the band cost — the first tile, then the
+summaries and their samples, as wall time over every core — and shows what
+survives it: a river narrower than the summary vanishes into its valley. The unique summaries are the pixels' count, so
+match `--scale` and `--radius` to the band, or a fine band over a wide
+viewport is a full-resolution render.
+
 ## What a view may read
 
 A view is one of two kinds.
