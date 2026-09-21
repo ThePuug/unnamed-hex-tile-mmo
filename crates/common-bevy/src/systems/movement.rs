@@ -256,9 +256,12 @@ pub fn calculate_movement(
         let here: Qrz = map.convert(world);
         let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
 
-        // Over nothing, or more than a level above the floor, a grounded
-        // entity starts to fall.
-        if airtime.is_none() && floor.map_or(true, |floor| here.z > floor.z + 1) {
+        // Over nothing, or more than a level above the ground under it, a
+        // grounded entity starts to fall. The ground is the surface, never
+        // the tile's level: on a slope the surface stands well above it in
+        // the uphill part of a tile, and a level test read there falls
+        // every few ticks.
+        if airtime.is_none() && floor.map_or(true, |floor| world.y > surface_y(world.xz(), floor, map) + map.rise()) {
             airtime = Some(0);
         }
 
@@ -278,10 +281,9 @@ pub fn calculate_movement(
                 let dy = -fall(-(air as i32) as f32, dt as f32);
                 air = air.saturating_sub(dt);
                 airtime = Some(air);
-                let fallen: Qrz = map.convert(Vec3::new(world.x, world.y + dy, world.z));
-                match floor {
-                    Some(floor) if fallen.z <= floor.z + 1 => {
-                        offset.y = standing_y(floor, map) - px0.y;
+                match floor.map(|floor| surface_y(world.xz(), floor, map)) {
+                    Some(ground) if world.y + dy <= ground => {
+                        offset.y = ground - px0.y;
                         airtime = None;
                     }
                     _ => offset.y += dy,
@@ -304,10 +306,11 @@ pub fn calculate_movement(
         let world = px0 + offset;
         let here: Qrz = map.convert(world);
         if let Some((floor, _)) = map.get_by_qr(here.q, here.r) {
+            let ground = surface_y(world.xz(), floor, map);
             if airtime.is_none() {
-                offset.y = surface_y(world.xz(), floor, map) - px0.y;
+                offset.y = ground - px0.y;
             } else {
-                offset.y = offset.y.max(standing_y(floor, map) - px0.y);
+                offset.y = offset.y.max(ground - px0.y);
             }
         }
     }
@@ -538,6 +541,42 @@ mod tests {
         assert!(landed_at < 1500, "landed after {landed_at} ms");
         let where_: Qrz = map.convert(input.position.to_world(&map));
         assert!(where_.q >= 2, "landed on tile {where_:?}, not down the slope");
+    }
+
+    /// Standing still on a slope a level a tile, near the corner where two
+    /// uphill neighbours meet and the surface stands two thirds of a level
+    /// above the tile's own, the entity stays on the ground: no fall
+    /// starts, and its height holds. Stepped as the client replays its
+    /// inputs, at a fraction of the server's tick: a fall short enough to
+    /// land inside one server tick shows on the client as several airborne.
+    #[test]
+    fn standing_on_a_slope_stays_grounded() {
+        const CLIENT_TICK_MS: i16 = 16;
+        let map = create_test_map();
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        for q in -4..=4 {
+            for r in -4..=4 {
+                map.insert(Qrz { q, r, z: q }, ground);
+            }
+        }
+        let nntree = create_test_nntree();
+        // The corner is the centroid of the three cells meeting there.
+        let centre: Vec3 = map.convert(Qrz { q: 0, r: 0, z: 0 });
+        let corner = (centre + map.convert(Qrz { q: 1, r: 0, z: 0 }) + map.convert(Qrz { q: 1, r: -1, z: 0 })) / 3.0;
+        let toward = (corner - centre) * 0.85;
+        let start = Position::new(Qrz { q: 0, r: 0, z: 1 }, Vec3::new(toward.x, 0.0, toward.z));
+        let mut input = MovementInput { position: start, ..walking(Heading::NORTH, false) };
+        let settled = calculate_movement(input, CLIENT_TICK_MS, &map, &nntree);
+        input.position = settled.position;
+        input.airtime = settled.airtime;
+        assert_eq!(settled.airtime, None, "on the ground once the feet find the surface");
+        for tick in 0..60 {
+            let out = calculate_movement(input, CLIENT_TICK_MS, &map, &nntree);
+            assert_eq!(out.airtime, None, "fell at tick {tick}");
+            assert!((out.position.offset.y - settled.position.offset.y).abs() < 1e-5, "moved at tick {tick}: {} from {}", out.position.offset.y, settled.position.offset.y);
+            input.position = out.position;
+            input.airtime = out.airtime;
+        }
     }
 
     /// A rise of two levels is a cliff: the step toward it is refused and
