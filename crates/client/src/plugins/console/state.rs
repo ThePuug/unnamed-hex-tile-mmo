@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::plugins::diagnostics::DateField;
+
 /// Which coordinate system the goto input expects.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GotoCoordType {
@@ -50,6 +52,8 @@ pub struct DevConsole {
     pub lighting_time_buf: String,
     /// How long an arrow has scrubbed the lighting clock, in seconds.
     pub lighting_scrub_secs: f32,
+    /// The date field Up and Down step (when in LightingTime menu).
+    pub lighting_date_field: DateField,
 }
 
 impl Default for DevConsole {
@@ -62,6 +66,7 @@ impl Default for DevConsole {
             summary_radius_buf: String::new(),
             lighting_time_buf: String::new(),
             lighting_scrub_secs: 0.0,
+            lighting_date_field: DateField::default(),
         }
     }
 }

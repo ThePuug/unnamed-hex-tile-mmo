@@ -1,7 +1,7 @@
 use bevy::{light::ShadowFilteringMethod, prelude::*};
 
 use crate::{
-    plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay},
+    plugins::diagnostics::{DateField, DiagnosticsState, grid::HexGridOverlay},
     components::PlayerOriginDebug,
 };
 use common_bevy::components::behaviour::Behaviour;
@@ -15,6 +15,8 @@ pub enum DevConsoleAction {
     SetLightingTime(u128),
     /// Move the held lighting clock by this many ms, either way.
     ScrubLightingClock(i128),
+    /// Step a field of the held lighting clock's date this many times.
+    StepLightingDate(DateField, i32),
     SyncLightingClock,
     ToggleCameraEnvelope,
     ToggleMsaa,
@@ -88,6 +90,11 @@ pub fn execute_console_actions(
             }
             DevConsoleAction::ScrubLightingClock(delta) => {
                 diagnostics_state.lighting.scrub(game, *delta);
+            }
+            DevConsoleAction::StepLightingDate(field, steps) => {
+                diagnostics_state.lighting.step(game, *field, *steps);
+                let at = diagnostics_state.lighting.at(game);
+                info!("Lighting clock: held on {}", common_bevy::systems::Date::of(at));
             }
             DevConsoleAction::SyncLightingClock => {
                 diagnostics_state.lighting.sync();

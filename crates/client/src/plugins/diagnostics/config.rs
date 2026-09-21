@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, YEAR_MS};
+use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_MS};
 
 #[derive(Resource)]
 pub struct DiagnosticsState {
@@ -76,6 +76,18 @@ impl LightingClock {
         self.held = Some((now + delta).rem_euclid(YEAR_MS as i128) as u128);
     }
 
+    /// Moves the clock `steps` of `field` on, or back, wrapping within the
+    /// span above it — a day within its week, a week within its season, a
+    /// season within the year — so nothing coarser or finer moves. Holds the
+    /// clock first where it read game time `game` if it was not held.
+    pub fn step(&mut self, game: u128, field: DateField, steps: i32) {
+        let (unit, span) = field.unit_span();
+        let now = self.at(game);
+        let count = (span / unit) as i128;
+        let index = ((now % span / unit) as i128 + steps as i128).rem_euclid(count) as u128;
+        self.held = Some(now - now % span + index * unit + now % unit);
+    }
+
     /// An hour of the day typed as `HHMM` or `HH`, in ms of the day.
     pub fn parse_time(text: &str) -> Option<u128> {
         let digits: Vec<u128> = text.chars().map(|c| c.to_digit(10).map(u128::from)).collect::<Option<_>>()?;
@@ -86,6 +98,35 @@ impl LightingClock {
             _ => return None,
         };
         (hours < 24 && minutes < 60).then(|| hours * HOUR_MS + minutes * MINUTE_MS)
+    }
+}
+
+/// A field of the date the console picks for the arrows to step.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DateField {
+    #[default]
+    Day,
+    Week,
+    Season,
+}
+
+impl DateField {
+    /// The field after this one, finer to coarser and round again.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Day => Self::Week,
+            Self::Week => Self::Season,
+            Self::Season => Self::Day,
+        }
+    }
+
+    /// The field's length and the span it counts within, in ms.
+    fn unit_span(self) -> (u128, u128) {
+        match self {
+            Self::Day => (DAY_MS, WEEK_MS),
+            Self::Week => (WEEK_MS, SEASON_MS),
+            Self::Season => (SEASON_MS, YEAR_MS),
+        }
     }
 }
 
@@ -121,5 +162,27 @@ mod tests {
         assert_eq!(LightingClock::parse_time("2460"), None);
         assert_eq!(LightingClock::parse_time("123"), None);
         assert_eq!(LightingClock::parse_time(""), None);
+    }
+
+    /// A stepped field wraps within the span above it and moves nothing
+    /// else; from game time, the step holds the clock where game time was.
+    #[test]
+    fn a_date_field_steps_within_its_span() {
+        use common_bevy::systems::Date;
+
+        let mut clock = LightingClock::default();
+        clock.step(0, DateField::Day, -1);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 0, day: 5 });
+        assert_eq!(clock.held_at().as_deref(), Some("09:00"));
+        clock.step(0, DateField::Week, 8);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 1, day: 5 });
+        clock.step(0, DateField::Season, -1);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 3, week: 1, day: 5 });
+
+        clock.sync();
+        let game = 2 * SEASON_MS + 3 * WEEK_MS + 4 * DAY_MS + 5 * HOUR_MS;
+        clock.step(game, DateField::Day, 1);
+        assert_eq!(clock.at(game), game + DAY_MS);
+        assert_eq!(clock.at(0), game + DAY_MS);
     }
 }

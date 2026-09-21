@@ -165,7 +165,8 @@ const SCRUB_EASE_SECS: f32 = 3.0;
 
 /// Digits typed into the lighting hour; Enter holds the clock there, or
 /// with nothing typed returns it to game time. Left and right arrows
-/// rewind and forward it, quickening the longer they are held.
+/// rewind and forward it, quickening the longer they are held. Tab picks a
+/// field of the date and up and down step it.
 fn handle_lighting_time(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
@@ -182,6 +183,15 @@ fn handle_lighting_time(
         action_writer.write(DevConsoleAction::ScrubLightingClock((dir as f32 * rate * dt * 1000.0) as i128));
     } else if console.lighting_scrub_secs != 0.0 {
         console.lighting_scrub_secs = 0.0;
+    }
+
+    if keyboard.just_pressed(KeyCode::Tab) {
+        console.lighting_date_field = console.lighting_date_field.next();
+        keyboard.clear_just_pressed(KeyCode::Tab);
+    }
+    let steps = keyboard.just_pressed(KeyCode::ArrowUp) as i32 - keyboard.just_pressed(KeyCode::ArrowDown) as i32;
+    if steps != 0 {
+        action_writer.write(DevConsoleAction::StepLightingDate(console.lighting_date_field, steps));
     }
 
     if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {

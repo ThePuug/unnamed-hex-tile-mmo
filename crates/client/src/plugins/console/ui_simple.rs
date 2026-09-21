@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use super::state::{DevConsole, MenuPath};
-use crate::plugins::diagnostics::DiagnosticsState;
+use crate::plugins::diagnostics::{DateField, DiagnosticsState};
+use common_bevy::systems::{Date, SEASONS, WEEKS};
 
 #[derive(Component)]
 pub struct DevConsoleRoot;
@@ -78,6 +79,8 @@ pub fn update_console_visibility(
 pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
+    server: Res<crate::resources::Server>,
+    time: Res<Time>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
     #[cfg(feature = "admin")] forced_radius: Res<crate::resources::ForcedSummaryRadius>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
@@ -201,6 +204,13 @@ pub fn update_console_menu(
                         TextColor(Color::srgb(0.9, 0.9, 0.4)),
                     ));
 
+                    let date = Date::of(diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis())));
+                    parent.spawn((
+                        Text::new(format!("Date = {}", picked_date(date, console.lighting_date_field))),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.4)),
+                    ));
+
                     parent.spawn((
                         Text::new("Enter HHMM or HH, press Enter (empty = game time)"),
                         TextFont { font_size: 12.0, ..default() },
@@ -209,6 +219,12 @@ pub fn update_console_menu(
 
                     parent.spawn((
                         Text::new("Left/Right: rewind / forward, hold to hurry"),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                    ));
+
+                    parent.spawn((
+                        Text::new("Tab: pick day / week / season, Up/Down: step it"),
                         TextFont { font_size: 12.0, ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
@@ -412,4 +428,17 @@ fn state_color(state: bool) -> Color {
     } else {
         Color::srgb(0.8, 0.2, 0.2)
     }
+}
+
+/// The date as the HUD shows it, with the picked field bracketed.
+fn picked_date(date: Date, picked: DateField) -> String {
+    let field = |field: DateField, name: String| {
+        if field == picked { format!("[{name}]") } else { name }
+    };
+    format!(
+        "{}.{}.{}",
+        field(DateField::Day, date.day.to_string()),
+        field(DateField::Week, WEEKS[date.week].to_string()),
+        field(DateField::Season, SEASONS[date.season].to_string()),
+    )
 }
