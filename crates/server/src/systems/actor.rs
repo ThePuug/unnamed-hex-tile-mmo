@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
-use qrz::{Convert, Qrz};
+use qrz::Qrz;
 use std::sync::Arc;
 
 use common_bevy::{
@@ -379,16 +379,9 @@ pub fn update(
     if query.is_empty() { return; }
     let _t = timings.scope("actor_update");
     for (ent, mut loc0, mut position) in &mut query {
-        let px = map.convert(**loc0);
-        let qrz = map.convert(px + position.offset);
+        let qrz = position.reached(&map);
         if **loc0 != qrz {
-            // Adjust offset to be relative to new tile center
-            let world_pos = px + position.offset;
-            let new_tile_center = map.convert(qrz);
-            position.offset = world_pos - new_tile_center;
-            position.tile = qrz;
-
-            // Update Loc component directly
+            position.rebase(qrz, &map);
             **loc0 = qrz;
 
             // Send Loc update to client

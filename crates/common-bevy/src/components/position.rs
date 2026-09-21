@@ -64,6 +64,24 @@ impl Position {
         use qrz::Convert;
         map.convert(self.tile) + self.offset
     }
+
+    /// The tile the offset has reached: the position's own while the offset
+    /// is within it, the neighbour it has crossed into once it has left.
+    pub fn reached(&self, map: &crate::resources::map::Map) -> Qrz {
+        use qrz::Convert;
+        self.tile + map.convert(self.offset)
+    }
+
+    /// Moves the position to `tile`, keeping where it stands: the offset
+    /// changes by the tile difference, exact, so a crossing far from the
+    /// origin never lands the position on a float step, as taking it
+    /// through a world vector would.
+    pub fn rebase(&mut self, tile: Qrz, map: &crate::resources::map::Map) {
+        use qrz::Convert;
+        let delta: Vec3 = map.convert(self.tile - tile);
+        self.offset += delta;
+        self.tile = tile;
+    }
 }
 
 /// Visual interpolation state for smooth rendering.
@@ -230,6 +248,28 @@ impl VisualPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A position that has walked into a neighbour re-bases onto it with
+    /// the same offset near the origin and millions of tiles out, bit for
+    /// bit; through a world vector the far offset would land on a float
+    /// step.
+    #[test]
+    fn a_rebase_keeps_the_place_however_far_out() {
+        use qrz::Convert;
+        let map = crate::resources::map::Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let step: Vec3 = map.convert(Qrz { q: 1, r: 0, z: 1 });
+        let walk = |at: Qrz| {
+            let mut position = Position::new(at, step * 0.6 + Vec3::new(0.0, 0.05, 0.11));
+            let reached = position.reached(&map);
+            assert_eq!(reached - at, Qrz { q: 1, r: 0, z: 1 }, "crossed into the neighbour a level up");
+            position.rebase(reached, &map);
+            position
+        };
+        let near = walk(Qrz { q: 0, r: 0, z: 0 });
+        let far = walk(Qrz { q: -1_600_000, r: 2_400_000, z: 5 });
+        assert_eq!(near.offset, far.offset);
+        assert!((near.offset - (step * 0.6 + Vec3::new(0.0, 0.05, 0.11) - step)).length() < 1e-6, "{:?}", near.offset);
+    }
 
     /// Standing still far from the origin, the visual holds one value as
     /// its progress moves, and a move between two points never steps back.

@@ -7,7 +7,6 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use qrz::Convert;
 
 use crate::components::RemoteMotion;
 use crate::resources::RenderOrigin;
@@ -221,9 +220,8 @@ pub fn do_loc(
         let Do { event: Event::Incremental { ent, component: Component::Loc(loc) } } = message else { continue };
         let (ent, loc) = (*ent, *loc);
         let Ok((mut loc0, mut position, mut visual, displacing, motion)) = query.get_mut(ent) else { continue; };
-        // The tile's centre as drawn, and the world's for the physics.
+        // The tile's centre as drawn.
         let centre: Vec3 = origin.render_tile(&map, *loc);
-        let centre_world: Vec3 = map.convert(*loc);
         let is_local = buffers.get(&ent).is_some();
 
         if let Some(displacing) = displacing {
@@ -237,13 +235,13 @@ pub fn do_loc(
             *position = Position::at_tile(*loc);
             visual.snap_to(centre);
         } else if motion.is_some() {
-            let world = position.to_world(&map);
-            if world.xz().distance(centre_world.xz()) > drift_limit {
+            let mut rebased = *position;
+            rebased.rebase(*loc, &map);
+            if rebased.offset.xz().length() > drift_limit {
                 *position = Position::at_tile(*loc);
                 visual.interpolate_toward(centre, LOC_SETTLE_SECS);
             } else {
-                position.tile = *loc;
-                position.offset = world - centre_world;
+                *position = rebased;
             }
         } else if !is_local {
             *position = Position::at_tile(*loc);
@@ -262,7 +260,7 @@ fn _duration_ms(duration_ms: u16) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qrz::Qrz;
+    use qrz::{Convert, Qrz};
 
     fn create_test_map() -> Map {
         Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
