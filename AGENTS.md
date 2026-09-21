@@ -262,6 +262,12 @@ points `VisualPosition` at it, `actor::update` renders it.
    belongs to Update.
 8. **Pop-then-push on a queue front.** Use `front_mut()` so the queue is never
    momentarily empty (INV-002).
+9. **The two-product lerp on a world position.** `a.lerp(b, s)` is
+   `a·(1−s) + b·s`: tens of thousands of units from the origin the two
+   products round apart and the sum wanders by a float step as `s` moves,
+   even with `a == b`. Interpolate a position as `a + (b − a)·s`, as
+   `VisualPosition::current` does; a follower rounding on its own — the
+   camera — turns that wander into the actor shaking on screen.
 
 ## Writing a world event
 

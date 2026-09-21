@@ -62,13 +62,28 @@ pub(crate) fn ready(
 /// Exponential decay constant of the facing's easing between headings: a
 /// heading steps by a bearing at a time, and the body turns through it.
 const FACING_EASE: f32 = 15.0;
+/// Radians short of the heading at which the facing lands on it. Eased all
+/// the way, the slerp never arrives: its last steps are a lerp and a
+/// normalise that flip a component by an ulp indefinitely, and far from
+/// the origin an ulp of rotation rounds a joint's world position across
+/// a float step — the body shakes on screen.
+const FACING_SNAP: f32 = 0.001;
+
+/// The facing after `dt` seconds of turning from `current` toward
+/// `heading`: eased, and landed exactly once within the snap.
+pub fn face(current: Quat, heading: Heading, dt: f32) -> Quat {
+    let facing: Quat = heading.into();
+    if current.angle_between(facing) < FACING_SNAP {
+        return facing;
+    }
+    current.slerp(facing, 1.0 - (-FACING_EASE * dt).exp())
+}
 
 pub fn update(
     mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>), Without<DeathMarker>>,
     map: Res<Map>,
     time: Res<Time>,
 ) {
-    let ease = 1.0 - (-FACING_EASE * time.delta_secs()).exp();
     for (&loc, &heading, mut transform0, vis_pos) in &mut query {
         let final_pos = if let Some(vis) = vis_pos {
             // Use VisualPosition for smooth, jitter-free rendering
@@ -78,8 +93,13 @@ pub fn update(
             map.convert(*loc)
         };
 
-        transform0.translation = final_pos;
-        transform0.rotation = transform0.rotation.slerp(heading.into(), ease);
+        let turned = face(transform0.rotation, heading, time.delta_secs());
+        // Written only when it moves: the same value written again marks
+        // the whole rig changed and the skin is re-extracted for nothing.
+        if transform0.translation != final_pos || transform0.rotation != turned {
+            transform0.translation = final_pos;
+            transform0.rotation = turned;
+        }
     }
 }
 
@@ -227,4 +247,27 @@ pub fn spawn_debug_sphere(
     )).id();
 
     commands.entity(actor_entity).add_child(debug_sphere);
+}
+
+#[cfg(test)]
+mod facing_tests {
+    use super::*;
+
+    /// A turn eases in and then lands: the facing becomes the heading's
+    /// rotation bit for bit and never moves again.
+    #[test]
+    fn the_facing_lands_on_the_heading_and_stays() {
+        let heading = Heading::from_degrees(105.0);
+        let target: Quat = heading.into();
+        let mut facing = Quat::IDENTITY;
+        for _ in 0..600 {
+            facing = face(facing, heading, 1.0 / 60.0);
+        }
+        assert_eq!(facing, target);
+        for _ in 0..600 {
+            let next = face(facing, heading, 1.0 / 60.0);
+            assert_eq!(next, facing);
+            facing = next;
+        }
+    }
 }

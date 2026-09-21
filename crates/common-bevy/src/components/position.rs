@@ -138,9 +138,17 @@ impl VisualPosition {
         self.path_len = 0;
     }
 
-    /// Get the current visual position (lerp between from and to)
+    /// Where the entity appears: `progress` of the way from `from` to `to`.
+    /// Computed as `from + (to - from) * progress`, never as the two-product
+    /// lerp: far from the origin that form's products round apart and the
+    /// sum wanders by a float step as the progress moves, with nothing to
+    /// move toward, and the camera following it rounds on its own.
     pub fn current(&self) -> Vec3 {
-        self.from.lerp(self.to, self.progress.clamp(0.0, 1.0))
+        let progress = self.progress.clamp(0.0, 1.0);
+        if progress >= 1.0 {
+            return self.to;
+        }
+        self.from + (self.to - self.from) * progress
     }
 
     /// Set up multi-segment interpolation along a path of waypoints.
@@ -212,6 +220,30 @@ impl VisualPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Standing still far from the origin, the visual holds one value as
+    /// its progress moves, and a move between two points never steps back.
+    #[test]
+    fn the_visual_holds_still_far_from_the_origin() {
+        let far = Vec3::new(-87366.0, 405.6, -41009.766);
+        let mut visual = VisualPosition::at(far);
+        visual.interpolate_toward(far, 0.1);
+        for _ in 0..200 {
+            visual.advance(0.001);
+            assert_eq!(visual.current(), far);
+        }
+        let mut walk = VisualPosition::at(far);
+        let there = far + Vec3::new(0.08, 0.0, -0.05);
+        walk.interpolate_toward(there, 0.1);
+        let mut last = walk.current();
+        for _ in 0..200 {
+            walk.advance(0.001);
+            let now = walk.current();
+            assert!((now - last).dot(there - far) >= 0.0, "stepped back: {last:?} -> {now:?}");
+            last = now;
+        }
+        assert_eq!(walk.current(), there);
+    }
 
     // ===== Position Tests =====
 
