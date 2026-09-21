@@ -363,6 +363,13 @@ pub fn send_try(
                     ent: *l2r.get_by_left(ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
+            Event::Teleport { ent, q, r } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Teleport {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    q: *q,
+                    r: *r,
+                }}, bincode::config::legacy()).unwrap());
+            }
             Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
                     ent: *l2r.get_by_left(ent).unwrap(),

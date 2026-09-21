@@ -16,8 +16,9 @@ use common_bevy::{
     components::{
         behaviour::PlayerControlled,
         entity_type::{EntityType, decorator::Decorator},
-        Actor,
+        Actor, Loc,
     },
+    message::{Event, Try},
     resources::map::Map,
 };
 use qrz::Convert;
@@ -124,6 +125,14 @@ pub struct AdminChunk;
 #[derive(Component)]
 struct FlyoverCursor;
 
+/// The cursor's entity and what spawning one takes.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Cursor<'w, 's> {
+    query: Query<'w, 's, Entity, With<FlyoverCursor>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+}
+
 /// Client-side Composite for local chunk generation (flyover).
 /// Same event stack as the server — deterministic from seed.
 #[derive(Resource)]
@@ -173,11 +182,14 @@ const SURFACE_FOLLOW_SPEED: f32 = 5.0;
 
 // ──── Systems ────
 
-/// Reads DevConsoleAction events and toggles flyover on/off.
+/// Reads DevConsoleAction events and toggles flyover on/off. A goto moves
+/// the cursor while flyover is up and teleports the player otherwise, and
+/// toggling flyover off lands the player where the cursor stopped.
 fn execute_admin_actions(
     mut flyover: ResMut<FlyoverState>,
     mut reader: MessageReader<DevConsoleAction>,
-    player_query: Query<&Transform, (With<Actor>, With<PlayerControlled>, Without<Camera3d>)>,
+    mut try_writer: MessageWriter<Try>,
+    player_query: Query<(Entity, &Transform, &Loc), (With<Actor>, With<PlayerControlled>, Without<Camera3d>)>,
     mut commands: Commands,
     mut loaded_chunks: ResMut<LoadedChunks>,
     map: Res<Map>,
@@ -187,41 +199,29 @@ fn execute_admin_actions(
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     mut forced_radius: ResMut<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
-    cursor_query: Query<Entity, With<FlyoverCursor>>,
+    mut cursor: Cursor,
     mut flyover_tracker: ResMut<FlyoverSummaryTracker>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for action in reader.read() {
         match action {
-            DevConsoleAction::GotoWorldUnits(wx, wy) => {
-                let sqrt_3 = 1.7320508075688772_f64;
-                let rf = wy * 2.0 / sqrt_3;
-                let qf = wx - rf * 0.5;
-                let q = qf.round() as i32;
-                let r = rf.round() as i32;
-                let z = admin_composite.0.elevation_at(q, r);
-                let target_qrz = qrz::Qrz { q, r, z };
-                let target: Vec3 = map.convert(target_qrz);
-
+            DevConsoleAction::GotoWorldUnits(..) | DevConsoleAction::GotoQR(..) => {
+                let (q, r) = match action {
+                    DevConsoleAction::GotoWorldUnits(wx, wy) => {
+                        let sqrt_3 = 1.7320508075688772_f64;
+                        let rf = wy * 2.0 / sqrt_3;
+                        let qf = wx - rf * 0.5;
+                        (qf.round() as i32, rf.round() as i32)
+                    }
+                    DevConsoleAction::GotoQR(q, r) => (*q, *r),
+                    _ => unreachable!(),
+                };
                 if flyover.active {
-                    flyover.world_position = target;
-                    info!("Goto: world units ({}, {}) → qr ({}, {}) → flyover", wx, wy, q, r);
-                } else {
-                    info!("Goto: world units ({}, {}) — enable flyover first", wx, wy);
-                }
-                continue;
-            }
-            DevConsoleAction::GotoQR(q, r) => {
-                let z = admin_composite.0.elevation_at(*q, *r);
-                let target_qrz = qrz::Qrz { q: *q, r: *r, z };
-                let target: Vec3 = map.convert(target_qrz);
-
-                if flyover.active {
-                    flyover.world_position = target;
-                    info!("Goto: QR ({}, {}) → flyover", q, r);
-                } else {
-                    info!("Goto: QR ({}, {}) — enable flyover first", q, r);
+                    let z = admin_composite.0.elevation_at(q, r);
+                    flyover.world_position = map.convert(qrz::Qrz { q, r, z });
+                    info!("Goto: qr ({q}, {r}) → flyover cursor");
+                } else if let Ok((ent, ..)) = player_query.single() {
+                    try_writer.write(Try { event: Event::Teleport { ent, q, r } });
+                    info!("Goto: qr ({q}, {r}) → player");
                 }
                 continue;
             }
@@ -252,7 +252,7 @@ fn execute_admin_actions(
 
         if !flyover.active {
             // Toggle ON
-            if let Ok(player_transform) = player_query.single() {
+            if let Ok((_, player_transform, _)) = player_query.single() {
                 flyover.world_position = player_transform.translation;
             }
 
@@ -276,8 +276,8 @@ fn execute_admin_actions(
             flyover.stashed_summary_meshes = Some(stashed);
 
             // Spawn ground cursor
-            let cursor_mesh = meshes.add(Sphere::new(0.25));
-            let cursor_mat = materials.add(StandardMaterial {
+            let cursor_mesh = cursor.meshes.add(Sphere::new(0.25));
+            let cursor_mat = cursor.materials.add(StandardMaterial {
                 base_color: Color::srgba(1.0, 0.0, 0.0, 0.5),
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
@@ -296,8 +296,15 @@ fn execute_admin_actions(
             flyover.speed_multiplier = 1.0;
             info!("Flyover camera: ON");
         } else {
-            // Toggle OFF — despawn cursor
-            for entity in cursor_query.iter() {
+            // Toggle OFF — the player lands on the cursor's tile, unless it
+            // never left the player's.
+            if let Ok((ent, _, loc)) = player_query.single() {
+                let here: qrz::Qrz = map.convert(flyover.world_position);
+                if (here.q, here.r) != (loc.q, loc.r) {
+                    try_writer.write(Try { event: Event::Teleport { ent, q: here.q, r: here.r } });
+                }
+            }
+            for entity in cursor.query.iter() {
                 commands.entity(entity).despawn();
             }
 

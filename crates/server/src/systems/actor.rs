@@ -6,6 +6,7 @@ use std::sync::Arc;
 use common_bevy::{
     chunk::{self, *},
     components::{
+        behaviour::PlayerControlled,
         entity_type::{ decorator::*, *},
         heading::Heading,
         position::Position,
@@ -393,6 +394,30 @@ pub fn update(
             // Send Loc update to client
             writer.write(Try { event: Event::Incremental { ent, component: Component::Loc(Loc::new(qrz)) } });
         }
+    }
+}
+
+/// Puts a player on the ground at the tile it asks for, as a spawn does:
+/// standing on the terrain there, whatever the map holds yet, and the tile
+/// broadcast so the stream, the area of interest and every client follow.
+/// Any connection may move its own entity; there is no admin identity on
+/// the wire.
+pub fn try_teleport(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut query: Query<(&mut Loc, &mut Position, &mut AirTime), With<PlayerControlled>>,
+    registry: Res<EventRegistry>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::Teleport { ent, q, r } } = message else { continue };
+        let (ent, q, r) = (*ent, *q, *r);
+        let Ok((mut loc, mut position, mut airtime)) = query.get_mut(ent) else { continue };
+        let qrz = Qrz { q, r, z: registry.elevation_at(q, r) + 1 };
+        *loc = Loc::new(qrz);
+        *position = Position::at_tile(qrz);
+        airtime.state = None;
+        info!("teleport: {ent} to {qrz:?}");
+        writer.write(Do { event: Event::Incremental { ent, component: Component::Loc(*loc) } });
     }
 }
 

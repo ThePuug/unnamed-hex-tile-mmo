@@ -257,7 +257,7 @@ fn handle_flyover_menu(
     if keyboard.just_pressed(KeyCode::Numpad1) {
         action_writer.write(DevConsoleAction::ToggleFlyover);
         consumed = Some(KeyCode::Numpad1);
-    } else if keyboard.just_pressed(KeyCode::Numpad2) && flyover.active {
+    } else if keyboard.just_pressed(KeyCode::Numpad2) {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);

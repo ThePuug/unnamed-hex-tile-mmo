@@ -75,6 +75,10 @@ pub enum Event {
     /// Server → Client: the entity slides to a standing-height tile under an
     /// ability (lunge, knockback), arriving after `duration_ms`.
     Displace { ent: Entity, destination: Qrz, duration_ms: u16 },
+    /// Client → Server: put the entity on the ground at this tile. An admin
+    /// request; the server decides the height and answers with the tile
+    /// update every client already treats as a teleport.
+    Teleport { ent: Entity, q: i32, r: i32 },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative

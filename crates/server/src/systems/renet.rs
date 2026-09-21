@@ -238,6 +238,10 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
                     writer.write(Try { event: Event::Wear { ent, item, on }});
                 }
+                Try { event: Event::Teleport { ent: _, q, r } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Teleport { ent, q, r }});
+                }
                 _ => {}
             }
         }

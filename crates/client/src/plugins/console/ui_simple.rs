@@ -263,16 +263,18 @@ pub fn update_console_menu(
                         TextColor(Color::srgb(0.8, 0.8, 0.2)),
                     ));
 
+                    let goto_target = if flyover.active { "cursor" } else { "player" };
+                    parent.spawn((
+                        Text::new(format!("2. Goto Coordinates    [{goto_target}]")),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
                     let active_color = if flyover.active {
                         Color::WHITE
                     } else {
                         Color::srgb(0.4, 0.4, 0.4)
                     };
-                    parent.spawn((
-                        Text::new("2. Goto Coordinates"),
-                        TextFont { font_size: 16.0, ..default() },
-                        TextColor(active_color),
-                    ));
 
                     let radius_label = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
                     parent.spawn((
