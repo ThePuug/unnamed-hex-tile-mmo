@@ -140,7 +140,8 @@ virtual clock would let one long server frame clamp every honest client.
 **Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is server
 authority; `VisualPosition` is rendering interpolation only.
 `WORLD_POS = map.convert(Position.tile) + Position.offset`; the offset may
-leave the tile, and `server::systems::actor::update` re-bases when it does.
+leave the tile, and `Position::rebase` moves it onto the tile it `reached`
+— on the server in `actor::update`, on the client in `movement::do_loc`.
 Movement is `Heading` (24 bearings) × speed × dt in
 `movement::calculate_movement()`, the canonical physics; `physics::apply()` is
 a thin wrapper for NPCs. Turning is physics too: a held turn key steps the
@@ -281,6 +282,18 @@ points `VisualPosition` at it, `actor::update` renders it.
    even with `a == b`. Interpolate a position as `a + (b − a)·s`, as
    `VisualPosition::current` does; a follower rounding on its own — the
    camera — turns that wander into the actor shaking on screen.
+10. **A world-space f32 position.** `map.convert(tile) + offset` far from
+    the origin keeps only float steps, and anything smaller than a step
+    added to it — a tick's walk, a re-base, a joint's motion — rounds away.
+    Compute in the tile's frame: the offset is the position, a neighbour is
+    `map.convert(here − tile)`, a height is `(z − tile.z) × rise`, and only
+    a lookup names the tile, as `calculate_movement`, `Position::rebase` and
+    `RenderOrigin` do. The test is exact: the same input at the origin and
+    millions of tiles out gives the same output, bit for bit. Sites still
+    world-space are static and drawn, each off by one step and fixable the
+    same way: the mesh builder's vertices (`p − mesh_origin`), a region's
+    placement (`mesh_origin − origin`), the camera's ray march, and the
+    terrain shader's bombing, which re-rolls at a rebase.
 
 ## Writing a world event
 
