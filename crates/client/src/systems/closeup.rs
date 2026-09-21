@@ -73,6 +73,7 @@ pub fn setup(
     let at = STAGE + Vec3::new(0.0, height * 0.5, 0.0);
     commands.spawn((
         CloseupCamera,
+        crate::resources::OffWorld,
         Camera3d::default(),
         Camera {
             order: -1,
@@ -86,6 +87,7 @@ pub fn setup(
         RenderLayers::layer(LAYER),
     ));
     commands.spawn((
+        crate::resources::OffWorld,
         DirectionalLight { illuminance: 6000.0, shadows_enabled: false, ..default() },
         Transform::from_translation(STAGE + Vec3::new(-2.0, 4.0, -3.0) * r).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
@@ -108,6 +110,7 @@ pub fn spawn_figure(
     commands
         .spawn((
             Figure,
+            crate::resources::OffWorld,
             typ,
             equipment,
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),

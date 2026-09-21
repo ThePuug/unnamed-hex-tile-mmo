@@ -79,16 +79,23 @@ impl RenderOrigin {
     }
 }
 
+/// A root that is not of the world: the render origin leaves it where it
+/// stands. The closeup's stage is one — the player drawn on a layer of its
+/// own, far under the world; shifted with the world it would stand far from
+/// the origin, and the figure's joints would step on the float grid there.
+#[derive(Component)]
+pub struct OffWorld;
+
 /// Keeps the origin near the player: when the player's tile is more than
 /// `REBASE_TILES` from it, the origin moves to their tile and every rendered
 /// root transform and every visual shifts by the difference in one pass,
-/// before anything reads them this frame. UI roots and the overlay camera
-/// are not of the world and stay.
+/// before anything reads them this frame. UI roots, the overlay camera and
+/// [`OffWorld`] roots are not of the world and stay.
 pub fn rebase_origin(
     mut origin: ResMut<RenderOrigin>,
     map: Res<Map>,
     player: Query<&Position, With<common_bevy::components::behaviour::PlayerControlled>>,
-    mut roots: Query<&mut Transform, (Without<ChildOf>, Without<Node>, Without<Camera2d>)>,
+    mut roots: Query<&mut Transform, (Without<ChildOf>, Without<Node>, Without<Camera2d>, Without<OffWorld>)>,
     mut visuals: Query<&mut VisualPosition>,
 ) {
     let Ok(position) = player.single() else { return };
@@ -108,9 +115,32 @@ pub fn rebase_origin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common_bevy::components::behaviour::PlayerControlled;
 
     fn map() -> Map {
         Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
+    }
+
+    /// A player far from the origin moves it: the world's roots and visuals
+    /// shift so nothing drawn moves, and a root that is not of the world
+    /// stays where it stands.
+    #[test]
+    fn a_rebase_moves_the_world_and_leaves_the_stage() {
+        let mut app = App::new();
+        app.insert_resource(map());
+        app.init_resource::<RenderOrigin>();
+        app.add_systems(Update, rebase_origin);
+        let tile = Qrz { q: 40_000, r: -9_000, z: 12 };
+        let player = app.world_mut().spawn((PlayerControlled, Position::at_tile(tile), Transform::default())).id();
+        let ground = app.world_mut().spawn(Transform::from_translation(Vec3::new(3.0, 1.0, -2.0))).id();
+        let stage = app.world_mut().spawn((OffWorld, Transform::from_translation(Vec3::new(0.0, -2000.0, 0.0)))).id();
+        app.update();
+        let origin = *app.world().resource::<RenderOrigin>();
+        assert_eq!(origin.tile(), Qrz { z: 0, ..tile });
+        let shift: Vec3 = map().convert(Qrz { q: -tile.q, r: -tile.r, z: 0 });
+        assert_eq!(app.world().get::<Transform>(player).unwrap().translation, shift);
+        assert_eq!(app.world().get::<Transform>(ground).unwrap().translation, Vec3::new(3.0, 1.0, -2.0) + shift);
+        assert_eq!(app.world().get::<Transform>(stage).unwrap().translation, Vec3::new(0.0, -2000.0, 0.0));
     }
 
     /// Far from the world's origin a rendered position keeps the offset's

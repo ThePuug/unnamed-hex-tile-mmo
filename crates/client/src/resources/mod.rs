@@ -1,5 +1,5 @@
 pub mod origin;
-pub use origin::{RenderOrigin, rebase_origin};
+pub use origin::{OffWorld, RenderOrigin, rebase_origin};
 
 use bevy::{
     prelude::*,
