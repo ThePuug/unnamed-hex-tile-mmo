@@ -58,18 +58,32 @@ const CEILING_ELEVATION: f32 = 12_f32.to_radians();
 const FLOOR_FOV: f32 = 6_f32.to_radians();
 const FLOOR_ELEVATION: f32 = 55_f32.to_radians();
 /// How far below the frame's centre the player stands, as a fraction of
-/// the half-height: the look point is that much ahead on the ground.
+/// the half-height: the look point is that much ahead on the ground. And
+/// how far above it the crest of a climb stands, the same, so the frame
+/// points up the climb with sky over it.
 const PLAYER_DROP: f32 = 1.0 / 3.0;
-/// The widest the lens opens to hold rising ground in the frame.
+const CREST_RISE: f32 = 1.0 / 3.0;
+/// The widest the lens opens to hold rising ground in the frame, and the
+/// rise ahead at which the frame has fully committed to the pose that
+/// holds it.
 const HILL_FOV: f32 = 60_f32.to_radians();
+const HILL_GRADE: f32 = 25_f32.to_radians();
 /// The plane the camera sweeps on is the ground's under the player: the
 /// steepest it is allowed to tilt, short of the angle of repose so a brink
-/// does not flip it; the decay constant of its smoothing; and the least
-/// the camera stands above the player's feet whatever the plane does
-/// behind them.
+/// does not flip it, and the decay constant of its smoothing.
 const TILT_MAX: f32 = 30_f32.to_radians();
 const TILT_EASE: f32 = 3.0;
-const MIN_RISE: f32 = 5_f32.to_radians();
+/// Beneath the eye the boom draws in to keep the camera this far above
+/// the plane, and no shorter than this, which is what caps how far below
+/// the eye a pose may stand. The plane is a fit and the ground itself is
+/// the boom's obstruction check, so this clears the ground by a margin
+/// more than the boom's clearance does, or the stand a pose asks for is
+/// one the boom refuses wherever the surface is a hair above the plane.
+/// As it draws in, the rig slides this far over the player's right
+/// shoulder so the player does not fill the frame.
+const PLANE_CLEARANCE: f32 = BOOM_CLEARANCE + 0.2;
+const BOOM_MIN: f32 = 4.0;
+const SHOULDER_WU: f32 = 1.2;
 /// Ground distances around the player at which the plane is fitted, in
 /// world units, in each of six directions.
 const TILT_RINGS_WU: [f32; 2] = [20.0, 45.0];
@@ -106,12 +120,14 @@ fn haze() -> DistanceFog {
     }
 }
 
-/// A camera pose. The camera stands `boom` behind the player along the
-/// yaw, at the height of the ground's plane under the player there plus
-/// the boom's `elevation`, and looks along the yaw through a lens of `fov`
-/// with the player a third of the way down the frame. The sweep is an
-/// ellipse on the plane: the boom's reach on the ground holds and the
-/// height follows the slope. The frame's top ray dips `pitch - fov / 2`
+/// A camera pose. The camera stands at the end of the boom behind the
+/// player's eye along the yaw, at the height of the ground's plane
+/// through the eye there plus the boom's `elevation`, which may be
+/// negative, and looks along the yaw through a lens of `fov` with the
+/// player a third of the way down the frame. The sweep is an ellipse on
+/// the plane: above the eye the boom's reach on the ground holds and the
+/// height follows the slope; beneath it the boom draws in to keep the
+/// camera above the plane. The frame's top ray dips `pitch - fov / 2`
 /// below the horizontal, which is what decides how far the footprint
 /// reaches.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -120,7 +136,6 @@ pub struct Pose {
     pub yaw: f32,
     pub elevation: f32,
     pub fov: f32,
-    pub boom: f32,
 }
 
 /// The ground's plane under the player as a gradient: its rise per unit
@@ -130,18 +145,36 @@ pub type Tilt = Vec2;
 impl Pose {
     /// The widest pose: the frame's top ray above the horizontal.
     fn ceiling(yaw: f32) -> Self {
-        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV, boom: CAMERA_DISTANCE }
+        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV }
     }
 
     /// The pose nothing pulls on: from the height the ladder is measured
     /// by, the lens narrow.
     fn rest(yaw: f32) -> Self {
-        Pose { yaw, elevation: (gameplay_camera_height() / CAMERA_DISTANCE).atan(), fov: REST_FOV, boom: CAMERA_DISTANCE }
+        Pose { yaw, elevation: (gameplay_camera_height() / CAMERA_DISTANCE).atan(), fov: REST_FOV }
     }
 
     /// The tightest pose.
     fn floor(yaw: f32) -> Self {
-        Pose { yaw, elevation: FLOOR_ELEVATION, fov: FLOOR_FOV, boom: CAMERA_DISTANCE }
+        Pose { yaw, elevation: FLOOR_ELEVATION, fov: FLOOR_FOV }
+    }
+
+    /// The pose that holds a climb of `up` ahead, from the pose `open`
+    /// ground pulls to: the lens the ceiling's, or the open pose's if
+    /// wider, and the elevation that puts the crest its rise above the
+    /// frame's centre on ground of `tilt` — no higher than the open pose's,
+    /// and no lower than the boom's shortest allows. On a slope the plane
+    /// has already brought the camera down, so the same climb asks less.
+    fn hill(open: Pose, up: f32, tilt: Tilt) -> Self {
+        let fov = open.fov.max(CEILING_FOV);
+        let crest = (PLAYER_DROP + CREST_RISE) * fov / 2.0;
+        let elevation = ((crest - up).tan() - tilt.dot(open.back())).atan().clamp(Self::elevation_min(), open.elevation);
+        Pose { fov, elevation, ..open }
+    }
+
+    /// The lowest a pose stands: where the boom is at its shortest.
+    fn elevation_min() -> f32 {
+        -((EYE_HEIGHT - PLANE_CLEARANCE) / BOOM_MIN).atan()
     }
 
     /// This pose `t` of the way to `to`, the yaw kept.
@@ -149,7 +182,6 @@ impl Pose {
         Pose {
             elevation: self.elevation.lerp(to.elevation, t),
             fov: self.fov.lerp(to.fov, t),
-            boom: self.boom.lerp(to.boom, t),
             ..self
         }
     }
@@ -160,15 +192,33 @@ impl Pose {
         Vec2::new(sin, cos)
     }
 
-    /// Where the camera stands relative to the player's feet on ground of
+    /// The boom's length: full above the eye, and beneath it as long as
+    /// keeps the camera its clearance above the plane.
+    fn boom(&self) -> f32 {
+        if self.elevation >= 0.0 {
+            return CAMERA_DISTANCE;
+        }
+        CAMERA_DISTANCE.min((EYE_HEIGHT - PLANE_CLEARANCE) / (-self.elevation).tan())
+    }
+
+    /// Where the camera stands relative to the player's eye on ground of
     /// `tilt`: the boom's length back on the ground, and up by the plane's
-    /// rise there plus the elevation, never less than the least rise. So
-    /// behind a player facing up a slope the camera stands low and near,
-    /// facing down it high and far.
+    /// rise there plus the elevation. So behind a player facing up a slope
+    /// the camera stands low and near, facing down it high and far.
     fn offset(&self, tilt: Tilt) -> Vec3 {
         let back = self.back();
-        let rise = (self.elevation.tan() + tilt.dot(back)).max(MIN_RISE.tan());
-        Vec3::new(back.x * self.boom, self.boom * rise, back.y * self.boom)
+        let boom = self.boom();
+        let rise = self.elevation.tan() + tilt.dot(back);
+        Vec3::new(back.x * boom, boom * rise, back.y * boom)
+    }
+
+    /// The rig's slide over the player's right shoulder for a camera
+    /// `reach` back on the ground: nothing at the boom's full length,
+    /// growing as it draws in, whether the pose drew it in or an
+    /// obstruction did.
+    fn shift(&self, reach: f32) -> Vec3 {
+        let back = self.back();
+        Vec3::new(back.y, 0.0, -back.x) * (SHOULDER_WU * (1.0 - reach / CAMERA_DISTANCE))
     }
 
     /// The camera's depression down to the player: negative looking up.
@@ -188,25 +238,27 @@ impl Pose {
         self.toward(Pose::floor(self.yaw), t)
     }
 
-    /// Where the camera stands and looks, for a player at `player` on
-    /// ground of `tilt`.
-    fn transform(&self, player: Vec3, tilt: Tilt) -> Transform {
+    /// Where the camera stands and looks, for a player whose eye is at
+    /// `eye` on ground of `tilt`, before the slide over the shoulder.
+    fn transform(&self, eye: Vec3, tilt: Tilt) -> Transform {
         let back = self.back();
         let pitch = self.pitch(tilt);
         let forward = Vec3::new(-back.x * pitch.cos(), -pitch.sin(), -back.y * pitch.cos());
-        Transform::from_translation(player + self.offset(tilt)).looking_to(forward, Vec3::Y)
+        Transform::from_translation(eye + self.offset(tilt)).looking_to(forward, Vec3::Y)
     }
 }
 
 /// The camera's state between frames: the pose it is at, easing toward a
 /// safe one; the pose the envelope is tightening it onto, while it is; the
-/// smoothed pull of the ground ahead; and the fraction of the boom it
+/// smoothed pulls of the ground ahead; and the fraction of the boom it
 /// stands at.
 #[derive(Resource)]
 pub struct CameraPose {
     pub pose: Pose,
     limit: Option<Pose>,
     openness: f32,
+    /// How steeply the ground ahead climbs, in radians, smoothed.
+    climb: f32,
     /// The ground's plane under the player, smoothed: what the camera
     /// sweeps on.
     tilt: Tilt,
@@ -290,14 +342,17 @@ pub fn setup(
     mut commands: Commands,
 ) {
     commands.insert_resource(CameraOrbit::default());
-    commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, tilt: Vec2::ZERO, clearance: 1.0 });
+    commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0 });
     commands.insert_resource(ClearColor(HAZE_COLOR));
 
     commands.spawn((
         Camera3d::default(),
         Projection::from(PerspectiveProjection {
             fov: REST_FOV,
-            near: 1.0,
+            // Near enough that the boom's ground clearance, which cannot be
+            // less, leaves a pose room beneath the eye. Reverse-z float
+            // depth, so precision does not depend on it.
+            near: 0.25,
             // Culling only: the projection is infinite reverse-z. Past the
             // reach, so the coarsest band is drawn to its edge.
             far: common_bevy::summary::reach_wu() * 1.5,
@@ -352,16 +407,29 @@ const OPEN_ELEVATION: f32 = 3_f32.to_radians();
 const EYE_HEIGHT: f32 = 1.5;
 
 /// The ground ahead, read by rays from the eye across a sweep about the
-/// heading: how open it is, and the steepest sightline up it inside the
-/// frame.
+/// heading: how open it is, and how steeply it climbs inside the frame.
 struct Ahead {
     /// 0 (closed) to 1 (open): the share of the sweep's lowest rays that
     /// fly free to the reach. What pulls the pose toward the ceiling.
     open: f32,
-    /// The highest elevation, in radians above the horizontal, at which a
-    /// ray inside the frame's width still meets the ground: None where
-    /// none does.
-    highest: Option<f32>,
+    /// How steeply the ground climbs, in radians above the horizontal: the
+    /// steepest elevation at which a ray still meets the ground, over the
+    /// rays inside the frame's width that agree with most of them on
+    /// whether there is ground there. Zero where there is none. What
+    /// brings the camera down to look up it.
+    climb: f32,
+}
+
+/// The majority's mean over a sweep of readings: the readings that agree
+/// with most of the sweep on whether there is anything there set it, so
+/// one ray crossing a gap does not.
+fn majority_mean(readings: &[f32]) -> f32 {
+    let some = readings.iter().filter(|&&g| g > 0.0).count();
+    let majority_some = 2 * some > readings.len();
+    let (sum, n) = readings.iter()
+        .filter(|&&g| (g > 0.0) == majority_some)
+        .fold((0.0, 0), |(s, n), &g| (s + g, n + 1));
+    if n > 0 { sum / n as f32 } else { 0.0 }
 }
 
 /// The ground's plane under a player standing at `player`: the gradient
@@ -389,13 +457,13 @@ fn ground_tilt(player: Vec3, map: &Map) -> Option<Tilt> {
 
 /// The ground ahead, or None where too little of it is loaded to read.
 /// `half_width` is the frame's horizontal half-angle: only rays inside it
-/// feed the sightline the lens is opened to clear.
-fn ground_ahead(player: Vec3, heading: Heading, half_width: f32, map: &Map) -> Option<Ahead> {
-    let eye = player + Vec3::Y * EYE_HEIGHT;
+/// feed the climb.
+fn ground_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map) -> Option<Ahead> {
+    let eye = feet + Vec3::Y * EYE_HEIGHT;
     let ahead = heading.to_world_dir();
     let mut rays = 0.0_f32;
     let mut free = 0.0_f32;
-    let mut highest: Option<f32> = None;
+    let mut grades = Vec::with_capacity((2 * SWEEP_RAYS + 1) as usize);
     for k in -SWEEP_RAYS..=SWEEP_RAYS {
         let yaw = k as f32 * SWEEP_STEP;
         let flat = Vec2::from_angle(yaw).rotate(ahead);
@@ -415,21 +483,20 @@ fn ground_ahead(player: Vec3, heading: Heading, half_width: f32, map: &Map) -> O
         }
         if grade.is_none() { free += 1.0; }
         if yaw.abs() <= half_width {
-            if let Some(up) = grade {
-                highest = Some(highest.map_or(up, |h: f32| h.max(up)));
-            }
+            grades.push(grade.unwrap_or(0.0));
         }
     }
-    Some(Ahead { open: free / rays, highest })
+    Some(Ahead { open: free / rays, climb: majority_mean(&grades) })
 }
 
 /// The lens `pose` needs to keep the ground ahead in the frame with the
-/// player in the lower third: the frame's top ray must clear the steepest
-/// sightline up the ground, `highest` above the horizontal, and the pitch
-/// the framing fixes puts the top `(1 + drop) · fov / 2` above the
-/// camera's sightline down to the player.
-fn lens_to_hold(pose: &Pose, tilt: Tilt, highest: Option<f32>) -> f32 {
-    let Some(up) = highest else { return pose.fov };
+/// player in the lower third: the frame's top ray must clear the climb,
+/// `up` above the horizontal, and the pitch the framing fixes puts the top
+/// `(1 + drop) · fov / 2` above the camera's sightline down to the player.
+fn lens_to_hold(pose: &Pose, tilt: Tilt, up: f32) -> f32 {
+    if up <= 0.0 {
+        return pose.fov;
+    }
     let needed = 2.0 * (pose.down(tilt) + up) / (1.0 + PLAYER_DROP);
     needed.clamp(pose.fov, HILL_FOV)
 }
@@ -461,7 +528,7 @@ fn march_reach_wu() -> f32 {
 /// lies within a degree of the horizon, a sliver the grid's rows miss.
 const HORIZON_ROWS: [f32; 2] = [1_f32.to_radians(), 3_f32.to_radians()];
 
-/// The footprint of `pose` for a player standing at `player`: the ground
+/// The footprint of `pose` for a player whose eye is at `eye`: the ground
 /// its frustum covers out to the haze limit, sampled on a grid of the
 /// frame and, where the frame spans the horizon, on rows just below it.
 /// A ray is marched against the loaded tiles first, so a hill in front is
@@ -469,8 +536,9 @@ const HORIZON_ROWS: [f32; 2] = [1_f32.to_radians(), 3_f32.to_radians()];
 /// player's feet, and a ray that lands past the haze limit is read at the
 /// limit. A ray that rises above the horizontal and meets no tile shows
 /// the sky, which needs nothing drawn, and is no sample.
-fn footprint(pose: &Pose, player: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> Vec<Vec2> {
-    let camera = pose.transform(player, tilt);
+fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> Vec<Vec2> {
+    let camera = pose.transform(eye, tilt);
+    let ground = eye.y - EYE_HEIGHT;
     let pitch = pose.pitch(tilt);
     let half_v = (pose.fov / 2.0).tan();
     let half_h = half_v * aspect;
@@ -479,7 +547,7 @@ fn footprint(pose: &Pose, player: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> V
     let (top, bottom) = (pitch - pose.fov / 2.0, pitch + pose.fov / 2.0);
     if top < 0.0 {
         // The row at which a ray lands on the haze limit, then the horizon rows.
-        let height = camera.translation.y - player.y;
+        let height = camera.translation.y - ground;
         let at_limit = height.atan2(limit);
         rows.extend(
             HORIZON_ROWS.iter().copied().chain(std::iter::once(at_limit))
@@ -502,9 +570,9 @@ fn footprint(pose: &Pose, player: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> V
             if dir.y >= 0.0 {
                 continue;
             }
-            let t = (player.y - from.y) / dir.y;
-            let ground = from.xz() + flat * t;
-            let hit = (ground.distance(from.xz()) <= limit).then_some(ground);
+            let t = (ground - from.y) / dir.y;
+            let landing = from.xz() + flat * t;
+            let hit = (landing.distance(from.xz()) <= limit).then_some(landing);
             points.push(hit.unwrap_or(from.xz() + flat.normalize() * limit));
         }
     }
@@ -512,8 +580,8 @@ fn footprint(pose: &Pose, player: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> V
 }
 
 /// Whether `pose` is safe: every point of its footprint is drawn.
-fn footprint_is_drawn(pose: &Pose, player: Vec3, tilt: Tilt, aspect: f32, map: &Map, drawn: &DrawnGround) -> bool {
-    footprint(pose, player, tilt, aspect, map).into_iter().all(|p| drawn.at(p))
+fn footprint_is_drawn(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, drawn: &DrawnGround) -> bool {
+    footprint(pose, eye, tilt, aspect, map).into_iter().all(|p| drawn.at(p))
 }
 
 /// The loosest pose on the ladder from `top` to the floor at its yaw that
@@ -579,10 +647,10 @@ fn step(current: Pose, wanted: Pose, limit: &mut Option<Pose>, dt: f32, safe: im
 /// and the halvings that then place it to within a hand's width.
 const BOOM_SAMPLES: u32 = 12;
 const BOOM_HALVINGS: u32 = 6;
-/// Clearance kept between the camera and what it would enter, in world units.
-const BOOM_CLEARANCE: f32 = 1.0;
-/// Height above the player's feet the boom is measured from.
-const HEAD_HEIGHT: f32 = 1.5;
+/// Clearance kept between the camera and what it would enter, in world
+/// units: no less than the near plane, or the ground at the frame's
+/// bottom edge is clipped when the boom is shortened onto a slope.
+const BOOM_CLEARANCE: f32 = 0.3;
 
 /// Whether the ground or a solid decorator stands at `at`.
 fn obstructed(at: Vec3, map: &Map) -> bool {
@@ -595,13 +663,13 @@ fn obstructed(at: Vec3, map: &Map) -> bool {
     solid || surface_y(at.xz(), floor, map) + BOOM_CLEARANCE > at.y
 }
 
-/// The fraction of the boom, from the player's head to the camera, that is
+/// The fraction of the boom, from the player's eye to the camera, that is
 /// clear of the ground and of solid decorators: 1 when nothing stands on
 /// it. Sampled along the boom, then bisected between the last clear point
 /// and the first obstructed one, so the fraction is continuous as the
 /// obstruction moves.
-fn boom_clearance(head: Vec3, camera: Vec3, map: &Map) -> f32 {
-    let at = |t: f32| head.lerp(camera, t);
+fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map) -> f32 {
+    let at = |t: f32| eye.lerp(camera, t);
     let Some(first) = (1..=BOOM_SAMPLES).find(|&i| obstructed(at(i as f32 / BOOM_SAMPLES as f32), map)) else {
         return 1.0;
     };
@@ -626,14 +694,15 @@ pub fn update(
 ) {
     let Ok((a_transform, &heading)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
-    let player = a_transform.translation + Vec3::Y * map.radius();
+    let feet = a_transform.translation;
+    let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
 
     // The yaw follows the heading. The ground ahead pulls the pose: open
-    // ground toward the ceiling, a slope down and in, and the lens opens
-    // as far as it takes to keep the rise in the frame. The pulls are
-    // smoothed so the ground sampled ahead cannot flick the pose;
+    // ground toward the ceiling, a climb down to the pose that holds it,
+    // and the lens opens as far as it takes for what is left. The pulls
+    // are smoothed so the ground sampled ahead cannot flick the pose;
     // unloaded ground holds them.
     orbit.follow(heading);
     let aspect = match &*projection {
@@ -641,39 +710,41 @@ pub fn update(
         _ => 1.0,
     };
     let half_width = (aspect * (current.fov / 2.0).tan()).atan();
-    let ahead = ground_ahead(a_transform.translation, heading, half_width, &map);
-    if let Some(ahead) = &ahead {
+    if let Some(ahead) = ground_ahead(feet, heading, half_width, &map) {
         state.openness = ease(state.openness, ahead.open, PULL_EASE, dt);
+        state.climb = ease(state.climb, ahead.climb, PULL_EASE, dt);
     }
     // The plane the camera sweeps on follows the ground under the player.
-    if let Some(tilt) = ground_tilt(a_transform.translation, &map) {
+    if let Some(tilt) = ground_tilt(feet, &map) {
         let k = 1.0 - (-TILT_EASE * dt).exp();
         state.tilt = state.tilt.lerp(tilt, k);
     }
     let tilt = state.tilt;
-    let mut wanted = Pose { yaw: orbit.target_angle(), ..Pose::rest(0.0).toward(Pose::ceiling(0.0), state.openness) };
-    if let Some(ahead) = &ahead {
-        wanted.fov = lens_to_hold(&wanted, tilt, ahead.highest);
-    }
+    let open = Pose { yaw: orbit.target_angle(), ..Pose::rest(0.0).toward(Pose::ceiling(0.0), state.openness) };
+    let mut wanted = open.toward(Pose::hill(open, state.climb, tilt), (state.climb / HILL_GRADE).min(1.0));
+    wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
     let next = if diagnostics.camera_envelope_off {
         step(current, wanted, &mut state.limit, dt, |_| true)
     } else {
-        let drawn = DrawnGround::new(player.xz(), &edges.0, &meshes);
-        step(current, wanted, &mut state.limit, dt, |p| footprint_is_drawn(p, player, tilt, aspect, &map, &drawn))
+        let drawn = DrawnGround::new(feet.xz(), &edges.0, &meshes);
+        step(current, wanted, &mut state.limit, dt, |p| footprint_is_drawn(p, eye, tilt, aspect, &map, &drawn))
     };
 
     // An obstruction on the boom shortens it further: the camera stands
-    // just short, pulling in quickly and letting out slowly.
-    let stand = next.transform(player, tilt);
-    let head = player + Vec3::Y * HEAD_HEIGHT;
-    let clear = boom_clearance(head, stand.translation, &map);
+    // just short, pulling in quickly and letting out slowly. The rig's
+    // slide over the shoulder follows the reach the camera has, from the
+    // last frame's clearance.
+    let stand = next.transform(eye, tilt);
+    let shift = next.shift(next.boom() * state.clearance);
+    let (head, foot) = (eye + shift, stand.translation + shift);
+    let clear = boom_clearance(head, foot, &map);
     state.clearance = if clear < state.clearance {
         ease(state.clearance, clear, SHORTEN_EASE, dt)
     } else {
         ease(state.clearance, clear, LENGTHEN_EASE, dt)
     };
-    let translation = head.lerp(stand.translation, state.clearance);
+    let translation = head.lerp(foot, state.clearance);
 
     state.pose = next;
     orbit.current = next.yaw;
@@ -725,16 +796,16 @@ mod tests {
     fn the_lens_opens_to_hold_a_rise_in_the_frame() {
         let rest = Pose::rest(0.0);
         let up = 20_f32.to_radians();
-        let fov = lens_to_hold(&rest, Vec2::ZERO, Some(up));
+        let fov = lens_to_hold(&rest, Vec2::ZERO, up);
         assert!(fov > rest.fov && fov <= HILL_FOV, "{fov}");
         let held = Pose { fov, ..rest };
         let top = held.pitch(Vec2::ZERO) - held.fov / 2.0;
         assert!(top <= -up + 1e-4 || fov == HILL_FOV, "top {top} above the slope's sightline {}", -up);
-        assert_eq!(lens_to_hold(&rest, Vec2::ZERO, None), rest.fov);
+        assert_eq!(lens_to_hold(&rest, Vec2::ZERO, 0.0), rest.fov);
     }
 
     /// A ray from the eye over flat ground flies free; one cast at a wall
-    /// of tiles meets it, and the sensor reads the wall as a full slope.
+    /// of tiles meets it, and the sensor reads the wall as a climb.
     #[test]
     fn rays_meet_a_wall_and_fly_free_over_a_plain() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
@@ -749,9 +820,9 @@ mod tests {
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
         let plain = ground_ahead(feet, Heading::from_degrees(180.0), 0.5, &map).expect("loaded");
-        assert!(plain.open > 0.9 && plain.highest.is_none(), "open {}", plain.open);
+        assert!(plain.open > 0.9 && plain.climb == 0.0, "open {}", plain.open);
         let wall = ground_ahead(feet, Heading::NORTH, 0.5, &map).expect("loaded");
-        assert!(wall.open < 0.1 && wall.highest.is_some(), "open {}", wall.open);
+        assert!(wall.open < 0.1 && wall.climb > 0.0, "open {}", wall.open);
     }
 
     /// On a slope the plane the camera sweeps on tilts with the ground, so
@@ -778,7 +849,6 @@ mod tests {
         assert!(facing_down.offset(tilt).y > rest.offset(Vec2::ZERO).y, "camera behind a descender stands high");
         let reach = |p: &Pose| p.offset(tilt).length();
         assert!(reach(&facing_up) < reach(&facing_down), "an ellipse: nearer looking up, farther looking down");
-        assert!(facing_up.offset(tilt).y >= rest.boom * MIN_RISE.tan() - 1e-4, "never under the player's feet");
         assert!(facing_up.pitch(tilt) < facing_down.pitch(tilt), "the frame looks up the slope, then down it");
     }
 
@@ -850,6 +920,113 @@ mod tests {
         let (_, closed) = run(&mut pose, &mut limit, 300, &flickering(edge));
         assert!(closed < sliver, "opening back out closed the frame by {closed}");
         assert!(!dips_past(inward)(&pose), "the frame opened back out past the edge that moved away");
+    }
+
+    /// Beneath the eye the boom draws in: full at the eye, shorter the
+    /// lower the pose, as short as it goes at the lowest, and the camera
+    /// never under its clearance above the plane whatever the plane's
+    /// tilt; and the rig slides over the shoulder as it does.
+    #[test]
+    fn the_boom_draws_in_beneath_the_eye() {
+        let at = |elevation: f32| Pose { elevation, ..Pose::rest(0.7) };
+        assert_eq!(at(0.0).boom(), CAMERA_DISTANCE);
+        assert_eq!(at(0.0).shift(at(0.0).boom()).length(), 0.0);
+        let mut last = CAMERA_DISTANCE;
+        for i in 1..=10 {
+            let pose = at(Pose::elevation_min() * i as f32 / 10.0);
+            assert!(pose.boom() < last, "draws in as the pose comes down");
+            for tilt in [Vec2::ZERO, Vec2::new(0.3, -0.4)] {
+                let above = EYE_HEIGHT + pose.offset(tilt).y - pose.boom() * tilt.dot(pose.back());
+                assert!(above >= PLANE_CLEARANCE - 1e-4, "above the plane by {above}");
+            }
+            assert!(pose.shift(pose.boom()).length() > 0.0, "over the shoulder");
+            last = pose.boom();
+        }
+        assert!((last - BOOM_MIN).abs() < 1e-3, "shortest at the lowest: {last}");
+    }
+
+    /// A climb ahead brings the hill pose down until its crest stands its
+    /// rise above the frame's centre, under the top: a steeper climb, a
+    /// lower pose, never above the pose open ground gives and never below
+    /// the boom's shortest; and on a slope the plane has already brought
+    /// the camera down, so the same climb asks less.
+    #[test]
+    fn the_hill_pose_holds_the_climb() {
+        let rest = Pose::rest(0.0);
+        let mut last = rest.elevation;
+        for up in [5, 15, 25, 30] {
+            let up = (up as f32).to_radians();
+            let hill = Pose::hill(rest, up, Vec2::ZERO);
+            assert!(hill.elevation <= last, "lower for a climb of {up}");
+            assert!(hill.elevation >= Pose::elevation_min());
+            let above_centre = hill.pitch(Vec2::ZERO) + up;
+            let placed = (above_centre - CREST_RISE * hill.fov / 2.0).abs() < 1e-4 && above_centre < hill.fov / 2.0;
+            assert!(placed || hill.elevation == Pose::elevation_min(), "crest {above_centre} above the centre for a climb of {up}");
+            last = hill.elevation;
+        }
+        let up = 25_f32.to_radians();
+        let rising_ahead = Vec2::new(0.0, -0.4);
+        assert!(Pose::hill(rest, up, rising_ahead).elevation > Pose::hill(rest, up, Vec2::ZERO).elevation, "the plane does part of the work");
+    }
+
+    /// A stand the pose asks for is one the boom allows: on level ground
+    /// nothing obstructs the boom to the lowest pose, so the camera stands
+    /// where the pose put it, not pulled up the boom toward the head.
+    #[test]
+    fn the_lowest_stand_is_clear_on_level_ground() {
+        use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
+        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        for q in -30..=30 {
+            for r in -30..=30 {
+                map.insert(Qrz { q, r, z: 0 }, ground);
+            }
+        }
+        let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
+        let eye = feet + Vec3::Y * EYE_HEIGHT;
+        for yaw in [0.0, 1.0, 2.5] {
+            let low = Pose { elevation: Pose::elevation_min(), ..Pose::rest(yaw) };
+            let (stand, shift) = (low.transform(eye, Vec2::ZERO), low.shift(low.boom()));
+            let clear = boom_clearance(eye + shift, stand.translation + shift, &map);
+            assert_eq!(clear, 1.0, "the boom at yaw {yaw} is obstructed at {clear}");
+        }
+    }
+
+    /// Where the player's eye lands in the frame, as fractions of the
+    /// half-width and half-height, right and up positive.
+    fn eye_in_frame(pose: &Pose, tilt: Tilt) -> Vec2 {
+        let eye = Vec3::new(3.0, 20.0, -7.0);
+        let mut camera = pose.transform(eye, tilt);
+        camera.translation += pose.shift(pose.boom());
+        let p = camera.compute_affine().inverse().transform_point3(eye);
+        let half_v = (pose.fov / 2.0).tan();
+        Vec2::new(p.x / -p.z / (half_v * WIDE), p.y / -p.z / half_v)
+    }
+
+    /// The slide over the shoulder follows the reach the camera has, not
+    /// the boom the pose asked for: nothing at full reach, more the
+    /// shorter it is, so an obstruction that draws the camera in brings
+    /// the shoulder with it.
+    #[test]
+    fn the_shoulder_follows_the_reach() {
+        let pose = Pose::rest(0.4);
+        assert_eq!(pose.shift(CAMERA_DISTANCE).length(), 0.0);
+        let (near, far) = (pose.shift(4.0).length(), pose.shift(30.0).length());
+        assert!(near > far && far > 0.0, "{near} at 4, {far} at 30");
+    }
+
+    /// The shoulder moves the player across the frame, not down it: at
+    /// full boom the eye is on the frame's centre line, a third of the way
+    /// down; drawn in, it is left of it, at the same height.
+    #[test]
+    fn the_shoulder_moves_the_player_across_the_frame() {
+        let level = Pose { elevation: 0.0, ..Pose::rest(1.1) };
+        let at_full = eye_in_frame(&level, Vec2::ZERO);
+        assert!(at_full.x.abs() < 1e-4 && (at_full.y + PLAYER_DROP).abs() < 0.01, "{at_full:?}");
+        let low = Pose { elevation: Pose::elevation_min(), ..level };
+        let drawn_in = eye_in_frame(&low, Vec2::ZERO);
+        assert!(drawn_in.x < -0.1, "left of centre: {drawn_in:?}");
+        assert!((drawn_in.y - at_full.y).abs() < 0.02, "same height: {drawn_in:?} vs {at_full:?}");
     }
 
     /// Tightening is monotone: each step toward the floor reaches no further
