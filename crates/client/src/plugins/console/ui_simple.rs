@@ -176,6 +176,24 @@ pub fn update_console_menu(
                         TextColor(state_color(!diagnostics_state.camera_envelope_off)),
                     ));
 
+                    parent.spawn((
+                        Text::new(format!(
+                            "4. Terrain                  [{}]",
+                            if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }
+                        )),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(!diagnostics_state.terrain_hidden)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(format!(
+                            "5. Camera Close-up          [{}]",
+                            if diagnostics_state.camera_closeup { "On" } else { "Off" }
+                        )),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(state_color(!diagnostics_state.camera_closeup)),
+                    ));
+
 
                     parent.spawn((
                         Text::new(""),
@@ -252,11 +270,11 @@ pub fn update_console_menu(
 
                     parent.spawn((
                         Text::new(format!(
-                            "2. Toggle Shadow Filter     [{}]",
-                            if diagnostics_state.hard_shadows { "2x2" } else { "Gaussian" }
+                            "2. Shadows                  [{}]",
+                            diagnostics_state.shadows.label()
                         )),
                         TextFont { font_size: 16.0, ..default() },
-                        TextColor(state_color(!diagnostics_state.hard_shadows)),
+                        TextColor(state_color(diagnostics_state.shadows == crate::plugins::diagnostics::Shadows::Gaussian)),
                     ));
 
                     parent.spawn((

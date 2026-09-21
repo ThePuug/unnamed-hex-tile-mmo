@@ -8,12 +8,44 @@ pub struct DiagnosticsState {
     pub metrics_overlay_visible: bool,
     /// Every camera renders without MSAA.
     pub msaa_off: bool,
-    /// The sun's shadows are filtered by the hardware's 2×2 tap instead of
-    /// the Gaussian.
-    pub hard_shadows: bool,
+    /// How the sun's shadows are drawn, if at all.
+    pub shadows: Shadows,
+    /// Every terrain mesh is hidden.
+    pub terrain_hidden: bool,
+    /// The camera holds its lowest pose — the boom at its shortest, looking
+    /// up — instead of following the ground: an actor seen close.
+    pub camera_closeup: bool,
     /// The camera goes straight to its wanted pose, showing whatever the
     /// envelope would have hidden.
     pub camera_envelope_off: bool,
+}
+
+/// The sun's shadows: filtered by the Gaussian, by the hardware's 2×2
+/// tap, or not cast at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shadows {
+    Gaussian,
+    Hard,
+    Off,
+}
+
+impl Shadows {
+    /// The next setting the toggle cycles to.
+    pub fn next(self) -> Self {
+        match self {
+            Shadows::Gaussian => Shadows::Hard,
+            Shadows::Hard => Shadows::Off,
+            Shadows::Off => Shadows::Gaussian,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Shadows::Gaussian => "Gaussian",
+            Shadows::Hard => "2x2",
+            Shadows::Off => "Off",
+        }
+    }
 }
 
 impl Default for DiagnosticsState {
@@ -23,7 +55,9 @@ impl Default for DiagnosticsState {
             lighting: LightingClock::default(),
             metrics_overlay_visible: false,
             msaa_off: false,
-            hard_shadows: false,
+            shadows: Shadows::Gaussian,
+            terrain_hidden: false,
+            camera_closeup: false,
             camera_envelope_off: false,
         }
     }

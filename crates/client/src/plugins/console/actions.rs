@@ -1,7 +1,7 @@
 use bevy::{light::ShadowFilteringMethod, prelude::*};
 
 use crate::{
-    plugins::diagnostics::{DateField, DiagnosticsState, grid::HexGridOverlay},
+    plugins::diagnostics::{DateField, DiagnosticsState, Shadows, grid::HexGridOverlay},
     components::PlayerOriginDebug,
 };
 use common_bevy::components::behaviour::Behaviour;
@@ -21,6 +21,8 @@ pub enum DevConsoleAction {
     ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
+    ToggleTerrainHidden,
+    ToggleCameraCloseup,
 
     // Top-level toggles
     ToggleMetricsOverlay,
@@ -50,6 +52,8 @@ pub fn execute_console_actions(
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut camera_msaa: Query<&mut Msaa, With<Camera>>,
     world_camera: Query<Entity, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
+    mut sun: Query<&mut DirectionalLight, With<common_bevy::components::Sun>>,
+    mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
@@ -105,12 +109,31 @@ pub fn execute_console_actions(
                 info!("Camera envelope: {}", if diagnostics_state.camera_envelope_off { "LIFTED" } else { "ON" });
             }
             DevConsoleAction::ToggleShadowFilter => {
-                diagnostics_state.hard_shadows = !diagnostics_state.hard_shadows;
-                let method = if diagnostics_state.hard_shadows { ShadowFilteringMethod::Hardware2x2 } else { ShadowFilteringMethod::Gaussian };
+                let shadows = diagnostics_state.shadows.next();
+                diagnostics_state.shadows = shadows;
+                let method = match shadows {
+                    Shadows::Hard => ShadowFilteringMethod::Hardware2x2,
+                    _ => ShadowFilteringMethod::Gaussian,
+                };
                 for camera in world_camera.iter() {
                     commands.entity(camera).insert(method);
                 }
-                info!("Shadow filter: {:?}", method);
+                for mut light in sun.iter_mut() {
+                    light.shadows_enabled = shadows != Shadows::Off;
+                }
+                info!("Shadows: {}", shadows.label());
+            }
+            DevConsoleAction::ToggleTerrainHidden => {
+                diagnostics_state.terrain_hidden = !diagnostics_state.terrain_hidden;
+                let shown = if diagnostics_state.terrain_hidden { Visibility::Hidden } else { Visibility::Inherited };
+                for mut visibility in terrain.iter_mut() {
+                    *visibility = shown;
+                }
+                info!("Terrain: {}", if diagnostics_state.terrain_hidden { "HIDDEN" } else { "shown" });
+            }
+            DevConsoleAction::ToggleCameraCloseup => {
+                diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;
+                info!("Camera close-up: {}", if diagnostics_state.camera_closeup { "ON" } else { "off" });
             }
             DevConsoleAction::ToggleMsaa => {
                 diagnostics_state.msaa_off = !diagnostics_state.msaa_off;

@@ -733,7 +733,11 @@ pub fn update(
     let mut wanted = open.toward(Pose::hill(open, state.climb, tilt), (state.climb / HILL_GRADE).min(1.0));
     wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
-    let next = if diagnostics.camera_envelope_off {
+    // The close-up holds the lowest pose whatever the ground says.
+    if diagnostics.camera_closeup {
+        wanted = Pose { yaw: wanted.yaw, elevation: Pose::elevation_min(), fov: CEILING_FOV };
+    }
+    let next = if diagnostics.camera_envelope_off || diagnostics.camera_closeup {
         step(current, wanted, &mut state.limit, dt, |_| true)
     } else {
         let drawn = DrawnGround::new(feet.xz(), &edges.0, &meshes);
