@@ -37,9 +37,9 @@ const WAIT_EASE: f32 = 1.5;
 /// Exponential decay constant of the pull's smoothing, so the ground
 /// sampled ahead cannot flick the pose as the player walks.
 const PULL_EASE: f32 = 2.0;
-/// Exponential decay constants of the boom's clearance: shortening away
-/// from an obstruction is quick, lengthening back out is slow.
-const SHORTEN_EASE: f32 = 12.0;
+/// Exponential decay constant of the boom's clearance letting back out
+/// after an obstruction. Shortening onto one is immediate, so the camera
+/// never enters what stands on the boom.
 const LENGTHEN_EASE: f32 = 2.0;
 /// Threshold below which the yaw's easing snaps to its target.
 const SNAP_THRESHOLD: f32 = 0.005;
@@ -681,6 +681,13 @@ fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map) -> f32 {
     clear
 }
 
+/// The boom's clearance this frame, from `current` toward `measured`:
+/// onto an obstruction at once, so the camera never enters what stands
+/// on the boom; back out eased.
+fn clearance_step(current: f32, measured: f32, dt: f32) -> f32 {
+    ease(current, measured, LENGTHEN_EASE, dt).min(measured)
+}
+
 pub fn update(
     mut orbit: ResMut<CameraOrbit>,
     mut state: ResMut<CameraPose>,
@@ -732,18 +739,12 @@ pub fn update(
     };
 
     // An obstruction on the boom shortens it further: the camera stands
-    // just short, pulling in quickly and letting out slowly. The rig's
-    // slide over the shoulder follows the reach the camera has, from the
-    // last frame's clearance.
+    // just short. The rig's slide over the shoulder follows the reach the
+    // camera has, from the last frame's clearance.
     let stand = next.transform(eye, tilt);
     let shift = next.shift(next.boom() * state.clearance);
     let (head, foot) = (eye + shift, stand.translation + shift);
-    let clear = boom_clearance(head, foot, &map);
-    state.clearance = if clear < state.clearance {
-        ease(state.clearance, clear, SHORTEN_EASE, dt)
-    } else {
-        ease(state.clearance, clear, LENGTHEN_EASE, dt)
-    };
+    state.clearance = clearance_step(state.clearance, boom_clearance(head, foot, &map), dt);
     let translation = head.lerp(foot, state.clearance);
 
     state.pose = next;
@@ -1013,6 +1014,17 @@ mod tests {
         assert_eq!(pose.shift(CAMERA_DISTANCE).length(), 0.0);
         let (near, far) = (pose.shift(4.0).length(), pose.shift(30.0).length());
         assert!(near > far && far > 0.0, "{near} at 4, {far} at 30");
+    }
+
+    /// An obstruction shortens the boom at once, so the camera never
+    /// enters what stands on it; the boom lets back out eased.
+    #[test]
+    fn an_obstruction_shortens_the_boom_at_once() {
+        let dt = 1.0 / 60.0;
+        assert_eq!(clearance_step(1.0, 0.3, dt), 0.3);
+        let out = clearance_step(0.3, 1.0, dt);
+        assert!(out > 0.3 && out < 1.0, "eased out to {out}");
+        assert!(clearance_step(0.9, 0.3, dt) <= 0.3);
     }
 
     /// The shoulder moves the player across the frame, not down it: at
