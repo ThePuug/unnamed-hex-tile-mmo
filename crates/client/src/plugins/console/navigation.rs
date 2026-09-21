@@ -10,6 +10,7 @@ pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
     mut action_writer: MessageWriter<DevConsoleAction>,
+    time: Res<Time>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     // Toggle console visibility with NumpadDivide
@@ -79,7 +80,7 @@ pub fn handle_console_input(
             handle_root_menu(&mut keyboard, &mut console, &mut action_writer);
         }
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
-        MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer),
+        MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer, time.delta_secs()),
         MenuPath::Video => handle_video_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::Flyover => handle_flyover_menu(&mut keyboard, &mut console, &mut action_writer, &flyover),
@@ -157,14 +158,31 @@ fn handle_terrain_menu(
     }
 }
 
+/// A held arrow scrubs the lighting clock at this many times game time's
+/// pace, eased up to from that pace over this many seconds of holding.
+const SCRUB_MAX_RATE: f32 = 60.0;
+const SCRUB_EASE_SECS: f32 = 3.0;
+
 /// Digits typed into the lighting hour; Enter holds the clock there, or
-/// with nothing typed returns it to game time.
+/// with nothing typed returns it to game time. Left and right arrows
+/// rewind and forward it, quickening the longer they are held.
 fn handle_lighting_time(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
+    dt: f32,
 ) {
     use crate::plugins::diagnostics::LightingClock;
+
+    let dir = keyboard.pressed(KeyCode::ArrowRight) as i32 - keyboard.pressed(KeyCode::ArrowLeft) as i32;
+    if dir != 0 {
+        console.lighting_scrub_secs += dt;
+        let eased = (console.lighting_scrub_secs / SCRUB_EASE_SECS).min(1.0);
+        let rate = 1.0 + (SCRUB_MAX_RATE - 1.0) * eased * eased;
+        action_writer.write(DevConsoleAction::ScrubLightingClock((dir as f32 * rate * dt * 1000.0) as i128));
+    } else if console.lighting_scrub_secs != 0.0 {
+        console.lighting_scrub_secs = 0.0;
+    }
 
     if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
         keyboard.clear_just_pressed(KeyCode::Enter);

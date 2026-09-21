@@ -48,6 +48,8 @@ pub struct DevConsole {
     pub summary_radius_buf: String,
     /// Text buffer for the lighting hour (when in LightingTime menu)
     pub lighting_time_buf: String,
+    /// How long an arrow has scrubbed the lighting clock, in seconds.
+    pub lighting_scrub_secs: f32,
 }
 
 impl Default for DevConsole {
@@ -59,6 +61,7 @@ impl Default for DevConsole {
             goto_input: None,
             summary_radius_buf: String::new(),
             lighting_time_buf: String::new(),
+            lighting_scrub_secs: 0.0,
         }
     }
 }

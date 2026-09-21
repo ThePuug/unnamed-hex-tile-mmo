@@ -34,15 +34,19 @@ pub const INPUT_SEND_MS: u16 = 50;
 pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
+    console: Res<crate::plugins::console::DevConsole>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
 ) {
-    // The character panel is modal: while it is open every gameplay key
+    // The character panel and the console's lighting panel, whose arrows
+    // scrub the clock, are modal: while one is open every gameplay key
     // reads as released, so the character stops and nothing fires.
+    let modal = panel.visible
+        || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
     let released = ButtonInput::default();
-    let keyboard: &ButtonInput<KeyCode> = if panel.visible { &released } else { &keyboard };
+    let keyboard: &ButtonInput<KeyCode> = if modal { &released } else { &keyboard };
     let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();

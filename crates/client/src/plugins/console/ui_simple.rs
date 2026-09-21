@@ -208,6 +208,12 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new("Left/Right: rewind / forward, hold to hurry"),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: 8.0, ..default() },
                     ));

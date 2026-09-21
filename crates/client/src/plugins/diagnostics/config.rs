@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS};
+use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, YEAR_MS};
 
 #[derive(Resource)]
 pub struct DiagnosticsState {
@@ -69,6 +69,13 @@ impl LightingClock {
         self.held = None;
     }
 
+    /// Moves the clock `delta` ms either way within the year, holding it
+    /// first where it read game time `game` if it was not held.
+    pub fn scrub(&mut self, game: u128, delta: i128) {
+        let now = self.at(game) as i128;
+        self.held = Some((now + delta).rem_euclid(YEAR_MS as i128) as u128);
+    }
+
     /// An hour of the day typed as `HHMM` or `HH`, in ms of the day.
     pub fn parse_time(text: &str) -> Option<u128> {
         let digits: Vec<u128> = text.chars().map(|c| c.to_digit(10).map(u128::from)).collect::<Option<_>>()?;
@@ -104,6 +111,12 @@ mod tests {
         assert_eq!(clock.at(game), game);
         clock.hold(game, LightingClock::parse_time("7").unwrap());
         assert_eq!(clock.at(game), 3 * DAY_MS + 7 * HOUR_MS);
+
+        clock.sync();
+        clock.scrub(game, -(HOUR_MS as i128));
+        assert_eq!(clock.at(game), game - HOUR_MS, "a scrub from game time holds an hour behind it");
+        clock.scrub(game, -(game as i128) - 1);
+        assert_eq!(clock.at(game), YEAR_MS - HOUR_MS - 1, "rewinding past the start wraps to the year's end");
 
         assert_eq!(LightingClock::parse_time("2460"), None);
         assert_eq!(LightingClock::parse_time("123"), None);

@@ -13,6 +13,8 @@ pub enum DevConsoleAction {
     ToggleGrid,
     /// Hold the lighting clock at an hour of the day, in ms.
     SetLightingTime(u128),
+    /// Move the held lighting clock by this many ms, either way.
+    ScrubLightingClock(i128),
     SyncLightingClock,
     ToggleCameraEnvelope,
     ToggleMsaa,
@@ -83,6 +85,9 @@ pub fn execute_console_actions(
             DevConsoleAction::SetLightingTime(ms_of_day) => {
                 diagnostics_state.lighting.hold(game, *ms_of_day);
                 info!("Lighting clock: held at {}", diagnostics_state.lighting.held_at().unwrap_or_default());
+            }
+            DevConsoleAction::ScrubLightingClock(delta) => {
+                diagnostics_state.lighting.scrub(game, *delta);
             }
             DevConsoleAction::SyncLightingClock => {
                 diagnostics_state.lighting.sync();

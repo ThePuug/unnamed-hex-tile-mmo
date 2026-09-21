@@ -334,8 +334,10 @@ fn execute_admin_actions(
 }
 
 /// Smooth camera movement using hex-direction arrow keys with speed ramp.
+/// The arrows are the console's while its lighting panel is up.
 fn flyover_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
+    console: Res<crate::plugins::console::DevConsole>,
     mut orbit: ResMut<CameraOrbit>,
     time: Res<Time>,
     map: Res<Map>,
@@ -345,7 +347,8 @@ fn flyover_movement(
     let dt = time.delta_secs();
 
     let shift_pressed = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let has_arrows = !shift_pressed && keyboard.any_pressed([
+    let console_has_arrows = console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime;
+    let has_arrows = !shift_pressed && !console_has_arrows && keyboard.any_pressed([
         KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight,
     ]);
 

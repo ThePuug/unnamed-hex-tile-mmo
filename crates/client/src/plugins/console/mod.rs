@@ -8,7 +8,7 @@ use ui_simple as ui;
 use bevy::prelude::*;
 
 // Re-export public types
-pub use state::DevConsole;
+pub use state::{DevConsole, MenuPath};
 pub use actions::DevConsoleAction;
 
 /// Plugin that provides a hierarchical, numpad-navigable developer console
