@@ -1,11 +1,11 @@
 //! Dresses actors in what the server says they wear, and keeps the local
 //! player's bag.
 //!
-//! A piece's GLB ships its wearer's cut with a copy of that body's rig and
-//! mesh, the copy the build proves it on. The client keeps the piece, points
-//! its skin's joints at the actor's own joints of the same names and drops
-//! the copies, so the actor's clips move the piece and nothing is fitted at
-//! load.
+//! A skinned piece's GLB ships its wearer's cut with a copy of that body's
+//! rig, the joints its skin names; the body itself is not in it. The client
+//! keeps the piece, points its skin's joints at the actor's own joints of
+//! the same names and drops the copy, so the actor's clips move the piece
+//! and nothing is fitted at load.
 
 use bevy::{mesh::skinning::SkinnedMesh, prelude::*};
 use std::collections::{HashMap, HashSet};
@@ -118,8 +118,8 @@ pub fn dress(
 
 /// Hangs each unbound piece from its wearer's rig once both scenes are
 /// spawned: a skinned piece's joints are pointed at the actor's, a socket
-/// piece's nodes are moved onto the rig's sockets, and the piece's copies
-/// of the body and its rig are dropped.
+/// piece's nodes are moved onto the rig's sockets, and the piece's copy of
+/// the rig is dropped.
 pub fn bind_worn(
     mut commands: Commands,
     mut pieces: Query<(Entity, &ChildOf, &mut Worn)>,
@@ -200,12 +200,6 @@ pub fn bind_worn(
             let is_root = parents.get(joint).map_or(true, |p| !copies.contains(&p.parent()));
             if is_root {
                 commands.entity(joint).try_despawn();
-            }
-        }
-        let body_mesh = format!("{body}-mesh");
-        for e in children.iter_descendants(piece) {
-            if names.get(e).is_ok_and(|n| n.as_str() == body_mesh) {
-                commands.entity(e).try_despawn();
             }
         }
         if let Ok((_, _, mut worn)) = pieces.get_mut(piece) {

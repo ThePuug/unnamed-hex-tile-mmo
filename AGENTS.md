@@ -214,7 +214,7 @@ it out from `land` once the ground comes.
 **Worn pieces.** A piece loads from `models/<piece>-<actor>.glb`, scene =
 style, as a child of the actor. `client::systems::equipment` points its
 skin's joints at the actor's by name, or hangs a socket piece from the rig's
-`socket.<name>` node, and drops the GLB's copies of the body and rig.
+`socket.<name>` node, and drops the GLB's copy of the rig.
 `client::systems::hiding` reads the node extras: `hides` regions in the
 build's z-up frame, judged at `_CENTRE`; `covers`, triangles of the actor's
 mesh; `socket`. It swaps index buffers on cached copies shared by every
