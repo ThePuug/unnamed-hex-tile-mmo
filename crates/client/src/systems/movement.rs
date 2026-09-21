@@ -122,7 +122,9 @@ pub fn simulate_remote(
     }
 }
 
-/// Advance VisualPosition interpolation each frame.
+/// Advance VisualPosition interpolation once per frame, before anything
+/// reads it: `current()` then holds through the schedules that follow,
+/// since every re-target starts from it.
 pub fn advance_interpolation(
     time: Res<Time>,
     mut query: Query<&mut VisualPosition>,

@@ -218,13 +218,17 @@ channel or lake surface at zero is under it.
 ## Pinned system ordering
 
 Ordering appears in about twenty places, most of it UI setup chaining off
-`camera::setup` and sequencing internal to one plugin. These two are the ones
-that produce gameplay bugs when broken:
+`camera::setup` and sequencing internal to one plugin. This is the one that
+produces gameplay bugs when broken:
 
-- `advance_interpolation.before(actor::update)` — `VisualPosition` advances
-  before `Transform` reads `current()`.
 - `movement::do_loc.after(movement::apply_displace)` — a `Loc` that ends a
   slide must see the `Displacing` marker the slide inserted, or it snaps.
+
+`VisualPosition` needs no pin: `advance_interpolation` runs in `PreUpdate`,
+and every re-target starts from `current()`, so `actor::update` and
+`camera::update` read the same value in any order. A reader that takes the
+actor's `Transform` instead sees this frame's or last frame's depending on
+the executor, and the player shakes in a close frame.
 
 Remote-entity interpolation is not its own system: `movement::apply_intent`
 seeds the simulation, `movement::simulate_remote` advances `Position` and

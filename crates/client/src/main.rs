@@ -103,8 +103,13 @@ fn main() {
         movement::predict_local_player,
     ));
 
+    // The visual advances once per frame here, so every Update reader —
+    // the actor's transform, the camera — sees the same current() whatever
+    // their order. A fixed tick between re-targets it from current(), which
+    // does not move it.
     app.add_systems(PreUpdate, (
         renet::write_do,
+        movement::advance_interpolation,
     ));
 
     app.add_systems(Update, (
@@ -112,7 +117,6 @@ fn main() {
         movement::apply_intent,
         movement::apply_displace,
         actor::try_gcd,
-        movement::advance_interpolation.before(actor::update), // Advance VisualPosition before rendering
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,

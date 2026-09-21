@@ -12,7 +12,7 @@ use crate::plugins::{diagnostics::DiagnosticsState, vignette::VignetteSettings};
 use crate::resources::{EdgeCenters, SummaryMeshes};
 use crate::systems::world::DrawnGround;
 use common_bevy::{
-    components::{heading::{Heading, HEADING_SLOTS}, *},
+    components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
     resources::map::Map,
     systems::movement::{standing_y, surface_y},
 };
@@ -692,16 +692,18 @@ pub fn update(
     mut orbit: ResMut<CameraOrbit>,
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    actor: Query<(&Transform, &Heading), (With<Actor>, Without<Camera3d>)>,
+    actor: Query<(&VisualPosition, &Heading), (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
     meshes: Res<SummaryMeshes>,
     edges: Res<EdgeCenters>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
 ) {
-    let Ok((a_transform, &heading)) = actor.single() else { return };
+    let Ok((visual, &heading)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
-    let feet = a_transform.translation;
+    // The visual, not the actor's Transform: the same value the actor is
+    // drawn at, whichever of the two systems runs first.
+    let feet = visual.current();
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
