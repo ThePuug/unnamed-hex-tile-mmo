@@ -17,6 +17,16 @@ pub struct ClientNet {
     send_timer: f32,
 }
 
+/// Tells the server the client is leaving. Without it the server learns
+/// of a closed window only from netcode's 15 s timeout, and the player
+/// stands there for a client that reconnects in the meantime, at the
+/// very tile it spawns on.
+impl Drop for ClientNet {
+    fn drop(&mut self) {
+        self.transport.disconnect();
+    }
+}
+
 impl ClientNet {
     fn new() -> Self {
         let server_addr = "127.0.0.1:5000".parse().unwrap();
