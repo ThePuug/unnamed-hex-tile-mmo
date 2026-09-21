@@ -372,6 +372,10 @@ pub fn dispatch_summary_tasks(
         return;
     }
     *backlog = false;
+    if data_changed {
+        summary_meshes.epoch += 1;
+    }
+    let epoch = summary_meshes.epoch;
     if let Some(pos) = camera_pos {
         *last_eval_pos = Some(pos);
     }
@@ -495,15 +499,14 @@ pub fn dispatch_summary_tasks(
 
     for (d2, region_key, mesh_origin) in ordered {
         if mesh_dispatched >= MAX_MESH_TASKS { break; }
-        if let Some(state) = summary_meshes.states.get(&region_key) {
-            if state.task.is_some() {
-                continue;
-            }
-            // Built regions are final: their heights are durable. A region
-            // still waiting for data is retried only when data arrived.
-            if state.entity.is_some() || (state.waiting && !data_changed) {
-                continue;
-            }
+        // Built regions are final: their heights are durable. A region
+        // still waiting for data is retried once data has arrived since its
+        // build was dispatched, judged by epoch and never by this run's
+        // flag alone: the flag is consumed whether or not the region could
+        // act on it, and it cannot while a build is in flight or once the
+        // task budget is spent.
+        if summary_meshes.states.get(&region_key).is_some_and(|state| !state.wants_build(epoch)) {
+            continue;
         }
 
         let radius = region_key.r;
@@ -531,6 +534,7 @@ pub fn dispatch_summary_tasks(
 
         if let Some(state) = summary_meshes.states.get_mut(&region_key) {
             state.task = Some(task);
+            state.epoch = epoch;
         } else {
             summary_meshes.states.insert(
                 region_key,
@@ -547,6 +551,7 @@ pub fn dispatch_summary_tasks(
                     base_tri_count: 0,
                     base_water: Default::default(),
                     waiting: false,
+                    epoch,
                 },
             );
         }
@@ -1202,6 +1207,7 @@ mod tests {
                         base_tri_count: 0,
                         base_water: Default::default(),
                         waiting: false,
+                        epoch: 0,
                     });
                 }
             }
@@ -1224,6 +1230,37 @@ mod tests {
         let far = Vec2::new(radius, 0.0);
         advance_edges(&mut edges, &bands, far, 0.05, &meshes);
         assert_eq!(edges[&fine], far);
+    }
+
+    /// A region whose build found no data is retried once data has arrived
+    /// since that build was dispatched, however many runs later, and not
+    /// before: neither a build in flight nor a spent budget loses the data.
+    #[test]
+    fn a_waiting_region_is_retried_once_data_has_arrived_since_its_build() {
+        let mut state = SummaryMeshState {
+            task: None,
+            entity: None,
+            mesh_handle: None,
+            tri_count: 0,
+            mesh_origin: Vec3::ZERO,
+            base_positions: Vec::new(),
+            base_normals: Vec::new(),
+            base_coarse: Vec::new(),
+            base_indices: Vec::new(),
+            base_tri_count: 0,
+            base_water: Default::default(),
+            waiting: true,
+            epoch: 3,
+        };
+        assert!(!state.wants_build(3), "nothing new to build from");
+        assert!(state.wants_build(4), "data arrived after the build was dispatched");
+        assert!(state.wants_build(7), "and stays wanted until a build is dispatched");
+
+        state.waiting = false;
+        assert!(state.wants_build(3), "a fresh region builds at any epoch");
+
+        state.entity = Some(Entity::from_raw_u32(1).unwrap());
+        assert!(!state.wants_build(9), "a built region is final");
     }
 
     /// Coverage invariant for the LoD band system: every ground point inside

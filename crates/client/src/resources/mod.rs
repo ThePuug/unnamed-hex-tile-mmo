@@ -307,9 +307,23 @@ pub struct SummaryMeshState {
     /// as a child of its entity, so it lives and dies with the ground.
     pub base_water: WaterGeometry,
     /// The last build yielded nothing — a cell or ring cell had no data
-    /// yet. Retried when data arrives, not on every run: retrying every
-    /// frame would take the build slots from regions that can be built.
+    /// yet. Retried once data has arrived since `epoch`, not on every run:
+    /// retrying every frame would take the build slots from regions that
+    /// can be built.
     pub waiting: bool,
+    /// `SummaryMeshes::epoch` when the last build was dispatched. Data that
+    /// lands while a build is in flight, or on a run whose task budget was
+    /// spent before this region's turn, is data the region has not built
+    /// from, and that run's own change flag is gone by the time it could.
+    pub epoch: u64,
+}
+
+impl SummaryMeshState {
+    /// Whether a build may be dispatched at data `epoch`: none in flight,
+    /// nothing built, and not still waiting on the data it last built from.
+    pub fn wants_build(&self, epoch: u64) -> bool {
+        self.task.is_none() && self.entity.is_none() && !(self.waiting && self.epoch == epoch)
+    }
 }
 
 /// Raw geometry of the water over a mesh region; empty where none stands.
@@ -336,6 +350,9 @@ pub struct SummaryMeshBuildResult {
 #[derive(Resource, Default)]
 pub struct SummaryMeshes {
     pub states: HashMap<MeshRegionKey, SummaryMeshState>,
+    /// Counts the dispatch runs that found new map or summary data. A
+    /// waiting region is retried while its build's epoch is behind it.
+    pub epoch: u64,
 }
 
 /// Marker component for summary mesh entities.
