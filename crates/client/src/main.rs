@@ -72,6 +72,8 @@ fn main() {
         VignettePlugin,
         WaterPlugin,
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
+        MaterialPlugin::<world::DiscMaterial>::default(),
+        MaterialPlugin::<world::SkyMaterial>::default(),
     ));
 
     app.add_message::<Do>();
@@ -177,6 +179,7 @@ fn main() {
 
     app.add_systems(PostUpdate, (
         renet::send_try,
+        world::follow_camera,
     ));
 
     app.insert_resource(common_bevy::resources::map::Map::new(

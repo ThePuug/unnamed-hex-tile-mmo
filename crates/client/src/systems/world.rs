@@ -3,45 +3,142 @@ use std::f32::consts::PI;
 
 use bevy::{
     color::ColorToComponents,
+    image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     math::ops::*,
-    pbr::DistanceFog,
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{DistanceFog, MaterialPipeline, MaterialPipelineKey},
     prelude::*,
+    render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError},
+    shader::ShaderRef,
     tasks::{block_on, futures_lite::future},
 };
 use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 
 pub const TILE_SIZE: f32 = 1.;
 
-/// Illuminance of the sun at noon and of the moon when full, in lux. Their
-/// ratio is what the haze dims by at night.
+/// Illuminance of the sun at noon, in lux. The moon's share of it is what
+/// the haze dims by at night.
 const SUN_ILLUMINANCE: f32 = 10_000.;
-const MOON_ILLUMINANCE: f32 = 200.;
+/// Apparent diameters of the sun's and the moon's discs. Earth's are both
+/// about half a degree; the sun's is four times that so it is more than
+/// a dot in the frame, and the moon's is what its light asks for.
+const SUN_ANGULAR_DIAMETER: f32 = 2_f32.to_radians();
+const MOON_ANGULAR_DIAMETER: f32 = 6_f32.to_radians();
+/// Illuminance of the moon when full, in lux: Earth's full moon gives a
+/// quarter lux from half a degree, and light goes with apparent area, so
+/// a moon so many times wider gives that many squared times as much.
+const EARTH_MOON_LUX: f32 = 0.25;
+const EARTH_MOON_ANGULAR_DIAMETER: f32 = 0.5_f32.to_radians();
+const MOON_ILLUMINANCE: f32 = EARTH_MOON_LUX
+    * (MOON_ANGULAR_DIAMETER / EARTH_MOON_ANGULAR_DIAMETER)
+    * (MOON_ANGULAR_DIAMETER / EARTH_MOON_ANGULAR_DIAMETER);
+
+/// The sky: a dome about the camera, past the discs and inside the far
+/// plane, one colour everywhere but toward the sun, where a glow of the
+/// sun's tint sits on the horizon under its bearing. Shaded by
+/// `shaders/sky.wgsl`.
+#[derive(Component)]
+pub struct SkyDome;
+
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct SkyMaterial {
+    /// The sun's bearing on the ground, a unit vector in xz.
+    #[uniform(0)]
+    pub bearing: Vec4,
+    #[uniform(0)]
+    pub base: LinearRgba,
+    #[uniform(0)]
+    pub glow: LinearRgba,
+}
+
+impl Material for SkyMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/sky.wgsl".into()
+    }
+
+    /// The camera is inside the dome, so its inner faces must draw.
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// The dome's radius: past the discs, inside the culling far plane.
+fn sky_radius_wu() -> f32 {
+    common_bevy::summary::reach_wu() * 1.4
+}
 
 /// The sun's and the moon's discs in the sky, unlit and unfogged, held
 /// `disc_distance_wu` from the camera in their light's direction.
 #[derive(Component)]
 pub enum Disc { Sun, Moon }
 
+/// A disc's material: the lit hemisphere of a sphere facing the camera,
+/// lit from `sun` in the disc's own frame, +z toward the camera, so the
+/// moon's phase shows with its lit limb toward the sun and the sun is
+/// full; the rest is the sky. The body's `face`, if it has one, is shown
+/// once and whole, inscribed. Below `waterline` there is no disc, so it
+/// sets into the sea instead of showing through it. Shaded by
+/// `shaders/disc.wgsl`.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct DiscMaterial {
+    #[uniform(0)]
+    pub sun: Vec4,
+    #[uniform(0)]
+    pub color: LinearRgba,
+    #[uniform(0)]
+    pub waterline: f32,
+    #[texture(1)]
+    #[sampler(2)]
+    pub face: Option<Handle<Image>>,
+}
+
+impl DiscMaterial {
+    fn new(face: Option<Handle<Image>>) -> Self {
+        Self { sun: Vec4::Z, color: LinearRgba::WHITE, waterline: crate::plugins::water::SEA_LEVEL_Y, face }
+    }
+}
+
+impl Material for DiscMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/disc.wgsl".into()
+    }
+
+    /// The unlit part is the sky: nothing of a body is darker than it.
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+}
+
 /// Past the frontier, so the ground hides a disc as it sets, and inside
 /// the culling far plane.
 fn disc_distance_wu() -> f32 {
     common_bevy::summary::reach_wu() * 1.25
 }
-/// Apparent diameter of either disc: four times the true half-degree,
-/// which is a dot in the frame.
-const DISC_ANGULAR_DIAMETER: f32 = 2_f32.to_radians();
-/// A disc over the sky's brightness: the sky is the same light scattered,
-/// so at one the sun's disc would sink into it, and the moon's rises and
-/// sets into the sun's sky.
-const DISC_BRIGHTNESS: f32 = 4.0;
+/// The sun's disc over the sky's brightness: the sky is the same light
+/// scattered, so at one the disc would sink into it. The moon's disc is
+/// its face at the albedo painted, sunlit: about a clear day sky's
+/// brightness, so it is faint by day and bright at dusk, and brighter
+/// would flatten the face's relief against the tonemapper's shoulder.
+const SUN_DISC_BRIGHTNESS: f32 = 4.0;
+const MOON_DISC_BRIGHTNESS: f32 = 1.0;
 
 /// When the sun and the moon rise and set, as fractions of the day from
-/// midnight: a sixteen-hour day, and a moon up from two hours before
-/// sunset to two after sunrise so that some light is always up.
+/// midnight: a sixteen-hour day, and the moon up while the sun is down,
+/// opposite it. The twilight sky lights the ground while the moon's light
+/// climbs, and again after it goes.
 const SUNRISE: f32 = 4. / 24.;
 const SUNSET: f32 = 20. / 24.;
-const MOONRISE: f32 = 18. / 24.;
-const MOONSET: f32 = 6. / 24.;
+const MOONRISE: f32 = SUNSET;
+const MOONSET: f32 = SUNRISE;
+/// How far the sun's rise and set swing from east and west at the
+/// season's height: its whole circle leans that far south and back.
+const SEASON_SWING: f32 = 25_f32.to_radians();
 
 /// A body's orbit angle at day fraction `t`: zero as it rises, π/2 at
 /// its zenith, π as it sets, 3π/2 at its nadir. The half above the
@@ -53,17 +150,46 @@ fn orbit(t: f32, rise: f32, set: f32) -> f32 {
     if since_rise < up { PI * since_rise / up } else { PI + PI * (since_rise - up) / (1. - up) }
 }
 
-/// Unit direction to a body at orbit angle `a`: rising on −x, setting on
-/// +x, its whole circle leaning `tilt` toward +z.
+/// Unit direction to a body at orbit angle `a`: rising in the east (+x,
+/// north being −z as `Heading` has it), setting in the west, its whole
+/// circle leaning `tilt` toward the south.
 fn toward(a: f32, tilt: f32) -> Vec3 {
-    Vec3::new(-cos(a), sin(a), tilt).normalize()
+    Vec3::new(cos(a), sin(a), tilt).normalize()
 }
 
-/// A body's light at orbit angle `a`, none below the horizon and full
-/// from a fifth of the way up its arc: the ground brightens fast after
-/// the rise and dims fast before the set.
-fn daylight(a: f32) -> f32 {
-    if a <= PI { 1. - cos(a).powf(16.) } else { 0. }
+/// A body's light through the air, by its elevation: none at the horizon,
+/// full and white this high. The sun climbs it in three quarters of an
+/// hour of the day, which is how long a sunrise or a sunset lasts.
+const CLEAR_ABOVE: f32 = 8_f32.to_radians();
+/// The sky stays lit by a sun this far below the horizon, and reddens
+/// from `GLOW_BELOW` up to `CLEAR_ABOVE`, so the glow is deepest around
+/// the crossing: before the sun crests and after it sinks.
+const TWILIGHT_BELOW: f32 = 10_f32.to_radians();
+const GLOW_BELOW: f32 = 6_f32.to_radians();
+/// The share of the sky's tint the haze carries. The haze is the whole
+/// sky's light scattered on the way, mostly the pale overhead, so a red
+/// dawn sky stands over a pale land and not a red mist.
+const HAZE_TINT_SHARE: f32 = 0.3;
+
+fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
+    let t = ((x - from) / (to - from)).clamp(0., 1.);
+    t * t * (3. - 2. * t)
+}
+
+/// Elevation of a direction above the horizontal, in radians.
+fn elevation(toward: Vec3) -> f32 {
+    toward.y.asin()
+}
+
+/// A body's direct light at elevation `e`, as a share of its full.
+fn direct(e: f32) -> f32 {
+    smoothstep(0., CLEAR_ABOVE, e)
+}
+
+/// The colour of a `share` of a body's light: the air takes the blue
+/// first, so it is red as the share goes and white at full.
+fn tint(share: f32) -> Color {
+    Color::linear_rgb(1., share, share)
 }
 
 use crate::{
@@ -88,7 +214,9 @@ use common_bevy::{
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut disc_materials: ResMut<Assets<DiscMaterial>>,
+    mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    assets: Res<AssetServer>,
 ) {
     commands.insert_resource(
         GlobalAmbientLight {
@@ -112,11 +240,24 @@ pub fn setup(
         Transform::default(),
         Moon::default()));
 
-    let disc = meshes.add(Circle::new(disc_distance_wu() * (DISC_ANGULAR_DIAMETER / 2.).tan()).mesh().resolution(48));
-    for which in [Disc::Sun, Disc::Moon] {
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(sky_radius_wu()).mesh().ico(3).expect("a sphere subdivides"))),
+        MeshMaterial3d(sky_materials.add(SkyMaterial { bearing: Vec4::X, base: LinearRgba::BLACK, glow: LinearRgba::BLACK })),
+        Transform::default(),
+        NotShadowCaster,
+        NotShadowReceiver,
+        SkyDome));
+
+    // The moon's face declares its mip chain; the sampler reads it,
+    // trilinear, so the disc small in the frame is the face's mean.
+    let moon_face = assets.load_with_settings("textures/moon.dds", |settings: &mut ImageLoaderSettings| {
+        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    });
+    let disc = |diameter: f32| Circle::new(disc_distance_wu() * (diameter / 2.).tan()).mesh().resolution(48);
+    for (which, diameter, face) in [(Disc::Sun, SUN_ANGULAR_DIAMETER, None), (Disc::Moon, MOON_ANGULAR_DIAMETER, Some(moon_face))] {
         commands.spawn((
-            Mesh3d(disc.clone()),
-            MeshMaterial3d(materials.add(StandardMaterial { unlit: true, fog_enabled: false, ..default() })),
+            Mesh3d(meshes.add(disc(diameter))),
+            MeshMaterial3d(disc_materials.add(DiscMaterial::new(face))),
             Transform::default(),
             NotShadowCaster,
             NotShadowReceiver,
@@ -221,8 +362,10 @@ pub fn update(
     mut a_light: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut q_camera: Query<(&GlobalTransform, &mut DistanceFog)>,
-    mut q_discs: Query<(&Disc, &mut Transform, &mut Visibility, &MeshMaterial3d<StandardMaterial>), (Without<Sun>, Without<Moon>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut q_discs: Query<(&Disc, &mut Transform, &MeshMaterial3d<DiscMaterial>), (Without<Sun>, Without<Moon>)>,
+    mut disc_materials: ResMut<Assets<DiscMaterial>>,
+    q_sky: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
+    mut sky_materials: ResMut<Assets<SkyMaterial>>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
@@ -235,56 +378,74 @@ pub fn update(
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
     let s_orbit = orbit(dtd, SUNRISE, SUNSET);
-    let s_toward = toward(s_orbit, cos(dty * 2. * PI));
-    let s_illuminance = daylight(s_orbit);
-    s_light.color = Color::linear_rgb(1., s_illuminance, s_illuminance);
-    s_light.illuminance = SUN_ILLUMINANCE*s_illuminance;
-    // Greatly increased ambient light to soften shadows during day (800 vs 100)
-    a_light.brightness = 800.*s_illuminance;
-    // Add sky-like blue tint to ambient light during day
-    a_light.color = Color::linear_rgb(0.7 + 0.3*s_illuminance, 0.8 + 0.2*s_illuminance, 1.0);
+    let s_toward = toward(s_orbit, tan(SEASON_SWING) * cos(dty * 2. * PI));
+    let s_elevation = elevation(s_toward);
+    let s_direct = direct(s_elevation);
+    s_light.color = tint(s_direct);
+    s_light.illuminance = SUN_ILLUMINANCE * s_direct;
     *s_transform = Transform::from_translation(s_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
+
+    // The sky: lit through twilight, reddened around the crossing, and
+    // the ambient is its light on the ground, blue as it is overhead.
+    let sky_bright = smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, s_elevation);
+    let sky_tint = tint(smoothstep(-GLOW_BELOW, CLEAR_ABOVE, s_elevation));
+    a_light.brightness = 800. * sky_bright;
+    a_light.color = Color::linear_rgb(0.7 + 0.3 * sky_bright, 0.8 + 0.2 * sky_bright, 1.0);
 
     // moon
     let (mut m_light, mut m_transform) = q_moon.single_mut().expect("no result in q_moon");
     let m_orbit = orbit(dtd, MOONRISE, MOONSET);
     let m_toward = toward(m_orbit, 0.);
-    let m_phase = 0.1 + 0.9*cos(dtm * PI).powf(2.);
-    m_light.illuminance = MOON_ILLUMINANCE * m_phase * daylight(m_orbit);
+    // The month turns the moon from full to new and back: its light is
+    // its lit fraction, and its disc is lit from that far round from the
+    // camera, on the sun's side.
+    let m_elongation = dtm * 2. * PI;
+    let m_lit = (1. + cos(m_elongation)) / 2.;
+    let m_phase = 0.1 + 0.9 * m_lit;
+    m_light.illuminance = MOON_ILLUMINANCE * m_phase * direct(elevation(m_toward));
     *m_transform = Transform::from_translation(m_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
-    // The haze is the sky, and the sky is the sun's light scattered, so it
-    // carries the sun's colour and brightness, and the moon's share at
-    // night: neither sky nor fog stays daylight-grey over a dark ground.
-    let sun = s_light.color.to_linear().to_vec3() * s_illuminance;
+    // The sky is the sun's light scattered, so it carries the sky's
+    // brightness and the moon's share at night, with the sun's tint as a
+    // glow toward the sun; the haze carries the brightness and a share
+    // of the tint. Neither stays daylight-grey over a dark ground.
     let moon = m_light.color.to_linear().to_vec3() * (m_light.illuminance / SUN_ILLUMINANCE);
-    let haze = Color::from(LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (sun + moon)));
-    clear.0 = haze;
+    let sky_tint = sky_tint.to_linear().to_vec3();
+    let lit = |tint: Vec3| LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (tint * sky_bright + moon));
+    clear.0 = lit(Vec3::ONE).into();
     let (camera, mut fog) = q_camera.single_mut().expect("no result in q_camera");
-    fog.color = haze;
-
-    // Each disc faces the camera from its body's direction, in its light's
-    // colour, and hides once wholly below the horizon: the ground occludes
-    // it there, but the sea is translucent and would let it through.
-    let camera = camera.translation();
-    let set = -(DISC_ANGULAR_DIAMETER / 2.).sin();
-    for (disc, mut transform, mut visibility, material) in &mut q_discs {
-        let (toward, color) = match disc {
-            Disc::Sun => (s_toward, s_light.color.to_linear() * DISC_BRIGHTNESS),
-            Disc::Moon => (m_toward, m_light.color.to_linear() * (m_phase * DISC_BRIGHTNESS)),
-        };
-        transform.translation = camera + toward * disc_distance_wu();
-        transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
-        *visibility = if toward.y > set { Visibility::Inherited } else { Visibility::Hidden };
-        if let Some(material) = materials.get_mut(&material.0) { material.base_color = color.into(); }
+    fog.color = lit(Vec3::ONE.lerp(sky_tint, HAZE_TINT_SHARE)).into();
+    if let Some(sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
+        sky.bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
+        sky.base = lit(Vec3::ONE);
+        sky.glow = lit(sky_tint) - lit(Vec3::ONE);
     }
 
-    // Anchor cascade shadow distance to the atmospheric fade start.
-    // The shader fades terrain to horizon haze at 80% of the loading radius,
-    // so shadows covering up to that point hide the shadow-to-no-shadow seam
-    // inside the fade band. Summary meshes are cheap (7 verts/chunk).
-    // maximum_distance is measured from the camera, not the player,
-    // so add the camera-to-player distance to the terrain radius.
+    // Each disc faces the camera from its body's direction, in its light's
+    // colour; the ground occludes it as it sets and its shader cuts it at
+    // the waterline.
+    let camera = camera.translation();
+    for (disc, mut transform, material) in &mut q_discs {
+        let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward };
+        transform.translation = camera + toward * disc_distance_wu();
+        transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
+        let Some(material) = disc_materials.get_mut(&material.0) else { continue };
+        match disc {
+            Disc::Sun => material.color = s_light.color.to_linear() * SUN_DISC_BRIGHTNESS,
+            Disc::Moon => {
+                let facing = -m_toward;
+                let sunward = (s_toward - s_toward.dot(facing) * facing).try_normalize().unwrap_or(Vec3::Y);
+                let light = facing * cos(m_elongation) + sunward * sin(m_elongation).abs();
+                material.sun = (transform.rotation.inverse() * light).extend(0.);
+                material.color = m_light.color.to_linear() * MOON_DISC_BRIGHTNESS;
+            }
+        }
+    }
+
+    // Shadows reach 80% of the streamed tile radius, inside the tiles: the
+    // summaries beyond are too coarse to shadow. The haze is slight there
+    // and does not hide the seam. maximum_distance is measured from the
+    // camera, not the player, so add the camera-to-player distance.
     if let Ok(player_loc) = player_query.single() {
         use crate::systems::camera::{CAMERA_DISTANCE, gameplay_camera_height};
         let height = gameplay_camera_height();
@@ -298,6 +459,18 @@ pub fn update(
                 ..default()
             }.into();
         }
+    }
+}
+
+/// Keeps the sky dome centred on the camera. After camera movement, so
+/// it never lags a frame and shows its own horizon.
+pub fn follow_camera(
+    camera: Query<&Transform, (With<Camera3d>, Without<SkyDome>, Without<crate::systems::closeup::CloseupCamera>)>,
+    mut sky: Query<&mut Transform, With<SkyDome>>,
+) {
+    let Ok(cam) = camera.single() else { return };
+    for mut transform in &mut sky {
+        transform.translation = cam.translation;
     }
 }
 
@@ -1098,12 +1271,39 @@ mod tests {
             assert_eq!(toward(a, 0.).y > 0., up, "t={t} a={a}");
             let advance = (a - prev).rem_euclid(2. * PI);
             assert!(advance > 0. && advance < 0.1, "t={t} advance={advance}");
-            assert_eq!(daylight(a) > 0., up, "t={t}");
+            assert_eq!(direct(elevation(toward(a, 0.))) > 0., up, "t={t}");
             prev = a;
         }
         let day_rate = orbit(SUNRISE + step, SUNRISE, SUNSET) - orbit(SUNRISE, SUNRISE, SUNSET);
         let night_rate = orbit(SUNSET + step, SUNRISE, SUNSET) - orbit(SUNSET, SUNRISE, SUNSET);
         assert!(day_rate < night_rate, "{day_rate} vs {night_rate}");
+    }
+
+    /// The sun's light and the sky's glow both turn within a band about
+    /// the horizon: white and full clear above it, and the sky's red
+    /// deepest just below, where the sun gives no direct light at all.
+    #[test]
+    fn the_reddening_keeps_to_the_horizon() {
+        let (above, below) = (CLEAR_ABOVE + 1e-4, -GLOW_BELOW);
+        assert_eq!(direct(above), 1.);
+        assert_eq!(tint(direct(above)), Color::WHITE);
+        assert_eq!(direct(0.), 0.);
+        assert_eq!(direct(below), 0.);
+        let glow = smoothstep(-GLOW_BELOW, CLEAR_ABOVE, below);
+        assert_eq!(glow, 0., "the sky is reddest with the sun just below the horizon");
+        assert!(smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, below) > 0., "and still lit there");
+        assert_eq!(smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, -TWILIGHT_BELOW), 0., "and dark past twilight");
+    }
+
+    /// At the season's height the sun still sets across the sky from
+    /// where it rose, each end swung from east and west by no more than
+    /// the season's swing.
+    #[test]
+    fn the_sun_sets_across_the_sky_from_its_rise() {
+        let lean = tan(SEASON_SWING);
+        let (rise, set) = (toward(0., lean), toward(PI, lean));
+        assert!(rise.x > 0. && set.x < 0., "rises in the east, sets in the west");
+        assert!(rise.angle_between(set) >= PI - 2. * SEASON_SWING - 1e-4, "{}", rise.angle_between(set).to_degrees());
     }
 
     /// A level begins exactly where the finer one ends, with the morph
