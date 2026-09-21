@@ -211,11 +211,22 @@ impl Cut {
 
 /// The two cuts at a position: the valley's, and the channel slot's below
 /// the valley floor. The channel is where the water stands: a river's
-/// surface is the floor, the ground plus the channel cut.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// surface is the floor, the ground plus the channel cut. With them, where
+/// on the wall the position lies, published for the layers above.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cuts {
     pub valley: f64,
     pub channel: f64,
+    /// How far up the nearest valley's wall the position lies: nothing
+    /// across the belt the river has swept, one at the divide, and one
+    /// where no valley reaches.
+    pub wall: f64,
+}
+
+impl Default for Cuts {
+    fn default() -> Self {
+        Cuts { valley: 0.0, channel: 0.0, wall: 1.0 }
+    }
 }
 
 /// The valleys a set of tiles can lie in: every channel in reach along its
@@ -368,6 +379,7 @@ impl Valleys {
             if u < 1.0 && at.depth > 0.0 {
                 let valley = (at.depth * profile(u, at.erodibility)).min((envelope - at.base).max(0.0));
                 best.valley = best.valley.max(valley);
+                best.wall = best.wall.min(u);
             }
             if d <= at.belt.max(at.half) {
                 let beside = cut.train.as_ref().map_or(d, |m| m.distance(wx, wy));
@@ -460,10 +472,11 @@ impl WorldEvent for DissectionEvent {
         let cuts = valleys.cuts_at(wx, wy, below.elevation);
         let cut = cuts.valley + cuts.channel;
         let water = valleys.surface_at(below.elevation - cut, cuts);
-        if cut <= 0.0 && water.is_none() {
+        let valley = (cuts.wall < 1.0).then_some(cuts.wall);
+        if cut <= 0.0 && water.is_none() && valley.is_none() {
             return None;
         }
-        Some(TileOutput { elevation_delta: -cut, water, ..TileOutput::default() })
+        Some(TileOutput { elevation_delta: -cut, water, valley, ..TileOutput::default() })
     }
 }
 

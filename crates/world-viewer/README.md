@@ -35,6 +35,8 @@ assets repo keeps its proof sheets.
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |
 | `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
 | `channels` | channel index | every channel as its train across its flow line, paler where the river holds the line, width by catchment |
+| `forest` | composite | each tile's cover over what is drawn beneath: the canopy's green by fullness, pine blue-green, deciduous green, scrub olive |
+| `moisture-field` | forest field | what the sky gives each position, the sea's share less the belts' shadow, tan dry to deep green wet, the sea blue; builds the coasts and plate outlines under the viewport itself, and logs the wind |
 
 Views stack bottom to top in the order given: fills first, markers as
 overdraw. A field view paints every pixel and cannot stack; asking for one

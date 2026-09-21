@@ -8,7 +8,7 @@ pub mod events;
 pub mod lattice;
 pub mod tectonic;
 
-pub use common::{ArrayVec, PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
+pub use common::{ArrayVec, Cover, PlateTag, Slot, TagSet, Tagged, MAX_PLATE_TAGS};
 pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 
 // ──── The vertical scale ────

@@ -19,6 +19,7 @@ use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateB
 use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
 use world::events::dissection::Valleys;
 use world::events::drainage::{surface_at, DrainageIndex};
+use world::events::forest;
 use world::events::lithology::{rock_on, Rock};
 use world::events::migration::ChannelIndex;
 use world::events::plates::{unwarp, Coasts, PlateEdgeIndex};
@@ -56,6 +57,12 @@ enum Layer {
     /// Channel index: every channel as its train across its flow line, or
     /// the line where it holds it, width by catchment.
     Channels,
+    /// Composite: each tile's cover over whatever is drawn beneath, the
+    /// canopy's green by fullness and the kinds' shares.
+    Forest,
+    /// Moisture field: what the sky gives each position, the sea's share
+    /// less the belts' shadow, on a dry-to-wet ramp; the wind is logged.
+    MoistureField,
 }
 
 /// Every view by its command-line name. The one list: parsing, the help text
@@ -74,6 +81,8 @@ const LAYERS: &[(&str, Layer)] = &[
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("channels", Layer::Channels),
+    ("forest", Layer::Forest),
+    ("moisture-field", Layer::MoistureField),
 ];
 
 impl Layer {
@@ -86,7 +95,12 @@ impl Layer {
     fn is_whole_image(self) -> bool {
         matches!(
             self,
-            Layer::Tilt | Layer::ThickeningField | Layer::LithologyField | Layer::DissectionField | Layer::WaterField
+            Layer::Tilt
+                | Layer::ThickeningField
+                | Layer::LithologyField
+                | Layer::DissectionField
+                | Layer::WaterField
+                | Layer::MoistureField
         )
     }
 }
@@ -277,6 +291,7 @@ fn main() {
             Layer::DissectionField => render_dissection_field(&cli, w, h, scale),
             Layer::WaterField => render_water_field(&cli, w, h, scale),
             Layer::LithologyField => render_lithology_field(&cli, w, h, scale),
+            Layer::MoistureField => render_moisture_field(&cli, w, h, scale),
             _ => render_thickening_field(&cli, w, h, scale),
         };
         log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
@@ -313,9 +328,9 @@ fn main() {
     // fills the indexes the marker layers below read.
     let views = composite.tiles_at(&coords);
 
-    let tile_cache: HashMap<(i32, i32), f64> = views
+    let tile_cache: HashMap<(i32, i32), (f64, common::Cover)> = views
         .into_iter()
-        .map(|((q, r), v)| ((q, r), v.elevation))
+        .map(|((q, r), v)| ((q, r), (v.elevation, v.cover)))
         .collect();
 
     let tile_secs = lap.elapsed().as_secs_f64();
@@ -418,7 +433,7 @@ fn main() {
                     let wy = origin_y + (py as f64) * scale;
                     let (q, r) = world::world_to_hex(wx, wy);
 
-                    let elevation = tc.get(&(q, r)).copied().unwrap_or(0.0);
+                    let (elevation, cover) = tc.get(&(q, r)).copied().unwrap_or((0.0, common::Cover::NONE));
 
                     let mut color = (0.0f64, 0.0, 0.0);
 
@@ -454,13 +469,16 @@ fn main() {
                                     .iter()
                                     .map(|&(dq, dr)| {
                                         let ne =
-                                            tc.get(&(q + dq, r + dr)).copied().unwrap_or(0.0);
+                                            tc.get(&(q + dq, r + dr)).map_or(0.0, |t| t.0);
                                         (ne - elevation).abs()
                                     })
                                     .fold(0.0f64, f64::max);
 
                                     color = slope_shade(color, max_diff);
                                 }
+                            }
+                            Layer::Forest => {
+                                color = cover_color(color, cover);
                             }
                             _ => {} // marker layers rendered as dot overdraw
                         }
@@ -927,6 +945,72 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
 /// The plateau on the substrate, hillshaded, so the thickening's shape reads
 /// independently of how the vertical scale is calibrated. Marches the fronts
 /// under the viewport itself, since the plateau rises with the wedge.
+/// A tile's cover over the colour beneath it: the canopy's green, pine
+/// blue-green, deciduous green, scrub olive, blended by the kinds' shares
+/// and laid over the ground by the tile's fullness.
+fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64) {
+    let fullness = cover.fullness();
+    if fullness == 0 {
+        return ground;
+    }
+    let mut canopy = (0.0, 0.0, 0.0);
+    for (_, slot) in cover.filled() {
+        let c = match slot {
+            common::Slot::Pine => (0.05, 0.30, 0.22),
+            common::Slot::Deciduous => (0.16, 0.48, 0.12),
+            common::Slot::Scrub => (0.45, 0.50, 0.18),
+            common::Slot::Empty => ground,
+        };
+        canopy = (canopy.0 + c.0, canopy.1 + c.1, canopy.2 + c.2);
+    }
+    let n = fullness as f64;
+    let canopy = (canopy.0 / n, canopy.1 / n, canopy.2 / n);
+    lerp_rgb(ground, canopy, 0.35 + 0.65 * n / 7.0)
+}
+
+/// What the sky gives each position, on a ramp from the dry ground's tan
+/// through the interior's grey-green to the wet coast's deep green, the
+/// sea blue. Reads the forest layer's own functions off the coasts and
+/// outlines under the viewport, so the rain shadow is the one the stands
+/// read.
+fn render_moisture_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
+    let origin_x = cli.center_x - cli.radius;
+    let origin_y = cli.center_y - cli.radius;
+    let seed = cli.seed;
+    let wind = forest::wind(seed);
+    log::info!(
+        "wind blows toward ({:.2}, {:.2}), bearing {:.0}° from +x",
+        wind.0,
+        wind.1,
+        wind.1.atan2(wind.0).to_degrees()
+    );
+    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let outlines = &outlines;
+    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
+    let coasts = &coasts;
+
+    (0..h).into_par_iter().flat_map(|py| {
+        (0..w).flat_map(move |px| {
+            let wx = origin_x + px as f64 * scale;
+            let wy = origin_y + py as f64 * scale;
+            let c = if world::substrate_on(wx, wy, coasts, seed) <= 0.0 {
+                (0.18, 0.30, 0.50)
+            } else {
+                let m = forest::sky_moisture(wx, wy, wind, coasts, outlines);
+                let dry = (0.78, 0.66, 0.42);
+                let mid = (0.55, 0.60, 0.35);
+                let wet = (0.08, 0.40, 0.18);
+                if m < forest::MOISTURE_CLOSED {
+                    lerp_rgb(dry, mid, m / forest::MOISTURE_CLOSED)
+                } else {
+                    lerp_rgb(mid, wet, (m - forest::MOISTURE_CLOSED) / (1.0 - forest::MOISTURE_CLOSED))
+                }
+            };
+            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
+        }).collect::<Vec<u8>>()
+    }).collect()
+}
+
 fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;

@@ -72,6 +72,7 @@
 
 pub mod dissection;
 pub mod drainage;
+pub mod forest;
 pub mod index;
 pub mod lithology;
 pub mod migration;
@@ -89,7 +90,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use dashmap::DashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex};
 
-use common::{HexLattice, TagSet};
+use common::{Cover, HexLattice, TagSet};
 
 use crate::hex_to_world;
 
@@ -109,6 +110,13 @@ pub struct TileOutput {
     /// layer puts one. Surfaces compose by the highest: water covers what
     /// lies under it.
     pub water: Option<f64>,
+    /// How far up a valley's wall the tile lies, from nothing across the
+    /// belt the river has swept to one at the divide, where the layer that
+    /// cut the valley says so. Composes by the lowest: the nearer floor.
+    pub valley: Option<f64>,
+    /// What stands in the tile's seven slots, where a layer puts anything.
+    /// A later layer's cover replaces an earlier one's.
+    pub cover: Cover,
 }
 
 /// Read-only composite view at a single tile.
@@ -122,15 +130,30 @@ pub struct TileView {
     pub elevation: f64,
     /// The highest water surface any layer below put over this tile.
     pub water: Option<f64>,
+    /// The tile's place up the nearest valley's wall, as [`TileOutput::valley`].
+    pub valley: Option<f64>,
+    /// What stands in the tile's seven slots.
+    pub cover: Cover,
 }
 
 impl TileView {
+    fn at(q: i32, r: i32) -> Self {
+        let (wx, wy) = hex_to_world(q, r);
+        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None, valley: None, cover: Cover::NONE }
+    }
+
     fn compose(&mut self, out: &TileOutput) {
         for t in out.tags_added.iter() { self.tags.add(t); }
         for t in out.tags_removed.iter() { self.tags.remove(t); }
         self.elevation += out.elevation_delta;
         if let Some(w) = out.water {
             self.water = Some(self.water.map_or(w, |v| v.max(w)));
+        }
+        if let Some(u) = out.valley {
+            self.valley = Some(self.valley.map_or(u, |v| v.min(u)));
+        }
+        if !out.cover.is_empty() {
+            self.cover = out.cover;
         }
     }
 }
@@ -565,6 +588,7 @@ impl Composite {
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
         composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));
+        composite.add_event(Box::new(forest::ForestEvent::new()));
         composite
     }
 
@@ -612,8 +636,7 @@ impl Composite {
         }
 
         // Phase 2: Query cascade — resolve tile bottom-up
-        let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None };
+        let mut view = TileView::at(q, r);
 
         {
             let _s = tracing::debug_span!("query").entered();
@@ -673,6 +696,11 @@ impl Composite {
 
     pub fn tags_at(&self, q: i32, r: i32) -> TagSet {
         self.tile_at(q, r).tags
+    }
+
+    /// What stands in a tile's seven slots.
+    pub fn cover_at(&self, q: i32, r: i32) -> Cover {
+        self.tile_at(q, r).cover
     }
 
     /// Access the IndexRegistry directly (no lock needed — interior mutability).
@@ -808,8 +836,7 @@ impl Composite {
     /// through to the cell caches so the work is never recomputed (insert is a
     /// no-op for cells not yet deformed).
     fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
-        let (wx, wy) = hex_to_world(q, r);
-        let mut view = TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None };
+        let mut view = TileView::at(q, r);
 
         for li in 0..up_to {
             let cell_id = self.lattices[li].cell_id(q, r);
