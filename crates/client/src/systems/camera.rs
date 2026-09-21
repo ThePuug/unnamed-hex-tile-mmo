@@ -376,15 +376,16 @@ const MARCH_STEPS: u32 = 12;
 /// within `reach`: `Ok(Some(t))` at that distance along the ray,
 /// `Ok(None)` when it flies free, `Err(())` when it crosses ground that
 /// is not loaded before meeting any. Read against the tiles' standing
-/// heights, so a slope reads at the resolution of its tiles.
-fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map) -> Result<Option<f32>, ()> {
+/// heights, so a slope reads at the resolution of its tiles. The ray is
+/// in rendered coordinates; `origin` is what the map's are short of them.
+fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map, origin: Vec3) -> Result<Option<f32>, ()> {
     for i in 1..=MARCH_STEPS {
         let f = i as f32 / MARCH_STEPS as f32;
         let t = reach * f * f;
         let at = from + dir * t;
-        let here: Qrz = map.convert(at);
+        let here: Qrz = map.convert(at + origin);
         let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return Err(()) };
-        if at.y <= standing_y(floor, map) {
+        if at.y + origin.y <= standing_y(floor, map) {
             return Ok(Some(t));
         }
     }
@@ -436,16 +437,16 @@ fn majority_mean(readings: &[f32]) -> f32 {
 /// fitted to the tiles' standing heights on rings around the feet, capped
 /// at the steepest tilt. None where a ring is not loaded. Six directions
 /// on each ring make the fit's normal equations diagonal.
-fn ground_tilt(player: Vec3, map: &Map) -> Option<Tilt> {
+fn ground_tilt(player: Vec3, map: &Map, origin: Vec3) -> Option<Tilt> {
     let (mut xh, mut zh, mut xx) = (0.0_f32, 0.0_f32, 0.0_f32);
     for radius in TILT_RINGS_WU {
         for k in 0..6 {
             let angle = k as f32 * std::f32::consts::TAU / 6.0;
             let p = Vec2::from_angle(angle) * radius;
             let at = player + Vec3::new(p.x, 0.0, p.y);
-            let here: Qrz = map.convert(at);
+            let here: Qrz = map.convert(at + origin);
             let (floor, _) = map.get_by_qr(here.q, here.r)?;
-            let h = standing_y(floor, map) - player.y;
+            let h = standing_y(floor, map) - (player.y + origin.y);
             xh += p.x * h;
             zh += p.y * h;
             xx += p.x * p.x;
@@ -458,7 +459,7 @@ fn ground_tilt(player: Vec3, map: &Map) -> Option<Tilt> {
 /// The ground ahead, or None where too little of it is loaded to read.
 /// `half_width` is the frame's horizontal half-angle: only rays inside it
 /// feed the climb.
-fn ground_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map) -> Option<Ahead> {
+fn ground_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map, origin: Vec3) -> Option<Ahead> {
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let ahead = heading.to_world_dir();
     let mut rays = 0.0_f32;
@@ -475,7 +476,7 @@ fn ground_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map) -> Opt
         for j in 0..FAN_RAYS {
             let up = OPEN_ELEVATION + j as f32 * FAN_STEP;
             let dir = Vec3::new(flat.x * up.cos(), up.sin(), flat.y * up.cos());
-            match march(eye, dir, AHEAD_REACH_WU, map) {
+            match march(eye, dir, AHEAD_REACH_WU, map, origin) {
                 Ok(Some(_)) => grade = Some(up),
                 Ok(None) => break,
                 Err(()) => return None,
@@ -536,7 +537,7 @@ const HORIZON_ROWS: [f32; 2] = [1_f32.to_radians(), 3_f32.to_radians()];
 /// player's feet, and a ray that lands past the haze limit is read at the
 /// limit. A ray that rises above the horizontal and meets no tile shows
 /// the sky, which needs nothing drawn, and is no sample.
-fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> Vec<Vec2> {
+fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, origin: Vec3) -> Vec<Vec2> {
     let camera = pose.transform(eye, tilt);
     let ground = eye.y - EYE_HEIGHT;
     let pitch = pose.pitch(tilt);
@@ -563,7 +564,7 @@ fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> Vec<
             let from = camera.translation;
             let flat = dir.xz();
             if flat.length_squared() < 1e-6 { continue; }
-            if let Ok(Some(t)) = march(from, dir, march_reach_wu(), map) {
+            if let Ok(Some(t)) = march(from, dir, march_reach_wu(), map, origin) {
                 points.push((from + dir * t).xz());
                 continue;
             }
@@ -579,9 +580,10 @@ fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map) -> Vec<
     points
 }
 
-/// Whether `pose` is safe: every point of its footprint is drawn.
-fn footprint_is_drawn(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, drawn: &DrawnGround) -> bool {
-    footprint(pose, eye, tilt, aspect, map).into_iter().all(|p| drawn.at(p))
+/// Whether `pose` is safe: every point of its footprint is drawn. The
+/// footprint is rendered coordinates; the cut is judged in the world's.
+fn footprint_is_drawn(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, origin: Vec3, drawn: &DrawnGround) -> bool {
+    footprint(pose, eye, tilt, aspect, map, origin).into_iter().all(|p| drawn.at(p + origin.xz()))
 }
 
 /// The loosest pose on the ladder from `top` to the floor at its yaw that
@@ -652,15 +654,17 @@ const BOOM_HALVINGS: u32 = 6;
 /// bottom edge is clipped when the boom is shortened onto a slope.
 const BOOM_CLEARANCE: f32 = 0.3;
 
-/// Whether the ground or a solid decorator stands at `at`.
-fn obstructed(at: Vec3, map: &Map) -> bool {
-    let here: Qrz = map.convert(at);
+/// Whether the ground or a solid decorator stands at `at`, a rendered
+/// point.
+fn obstructed(at: Vec3, map: &Map, origin: Vec3) -> bool {
+    let world = at + origin;
+    let here: Qrz = map.convert(world);
     let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return false };
     let solid = matches!(
         map.get(here),
         Some(common_bevy::components::entity_type::EntityType::Decorator(d)) if d.is_solid
     );
-    solid || surface_y(at.xz(), floor, map) + BOOM_CLEARANCE > at.y
+    solid || surface_y(world.xz(), floor, map) + BOOM_CLEARANCE > world.y
 }
 
 /// The fraction of the boom, from the player's eye to the camera, that is
@@ -668,15 +672,15 @@ fn obstructed(at: Vec3, map: &Map) -> bool {
 /// it. Sampled along the boom, then bisected between the last clear point
 /// and the first obstructed one, so the fraction is continuous as the
 /// obstruction moves.
-fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map) -> f32 {
-    let at = |t: f32| eye.lerp(camera, t);
-    let Some(first) = (1..=BOOM_SAMPLES).find(|&i| obstructed(at(i as f32 / BOOM_SAMPLES as f32), map)) else {
+fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map, origin: Vec3) -> f32 {
+    let at = |t: f32| eye + (camera - eye) * t;
+    let Some(first) = (1..=BOOM_SAMPLES).find(|&i| obstructed(at(i as f32 / BOOM_SAMPLES as f32), map, origin)) else {
         return 1.0;
     };
     let (mut clear, mut blocked) = ((first - 1) as f32 / BOOM_SAMPLES as f32, first as f32 / BOOM_SAMPLES as f32);
     for _ in 0..BOOM_HALVINGS {
         let mid = (clear + blocked) / 2.0;
-        if obstructed(at(mid), map) { blocked = mid } else { clear = mid }
+        if obstructed(at(mid), map, origin) { blocked = mid } else { clear = mid }
     }
     clear
 }
@@ -698,12 +702,15 @@ pub fn update(
     edges: Res<EdgeCenters>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
+    render_origin: Res<crate::resources::RenderOrigin>,
 ) {
     let Ok((visual, &heading)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
     // The visual, not the actor's Transform: the same value the actor is
-    // drawn at, whichever of the two systems runs first.
+    // drawn at, whichever of the two systems runs first. Everything here is
+    // in rendered coordinates; the map is read through the origin.
     let feet = visual.current();
+    let origin = render_origin.world_vec();
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
@@ -719,12 +726,12 @@ pub fn update(
         _ => 1.0,
     };
     let half_width = (aspect * (current.fov / 2.0).tan()).atan();
-    if let Some(ahead) = ground_ahead(feet, heading, half_width, &map) {
+    if let Some(ahead) = ground_ahead(feet, heading, half_width, &map, origin) {
         state.openness = ease(state.openness, ahead.open, PULL_EASE, dt);
         state.climb = ease(state.climb, ahead.climb, PULL_EASE, dt);
     }
     // The plane the camera sweeps on follows the ground under the player.
-    if let Some(tilt) = ground_tilt(feet, &map) {
+    if let Some(tilt) = ground_tilt(feet, &map, origin) {
         let k = 1.0 - (-TILT_EASE * dt).exp();
         state.tilt = state.tilt.lerp(tilt, k);
     }
@@ -740,8 +747,8 @@ pub fn update(
     let next = if diagnostics.camera_envelope_off || diagnostics.camera_closeup {
         step(current, wanted, &mut state.limit, dt, |_| true)
     } else {
-        let drawn = DrawnGround::new(feet.xz(), &edges.0, &meshes);
-        step(current, wanted, &mut state.limit, dt, |p| footprint_is_drawn(p, eye, tilt, aspect, &map, &drawn))
+        let drawn = DrawnGround::new((feet + origin).xz(), &edges.0, &meshes);
+        step(current, wanted, &mut state.limit, dt, |p| footprint_is_drawn(p, eye, tilt, aspect, &map, origin, &drawn))
     };
 
     // An obstruction on the boom shortens it further: the camera stands
@@ -750,8 +757,8 @@ pub fn update(
     let stand = next.transform(eye, tilt);
     let shift = next.shift(next.boom() * state.clearance);
     let (head, foot) = (eye + shift, stand.translation + shift);
-    state.clearance = clearance_step(state.clearance, boom_clearance(head, foot, &map), dt);
-    let translation = head.lerp(foot, state.clearance);
+    state.clearance = clearance_step(state.clearance, boom_clearance(head, foot, &map, origin), dt);
+    let translation = head + (foot - head) * state.clearance;
 
     state.pose = next;
     orbit.current = next.yaw;
@@ -770,7 +777,7 @@ mod tests {
     fn reach_of(pose: &Pose) -> f32 {
         let player = Vec3::new(300.0, 7.0, -40.0);
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
-        footprint(pose, player, Vec2::ZERO, WIDE, &map).into_iter()
+        footprint(pose, player, Vec2::ZERO, WIDE, &map, Vec3::ZERO).into_iter()
             .map(|p| p.distance(player.xz()))
             .fold(0.0, f32::max)
     }
@@ -826,9 +833,9 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let plain = ground_ahead(feet, Heading::from_degrees(180.0), 0.5, &map).expect("loaded");
+        let plain = ground_ahead(feet, Heading::from_degrees(180.0), 0.5, &map, Vec3::ZERO).expect("loaded");
         assert!(plain.open > 0.9 && plain.climb == 0.0, "open {}", plain.open);
-        let wall = ground_ahead(feet, Heading::NORTH, 0.5, &map).expect("loaded");
+        let wall = ground_ahead(feet, Heading::NORTH, 0.5, &map, Vec3::ZERO).expect("loaded");
         assert!(wall.open < 0.1 && wall.climb > 0.0, "open {}", wall.open);
     }
 
@@ -847,7 +854,7 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let tilt = ground_tilt(feet, &map).expect("loaded");
+        let tilt = ground_tilt(feet, &map, Vec3::ZERO).expect("loaded");
         assert!(tilt.y < -0.2 && tilt.x.abs() < 0.1, "rises toward -z: {tilt:?}");
         let rest = Pose::rest(0.0);
         let facing_up = Pose { yaw: 0.0, ..rest };
@@ -994,7 +1001,7 @@ mod tests {
         for yaw in [0.0, 1.0, 2.5] {
             let low = Pose { elevation: Pose::elevation_min(), ..Pose::rest(yaw) };
             let (stand, shift) = (low.transform(eye, Vec2::ZERO), low.shift(low.boom()));
-            let clear = boom_clearance(eye + shift, stand.translation + shift, &map);
+            let clear = boom_clearance(eye + shift, stand.translation + shift, &map, Vec3::ZERO);
             assert_eq!(clear, 1.0, "the boom at yaw {yaw} is obstructed at {clear}");
         }
     }

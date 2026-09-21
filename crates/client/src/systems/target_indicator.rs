@@ -100,6 +100,7 @@ pub fn update(
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     // Get local player's targets and health
     let Ok((player_target, player_ally_target, health)) = local_player_query.single() else {
@@ -185,8 +186,9 @@ pub fn update(
                         // Update AABB to prevent culling
                         *aabb = Aabb::from_min_max(min, max);
 
-                        // Position at origin since vertices are in world space
-                        transform.translation = Vec3::ZERO;
+                        // The vertices are world coordinates: the transform
+                        // takes the render origin off them.
+                        transform.translation = -origin.world_vec();
                         transform.rotation = Quat::IDENTITY;
 
                         *visibility = Visibility::Visible;
@@ -263,8 +265,9 @@ pub fn update(
                         // Update AABB to prevent culling
                         *aabb = Aabb::from_min_max(min, max);
 
-                        // Position at origin since vertices are in world space
-                        transform.translation = Vec3::ZERO;
+                        // The vertices are world coordinates: the transform
+                        // takes the render origin off them.
+                        transform.translation = -origin.world_vec();
                         transform.rotation = Quat::IDENTITY;
 
                         *visibility = Visibility::Visible;

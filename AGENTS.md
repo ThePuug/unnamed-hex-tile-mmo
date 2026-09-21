@@ -150,6 +150,19 @@ result must not depend on how dt is partitioned — no per-call smoothing, no
 per-step constant unscaled by dt — because the client replays in different
 slices what the server applied.
 
+**Render origin.** The client draws about `client::resources::RenderOrigin`,
+a tile near the player at `z = 0`. A rendered position is
+`map.convert(tile − origin.tile) + offset`, never `map.convert(tile) − origin`:
+the tile difference is exact, so the offset keeps its precision however far
+out the world is, where a world vector tens of thousands of units out keeps
+only millimetres and an actor's joints shake on screen. `rebase_origin` moves
+it in PreUpdate and shifts every root `Transform` and `VisualPosition` in the
+same pass. `Transform`, `VisualPosition` and the shaders' world position are
+rendered coordinates; `Position`, `Loc`, the `Map`, the region lattice and the
+wire are world. Cross at the read with `origin.render*` and `origin.world`, as
+`camera::update` and `world::update_terrain_cut` do: a system that reads the
+actor's `Transform` for the map has the origin to add.
+
 **Client-side prediction.** `InputQueue` distinguishes local from remote
 players. `input::update_keybits` pushes a new `seq` at the front on any key
 change, `input::tick` attributes the fixed tick to the front and puts it on

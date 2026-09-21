@@ -468,6 +468,7 @@ pub fn update_metrics_overlay(
         (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
     >,
     tri_stats: Res<crate::resources::LodTriangleStats>,
+    origin: Res<crate::resources::RenderOrigin>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
@@ -529,12 +530,12 @@ pub fn update_metrics_overlay(
             if flyover.active {
                 Some(flyover.world_position)
             } else {
-                player_q.single().ok().map(|(t, _)| t.translation)
+                player_q.single().ok().map(|(t, _)| origin.world(t.translation))
             }
         }
         #[cfg(not(feature = "admin"))]
         {
-            player_q.single().ok().map(|(t, _)| t.translation)
+            player_q.single().ok().map(|(t, _)| origin.world(t.translation))
         }
     };
 

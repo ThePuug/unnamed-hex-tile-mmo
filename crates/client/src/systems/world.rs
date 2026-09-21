@@ -511,21 +511,23 @@ pub fn dispatch_summary_tasks(
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
     edges: Res<crate::resources::EdgeCenters>,
+    origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
     mut last_eval_pos: Local<Option<Vec3>>,
     mut last_eval_edges: Local<HashMap<u32, Vec2>>,
     mut backlog: Local<bool>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
-    // Determine camera world position for local band computation
+    // The camera's world position, for the regions: the player is drawn
+    // about the render origin.
     #[cfg(feature = "admin")]
     let camera_pos = flyover
         .as_ref()
         .filter(|f| f.active)
         .map(|f| f.world_position)
-        .or_else(|| player_query.single().ok().map(|t| t.translation));
+        .or_else(|| player_query.single().ok().map(|t| origin.world(t.translation)));
     #[cfg(not(feature = "admin"))]
-    let camera_pos = player_query.single().ok().map(|t| t.translation);
+    let camera_pos = player_query.single().ok().map(|t| origin.world(t.translation));
 
     let map_changed = map.take_changed();
     let cache_changed = summary_cache.take_new_data();
@@ -765,6 +767,8 @@ const EDGE_MAX_LAG: f32 = 0.5;
 /// shaders drop fragments outside the band, so band edges follow the
 /// player with no rebuild. An edge moves only where both its levels are
 /// drawn, and eases when it does. A forced debug radius lifts the cut.
+/// The edges live in world coordinates, the frame of the region lattice;
+/// the uniform carries them as rendered, the frame the shaders see.
 pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
@@ -772,10 +776,11 @@ pub fn update_terrain_cut(
     summary_meshes: Res<SummaryMeshes>,
     mut edges: ResMut<crate::resources::EdgeCenters>,
     time: Res<Time>,
+    render_origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
-    let player = || player_query.single().ok().map(|t| t.translation);
+    let player = || player_query.single().ok().map(|t| render_origin.world(t.translation));
     #[cfg(feature = "admin")]
     let origin = match flyover.as_ref().filter(|f| f.active) {
         Some(f) => Some(f.world_position),
@@ -796,7 +801,7 @@ pub fn update_terrain_cut(
         material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {
-            level_cut(r, &bands, &edges.0, target)
+            level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz())
         };
     }
 }
@@ -1122,6 +1127,7 @@ fn build_bevy_mesh(
 pub fn poll_summary_meshes(
     mut commands: Commands,
     mut summary_meshes: ResMut<SummaryMeshes>,
+    origin: Res<crate::resources::RenderOrigin>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut tri_stats: ResMut<LodTriangleStats>,
     mut terrain_material: ResMut<TerrainMaterial>,
@@ -1212,7 +1218,7 @@ pub fn poll_summary_meshes(
                     .spawn((
                         Mesh3d(mesh_handle),
                         MeshMaterial3d(terrain_material.for_level(build.key.r, &mut materials)),
-                        Transform::from_translation(state.mesh_origin),
+                        Transform::from_translation(origin.render_world(state.mesh_origin)),
                         SummaryMesh { region_key: build.key },
                     ))
                     .id();

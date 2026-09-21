@@ -110,6 +110,7 @@ fn main() {
     app.add_systems(PreUpdate, (
         renet::write_do,
         movement::advance_interpolation,
+        crate::resources::rebase_origin,
     ));
 
     app.add_systems(Update, (
@@ -195,6 +196,7 @@ fn main() {
     ));
 
     app.init_resource::<InputQueues>();
+    app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<hiding::HiddenMeshes>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();

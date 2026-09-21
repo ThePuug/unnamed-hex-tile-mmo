@@ -235,6 +235,7 @@ pub fn update(
     mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, Option<&mut Jumping>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     for (entity, &airtime, &animates, vis_pos, &heading, jumping) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
@@ -262,7 +263,7 @@ pub fn update(
                 }
                 // Falling, the airtime counts the fall's age below zero.
                 let to_land = airtime.step.filter(|&ms| ms <= 0)
-                    .and_then(|ms| time_to_land(vis_pos.current(), -(ms as i32) as f32, &map));
+                    .and_then(|ms| time_to_land(origin.world(vis_pos.current()), -(ms as i32) as f32, &map));
                 let Some(anim) = player.animation_mut(node) else { continue };
                 if jumping.advance(anim, moments, airborne, to_land) {
                     commands.entity(entity).remove::<Jumping>();

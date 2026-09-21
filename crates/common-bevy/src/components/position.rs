@@ -207,6 +207,16 @@ impl VisualPosition {
         self.progress >= 1.0
     }
 
+    /// Moves the whole interpolation by `delta`: where it is, where it is
+    /// going, and every waypoint after — the render origin moving under it.
+    pub fn shift(&mut self, delta: Vec3) {
+        self.from += delta;
+        self.to += delta;
+        for waypoint in &mut self.path {
+            *waypoint += delta;
+        }
+    }
+
     /// Snap to a position immediately (no interpolation)
     pub fn snap_to(&mut self, position: Vec3) {
         self.from = position;

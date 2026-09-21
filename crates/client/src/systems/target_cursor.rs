@@ -43,6 +43,7 @@ pub fn update(
     player_query: Query<(&Loc, &Heading), With<Actor>>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     if let Ok((mut mesh_handle, mut cursor_transform, mut aabb)) = cursor_query.single_mut() {
         if let Ok((loc, heading)) = player_query.single() {
@@ -104,8 +105,9 @@ pub fn update(
                 // Update AABB to prevent culling when far from origin
                 *aabb = Aabb::from_min_max(min, max);
                 
-                // Position at origin since vertices are in world space
-                cursor_transform.translation = Vec3::ZERO;
+                // The vertices are world coordinates: the transform takes
+                // the render origin off them.
+                cursor_transform.translation = -origin.world_vec();
                 cursor_transform.rotation = Quat::IDENTITY;
             }
         }

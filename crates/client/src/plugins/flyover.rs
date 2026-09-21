@@ -198,6 +198,7 @@ fn execute_admin_actions(
     mut pending_tiles: ResMut<PendingFlyoverTiles>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     mut forced_radius: ResMut<ForcedSummaryRadius>,
+    origin: Res<crate::resources::RenderOrigin>,
     summary_cache: Res<crate::resources::SummaryCache>,
     mut cursor: Cursor,
     mut flyover_tracker: ResMut<FlyoverSummaryTracker>,
@@ -253,7 +254,7 @@ fn execute_admin_actions(
         if !flyover.active {
             // Toggle ON
             if let Ok((_, player_transform, _)) = player_query.single() {
-                flyover.world_position = player_transform.translation;
+                flyover.world_position = origin.world(player_transform.translation);
             }
 
             // Drop only flyover-sourced cache entries. Server data is durable
@@ -286,7 +287,7 @@ fn execute_admin_actions(
             commands.spawn((
                 Mesh3d(cursor_mesh),
                 MeshMaterial3d(cursor_mat),
-                Transform::from_translation(flyover.world_position),
+                Transform::from_translation(origin.render_world(flyover.world_position)),
                 bevy_light::NotShadowCaster,
                 FlyoverCursor,
             ));
@@ -350,6 +351,7 @@ fn flyover_movement(
     map: Res<Map>,
     mut flyover: ResMut<FlyoverState>,
     mut cursor_query: Query<&mut Transform, With<FlyoverCursor>>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     let dt = time.delta_secs();
 
@@ -414,7 +416,7 @@ fn flyover_movement(
 
     // Update ground cursor position
     if let Ok(mut cursor_tf) = cursor_query.single_mut() {
-        cursor_tf.translation = flyover.world_position;
+        cursor_tf.translation = origin.render_world(flyover.world_position);
     }
 }
 
@@ -426,6 +428,7 @@ fn flyover_camera_update(
     map: Res<Map>,
     time: Res<Time>,
     flyover: Res<FlyoverState>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     let target = orbit.target_angle();
     let diff = {
@@ -459,8 +462,9 @@ fn flyover_camera_update(
             orbit.current.cos() * CAMERA_DISTANCE,
         );
 
-        c_transform.translation = flyover.world_position + offset;
-        c_transform.look_at(flyover.world_position + Vec3::Y * map.radius(), Vec3::Y);
+        let at = origin.render_world(flyover.world_position);
+        c_transform.translation = at + offset;
+        c_transform.look_at(at + Vec3::Y * map.radius(), Vec3::Y);
     }
 }
 

@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use qrz::Convert;
 
 use crate::components::RemoteMotion;
+use crate::resources::RenderOrigin;
 use common_bevy::{
     components::{
         displacing::Displacing,
@@ -46,6 +47,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 /// state.
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
+    origin: Res<RenderOrigin>,
     mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -78,7 +80,7 @@ pub fn predict_local_player(
 
         if *heading != facing { *heading = facing; }
         airtime.step = air;
-        let predicted = map.convert(position.tile) + offset;
+        let predicted = origin.render(&map, &Position::new(position.tile, offset));
         visual.interpolate_toward(predicted, tick * VISUAL_TICKS);
     }
 }
@@ -89,6 +91,7 @@ pub fn predict_local_player(
 pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
+    origin: Res<RenderOrigin>,
     mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
@@ -118,7 +121,7 @@ pub fn simulate_remote(
             airtime.state = out.airtime;
             airtime.step = out.airtime;
         }
-        visual.interpolate_toward(position.to_world(&map), tick * VISUAL_TICKS);
+        visual.interpolate_toward(origin.render(&map, &position), tick * VISUAL_TICKS);
     }
 }
 
@@ -162,6 +165,7 @@ pub fn apply_intent(
 /// destination over its duration, for the local player and remote entities
 /// alike. `Displacing` marks it until the matching `Loc` arrives.
 pub fn apply_displace(
+    origin: Res<RenderOrigin>,
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut query: Query<(&Loc, &mut VisualPosition)>,
@@ -174,7 +178,7 @@ pub fn apply_displace(
 
         let duration_secs = duration_ms as f32 / 1000.0;
         let flat_dist = loc.flat_distance(&destination);
-        let dest_world: Vec3 = map.convert(destination);
+        let dest_world: Vec3 = origin.render_tile(&map, destination);
 
         if flat_dist > 1 {
             // Path on floor tiles: Loc and the destination stand one level up.
@@ -184,7 +188,7 @@ pub fn apply_displace(
             if path.is_empty() {
                 visual.interpolate_toward(dest_world, duration_secs);
             } else {
-                let waypoints: Vec<Vec3> = path.iter().map(|&tile| map.convert(tile + qrz::Qrz::Z)).collect();
+                let waypoints: Vec<Vec3> = path.iter().map(|&tile| origin.render_tile(&map, tile + qrz::Qrz::Z)).collect();
                 visual.interpolate_along_path(&waypoints, duration_secs);
             }
         } else {
@@ -209,6 +213,7 @@ pub fn do_loc(
     mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition, Option<&Displacing>, Option<&RemoteMotion>)>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
+    origin: Res<RenderOrigin>,
 ) {
     let drift_limit = DRIFT_LIMIT_TILES * 3f32.sqrt() * map.radius();
 
@@ -216,7 +221,9 @@ pub fn do_loc(
         let Do { event: Event::Incremental { ent, component: Component::Loc(loc) } } = message else { continue };
         let (ent, loc) = (*ent, *loc);
         let Ok((mut loc0, mut position, mut visual, displacing, motion)) = query.get_mut(ent) else { continue; };
-        let centre: Vec3 = map.convert(*loc);
+        // The tile's centre as drawn, and the world's for the physics.
+        let centre: Vec3 = origin.render_tile(&map, *loc);
+        let centre_world: Vec3 = map.convert(*loc);
         let is_local = buffers.get(&ent).is_some();
 
         if let Some(displacing) = displacing {
@@ -231,12 +238,12 @@ pub fn do_loc(
             visual.snap_to(centre);
         } else if motion.is_some() {
             let world = position.to_world(&map);
-            if world.xz().distance(centre.xz()) > drift_limit {
+            if world.xz().distance(centre_world.xz()) > drift_limit {
                 *position = Position::at_tile(*loc);
                 visual.interpolate_toward(centre, LOC_SETTLE_SECS);
             } else {
                 position.tile = *loc;
-                position.offset = world - centre;
+                position.offset = world - centre_world;
             }
         } else if !is_local {
             *position = Position::at_tile(*loc);

@@ -1,3 +1,6 @@
+pub mod origin;
+pub use origin::{RenderOrigin, rebase_origin};
+
 use bevy::{
     prelude::*,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
@@ -42,6 +45,14 @@ impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
         Self { inner_center: Vec2::ZERO, outer_center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, pad: 0.0 }
+    }
+}
+
+impl TerrainCut {
+    /// The cut as the shaders see it: its centres taken off `origin`, the
+    /// render origin's ground position.
+    pub fn rendered(self, origin: Vec2) -> Self {
+        Self { inner_center: self.inner_center - origin, outer_center: self.outer_center - origin, ..self }
     }
 }
 

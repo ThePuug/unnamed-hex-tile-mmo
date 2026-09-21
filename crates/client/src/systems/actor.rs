@@ -111,6 +111,7 @@ pub fn do_spawn(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     for message in reader.read() {
         let Do { event: Event::Spawn { ent, typ, qrz, attrs } } = message else { continue };
@@ -135,7 +136,8 @@ pub fn do_spawn(
                     commands.spawn_empty()
                 };
 
-                let spawn_world: Vec3 = map.convert(qrz);
+                // Where it is drawn, about the render origin.
+                let spawn_world: Vec3 = origin.render_tile(&map, qrz);
 
                 entity_cmd
                     .insert((

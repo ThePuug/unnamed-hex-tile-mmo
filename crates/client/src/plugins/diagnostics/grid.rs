@@ -195,7 +195,8 @@ pub fn spawn_grid_mesh_task(
 pub fn poll_grid_mesh_task(
     mut pending_mesh: ResMut<PendingGridMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut grid_query: Query<(&mut Mesh3d, &mut Aabb), With<HexGridOverlay>>,
+    mut grid_query: Query<(&mut Mesh3d, &mut Aabb, &mut Transform), With<HexGridOverlay>>,
+    origin: Res<crate::resources::RenderOrigin>,
 ) {
     let Some(task) = pending_mesh.task.as_mut() else {
         return;
@@ -208,11 +209,14 @@ pub fn poll_grid_mesh_task(
         // Task completed - update the mesh
         pending_mesh.task = None;
 
-        let Ok((mut grid_mesh_handle, mut aabb)) = grid_query.single_mut() else {
+        let Ok((mut grid_mesh_handle, mut aabb, mut grid_transform)) = grid_query.single_mut() else {
             return;
         };
 
         grid_mesh_handle.0 = meshes.add(new_mesh);
+        // The lines are world coordinates: the transform takes the render
+        // origin off them.
+        grid_transform.translation = -origin.world_vec();
         *aabb = new_aabb;
     }
 }
