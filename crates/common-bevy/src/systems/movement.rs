@@ -91,11 +91,21 @@ pub fn standing_y(floor: Qrz, map: &Map) -> f32 {
 /// same fan surface the mesh draws (`surface::surface_y`), so an entity's
 /// feet stay on what is rendered, across tile edges and up to a cliff's
 /// face. Whether a tile may be entered is decided on tile z elsewhere; this
-/// only says how high the ground is.
+/// only says how high the ground is. The point is a world vector, so the
+/// sample is as exact as that vector; the walk uses [`surface_y_from`].
 pub fn surface_y(world_xz: Vec2, floor: Qrz, map: &Map) -> f32 {
     let floor_centre: Vec3 = map.convert(floor);
-    crate::surface::surface_y(world_xz, floor, floor_centre, |q, r| {
-        map.get_by_qr(q, r).map(|(qrz, _)| qrz.z)
+    floor_centre.y + surface_y_from(floor, world_xz - floor_centre.xz(), floor, map)
+}
+
+/// The surface's height over the level of `tile`, under a point given as
+/// `xz` from that tile's centre: the walk's frame. Every height and
+/// distance is taken as a difference from `tile`, so the sample is exact
+/// however far out, or up, the tile is.
+pub fn surface_y_from(tile: Qrz, xz: Vec2, floor: Qrz, map: &Map) -> f32 {
+    let floor_centre: Vec3 = map.convert(floor - tile);
+    crate::surface::surface_y(xz, Qrz { z: floor.z - tile.z, ..floor }, floor_centre, |q, r| {
+        map.get_by_qr(q, r).map(|(qrz, _)| qrz.z - tile.z)
     })
 }
 
@@ -128,14 +138,16 @@ pub struct MovementOutput {
 }
 
 /// Whether a step from the tile over `here_floor` may land in `next`, for an
-/// entity whose feet are at world height `world_y`. Refused by a rise of more
-/// than one level unless airborne at or above its standing height, by a
-/// solid decorator with no floor, by a tile at its entity capacity, and by
-/// water deeper than a walker wades.
+/// entity whose feet stand `y` over the level of `tile`, the tile its walk
+/// is measured from. Refused by a rise of more than one level unless
+/// airborne at or above its standing height, by a solid decorator with no
+/// floor, by a tile at its entity capacity, and by water deeper than a
+/// walker wades.
 pub fn is_tile_blocked(
+    tile: Qrz,
     here_floor: Option<Qrz>,
     next: Qrz,
-    world_y: f32,
+    y: f32,
     airtime: Option<i16>,
     map: &Map,
     nntree: &NNTree,
@@ -144,7 +156,8 @@ pub fn is_tile_blocked(
 
     let cliff = match (here_floor, next_floor) {
         (Some(here), Some(there)) if there.z - here.z > 1 => {
-            airtime.is_none() || world_y + LEDGE_GRAB_THRESHOLD < standing_y(there, map)
+            let standing = (there.z + 1 - tile.z) as f32 * map.rise();
+            airtime.is_none() || y + LEDGE_GRAB_THRESHOLD < standing
         }
         _ => false,
     };
@@ -169,18 +182,23 @@ const FACE_MARGIN: f32 = 0.01;
 const FACES_PER_WALK: usize = 16;
 
 /// Displacement of a walk of `reach` world units along the unit `heading`
-/// from `from`, a ground-plane point in `here` whose floor is `floor`. The
-/// walk crosses the faces [`is_tile_blocked`] allows and slides along the
-/// ones it refuses: against a face only the heading's component along it is
-/// kept, so a graze keeps most of its speed, a head-on push stands, and past
-/// the face's end the heading resumes.
+/// from `from`, a ground-plane point given from the centre of `tile`, in
+/// `here` whose floor is `floor`. The walk crosses the faces
+/// [`is_tile_blocked`] allows and slides along the ones it refuses: against
+/// a face only the heading's component along it is kept, so a graze keeps
+/// most of its speed, a head-on push stands, and past the face's end the
+/// heading resumes. The faces are read with the tiles taken relative to
+/// `tile`, so the geometry is exact however far out the tile is; only the
+/// lookups name the tiles themselves. `y` is the feet's height over the
+/// level of `tile`.
 fn walk(
+    tile: Qrz,
     from: Vec2,
     heading: Vec2,
     reach: f32,
     mut here: Qrz,
     mut floor: Option<Qrz>,
-    world_y: f32,
+    y: f32,
     airtime: Option<i16>,
     map: &Map,
     nntree: &NNTree,
@@ -192,17 +210,18 @@ fn walk(
     // while sliding, so a slide spends `left` faster than it covers ground.
     let mut rate = 1.0;
     for _ in 0..FACES_PER_WALK {
-        let (to_face, next) = map.exit(pos, dir, here);
+        let (to_face, next) = map.exit(pos, dir, here - tile);
+        let next = next + tile;
         let run = left * rate;
         if run <= to_face {
             pos += dir * run;
             break;
         }
-        if is_tile_blocked(floor, next, world_y, airtime, map, nntree) {
+        if is_tile_blocked(tile, floor, next, y, airtime, map, nntree) {
             let short = (to_face - FACE_MARGIN).max(0.0);
             pos += dir * short;
             left -= short / rate;
-            let along = map.face(here, next).0.perp();
+            let along = map.face(here - tile, next - tile).0.perp();
             let kept = heading.dot(along);
             if kept.abs() < 1e-6 {
                 break;
@@ -227,6 +246,10 @@ fn walk(
 /// into another tile. A held turn key steps the heading when the turn clock
 /// fills, and the walk is split there, so the part before a step runs on
 /// the old heading and the part after on the new whatever the partition.
+/// Everything runs in the tile's frame — its centre the origin, the offset
+/// the position, neighbours and heights as tile differences — so the
+/// result is the same however far out the tile is: a world vector would
+/// keep only float steps there, and a tick's step is smaller than one.
 pub fn calculate_movement(
     input: MovementInput,
     mut dt0: i16,
@@ -234,7 +257,6 @@ pub fn calculate_movement(
     nntree: &NNTree,
 ) -> MovementOutput {
     let tile = input.position.tile;
-    let px0: Vec3 = map.convert(tile);
     let mut offset = input.position.offset;
     let mut airtime = input.airtime;
     let mut heading = input.heading;
@@ -252,8 +274,7 @@ pub fn calculate_movement(
         dt0 -= dt;
         let dir = if input.back { heading.reversed() } else { heading }.to_world_dir();
 
-        let world = px0 + offset;
-        let here: Qrz = map.convert(world);
+        let here: Qrz = tile + map.convert(offset);
         let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
 
         // Over nothing, or more than a level above the ground under it, a
@@ -261,7 +282,7 @@ pub fn calculate_movement(
         // the tile's level: on a slope the surface stands well above it in
         // the uphill part of a tile, and a level test read there falls
         // every few ticks.
-        if airtime.is_none() && floor.map_or(true, |floor| world.y > surface_y(world.xz(), floor, map) + map.rise()) {
+        if airtime.is_none() && floor.map_or(true, |floor| offset.y > surface_y_from(tile, offset.xz(), floor, map) + map.rise()) {
             airtime = Some(0);
         }
 
@@ -281,9 +302,9 @@ pub fn calculate_movement(
                 let dy = -fall(-(air as i32) as f32, dt as f32);
                 air = air.saturating_sub(dt);
                 airtime = Some(air);
-                match floor.map(|floor| surface_y(world.xz(), floor, map)) {
-                    Some(ground) if world.y + dy <= ground => {
-                        offset.y = ground - px0.y;
+                match floor.map(|floor| surface_y_from(tile, offset.xz(), floor, map)) {
+                    Some(ground) if offset.y + dy <= ground => {
+                        offset.y = ground;
                         airtime = None;
                     }
                     _ => offset.y += dy,
@@ -296,21 +317,20 @@ pub fn calculate_movement(
 
         if input.moving {
             let moved = walk(
-                (px0 + offset).xz(), dir, input.movement_speed * dt as f32,
-                here, floor, px0.y + offset.y, airtime, map, nntree,
+                tile, offset.xz(), dir, input.movement_speed * dt as f32,
+                here, floor, offset.y, airtime, map, nntree,
             );
             offset.x += moved.x;
             offset.z += moved.y;
         }
 
-        let world = px0 + offset;
-        let here: Qrz = map.convert(world);
+        let here: Qrz = tile + map.convert(offset);
         if let Some((floor, _)) = map.get_by_qr(here.q, here.r) {
-            let ground = surface_y(world.xz(), floor, map);
+            let ground = surface_y_from(tile, offset.xz(), floor, map);
             if airtime.is_none() {
-                offset.y = ground - px0.y;
+                offset.y = ground;
             } else {
-                offset.y = offset.y.max(ground - px0.y);
+                offset.y = offset.y.max(ground);
             }
         }
     }
@@ -576,6 +596,56 @@ mod tests {
             assert!((out.position.offset.y - settled.position.offset.y).abs() < 1e-5, "moved at tick {tick}: {} from {}", out.position.offset.y, settled.position.offset.y);
             input.position = out.position;
             input.airtime = out.airtime;
+        }
+    }
+
+    /// The physics reads nothing of where its tile is: the same ground
+    /// laid around a tile at the origin and around one millions of units
+    /// out, walked with the same inputs — across faces, along a refused
+    /// face, off a ledge and down to a landing — gives the same offsets,
+    /// bit for bit. A world vector that far out keeps only quarter-unit
+    /// steps, less than a tick's walk; the tile stands five levels up, so
+    /// the heights are tested the same way.
+    #[test]
+    fn the_walk_is_the_same_however_far_out_the_tile_is() {
+        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let lay = |map: &Map, at: Qrz| {
+            for q in -4..=4 {
+                for r in -4..=4 {
+                    // A slope to the east, a wall of two levels along r = 2.
+                    let z = if r == 2 { 3 } else { q.max(0) };
+                    map.insert(Qrz { q: at.q + q, r: at.r + r, z: at.z + z }, ground);
+                }
+            }
+        };
+        let run = |at: Qrz| {
+            let map = create_test_map();
+            lay(&map, at);
+            let nntree = create_test_nntree();
+            let mut input = MovementInput {
+                position: Position::new(Qrz { z: at.z + 1, ..at }, Vec3::new(0.3, 0.0, -0.2)),
+                turn: 1,
+                since_step_ms: 0,
+                ..walking(Heading::from_degrees(150.0), true)
+            };
+            let mut trace = Vec::new();
+            for tick in 0..120 {
+                if tick == 60 { input.airtime = Some(JUMP_DURATION_MS); }
+                let out = calculate_movement(input, 16, &map, &nntree);
+                input.position = out.position;
+                input.heading = out.heading;
+                input.since_step_ms = out.since_step_ms;
+                input.airtime = out.airtime;
+                trace.push((out.position.offset, out.airtime, out.heading));
+            }
+            trace
+        };
+        let near = run(Qrz { q: 0, r: 0, z: 0 });
+        let far = run(Qrz { q: -1_600_000, r: 2_400_000, z: 5 });
+        assert!(near.iter().any(|(o, _, _)| o.xz().length() > 2.0), "the walk crossed faces: {:?}", near.last());
+        assert!(near.iter().any(|(_, air, _)| air.is_some()) && near.last().unwrap().1.is_none(), "it jumped and landed");
+        for (tick, (n, f)) in near.iter().zip(&far).enumerate() {
+            assert_eq!(n, f, "tick {tick}: near {n:?}, far {f:?}");
         }
     }
 
