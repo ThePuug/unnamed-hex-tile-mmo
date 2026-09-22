@@ -415,6 +415,10 @@ struct ConsoleApp {
     hist_ord_queue: History,
     hist_unord_queue: History,
 
+    hist_credit: History,
+    hist_clamped: History,
+    hist_violations: History,
+
     timing_entries: HashMap<String, TimingEntry>,
     /// World layers, in the order the stack evaluates them — read from the
     /// snapshot's own field order, so a layer added to the stack appears
@@ -442,6 +446,9 @@ impl ConsoleApp {
             hist_net_recv: History::new(),
             hist_ord_queue: History::new(),
             hist_unord_queue: History::new(),
+            hist_credit: History::new(),
+            hist_clamped: History::new(),
+            hist_violations: History::new(),
             timing_entries: HashMap::new(),
             layers: Vec::new(),
         }
@@ -503,6 +510,10 @@ impl ConsoleApp {
         self.hist_mem.push(self.field("memory_mb"));
         self.hist_frame_overruns.push(self.field("frame_overruns"));
         self.hist_tick_overruns.push(self.field("tick_overruns"));
+
+        self.hist_credit.push(self.field("input.credit_pct"));
+        self.hist_clamped.push(self.field("input.clamped_ms"));
+        self.hist_violations.push(self.field("input.violations"));
 
         self.hist_chunk_dur.push(self.field("chunk.dur_ms"));
         self.hist_chunk_queue.push(self.field("chunk.in_flight"));
@@ -693,6 +704,43 @@ impl eframe::App for ConsoleApp {
                             seg_half(ui, &format!("{:>7}", "buf%"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>5}  ", CHAN_BUF.fmt(self.field("net_unord_buf_pct"))), COLOR_DIM);
+                        });
+                    });
+
+                    // INV-007: the credit a client's own timing is spent
+                    // against. It falling is a client ahead of real time;
+                    // clamped milliseconds are the movement refused for it.
+                    const ALARM_CREDIT: Alarm = Alarm { bands: &[
+                        (10.0, COLOR_CRITICAL),
+                        (50.0, COLOR_WARN),
+                        (f64::INFINITY, COLOR_DIM),
+                    ]};
+                    const ALARM_REFUSED: Alarm = Alarm { bands: &[
+                        (0.5, COLOR_DIM),
+                        (f64::INFINITY, COLOR_CRITICAL),
+                    ]};
+
+                    draw_section(&mut cols[0], "INPUT", |ui| {
+                        const PCT5: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Clamp };
+                        let credit = self.field("input.credit_pct");
+                        seg_row(ui, cw, rh, |s| {
+                            s.half(" CREDIT", COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", PCT5.fmt(credit), " %"), ALARM_CREDIT.color(credit));
+                            s.spark(&self.hist_credit.as_f32(), SparkScale::Fixed(100.0), &ALARM_CREDIT);
+                            s.half("  clamp", COLOR_DIM);
+                            let clamped = self.hist_clamped.visible_sum(bar_count);
+                            s.half(&format!("{:>5}{:<2}", TIME5.fmt(clamped), "ms"), ALARM_REFUSED.color(clamped));
+                        });
+                        let viol = self.hist_violations.visible_sum(bar_count);
+                        let dc = self.field("input.disconnects");
+                        seg_row(ui, cw, rh, |s| {
+                            s.half("   VIOL", COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(viol)), ALARM_REFUSED.color(viol));
+                            s.spark(&self.hist_violations.as_f32(), SparkScale::Auto, &ALARM_REFUSED);
+                            s.half("   drop", COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(self.field("input.drops"))), COLOR_DIM);
+                            s.half("     dc", COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(dc)), ALARM_REFUSED.color(dc));
                         });
                     });
 

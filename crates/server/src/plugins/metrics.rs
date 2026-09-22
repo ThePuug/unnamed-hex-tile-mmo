@@ -275,6 +275,12 @@ impl Plugin for MetricsPlugin {
         snapshot.register("summary.in_flight", Aggregator::Last);
         snapshot.register("summary.pending", Aggregator::Last);
         snapshot.register("summary.budget", Aggregator::Last);
+        // The clock guard on client-timed input (INV-007)
+        snapshot.register("input.credit_pct", Aggregator::Last);
+        snapshot.register("input.clamped_ms", Aggregator::Sum);
+        snapshot.register("input.drops", Aggregator::Sum);
+        snapshot.register("input.violations", Aggregator::Sum);
+        snapshot.register("input.disconnects", Aggregator::Sum);
         let timings = SystemTimings::new(transport.clone(), self.interval);
         app.insert_resource(snapshot)
             .insert_resource(timings)

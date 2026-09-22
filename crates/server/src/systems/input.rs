@@ -142,8 +142,10 @@ pub fn try_input(
     mut net: ResMut<ServerNet>,
     lobby: Res<Lobby>,
     time: Res<Time<Real>>,
+    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
 ) {
     let now = time.elapsed_secs();
+    let (mut clamped_ms, mut drops, mut violations, mut disconnects) = (0.0, 0.0, 0.0, 0.0);
     for message in reader.read() {
         let Try { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
@@ -151,14 +153,17 @@ pub fn try_input(
         let opened = seq == guard.open_seq.wrapping_add(1);
         match guard.accept(now, key_bits, dt, seq) {
             Verdict::Apply(applied) => {
+                clamped_ms += (dt - applied) as f32;
                 if applied > 0 || opened {
                     writer.write(Do { event: Event::Input { ent, key_bits, dt: applied, seq } });
                 }
             }
-            Verdict::Drop => {}
+            Verdict::Drop => drops += 1.0,
             Verdict::Violation(what) => {
+                violations += 1.0;
                 warn!("input violation from {ent}: {what}");
                 if guard.violate(now) {
+                    disconnects += 1.0;
                     if let Some(&client_id) = lobby.get_by_right(&ent) {
                         warn!("disconnecting {client_id}: repeated input violations");
                         net.disconnect(client_id);
@@ -167,6 +172,17 @@ pub fn try_input(
             }
         }
     }
+
+    // The tightest connection's remaining credit: what is left before a
+    // client's own timing starts being clamped.
+    let lowest = guards.0.values().map(|g| g.credit_ms).fold(f32::INFINITY, f32::min);
+    snapshot.record(&[
+        ("input.credit_pct", if lowest.is_finite() { lowest / CREDIT_CAP_MS * 100.0 } else { 100.0 }),
+        ("input.clamped_ms", clamped_ms),
+        ("input.drops", drops),
+        ("input.violations", violations),
+        ("input.disconnects", disconnects),
+    ]);
 }
 
 /// Applies accepted inputs to physics in arrival order. The queue holds one
