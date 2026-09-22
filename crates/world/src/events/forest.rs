@@ -567,22 +567,30 @@ pub fn tree_at(temperature: f64, mix: f64) -> Slot {
     if mix < warm { Slot::Deciduous } else { Slot::Pine }
 }
 
+/// The three draws slot `k` of tile `(q, r)` is filled by, each in
+/// [0, 1): against the density, whether it holds anything; against the
+/// tree share, scrub or a tree; and which tree. A summary filling the
+/// same slot from its canopy draws these too, so where its density is the
+/// tile's the same slots fill and the seam between the levels holds.
+pub fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
+    (
+        hash_channel_f64(q as i64, r as i64, seed, SLOT_FILL + k as u64),
+        hash_channel_f64(q as i64, r as i64, seed, SLOT_KIND + k as u64),
+        hash_channel_f64(q as i64, r as i64, seed, SLOT_MIX + k as u64),
+    )
+}
+
 /// A tile's cover from the density and tree share it lands on at
-/// `temperature`: each slot filled by its own hash against the density,
+/// `temperature`: each slot filled by its own draw against the density,
 /// scrub or a tree by another against the share.
 pub fn cover_of(q: i32, r: i32, density: f64, trees: f64, temperature: f64, seed: u64) -> Cover {
     let mut cover = Cover::NONE;
     for k in 0..SLOTS.len() {
-        let fill = hash_channel_f64(q as i64, r as i64, seed, SLOT_FILL + k as u64);
+        let (fill, kind, mix) = slot_draws(q, r, k, seed);
         if density <= fill {
             continue;
         }
-        let kind = hash_channel_f64(q as i64, r as i64, seed, SLOT_KIND + k as u64);
-        let slot = if kind >= trees {
-            Slot::Scrub
-        } else {
-            tree_at(temperature, hash_channel_f64(q as i64, r as i64, seed, SLOT_MIX + k as u64))
-        };
+        let slot = if kind >= trees { Slot::Scrub } else { tree_at(temperature, mix) };
         cover = cover.with(k, slot);
     }
     cover

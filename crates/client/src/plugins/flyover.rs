@@ -140,8 +140,7 @@ struct AdminComposite(pub Arc<world::events::Composite>);
 
 impl Default for AdminComposite {
     fn default() -> Self {
-        let seed = 0x9E3779B97F4A7C15;
-        Self(Arc::new(world::events::Composite::standard(seed)))
+        Self(Arc::new(world::events::Composite::standard(world::WORLD_SEED)))
     }
 }
 

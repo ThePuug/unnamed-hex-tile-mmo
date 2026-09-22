@@ -61,6 +61,11 @@ pub(crate) const SQRT_3: f64 = 1.7320508075688772;
 /// renderer spaces tiles √3 of its own units apart, which [`RISE`] carries.
 pub const TILE_SPACING: f64 = 1.0;
 
+/// The seed the served world is built from. The server's registry, the
+/// client's flyover and the client's far trees all draw from this one, or
+/// they draw different worlds.
+pub const WORLD_SEED: u64 = 0x9E3779B97F4A7C15;
+
 /// Convert hex tile coordinates to world (cartesian) coordinates.
 /// Hex q,r axes are 60° apart; this produces isotropic x,y.
 pub fn hex_to_world(q: i32, r: i32) -> (f64, f64) {

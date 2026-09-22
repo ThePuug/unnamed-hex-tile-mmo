@@ -371,9 +371,11 @@ pub fn place_trees(region_key: MeshRegionKey, mesh_origin: Vec3, map: &common_be
 
 /// The trees of a mesh region at a summary level: every tile the region's
 /// summaries cover has its slots, each filled from its summary's canopy by
-/// the tile rule, standing on the level's drawn surface at its slot, from
-/// the region's origin. Reads the level's cells and nothing else, so it
-/// runs where the level's ground is built; nothing while a cell is absent.
+/// the tile rule from the tile's own draws — so where the canopy's density
+/// is the tile's, the same trees stand at both levels and the seam holds —
+/// standing on the level's drawn surface at its slot, from the region's
+/// origin. Reads the level's cells and nothing else, so it runs where the
+/// level's ground is built; nothing while a cell is absent.
 pub fn place_canopy(
     radius: u32,
     region_key: MeshRegionKey,
@@ -393,7 +395,8 @@ pub fn place_canopy(
         let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * canopy.density() as f32;
         for (q, r) in lattice.tiles_in_cell(cell) {
             for k in 0..SLOTS.len() {
-                let slot = canopy.slot(q, r, k);
+                let (fill, kind, mix) = world::events::forest::slot_draws(q, r, k, world::WORLD_SEED);
+                let slot = canopy.slot(fill, kind, mix);
                 if slot == Slot::Empty {
                     continue;
                 }

@@ -137,8 +137,7 @@ fn main() {
     app.init_resource::<Lobby>();
     app.init_resource::<InputQueues>();
     app.init_resource::<input::InputGuards>();
-    let seed = 0x9E3779B97F4A7C15;
-    let registry = crate::resources::event_registry::EventRegistry::new(seed);
+    let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::spatial_difficulty::HAVEN_LOCATION;

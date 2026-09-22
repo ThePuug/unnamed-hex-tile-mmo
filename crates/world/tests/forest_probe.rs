@@ -202,3 +202,36 @@ fn vantage_points() {
     let near: Vec<((i32, i32), u8)> = views.iter().filter(|(_, (_, f))| *f >= 3).map(|(k, (_, f))| (*k, *f)).take(5).collect();
     println!("wooded tiles near the spawn: {near:?}");
 }
+
+/// How far the first summary level's trees agree with the tiles' own:
+/// each slot under a summary filled from its canopy by the tile's draws,
+/// against what the tile holds.
+#[test]
+#[ignore]
+fn seam_agreement() {
+    use common::cover::SLOTS;
+    use common::summary::{summarize, SummarySource};
+    let c = with_forest();
+    let (mut same, mut wooded, mut total) = (0usize, 0usize, 0usize);
+    for (q, r) in window(SPAWN, 900, 3) {
+        let (sq, sr) = (q / 3, r / 3);
+        let Some(cell) = summarize(1, sq, sr, &c) else { continue };
+        for dq in -1i32..=1 {
+            for dr in -1..=1 {
+                if (dq + dr).abs() > 1 { continue; }
+                let (tq, tr) = (sq * 3 + dq, sr * 3 + dr);
+                let cover = c.sample(tq, tr).unwrap().cover;
+                for k in 0..SLOTS.len() {
+                    let (fill, kind, mix) = forest::slot_draws(tq, tr, k, SEED);
+                    let far = cell.canopy.slot(fill, kind, mix);
+                    let near = cover.slot(k);
+                    total += 1;
+                    if near != Slot::Empty || far != Slot::Empty { wooded += 1; }
+                    if near == far { same += 1; }
+                }
+            }
+        }
+    }
+    println!("slots {total}, agreeing {same} ({:.1}%); of the {wooded} filled at either level, {:.1}% agree",
+        100.0 * same as f64 / total as f64, 100.0 * (same + wooded - total) as f64 / wooded as f64);
+}
