@@ -6,3 +6,4 @@ pub mod ui;
 pub mod vignette;
 pub mod water;
 pub mod world_streaming;
+pub mod forest;

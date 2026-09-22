@@ -2413,6 +2413,7 @@ dependencies = [
  "bevy_mesh",
  "bimap",
  "bincode",
+ "bytemuck",
  "chrono",
  "common",
  "common-bevy",

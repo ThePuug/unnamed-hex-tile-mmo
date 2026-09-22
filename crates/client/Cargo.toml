@@ -21,6 +21,7 @@ bevy_camera = "0.18"
 bevy_easings = "0.18"
 bevy_light = "0.18"
 bevy_mesh = "0.18"
+bytemuck = { version = "1", features = ["derive"] }
 renet_netcode = "2"
 bimap = "0"
 dashmap = "6"

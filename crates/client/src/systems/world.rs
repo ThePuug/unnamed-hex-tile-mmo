@@ -725,6 +725,8 @@ pub fn dispatch_summary_tasks(
                     base_indices: Vec::new(),
                     base_tri_count: 0,
                     base_water: Default::default(),
+                    base_trees: Vec::new(),
+                    trees_spawned: false,
                     waiting: false,
                     epoch,
                 },
@@ -1006,6 +1008,7 @@ fn collect_and_build_summary_mesh(
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
         water: Default::default(),
+        trees: Vec::new(),
     };
 
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
@@ -1053,11 +1056,18 @@ fn collect_and_build_summary_mesh(
     let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
     let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
 
+    // The trees stand with the tiles: placed here from the map's cover,
+    // spawned with the ground once the kit is loaded. The coarser levels'
+    // slots are unbuilt.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse)
             .as_ref()
-            .map_or(empty, |smr| with_water(smr, &tile_water));
+            .map_or(empty, |smr| {
+                let mut result = with_water(smr, &tile_water);
+                result.trees = crate::plugins::forest::place_trees(region_key, smr.mesh_origin, map);
+                result
+            });
     }
 
     // Water follows the height's provenance: the cached surface where the
@@ -1085,6 +1095,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
         water: Default::default(),
+        trees: Vec::new(),
     }
 }
 
@@ -1152,6 +1163,7 @@ pub fn poll_summary_meshes(
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.base_water = result.water;
+                state.base_trees = result.trees;
                 state.waiting = result.tri_count == 0;
                 to_upload.push(region_key);
             }
@@ -1209,7 +1221,8 @@ pub fn poll_summary_meshes(
         let entity = match state.entity {
             Some(entity) => {
                 commands.entity(entity).insert(Mesh3d(mesh_handle));
-                // The water is the ground's child: rebuilt with it.
+                // The water and the trees are the ground's children:
+                // rebuilt with it.
                 commands.entity(entity).despawn_related::<Children>();
                 entity
             }
@@ -1226,6 +1239,7 @@ pub fn poll_summary_meshes(
                 entity
             }
         };
+        state.trees_spawned = false;
 
         if !build.water.indices.is_empty() {
             let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &build.water.indices);
@@ -1412,6 +1426,8 @@ mod tests {
                         base_indices: Vec::new(),
                         base_tri_count: 0,
                         base_water: Default::default(),
+                        base_trees: Vec::new(),
+                        trees_spawned: false,
                         waiting: false,
                         epoch: 0,
                     });
@@ -1455,6 +1471,8 @@ mod tests {
             base_indices: Vec::new(),
             base_tri_count: 0,
             base_water: Default::default(),
+            base_trees: Vec::new(),
+            trees_spawned: false,
             waiting: true,
             epoch: 3,
         };
