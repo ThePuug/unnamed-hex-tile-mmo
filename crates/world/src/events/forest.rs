@@ -569,10 +569,8 @@ pub fn tree_at(temperature: f64, mix: f64) -> Slot {
 
 /// The three draws slot `k` of tile `(q, r)` is filled by, each in
 /// [0, 1): against the density, whether it holds anything; against the
-/// tree share, scrub or a tree; and which tree. A summary filling the
-/// same slot from its canopy draws these too, so where its density is the
-/// tile's the same slots fill and the seam between the levels holds.
-pub fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
+/// tree share, scrub or a tree; and which tree.
+fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
     (
         hash_channel_f64(q as i64, r as i64, seed, SLOT_FILL + k as u64),
         hash_channel_f64(q as i64, r as i64, seed, SLOT_KIND + k as u64),

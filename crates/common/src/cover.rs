@@ -1,7 +1,6 @@
 //! A tile's cover: what stands in each of its three slots. And the canopy,
-//! what stands over many tiles as seven of them say, from which a summary
-//! fills the slots of every tile it covers by the tile's own rule, from
-//! the tile's own draws.
+//! what stands over many tiles as seven of them say, which is what the
+//! far ground is coloured by.
 
 use serde::{Deserialize, Serialize};
 
@@ -128,8 +127,7 @@ impl Cover {
 /// [`crate::summary::SAMPLES`] sample tiles' slots: how many of those
 /// readings hold pine, deciduous and scrub, five bits each, the rest
 /// empty. Lossless for the reading, two bytes on the wire, and the density
-/// and the kinds' shares fall out of it; the summary fills each slot of
-/// every tile it covers from those by [`Canopy::slot`].
+/// and the kinds' shares fall out of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Canopy(u16);
 
@@ -190,29 +188,6 @@ impl Canopy {
         self.filled() as f64 / CANOPY_READINGS as f64
     }
 
-    /// What a slot holds under this canopy, from the slot's three draws in
-    /// [0, 1) as the tile rule makes them: `fill` against the density,
-    /// `kind` against the trees' share of what is filled, scrub past it,
-    /// and `mix` against the deciduous share of the trees. The same draws
-    /// the tile's own cover was filled by, so where the canopy's density
-    /// is the tile's the same slot fills with the same kind; a denser
-    /// canopy only adds trees and never moves one, and a canopy of one
-    /// kind gives nothing else.
-    pub fn slot(self, fill: f64, kind: f64, mix: f64) -> Slot {
-        if self.density() <= fill {
-            return Slot::Empty;
-        }
-        let filled = self.filled() as f64;
-        let trees = (self.count(Slot::Pine) + self.count(Slot::Deciduous)) as f64;
-        if kind >= trees / filled {
-            return Slot::Scrub;
-        }
-        if mix < self.count(Slot::Deciduous) as f64 / trees {
-            Slot::Deciduous
-        } else {
-            Slot::Pine
-        }
-    }
 }
 
 #[cfg(test)]
@@ -258,11 +233,10 @@ mod tests {
         assert_eq!(c.bits() >> (2 * SLOTS.len()), 0, "nothing past the last slot");
     }
 
-    /// A canopy counts what its covers hold, and its slots follow: none
-    /// from none, every one from a full canopy of one kind, and as the
-    /// density climbs a slot that was filled stays filled.
+    /// A canopy counts what its covers hold: none from none, every
+    /// reading from a full one, and the kinds' counts from a mixture.
     #[test]
-    fn a_canopy_counts_its_covers_and_fills_by_them() {
+    fn a_canopy_counts_what_its_covers_hold() {
         let samples = crate::summary::SAMPLES;
         assert_eq!(Canopy::of(&vec![Cover::NONE; samples]), Canopy::NONE);
         let all = |kind: Slot| Cover::NONE.with(0, kind).with(1, kind).with(2, kind);
@@ -271,31 +245,9 @@ mod tests {
         assert_eq!(pines.count(Slot::Empty), 0);
         assert_eq!(pines.density(), 1.0);
         assert_eq!(Canopy::from_bits(pines.bits()), pines);
-        for draw in [0.0, 0.3, 0.999] {
-            assert_eq!(pines.slot(draw, draw, draw), Slot::Pine);
-            assert_eq!(Canopy::NONE.slot(draw, draw, draw), Slot::Empty);
-        }
         let mixed = Canopy::of(&[all(Slot::Pine), all(Slot::Deciduous), Cover::NONE.with(1, Slot::Scrub)]);
         assert_eq!((mixed.count(Slot::Pine), mixed.count(Slot::Deciduous), mixed.count(Slot::Scrub)), (3, 3, 1));
         assert_eq!(mixed.filled(), 7);
-        let mut covers = Vec::new();
-        let mut was = vec![Slot::Empty; 30];
-        for n in 0..=samples {
-            let canopy = Canopy::of(&covers);
-            for (i, slot) in was.iter_mut().enumerate() {
-                let draw = i as f64 / 30.0;
-                let now = canopy.slot(draw, draw, draw);
-                assert!(*slot == Slot::Empty || now == *slot, "a filled slot stays as the canopy thickens");
-                *slot = now;
-            }
-            if n < samples {
-                covers.push(all(Slot::Deciduous));
-            }
-        }
-        assert!(was.iter().all(|s| *s == Slot::Deciduous));
-        assert_eq!(mixed.slot(0.0, 0.99, 0.0), Slot::Scrub, "the kind draw past the trees' share is scrub");
-        assert_eq!(mixed.slot(0.0, 0.0, 0.0), Slot::Deciduous, "the mix draw under the deciduous share is deciduous, else pine");
-        assert_eq!(mixed.slot(0.0, 0.0, 0.4), Slot::Deciduous);
-        assert_eq!(mixed.slot(0.0, 0.0, 0.99), Slot::Pine);
+        assert_eq!(mixed.count(Slot::Empty), CANOPY_READINGS - 7);
     }
 }
