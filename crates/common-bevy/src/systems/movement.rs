@@ -67,6 +67,27 @@ pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
     }
 }
 
+/// The fullness at which a tile's trees refuse entry: every slot.
+pub const COVER_FULL: u8 = 7;
+
+/// A walker's pace through a tile of six trees, as a share of full: the
+/// slowest it goes before the seventh refuses it.
+pub const COVER_PACE_MIN: f32 = 0.2;
+
+/// A walker's pace through a tile as a share of full, by the tile's
+/// fullness: one tree costs nothing, and from there the pace eases to
+/// [`COVER_PACE_MIN`] at six. Seven is refused in [`is_tile_blocked`],
+/// never slowed to nothing.
+pub fn pace(fullness: u8) -> f32 {
+    let n = fullness.saturating_sub(1).min(COVER_FULL - 2) as f32;
+    1.0 - n / (COVER_FULL - 2) as f32 * (1.0 - COVER_PACE_MIN)
+}
+
+/// Whether a tile's trees fill every slot, so nothing walks in.
+pub fn is_full_cover(map: &Map, q: i32, r: i32) -> bool {
+    map.cover_at(q, r).fullness() >= COVER_FULL
+}
+
 /// How far a fall `fallen_ms` old drops over its next `dt` milliseconds:
 /// the integral of the speed gravity has built, so a fall sliced any way
 /// drops the same.
@@ -141,8 +162,8 @@ pub struct MovementOutput {
 /// entity whose feet stand `y` over the level of `tile`, the tile its walk
 /// is measured from. Refused by a rise of more than one level unless
 /// airborne at or above its standing height, by a solid decorator with no
-/// floor, by a tile at its entity capacity, and by water deeper than a
-/// walker wades.
+/// floor, by a tile at its entity capacity, by water deeper than a walker
+/// wades, and by trees in every slot.
 pub fn is_tile_blocked(
     tile: Qrz,
     here_floor: Option<Qrz>,
@@ -167,7 +188,7 @@ pub fn is_tile_blocked(
         _ => nntree.locate_all_at_point(&Loc::new(next)).count() >= MAX_ENTITIES_PER_TILE,
     };
 
-    cliff || (solid && next_floor.is_none()) || is_deep_water(map, next.q, next.r)
+    cliff || (solid && next_floor.is_none()) || is_deep_water(map, next.q, next.r) || is_full_cover(map, next.q, next.r)
 }
 
 /// How far short of a refused face a walk stops, in world units: a hair, so
@@ -187,10 +208,12 @@ const FACES_PER_WALK: usize = 16;
 /// [`is_tile_blocked`] allows and slides along the ones it refuses: against
 /// a face only the heading's component along it is kept, so a graze keeps
 /// most of its speed, a head-on push stands, and past the face's end the
-/// heading resumes. The faces are read with the tiles taken relative to
-/// `tile`, so the geometry is exact however far out the tile is; only the
-/// lookups name the tiles themselves. `y` is the feet's height over the
-/// level of `tile`.
+/// heading resumes. Each tile is crossed at its own [`pace`], read at the
+/// face, so a slow tile spends the reach faster over the part of the walk
+/// inside it and the same however the walk is sliced. The faces are read
+/// with the tiles taken relative to `tile`, so the geometry is exact
+/// however far out the tile is; only the lookups name the tiles
+/// themselves. `y` is the feet's height over the level of `tile`.
 fn walk(
     tile: Qrz,
     from: Vec2,
@@ -209,10 +232,12 @@ fn walk(
     // Speed along `dir` as a fraction of full: the cosine of the incidence
     // while sliding, so a slide spends `left` faster than it covers ground.
     let mut rate = 1.0;
+    let mut pace_here = pace(map.cover_at(here.q, here.r).fullness());
     for _ in 0..FACES_PER_WALK {
         let (to_face, next) = map.exit(pos, dir, here - tile);
         let next = next + tile;
-        let run = left * rate;
+        let speed = rate * pace_here;
+        let run = left * speed;
         if run <= to_face {
             pos += dir * run;
             break;
@@ -220,7 +245,7 @@ fn walk(
         if is_tile_blocked(tile, floor, next, y, airtime, map, nntree) {
             let short = (to_face - FACE_MARGIN).max(0.0);
             pos += dir * short;
-            left -= short / rate;
+            left -= short / speed;
             let along = map.face(here - tile, next - tile).0.perp();
             let kept = heading.dot(along);
             if kept.abs() < 1e-6 {
@@ -230,9 +255,10 @@ fn walk(
             rate = kept.abs();
         } else {
             pos += dir * to_face;
-            left -= to_face / rate;
+            left -= to_face / speed;
             here = next;
             floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
+            pace_here = pace(map.cover_at(next.q, next.r).fullness());
             dir = heading;
             rate = 1.0;
         }
@@ -485,6 +511,77 @@ mod tests {
         let input = MovementInput { position: start, ..walking(Heading::from_slot(5), false) };
         let out = calculate_movement(input, 500, &map, &nntree);
         assert_eq!(out.position.offset.xz(), start.offset.xz(), "nothing pulls an idle entity anywhere");
+    }
+
+    /// The pace never rises with fullness, costs nothing to one tree, and
+    /// never falls to nothing: the seventh tree refuses, it does not stall.
+    #[test]
+    fn pace_falls_with_fullness_and_never_to_nothing() {
+        assert_eq!(pace(0), 1.0);
+        assert_eq!(pace(1), 1.0);
+        let mut last = 1.0;
+        for n in 0..=COVER_FULL {
+            let p = pace(n);
+            assert!(p <= last && p >= COVER_PACE_MIN - 1e-6, "pace {p} at {n}");
+            last = p;
+        }
+        assert!((pace(6) - COVER_PACE_MIN).abs() < 1e-6);
+    }
+
+    /// A tile of trees: `n` slots filled, at (q, r), on the flat ground.
+    fn wooded(map: &Map, q: i32, r: i32, n: usize) {
+        use common::{Cover, Slot};
+        let mut cover = Cover::NONE;
+        for k in 0..n {
+            cover = cover.with(k, Slot::Pine);
+        }
+        map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: false }));
+    }
+
+    /// A walk through wooded ground covers less than one across open
+    /// ground, less again through a heavier wood, and the same however the
+    /// time is sliced; a full tile is a wall.
+    #[test]
+    fn trees_slow_a_walk_and_seven_stop_it() {
+        let nntree = create_test_nntree();
+        let heading = Heading::from_slot(0);
+        let input = walking(heading, true);
+        let open = {
+            let map = create_test_map();
+            flat_ground(&map, 6);
+            calculate_movement(input, 1000, &map, &nntree).position.offset.xz().length()
+        };
+        let mut last = open;
+        for n in [2, 4, 6] {
+            let map = create_test_map();
+            flat_ground(&map, 6);
+            for q in -6..=6 {
+                for r in -6..=6 {
+                    wooded(&map, q, r, n);
+                }
+            }
+            let whole = calculate_movement(input, 1000, &map, &nntree);
+            let mut sliced = input;
+            for _ in 0..40 {
+                sliced = carried(sliced, &calculate_movement(sliced, 25, &map, &nntree));
+            }
+            assert!(whole.position.offset.abs_diff_eq(sliced.position.offset, 1e-3), "{n} trees: whole {:?} vs sliced {:?}", whole.position.offset, sliced.position.offset);
+            let went = whole.position.offset.xz().length();
+            assert!(went < last, "{n} trees: went {went}, no slower than {last}");
+            assert!((went - open * pace(n as u8)).abs() < 1e-3, "{n} trees: {went} is not the pace's share of {open}");
+            last = went;
+        }
+        let map = create_test_map();
+        flat_ground(&map, 6);
+        let out = calculate_movement(input, 2000, &map, &nntree);
+        let far: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
+        let first: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset / 20.0 * 3.0);
+        assert!((first.q, first.r) != (0, 0) && (first.q, first.r) != (far.q, far.r), "the walk should cross more than one tile");
+        wooded(&map, first.q, first.r, 7);
+        let out = calculate_movement(input, 2000, &map, &nntree);
+        let here: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
+        assert_eq!((here.q, here.r), (0, 0), "walked into a full tile");
+        assert!(out.position.offset.xz().length() > 0.5, "stopped short of the face");
     }
 
     /// The same duration, split into 16 ms and 250 ms slices, reaches the
