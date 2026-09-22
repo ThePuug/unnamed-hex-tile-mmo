@@ -596,7 +596,8 @@ mod tests {
     #[test]
     fn terrain_chunk_radius_sea_level_with_max_zoom() {
         let r = terrain_chunk_radius(0);
-        assert!(r >= 15, "ground level at max zoom should need many chunks, got {r}");
+        let floor = FOV_CHUNK_RADIUS + MIN_SUMMARY_RING;
+        assert!(r > floor, "at max zoom the frustum, not the floor, sets the radius: got {r} against {floor}");
     }
 
     #[test]

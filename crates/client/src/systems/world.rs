@@ -1454,11 +1454,15 @@ mod tests {
         // Every region of both levels the circle could touch is drawn: the
         // edge steps toward the player, part of the way.
         let region_lat = common_bevy::summary::mesh_region_lattice();
+        // Sampled finer than a mesh region, out to twice the circle's
+        // radius so the circle keeps its margin wherever it moves.
+        let step = 3.0;
+        let reach = (radius * 2.0 / step).ceil() as i32;
         for r in [fine, coarse] {
             let lat = common_bevy::summary::summary_lattice(r);
-            for x in -60..=60 {
-                for z in -60..=60 {
-                    let p = Vec2::new(x as f32 * 3.0, z as f32 * 3.0);
+            for x in -reach..=reach {
+                for z in -reach..=reach {
+                    let p = Vec2::new(x as f32, z as f32) * step;
                     let (sq, sr) = lat.cell_at(p);
                     let (mn, mm) = region_lat.cell_id(sq, sr);
                     let key = common_bevy::summary_mesh::MeshRegionKey { r, mn, mm };

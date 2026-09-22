@@ -961,10 +961,11 @@ mod tests {
         assert!(!dips_past(inward)(&pose), "the frame opened back out past the edge that moved away");
     }
 
-    /// Beneath the eye the boom draws in: full at the eye, shorter the
-    /// lower the pose, as short as it goes at the lowest, and the camera
-    /// never under its clearance above the plane whatever the plane's
-    /// tilt; and the rig slides over the shoulder as it does.
+    /// Beneath the eye the boom never lengthens, drawing in wherever its
+    /// full length would put the camera under its clearance above the
+    /// plane, whatever the plane's tilt, until at the lowest pose it is
+    /// as short as it goes; and the rig slides over the shoulder as it
+    /// draws in.
     #[test]
     fn the_boom_draws_in_beneath_the_eye() {
         let at = |elevation: f32| Pose { elevation, ..Pose::rest(0.7) };
@@ -973,12 +974,14 @@ mod tests {
         let mut last = CAMERA_DISTANCE;
         for i in 1..=10 {
             let pose = at(Pose::elevation_min() * i as f32 / 10.0);
-            assert!(pose.boom() < last, "draws in as the pose comes down");
+            assert!(pose.boom() <= last, "never lengthens as the pose comes down");
             for tilt in [Vec2::ZERO, Vec2::new(0.3, -0.4)] {
                 let above = EYE_HEIGHT + pose.offset(tilt).y - pose.boom() * tilt.dot(pose.back());
                 assert!(above >= PLANE_CLEARANCE - 1e-4, "above the plane by {above}");
             }
-            assert!(pose.shift(pose.boom()).length() > 0.0, "over the shoulder");
+            if pose.boom() < CAMERA_DISTANCE {
+                assert!(pose.shift(pose.boom()).length() > 0.0, "over the shoulder");
+            }
             last = pose.boom();
         }
         assert!((last - BOOM_MIN).abs() < 1e-3, "shortest at the lowest: {last}");

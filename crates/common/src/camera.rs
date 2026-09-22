@@ -1,6 +1,6 @@
 /// Horizontal distance from camera to player pivot (world units): the
 /// boom at full length.
-pub const CAMERA_DISTANCE: f32 = 60.0;
+pub const CAMERA_DISTANCE: f32 = 40.0;
 /// Degrees the frame top stays below the horizontal at max FOV; with
 /// `CAMERA_DISTANCE` this fixes the boom's pitch (`camera_height`).
 pub const HORIZON_MARGIN_DEG: f32 = 5.0;
