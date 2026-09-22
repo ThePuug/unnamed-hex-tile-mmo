@@ -62,6 +62,10 @@ pub const TREE_KEEP: f32 = 140.0;
 pub struct Variation {
     pub mesh: Handle<Mesh>,
     pub height: f32,
+    /// Its footprint across, and the mean of its colour over its vertices:
+    /// what the far ground wears for it.
+    pub width: f32,
+    pub color: Vec3,
     pub cards: Option<Arc<draw::Cards>>,
     pub seed: u32,
 }
@@ -178,6 +182,7 @@ impl Plugin for ForestPlugin {
         app.add_plugins(draw::TreeDrawPlugin);
         app.add_systems(Startup, begin_loading);
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
+        app.add_systems(Update, dress_far_ground.run_if(resource_added::<TreeKit>));
         app.add_systems(
             Update,
             update_trees
@@ -185,6 +190,30 @@ impl Plugin for ForestPlugin {
                 .after(crate::systems::world::poll_summary_meshes),
         );
     }
+}
+
+/// The growth a crown on the far ground stands for: a tree well along,
+/// as most are.
+const CROWN_GROWTH: f32 = 0.75;
+
+/// Once the kit is up, the far ground wears each kind as its models
+/// look: the mean of their colour over every vertex, and the width a
+/// grown crown of the kind's first variation stands, so the canopy past
+/// the cards is the colour of the trees before them. A kind with no
+/// model is colourless and never drawn there.
+fn dress_far_ground(
+    kit: Res<TreeKit>,
+    mut terrain_material: ResMut<crate::resources::TerrainMaterial>,
+    mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
+) {
+    use crate::resources::KindLook;
+    let of = |slot: Slot| -> KindLook {
+        let variations = kit.kit.of(slot);
+        let Some(first) = variations.first() else { return KindLook { color: Vec3::ZERO, width: 0.0 } };
+        let color = variations.iter().map(|v| v.color).sum::<Vec3>() / variations.len() as f32;
+        KindLook { color, width: first.width * Kit::scale(slot, first.height, CROWN_GROWTH) }
+    };
+    terrain_material.set_kinds([of(Slot::Pine), of(Slot::Deciduous), of(Slot::Scrub)], &mut materials);
 }
 
 fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -234,11 +263,20 @@ fn load_kit(
         for (seed, mesh_handle) in gltf.meshes.iter().enumerate() {
             let Some(gm) = gltf_meshes.get(mesh_handle) else { continue };
             let merged = merge(gm, &meshes, &materials);
-            let height = match merged.attribute(Mesh::ATTRIBUTE_POSITION) {
-                Some(VertexAttributeValues::Float32x3(p)) => p.iter().map(|v| v[1]).fold(0.0, f32::max),
-                _ => 0.0,
+            let (height, width) = match merged.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(VertexAttributeValues::Float32x3(p)) => {
+                    let across = |i: usize| p.iter().map(|v| v[i]).fold(f32::MIN, f32::max) - p.iter().map(|v| v[i]).fold(f32::MAX, f32::min);
+                    (p.iter().map(|v| v[1]).fold(0.0, f32::max), across(0).max(across(2)))
+                }
+                _ => (0.0, 0.0),
             };
-            let variation = Variation { mesh: meshes.add(merged), height, cards: cards.clone(), seed: seed as u32 };
+            let color = match merged.attribute(Mesh::ATTRIBUTE_COLOR) {
+                Some(VertexAttributeValues::Float32x4(c)) if !c.is_empty() => {
+                    c.iter().map(|c| Vec3::new(c[0], c[1], c[2])).sum::<Vec3>() / c.len() as f32
+                }
+                _ => Vec3::ZERO,
+            };
+            let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
             match slot {
                 Slot::Pine => kit.pine.push(variation),
                 Slot::Deciduous => kit.deciduous.push(variation),

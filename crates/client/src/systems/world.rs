@@ -1091,14 +1091,17 @@ fn collect_and_build_summary_mesh(
     };
 
     // The level's canopy follows the height's provenance too. Every level
-    // above the tiles carries it on the ground as a colour, and the first
-    // stands its trees on that ground as well, so the ground under the
-    // trees is the ground past them and the band edge shows no line.
+    // above the tiles but the last carries it on the ground as a colour —
+    // the first stands its trees on that ground as well, so the ground
+    // under the trees is the ground past them and the band edge shows no
+    // line — and the material lays crowns on it or not by level.
     let summary_canopy = |sq: i32, sr: i32| -> Option<common::Canopy> {
         cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
     };
+    let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
+    let canopied: Option<&dyn Fn(i32, i32) -> Option<common::Canopy>> = (radius != last).then_some(&summary_canopy);
 
-    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, Some(&summary_canopy))
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied)
         .as_ref()
         .map_or(empty, |smr| {
             let mut result = with_water(smr, &summary_water);

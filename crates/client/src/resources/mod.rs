@@ -88,10 +88,34 @@ impl CardEdge {
 pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
     MeshVertexAttribute::new("Terrain_CoarseSurface", 0x7e88_a1c0, VertexFormat::Float32x4);
 
+/// How a level wears its canopy: each kind's colour, the trees' own, and
+/// how wide a grown crown of it stands; and the crowns' relief, full
+/// where the level begins and gone where it ends, so the level past it
+/// wears the canopy flat with no seam. A level declaring no relief at
+/// all wears it flat throughout.
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+pub struct CanopyLook {
+    /// Pine, deciduous, scrub: rgb, and the crown's width in world units.
+    pub kinds: [Vec4; 3],
+    /// The ground distances the relief is full at and gone by.
+    pub relief_full: f32,
+    pub relief_gone: f32,
+}
+
+/// One kind's look as the tree kit hands it over: the mean colour of its
+/// models and a grown crown's width.
+#[derive(Clone, Copy, Debug)]
+pub struct KindLook {
+    pub color: Vec3,
+    pub width: f32,
+}
+
 /// Terrain material extension: elevation colour in the fragment shader,
 /// grass over the ramp's green band and scree over its mountain band on
 /// the tops, stone on the faces, atmospheric fade from the view position,
-/// and the band cut. The shaders are shared; the cut is per material, one
+/// the band cut, and the canopy where the level carries one, in the
+/// trees' colours with the crowns' relief near and flat far. The shaders
+/// are shared; the cut and the canopy's look are per material, one
 /// material per LoD level.
 ///
 /// Every texture is sampled in world space, so its sampler must wrap: a
@@ -116,6 +140,8 @@ pub struct TerrainExtension {
     #[texture(105, dimension = "2d_array")]
     #[sampler(106)]
     pub scree: Handle<Image>,
+    #[uniform(107)]
+    pub canopy: CanopyLook,
 }
 
 /// Layers in each texture asset, as texgen's `VARIANTS` writes them: the
@@ -210,6 +236,9 @@ pub struct TerrainMaterial {
     grass: Handle<Image>,
     cliff: Handle<Image>,
     scree: Handle<Image>,
+    /// The kinds' looks once the tree kit has handed them over: pine,
+    /// deciduous, scrub.
+    kinds: Option<[KindLook; 3]>,
 }
 
 impl FromWorld for TerrainMaterial {
@@ -232,16 +261,48 @@ impl FromWorld for TerrainMaterial {
             grass: repeating("textures/grass-plain.dds"),
             cliff: repeating("textures/cliff-stone.dds"),
             scree: repeating("textures/mountain-scree.dds"),
+            kinds: None,
         }
     }
 }
 
 impl TerrainMaterial {
+    /// How level `r` wears its canopy: the kinds' looks, once the kit has
+    /// given them, with the crowns' relief across the levels that stand
+    /// or lay their trees — full at the first, fading over the next to
+    /// nothing where the level after begins — and none at all before.
+    fn canopy_for(&self, r: u32) -> CanopyLook {
+        use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
+        let Some(kinds) = &self.kinds else { return CanopyLook::default() };
+        let (relief_full, relief_gone) = if r == LOD_LEVELS[1] || r == LOD_LEVELS[2] {
+            (threshold_horiz(LOD_LEVELS[1]), threshold_horiz(LOD_LEVELS[2]))
+        } else {
+            (0.0, 0.0)
+        };
+        CanopyLook {
+            kinds: kinds.map(|k| k.color.extend(k.width)),
+            relief_full,
+            relief_gone,
+        }
+    }
+
+    /// Hand every level the kinds' looks, from the tree kit once it has
+    /// loaded.
+    pub fn set_kinds(&mut self, kinds: [KindLook; 3], materials: &mut Assets<TerrainMaterialAsset>) {
+        self.kinds = Some(kinds);
+        for (&r, handle) in &self.by_level {
+            if let Some(material) = materials.get_mut(handle) {
+                material.extension.canopy = self.canopy_for(r);
+            }
+        }
+    }
+
     pub fn for_level(
         &mut self,
         r: u32,
         materials: &mut Assets<TerrainMaterialAsset>,
     ) -> Handle<TerrainMaterialAsset> {
+        let canopy = self.canopy_for(r);
         self.by_level
             .entry(r)
             .or_insert_with(|| {
@@ -260,6 +321,7 @@ impl TerrainMaterial {
                         grass: self.grass.clone(),
                         cliff: self.cliff.clone(),
                         scree: self.scree.clone(),
+                        canopy,
                         ..default()
                     },
                 })
