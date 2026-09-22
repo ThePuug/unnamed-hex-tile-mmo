@@ -16,9 +16,9 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Cover, Slot, SLOTS};
-use common_bevy::geometry::{flat_top_tile_center, slot_center};
-use common_bevy::surface::{height_y, surface_y};
+use common::{Slot, SLOTS};
+use common_bevy::geometry::slot_center;
+use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// The model each kind of slot is drawn with: one GLB for each tree, three
@@ -334,77 +334,39 @@ fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<StandardMateri
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// The trees of a mesh region at the tile level: one instance per filled
-/// slot, standing on the ground surface at its slot, from the region's
-/// origin. Reads the map's cover and heights and nothing else, so it runs
-/// where the ground is built.
-pub fn place_trees(region_key: MeshRegionKey, mesh_origin: Vec3, map: &common_bevy::resources::map::Map) -> Vec<TreeInstance> {
-    let lattice = common_bevy::summary::summary_lattice(0);
-    let region_lat = common_bevy::summary::mesh_region_lattice();
-    let tile_z = |q: i32, r: i32| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z);
-    let mut out = Vec::new();
-    for cell in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
-        let (q, r) = lattice.cell_center(cell);
-        let cover = map.cover_at(q, r);
-        if cover.is_empty() {
-            continue;
-        }
-        let Some((floor, _)) = map.get_by_qr(q, r) else { continue };
-        let (cx, cz) = flat_top_tile_center(q, r, 1.0);
-        let floor_centre = Vec3::new(cx, height_y(floor.z as f32), cz);
-        let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.fullness() as f32 / SLOTS.len() as f32;
-        for (k, slot) in cover.filled() {
-            let sway = common::sway(q, r, k);
-            let (x, z) = slot_center(q, r, k, &sway);
-            let y = surface_y(Vec2::new(x, z), floor, floor_centre, tile_z);
-            out.push(TreeInstance {
-                translation: Vec3::new(x, y, z) - mesh_origin,
-                yaw: sway.yaw as f32,
-                growth: sway.growth as f32 * edge,
-                slot,
-                variation: sway.variation,
-            });
-        }
-    }
-    out
-}
-
-/// The trees of a mesh region at a summary level: every tile the region's
-/// summaries cover has its slots, each filled from its summary's canopy by
-/// the tile rule from the tile's own draws — so where the canopy's density
-/// is the tile's, the same trees stand at both levels and the seam holds —
+/// The trees of a mesh region at level `radius`, from the map's covers:
+/// one instance per filled slot of every tile the region's cells cover,
 /// standing on the level's drawn surface at its slot, from the region's
-/// origin. Reads the level's cells and nothing else, so it runs where the
-/// level's ground is built; nothing while a cell is absent.
-pub fn place_canopy(
+/// origin. The same covers at every level the map reaches, so a tree is
+/// the same tree on both sides of a band edge and the edge hands one
+/// drawing of the wood to the other. Reads the map's covers and the
+/// level's heights and nothing else, so it runs where the ground is
+/// built; a tile not yet streamed in stands nothing, and a tree at the
+/// rim, where a corner's cell is not there yet, stands at its cell's
+/// own height.
+pub fn place_trees(
     radius: u32,
     region_key: MeshRegionKey,
     mesh_origin: Vec3,
+    map: &common_bevy::resources::map::Map,
     height: &dyn Fn(i32, i32) -> Option<i32>,
-    canopy: &dyn Fn(i32, i32) -> Option<common::Canopy>,
 ) -> Vec<TreeInstance> {
     let lattice = common_bevy::summary::summary_lattice(radius);
     let region_lat = common_bevy::summary::mesh_region_lattice();
     let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
     let mut out = Vec::new();
     for cell in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
-        let Some(canopy) = canopy(cell.0, cell.1) else { continue };
-        if canopy.is_empty() {
-            continue;
-        }
+        let Some(cell_z) = height(cell.0, cell.1) else { continue };
         for (q, r) in lattice.tiles_covered(cell) {
-            // The tile's cover as the canopy fills it, so its trees grow
-            // to the same edge factor the tile's own would.
-            let mut cover = Cover::NONE;
-            for k in 0..SLOTS.len() {
-                let (fill, kind, mix) = world::events::forest::slot_draws(q, r, k, world::WORLD_SEED);
-                cover = cover.with(k, canopy.slot(fill, kind, mix));
+            let cover = map.cover_at(q, r);
+            if cover.is_empty() {
+                continue;
             }
             let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.fullness() as f32 / SLOTS.len() as f32;
             for (k, slot) in cover.filled() {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
-                let Some((y, _)) = surface.at(Vec2::new(x, z)) else { continue };
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
                 out.push(TreeInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
@@ -545,6 +507,7 @@ mod tests {
     use super::*;
     use common::Cover;
     use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
+    use common_bevy::geometry::flat_top_tile_center;
     use common_bevy::resources::map::Map;
     use qrz::{Convert, Qrz};
 
@@ -570,7 +533,7 @@ mod tests {
         let (oq, or) = lattice.cell_center(region_lat.cell_center((0, 0)));
         let (ox, oz) = flat_top_tile_center(oq, or, 1.0);
         let origin = Vec3::new(ox, 0.0, oz);
-        let trees = place_trees(key, origin, &map);
+        let trees = place_trees(0, key, origin, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z));
         assert_eq!(trees.len(), expected);
         for t in &trees {
             assert!((t.translation.y - height_y(0.0)).abs() < 1e-4, "a tree off the ground at {:?}", t.translation);

@@ -1067,16 +1067,16 @@ fn collect_and_build_summary_mesh(
     let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
     let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
 
-    // The trees stand with the ground: placed here from the map's cover
-    // at the tiles and from each summary's canopy above them, spawned with
-    // the ground once the kit is loaded.
+    // The trees stand with the ground: placed here from the map's covers
+    // at every level the map reaches, spawned with the ground once the kit
+    // is loaded.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
             .as_ref()
             .map_or(empty, |smr| {
                 let mut result = with_water(smr, &tile_water);
-                result.trees = crate::plugins::forest::place_trees(region_key, smr.mesh_origin, map);
+                result.trees = crate::plugins::forest::place_trees(0, region_key, smr.mesh_origin, map, &height);
                 result
             });
     }
@@ -1093,9 +1093,10 @@ fn collect_and_build_summary_mesh(
 
     // The level's canopy follows the height's provenance too. Every level
     // above the tiles but the last carries it on the ground as a colour —
-    // the first stands its trees on that ground as well, so the ground
-    // under the trees is the ground past them and the band edge shows no
-    // line — and the material lays crowns on it or not by level.
+    // the first stands its trees on that ground as well, from the map's
+    // own covers, which reach exactly as far as that level does, so the
+    // ground under the trees is the ground past them and the trees are
+    // the tiles' own — and the material lays crowns on it or not by level.
     let summary_canopy = |sq: i32, sr: i32| -> Option<common::Canopy> {
         cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
     };
@@ -1107,7 +1108,7 @@ fn collect_and_build_summary_mesh(
         .map_or(empty, |smr| {
             let mut result = with_water(smr, &summary_water);
             if radius == common_bevy::summary::LOD_LEVELS[1] {
-                result.trees = crate::plugins::forest::place_canopy(radius, region_key, smr.mesh_origin, &height, &summary_canopy);
+                result.trees = crate::plugins::forest::place_trees(radius, region_key, smr.mesh_origin, map, &height);
             }
             result
         })
