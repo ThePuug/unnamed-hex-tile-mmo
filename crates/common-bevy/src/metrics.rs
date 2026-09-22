@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-pub const METRICS_VERSION: u16 = 9;
+pub const METRICS_VERSION: u16 = 10;
 
 /// How a snapshot field combines multiple `record()` calls between flushes.
 #[derive(Clone, Copy, Debug)]

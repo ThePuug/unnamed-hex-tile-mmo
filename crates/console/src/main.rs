@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // ── Wire types (mirror of common_bevy::metrics) ──
 
 const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-const METRICS_VERSION: u16 = 9;
+const METRICS_VERSION: u16 = 10;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 enum Cadence { Snapshot = 0, Event = 1 }
@@ -201,6 +201,13 @@ fn seg_half(ui: &mut egui::Ui, s: &str, color: Color32) {
     debug_assert_eq!(s.chars().count(), 7,
         "seg_half: 7 chars expected, got {} for {:?}", s.chars().count(), s);
     ui.label(colored_mono(s, color));
+}
+
+/// A name as a half-segment: right-aligned when it fits, its first 7
+/// characters when it does not.
+fn fit_half(name: &str) -> String {
+    if name.chars().count() > 7 { name.chars().take(7).collect() }
+    else { format!("{name:>7}") }
 }
 
 /// Row builder with auto-gapped segments.
@@ -398,6 +405,10 @@ struct ConsoleApp {
     hist_unord_queue: History,
 
     timing_entries: HashMap<String, TimingEntry>,
+    /// World layers, in the order the stack evaluates them — read from the
+    /// snapshot's own field order, so a layer added to the stack appears
+    /// here without the console naming it.
+    layers: Vec<String>,
 }
 
 impl ConsoleApp {
@@ -417,6 +428,7 @@ impl ConsoleApp {
             hist_ord_queue: History::new(),
             hist_unord_queue: History::new(),
             timing_entries: HashMap::new(),
+            layers: Vec::new(),
         }
     }
 
@@ -453,6 +465,14 @@ impl ConsoleApp {
     fn handle_snapshot(&mut self, packet: MetricsPacket) {
         self.snapshot.clear();
         for (name, val) in &packet.fields { self.snapshot.insert(name.clone(), *val); }
+
+        // One layer per `evt.<name>.index`, taken in field order: the server
+        // registers a layer's fields when the stack first reports it, and
+        // flushes in registration order, so this is the evaluation order.
+        self.layers = packet.fields.iter()
+            .filter_map(|(name, _)| name.strip_prefix("evt.")?.strip_suffix(".index"))
+            .map(str::to_owned)
+            .collect();
 
         self.prev_snapshot_timestamp = self.snapshot_timestamp;
         self.snapshot_timestamp = packet.timestamp_secs;
@@ -759,7 +779,7 @@ impl eframe::App for ConsoleApp {
                         });
 
                         // Per-event rows: index + cell hit%
-                        for name in &["plates", "motion", "spines"] {
+                        for name in &self.layers {
                             let index = self.field(&format!("evt.{name}.index"));
                             let c_hits = self.field(&format!("evt.{name}.cell_hits"));
                             let c_misses = self.field(&format!("evt.{name}.cell_misses"));
@@ -767,8 +787,9 @@ impl eframe::App for ConsoleApp {
                             let cell_pct = if c_total > 0.0 { (c_hits / c_total * 100.0) as u32 } else { 0 };
                             let cell_pct = cell_pct.min(99);
 
+                            let label = fit_half(name);
                             seg_row(ui, cw, |s| {
-                                s.half(&format!("{:>7}", name), COLOR_DIM);
+                                s.half(&label, COLOR_DIM);
                                 s.half("indexed", COLOR_DIM);
                                 s.half(&format!("{:>5}  ", COUNT5.fmt(index)), COLOR_DIM);
                                 s.half(&format!("{:<2}{:>2}%  ", GLYPH_CACHE, cell_pct), COLOR_DIM);

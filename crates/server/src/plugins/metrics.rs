@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -48,9 +49,40 @@ impl Transport {
 // ── MetricSnapshot ──
 
 struct SnapshotField {
-    name: &'static str,
+    name: Cow<'static, str>,
     aggregator: Aggregator,
     value: f32,
+}
+
+/// The fields and the index of each by name, under one lock: a field whose
+/// name is only known at runtime is added while other systems record.
+#[derive(Default)]
+struct SnapshotState {
+    fields: Vec<SnapshotField>,
+    indices: HashMap<Cow<'static, str>, usize>,
+}
+
+impl SnapshotState {
+    /// The slot `name` records into, added at the end if this is its first.
+    /// Fields keep the order they were first named in, and the flush sends
+    /// them in it, so a reader recovers the order a producer reports in.
+    fn slot(&mut self, name: &str, aggregator: Aggregator) -> usize {
+        if let Some(&idx) = self.indices.get(name) { return idx; }
+        let name: Cow<'static, str> = Cow::Owned(name.to_owned());
+        let idx = self.fields.len();
+        self.indices.insert(name.clone(), idx);
+        self.fields.push(SnapshotField { name, aggregator, value: 0.0 });
+        idx
+    }
+
+    fn accumulate(&mut self, idx: usize, val: f32) {
+        let f = &mut self.fields[idx];
+        match f.aggregator {
+            Aggregator::Last => f.value = val,
+            Aggregator::Peak => f.value = f.value.max(val),
+            Aggregator::Sum => f.value += val,
+        }
+    }
 }
 
 /// Accumulates field values from multiple systems. Flushes as one UDP
@@ -59,8 +91,7 @@ struct SnapshotField {
 #[derive(Resource)]
 pub struct MetricSnapshot {
     group: &'static str,
-    field_indices: HashMap<&'static str, usize>,
-    state: std::sync::Mutex<Vec<SnapshotField>>,
+    state: std::sync::Mutex<SnapshotState>,
     transport: Transport,
     flush_interval: Duration,
     last_flush_ms: AtomicU64,
@@ -70,8 +101,7 @@ impl MetricSnapshot {
     fn new(group: &'static str, transport: Transport, interval: Duration) -> Self {
         Self {
             group,
-            field_indices: HashMap::new(),
-            state: std::sync::Mutex::new(Vec::new()),
+            state: std::sync::Mutex::new(SnapshotState::default()),
             transport,
             flush_interval: interval,
             last_flush_ms: AtomicU64::new(0),
@@ -79,40 +109,40 @@ impl MetricSnapshot {
     }
 
     fn register(&mut self, name: &'static str, aggregator: Aggregator) {
-        let idx = self.field_indices.len();
-        self.field_indices.insert(name, idx);
-        self.state.get_mut().unwrap().push(SnapshotField {
-            name,
-            aggregator,
-            value: 0.0,
-        });
+        self.state.get_mut().unwrap().slot(name, aggregator);
     }
 
-    /// Record one or more field values. Thread-safe, takes &self.
+    /// Record one or more registered field values. Thread-safe, takes &self.
+    /// A name that was never registered is dropped, so a typo stays a typo
+    /// instead of becoming a field.
     pub fn record(&self, fields: &[(&str, f32)]) {
         let mut state = self.state.lock().unwrap();
         for &(name, val) in fields {
-            if let Some(&idx) = self.field_indices.get(name) {
-                let f = &mut state[idx];
-                match f.aggregator {
-                    Aggregator::Last => f.value = val,
-                    Aggregator::Peak => f.value = f.value.max(val),
-                    Aggregator::Sum => f.value += val,
-                }
+            if let Some(&idx) = state.indices.get(name) {
+                state.accumulate(idx, val);
             }
         }
+    }
+
+    /// Record under a name learned at runtime — a world layer's, whose set
+    /// the stack decides — registering it the first time it is seen.
+    pub fn record_named(&self, name: &str, aggregator: Aggregator, val: f32) {
+        let mut state = self.state.lock().unwrap();
+        let idx = state.slot(name, aggregator);
+        state.accumulate(idx, val);
     }
 
     fn flush(&self, timestamp_secs: f64) {
         let mut state = self.state.lock().unwrap();
 
-        let fields: Vec<(std::borrow::Cow<'static, str>, f32)> = state
+        let fields: Vec<(Cow<'static, str>, f32)> = state
+            .fields
             .iter()
-            .map(|f| (std::borrow::Cow::Borrowed(f.name), f.value))
+            .map(|f| (f.name.clone(), f.value))
             .collect();
 
         let packet = MetricsPacket {
-            group: std::borrow::Cow::Borrowed(self.group),
+            group: Cow::Borrowed(self.group),
             cadence: Cadence::Snapshot,
             timestamp_secs,
             fields,
@@ -120,7 +150,7 @@ impl MetricSnapshot {
         self.transport.send_packet(&packet);
 
         // Reset Peak and Sum fields after flush
-        for f in state.iter_mut() {
+        for f in state.fields.iter_mut() {
             match f.aggregator {
                 Aggregator::Peak | Aggregator::Sum => f.value = 0.0,
                 Aggregator::Last => {}
@@ -232,16 +262,8 @@ impl Plugin for MetricsPlugin {
         snapshot.register("evt.tile_hits", Aggregator::Last);
         snapshot.register("evt.tile_misses", Aggregator::Last);
         snapshot.register("evt.active", Aggregator::Last);
-        // Per-layer metrics
-        snapshot.register("evt.plates.index", Aggregator::Last);
-        snapshot.register("evt.plates.cell_hits", Aggregator::Last);
-        snapshot.register("evt.plates.cell_misses", Aggregator::Last);
-        snapshot.register("evt.spines.index", Aggregator::Last);
-        snapshot.register("evt.spines.cell_hits", Aggregator::Last);
-        snapshot.register("evt.spines.cell_misses", Aggregator::Last);
-        snapshot.register("evt.motion.index", Aggregator::Last);
-        snapshot.register("evt.motion.cell_hits", Aggregator::Last);
-        snapshot.register("evt.motion.cell_misses", Aggregator::Last);
+        // Per-layer fields are named by the stack, not here: see
+        // `drain_event_metrics`.
         // Async chunk generation metrics
         snapshot.register("async.task_duration_ms", Aggregator::Peak);
         snapshot.register("async.tasks_in_flight", Aggregator::Last);
@@ -271,19 +293,14 @@ fn drain_event_metrics(
         ("evt.tile_misses", m.tile_misses as f32),
         ("evt.active", active.0.len() as f32),
     ]);
-    // Layer names are static ("plates", "motion", "spines") — map to pre-registered keys
+    // The stack names its own layers, in the order it evaluates them, and
+    // the flush keeps that order — a fixed list here would go stale the
+    // next time the stack gains a layer.
     for layer in &m.layers {
-        let (k_index, k_hits, k_misses) = match layer.name.as_str() {
-            "plates" => ("evt.plates.index", "evt.plates.cell_hits", "evt.plates.cell_misses"),
-            "spines" => ("evt.spines.index", "evt.spines.cell_hits", "evt.spines.cell_misses"),
-            "motion" => ("evt.motion.index", "evt.motion.cell_hits", "evt.motion.cell_misses"),
-            _ => continue,
-        };
-        snapshot.record(&[
-            (k_index, layer.indexed as f32),
-            (k_hits, layer.cell_hits as f32),
-            (k_misses, layer.cell_misses as f32),
-        ]);
+        let name = &layer.name;
+        snapshot.record_named(&format!("evt.{name}.index"), Aggregator::Last, layer.indexed as f32);
+        snapshot.record_named(&format!("evt.{name}.cell_hits"), Aggregator::Last, layer.cell_hits as f32);
+        snapshot.record_named(&format!("evt.{name}.cell_misses"), Aggregator::Last, layer.cell_misses as f32);
     }
 }
 
