@@ -108,9 +108,12 @@ impl CardDecl {
         let [side, top] = self.views.as_slice() else { return None };
         // Trilinear, so a card crossing a level does not step, and
         // clamped, since a picture has an edge and no repeat.
-        let texture = asset_server.load_with_settings(self.texture.clone(), |s: &mut bevy::image::ImageLoaderSettings| {
-            s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor::linear());
-        });
+        let texture = asset_server
+            .load_builder()
+            .with_settings(|s: &mut bevy::image::ImageLoaderSettings| {
+                s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor::linear());
+            })
+            .load(self.texture.clone());
         Some(draw::Cards { texture, side: view(side), top: view(top) })
     }
 }

@@ -250,9 +250,12 @@ pub fn setup(
 
     // The moon's face declares its mip chain; the sampler reads it,
     // trilinear, so the disc small in the frame is the face's mean.
-    let moon_face = assets.load_with_settings("textures/moon.dds", |settings: &mut ImageLoaderSettings| {
-        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
-    });
+    let moon_face = assets
+        .load_builder()
+        .with_settings(|settings: &mut ImageLoaderSettings| {
+            settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+        })
+        .load("textures/moon.dds");
     let disc = |diameter: f32| Circle::new(disc_distance_wu() * (diameter / 2.).tan()).mesh().resolution(48);
     for (which, diameter, face) in [(Disc::Sun, SUN_ANGULAR_DIAMETER, None), (Disc::Moon, MOON_ANGULAR_DIAMETER, Some(moon_face))] {
         commands.spawn((

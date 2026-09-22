@@ -255,16 +255,19 @@ impl FromWorld for TerrainMaterial {
     fn from_world(world: &mut World) -> Self {
         let assets = world.resource::<AssetServer>();
         let repeating = |path: &'static str| {
-            assets.load_with_settings(path, |settings: &mut ImageLoaderSettings| {
-                // The asset declares its layers and mip chain; the sampler
-                // reads the chain, trilinear, so a tile far off is its own
-                // mean and not the texels the pixel happens to land on.
-                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                    address_mode_u: ImageAddressMode::Repeat,
-                    address_mode_v: ImageAddressMode::Repeat,
-                    ..ImageSamplerDescriptor::linear()
-                });
-            })
+            assets
+                .load_builder()
+                .with_settings(|settings: &mut ImageLoaderSettings| {
+                    // The asset declares its layers and mip chain; the sampler
+                    // reads the chain, trilinear, so a tile far off is its own
+                    // mean and not the texels the pixel happens to land on.
+                    settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                        address_mode_u: ImageAddressMode::Repeat,
+                        address_mode_v: ImageAddressMode::Repeat,
+                        ..ImageSamplerDescriptor::linear()
+                    });
+                })
+                .load(path)
         };
         Self {
             by_level: HashMap::new(),
