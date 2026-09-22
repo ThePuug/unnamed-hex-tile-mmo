@@ -232,11 +232,15 @@ channel or lake surface at zero is under it.
 ## Pinned system ordering
 
 Ordering appears in about twenty places, most of it UI setup chaining off
-`camera::setup` and sequencing internal to one plugin. This is the one that
-produces gameplay bugs when broken:
+`camera::setup` and sequencing internal to one plugin. These two are the ones
+that break loudly:
 
 - `movement::do_loc.after(movement::apply_displace)` — a `Loc` that ends a
   slide must see the `Displacing` marker the slide inserted, or it snaps.
+- `forest::draw::init_pipelines.after(MeshPipelineSystems)` — `MeshPipeline`
+  is itself built in `RenderStartup`, so a system that clones it there finds
+  no resource without the pin. Every render pipeline built on the mesh
+  pipeline carries this, in Bevy's own plugins as much as ours.
 
 `VisualPosition` needs no pin: `advance_interpolation` runs in `PreUpdate`,
 and every re-target starts from `current()`, so `actor::update` and

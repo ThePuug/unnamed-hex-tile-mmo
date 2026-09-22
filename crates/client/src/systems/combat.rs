@@ -84,11 +84,11 @@ pub fn handle_apply_damage(
                 },
                 Text::new(format!("{:.0}", damage)),
                 TextFont {
-                    font_size: 32.0,
+                    font_size: FontSize::Px(32.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
-                TextLayout::new_with_justify(Justify::Center),
+                TextLayout::justify(Justify::Center),
                 crate::components::FloatingText {
                     spawn_time: time.elapsed(),
                     world_position: world_pos,

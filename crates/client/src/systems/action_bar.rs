@@ -114,7 +114,7 @@ pub fn setup(
         parent.spawn((
             Text::new(icon_text),
             TextFont {
-                font_size: 32.0,
+                font_size: FontSize::Px(32.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -129,7 +129,7 @@ pub fn setup(
         parent.spawn((
             Text::new(format!("{:?}", keybind).replace("Key", "")),
             TextFont {
-                font_size: 14.0,
+                font_size: FontSize::Px(14.0),
                 ..default()
             },
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
@@ -158,7 +158,7 @@ pub fn setup(
                 parent.spawn((
                     Text::new(cost_text),
                     TextFont {
-                        font_size: 12.0,
+                        font_size: FontSize::Px(12.0),
                         ..default()
                     },
                     TextColor(Color::srgb(0.9, 0.8, 0.0)),  // Yellow for stamina cost

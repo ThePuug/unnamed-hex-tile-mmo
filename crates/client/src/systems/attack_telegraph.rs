@@ -160,7 +160,7 @@ pub fn update_telegraphs(
             let progress = age_ms as f32 / line.duration_ms as f32;
             let alpha = 1.0 - progress;
 
-            if let Some(material) = materials.get_mut(&material_handle.0) {
+            if let Some(mut material) = materials.get_mut(&material_handle.0) {
                 material.emissive = LinearRgba::rgb(15.0 * alpha, 15.0 * alpha, 15.0 * alpha);
             }
         }

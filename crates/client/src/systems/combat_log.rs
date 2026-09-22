@@ -256,7 +256,7 @@ fn spawn_log_entry(
         parent.spawn((
             Text::new(text),
             TextFont {
-                font_size: FONT_SIZE,
+                font_size: FontSize::Px(FONT_SIZE),
                 ..default()
             },
             TextColor(color),

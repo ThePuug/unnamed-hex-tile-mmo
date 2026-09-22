@@ -102,7 +102,7 @@ pub fn spawn_compass(parent: &mut ChildSpawnerCommands, size: f32, border: f32) 
         parent.spawn((
             Text::new("N"),
             TextFont {
-                font_size,
+                font_size: FontSize::Px(font_size),
                 ..default()
             },
             TextColor(Color::srgb(1.0, 0.2, 0.2)),

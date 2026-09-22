@@ -15,12 +15,12 @@ trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 [dependencies]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = { version = "0.18", features = ["dds"] }
-bevy_asset = "0.18"
-bevy_camera = "0.18"
-bevy_easings = "0.18"
-bevy_light = "0.18"
-bevy_mesh = "0.18"
+bevy = { version = "0.19", features = ["dds"] }
+bevy_asset = "0.19"
+bevy_camera = "0.19"
+bevy_easings = "0.19"
+bevy_light = "0.19"
+bevy_mesh = "0.19"
 bytemuck = { version = "1", features = ["derive"] }
 renet_netcode = "2"
 bimap = "0"
@@ -30,7 +30,7 @@ chrono = "0"
 renet = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bevy_egui = "0.39"
+bevy_egui = "0.42"
 
 [dependencies.qrz]
 path = "../qrz"

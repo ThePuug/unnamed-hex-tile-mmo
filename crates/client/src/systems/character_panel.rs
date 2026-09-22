@@ -293,14 +293,14 @@ macro_rules! create_absolute_stat_display {
                 // Stat name (colored)
                 stat_col.spawn((
                     Text::new(name),
-                    TextFont { font_size: 11.0, ..default() },
+                    TextFont { font_size: FontSize::Px(11.0), ..default() },
                     TextColor(color),
                 ));
                 // Stat value
                 stat_col.spawn((
                     $stat,
                     Text::new("(0)"),
-                    TextFont { font_size: 11.0, ..default() },
+                    TextFont { font_size: FontSize::Px(11.0), ..default() },
                     TextColor(Color::srgb(0.7, 0.7, 0.7)),
                 ));
             });
@@ -387,7 +387,7 @@ macro_rules! create_stat_display {
                     // Stat name (colored)
                     header.spawn((
                         Text::new(name),
-                        TextFont { font_size: 11.0, ..default() },
+                        TextFont { font_size: FontSize::Px(11.0), ..default() },
                         TextColor(color),
                     ));
                     // Raw stat value
@@ -395,7 +395,7 @@ macro_rules! create_stat_display {
                         $stat.clone(),
                         RawStatValue,
                         Text::new("(0)"),
-                        TextFont { font_size: 11.0, ..default() },
+                        TextFont { font_size: FontSize::Px(11.0), ..default() },
                         TextColor(Color::srgb(0.7, 0.7, 0.7)),
                     ));
                 });
@@ -412,14 +412,14 @@ macro_rules! create_stat_display {
                     // Effect label
                     effect_row.spawn((
                         Text::new(effect_label),
-                        TextFont { font_size: 10.0, ..default() },
+                        TextFont { font_size: FontSize::Px(10.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.8, 0.8)),
                     ));
                     // Calculated value (marker for updates)
                     effect_row.spawn((
                         $stat,
                         Text::new("0"),
-                        TextFont { font_size: 11.0, ..default() },
+                        TextFont { font_size: FontSize::Px(11.0), ..default() },
                         TextColor(Color::srgb(1.0, 1.0, 1.0)),
                     ));
                 });
@@ -456,25 +456,25 @@ macro_rules! create_attribute_section {
                 // Left reach value (outer)
                 title_row.spawn((
                     Text::new("0"),
-                    TextFont { font_size: 12.0, ..default() },
+                    TextFont { font_size: FontSize::Px(12.0), ..default() },
                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 ));
                 // Left attribute name
                 title_row.spawn((
                     Text::new($left_name),
-                    TextFont { font_size: 14.0, ..default() },
+                    TextFont { font_size: FontSize::Px(14.0), ..default() },
                     TextColor($left_color),
                 ));
                 // Right attribute name
                 title_row.spawn((
                     Text::new($right_name),
-                    TextFont { font_size: 14.0, ..default() },
+                    TextFont { font_size: FontSize::Px(14.0), ..default() },
                     TextColor($right_color),
                 ));
                 // Right reach value (outer)
                 title_row.spawn((
                     Text::new("0"),
-                    TextFont { font_size: 12.0, ..default() },
+                    TextFont { font_size: FontSize::Px(12.0), ..default() },
                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 ));
             });
@@ -518,7 +518,7 @@ macro_rules! create_attribute_section {
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new("+"),
-                            TextFont { font_size: 10.0, ..default() },
+                            TextFont { font_size: FontSize::Px(10.0), ..default() },
                         ));
                     });
 
@@ -530,9 +530,9 @@ macro_rules! create_attribute_section {
                             flex_grow: 1.,
                             ..default()
                         },
-                        TextFont { font_size: 13.0, ..default() },
+                        TextFont { font_size: FontSize::Px(13.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                        TextLayout::new_with_justify(Justify::Center),
+                        TextLayout::justify(Justify::Center),
                     ));
 
                     // Minus button (left-side) - reduces commitment (inside, next to bar)
@@ -552,7 +552,7 @@ macro_rules! create_attribute_section {
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new("-"),
-                            TextFont { font_size: 10.0, ..default() },
+                            TextFont { font_size: FontSize::Px(10.0), ..default() },
                         ));
                     });
                 });
@@ -651,7 +651,7 @@ macro_rules! create_attribute_section {
                         .with_children(|btn| {
                             btn.spawn((
                                 Text::new("-"),
-                                TextFont { font_size: 10.0, ..default() },
+                                TextFont { font_size: FontSize::Px(10.0), ..default() },
                             ));
                         });
 
@@ -675,7 +675,7 @@ macro_rules! create_attribute_section {
                         .with_children(|btn| {
                             btn.spawn((
                                 Text::new("+"),
-                                TextFont { font_size: 10.0, ..default() },
+                                TextFont { font_size: FontSize::Px(10.0), ..default() },
                             ));
                         });
                     });
@@ -710,7 +710,7 @@ macro_rules! create_attribute_section {
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new("-"),
-                            TextFont { font_size: 10.0, ..default() },
+                            TextFont { font_size: FontSize::Px(10.0), ..default() },
                         ));
                     });
 
@@ -722,9 +722,9 @@ macro_rules! create_attribute_section {
                             flex_grow: 1.,
                             ..default()
                         },
-                        TextFont { font_size: 13.0, ..default() },
+                        TextFont { font_size: FontSize::Px(13.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                        TextLayout::new_with_justify(Justify::Center),
+                        TextLayout::justify(Justify::Center),
                     ));
 
                     // Plus button (right-side) - increases commitment (outside, away from bar)
@@ -744,7 +744,7 @@ macro_rules! create_attribute_section {
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new("+"),
-                            TextFont { font_size: 10.0, ..default() },
+                            TextFont { font_size: FontSize::Px(10.0), ..default() },
                         ));
                     });
                 });
@@ -902,7 +902,7 @@ pub fn setup(
                 btn.spawn((
                     ApplyButtonText,
                     Text::new("Apply Changes"),
-                    TextFont { font_size: 14.0, ..default() },
+                    TextFont { font_size: FontSize::Px(14.0), ..default() },
                 ));
             });
 
@@ -977,7 +977,7 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                         frame.spawn((
                             TabLabel(tab),
                             Text::new(tab.name()),
-                            TextFont { font_size: 14.0, ..default() },
+                            TextFont { font_size: FontSize::Px(14.0), ..default() },
                             TextColor(Color::srgb(0.6, 0.6, 0.6)),
                         ));
                     });
@@ -985,9 +985,9 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
             strip.spawn((
                 Text::new("- above
 + below"),
-                TextFont { font_size: 10.0, ..default() },
+                TextFont { font_size: FontSize::Px(10.0), ..default() },
                 TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                TextLayout::new_with_justify(Justify::Right),
+                TextLayout::justify(Justify::Right),
                 // A margin, since a text node takes no padding of its own.
                 Node {
                     margin: UiRect::new(Val::Px(0.), Val::Px(20.), Val::Px(8.), Val::Px(0.)),

@@ -422,7 +422,7 @@ fn spawn_overflow_counter(
             parent.spawn((
                 Text::new(format!("+{}", hidden_count)),
                 TextFont {
-                    font_size: 24.0,
+                    font_size: FontSize::Px(24.0),
                     ..default()
                 },
                 TextColor(Color::srgb(1.0, 0.7, 0.0)), // Orange
@@ -511,7 +511,7 @@ pub fn spawn_pop_animation(
                     parent.spawn((
                         Text::new(format!("{:.0}", damage)),
                         TextFont {
-                            font_size: 14.0,
+                            font_size: FontSize::Px(14.0),
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 1.0, 1.0)),

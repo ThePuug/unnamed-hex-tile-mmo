@@ -1,16 +1,14 @@
-//! Vignette post-processing plugin using Bevy 0.18 FullscreenMaterial API
+//! Vignette post-processing plugin.
 
 use bevy::{
     core_pipeline::{
-        core_3d::graph::{Core3d, Node3d},
         fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},
+        tonemapping::tonemapping,
+        Core3dSystems,
     },
+    ecs::{schedule::ScheduleConfigs, system::BoxedSystem},
     prelude::*,
-    render::{
-        extract_component::ExtractComponent,
-        render_graph::{InternedRenderLabel, InternedRenderSubGraph, RenderLabel, RenderSubGraph},
-        render_resource::ShaderType,
-    },
+    render::{extract_component::ExtractComponent, render_resource::ShaderType},
     shader::ShaderRef,
 };
 
@@ -40,16 +38,10 @@ impl FullscreenMaterial for VignetteSettings {
         "shaders/vignette.wgsl".into()
     }
 
-    fn node_edges() -> Vec<InternedRenderLabel> {
-        vec![
-            Node3d::Tonemapping.intern(),
-            Self::node_label().intern(),
-            Node3d::EndMainPassPostProcessing.intern(),
-        ]
-    }
-
-    fn sub_graph() -> Option<InternedRenderSubGraph> {
-        Some(Core3d.intern())
+    /// After tone mapping: the vignette darkens the graded image, not the
+    /// linear one, or its edge lifts back out under the curve.
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system.in_set(Core3dSystems::PostProcess).after(tonemapping)
     }
 }
 

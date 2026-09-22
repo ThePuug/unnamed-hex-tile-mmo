@@ -5,33 +5,40 @@
 //! transform is the draw's own uniform, written each frame, so the draw
 //! never reads the mesh's uniform and needs no change to how the rest of
 //! the scene is drawn. Trees and cards are opaque, cast no shadow and are
-//! queued into the opaque phase by their own visibility class, one
-//! bounding box per batch. What stands on the camera's sightline to the
-//! player is seen through: the sightline rides in the same uniform and
-//! the fragment shader dithers out what lies inside its tunnel, so the
-//! trees stay opaque and unsorted. A card is a quad the shader turns to
+//! queued by their own visibility class, one bounding box per batch,
+//! into the depth prepass and then the opaque pass: the prepass writes
+//! every silhouette, so the opaque pass shades each pixel of the wood
+//! once and never shades the ground a canopy covers. What stands on the
+//! camera's sightline to the player is seen through: the sightline rides
+//! in the same uniform and the fragment shader dithers out what lies
+//! inside its tunnel, so the trees stay opaque and unsorted. A card is a quad the shader turns to
 //! the camera, with the model's baked picture on it: the card pipeline
 //! binds the variation's card texture and frames beside the region.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bevy::asset::UntypedAssetId;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{self, VisibilityClass};
 use bevy::core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey};
-use bevy::ecs::change_detection::Tick;
+use bevy::core_pipeline::prepass::{Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
 use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::{lifetimeless::*, SystemParamItem};
 use bevy::mesh::{MeshVertexBufferLayoutRef, VertexBufferLayout};
-use bevy::pbr::{MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache};
+use bevy::pbr::{MeshPipeline, MeshPipelineKey, MeshPipelineSystems, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache};
 use bevy::prelude::*;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
+use bevy::render::sync_component::SyncComponent;
 use bevy::render::extract_resource::ExtractResourcePlugin;
-use bevy::render::mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo};
+use bevy::render::mesh::{
+    allocator::{MeshAllocator, MeshSlabs},
+    RenderMesh, RenderMeshBufferInfo,
+};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
-    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult, SetItemPipeline,
-    TrackedRenderPass, ViewBinnedRenderPhases,
+    AddRenderCommand, BinnedPhaseItem, BinnedRenderPhaseType, DrawFunctionId, DrawFunctions, PhaseItem, RenderCommand,
+    RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
 };
 use bevy::render::render_resource::binding_types::{sampler, texture_2d_array, uniform_buffer};
 use bevy::render::render_resource::*;
@@ -50,6 +57,15 @@ const CARD_SHADER: &str = "shaders/cards.wgsl";
 /// and a pipeline whose import is missing waits forever and says nothing,
 /// so the handle is held here for the life of the app.
 const SHARED_SHADER: &str = "shaders/forest_shared.wgsl";
+
+/// The fragment stage each shader writes its silhouette into the depth
+/// prepass with: the colour stage's discards and nothing else.
+const DEPTH_ENTRY: &str = "prepass_fragment";
+
+/// The fragment stage each shader shades with. Both stages live in one
+/// module, so neither is the module's only one and each pipeline must
+/// name the one it wants.
+const COLOUR_ENTRY: &str = "fragment";
 
 /// One tree as the shader reads it: its place in the region's frame and
 /// its scale, then the cosine and sine of its turn; for a card, the first
@@ -84,8 +100,10 @@ impl Instance {
 
 /// A batch of instances the draw takes its buffer and count from.
 pub trait Batch: Component {
-    /// What the overlay calls the time spent queueing batches of this kind.
+    /// What the overlay calls the time spent queueing batches of this kind
+    /// into the opaque pass, and into the depth prepass before it.
     const TIMER: &'static str;
+    const DEPTH_TIMER: &'static str;
 
     fn buffer(&self) -> &Buffer;
     fn len(&self) -> u32;
@@ -129,6 +147,7 @@ impl TreeBatch {
 
 impl Batch for TreeBatch {
     const TIMER: &'static str = "tree_q";
+    const DEPTH_TIMER: &'static str = "tree_z";
 
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
@@ -176,6 +195,7 @@ impl CardBatch {
 
 impl Batch for CardBatch {
     const TIMER: &'static str = "card_q";
+    const DEPTH_TIMER: &'static str = "card_z";
 
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
@@ -186,6 +206,10 @@ impl Batch for CardBatch {
 #[derive(Component, Clone, Copy)]
 pub struct TreeTransform(pub Mat4);
 
+impl SyncComponent for TreeBatch {
+    type Target = (TreeBatch, TreeTransform);
+}
+
 impl ExtractComponent for TreeBatch {
     type QueryData = (&'static TreeBatch, &'static GlobalTransform);
     type QueryFilter = ();
@@ -194,6 +218,10 @@ impl ExtractComponent for TreeBatch {
     fn extract_component((batch, transform): QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
         Some((batch.clone(), TreeTransform(transform.to_matrix())))
     }
+}
+
+impl SyncComponent for CardBatch {
+    type Target = (CardBatch, TreeTransform);
 }
 
 impl ExtractComponent for CardBatch {
@@ -223,12 +251,18 @@ impl Plugin for TreeDrawPlugin {
             .init_resource::<Regions>()
             .add_render_command::<Opaque3d, DrawTrees>()
             .add_render_command::<Opaque3d, DrawCards>()
-            .add_systems(RenderStartup, init_pipelines)
+            .add_render_command::<Opaque3dPrepass, DrawTrees>()
+            .add_render_command::<Opaque3dPrepass, DrawCards>()
+            // `MeshPipeline` is built in `RenderStartup` as well, and this
+            // clones it.
+            .add_systems(RenderStartup, init_pipelines.after(MeshPipelineSystems))
             .add_systems(
                 Render,
                 (
-                    queue_batches::<TreeBatch, TreePipeline, DrawTrees>.in_set(RenderSystems::Queue),
-                    queue_batches::<CardBatch, CardPipeline, DrawCards>.in_set(RenderSystems::Queue),
+                    queue_batches::<TreeBatch, TreePipeline, DrawTrees, Opaque3dPrepass>.in_set(RenderSystems::Queue),
+                    queue_batches::<TreeBatch, TreePipeline, DrawTrees, Opaque3d>.in_set(RenderSystems::Queue),
+                    queue_batches::<CardBatch, CardPipeline, DrawCards, Opaque3dPrepass>.in_set(RenderSystems::Queue),
+                    queue_batches::<CardBatch, CardPipeline, DrawCards, Opaque3d>.in_set(RenderSystems::Queue),
                     prepare_regions.in_set(RenderSystems::PrepareResources),
                     prepare_region_bind_groups.in_set(RenderSystems::PrepareBindGroups),
                 ),
@@ -266,19 +300,30 @@ impl CardUniform {
     }
 }
 
+/// Which pipeline a batch is drawn with: the view's own key, and whether
+/// this is the depth prepass's drawing of it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct BatchKey {
+    view: MeshPipelineKey,
+    depth_only: bool,
+}
+
 /// A pipeline over the mesh pipeline's descriptor: its shader, and the
 /// layout that takes the mesh's place at group 2.
-trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = MeshPipelineKey> {
+trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
     fn parts(&self) -> (&Handle<Shader>, &MeshPipeline, &BindGroupLayoutDescriptor);
     fn two_sided(&self) -> bool { false }
 
     /// The mesh pipeline's descriptor for the key, its view layouts and
     /// shader defs kept, with the batch shader, the instance buffer as a
     /// second vertex buffer, and the batch's layout in the mesh's place.
-    fn batch_descriptor(&self, key: MeshPipelineKey, layout: &MeshVertexBufferLayoutRef, label: &'static str) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
+    /// The prepass's drawing differs in its fragment stage alone — the
+    /// silhouette, written to depth and to no colour target — so the
+    /// depth the opaque pass tests against is the depth this wrote.
+    fn batch_descriptor(&self, key: BatchKey, layout: &MeshVertexBufferLayoutRef, label: &'static str) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         let (shader, mesh_pipeline, group) = self.parts();
-        let mut descriptor = mesh_pipeline.specialize(key, layout)?;
-        descriptor.label = Some(label.into());
+        let mut descriptor = mesh_pipeline.specialize(key.view, layout)?;
+        descriptor.label = Some(if key.depth_only { format!("{label}_depth").into() } else { label.into() });
         descriptor.vertex.shader = shader.clone();
         descriptor.vertex.buffers.push(VertexBufferLayout {
             array_stride: size_of::<Instance>() as u64,
@@ -290,6 +335,22 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = MeshPipelineKey> {
         });
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader.clone();
+            if key.depth_only {
+                fragment.entry_point = Some(DEPTH_ENTRY.into());
+                fragment.targets.clear();
+            } else {
+                fragment.entry_point = Some(COLOUR_ENTRY.into());
+            }
+        }
+        // Where the prepass has already written this silhouette, the
+        // colour pass only tests against it. Writing it again would make
+        // the hardware hold the depth test back until the shader's
+        // discards are known, and every tree behind a tree would be
+        // shaded before being thrown away.
+        if !key.depth_only && key.view.contains(MeshPipelineKey::DEPTH_PREPASS) {
+            if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+                depth_stencil.depth_write_enabled = Some(false);
+            }
         }
         if self.two_sided() {
             descriptor.primitive.cull_mode = None;
@@ -358,7 +419,7 @@ impl BatchPipeline for TreePipeline {
 }
 
 impl SpecializedMeshPipeline for TreePipeline {
-    type Key = MeshPipelineKey;
+    type Key = BatchKey;
 
     fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         self.batch_descriptor(key, layout, "trees")
@@ -375,42 +436,106 @@ impl BatchPipeline for CardPipeline {
 }
 
 impl SpecializedMeshPipeline for CardPipeline {
-    type Key = MeshPipelineKey;
+    type Key = BatchKey;
 
     fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         self.batch_descriptor(key, layout, "cards")
     }
 }
 
-/// Each batch of `B` visible from a view goes into the view's opaque
-/// phase with `P` specialised for its mesh and drawn by `D`, unbatched:
-/// the draw batches itself.
+/// A phase a batch is drawn into. The depth prepass takes it for its
+/// silhouette alone; the opaque pass after that shades what is left
+/// showing. Both draw the same instances through the same vertex stage,
+/// so a fragment's depth is the one already in the buffer, and of an
+/// overlapping stand only the nearest is ever shaded.
+trait BatchPhase: BinnedPhaseItem {
+    /// Whether the phase takes the batch for its depth alone.
+    const DEPTH_ONLY: bool;
+
+    fn keys(
+        draw_function: DrawFunctionId,
+        pipeline: CachedRenderPipelineId,
+        slabs: Option<MeshSlabs>,
+        asset_id: UntypedAssetId,
+    ) -> (Self::BatchSetKey, Self::BinKey);
+}
+
+impl BatchPhase for Opaque3dPrepass {
+    const DEPTH_ONLY: bool = true;
+
+    fn keys(
+        draw_function: DrawFunctionId,
+        pipeline: CachedRenderPipelineId,
+        slabs: Option<MeshSlabs>,
+        asset_id: UntypedAssetId,
+    ) -> (Self::BatchSetKey, Self::BinKey) {
+        (
+            OpaqueNoLightmap3dBatchSetKey {
+                draw_function,
+                pipeline,
+                material_bind_group_index: None,
+                slabs: slabs.unwrap_or_default(),
+            },
+            OpaqueNoLightmap3dBinKey { asset_id },
+        )
+    }
+}
+
+impl BatchPhase for Opaque3d {
+    const DEPTH_ONLY: bool = false;
+
+    fn keys(
+        draw_function: DrawFunctionId,
+        pipeline: CachedRenderPipelineId,
+        slabs: Option<MeshSlabs>,
+        asset_id: UntypedAssetId,
+    ) -> (Self::BatchSetKey, Self::BinKey) {
+        (
+            Opaque3dBatchSetKey {
+                draw_function,
+                pipeline,
+                material_bind_group_index: None,
+                slabs: slabs.unwrap_or_default(),
+                lightmap_slab: None,
+            },
+            Opaque3dBinKey { asset_id },
+        )
+    }
+}
+
+/// Each batch of `B` visible from a view goes into the view's `I` phase
+/// with `P` specialised for its mesh and drawn by `D`, unbatched: the
+/// draw batches itself. A view without a phase of that kind — one drawn
+/// with no depth prepass — is passed over.
 #[allow(clippy::too_many_arguments)]
-fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
+fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
     pipeline_cache: Res<PipelineCache>,
     batch_pipeline: Res<P>,
     mut pipelines: ResMut<SpecializedMeshPipelines<P>>,
-    mut phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
-    draw_functions: Res<DrawFunctions<Opaque3d>>,
+    mut phases: ResMut<ViewBinnedRenderPhases<I>>,
+    draw_functions: Res<DrawFunctions<I>>,
     views: Query<(&RenderVisibleEntities, &ExtractedView)>,
     view_keys: Res<ViewKeyCache>,
     meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
     mesh_allocator: Res<MeshAllocator>,
-    mut change_tick: Local<Tick>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope(B::TIMER);
+    let _t = timers.0.scope(if I::DEPTH_ONLY { B::DEPTH_TIMER } else { B::TIMER });
     let draw_function = draw_functions.read().id::<D>();
     for (visible, view) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else { continue };
         // The view's own key, as the mesh pipeline computed it: its
         // prepasses and samples pick the view layout the bind group holds.
         let Some(&view_key) = view_keys.get(&view.retained_view_entity) else { continue };
-        for &(render_entity, main_entity) in visible.get::<B>().iter() {
+        let Some(class) = visible.get::<B>() else { continue };
+        for &(render_entity, main_entity) in class.entities_cpu_culling.iter() {
             let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(main_entity) else { continue };
-            let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id) else { continue };
-            let key = view_key | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology());
+            let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id()) else { continue };
+            let key = BatchKey {
+                view: view_key | MeshPipelineKey::from_primitive_topology_and_strip_index(mesh.primitive_topology(), mesh.index_format()),
+                depth_only: I::DEPTH_ONLY,
+            };
             let pipeline = match pipelines.specialize(&pipeline_cache, &batch_pipeline, key, &mesh.layout) {
                 Ok(pipeline) => pipeline,
                 Err(e) => {
@@ -418,23 +543,15 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
                     continue;
                 }
             };
-            let (vertex_slab, index_slab) = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id);
-            let next = change_tick.get() + 1;
-            change_tick.set(next);
+            let slabs = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id());
+            let (batch_set_key, bin_key) =
+                I::keys(draw_function, pipeline, slabs, mesh_instance.mesh_asset_id().into());
             phase.add(
-                Opaque3dBatchSetKey {
-                    draw_function,
-                    pipeline,
-                    material_bind_group_index: None,
-                    vertex_slab: vertex_slab.unwrap_or_default(),
-                    index_slab,
-                    lightmap_slab: None,
-                },
-                Opaque3dBinKey { asset_id: mesh_instance.mesh_asset_id.into() },
+                batch_set_key,
+                bin_key,
                 (render_entity, main_entity),
                 mesh_instance.current_uniform_index,
                 BinnedRenderPhaseType::UnbatchableMesh,
-                *change_tick,
             );
         }
     }
@@ -628,15 +745,15 @@ impl<P: PhaseItem, B: Batch> RenderCommand<P> for DrawBatch<B> {
         let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(item.main_entity()) else {
             return RenderCommandResult::Skip;
         };
-        let Some(gpu_mesh) = meshes.into_inner().get(mesh_instance.mesh_asset_id) else { return RenderCommandResult::Skip };
-        let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_instance.mesh_asset_id) else {
+        let Some(gpu_mesh) = meshes.into_inner().get(mesh_instance.mesh_asset_id()) else { return RenderCommandResult::Skip };
+        let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_instance.mesh_asset_id()) else {
             return RenderCommandResult::Skip;
         };
         pass.set_vertex_buffer(0, vertex_slice.buffer.slice(..));
         pass.set_vertex_buffer(1, batch.buffer().slice(..));
         match &gpu_mesh.buffer_info {
             RenderMeshBufferInfo::Indexed { index_format, count } => {
-                let Some(index_slice) = mesh_allocator.mesh_index_slice(&mesh_instance.mesh_asset_id) else {
+                let Some(index_slice) = mesh_allocator.mesh_index_slice(&mesh_instance.mesh_asset_id()) else {
                     return RenderCommandResult::Skip;
                 };
                 pass.set_index_buffer(index_slice.buffer.slice(..), *index_format);

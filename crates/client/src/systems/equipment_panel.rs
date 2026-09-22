@@ -128,9 +128,9 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                             hands.spawn(held_square()).with_children(|cell| {
                                 cell.spawn((
                                     Text::new("Main\nhand"),
-                                    TextFont { font_size: 11.0, ..default() },
+                                    TextFont { font_size: FontSize::Px(11.0), ..default() },
                                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                    TextLayout::new_with_justify(Justify::Center),
+                                    TextLayout::justify(Justify::Center),
                                 ));
                             });
                             slot_square(hands, Slot::OffHand);
@@ -146,7 +146,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
             .with_children(|bag| {
                 bag.spawn((
                     Text::new("Bag     1-9 wear or take off     . next row     - + tab     0 close"),
-                    TextFont { font_size: 12.0, ..default() },
+                    TextFont { font_size: FontSize::Px(12.0), ..default() },
                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 ));
                 bag.spawn((
@@ -195,9 +195,9 @@ fn slot_square(parent: &mut ChildSpawnerCommands, slot: Slot) {
             cell.spawn((
                 SlotText(slot),
                 Text::new(slot.name()),
-                TextFont { font_size: 11.0, ..default() },
+                TextFont { font_size: FontSize::Px(11.0), ..default() },
                 TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                TextLayout::new_with_justify(Justify::Center),
+                TextLayout::justify(Justify::Center),
             ));
         });
 }
@@ -313,7 +313,7 @@ pub fn rebuild_bag(
                             cell.spawn((
                                 BagCellKey,
                                 Text::new((c + 1).to_string()),
-                                TextFont { font_size: 10.0, ..default() },
+                                TextFont { font_size: FontSize::Px(10.0), ..default() },
                                 TextColor(WORN),
                                 Node {
                                     position_type: PositionType::Absolute,

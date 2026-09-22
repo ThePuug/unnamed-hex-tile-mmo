@@ -226,7 +226,7 @@ pub fn setup(
 
     commands.spawn((
         DirectionalLight {
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             shadow_depth_bias: 0.02,
             shadow_normal_bias: 0.6,
             ..default()},
@@ -234,7 +234,7 @@ pub fn setup(
         Sun::default()));
     commands.spawn((
         DirectionalLight {
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             color: Color::WHITE,
             ..default()},
         Transform::default(),
@@ -415,7 +415,7 @@ pub fn update(
     clear.0 = lit(Vec3::ONE).into();
     let (camera, mut fog) = q_camera.single_mut().expect("no result in q_camera");
     fog.color = lit(Vec3::ONE.lerp(sky_tint, HAZE_TINT_SHARE)).into();
-    if let Some(sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
+    if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
         sky.bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
         sky.base = lit(Vec3::ONE);
         sky.glow = lit(sky_tint) - lit(Vec3::ONE);
@@ -429,7 +429,7 @@ pub fn update(
         let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward };
         transform.translation = camera + toward * disc_distance_wu();
         transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
-        let Some(material) = disc_materials.get_mut(&material.0) else { continue };
+        let Some(mut material) = disc_materials.get_mut(&material.0) else { continue };
         match disc {
             Disc::Sun => material.color = s_light.color.to_linear() * SUN_DISC_BRIGHTNESS,
             Disc::Moon => {
@@ -820,7 +820,7 @@ pub fn update_terrain_cut(
     };
 
     for (&r, handle) in &terrain_material.by_level {
-        let Some(material) = materials.get_mut(handle) else { continue };
+        let Some(mut material) = materials.get_mut(handle) else { continue };
         material.extension.canopy.lift = lift;
         material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()

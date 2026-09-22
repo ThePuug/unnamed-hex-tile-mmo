@@ -88,7 +88,7 @@ pub fn setup(
     ));
     commands.spawn((
         crate::resources::OffWorld,
-        DirectionalLight { illuminance: 6000.0, shadows_enabled: false, ..default() },
+        DirectionalLight { illuminance: 6000.0, shadow_maps_enabled: false, ..default() },
         Transform::from_translation(STAGE + Vec3::new(-2.0, 4.0, -3.0) * r).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
     ));
@@ -113,7 +113,7 @@ pub fn spawn_figure(
             crate::resources::OffWorld,
             typ,
             equipment,
-            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),
+            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),
             animator::Rig(asset_server.load(actor::get_asset(typ))),
             Transform {
                 translation: STAGE,

@@ -204,7 +204,7 @@ fn spawn_resolved_threat_entry(
             parent.spawn((
                 Text::new(format!("{:.0}", damage)),
                 TextFont {
-                    font_size: 14.0,
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::{gltf::GltfNode, prelude::*, scene::SceneInstanceReady};
+use bevy::{gltf::GltfNode, prelude::*, world_serialization::WorldInstanceReady};
 use qrz::Convert;
 
 use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
@@ -24,7 +24,7 @@ pub fn setup() {}
 /// found by name (`animator::Clip`), the idle playing, which the animator
 /// switches from.
 pub(crate) fn ready(
-    trigger: On<SceneInstanceReady>,
+    trigger: On<WorldInstanceReady>,
     mut commands: Commands,
     query: Query<(&EntityType, &Rig)>,
     mut q_player: Query<&mut AnimationPlayer>,
@@ -147,7 +147,7 @@ pub fn do_spawn(
                         // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
                         Behaviour::Controlled,
                         (
-                            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
                             Rig(asset_server.load(get_asset(EntityType::Actor(desc)))),
                         ),
                         Transform {

@@ -41,14 +41,14 @@ pub fn setup_dev_console(mut commands: Commands) {
         .with_children(|parent| {
             parent.spawn((
                 Text::new("Developer Console"),
-                TextFont { font_size: 20.0, ..default() },
+                TextFont { font_size: FontSize::Px(20.0), ..default() },
                 TextColor(Color::srgb(0.3, 0.6, 0.9)),
             ));
 
             parent.spawn((
                 BreadcrumbText,
                 Text::new("Main Menu"),
-                TextFont { font_size: 14.0, ..default() },
+                TextFont { font_size: FontSize::Px(14.0), ..default() },
                 TextColor(Color::srgb(0.7, 0.7, 0.7)),
             ));
 
@@ -108,52 +108,52 @@ pub fn update_console_menu(
                     // Submenus first
                     parent.spawn((
                         Text::new("1. Terrain"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
                     #[cfg(feature = "admin")]
                     parent.spawn((
                         Text::new("2. Flyover"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
                     let video_key = if cfg!(feature = "admin") { "3" } else { "2" };
                     parent.spawn((
                         Text::new(format!("{video_key}. Video")),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     // Toggles after
                     let metrics_key = if cfg!(feature = "admin") { "4" } else { "3" };
                     parent.spawn((
                         Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("0. Close Console"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
                 MenuPath::Terrain => {
                     parent.spawn((
                         Text::new(format!("1. Toggle Grid Overlay      [{}]", on_off(diagnostics_state.grid_visible))),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.grid_visible)),
                     ));
 
@@ -163,7 +163,7 @@ pub fn update_console_menu(
                             "2. Lighting Time            [{}]",
                             held.clone().map_or("Game time".to_string(), |at| format!("Held {at}"))
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(held.is_some())),
                     ));
 
@@ -172,7 +172,7 @@ pub fn update_console_menu(
                             "3. Toggle Camera Envelope   [{}]",
                             if diagnostics_state.camera_envelope_off { "Lifted" } else { "On" }
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(!diagnostics_state.camera_envelope_off)),
                     ));
 
@@ -181,7 +181,7 @@ pub fn update_console_menu(
                             "4. Terrain                  [{}]",
                             if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(!diagnostics_state.terrain_hidden)),
                     ));
 
@@ -190,19 +190,19 @@ pub fn update_console_menu(
                             "5. Camera Close-up          [{}]",
                             if diagnostics_state.camera_closeup { "On" } else { "Off" }
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(!diagnostics_state.camera_closeup)),
                     ));
 
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
@@ -210,7 +210,7 @@ pub fn update_console_menu(
                     let current = diagnostics_state.lighting.held_at().map_or("Game time".to_string(), |at| format!("Held {at}"));
                     parent.spawn((
                         Text::new(format!("Current: {current}")),
-                        TextFont { font_size: 14.0, ..default() },
+                        TextFont { font_size: FontSize::Px(14.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.8, 1.0)),
                     ));
 
@@ -218,43 +218,43 @@ pub fn update_console_menu(
                     let display = if buf.is_empty() { "_" } else { buf };
                     parent.spawn((
                         Text::new(format!("Time = {display}")),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.4)),
                     ));
 
                     let date = Date::of(diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis())));
                     parent.spawn((
                         Text::new(format!("Date = {}", picked_date(date, console.lighting_date_field))),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.4)),
                     ));
 
                     parent.spawn((
                         Text::new("Enter HHMM or HH, press Enter (empty = game time)"),
-                        TextFont { font_size: 12.0, ..default() },
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
 
                     parent.spawn((
                         Text::new("Left/Right: rewind / forward, hold to hurry"),
-                        TextFont { font_size: 12.0, ..default() },
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
 
                     parent.spawn((
                         Text::new("Tab: pick day / week / season, Up/Down: step it"),
-                        TextFont { font_size: 12.0, ..default() },
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("Esc. Back"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
@@ -264,7 +264,7 @@ pub fn update_console_menu(
                             "1. Toggle MSAA              [{}]",
                             if diagnostics_state.msaa_off { "Off" } else { "4x" }
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(!diagnostics_state.msaa_off)),
                     ));
 
@@ -273,18 +273,18 @@ pub fn update_console_menu(
                             "2. Shadows                  [{}]",
                             diagnostics_state.shadows.label()
                         )),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.shadows == crate::plugins::diagnostics::Shadows::Gaussian)),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
@@ -293,14 +293,14 @@ pub fn update_console_menu(
                     let flyover_label = if flyover.active { "Disable" } else { "Enable" };
                     parent.spawn((
                         Text::new(format!("1. {} Flyover Camera", flyover_label)),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.8, 0.2)),
                     ));
 
                     let goto_target = if flyover.active { "cursor" } else { "player" };
                     parent.spawn((
                         Text::new(format!("2. Goto Coordinates    [{goto_target}]")),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
@@ -313,24 +313,24 @@ pub fn update_console_menu(
                     let radius_label = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
                     parent.spawn((
                         Text::new(format!("3. Summary Radius    [{radius_label}]")),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(active_color),
                     ));
 
                     parent.spawn((
                         Text::new("4. Report Terrain at Cursor"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(active_color),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
@@ -338,24 +338,24 @@ pub fn update_console_menu(
                 MenuPath::GotoSelect => {
                     parent.spawn((
                         Text::new("1. World Units (X, Y)"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
                     parent.spawn((
                         Text::new("2. QR Coordinates (Q, R)"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("0. Back"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }
@@ -374,25 +374,25 @@ pub fn update_console_menu(
                             };
                             parent.spawn((
                                 Text::new(text),
-                                TextFont { font_size: 16.0, ..default() },
+                                TextFont { font_size: FontSize::Px(16.0), ..default() },
                                 TextColor(color),
                             ));
                         }
 
                         parent.spawn((
                             Text::new(""),
-                            TextFont { font_size: 8.0, ..default() },
+                            TextFont { font_size: FontSize::Px(8.0), ..default() },
                         ));
 
                         parent.spawn((
                             Text::new("Tab: switch field  Enter: submit"),
-                            TextFont { font_size: 14.0, ..default() },
+                            TextFont { font_size: FontSize::Px(14.0), ..default() },
                             TextColor(Color::srgb(0.5, 0.5, 0.5)),
                         ));
 
                         parent.spawn((
                             Text::new("Esc. Back"),
-                            TextFont { font_size: 16.0, ..default() },
+                            TextFont { font_size: FontSize::Px(16.0), ..default() },
                             TextColor(Color::srgb(0.8, 0.3, 0.3)),
                         ));
                     }
@@ -402,7 +402,7 @@ pub fn update_console_menu(
                     let current = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
                     parent.spawn((
                         Text::new(format!("Current: {current}")),
-                        TextFont { font_size: 14.0, ..default() },
+                        TextFont { font_size: FontSize::Px(14.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.8, 1.0)),
                     ));
 
@@ -410,24 +410,24 @@ pub fn update_console_menu(
                     let display = if buf.is_empty() { "_" } else { buf };
                     parent.spawn((
                         Text::new(format!("r = {display}")),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.4)),
                     ));
 
                     parent.spawn((
                         Text::new("Enter number, press Enter (empty = Auto)"),
-                        TextFont { font_size: 12.0, ..default() },
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
                     ));
 
                     parent.spawn((
                         Text::new(""),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     parent.spawn((
                         Text::new("Esc. Back"),
-                        TextFont { font_size: 16.0, ..default() },
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
                 }

@@ -119,7 +119,7 @@ pub fn execute_console_actions(
                     commands.entity(camera).insert(method);
                 }
                 for mut light in sun.iter_mut() {
-                    light.shadows_enabled = shadows != Shadows::Off;
+                    light.shadow_maps_enabled = shadows != Shadows::Off;
                 }
                 info!("Shadows: {}", shadows.label());
             }

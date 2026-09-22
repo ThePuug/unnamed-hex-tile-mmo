@@ -307,7 +307,7 @@ impl TerrainMaterial {
     pub fn set_kinds(&mut self, kinds: [KindLook; 3], materials: &mut Assets<TerrainMaterialAsset>) {
         self.kinds = Some(kinds);
         for (&r, handle) in &self.by_level {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 material.extension.canopy = self.canopy_for(r);
             }
         }

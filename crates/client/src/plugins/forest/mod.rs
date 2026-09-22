@@ -260,7 +260,7 @@ fn load_kit(
     gltf_meshes: Res<Assets<GltfMesh>>,
     gltf_nodes: Res<Assets<GltfNode>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    materials: Res<Assets<StandardMaterial>>,
+    materials: Res<Assets<bevy::gltf::GltfMaterial>>,
 ) {
     for (_, handle) in &loading.0 {
         match asset_server.recursive_dependency_load_state(handle.id()) {
@@ -345,7 +345,7 @@ fn surface_color(mesh: &Mesh) -> Vec3 {
 
 /// One variation's primitives as one mesh, each vertex coloured by its
 /// primitive's material, so one white material draws the whole tree.
-fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<StandardMaterial>) -> Mesh {
+fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::GltfMaterial>) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::render::render_resource::PrimitiveTopology;
 

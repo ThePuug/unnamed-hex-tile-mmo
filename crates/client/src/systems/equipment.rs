@@ -108,7 +108,7 @@ pub fn dress(
             commands.spawn((
                 Worn { item: *item, bound: false, moved: Vec::new() },
                 Name::new(format!("worn:{}", item.piece.name())),
-                SceneRoot(asset_server.load(GltfAssetLabel::Scene(item.style as usize).from_asset(path))),
+                WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(item.style as usize).from_asset(path))),
                 ChildOf(actor),
             ));
         }

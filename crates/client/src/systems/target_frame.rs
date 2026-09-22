@@ -169,7 +169,7 @@ pub fn setup(
                 parent.spawn((
                     Text::new("0"),
                     TextFont {
-                        font_size: 12.0,
+                        font_size: FontSize::Px(12.0),
                         ..default()
                     },
                     TextColor(Color::WHITE),
@@ -180,7 +180,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("Enemy Name"),
                 TextFont {
-                    font_size: 14.0,
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -192,7 +192,7 @@ pub fn setup(
         parent.spawn((
             Text::new("Direct / Primal"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.8, 0.8, 0.8)), // Will be set dynamically based on origin
@@ -232,7 +232,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("100/100"),
                 TextFont {
-                    font_size: 12.0,
+                    font_size: FontSize::Px(12.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -341,7 +341,7 @@ pub fn setup(
                 parent.spawn((
                     Text::new("0"),
                     TextFont {
-                        font_size: 12.0,
+                        font_size: FontSize::Px(12.0),
                         ..default()
                     },
                     TextColor(Color::WHITE),
@@ -352,7 +352,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("Ally Name"),
                 TextFont {
-                    font_size: 14.0,
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::srgb(0.8, 1.0, 0.8)),  // Light green tint
@@ -364,7 +364,7 @@ pub fn setup(
         parent.spawn((
             Text::new("Direct / Primal"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
@@ -404,7 +404,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("100/100"),
                 TextFont {
-                    font_size: 12.0,
+                    font_size: FontSize::Px(12.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -813,7 +813,7 @@ pub fn update_queue(
                                     parent.spawn((
                                         Text::new(icon_text),
                                         TextFont {
-                                            font_size: 22.0,
+                                            font_size: FontSize::Px(22.0),
                                             ..default()
                                         },
                                         TextColor(Color::WHITE),
@@ -1210,7 +1210,7 @@ pub fn update_ally_queue(
                                 parent.spawn((
                                     Text::new(icon_text),
                                     TextFont {
-                                        font_size: 22.0,
+                                        font_size: FontSize::Px(22.0),
                                         ..default()
                                     },
                                     TextColor(Color::WHITE),

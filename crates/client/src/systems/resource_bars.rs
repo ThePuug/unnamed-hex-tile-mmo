@@ -99,7 +99,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("100 / 100"),
                 TextFont {
-                    font_size: 12.0,
+                    font_size: FontSize::Px(12.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -142,7 +142,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("100 / 100"),
                 TextFont {
-                    font_size: 12.0,
+                    font_size: FontSize::Px(12.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -185,7 +185,7 @@ pub fn setup(
             parent.spawn((
                 Text::new("100 / 100"),
                 TextFont {
-                    font_size: 12.0,
+                    font_size: FontSize::Px(12.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),

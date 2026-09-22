@@ -14,8 +14,8 @@ trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
 [dependencies]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = "0.18"
-bevy_easings = "0.18"
+bevy = "0.19"
+bevy_easings = "0.19"
 renet_netcode = "2"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
