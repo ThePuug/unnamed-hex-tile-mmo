@@ -965,7 +965,7 @@ fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64)
     }
     let n = fullness as f64;
     let canopy = (canopy.0 / n, canopy.1 / n, canopy.2 / n);
-    lerp_rgb(ground, canopy, 0.35 + 0.65 * n / 7.0)
+    lerp_rgb(ground, canopy, 0.35 + 0.65 * n / common::SLOTS.len() as f64)
 }
 
 /// What the sky gives each position, on a ramp from the dry ground's tan

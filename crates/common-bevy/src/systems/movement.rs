@@ -68,16 +68,16 @@ pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
 }
 
 /// The fullness at which a tile's trees refuse entry: every slot.
-pub const COVER_FULL: u8 = 7;
+pub const COVER_FULL: u8 = common::SLOTS.len() as u8;
 
-/// A walker's pace through a tile of six trees, as a share of full: the
-/// slowest it goes before the seventh refuses it.
-pub const COVER_PACE_MIN: f32 = 0.2;
+/// A walker's pace through a tile one tree short of full, as a share of
+/// full: the slowest it goes before the last refuses it.
+pub const COVER_PACE_MIN: f32 = 0.5;
 
 /// A walker's pace through a tile as a share of full, by the tile's
 /// fullness: one tree costs nothing, and from there the pace eases to
-/// [`COVER_PACE_MIN`] at six. Seven is refused in [`is_tile_blocked`],
-/// never slowed to nothing.
+/// [`COVER_PACE_MIN`] one short of full. Full is refused in
+/// [`is_tile_blocked`], never slowed to nothing.
 pub fn pace(fullness: u8) -> f32 {
     let n = fullness.saturating_sub(1).min(COVER_FULL - 2) as f32;
     1.0 - n / (COVER_FULL - 2) as f32 * (1.0 - COVER_PACE_MIN)
@@ -525,7 +525,7 @@ mod tests {
             assert!(p <= last && p >= COVER_PACE_MIN - 1e-6, "pace {p} at {n}");
             last = p;
         }
-        assert!((pace(6) - COVER_PACE_MIN).abs() < 1e-6);
+        assert!((pace(COVER_FULL - 1) - COVER_PACE_MIN).abs() < 1e-6);
     }
 
     /// A tile of trees: `n` slots filled, at (q, r), on the flat ground.
@@ -552,7 +552,7 @@ mod tests {
             calculate_movement(input, 1000, &map, &nntree).position.offset.xz().length()
         };
         let mut last = open;
-        for n in [2, 4, 6] {
+        for n in 2..COVER_FULL as usize {
             let map = create_test_map();
             flat_ground(&map, 6);
             for q in -6..=6 {
@@ -577,7 +577,7 @@ mod tests {
         let far: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
         let first: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset / 20.0 * 3.0);
         assert!((first.q, first.r) != (0, 0) && (first.q, first.r) != (far.q, far.r), "the walk should cross more than one tile");
-        wooded(&map, first.q, first.r, 7);
+        wooded(&map, first.q, first.r, COVER_FULL as usize);
         let out = calculate_movement(input, 2000, &map, &nntree);
         let here: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
         assert_eq!((here.q, here.r), (0, 0), "walked into a full tile");

@@ -235,9 +235,10 @@ pub const MOISTURE_SCRUB: f64 = 0.12;
 pub const MOISTURE_TREES: f64 = 0.25;
 pub const MOISTURE_CLOSED: f64 = 0.55;
 
-/// The density a closed stand fills its slots at: short of every slot, so
-/// a closed forest keeps the gaps it is crossed by.
-pub const DENSITY_MAX: f64 = 0.9;
+/// The density a closed stand fills its slots at: well short of every
+/// slot, so a closed forest averages two of its three and refuses about
+/// one tile in five, a maze that is crossed.
+pub const DENSITY_MAX: f64 = 0.6;
 
 /// The share of a stand's radius its density holds full before tapering
 /// to nothing at the edge.
@@ -704,7 +705,7 @@ mod tests {
     fn slots_fill_with_density() {
         for (q, r) in [(0, 0), (SPAWN.0, SPAWN.1), (1_000_000, -2_000_000)] {
             assert!(cover_of(q, r, 0.0, 1.0, 20.0, S).is_empty());
-            assert_eq!(cover_of(q, r, 1.0, 1.0, 20.0, S).fullness(), 7);
+            assert_eq!(cover_of(q, r, 1.0, 1.0, 20.0, S).fullness(), SLOTS.len() as u8);
             let mut last = 0;
             for i in 0..=20 {
                 let f = cover_of(q, r, i as f64 / 20.0, 1.0, 20.0, S).fullness();

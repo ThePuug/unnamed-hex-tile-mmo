@@ -73,7 +73,7 @@ fn cover_stands_only_where_it_may() {
         assert!(v.water.is_none(), "cover in water at ({q}, {r})");
         let (wx, wy) = hex_to_world(q, r);
         assert!(forest::temperature(wx, wy, v.elevation, SEED) > forest::TREELINE, "cover above the treeline at ({q}, {r})");
-        assert!(v.cover.fullness() <= 7);
+        assert!(v.cover.fullness() <= 3);
     }
 }
 
@@ -89,7 +89,7 @@ fn forest_census() {
     let t = Instant::now();
     let (mut land, mut covered, mut cold, mut full) = (0u32, 0u32, 0u32, 0u64);
     let mut kinds = [0u32; 4];
-    let mut hist = [0u32; 8];
+    let mut hist = [0u32; 4];
     let (mut t_min, mut t_max, mut t_sum) = (f64::MAX, f64::MIN, 0.0);
     for &(q, r) in &tiles {
         let v = c.tile_at(q, r);
@@ -120,7 +120,7 @@ fn forest_census() {
     println!("land {land}: {:.1}% covered, {:.1}% above the treeline", 100.0 * covered as f64 / land.max(1) as f64, 100.0 * cold as f64 / land.max(1) as f64);
     println!("temperature on land: {t_min:.1} to {t_max:.1}, mean {:.1} (treeline {})", t_sum / land.max(1) as f64, forest::TREELINE);
     println!("mean fullness where covered: {:.2}", full as f64 / covered.max(1) as f64);
-    println!("fullness histogram 0..7: {hist:?}");
+    println!("fullness histogram 0..3: {hist:?}");
     println!(
         "slots: scrub {}, pine {}, deciduous {}",
         kinds[Slot::Scrub as usize], kinds[Slot::Pine as usize], kinds[Slot::Deciduous as usize]
@@ -166,4 +166,39 @@ fn heights() {
     zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let at = |p: f64| zs[((zs.len() - 1) as f64 * p) as usize];
     println!("land elevation: median {:.0}, 75% {:.0}, 90% {:.0}, 99% {:.0}, max {:.0}", at(0.5), at(0.75), at(0.9), at(0.99), at(1.0));
+}
+
+/// Vantage points for a look in the client: the spawn's own cover, and the
+/// best ridge near it, a high tile whose ground falls far to wooded tiles
+/// within a short walk.
+#[test]
+#[ignore]
+fn vantage_points() {
+    let c = with_forest();
+    let v = c.tile_at(SPAWN.0, SPAWN.1);
+    println!("spawn {:?}: z {:.0}, fullness {}, water {:?}", SPAWN, v.elevation, v.cover.fullness(), v.water);
+    let tiles = window(SPAWN, 1500, 25);
+    let views: std::collections::HashMap<(i32, i32), (f64, u8)> = tiles.iter().map(|&(q, r)| {
+        let v = c.tile_at(q, r);
+        ((q, r), (v.elevation, if v.water.is_some() { 0 } else { v.cover.fullness() }))
+    }).collect();
+    let mut best: Vec<(f64, (i32, i32), (i32, i32), f64, u8)> = Vec::new();
+    for (&(q, r), &(z, _)) in &views {
+        for (&(oq, or), &(oz, f)) in &views {
+            let d = ((oq - q).abs() + (or - r).abs() + (oq - q + or - r).abs()) / 2;
+            if f < 4 || d < 30 || d > 120 {
+                continue;
+            }
+            let drop = z - oz;
+            if drop > 12.0 {
+                best.push((drop / (d as f64).sqrt(), (q, r), (oq, or), drop, f));
+            }
+        }
+    }
+    best.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    for (score, ridge, wood, drop, f) in best.iter().take(5) {
+        println!("ridge {:?} z {:.0} over wood {:?} (fullness {f}): drop {drop:.0} z, score {score:.1}", ridge, views[ridge].0, wood);
+    }
+    let near: Vec<((i32, i32), u8)> = views.iter().filter(|(_, (_, f))| *f >= 5).map(|(k, (_, f))| (*k, *f)).take(5).collect();
+    println!("wooded tiles near the spawn: {near:?}");
 }
