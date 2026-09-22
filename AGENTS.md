@@ -44,6 +44,13 @@ undefined. `--no-default-features` drops it; the client also loses `admin`,
 which is what a shipping build wants. `-p world` has no Bevy dependency, so its
 release builds keep LTO either way.
 
+`Cargo.lock` pins `windows` to 0.62.0, and a bare `cargo update` unpins it:
+`gpu-allocator` accepts `<=0.62`, which excludes 0.62.2, while `wgpu-hal`
+asks for `^0.62` and takes it, leaving the dx12 backend compiled against two
+incompatible sets of D3D12 types. Update a package at a time, and if the
+backend stops compiling over `ID3D12Device` or `ResourceCategory`, this is
+why.
+
 ## Crates
 
 Client-server MMO on Bevy ECS. Authoritative server, client-side prediction,
