@@ -11,10 +11,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::asset::RecursiveDependencyLoadState;
-use bevy::gltf::{Gltf, GltfMesh};
+use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use bevy_mesh::{Indices, VertexAttributeValues};
+use serde::Deserialize;
 use common::{Slot, SLOTS};
 use common_bevy::geometry::{flat_top_tile_center, slot_center};
 use common_bevy::surface::{height_y, surface_y};
@@ -45,27 +46,78 @@ pub const GROWN: f32 = 2.5;
 /// The least a bush stands, as a share of its model.
 pub const SCRUB_SMALL: f32 = 0.6;
 
-/// How far from the camera a region's trees are drawn, in world units,
-/// and the further reach they are kept to once drawn, so a step does not
-/// take a region's trees down and put them back. Beyond it nothing stands
-/// until the far levels draw their own; what the frame can carry at full
-/// geometry.
+/// How far from the camera a region's trees are drawn as models, in
+/// world units, and the further reach they are kept to once drawn, so a
+/// step does not take a region's trees down and put them back; past the
+/// keep a region's trees stand as cards, taken down again inside the
+/// reach. Between the two a region keeps whichever it had. The reach is
+/// what the frame can carry at full geometry.
 pub const TREE_REACH: f32 = 120.0;
 pub const TREE_KEEP: f32 = 140.0;
 
 /// One variation of a kind: its mesh in the tree's own frame, foot at the
-/// origin, up +y, the GLB's units the world's, and its height there.
+/// origin, up +y, the GLB's units the world's, and its height there; and
+/// its model's cards, where the model shipped them, with which seed of
+/// the model it is, the layer its pictures start at.
 pub struct Variation {
     pub mesh: Handle<Mesh>,
     pub height: f32,
+    pub cards: Option<Arc<draw::Cards>>,
+    pub seed: u32,
 }
 
-/// Every variation of every kind.
+/// Every variation of every kind, and the quad every card is drawn on.
 #[derive(Default)]
 pub struct Kit {
     pine: Vec<Variation>,
     deciduous: Vec<Variation>,
     scrub: Vec<Variation>,
+    quad: Handle<Mesh>,
+}
+
+/// What a model declares of its cards in its first node's extras, as
+/// modelgen writes it: the texture array's path, and each view's
+/// elevation in degrees and frame in world units, the side then the top.
+#[derive(Deserialize)]
+struct CardExtras {
+    card: CardDecl,
+}
+
+#[derive(Deserialize)]
+struct CardDecl {
+    texture: String,
+    views: Vec<CardViewDecl>,
+}
+
+#[derive(Deserialize)]
+struct CardViewDecl {
+    elevation: f32,
+    width: f32,
+    height: f32,
+}
+
+impl CardDecl {
+    fn parse(extras: &str) -> Option<CardDecl> {
+        serde_json::from_str::<CardExtras>(extras).ok().map(|e| e.card)
+    }
+
+    fn cards(&self, asset_server: &AssetServer) -> Option<draw::Cards> {
+        let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, elevation: d.elevation.to_radians() };
+        let [side, top] = self.views.as_slice() else { return None };
+        Some(draw::Cards { texture: asset_server.load(self.texture.clone()), side: view(side), top: view(top) })
+    }
+}
+
+/// The quad a card is drawn on: a unit wide about its foot and a unit
+/// tall from it, the picture's top at its top.
+fn card_quad() -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::PrimitiveTopology;
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [0.5, 1.0, 0.0], [-0.5, 1.0, 0.0]])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]])
+        .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]))
 }
 
 impl Kit {
@@ -75,16 +127,6 @@ impl Kit {
             Slot::Deciduous => &self.deciduous,
             _ => &self.scrub,
         }
-    }
-
-    /// The variation a tree of `slot`'s kind with this variation hash is
-    /// drawn with, or none where the kind has no model.
-    pub fn variation(&self, slot: Slot, variation: u32) -> Option<&Variation> {
-        let all = self.of(slot);
-        if all.is_empty() {
-            return None;
-        }
-        Some(&all[variation as usize % all.len()])
     }
 
     /// The scale a tree `growth` of the way grown is drawn at: a tree from
@@ -125,6 +167,10 @@ pub struct TreeInstance {
 #[derive(Component)]
 pub struct Tree;
 
+/// A drawn card.
+#[derive(Component)]
+pub struct Card;
+
 pub struct ForestPlugin;
 
 impl Plugin for ForestPlugin {
@@ -156,6 +202,7 @@ fn load_kit(
     asset_server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     gltf_meshes: Res<Assets<GltfMesh>>,
+    gltf_nodes: Res<Assets<GltfNode>>,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
 ) {
@@ -165,20 +212,33 @@ fn load_kit(
             _ => return,
         }
     }
-    let mut kit = Kit::default();
+    let mut kit = Kit { quad: meshes.add(card_quad()), ..default() };
     for (slot, handle) in &loading.0 {
         let Some(gltf) = gltfs.get(handle) else {
             warn!("tree model for {slot:?} did not load; its kind is drawn as nothing");
             continue;
         };
-        for mesh_handle in &gltf.meshes {
+        // The model's cards, declared on its first node; a model without
+        // them is drawn as nothing past the trees' reach.
+        let cards = gltf
+            .nodes
+            .first()
+            .and_then(|n| gltf_nodes.get(n))
+            .and_then(|n| n.extras.as_ref())
+            .and_then(|e| CardDecl::parse(&e.value))
+            .and_then(|d| d.cards(&asset_server))
+            .map(Arc::new);
+        if cards.is_none() {
+            info!("tree model for {slot:?} ships no cards; nothing of it stands past the trees' reach");
+        }
+        for (seed, mesh_handle) in gltf.meshes.iter().enumerate() {
             let Some(gm) = gltf_meshes.get(mesh_handle) else { continue };
             let merged = merge(gm, &meshes, &materials);
             let height = match merged.attribute(Mesh::ATTRIBUTE_POSITION) {
                 Some(VertexAttributeValues::Float32x3(p)) => p.iter().map(|v| v[1]).fold(0.0, f32::max),
                 _ => 0.0,
             };
-            let variation = Variation { mesh: meshes.add(merged), height };
+            let variation = Variation { mesh: meshes.add(merged), height, cards: cards.clone(), seed: seed as u32 };
             match slot {
                 Slot::Pine => kit.pine.push(variation),
                 Slot::Deciduous => kit.deciduous.push(variation),
@@ -296,8 +356,49 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
     });
 }
 
-/// Stand the trees of every region within reach of the camera and take
-/// down those beyond the keep: the region's origin is its measure, and a
+/// Spawn a region's trees as cards, children of its entity: one batch
+/// per variation present whose model shipped cards, each the shared quad
+/// and an instance buffer of every tree drawn with it, the side layer of
+/// its seed in the model's texture.
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
+    let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
+    let mut reach = 0.0f32;
+    for t in trees {
+        let all = kit.kit.of(t.slot);
+        if all.is_empty() {
+            continue;
+        }
+        let k = t.variation as usize % all.len();
+        let v = &all[k];
+        let Some(cards) = &v.cards else { continue };
+        let scale = Kit::scale(t.slot, v.height, t.growth);
+        reach = reach.max(cards.side.height.max(cards.side.width) * scale);
+        batches.entry((t.slot, k)).or_default().push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * 2, v.height * scale));
+    }
+    commands.entity(entity).with_children(|parent| {
+        for ((slot, k), instances) in batches {
+            let v = &kit.kit.of(slot)[k];
+            let Some(cards) = &v.cards else { continue };
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone());
+            parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Card));
+        }
+    });
+}
+
+/// Take down a region's children of one kind.
+fn take_down<M: Component>(commands: &mut Commands, entity: Entity, children: &Query<&Children>, marked: &Query<(), With<M>>) {
+    if let Ok(kids) = children.get(entity) {
+        for &kid in kids {
+            if marked.get(kid).is_ok() {
+                commands.entity(kid).despawn();
+            }
+        }
+    }
+}
+
+/// Stand the trees of every region within reach of the camera as models
+/// and those beyond the keep as cards, and take each down where the
+/// other's ground begins: the region's origin is its measure, and a
 /// region built before the kit loaded gets its trees here too.
 #[allow(clippy::too_many_arguments)]
 fn update_trees(
@@ -309,6 +410,7 @@ fn update_trees(
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
     children: Query<&Children>,
     trees: Query<(), With<Tree>>,
+    cards: Query<(), With<Card>>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     #[cfg(feature = "admin")]
@@ -331,14 +433,15 @@ fn update_trees(
             spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
             state.trees_spawned = true;
         } else if state.trees_spawned && d > TREE_KEEP {
-            if let Ok(kids) = children.get(entity) {
-                for &kid in kids {
-                    if trees.get(kid).is_ok() {
-                        commands.entity(kid).despawn();
-                    }
-                }
-            }
+            take_down::<Tree>(&mut commands, entity, &children, &trees);
             state.trees_spawned = false;
+        }
+        if !state.cards_spawned && d > TREE_KEEP {
+            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device);
+            state.cards_spawned = true;
+        } else if state.cards_spawned && d <= TREE_REACH {
+            take_down::<Card>(&mut commands, entity, &children, &cards);
+            state.cards_spawned = false;
         }
     }
 }

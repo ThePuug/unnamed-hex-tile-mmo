@@ -727,6 +727,7 @@ pub fn dispatch_summary_tasks(
                     base_water: Default::default(),
                     base_trees: Vec::new(),
                     trees_spawned: false,
+                    cards_spawned: false,
                     waiting: false,
                     epoch,
                 },
@@ -1240,6 +1241,7 @@ pub fn poll_summary_meshes(
             }
         };
         state.trees_spawned = false;
+        state.cards_spawned = false;
 
         if !build.water.indices.is_empty() {
             let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &build.water.indices);
@@ -1428,6 +1430,7 @@ mod tests {
                         base_water: Default::default(),
                         base_trees: Vec::new(),
                         trees_spawned: false,
+                        cards_spawned: false,
                         waiting: false,
                         epoch: 0,
                     });
@@ -1473,6 +1476,7 @@ mod tests {
             base_water: Default::default(),
             base_trees: Vec::new(),
             trees_spawned: false,
+            cards_spawned: false,
             waiting: true,
             epoch: 3,
         };

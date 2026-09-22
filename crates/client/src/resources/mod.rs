@@ -324,6 +324,8 @@ pub struct SummaryMeshState {
     /// spawned within the trees' reach, cleared as they are taken down
     /// beyond it and whenever the entity or its children go.
     pub trees_spawned: bool,
+    /// The same for its trees as cards, past the trees' keep.
+    pub cards_spawned: bool,
     /// The last build yielded nothing — a cell or ring cell had no data
     /// yet. Retried once data has arrived since `epoch`, not on every run:
     /// retrying every frame would take the build slots from regions that
