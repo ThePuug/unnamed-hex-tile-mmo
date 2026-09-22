@@ -156,13 +156,18 @@ pub fn execute_console_actions(
                 info!("Camera close-up: {}", if diagnostics_state.camera_closeup { "ON" } else { "off" });
             }
             DevConsoleAction::ToggleMsaa => {
-                diagnostics_state.msaa_off = !diagnostics_state.msaa_off;
-                // Every camera on the window, or the ones left at 4x stop
+                let samples = diagnostics_state.samples.next();
+                diagnostics_state.samples = samples;
+                // Every camera on the window, or the ones left behind stop
                 // sharing its main texture and draw the UI a second time.
                 for mut msaa in camera_msaa.iter_mut() {
-                    *msaa = if diagnostics_state.msaa_off { Msaa::Off } else { Msaa::Sample4 };
+                    *msaa = match samples {
+                        crate::plugins::diagnostics::Samples::Four => Msaa::Sample4,
+                        crate::plugins::diagnostics::Samples::Two => Msaa::Sample2,
+                        crate::plugins::diagnostics::Samples::Off => Msaa::Off,
+                    };
                 }
-                info!("MSAA: {}", if diagnostics_state.msaa_off { "OFF" } else { "4x" });
+                info!("MSAA: {}", samples.label());
             }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;

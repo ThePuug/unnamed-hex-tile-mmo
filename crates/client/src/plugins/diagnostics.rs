@@ -14,7 +14,7 @@ use bevy::{
 use bevy::render::diagnostic::*;
 use bevy_egui::EguiPlugin;
 
-pub use config::{DateField, DiagnosticsState, LightingClock, Shadows};
+pub use config::{DateField, DiagnosticsState, LightingClock, Samples, Shadows};
 
 pub struct DiagnosticsPlugin;
 

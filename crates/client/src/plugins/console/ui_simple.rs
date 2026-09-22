@@ -270,11 +270,13 @@ pub fn update_console_menu(
                 MenuPath::Video => {
                     parent.spawn((
                         Text::new(format!(
-                            "1. Toggle MSAA              [{}]",
-                            if diagnostics_state.msaa_off { "Off" } else { "4x" }
+                            "1. MSAA                     [{}]",
+                            diagnostics_state.samples.label()
                         )),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(!diagnostics_state.msaa_off)),
+                        TextColor(state_color(
+                            diagnostics_state.samples == crate::plugins::diagnostics::Samples::Four
+                        )),
                     ));
 
                     parent.spawn((

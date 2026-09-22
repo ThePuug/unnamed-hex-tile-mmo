@@ -43,8 +43,8 @@ pub struct DiagnosticsState {
     pub metrics_overlay_visible: bool,
     /// Which set of numbers the overlay's panel shows.
     pub metrics_tab: MetricsTab,
-    /// Every camera renders without MSAA.
-    pub msaa_off: bool,
+    /// How many samples every camera renders with.
+    pub samples: Samples,
     /// How the sun's shadows are drawn, if at all.
     pub shadows: Shadows,
     /// Every terrain mesh is hidden.
@@ -59,6 +59,35 @@ pub struct DiagnosticsState {
     /// The camera goes straight to its wanted pose, showing whatever the
     /// envelope would have hidden.
     pub camera_envelope_off: bool,
+}
+
+/// How many samples a camera takes per pixel. Coverage work — every
+/// silhouette the depth prepass rasterises — scales with this, and the
+/// wood is nothing but silhouette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Samples {
+    Four,
+    Two,
+    Off,
+}
+
+impl Samples {
+    /// The next setting the toggle cycles to.
+    pub fn next(self) -> Self {
+        match self {
+            Samples::Four => Samples::Two,
+            Samples::Two => Samples::Off,
+            Samples::Off => Samples::Four,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Samples::Four => "4x",
+            Samples::Two => "2x",
+            Samples::Off => "Off",
+        }
+    }
 }
 
 /// The sun's shadows: filtered by the Gaussian, by the hardware's 2×2
@@ -96,7 +125,7 @@ impl Default for DiagnosticsState {
             lighting: LightingClock::default(),
             metrics_overlay_visible: false,
             metrics_tab: MetricsTab::default(),
-            msaa_off: false,
+            samples: Samples::Four,
             shadows: Shadows::Gaussian,
             terrain_hidden: false,
             forest_hidden: false,
