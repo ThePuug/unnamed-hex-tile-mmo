@@ -106,7 +106,12 @@ impl CardDecl {
     fn cards(&self, asset_server: &AssetServer) -> Option<draw::Cards> {
         let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, elevation: d.elevation.to_radians() };
         let [side, top] = self.views.as_slice() else { return None };
-        Some(draw::Cards { texture: asset_server.load(self.texture.clone()), side: view(side), top: view(top) })
+        // Trilinear, so a card crossing a level does not step, and
+        // clamped, since a picture has an edge and no repeat.
+        let texture = asset_server.load_with_settings(self.texture.clone(), |s: &mut bevy::image::ImageLoaderSettings| {
+            s.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor::linear());
+        });
+        Some(draw::Cards { texture, side: view(side), top: view(top) })
     }
 }
 
