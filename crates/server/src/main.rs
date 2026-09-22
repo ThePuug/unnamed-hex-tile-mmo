@@ -1,6 +1,3 @@
-#![feature(more_float_constants)]
-#![feature(extend_one)]
-
 mod components;
 pub mod network;
 mod plugins;
