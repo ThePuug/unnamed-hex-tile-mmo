@@ -1,3 +1,6 @@
+// AsBindGroup builds a SystemParam tuple that nests past the default 128.
+#![recursion_limit = "256"]
+
 mod components;
 pub mod network;
 mod plugins;
