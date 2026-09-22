@@ -329,6 +329,50 @@ pub fn place_trees(region_key: MeshRegionKey, mesh_origin: Vec3, map: &common_be
     out
 }
 
+/// The trees of a mesh region at a summary level: every tile the region's
+/// summaries cover has its slots, each filled from its summary's canopy by
+/// the tile rule, standing on the level's drawn surface at its slot, from
+/// the region's origin. Reads the level's cells and nothing else, so it
+/// runs where the level's ground is built; nothing while a cell is absent.
+pub fn place_canopy(
+    radius: u32,
+    region_key: MeshRegionKey,
+    mesh_origin: Vec3,
+    height: &dyn Fn(i32, i32) -> Option<i32>,
+    canopy: &dyn Fn(i32, i32) -> Option<common::Canopy>,
+) -> Vec<TreeInstance> {
+    let lattice = common_bevy::summary::summary_lattice(radius);
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
+    let mut out = Vec::new();
+    for cell in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
+        let Some(canopy) = canopy(cell.0, cell.1) else { continue };
+        if canopy.is_empty() {
+            continue;
+        }
+        let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * canopy.density() as f32;
+        for (q, r) in lattice.tiles_in_cell(cell) {
+            for k in 0..SLOTS.len() {
+                let slot = canopy.slot(q, r, k);
+                if slot == Slot::Empty {
+                    continue;
+                }
+                let sway = common::sway(q, r, k);
+                let (x, z) = slot_center(q, r, k, &sway);
+                let Some((y, _)) = surface.at(Vec2::new(x, z)) else { continue };
+                out.push(TreeInstance {
+                    translation: Vec3::new(x, y, z) - mesh_origin,
+                    yaw: sway.yaw as f32,
+                    growth: sway.growth as f32 * edge,
+                    slot,
+                    variation: sway.variation,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Spawn a region's trees as children of its entity: one batch per
 /// variation present, each the variation's mesh and an instance buffer of
 /// every tree drawn with it, built now. Trees cast no shadow: the
@@ -423,12 +467,14 @@ fn update_trees(
     let camera = player_query.single().ok().map(|t| origin.world(t.translation));
     let Some(camera) = camera else { return };
 
-    for state in summary_meshes.states.values_mut() {
+    for (key, state) in summary_meshes.states.iter_mut() {
         let Some(entity) = state.entity else { continue };
         if state.base_trees.is_empty() {
             continue;
         }
-        let d = state.mesh_origin.xz().distance(camera.xz());
+        // Only the tiles' own trees are ever models: a summary's stand as
+        // cards from the moment its ground does.
+        let d = if key.r == 0 { state.mesh_origin.xz().distance(camera.xz()) } else { f32::INFINITY };
         if !state.trees_spawned && d <= TREE_REACH {
             spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
             state.trees_spawned = true;

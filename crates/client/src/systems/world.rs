@@ -1060,9 +1060,9 @@ fn collect_and_build_summary_mesh(
     let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
     let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
 
-    // The trees stand with the tiles: placed here from the map's cover,
-    // spawned with the ground once the kit is loaded. The coarser levels'
-    // slots are unbuilt.
+    // The trees stand with the ground: placed here from the map's cover
+    // at the tiles and from each summary's canopy above them, spawned with
+    // the ground once the kit is loaded.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse)
@@ -1084,9 +1084,22 @@ fn collect_and_build_summary_mesh(
         }
     };
 
+    // The level's canopy follows the height's provenance too. Only the
+    // first level above the tiles stands its trees; the levels above it
+    // carry the canopy as a tint of the ground, unbuilt.
+    let summary_canopy = |sq: i32, sr: i32| -> Option<common::Canopy> {
+        cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
+    };
+
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse)
         .as_ref()
-        .map_or(empty, |smr| with_water(smr, &summary_water))
+        .map_or(empty, |smr| {
+            let mut result = with_water(smr, &summary_water);
+            if radius == common_bevy::summary::LOD_LEVELS[1] {
+                result.trees = crate::plugins::forest::place_canopy(radius, region_key, smr.mesh_origin, &height, &summary_canopy);
+            }
+            result
+        })
 }
 
 fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {

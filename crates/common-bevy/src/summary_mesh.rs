@@ -116,16 +116,23 @@ pub fn cell_fan(
 /// fan under the point, its height and vertex normals interpolated by the
 /// fan's own weights, so a vertex morphed onto it lands where that level's
 /// triangles are drawn. Fans are read once per cell across a build.
-struct CoarseSurface<'a> {
+/// A level's drawn surface from a height lookup over its lattice, its fans
+/// made as they are read: what a vertex morphs toward at the level below,
+/// and what stands on the level at its own.
+pub struct LevelSurface<'a> {
     lattice: SummaryLattice,
     height: &'a dyn Fn(i32, i32) -> Option<i32>,
     fans: HashMap<(i32, i32), Option<Fan>>,
 }
 
-impl CoarseSurface<'_> {
+impl<'a> LevelSurface<'a> {
+    pub fn new(radius: u32, height: &'a dyn Fn(i32, i32) -> Option<i32>) -> Self {
+        LevelSurface { lattice: summary_lattice(radius), height, fans: HashMap::new() }
+    }
+
     /// Height (world Y, before any bias) and normal at world `xz`. None
     /// while a cell the fan reads is absent.
-    fn at(&mut self, xz: Vec2) -> Option<(f32, Vec3)> {
+    pub fn at(&mut self, xz: Vec2) -> Option<(f32, Vec3)> {
         let cell = self.lattice.cell_at(xz);
         let (lattice, height) = (&self.lattice, self.height);
         let fan = self
@@ -184,10 +191,8 @@ pub fn build_summary_mesh_region(
 
     let bias = level_depth_bias(radius);
     let offsets = corner_offsets(lattice.scale as f32);
-    let mut coarse = coarse.map(|height| CoarseSurface {
-        lattice: summary_lattice(coarser_level(radius).expect("a level with a coarser one")),
-        height,
-        fans: HashMap::new(),
+    let mut coarse = coarse.map(|height| {
+        LevelSurface::new(coarser_level(radius).expect("a level with a coarser one"), height)
     });
     // The morph target of a vertex at `p` with normal `n`: the coarser
     // surface there in this level's frame, or the vertex itself.
