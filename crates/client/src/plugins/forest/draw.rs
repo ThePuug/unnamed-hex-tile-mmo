@@ -5,7 +5,10 @@
 //! the draw never reads the mesh's uniform and needs no change to how the
 //! rest of the scene is drawn. Trees are opaque, cast no shadow and are
 //! queued into the opaque phase by their own visibility class, one
-//! bounding box per batch.
+//! bounding box per batch. What stands on the camera's sightline to the
+//! player is seen through: the sightline rides in the same uniform and
+//! the fragment shader dithers out what lies inside its tunnel, so the
+//! trees stay opaque and unsorted.
 
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{self, VisibilityClass};
@@ -17,6 +20,7 @@ use bevy::mesh::{MeshVertexBufferLayoutRef, VertexBufferLayout};
 use bevy::pbr::{MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache};
 use bevy::prelude::*;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
+use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
@@ -29,6 +33,8 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::view::{ExtractedView, RenderVisibleEntities};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
+
+use crate::systems::camera::{Sightline, NEAR_FADE_RADIUS, SIGHTLINE_RADIUS};
 
 const SHADER: &str = "shaders/trees.wgsl";
 
@@ -101,7 +107,7 @@ pub struct TreeDrawPlugin;
 
 impl Plugin for TreeDrawPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ExtractComponentPlugin::<TreeBatch>::default());
+        app.add_plugins((ExtractComponentPlugin::<TreeBatch>::default(), ExtractResourcePlugin::<Sightline>::default()));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
             .init_resource::<SpecializedMeshPipelines<TreePipeline>>()
@@ -117,10 +123,15 @@ impl Plugin for TreeDrawPlugin {
     }
 }
 
-/// The region's transform as the shader's uniform.
+/// The region's transform as the shader's uniform, with the sightline:
+/// the player's centre and the tunnel's radius about the line from the
+/// camera to it, zero when nothing is seen through, and the radius about
+/// the camera inside which everything fades.
 #[derive(Clone, Copy, ShaderType)]
 struct RegionUniform {
     world_from_local: Mat4,
+    sightline: Vec4,
+    near_fade: f32,
 }
 
 #[derive(Resource)]
@@ -137,7 +148,7 @@ fn init_tree_pipeline(
     mesh_pipeline: Res<MeshPipeline>,
     render_device: Res<RenderDevice>,
 ) {
-    let entries = BindGroupLayoutEntries::single(ShaderStages::VERTEX, uniform_buffer::<RegionUniform>(false));
+    let entries = BindGroupLayoutEntries::single(ShaderStages::VERTEX_FRAGMENT, uniform_buffer::<RegionUniform>(false));
     commands.insert_resource(TreePipeline {
         shader: asset_server.load(SHADER),
         mesh_pipeline: mesh_pipeline.clone(),
@@ -232,7 +243,7 @@ fn queue_trees(
 }
 
 /// The region's uniform and bind group, made once per batch and written
-/// every frame from the extracted transform.
+/// every frame from the extracted transform and sightline.
 #[derive(Component)]
 struct TreeBindGroup {
     uniform: Buffer,
@@ -244,12 +255,17 @@ fn prepare_tree_bind_groups(
     pipeline: Res<TreePipeline>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
+    sightline: Option<Res<Sightline>>,
     batches: Query<(Entity, &TreeTransform, Option<&TreeBindGroup>), With<TreeBatch>>,
 ) {
+    let sightline = match sightline.as_ref().and_then(|s| s.player) {
+        Some(p) => p.extend(SIGHTLINE_RADIUS),
+        None => Vec4::ZERO,
+    };
     for (entity, transform, existing) in &batches {
-        let uniform = RegionUniform { world_from_local: transform.0 };
+        let uniform = RegionUniform { world_from_local: transform.0, sightline, near_fade: NEAR_FADE_RADIUS };
         let mut bytes = encase::UniformBuffer::new(Vec::new());
-        bytes.write(&uniform).expect("a matrix writes");
+        bytes.write(&uniform).expect("a uniform of plain floats writes");
         match existing {
             Some(bg) => render_queue.write_buffer(&bg.uniform, 0, bytes.as_ref()),
             None => {
