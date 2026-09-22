@@ -13,6 +13,7 @@ use bevy::{
     log::LogPlugin,
     pbr::ExtendedMaterial,
     prelude::*,
+    render::error_handler::{ErrorType, RenderErrorHandler, RenderErrorPolicy},
     time::common_conditions::on_timer,
 };
 use bevy_easings::*;
@@ -76,6 +77,18 @@ fn main() {
         MaterialPlugin::<world::DiscMaterial>::default(),
         MaterialPlugin::<world::SkyMaterial>::default(),
     ));
+
+    // wgpu reports a validation error where a draw and its pass disagree,
+    // and the default handler quits. A custom draw that misses a frame's
+    // change of sample count says so this way, and the frame after it is
+    // right: losing the client to one is worse than drawing it wrong.
+    // A lost device is the one worth acting on.
+    app.insert_resource(RenderErrorHandler(|error, _main, _render| match error.ty {
+        ErrorType::DeviceLost => RenderErrorPolicy::Recover(default()),
+        ErrorType::OutOfMemory => RenderErrorPolicy::StopRendering,
+        ErrorType::Validation => RenderErrorPolicy::Ignore,
+        ErrorType::Internal => RenderErrorPolicy::StopRendering,
+    }));
 
     app.add_message::<Do>();
     app.add_message::<Try>();
