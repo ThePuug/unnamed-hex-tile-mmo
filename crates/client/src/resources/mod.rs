@@ -553,9 +553,11 @@ impl SummaryCache {
 
 /// Client-side system timers. Wraps `common::timers::SystemTimers`.
 /// No transport — data accumulates locally. Can be drained for diagnostics.
-#[derive(Resource)]
-pub struct ClientTimers(pub common::timers::SystemTimers);
+/// Shared, because a frame is main-thread work and render-thread work and
+/// the render app holds a clone of the same accumulator.
+#[derive(Resource, Clone)]
+pub struct ClientTimers(pub Arc<common::timers::SystemTimers>);
 
 impl Default for ClientTimers {
-    fn default() -> Self { Self(common::timers::SystemTimers::new()) }
+    fn default() -> Self { Self(Arc::new(common::timers::SystemTimers::new())) }
 }

@@ -256,6 +256,16 @@ const ALARM_FRAME: Alarm = Alarm {
     ],
 };
 
+/// A draw call costs the thread that encodes it, every frame, and a wood
+/// that stands in thousands of them pays for every one.
+const ALARM_DRAWS: Alarm = Alarm {
+    bands: &[
+        (500.0, COLOR_NORMAL),
+        (2000.0, COLOR_WARN),
+        (f64::INFINITY, COLOR_CRITICAL),
+    ],
+};
+
 const ALARM_BW: Alarm = Alarm {
     bands: &[
         (15360.0, COLOR_NORMAL),        // <15KB/s green
@@ -469,6 +479,7 @@ pub fn update_metrics_overlay(
     >,
     tri_stats: Res<crate::resources::LodTriangleStats>,
     origin: Res<crate::resources::RenderOrigin>,
+    wood: Res<crate::plugins::forest::ForestDraws>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
@@ -659,37 +670,60 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "TILES"), COLOR_DIM);
                             s.half(&format!("{:>5}  ", TILES.fmt(map.len() as f64)), COLOR_DIM);
                         });
+                        // The wood: what it draws, and what it draws in one
+                        // go. A draw costs the thread that encodes it; an
+                        // instance in it costs nothing more.
+                        for (what, draws, trees) in [
+                            ("TREES", wood.models, wood.model_trees),
+                            ("CARDS", wood.cards, wood.card_trees),
+                        ] {
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{what:>7}"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(trees as f64)), COLOR_DIM);
+                                s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(draws as f64)), ALARM_DRAWS.color(draws as f64));
+                            });
+                        }
                     });
 
                     ui.add_space(4.0);
 
-                    // ── GPU ──
-                    // Every pass Bevy times on the GPU, heaviest first, and
-                    // their sum: the frame is GPU-bound when the sum nears
-                    // the frame time, and CPU-bound when it falls well short.
-                    draw_section(ui, "GPU", content_width, |ui| {
+                    // ── PASSES ──
+                    // Every pass Bevy times, heaviest first: what the GPU
+                    // spent on it, and what the thread encoding it spent.
+                    // The frame is GPU-bound when the gpu sum nears the
+                    // frame time; when it falls well short, the cpu column
+                    // says whether the encoding took the rest.
+                    draw_section(ui, "PASSES", content_width, |ui| {
                         const PASS_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
-                        let mut passes: Vec<(&str, f64)> = diagnostics
-                            .iter()
-                            .filter_map(|d| {
-                                let name = d.path().as_str().strip_prefix("render/")?.strip_suffix("/elapsed_gpu")?;
-                                Some((name, d.smoothed()?))
-                            })
-                            .collect();
-                        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
-                        let sum: f64 = passes.iter().map(|(_, ms)| ms).sum();
+                        let mut timed: std::collections::HashMap<&str, (f64, f64)> = Default::default();
+                        for d in diagnostics.iter() {
+                            let Some(rest) = d.path().as_str().strip_prefix("render/") else { continue };
+                            let Some(ms) = d.smoothed() else { continue };
+                            if let Some(name) = rest.strip_suffix("/elapsed_cpu") {
+                                timed.entry(name).or_default().0 = ms;
+                            } else if let Some(name) = rest.strip_suffix("/elapsed_gpu") {
+                                timed.entry(name).or_default().1 = ms;
+                            }
+                        }
+                        let mut passes: Vec<(&str, (f64, f64))> = timed.into_iter().collect();
+                        passes.sort_by(|a, b| (b.1.0 + b.1.1).total_cmp(&(a.1.0 + a.1.1)));
+                        let cpu_sum: f64 = passes.iter().map(|p| p.1.0).sum();
+                        let gpu_sum: f64 = passes.iter().map(|p| p.1.1).sum();
                         seg_row(ui, cw, |s| {
                             s.full(&format!("{:<15}", "all passes"), COLOR_DIM);
-                            s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(sum), "ms"), ALARM_FRAME.color(sum));
+                            s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(cpu_sum), "c"), ALARM_FRAME.color(cpu_sum));
+                            s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(gpu_sum), "g"), ALARM_FRAME.color(gpu_sum));
                         });
-                        for (name, ms) in passes.iter().take(10) {
+                        for (name, (cpu, gpu)) in passes.iter().take(10) {
                             // The last path component names the pass; the
                             // tail of it is the telling part.
                             let leaf = name.rsplit('/').next().unwrap_or(name);
                             let shown: String = leaf.chars().rev().take(SEG_WIDTH).collect::<Vec<_>>().into_iter().rev().collect();
                             seg_row(ui, cw, |s| {
                                 s.full(&format!("{shown:<15}"), COLOR_DIM);
-                                s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*ms), "ms"), COLOR_DIM);
+                                s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*cpu), "c"), COLOR_DIM);
+                                s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*gpu), "g"), COLOR_DIM);
                             });
                         }
                     });

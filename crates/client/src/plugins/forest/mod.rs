@@ -174,12 +174,39 @@ pub struct TreeInstance {
 #[derive(Component)]
 pub struct Tree;
 
+/// What the wood costs to draw: the batches standing and the trees in
+/// them, models and cards apart. A batch is one draw call, and its
+/// instances cost the draw nothing more, so the two numbers say which
+/// of the two a frame is paying for.
+#[derive(Resource, Default)]
+pub struct ForestDraws {
+    pub models: u32,
+    pub model_trees: u32,
+    pub cards: u32,
+    pub card_trees: u32,
+}
+
+fn count_draws(mut draws: ResMut<ForestDraws>, trees: Query<&draw::TreeBatch>, cards: Query<&draw::CardBatch>) {
+    use draw::Batch;
+    *draws = ForestDraws::default();
+    for batch in &trees {
+        draws.models += 1;
+        draws.model_trees += batch.len();
+    }
+    for batch in &cards {
+        draws.cards += 1;
+        draws.card_trees += batch.len();
+    }
+}
+
 pub struct ForestPlugin;
 
 impl Plugin for ForestPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(draw::TreeDrawPlugin);
+        app.init_resource::<ForestDraws>();
         app.add_systems(Startup, begin_loading);
+        app.add_systems(Update, count_draws);
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
         app.add_systems(Update, dress_far_ground.run_if(resource_added::<TreeKit>));
         app.add_systems(

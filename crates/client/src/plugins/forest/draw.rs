@@ -83,6 +83,9 @@ impl Instance {
 
 /// A batch of instances the draw takes its buffer and count from.
 pub trait Batch: Component {
+    /// What the overlay calls the time spent queueing batches of this kind.
+    const TIMER: &'static str;
+
     fn buffer(&self) -> &Buffer;
     fn len(&self) -> u32;
 }
@@ -124,6 +127,8 @@ impl TreeBatch {
 }
 
 impl Batch for TreeBatch {
+    const TIMER: &'static str = "tree_q";
+
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
 }
@@ -169,6 +174,8 @@ impl CardBatch {
 }
 
 impl Batch for CardBatch {
+    const TIMER: &'static str = "card_q";
+
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
 }
@@ -389,7 +396,9 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
     render_mesh_instances: Res<RenderMeshInstances>,
     mesh_allocator: Res<MeshAllocator>,
     mut change_tick: Local<Tick>,
+    timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = timers.0.scope(B::TIMER);
     let draw_function = draw_functions.read().id::<D>();
     for (visible, view) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else { continue };
@@ -467,7 +476,9 @@ fn prepare_tree_bind_groups(
     sightline: Option<Res<Sightline>>,
     band: Option<Res<CardBand>>,
     batches: Query<(Entity, &TreeTransform, Option<&BatchBindGroup>), With<TreeBatch>>,
+    timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = timers.0.scope("tree_bg");
     for (entity, transform, existing) in &batches {
         let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
         match existing {
@@ -496,7 +507,9 @@ fn prepare_card_bind_groups(
     band: Option<Res<CardBand>>,
     images: Res<RenderAssets<GpuImage>>,
     batches: Query<(Entity, &TreeTransform, &CardBatch, Option<&BatchBindGroup>)>,
+    timers: Res<crate::resources::ClientTimers>,
 ) {
+    let _t = timers.0.scope("card_bg");
     for (entity, transform, batch, existing) in &batches {
         let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
         match existing {

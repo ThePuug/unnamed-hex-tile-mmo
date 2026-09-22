@@ -3,9 +3,12 @@ pub mod grid;
 pub mod metrics_overlay;
 pub mod network_ui;
 
+use std::time::Instant;
+
 use bevy::{
     diagnostic::*,
     prelude::*,
+    render::{Render, RenderApp, RenderSystems},
 };
 #[cfg(not(feature = "trace"))]
 use bevy::render::diagnostic::*;
@@ -25,6 +28,9 @@ impl Plugin for DiagnosticsPlugin {
         // trace_tracy auto-registers RenderDiagnosticsPlugin; skip when active.
         #[cfg(not(feature = "trace"))]
         app.add_plugins(RenderDiagnosticsPlugin);
+
+        app.init_resource::<crate::resources::ClientTimers>();
+        share_timers(app);
 
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<network_ui::NetworkMetrics>();
@@ -52,6 +58,30 @@ impl Plugin for DiagnosticsPlugin {
             ),
         );
     }
+}
+
+/// When the render thread took up this frame.
+#[derive(Resource)]
+struct RenderStart(Instant);
+
+/// The render app records into the same timers as the main world, and
+/// brackets its whole schedule as `render`: the frame is that thread's
+/// work or the main thread's, and which one it is decides where to look.
+fn share_timers(app: &mut App) {
+    let timers = app.world().resource::<crate::resources::ClientTimers>().clone();
+    let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+    render_app.insert_resource(timers);
+    render_app.insert_resource(RenderStart(Instant::now()));
+    render_app.add_systems(
+        Render,
+        (
+            (|mut start: ResMut<RenderStart>| start.0 = Instant::now()).before(RenderSystems::ExtractCommands),
+            (|start: Res<RenderStart>, timers: Res<crate::resources::ClientTimers>| {
+                timers.0.record("render", start.0.elapsed().as_secs_f32() * 1000.0);
+            })
+            .after(RenderSystems::PostCleanup),
+        ),
+    );
 }
 
 #[cfg(test)]

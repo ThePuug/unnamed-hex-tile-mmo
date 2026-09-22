@@ -202,7 +202,6 @@ fn main() {
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
     app.init_resource::<crate::resources::SkipNeighborRegen>();
-    app.init_resource::<crate::resources::ClientTimers>();
 
     #[cfg(feature = "admin")]
     app.add_plugins(flyover::FlyoverPlugin);
