@@ -49,6 +49,10 @@ pub struct DiagnosticsState {
     pub shadows: Shadows,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
+    /// Every stand of trees and cards is hidden. The batches hang under
+    /// the region meshes, so hiding terrain hides these too; this hides
+    /// them alone, leaving the ground to be measured by itself.
+    pub forest_hidden: bool,
     /// The camera holds its lowest pose — the boom at its shortest, looking
     /// up — instead of following the ground: an actor seen close.
     pub camera_closeup: bool,
@@ -95,6 +99,7 @@ impl Default for DiagnosticsState {
             msaa_off: false,
             shadows: Shadows::Gaussian,
             terrain_hidden: false,
+            forest_hidden: false,
             camera_closeup: false,
             camera_envelope_off: false,
         }

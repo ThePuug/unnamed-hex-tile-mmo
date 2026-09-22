@@ -157,6 +157,9 @@ fn handle_terrain_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad5) {
         action_writer.write(DevConsoleAction::ToggleCameraCloseup);
         consumed = Some(KeyCode::Numpad5);
+    } else if keyboard.just_pressed(KeyCode::Numpad6) {
+        action_writer.write(DevConsoleAction::ToggleForestHidden);
+        consumed = Some(KeyCode::Numpad6);
     }
 
     if let Some(key) = consumed {

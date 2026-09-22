@@ -22,6 +22,7 @@ pub enum DevConsoleAction {
     ToggleMsaa,
     ToggleShadowFilter,
     ToggleTerrainHidden,
+    ToggleForestHidden,
     ToggleCameraCloseup,
 
     // Top-level toggles
@@ -54,6 +55,17 @@ pub fn execute_console_actions(
     world_camera: Query<Entity, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
     mut sun: Query<&mut DirectionalLight, With<common_bevy::components::Sun>>,
     mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
+    mut forest: Query<
+        &mut Visibility,
+        (
+            Or<(
+                With<crate::plugins::forest::draw::TreeBatch>,
+                With<crate::plugins::forest::draw::CardBatch>,
+            )>,
+            Without<crate::resources::SummaryMesh>,
+            Without<HexGridOverlay>,
+        ),
+    >,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
@@ -130,6 +142,14 @@ pub fn execute_console_actions(
                     *visibility = shown;
                 }
                 info!("Terrain: {}", if diagnostics_state.terrain_hidden { "HIDDEN" } else { "shown" });
+            }
+            DevConsoleAction::ToggleForestHidden => {
+                diagnostics_state.forest_hidden = !diagnostics_state.forest_hidden;
+                let shown = if diagnostics_state.forest_hidden { Visibility::Hidden } else { Visibility::Inherited };
+                for mut visibility in forest.iter_mut() {
+                    *visibility = shown;
+                }
+                info!("Forest: {}", if diagnostics_state.forest_hidden { "HIDDEN" } else { "shown" });
             }
             DevConsoleAction::ToggleCameraCloseup => {
                 diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;
