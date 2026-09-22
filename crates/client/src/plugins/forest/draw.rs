@@ -50,9 +50,9 @@ const CARD_SHADER: &str = "shaders/cards.wgsl";
 const SHARED_SHADER: &str = "shaders/forest_shared.wgsl";
 
 /// One tree as the shader reads it: its place in the region's frame and
-/// its scale, then the cosine and sine of its turn; for a card, its side
-/// layer in the card texture, its mirror, one or minus one, and the
-/// model's height in world units.
+/// its scale, then the cosine and sine of its turn; for a card, the first
+/// of its layers in the card texture, its mirror, one or minus one, and
+/// the model's height in world units.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct Instance {
@@ -68,14 +68,14 @@ impl Instance {
         }
     }
 
-    /// A card: the side layer of its variation, mirrored by its turn,
-    /// facing left or right of the front, and `height` tall as scaled,
-    /// which the shader centres the picture on.
-    pub fn card(translation: Vec3, yaw: f32, scale: f32, side_layer: u32, height: f32) -> Self {
+    /// A card: the first layer of its variation's pictures, mirrored by
+    /// its turn, facing left or right of the front, and `height` tall as
+    /// scaled, which the shader centres the picture on.
+    pub fn card(translation: Vec3, yaw: f32, scale: f32, layer: u32, height: f32) -> Self {
         let mirror = if yaw.sin() < 0.0 { -1.0 } else { 1.0 };
         Instance {
             pos_scale: [translation.x, translation.y, translation.z, scale],
-            turn: [side_layer as f32, mirror, height, 0.0],
+            turn: [layer as f32, mirror, height, 0.0],
         }
     }
 }
@@ -136,8 +136,12 @@ pub struct CardView {
     pub elevation: f32,
 }
 
-/// A kind's cards: the texture array, a layer per variation and view,
-/// side then top, and the two views' frames.
+/// The layers of one variation's pictures in a card texture: each view's
+/// unlit colour then its normals, side then top, as modelgen packs them.
+pub const CARD_LAYERS: u32 = 4;
+
+/// A kind's cards: the texture array, `CARD_LAYERS` per variation, and
+/// the two views' frames.
 #[derive(Debug)]
 pub struct Cards {
     pub texture: Handle<Image>,

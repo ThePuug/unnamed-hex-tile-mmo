@@ -402,8 +402,8 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
 
 /// Spawn a region's trees as cards, children of its entity: one batch
 /// per variation present whose model shipped cards, each the shared quad
-/// and an instance buffer of every tree drawn with it, the side layer of
-/// its seed in the model's texture.
+/// and an instance buffer of every tree drawn with it, the first layer
+/// of its seed's pictures in the model's texture.
 pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
     let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
@@ -417,7 +417,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         let Some(cards) = &v.cards else { continue };
         let scale = Kit::scale(t.slot, v.height, t.growth);
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
-        batches.entry((t.slot, k)).or_default().push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * 2, v.height * scale));
+        batches.entry((t.slot, k)).or_default().push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale));
     }
     commands.entity(entity).with_children(|parent| {
         for ((slot, k), instances) in batches {
