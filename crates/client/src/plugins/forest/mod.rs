@@ -296,12 +296,7 @@ fn load_kit(
                 }
                 _ => (0.0, 0.0),
             };
-            let color = match merged.attribute(Mesh::ATTRIBUTE_COLOR) {
-                Some(VertexAttributeValues::Float32x4(c)) if !c.is_empty() => {
-                    c.iter().map(|c| Vec3::new(c[0], c[1], c[2])).sum::<Vec3>() / c.len() as f32
-                }
-                _ => Vec3::ZERO,
-            };
+            let color = surface_color(&merged);
             let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
             match slot {
                 Slot::Pine => kit.pine.push(variation),
@@ -318,6 +313,33 @@ fn load_kit(
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
+}
+
+/// What a stand of this model reads as from far off: the mean of its own
+/// colour over its surface, weighted by area. A mean over the vertices
+/// counts a trunk's rings as heavily as a crown's faces, and comes out
+/// the bark's colour as much as the leaves'.
+fn surface_color(mesh: &Mesh) -> Vec3 {
+    let (Some(VertexAttributeValues::Float32x3(p)), Some(VertexAttributeValues::Float32x4(c)), Some(Indices::U32(idx))) =
+        (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.attribute(Mesh::ATTRIBUTE_COLOR), mesh.indices())
+    else {
+        return Vec3::ZERO;
+    };
+    let mut sum = Vec3::ZERO;
+    let mut area = 0.0f32;
+    for face in idx.chunks_exact(3) {
+        let [a, b, d] = [face[0] as usize, face[1] as usize, face[2] as usize];
+        let (pa, pb, pd) = (Vec3::from(p[a]), Vec3::from(p[b]), Vec3::from(p[d]));
+        let face_area = (pb - pa).cross(pd - pa).length() * 0.5;
+        let face_color = [a, b, d].iter().map(|&i| Vec3::new(c[i][0], c[i][1], c[i][2])).sum::<Vec3>() / 3.0;
+        sum += face_color * face_area;
+        area += face_area;
+    }
+    if area > 0.0 {
+        sum / area
+    } else {
+        Vec3::ZERO
+    }
 }
 
 /// One variation's primitives as one mesh, each vertex coloured by its
