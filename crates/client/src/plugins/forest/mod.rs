@@ -48,12 +48,10 @@ pub const SCRUB_SMALL: f32 = 0.6;
 
 /// How far from the camera a region's trees are drawn as models, in
 /// world units, and the further reach they are kept to once drawn, so a
-/// step does not take a region's trees down and put them back; past the
-/// keep a region's trees stand as cards, taken down again inside the
-/// reach. Between the two a region keeps whichever it had. The reach is
-/// what the frame can carry at full geometry.
-pub const TREE_REACH: f32 = 120.0;
-pub const TREE_KEEP: f32 = 140.0;
+/// How far past the ring a region of tiles keeps its models: its own
+/// half-width and a margin, so a region astride the ring carries them
+/// and none flickers at its edge.
+const RING_MARGIN: f32 = 40.0;
 
 /// One variation of a kind: its mesh in the tree's own frame, foot at the
 /// origin, up +y, the GLB's units the world's, and its height there; and
@@ -172,10 +170,6 @@ pub struct TreeInstance {
 /// A drawn tree.
 #[derive(Component)]
 pub struct Tree;
-
-/// A drawn card.
-#[derive(Component)]
-pub struct Card;
 
 pub struct ForestPlugin;
 
@@ -410,9 +404,10 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
 /// Spawn a region's trees as cards, children of its entity: one batch
 /// per variation present whose model shipped cards, each the shared quad
 /// and an instance buffer of every tree drawn with it, the first layer
-/// of its seed's pictures in the model's texture; `shaped` cards stand
-/// in the depth buffer by their pictures' depth.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice, shaped: bool, level: u32) {
+/// of its seed's pictures in the model's texture. The cards stand past
+/// the ring, far enough that their overlaps do not show, so they keep
+/// the quad's own depth.
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
     let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
@@ -431,8 +426,8 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         for ((slot, k), instances) in batches {
             let v = &kit.kit.of(slot)[k];
             let Some(cards) = &v.cards else { continue };
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), shaped, level);
-            parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Card));
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), false);
+            parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY));
         }
     });
 }
@@ -462,7 +457,7 @@ fn update_trees(
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
     children: Query<&Children>,
     trees: Query<(), With<Tree>>,
-    cards: Query<(), With<Card>>,
+    band: Res<crate::resources::CardBand>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     #[cfg(feature = "admin")]
@@ -474,30 +469,31 @@ fn update_trees(
     #[cfg(not(feature = "admin"))]
     let camera = player_query.single().ok().map(|t| origin.world(t.translation));
     let Some(camera) = camera else { return };
+    // The ring, or where it will be once the cuts are set.
+    let ring = if band.inner > 0.0 { band.inner } else { common_bevy::summary::threshold_horiz(0) };
 
     for (key, state) in summary_meshes.states.iter_mut() {
         let Some(entity) = state.entity else { continue };
         if state.base_trees.is_empty() {
             continue;
         }
-        // Only the tiles' own trees are ever models: a summary's stand as
-        // cards from the moment its ground does, and only the tiles' cards,
-        // near enough for their overlaps to show, are shaped in depth.
-        let near = key.r == 0;
-        let d = if near { state.mesh_origin.xz().distance(camera.xz()) } else { f32::INFINITY };
-        if !state.trees_spawned && d <= TREE_REACH {
-            spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
-            state.trees_spawned = true;
-        } else if state.trees_spawned && d > TREE_KEEP {
-            take_down::<Tree>(&mut commands, entity, &children, &trees);
-            state.trees_spawned = false;
-        }
-        if !state.cards_spawned && d > TREE_KEEP {
-            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device, near, key.r);
+        // The tiles' trees are models and the summaries' are cards; the
+        // ring between the two levels is where one dithers out and the
+        // other in, which is the shaders' to do. A region of tiles keeps
+        // its models while it can reach the ring, and a summary's cards
+        // stand from the moment its ground does.
+        if key.r == 0 {
+            let d = state.mesh_origin.xz().distance(camera.xz());
+            if !state.trees_spawned && d <= ring + RING_MARGIN {
+                spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
+                state.trees_spawned = true;
+            } else if state.trees_spawned && d > ring + 2.0 * RING_MARGIN {
+                take_down::<Tree>(&mut commands, entity, &children, &trees);
+                state.trees_spawned = false;
+            }
+        } else if !state.cards_spawned {
+            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device);
             state.cards_spawned = true;
-        } else if state.cards_spawned && d <= TREE_REACH {
-            take_down::<Card>(&mut commands, entity, &children, &cards);
-            state.cards_spawned = false;
         }
     }
 }

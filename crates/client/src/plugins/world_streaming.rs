@@ -20,7 +20,7 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<SummaryCache>();
         app.init_resource::<TerrainMaterial>();
         app.init_resource::<crate::resources::EdgeCenters>();
-        app.init_resource::<crate::resources::CardCuts>();
+        app.init_resource::<crate::resources::CardBand>();
 
         app.add_systems(Update, (
             world::do_spawn,

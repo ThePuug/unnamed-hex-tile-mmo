@@ -40,7 +40,7 @@ use bevy::render::view::{ExtractedView, RenderVisibleEntities};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
 
-use crate::resources::CardCuts;
+use crate::resources::CardBand;
 use crate::systems::camera::{Sightline, NEAR_FADE_RADIUS, SIGHTLINE_RADIUS};
 
 const TREE_SHADER: &str = "shaders/trees.wgsl";
@@ -167,14 +167,12 @@ pub struct CardBatch {
     pub len: u32,
     pub cards: Arc<Cards>,
     pub shaped: bool,
-    /// The level whose band cut confines the cards.
-    pub level: u32,
 }
 
 impl CardBatch {
-    pub fn new(render_device: &RenderDevice, instances: &[Instance], reach: f32, cards: Arc<Cards>, shaped: bool, level: u32) -> (CardBatch, Aabb) {
+    pub fn new(render_device: &RenderDevice, instances: &[Instance], reach: f32, cards: Arc<Cards>, shaped: bool) -> (CardBatch, Aabb) {
         let (buffer, aabb) = instance_buffer(render_device, instances, reach);
-        (CardBatch { buffer, len: instances.len() as u32, cards, shaped, level }, aabb)
+        (CardBatch { buffer, len: instances.len() as u32, cards, shaped }, aabb)
     }
 }
 
@@ -217,7 +215,7 @@ impl Plugin for TreeDrawPlugin {
             ExtractComponentPlugin::<TreeBatch>::default(),
             ExtractComponentPlugin::<CardBatch>::default(),
             ExtractResourcePlugin::<Sightline>::default(),
-            ExtractResourcePlugin::<CardCuts>::default(),
+            ExtractResourcePlugin::<CardBand>::default(),
         ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
@@ -240,15 +238,16 @@ impl Plugin for TreeDrawPlugin {
 
 /// The region's transform as the shader's uniform, with the sightline:
 /// the player's centre and the tunnel's radius about the line from the
-/// camera to it, zero when nothing is seen through; the two edges the
-/// cards sink at, each its centre, radius and strip width; and the
-/// radius about the camera inside which everything fades.
+/// camera to it, zero when nothing is seen through; the ring where the
+/// models hand over to the cards, its centre, radius and overlap; the
+/// distance the cards have sunk away by; and the radius about the camera
+/// inside which everything fades.
 #[derive(Clone, Copy, ShaderType)]
 struct RegionUniform {
     world_from_local: Mat4,
     sightline: Vec4,
-    edge_in: Vec4,
-    edge_out: Vec4,
+    band: Vec4,
+    sink_to: f32,
     near_fade: f32,
 }
 
@@ -469,18 +468,13 @@ struct BatchBindGroup {
 }
 
 /// The region uniform's bytes for this frame.
-fn region_bytes(transform: &TreeTransform, sightline: Option<&Sightline>, cut: Option<&crate::resources::CardCut>) -> Vec<u8> {
+fn region_bytes(transform: &TreeTransform, sightline: Option<&Sightline>, band: Option<&CardBand>) -> Vec<u8> {
     let sightline = match sightline.and_then(|s| s.player) {
         Some(p) => p.extend(SIGHTLINE_RADIUS),
         None => Vec4::ZERO,
     };
-    let (edge_in, edge_out) = cut.map_or((Vec4::ZERO, Vec4::ZERO), |c| {
-        (
-            Vec4::new(c.inner_center.x, c.inner_center.y, c.inner, c.inner_strip),
-            Vec4::new(c.outer_center.x, c.outer_center.y, c.outer, c.outer_strip),
-        )
-    });
-    let uniform = RegionUniform { world_from_local: transform.0, sightline, edge_in, edge_out, near_fade: NEAR_FADE_RADIUS };
+    let (band, sink_to) = band.map_or((Vec4::ZERO, 0.0), |b| (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.sink_to));
+    let uniform = RegionUniform { world_from_local: transform.0, sightline, band, sink_to, near_fade: NEAR_FADE_RADIUS };
     let mut bytes = encase::UniformBuffer::new(Vec::new());
     bytes.write(&uniform).expect("a uniform of plain floats writes");
     bytes.into_inner()
@@ -500,10 +494,11 @@ fn prepare_tree_bind_groups(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     sightline: Option<Res<Sightline>>,
+    band: Option<Res<CardBand>>,
     batches: Query<(Entity, &TreeTransform, Option<&BatchBindGroup>), With<TreeBatch>>,
 ) {
     for (entity, transform, existing) in &batches {
-        let bytes = region_bytes(transform, sightline.as_deref(), None);
+        let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
         match existing {
             Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
             None => {
@@ -527,13 +522,12 @@ fn prepare_card_bind_groups(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     sightline: Option<Res<Sightline>>,
-    cuts: Option<Res<CardCuts>>,
+    band: Option<Res<CardBand>>,
     images: Res<RenderAssets<GpuImage>>,
     batches: Query<(Entity, &TreeTransform, &CardBatch, Option<&BatchBindGroup>)>,
 ) {
     for (entity, transform, batch, existing) in &batches {
-        let cut = cuts.as_ref().and_then(|c| c.0.get(&batch.level));
-        let bytes = region_bytes(transform, sightline.as_deref(), cut);
+        let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
         match existing {
             Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
             None => {

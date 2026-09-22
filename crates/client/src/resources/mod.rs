@@ -65,47 +65,19 @@ impl TerrainCut {
 #[derive(Resource, Default)]
 pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 
-/// Each level's band cut as the card shader sees it, keyed by level: the
-/// level's cards are confined to its band as its ground is, or a region
-/// built whole would stand its cards over the level beside it. A card
-/// past either edge is under the ground. At the seam between two levels
-/// that both stand cards the handoff is at the edge itself, as the
-/// ground's is — the trees agree across it, and a strip on either side
-/// would sink both levels' trees at once into a trough — while at the
-/// outermost card level's edge the cards sink across a long strip, each
-/// in its own turn, into the ground that wears their colour and crowns,
-/// where a wood going under is seen from far off. No strip while the
-/// edge is forced.
-#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
-pub struct CardCuts(pub HashMap<u32, CardCut>);
-
-#[derive(Clone, Copy, Default)]
-pub struct CardCut {
-    pub inner_center: Vec2,
+/// Where the tiles' models hand over to the summaries' cards, as the
+/// shaders see it: the ring at the first summary level's edge, its
+/// centre and radius, the width of the overlap inside it over which the
+/// models dither out and the cards dither in, and the distance by which
+/// the cards, sinking from the ring on, have gone wholly under the
+/// ground that wears their colour. Rendered coordinates, as the regions'
+/// transforms are; an unset ring shows the models and hides the cards.
+#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
+pub struct CardBand {
+    pub center: Vec2,
     pub inner: f32,
-    pub inner_strip: f32,
-    pub outer_center: Vec2,
-    pub outer: f32,
-    pub outer_strip: f32,
-}
-
-/// The strip the cards leave over at the last card level's outer edge, in
-/// world units.
-pub const CARD_SINK_WU: f32 = 240.0;
-
-impl CardCut {
-    /// The cut of level `r`, from its ground's; `last` when no level past
-    /// it stands cards.
-    pub fn of(cut: TerrainCut, last: bool) -> Self {
-        CardCut {
-            inner_center: cut.inner_center,
-            inner: cut.inner,
-            inner_strip: 0.0,
-            outer_center: cut.outer_center,
-            outer: cut.outer,
-            outer_strip: if last && cut.fade > 0.0 { CARD_SINK_WU } else { 0.0 },
-        }
-    }
+    pub overlap: f32,
+    pub sink_to: f32,
 }
 
 /// The coarser level's surface at a terrain vertex: normal xyz, height w in
