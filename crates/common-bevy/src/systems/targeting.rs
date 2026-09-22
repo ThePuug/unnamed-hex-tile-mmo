@@ -750,7 +750,7 @@ mod tests {
         use crate::components::entity_type::decorator::*;
 
         let entity = world.spawn((
-            EntityType::Decorator(Decorator { index: 0, is_solid: true }),
+            EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: true }),
             loc,
         )).id();
 

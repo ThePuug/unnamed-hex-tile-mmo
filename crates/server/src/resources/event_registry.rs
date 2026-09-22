@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use world::events::Composite;
-use world::TagSet;
+use world::{Cover, TagSet};
 
 /// Server-side registry of world events.
 
@@ -32,6 +32,11 @@ impl EventRegistry {
     #[allow(dead_code)]
     pub fn tags_at(&self, q: i32, r: i32) -> TagSet {
         self.composite.tags_at(q, r)
+    }
+
+    /// What stands in a tile's seven slots.
+    pub fn cover_at(&self, q: i32, r: i32) -> Cover {
+        self.composite.cover_at(q, r)
     }
 
     /// Drain event metrics (reads gauges, resets interval counters).

@@ -824,7 +824,7 @@ mod tests {
     fn rays_meet_a_wall_and_fly_free_over_a_plain() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -220..=220 {
             for r in -220..=220 {
                 // A wall of 80 levels across the north (negative z) half, some tiles out.
@@ -846,7 +846,7 @@ mod tests {
     fn the_sweep_plane_tilts_with_the_ground() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -60..=60 {
             for r in -60..=60 {
                 // A slope rising one level per tile toward -z.
@@ -990,7 +990,7 @@ mod tests {
     fn the_lowest_stand_is_clear_on_level_ground() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -30..=30 {
             for r in -30..=30 {
                 map.insert(Qrz { q, r, z: 0 }, ground);

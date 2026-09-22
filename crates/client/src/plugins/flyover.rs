@@ -518,8 +518,9 @@ fn flyover_generate_chunks(
             for (q, r) in chunk_tiles(chunk_id) {
                 let z = composite.elevation_at(q, r);
                 let water = composite.water_at(q, r);
+                let cover = composite.cover_at(q, r);
                 let qrz = qrz::Qrz { q, r, z };
-                let decorator = Decorator { index: 3, is_solid: true };
+                let decorator = Decorator { cover, is_solid: true };
                 tiles.push((qrz, EntityType::Decorator(decorator), water));
             }
             tiles

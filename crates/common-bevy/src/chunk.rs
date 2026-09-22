@@ -563,7 +563,7 @@ mod tests {
         let chunk4 = ChunkId(3, 3);
 
         let mut tiles1 = tinyvec::ArrayVec::new();
-        tiles1.push((Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(crate::components::entity_type::decorator::Decorator { index: 0, is_solid: true }), None));
+        tiles1.push((Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(crate::components::entity_type::decorator::Decorator { cover: common::Cover::NONE, is_solid: true }), None));
         let tiles2 = tiles1.clone();
         let tiles3 = tiles1.clone();
         let tiles4 = tiles1.clone();

@@ -143,6 +143,16 @@ impl Map {
             .map(|r| r.typ)
     }
 
+    /// What stands in a tile's seven slots: nothing where the tile is not
+    /// loaded or its ground is not a decorator. The one read movement and
+    /// the renderer take a tile's trees from.
+    pub fn cover_at(&self, q: i32, r: i32) -> common::Cover {
+        match self.get_by_qr(q, r) {
+            Some((_, EntityType::Decorator(d))) => d.cover,
+            _ => common::Cover::NONE,
+        }
+    }
+
     pub fn take_changed(&self) -> bool {
         self.changed.swap(false, Ordering::Relaxed)
     }
@@ -271,6 +281,20 @@ mod tests {
             }
         }
         Map::new(qrz_map)
+    }
+
+    /// A tile's cover is its decorator's, and a tile not loaded has none.
+    #[test]
+    fn cover_is_the_decorators() {
+        use common::{Cover, Slot};
+        use crate::components::entity_type::decorator::Decorator;
+        let map = make_flat_map();
+        let cover = Cover::NONE.with(0, Slot::Pine).with(4, Slot::Scrub);
+        map.insert(Qrz { q: 1, r: 1, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
+        assert_eq!(map.cover_at(1, 1), cover);
+        assert_eq!(map.cover_at(1, 1).fullness(), 2);
+        assert_eq!(map.cover_at(0, 0), Cover::NONE);
+        assert_eq!(map.cover_at(50, 50), Cover::NONE);
     }
 
     #[test]

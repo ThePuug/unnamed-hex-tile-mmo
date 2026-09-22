@@ -214,8 +214,9 @@ fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
     for &(q, r) in &coords {
         let z = registry.elevation_at(q, r);
         let water = registry.water_at(q, r);
+        let cover = registry.cover_at(q, r);
         let qrz = Qrz { q, r, z };
-        let typ = EntityType::Decorator(Decorator { index: 3, is_solid: true });
+        let typ = EntityType::Decorator(Decorator { cover, is_solid: true });
         tiles.push((qrz, typ, water));
     }
 

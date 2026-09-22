@@ -356,7 +356,7 @@ mod tests {
     }
 
     fn flat_ground(map: &Map, radius: i32) {
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -radius..=radius {
             for r in -radius..=radius {
                 map.insert(Qrz { q, r, z: 0 }, ground);
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn a_fall_catches_a_slope() {
         let map = create_test_map();
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -2..=40 {
             for r in -3..=3 {
                 map.insert(Qrz { q, r, z: -2 * q.max(0) }, ground);
@@ -573,7 +573,7 @@ mod tests {
     fn standing_on_a_slope_stays_grounded() {
         const CLIENT_TICK_MS: i16 = 16;
         let map = create_test_map();
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -4..=4 {
             for r in -4..=4 {
                 map.insert(Qrz { q, r, z: q }, ground);
@@ -608,7 +608,7 @@ mod tests {
     /// the heights are tested the same way.
     #[test]
     fn the_walk_is_the_same_however_far_out_the_tile_is() {
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         let lay = |map: &Map, at: Qrz| {
             for q in -4..=4 {
                 for r in -4..=4 {
@@ -655,7 +655,7 @@ mod tests {
     fn cliffs_block_and_steps_do_not() {
         let map = create_test_map();
         flat_ground(&map, 3);
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         let nntree = create_test_nntree();
         let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
 
@@ -708,7 +708,7 @@ mod tests {
     }
 
     fn cliff(map: &Map, q: i32, r: i32) {
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         map.insert(Qrz { q, r, z: 2 }, ground);
     }
 

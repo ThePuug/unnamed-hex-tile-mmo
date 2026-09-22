@@ -40,7 +40,7 @@ mod tests {
 
     fn create_test_map() -> Map {
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
-        let ground = EntityType::Decorator(Decorator { index: 0, is_solid: false });
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -3..=3 {
             for r in -3..=3 {
                 map.insert(Qrz { q, r, z: 0 }, ground);
