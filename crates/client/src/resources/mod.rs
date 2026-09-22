@@ -98,12 +98,14 @@ pub struct CanopyLook {
     /// The same three kinds' grown height, which is how far the ground
     /// rises where their canopy is closed. The fourth is unused.
     pub rises: Vec4,
-    /// The ground distances over which the canopy's ground rises to the
-    /// height of the trees standing in it: nothing at the ring where the
-    /// models hand over, their whole height where the last card is drawn.
-    /// One span for every level, so they agree where they meet.
-    pub lift_from: f32,
-    pub lift_to: f32,
+    /// The circle the canopy's ground rises across: the cards' own centre
+    /// in xy, and in zw the ground distances from it where the rise
+    /// begins and ends — nothing at the ring where the models hand over,
+    /// their whole height where the last card is drawn. Carried rather
+    /// than taken from the view, because the shadow pass's view is the
+    /// sun's: read from there, every pass would lift a different surface
+    /// and the ground would shadow itself from one it never draws.
+    pub lift: Vec4,
     /// The ground distances the relief is full at and gone by.
     pub relief_full: f32,
     pub relief_gone: f32,
@@ -294,8 +296,7 @@ impl TerrainMaterial {
             rises: Vec4::new(kinds[0].height, kinds[1].height, kinds[2].height, 0.0),
             // The span is the band cut's, handed over each frame by
             // `update_terrain_cut`; until it has run the ground is flat.
-            lift_from: 0.0,
-            lift_to: 0.0,
+            lift: Vec4::ZERO,
             relief_full,
             relief_gone,
         }

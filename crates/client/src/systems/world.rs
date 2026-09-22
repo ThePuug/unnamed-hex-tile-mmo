@@ -812,17 +812,16 @@ pub fn update_terrain_cut(
     // Every level is given the same one, so the ground they draw agrees
     // where their bands meet.
     let lift = if forced_radius.0.is_some() {
-        (0.0, 0.0)
+        Vec4::ZERO
     } else {
-        (
-            level_cut(0, &bands, &edges.0, target).outer,
-            level_cut(common_bevy::summary::LOD_LEVELS[1], &bands, &edges.0, target).outer,
-        )
+        let ring = level_cut(0, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
+        let cards = level_cut(common_bevy::summary::LOD_LEVELS[1], &bands, &edges.0, target).outer;
+        ring.outer_center.extend(ring.outer).extend(cards)
     };
 
     for (&r, handle) in &terrain_material.by_level {
         let Some(material) = materials.get_mut(handle) else { continue };
-        (material.extension.canopy.lift_from, material.extension.canopy.lift_to) = lift;
+        material.extension.canopy.lift = lift;
         material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {
