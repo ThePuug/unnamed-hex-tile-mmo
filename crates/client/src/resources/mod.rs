@@ -266,14 +266,16 @@ impl FromWorld for TerrainMaterial {
 
 impl TerrainMaterial {
     /// How level `r` wears its canopy: the kinds' looks, once the kit has
-    /// given them, with the crowns' relief across the levels that stand
-    /// or lay their trees — full at the first, fading over the next to
-    /// nothing where the level after begins — and none at all before.
+    /// given them, with the canopy's relief on every level that wears the
+    /// colour, over the same two distances whichever level it is, so no
+    /// seam opens where one hands to the next. It runs full to the end of
+    /// the third level's band and fades over the fourth's, which is as
+    /// far as the colour itself reaches; the tiles wear neither.
     fn canopy_for(&self, r: u32) -> CanopyLook {
         use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
         let Some(kinds) = &self.kinds else { return CanopyLook::default() };
-        let (relief_full, relief_gone) = if r == LOD_LEVELS[1] || r == LOD_LEVELS[2] {
-            (threshold_horiz(LOD_LEVELS[1]), threshold_horiz(LOD_LEVELS[2]))
+        let (relief_full, relief_gone) = if LOD_LEVELS[1..LOD_LEVELS.len() - 1].contains(&r) {
+            (threshold_horiz(LOD_LEVELS[2]), threshold_horiz(LOD_LEVELS[3]))
         } else {
             (0.0, 0.0)
         };
