@@ -335,6 +335,21 @@ impl SummaryLattice {
     pub fn tiles_per_cell(&self) -> u32 {
         3 * self.radius * self.radius + 3 * self.radius + 1
     }
+
+    /// The tiles the cell covers: every tile whose nearest centre is this
+    /// one, by [`SummaryLattice::cell_id`]. More than the hex ball, which
+    /// leaves the tiles between balls to no cell: the cells' footprints
+    /// tile the plane, `scale²` tiles each on average.
+    pub fn tiles_covered(&self, id: (i32, i32)) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let (cq, cr) = self.cell_center(id);
+        let reach = self.scale;
+        (-reach..=reach).flat_map(move |dq| {
+            let dr_min = (-reach).max(-dq - reach);
+            let dr_max = reach.min(-dq + reach);
+            (dr_min..=dr_max).map(move |dr| (cq + dq, cr + dr))
+        })
+        .filter(move |&(q, r)| self.cell_id(q, r) == id)
+    }
 }
 
 /// Create the summary lattice for a given radius.
@@ -375,6 +390,32 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cells' footprints tile the plane: every tile of a window is
+    /// covered by exactly one cell, the one its nearest centre names.
+    #[test]
+    fn covered_tiles_partition_the_plane() {
+        for radius in [1u32, 4] {
+            let lattice = summary_lattice(radius);
+            let mut seen = std::collections::HashMap::new();
+            let span = 3 * lattice.scale;
+            for sq in -3..=3 {
+                for sr in -3..=3 {
+                    for tile in lattice.tiles_covered((sq, sr)) {
+                        assert!(seen.insert(tile, (sq, sr)).is_none(), "tile {tile:?} covered twice at r={radius}");
+                    }
+                }
+            }
+            for q in -span..=span {
+                for r in -span..=span {
+                    let id = lattice.cell_id(q, r);
+                    if id.0.abs() <= 3 && id.1.abs() <= 3 {
+                        assert_eq!(seen.get(&(q, r)), Some(&id), "tile ({q}, {r}) uncovered at r={radius}");
+                    }
+                }
+            }
+        }
+    }
 
     // ── SummaryLattice tests ──
 

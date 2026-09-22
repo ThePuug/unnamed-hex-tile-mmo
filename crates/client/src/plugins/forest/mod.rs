@@ -392,7 +392,7 @@ pub fn place_canopy(
         if canopy.is_empty() {
             continue;
         }
-        for (q, r) in lattice.tiles_in_cell(cell) {
+        for (q, r) in lattice.tiles_covered(cell) {
             // The tile's cover as the canopy fills it, so its trees grow
             // to the same edge factor the tile's own would.
             let mut cover = Cover::NONE;
