@@ -11,13 +11,14 @@ use crate::{components::ActorAttributes, message::AbilityType};
 
 /// Haven location, in hex coordinates.
 ///
-/// Sited on the brink of a belt's plateau on a continental plate: the
-/// front falls away to the plain some 460 z-levels below over the next
-/// 350 tiles in the -r direction, the plateau top lies a dozen levels up
-/// behind, and no water stands within three hundred tiles. The z is a
-/// placeholder — the server resolves the real one from the terrain at
-/// startup, because elevation is generated, not authored.
-pub const HAVEN_LOCATION: Qrz = Qrz { q: -58244, r: 5445, z: 0 };
+/// Sited on the brink of a belt's plateau on the home continent: the
+/// front falls away to a basin plain some 560 z-levels below over the next
+/// 300 tiles in the -r direction, with the next belt rising beyond it, the
+/// plateau top lies a few levels up behind, and no water stands within six
+/// hundred tiles. The z is a placeholder — the server resolves the real one
+/// from the terrain at startup, because elevation is generated, not
+/// authored.
+pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
 
 /// Calculate enemy level based on distance from haven
 
