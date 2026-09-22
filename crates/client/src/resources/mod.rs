@@ -68,12 +68,14 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// Each level's band cut as the card shader sees it, keyed by level: the
 /// level's cards are confined to its band as its ground is, or a region
 /// built whole would stand its cards over the level beside it. A card
-/// past either edge is under the ground; over a strip inside the edge it
-/// sinks, each card in its own turn. At the seam between two levels that
-/// both stand cards the strip is short — the trees mostly agree across
-/// it — and at the outermost card level's edge it is long, into the
-/// ground that wears the trees' colour and crowns, where a wood going
-/// under is seen from far off. No strips while the edge is forced.
+/// past either edge is under the ground. At the seam between two levels
+/// that both stand cards the handoff is at the edge itself, as the
+/// ground's is — the trees agree across it, and a strip on either side
+/// would sink both levels' trees at once into a trough — while at the
+/// outermost card level's edge the cards sink across a long strip, each
+/// in its own turn, into the ground that wears their colour and crowns,
+/// where a wood going under is seen from far off. No strip while the
+/// edge is forced.
 #[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
 pub struct CardCuts(pub HashMap<u32, CardCut>);
 
@@ -87,23 +89,21 @@ pub struct CardCut {
     pub outer_strip: f32,
 }
 
-/// The strips the cards leave over, in world units: at a seam between
-/// card levels, and at the last card level's outer edge.
-pub const CARD_SEAM_WU: f32 = 24.0;
+/// The strip the cards leave over at the last card level's outer edge, in
+/// world units.
 pub const CARD_SINK_WU: f32 = 240.0;
 
 impl CardCut {
     /// The cut of level `r`, from its ground's; `last` when no level past
     /// it stands cards.
     pub fn of(cut: TerrainCut, last: bool) -> Self {
-        let sinks = cut.fade > 0.0;
         CardCut {
             inner_center: cut.inner_center,
             inner: cut.inner,
-            inner_strip: if sinks { CARD_SEAM_WU } else { 0.0 },
+            inner_strip: 0.0,
             outer_center: cut.outer_center,
             outer: cut.outer,
-            outer_strip: if !sinks { 0.0 } else if last { CARD_SINK_WU } else { CARD_SEAM_WU },
+            outer_strip: if last && cut.fade > 0.0 { CARD_SINK_WU } else { 0.0 },
         }
     }
 }
