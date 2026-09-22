@@ -186,7 +186,7 @@ fn vantage_points() {
     for (&(q, r), &(z, _)) in &views {
         for (&(oq, or), &(oz, f)) in &views {
             let d = ((oq - q).abs() + (or - r).abs() + (oq - q + or - r).abs()) / 2;
-            if f < 4 || d < 30 || d > 120 {
+            if f < 2 || d < 30 || d > 120 {
                 continue;
             }
             let drop = z - oz;
@@ -199,6 +199,6 @@ fn vantage_points() {
     for (score, ridge, wood, drop, f) in best.iter().take(5) {
         println!("ridge {:?} z {:.0} over wood {:?} (fullness {f}): drop {drop:.0} z, score {score:.1}", ridge, views[ridge].0, wood);
     }
-    let near: Vec<((i32, i32), u8)> = views.iter().filter(|(_, (_, f))| *f >= 5).map(|(k, (_, f))| (*k, *f)).take(5).collect();
+    let near: Vec<((i32, i32), u8)> = views.iter().filter(|(_, (_, f))| *f >= 3).map(|(k, (_, f))| (*k, *f)).take(5).collect();
     println!("wooded tiles near the spawn: {near:?}");
 }
