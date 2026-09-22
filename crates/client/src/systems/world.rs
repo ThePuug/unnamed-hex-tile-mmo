@@ -807,8 +807,22 @@ pub fn update_terrain_cut(
         advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
     }
 
+    // The span the canopy's ground rises over is the cards' own: from the
+    // ring where the models hand over to where the last card is drawn.
+    // Every level is given the same one, so the ground they draw agrees
+    // where their bands meet.
+    let lift = if forced_radius.0.is_some() {
+        (0.0, 0.0)
+    } else {
+        (
+            level_cut(0, &bands, &edges.0, target).outer,
+            level_cut(common_bevy::summary::LOD_LEVELS[1], &bands, &edges.0, target).outer,
+        )
+    };
+
     for (&r, handle) in &terrain_material.by_level {
         let Some(material) = materials.get_mut(handle) else { continue };
+        (material.extension.canopy.lift_from, material.extension.canopy.lift_to) = lift;
         material.extension.cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {

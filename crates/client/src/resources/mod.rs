@@ -95,17 +95,27 @@ pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
 pub struct CanopyLook {
     /// Pine, deciduous, scrub: rgb, and the crown's width in world units.
     pub kinds: [Vec4; 3],
+    /// The same three kinds' grown height, which is how far the ground
+    /// rises where their canopy is closed. The fourth is unused.
+    pub rises: Vec4,
+    /// The ground distances over which the canopy's ground rises to the
+    /// height of the trees standing in it: nothing at the ring where the
+    /// models hand over, their whole height where the last card is drawn.
+    /// One span for every level, so they agree where they meet.
+    pub lift_from: f32,
+    pub lift_to: f32,
     /// The ground distances the relief is full at and gone by.
     pub relief_full: f32,
     pub relief_gone: f32,
 }
 
 /// One kind's look as the tree kit hands it over: the mean colour of its
-/// models and a grown crown's width.
+/// models, a grown crown's width, and a grown tree's height.
 #[derive(Clone, Copy, Debug)]
 pub struct KindLook {
     pub color: Vec3,
     pub width: f32,
+    pub height: f32,
 }
 
 /// Terrain material extension: elevation colour in the fragment shader,
@@ -281,6 +291,11 @@ impl TerrainMaterial {
         };
         CanopyLook {
             kinds: kinds.map(|k| k.color.extend(k.width)),
+            rises: Vec4::new(kinds[0].height, kinds[1].height, kinds[2].height, 0.0),
+            // The span is the band cut's, handed over each frame by
+            // `update_terrain_cut`; until it has run the ground is flat.
+            lift_from: 0.0,
+            lift_to: 0.0,
             relief_full,
             relief_gone,
         }

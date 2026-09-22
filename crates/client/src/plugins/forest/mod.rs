@@ -235,9 +235,10 @@ fn dress_far_ground(
     use crate::resources::KindLook;
     let of = |slot: Slot| -> KindLook {
         let variations = kit.kit.of(slot);
-        let Some(first) = variations.first() else { return KindLook { color: Vec3::ZERO, width: 0.0 } };
+        let Some(first) = variations.first() else { return KindLook { color: Vec3::ZERO, width: 0.0, height: 0.0 } };
         let color = variations.iter().map(|v| v.color).sum::<Vec3>() / variations.len() as f32;
-        KindLook { color, width: first.width * Kit::scale(slot, first.height, CROWN_GROWTH) }
+        let scale = Kit::scale(slot, first.height, CROWN_GROWTH);
+        KindLook { color, width: first.width * scale, height: first.height * scale }
     };
     terrain_material.set_kinds([of(Slot::Pine), of(Slot::Deciduous), of(Slot::Scrub)], &mut materials);
 }
