@@ -261,7 +261,7 @@ impl Plugin for MetricsPlugin {
         snapshot.register("evt.visible", Aggregator::Last);
         snapshot.register("evt.tile_hits", Aggregator::Last);
         snapshot.register("evt.tile_misses", Aggregator::Last);
-        snapshot.register("evt.active", Aggregator::Last);
+        snapshot.register("spawners.active", Aggregator::Last);
         // Per-layer fields are named by the stack, not here: see
         // `drain_event_metrics`.
         // Async pipelines: what each costs, how much of its task budget is
@@ -305,7 +305,7 @@ fn drain_event_metrics(
         ("evt.visible", m.visible as f32),
         ("evt.tile_hits", m.tile_hits as f32),
         ("evt.tile_misses", m.tile_misses as f32),
-        ("evt.active", active.0.len() as f32),
+        ("spawners.active", active.0.len() as f32),
     ]);
     // The stack names its own layers, in the order it evaluates them, and
     // the flush keeps that order — a fixed list here would go stale the

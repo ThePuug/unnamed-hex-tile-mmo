@@ -395,7 +395,6 @@ struct ConsoleApp {
     snapshot: HashMap<String, f32>,
     snapshot_timestamp: f64,
     prev_snapshot_timestamp: f64,
-    prev_tick_count: f32,
     ticks_per_sec: f64,
     char_width: Option<f32>,
     row_height: Option<f32>,
@@ -432,7 +431,7 @@ impl ConsoleApp {
             rx, last_received: None,
             snapshot: HashMap::new(),
             snapshot_timestamp: 0.0, prev_snapshot_timestamp: 0.0,
-            prev_tick_count: 0.0, ticks_per_sec: 0.0,
+            ticks_per_sec: 0.0,
             char_width: None, row_height: None,
             hist_frame: History::new(), hist_tick: History::new(), hist_mem: History::new(),
             hist_frame_overruns: History::new(), hist_tick_overruns: History::new(),
@@ -498,11 +497,11 @@ impl ConsoleApp {
 
         self.prev_snapshot_timestamp = self.snapshot_timestamp;
         self.snapshot_timestamp = packet.timestamp_secs;
+        // `tick_count` is summed and reset each flush, so the packet carries
+        // the ticks of this interval, not a running total.
         let dt = self.snapshot_timestamp - self.prev_snapshot_timestamp;
         if dt > 0.0 {
-            let tc = self.field("tick_count") as f32;
-            self.ticks_per_sec = (tc - self.prev_tick_count) as f64 / dt;
-            self.prev_tick_count = tc;
+            self.ticks_per_sec = self.field("tick_count") / dt;
         }
 
         self.hist_frame.push(self.field("frame_peak_ms"));
@@ -616,7 +615,7 @@ impl eframe::App for ConsoleApp {
                     ]};
 
                     draw_section(&mut cols[0], "SYSTEM", |ui| {
-                        // FRAME: label | value | spark | peak | !overruns | MEM label | MEM value | spark
+                        // FRAME: label | value | spark | peak | !overruns
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             seg_half(ui, &format!("{:>7}", "FRAME"), COLOR_DIM);
@@ -631,14 +630,16 @@ impl eframe::App for ConsoleApp {
                             let ov_val = self.hist_frame_overruns.visible_sum(bar_count);
                             let ov = OVERRUN.fmt(ov_val);
                             seg_quarter(ui, &format!("{}{:<2}", ov, GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("{:>7}", "MEM"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("{:>5}{:<2}", RATE5.fmt(self.field("memory_mb")), "MB"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &self.hist_mem.as_f32(), SparkScale::Fixed(mem_ceiling), &ALARM_MEM, cw, rh);
                         });
-                        // TICK: label | value | spark | peak | !overruns
+                        // MEM: the process, and the Map's share of it
+                        seg_row(ui, cw, rh, |s| {
+                            s.half(&format!("{:>7}", "MEM"), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", RATE5.fmt(self.field("memory_mb")), "MB"), COLOR_DIM);
+                            s.spark(&self.hist_mem.as_f32(), SparkScale::Fixed(mem_ceiling), &ALARM_MEM);
+                            s.half("    map", COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", RATE5.fmt(self.field("memory_map_mb")), "MB"), COLOR_DIM);
+                        });
+                        // TICK: label | value | spark | peak | !overruns | rate
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             seg_half(ui, &format!("{:>7}", "TICK"), COLOR_DIM);
@@ -653,6 +654,9 @@ impl eframe::App for ConsoleApp {
                             let ov_val = self.hist_tick_overruns.visible_sum(bar_count);
                             let ov = OVERRUN.fmt(ov_val);
                             seg_quarter(ui, &format!("{}{:<2}", ov, GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
+                            seg_gap(ui, cw);
+                            // The rate the fixed schedule is actually holding
+                            seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(self.ticks_per_sec), "/s"), COLOR_DIM);
                         });
                         // NET UP: label | value | spark | peak
                         ui.horizontal(|ui| {
@@ -831,6 +835,17 @@ impl eframe::App for ConsoleApp {
                             seg_half(ui, &format!("{:>7}", "#HEX"), COLOR_DIM);
                             seg_gap(ui, cw);
                             seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("loaded_hexes"))), COLOR_DIM);
+                        });
+                        // The transport's clients beside the lobby's players:
+                        // the two disagreeing is a connection half torn down.
+                        let players = self.field("connected_players");
+                        let clients = self.field("net_clients");
+                        seg_row(ui, cw, rh, |s| {
+                            s.half(&format!("{:>7}", "#CONN"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(clients)),
+                                if clients == players { COLOR_DIM } else { COLOR_WARN });
+                            s.half(&format!("{:>7}", "#SPWN"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", COUNT5.fmt(self.field("spawners.active"))), COLOR_DIM);
                         });
                     });
 
