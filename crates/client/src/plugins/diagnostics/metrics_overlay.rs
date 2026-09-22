@@ -6,7 +6,7 @@ use crate::systems::closeup::CloseupCamera;
 use bevy_camera::Viewport;
 use bevy_egui::{egui, EguiContext, EguiContexts};
 
-use super::config::DiagnosticsState;
+use super::config::{DiagnosticsState, MetricsTab};
 use super::network_ui::NetworkMetrics;
 use common_bevy::{
     components::{behaviour::PlayerControlled, Actor, Loc},
@@ -396,6 +396,20 @@ fn seg_spark(
 
 // ── Section rendering ──
 
+/// The section a tab shows, drawn only when that tab is the one up.
+fn tab_section<F: FnOnce(&mut egui::Ui)>(
+    ui: &mut egui::Ui,
+    up: MetricsTab,
+    tab: MetricsTab,
+    content_width: f32,
+    content: F,
+) {
+    if up != tab {
+        return;
+    }
+    draw_section(ui, tab.label(), content_width, content);
+}
+
 fn draw_section<F: FnOnce(&mut egui::Ui)>(
     ui: &mut egui::Ui,
     label: &str,
@@ -464,7 +478,8 @@ pub fn setup_overlay_font(mut contexts: EguiContexts, overlay: Res<OverlayCamera
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_metrics_overlay(
-    state: Res<DiagnosticsState>,
+    mut state: ResMut<DiagnosticsState>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut contexts: EguiContexts,
     overlay: Res<OverlayCameraEntity>,
     mut camera_q: Query<&mut Camera, (With<Camera3d>, Without<OverlayCamera>, Without<CloseupCamera>)>,
@@ -528,6 +543,14 @@ pub fn update_metrics_overlay(
             ..default()
         });
     }
+
+    // The brackets step the tab either way, for a hand already on the
+    // keyboard; the strip under the view takes a click for one directly.
+    let step = i32::from(keys.just_pressed(KeyCode::BracketRight)) - i32::from(keys.just_pressed(KeyCode::BracketLeft));
+    if step != 0 {
+        state.metrics_tab = state.metrics_tab.step(step);
+    }
+    let tab = state.metrics_tab;
 
     // ── Sparkline bar count (matches visible window for stats) ──
     let spark_width = SPARKLINE_CHARS as f32 * cw;
@@ -603,8 +626,28 @@ pub fn update_metrics_overlay(
             egui::Frame::NONE
                 .inner_margin(OUTER_MARGIN)
                 .show(ui, |ui| {
+                    // ── FRAME ──
+                    // Above every tab: the one number the rest explain.
+                    draw_section(ui, "FRAME", content_width, |ui| {
+                        const FRAME_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
+                        const FPS: NumFmt = NumFmt { width: 3, precision: Precision::Integer, overflow: Overflow::Clamp };
+                        let frame_peak = history.frame_ms.visible_max(bar_count);
+                        let peak_v = FRAME_MS.fmt(frame_peak);
+                        let fps_v = FPS.fmt(fps_p95);
+                        let fps_color = ALARM_FPS.color(fps_p95);
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
+                            s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
+                            s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, peak_v), COLOR_DIM);
+                            s.half(&format!("ƒ{:<6}", fps_v), fps_color);
+                        });
+                    });
+
+                    ui.add_space(4.0);
+
                     // ── TERRAIN ──
-                    draw_section(ui, "TERRAIN", content_width, |ui| {
+                    tab_section(ui, tab, MetricsTab::Terrain, content_width, |ui| {
                         let (q, r, z, wx, wy) = tile_data
                             .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
                             .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
@@ -645,23 +688,9 @@ pub fn update_metrics_overlay(
                         }
                     });
 
-                    ui.add_space(4.0);
 
                     // ── RENDER ──
-                    draw_section(ui, "RENDER", content_width, |ui| {
-                        const FRAME_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
-                        const FPS: NumFmt = NumFmt { width: 3, precision: Precision::Integer, overflow: Overflow::Clamp };
-                        let frame_peak = history.frame_ms.visible_max(bar_count);
-                        let peak_v = FRAME_MS.fmt(frame_peak);
-                        let fps_v = FPS.fmt(fps_p95);
-                        let fps_color = ALARM_FPS.color(fps_p95);
-                        seg_row(ui, cw, |s| {
-                            s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
-                            s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
-                            s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, peak_v), COLOR_DIM);
-                            s.half(&format!("ƒ{:<6}", fps_v), fps_color);
-                        });
+                    tab_section(ui, tab, MetricsTab::Render, content_width, |ui| {
                         const ENTS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         const TILES: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
@@ -686,7 +715,6 @@ pub fn update_metrics_overlay(
                         }
                     });
 
-                    ui.add_space(4.0);
 
                     // ── PASSES ──
                     // Every pass Bevy times, heaviest first: what the GPU
@@ -694,7 +722,7 @@ pub fn update_metrics_overlay(
                     // The frame is GPU-bound when the gpu sum nears the
                     // frame time; when it falls well short, the cpu column
                     // says whether the encoding took the rest.
-                    draw_section(ui, "PASSES", content_width, |ui| {
+                    tab_section(ui, tab, MetricsTab::Passes, content_width, |ui| {
                         const PASS_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
                         let mut timed: std::collections::HashMap<&str, (f64, f64)> = Default::default();
                         for d in diagnostics.iter() {
@@ -728,10 +756,9 @@ pub fn update_metrics_overlay(
                         }
                     });
 
-                    ui.add_space(4.0);
 
                     // ── NETWORK ──
-                    draw_section(ui, "NETWORK", content_width, |ui| {
+                    tab_section(ui, tab, MetricsTab::Network, content_width, |ui| {
                         const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:<2}NET  ", GLYPH_NET_DOWN), COLOR_DIM);
@@ -750,10 +777,9 @@ pub fn update_metrics_overlay(
                         });
                     });
 
-                    // ── TIMINGS ──
-                    if !history.timings.is_empty() {
-                        ui.add_space(4.0);
 
+                    // ── TIMINGS ──
+                    if tab == MetricsTab::Timings && !history.timings.is_empty() {
                         const ALARM_TIMING: Alarm = Alarm { bands: &[
                             (16.667, COLOR_NORMAL),
                             (33.333, COLOR_WARN),
@@ -793,6 +819,43 @@ pub fn update_metrics_overlay(
                     }
                 });
         });
+
+    // ── The strip under the view ──
+    // The camera is letterboxed to 16:9 in what the panel leaves, so the
+    // band below it is the window's own dead space: the tabs live there
+    // rather than take rows from the panel.
+    let strip_top = cam_h as f32 / scale_factor;
+    let strip_height = window_logical_height - strip_top;
+    if strip_height < rh * 2.0 {
+        return;
+    }
+    let mut picked = None;
+    egui::Area::new(egui::Id::new("metrics_tabs"))
+        .fixed_pos(egui::pos2(0.0, strip_top))
+        .show(ctx, |ui| {
+            let strip = egui::Rect::from_min_size(
+                egui::pos2(0.0, strip_top),
+                egui::vec2(cam_w as f32 / scale_factor, strip_height),
+            );
+            ui.painter().rect_filled(strip, 0.0, COLOR_BG);
+            egui::Frame::NONE.inner_margin(OUTER_MARGIN).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = cw * 2.0;
+                    for entry in MetricsTab::ALL {
+                        let lit = entry == tab;
+                        let text = if lit { format!("[{}]", entry.label()) } else { format!(" {} ", entry.label()) };
+                        let color = if lit { COLOR_NORMAL } else { COLOR_DIM };
+                        let label = egui::Label::new(colored_mono(&text, color)).sense(egui::Sense::click());
+                        if ui.add(label).clicked() {
+                            picked = Some(entry);
+                        }
+                    }
+                });
+            });
+        });
+    if let Some(entry) = picked {
+        state.metrics_tab = entry;
+    }
 }
 
 // ── Tests ──

@@ -1,11 +1,48 @@
 use bevy::prelude::*;
 use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_MS};
 
+/// Which set of numbers the overlay shows. The frame's own line stands
+/// above them whatever is picked; the rest come one at a time, chosen
+/// from the strip under the view, because together they outgrew the
+/// window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MetricsTab {
+    Terrain,
+    #[default]
+    Render,
+    Passes,
+    Network,
+    Timings,
+}
+
+impl MetricsTab {
+    /// Every tab, in the order the strip lays them out.
+    pub const ALL: [MetricsTab; 5] = [Self::Terrain, Self::Render, Self::Passes, Self::Network, Self::Timings];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Terrain => "TERRAIN",
+            Self::Render => "RENDER",
+            Self::Passes => "PASSES",
+            Self::Network => "NETWORK",
+            Self::Timings => "TIMINGS",
+        }
+    }
+
+    /// The tab `steps` along the strip, wrapping at either end.
+    pub fn step(self, steps: i32) -> Self {
+        let at = Self::ALL.iter().position(|&tab| tab == self).unwrap_or(0) as i32;
+        Self::ALL[(at + steps).rem_euclid(Self::ALL.len() as i32) as usize]
+    }
+}
+
 #[derive(Resource)]
 pub struct DiagnosticsState {
     pub grid_visible: bool,
     pub lighting: LightingClock,
     pub metrics_overlay_visible: bool,
+    /// Which set of numbers the overlay's panel shows.
+    pub metrics_tab: MetricsTab,
     /// Every camera renders without MSAA.
     pub msaa_off: bool,
     /// How the sun's shadows are drawn, if at all.
@@ -54,6 +91,7 @@ impl Default for DiagnosticsState {
             grid_visible: false,
             lighting: LightingClock::default(),
             metrics_overlay_visible: false,
+            metrics_tab: MetricsTab::default(),
             msaa_off: false,
             shadows: Shadows::Gaussian,
             terrain_hidden: false,
