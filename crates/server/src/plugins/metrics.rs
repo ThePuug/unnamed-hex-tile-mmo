@@ -264,9 +264,17 @@ impl Plugin for MetricsPlugin {
         snapshot.register("evt.active", Aggregator::Last);
         // Per-layer fields are named by the stack, not here: see
         // `drain_event_metrics`.
-        // Async chunk generation metrics
-        snapshot.register("async.task_duration_ms", Aggregator::Peak);
-        snapshot.register("async.tasks_in_flight", Aggregator::Last);
+        // Async pipelines: what each costs, how much of its task budget is
+        // spent, and what is behind it. The budget travels with them so the
+        // console scales against the limit the server actually enforces.
+        snapshot.register("chunk.dur_ms", Aggregator::Peak);
+        snapshot.register("chunk.in_flight", Aggregator::Last);
+        snapshot.register("chunk.pending", Aggregator::Last);
+        snapshot.register("chunk.budget", Aggregator::Last);
+        snapshot.register("summary.dur_ms", Aggregator::Peak);
+        snapshot.register("summary.in_flight", Aggregator::Last);
+        snapshot.register("summary.pending", Aggregator::Last);
+        snapshot.register("summary.budget", Aggregator::Last);
         let timings = SystemTimings::new(transport.clone(), self.interval);
         app.insert_resource(snapshot)
             .insert_resource(timings)
@@ -359,7 +367,10 @@ fn refresh_metric_gauges(
         ("npc_count", npc_query.iter().count() as f32),
         ("memory_mb", process_working_set_bytes() as f32 / 1_048_576.0),
         ("memory_map_mb", map.heap_size_estimate() as f32 / 1_048_576.0),
-        ("async.tasks_in_flight", chunk_tasks.in_flight.len() as f32),
+        ("chunk.in_flight", chunk_tasks.in_flight.len() as f32),
+        ("chunk.pending", chunk_tasks.pending_len() as f32),
+        ("chunk.budget", crate::systems::actor::MAX_CHUNK_TASKS as f32),
+        ("summary.budget", crate::systems::summary::MAX_SUMMARY_TASKS as f32),
     ]);
 
     // Aggregate network stats across all connected clients

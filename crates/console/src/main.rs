@@ -214,6 +214,7 @@ fn fit_half(name: &str) -> String {
 struct Seg<'a> {
     ui: &'a mut egui::Ui,
     cw: f32,
+    rh: f32,
     count: usize,
 }
 
@@ -223,12 +224,18 @@ impl<'a> Seg<'a> {
         seg_half(self.ui, s, color);
         self.count += 1;
     }
+
+    fn spark(&mut self, history: &[f32], scale: SparkScale, alarm: &Alarm) {
+        if self.count > 0 { self.ui.add_space(self.cw); }
+        draw_sparkline(self.ui, history, scale, alarm, self.cw, self.rh);
+        self.count += 1;
+    }
 }
 
-fn seg_row(ui: &mut egui::Ui, cw: f32, f: impl FnOnce(&mut Seg)) {
+fn seg_row(ui: &mut egui::Ui, cw: f32, rh: f32, f: impl FnOnce(&mut Seg)) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let mut seg = Seg { ui, cw, count: 0 };
+        let mut seg = Seg { ui, cw, rh, count: 0 };
         f(&mut seg);
     });
 }
@@ -396,8 +403,12 @@ struct ConsoleApp {
     hist_frame: History, hist_tick: History, hist_mem: History,
     hist_frame_overruns: History, hist_tick_overruns: History,
 
-    hist_async_dur: History,
-    hist_async_queue: History,
+    hist_chunk_dur: History,
+    hist_chunk_queue: History,
+    hist_chunk_pending: History,
+    hist_summary_dur: History,
+    hist_summary_queue: History,
+    hist_summary_pending: History,
 
     hist_net_sent: History,
     hist_net_recv: History,
@@ -421,8 +432,12 @@ impl ConsoleApp {
             char_width: None, row_height: None,
             hist_frame: History::new(), hist_tick: History::new(), hist_mem: History::new(),
             hist_frame_overruns: History::new(), hist_tick_overruns: History::new(),
-            hist_async_dur: History::new(),
-            hist_async_queue: History::new(),
+            hist_chunk_dur: History::new(),
+            hist_chunk_queue: History::new(),
+            hist_chunk_pending: History::new(),
+            hist_summary_dur: History::new(),
+            hist_summary_queue: History::new(),
+            hist_summary_pending: History::new(),
             hist_net_sent: History::new(),
             hist_net_recv: History::new(),
             hist_ord_queue: History::new(),
@@ -489,8 +504,12 @@ impl ConsoleApp {
         self.hist_frame_overruns.push(self.field("frame_overruns"));
         self.hist_tick_overruns.push(self.field("tick_overruns"));
 
-        self.hist_async_dur.push(self.field("async.task_duration_ms"));
-        self.hist_async_queue.push(self.field("async.tasks_in_flight"));
+        self.hist_chunk_dur.push(self.field("chunk.dur_ms"));
+        self.hist_chunk_queue.push(self.field("chunk.in_flight"));
+        self.hist_chunk_pending.push(self.field("chunk.pending"));
+        self.hist_summary_dur.push(self.field("summary.dur_ms"));
+        self.hist_summary_queue.push(self.field("summary.in_flight"));
+        self.hist_summary_pending.push(self.field("summary.pending"));
         self.hist_net_sent.push(self.field("net_sent_bps"));
         self.hist_net_recv.push(self.field("net_recv_bps"));
         self.hist_ord_queue.push(self.field("net_ord_queue"));
@@ -680,35 +699,40 @@ impl eframe::App for ConsoleApp {
                     const ALARM_ASYNC: Alarm = Alarm { bands: &[(f64::INFINITY, COLOR_DIM)] };
 
                     draw_section(&mut cols[1], "ASYNC", |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("{:>7}", "DUR"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("{:>5}{:<2}", TIME5.fmt(self.field("async.task_duration_ms")), "ms"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &self.hist_async_dur.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
-                            seg_gap(ui, cw);
-                            let pv = TIME5.fmt(self.hist_async_dur.visible_max(bar_count));
-                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            seg_half(ui, &format!("{:>7}", "QUEUE"), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_half(ui, &format!("{:>5}  ", COUNT5.fmt(self.field("async.tasks_in_flight"))), COLOR_DIM);
-                            seg_gap(ui, cw);
-                            seg_spark(ui, &self.hist_async_queue.as_f32(), SparkScale::Auto, &ALARM_ASYNC, cw, rh);
-                            seg_gap(ui, cw);
-                            let pv = COUNT5.fmt(self.hist_async_queue.visible_max(bar_count));
-                            seg_half(ui, &format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
-                        });
+                        // Each pipeline: what one task costs, then how many
+                        // slots of its budget are spent and how much work is
+                        // behind them. A full queue is not a fault — a full
+                        // queue with a growing wait is.
+                        for (name, dur, queue, pending, budget) in [
+                            ("CHUNK", &self.hist_chunk_dur, &self.hist_chunk_queue,
+                             &self.hist_chunk_pending, self.field("chunk.budget")),
+                            ("SUMMRY", &self.hist_summary_dur, &self.hist_summary_queue,
+                             &self.hist_summary_pending, self.field("summary.budget")),
+                        ] {
+                            let last = |h: &History| h.0.back().copied().unwrap_or(0.0);
+                            seg_row(ui, cw, rh, |s| {
+                                s.half(&fit_half(name), COLOR_DIM);
+                                s.half(&format!("{:>5}{:<2}", TIME5.fmt(last(dur)), "ms"), COLOR_DIM);
+                                s.spark(&dur.as_f32(), SparkScale::Auto, &ALARM_ASYNC);
+                                s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(dur.visible_max(bar_count))), COLOR_DIM);
+                            });
+                            let spent = budget > 0.0 && last(queue) >= budget;
+                            seg_row(ui, cw, rh, |s| {
+                                s.half("  queue", COLOR_DIM);
+                                s.half(&format!("{:>5}  ", COUNT5.fmt(last(queue))),
+                                    if spent { COLOR_WARN } else { COLOR_DIM });
+                                s.spark(&queue.as_f32(), SparkScale::Fixed(budget.max(1.0) as f32), &ALARM_ASYNC);
+                                s.half("   wait", COLOR_DIM);
+                                s.half(&format!("{:>5}  ", COUNT5.fmt(last(pending))), COLOR_DIM);
+                            });
+                        }
                     });
 
                     draw_section(&mut cols[1], "TIMINGS", |ui| {
                         let mut names: Vec<&String> = self.timing_entries.keys().collect();
                         names.sort();
                         if names.is_empty() {
-                            seg_row(ui, cw, |s| { s.half("     --", COLOR_DIM); });
+                            seg_row(ui, cw, rh, |s| { s.half("     --", COLOR_DIM); });
                         }
                         for name in names {
                             let entry = &self.timing_entries[name];
@@ -771,7 +795,7 @@ impl eframe::App for ConsoleApp {
 
                         let tile_pct = (tile_pct as u32).min(99);
                         // Composite row: cached tiles + tile hit%
-                        seg_row(ui, cw, |s| {
+                        seg_row(ui, cw, rh, |s| {
                             s.half("       ", COLOR_DIM);
                             s.half(" cached", COLOR_DIM);
                             s.half(&format!("{:>5}  ", COUNT5.fmt(visible)), COLOR_DIM);
@@ -788,7 +812,7 @@ impl eframe::App for ConsoleApp {
                             let cell_pct = cell_pct.min(99);
 
                             let label = fit_half(name);
-                            seg_row(ui, cw, |s| {
+                            seg_row(ui, cw, rh, |s| {
                                 s.half(&label, COLOR_DIM);
                                 s.half("indexed", COLOR_DIM);
                                 s.half(&format!("{:>5}  ", COUNT5.fmt(index)), COLOR_DIM);

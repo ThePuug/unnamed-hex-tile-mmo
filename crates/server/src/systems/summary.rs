@@ -31,14 +31,16 @@ pub struct VisibleSummaryCache {
 /// the clients each one is computed for.
 #[derive(Resource, Default)]
 pub struct SummaryTaskQueue {
-    tasks: Vec<(MeshRegionKey, Task<Vec<SummaryData>>)>,
+    /// Each task answers with how long it took, so the console reads the
+    /// cost of a region the same way it reads a chunk's.
+    tasks: Vec<(MeshRegionKey, Task<(Vec<SummaryData>, f32)>)>,
     /// Clients waiting on each region in flight: whoever asked first and
     /// whoever asked since, so a region is computed once and sent to all.
     waiting: HashMap<MeshRegionKey, Vec<Entity>>,
 }
 
 /// Maximum in-flight async region tasks across all players.
-const MAX_SUMMARY_TASKS: usize = 16;
+pub const MAX_SUMMARY_TASKS: usize = 16;
 
 /// The level whose band, and everything inside it, streams all round the
 /// player for context; beyond its outer edge only the sector around the
@@ -131,6 +133,7 @@ pub fn dispatch_summary_tasks(
     registry: Res<EventRegistry>,
     mut task_queue: ResMut<SummaryTaskQueue>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
+    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
 ) {
     let _t = timings.scope("summary_dispatch");
     let mut budget = MAX_SUMMARY_TASKS.saturating_sub(task_queue.tasks.len());
@@ -151,17 +154,25 @@ pub fn dispatch_summary_tasks(
             task_queue.waiting.insert(rk, vec![*ent]);
             let reg = registry.clone();
             let task = AsyncComputeTaskPool::get().spawn(async move {
+                let start = std::time::Instant::now();
                 let rl = mesh_region_lattice();
-                rl.tiles_in_cell((rk.mn, rk.mm))
+                let data: Vec<SummaryData> = rl.tiles_in_cell((rk.mn, rk.mm))
                     .map(|(sq, sr)| {
                         let cell = summarize(rk.r, sq, sr, &reg).expect("the registry has every tile");
                         SummaryData { r: rk.r, sq, sr, cell }
                     })
-                    .collect()
+                    .collect();
+                (data, start.elapsed().as_secs_f64() as f32 * 1000.0)
             });
             task_queue.tasks.push((rk, task));
         }
     }
+
+    let backlog: usize = players.iter().map(|(_, c)| c.pending.len()).sum();
+    snapshot.record(&[
+        ("summary.in_flight", task_queue.tasks.len() as f32),
+        ("summary.pending", backlog as f32),
+    ]);
 }
 
 /// Poll completed async summary tasks: into the cache, then to every
@@ -172,16 +183,18 @@ pub fn poll_summary_tasks(
     mut task_queue: ResMut<SummaryTaskQueue>,
     mut query: Query<&mut VisibleSummaryCache>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
+    snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
 ) {
     let _t = timings.scope("summary_poll");
     let current = std::mem::take(&mut task_queue.tasks);
     let mut pending = Vec::new();
 
     for (region_key, mut task) in current {
-        let Some(results) = block_on(future::poll_once(&mut task)) else {
+        let Some((results, duration_ms)) = block_on(future::poll_once(&mut task)) else {
             pending.push((region_key, task));
             continue;
         };
+        snapshot.record(&[("summary.dur_ms", duration_ms)]);
         for data in &results {
             summary_cache.insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr }, data.cell);
         }

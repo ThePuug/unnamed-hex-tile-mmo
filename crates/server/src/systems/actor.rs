@@ -35,7 +35,7 @@ pub struct VisibleChunkCache {
 /// chunks at once; unbounded task spawning saturates the async compute pool
 /// in raster order, generating the radius-21 frontier before the chunks the
 /// player is standing on. Pending work drains nearest-first instead.
-const MAX_CHUNK_TASKS: usize = 16;
+pub const MAX_CHUNK_TASKS: usize = 16;
 
 /// In-flight async chunk generation tasks.
 /// Task returns (chunk, duration_ms) so we can report async metrics.
@@ -76,6 +76,10 @@ impl ChunkTaskQueue {
     fn release(&mut self, chunk_id: ChunkId) -> Vec<Entity> {
         self.waiters.remove(&chunk_id).unwrap_or_default()
     }
+
+    /// Chunks waiting on a task slot. What the queue is behind by: the
+    /// in-flight count only says the budget is spent.
+    pub fn pending_len(&self) -> usize { self.pending.len() }
 }
 
 /// Hex distance between two chunks (in tiles, via their center tiles).
@@ -343,7 +347,7 @@ pub fn poll_chunk_tasks(
     for (chunk_id, mut task) in current {
         if let Some((chunk, duration_ms)) = block_on(poll_once(&mut task)) {
             _t.get_or_insert_with(|| timings.scope("chunk_poll"));
-            snapshot.record(&[("async.task_duration_ms", duration_ms)]);
+            snapshot.record(&[("chunk.dur_ms", duration_ms)]);
             let chunk = Arc::new(chunk);
 
             // Insert into world cache
