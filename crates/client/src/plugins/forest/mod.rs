@@ -432,31 +432,34 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
 }
 
 /// Spawn a region's trees as cards, children of its entity: one batch
-/// per variation present whose model shipped cards, each the shared quad
-/// and an instance buffer of every tree drawn with it, the first layer
-/// of its seed's pictures in the model's texture. The cards stand past
-/// the ring, far enough that their overlaps do not show, so they keep
-/// the quad's own depth.
+/// per model whose cards stand here, each the shared quad and an
+/// instance buffer of every tree drawn from that model's pictures. A
+/// batch is one draw the frame pays for, and a model's variations
+/// differ only by which layer of its texture an instance names, so
+/// they go in together — a kind is one draw here where its models are
+/// one each near. The cards stand past the ring, far enough that their
+/// overlaps do not show, so they keep the quad's own depth.
 pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
-    let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
+    let mut batches: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
         let all = kit.kit.of(t.slot);
         if all.is_empty() {
             continue;
         }
-        let k = t.variation as usize % all.len();
-        let v = &all[k];
+        let v = &all[t.variation as usize % all.len()];
         let Some(cards) = &v.cards else { continue };
         let scale = Kit::scale(t.slot, v.height, t.growth);
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
-        batches.entry((t.slot, k)).or_default().push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale));
+        batches
+            .entry(cards.texture.id())
+            .or_insert_with(|| (cards.clone(), Vec::new()))
+            .1
+            .push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale));
     }
     commands.entity(entity).with_children(|parent| {
-        for ((slot, k), instances) in batches {
-            let v = &kit.kit.of(slot)[k];
-            let Some(cards) = &v.cards else { continue };
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone());
+        for (_, (cards, instances)) in batches {
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards);
             parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY));
         }
     });
