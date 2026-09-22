@@ -79,8 +79,7 @@ pub struct Kit {
 
 /// What a model declares of its cards in its first node's extras, as
 /// modelgen writes it: the texture array's path, and each view's
-/// elevation in degrees and frame and depth span in world units, the
-/// side then the top.
+/// elevation in degrees and frame in world units, the side then the top.
 #[derive(Deserialize)]
 struct CardExtras {
     card: CardDecl,
@@ -97,7 +96,6 @@ struct CardViewDecl {
     elevation: f32,
     width: f32,
     height: f32,
-    depth: f32,
 }
 
 impl CardDecl {
@@ -106,7 +104,7 @@ impl CardDecl {
     }
 
     fn cards(&self, asset_server: &AssetServer) -> Option<draw::Cards> {
-        let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, depth: d.depth, elevation: d.elevation.to_radians() };
+        let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, elevation: d.elevation.to_radians() };
         let [side, top] = self.views.as_slice() else { return None };
         Some(draw::Cards { texture: asset_server.load(self.texture.clone()), side: view(side), top: view(top) })
     }
@@ -426,7 +424,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         for ((slot, k), instances) in batches {
             let v = &kit.kit.of(slot)[k];
             let Some(cards) = &v.cards else { continue };
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), false);
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone());
             parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY));
         }
     });
