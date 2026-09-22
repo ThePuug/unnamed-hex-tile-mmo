@@ -273,7 +273,7 @@ fn draw_section<F: FnOnce(&mut egui::Ui)>(
     ui.label(colored_mono(label, COLOR_BORDER));
     let avail = ui.available_width();
     egui::Frame::NONE
-        .stroke(egui::Stroke::new(1.0, COLOR_BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, COLOR_BORDER))
         .inner_margin(4.0)
         .show(ui, |ui| {
             ui.set_min_width(avail - 10.0);
@@ -319,7 +319,7 @@ fn draw_funnel(
                 painter.rect_filled(filled, 0.0, COLOR_DIM);
             }
             if count == 0.0 {
-                painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, COLOR_BORDER), egui::StrokeKind::Outside);
+                painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0_f32, COLOR_BORDER), egui::StrokeKind::Outside);
             }
 
             seg_gap(ui, cw);
