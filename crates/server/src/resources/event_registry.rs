@@ -34,7 +34,7 @@ impl EventRegistry {
         self.composite.tags_at(q, r)
     }
 
-    /// What stands in a tile's seven slots.
+    /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
         self.composite.cover_at(q, r)
     }
@@ -42,5 +42,11 @@ impl EventRegistry {
     /// Drain event metrics (reads gauges, resets interval counters).
     pub fn drain_metrics(&self) -> world::events::EventMetricsSnapshot {
         self.composite.drain_metrics()
+    }
+}
+
+impl common::summary::SummarySource for EventRegistry {
+    fn sample(&self, q: i32, r: i32) -> Option<common::summary::TileSample> {
+        self.composite.sample(q, r)
     }
 }

@@ -1013,6 +1013,9 @@ fn collect_and_build_summary_mesh(
     };
 
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
+    // The same seven samples over the map's tiles, where every producer's
+    // rule reads them; nothing until the tiles are all there.
+    let sampled = |level: u32, sq: i32, sr: i32| common_bevy::summary::summarize(level, sq, sr, map);
 
     // The water over the region, built once the ground is: at r = 0 the
     // map's per-tile surface, above it the surface each summary carries.
@@ -1030,7 +1033,7 @@ fn collect_and_build_summary_mesh(
     let regions: std::cell::RefCell<
         std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, Option<std::sync::Arc<crate::resources::RegionData>>>,
     > = Default::default();
-    let cached = |level: u32, sq: i32, sr: i32| -> Option<(i32, Option<i32>)> {
+    let cached = |level: u32, sq: i32, sr: i32| -> Option<common_bevy::summary::SummaryCell> {
         let (mn, mm) = region_lat.cell_id(sq, sr);
         let key = common_bevy::summary_mesh::MeshRegionKey { r: level, mn, mm };
         regions
@@ -1047,10 +1050,10 @@ fn collect_and_build_summary_mesh(
             if level == 0 {
                 return tile_z(sq, sr);
             }
-            if let Some((z, _)) = cached(level, sq, sr) {
-                return Some(z);
+            if let Some(cell) = cached(level, sq, sr) {
+                return Some(cell.z);
             }
-            common_bevy::summary::sample_center_z_opt(level, sq, sr, tile_z)
+            sampled(level, sq, sr).map(|c| c.z)
         }
     };
     let height = level_z(radius);
@@ -1075,11 +1078,10 @@ fn collect_and_build_summary_mesh(
     // cell was sent, else the same seven samples over the map's tiles, and
     // nothing where the tiles are not all there.
     let summary_water = |sq: i32, sr: i32| -> Option<i32> {
-        if let Some((_, water)) = cached(radius, sq, sr) {
-            return water;
+        match cached(radius, sq, sr) {
+            Some(cell) => cell.water,
+            None => sampled(radius, sq, sr)?.water,
         }
-        common_bevy::summary::sample_center_z_opt(radius, sq, sr, tile_z)?;
-        common_bevy::summary::sample_center_water(radius, sq, sr, |q, r| map.water_at(q, r))
     };
 
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse)

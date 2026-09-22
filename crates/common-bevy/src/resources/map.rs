@@ -143,7 +143,7 @@ impl Map {
             .map(|r| r.typ)
     }
 
-    /// What stands in a tile's seven slots: nothing where the tile is not
+    /// What stands in a tile's slots: nothing where the tile is not
     /// loaded or its ground is not a decorator. The one read movement and
     /// the renderer take a tile's trees from.
     pub fn cover_at(&self, q: i32, r: i32) -> common::Cover {
@@ -253,6 +253,18 @@ impl Map {
     /// (`qrz::Map::exit`).
     pub fn exit(&self, from: Vec2, dir: Vec2, here: Qrz) -> (f32, Qrz) {
         self.geo.exit(from, dir, here)
+    }
+}
+
+/// The tile as a summary reads it, or None while it has not streamed in.
+impl common::summary::SummarySource for Map {
+    fn sample(&self, q: i32, r: i32) -> Option<common::summary::TileSample> {
+        let (qrz, typ) = self.get_by_qr(q, r)?;
+        let cover = match typ {
+            EntityType::Decorator(d) => d.cover,
+            _ => common::Cover::NONE,
+        };
+        Some(common::summary::TileSample { z: qrz.z, water: self.water_at(q, r), cover })
     }
 }
 

@@ -262,11 +262,11 @@ pub fn write_do(
                 }
                 // Group additions by mesh region
                 let region_lat = common_bevy::summary::mesh_region_lattice();
-                let mut by_region: std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, std::collections::HashMap<(i32,i32), (i32, Option<i32>)>> = std::collections::HashMap::new();
+                let mut by_region: std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, std::collections::HashMap<(i32,i32), common_bevy::summary::SummaryCell>> = std::collections::HashMap::new();
                 for add in &additions {
                     let (mn, mm) = region_lat.cell_id(add.sq, add.sr);
                     let key = common_bevy::summary_mesh::MeshRegionKey { r: add.r, mn, mm };
-                    by_region.entry(key).or_default().insert((add.sq, add.sr), (add.center_z, add.water));
+                    by_region.entry(key).or_default().insert((add.sq, add.sr), add.cell);
                 }
                 for (key, cells) in by_region {
                     summary_cache.insert_region(key, crate::resources::RegionData {

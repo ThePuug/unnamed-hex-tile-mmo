@@ -4,7 +4,34 @@
 //! flyover, the world viewer — reads this one rule, or their silhouettes
 //! differ where they meet.
 
+use serde::{Deserialize, Serialize};
+
 use crate::cover::{Canopy, Cover};
+
+/// What a summary is read from: tiles, each giving its height, the water
+/// over it and its cover at once, so a source that materialises a tile
+/// serves all three from one. None where the source has no tile yet.
+pub trait SummarySource {
+    fn sample(&self, q: i32, r: i32) -> Option<TileSample>;
+}
+
+/// One tile as a summary reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileSample {
+    pub z: i32,
+    /// The surface water stands at over the tile, or None where it is dry.
+    pub water: Option<i32>,
+    pub cover: Cover,
+}
+
+/// One summary: the height, the water surface over it or None where it is
+/// dry, and the canopy. What every cache holds and the wire carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryCell {
+    pub z: i32,
+    pub water: Option<i32>,
+    pub canopy: Canopy,
+}
 
 /// Nested LoD levels: summary scales triple per level.
 ///
@@ -40,49 +67,28 @@ pub fn sample_offsets(r: u32) -> [(i32, i32); SAMPLES] {
     [(0, 0), (d, 0), (-d, 0), (0, d), (0, -d), (d, -d), (-d, d)]
 }
 
-/// Sample 7 elevations (center + 6 hex-axis points) and select center_z.
-pub fn sample_center_z(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> i32) -> i32 {
-    sample_center_z_opt(r, sq, sr, |q, rr| Some(elevation_at(q, rr))).expect("infallible elevation source")
-}
-
-/// Fallible variant of [`sample_center_z`] for tile sources with holes
-/// (the client map while chunks stream in). None unless all 7 samples are
-/// available.
-pub fn sample_center_z_opt(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> Option<i32>) -> Option<i32> {
+/// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
+/// seven samples: the height by [`select_center_z`], the water by
+/// [`select_center_water`], the canopy by [`Canopy::of`]. None unless the
+/// source has all seven (the client's map while chunks stream in).
+pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
     let mut zs = [0i32; SAMPLES];
-    for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
-        zs[i] = elevation_at(cq + dq, cr + dr)?;
-    }
-    Some(select_center_z(&zs))
-}
-
-/// The water surface a summary carries: the surface a majority of its seven
-/// samples share, or None. A lake wider than the summary keeps its surface;
-/// a river narrower than it vanishes into its valley, the way a valley
-/// narrower than a summary vanishes under the height rule. `water_at` is a
-/// tile's surface, or None where it is dry.
-pub fn sample_center_water(r: u32, sq: i32, sr: i32, mut water_at: impl FnMut(i32, i32) -> Option<i32>) -> Option<i32> {
-    let (cq, cr) = center_tile(r, sq, sr);
     let mut ws = [None; SAMPLES];
-    for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
-        ws[i] = water_at(cq + dq, cr + dr);
-    }
-    select_center_water(&ws)
-}
-
-/// The canopy a summary carries: what its seven samples' slots hold,
-/// counted. `cover_at` is a tile's cover, none where it has nothing.
-pub fn sample_center_canopy(r: u32, sq: i32, sr: i32, mut cover_at: impl FnMut(i32, i32) -> Cover) -> Canopy {
-    let (cq, cr) = center_tile(r, sq, sr);
     let mut covers = [Cover::NONE; SAMPLES];
     for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
-        covers[i] = cover_at(cq + dq, cr + dr);
+        let sample = source.sample(cq + dq, cr + dr)?;
+        zs[i] = sample.z;
+        ws[i] = sample.water;
+        covers[i] = sample.cover;
     }
-    Canopy::of(&covers)
+    Some(SummaryCell { z: select_center_z(&zs), water: select_center_water(&ws), canopy: Canopy::of(&covers) })
 }
 
-/// The surface more than half of the samples share, or None.
+/// The water surface a summary carries: the surface more than half of
+/// the samples share, or None. A lake wider than the summary keeps its
+/// surface; a river narrower than it vanishes into its valley, the way a
+/// valley narrower than a summary vanishes under the height rule.
 pub fn select_center_water(ws: &[Option<i32>]) -> Option<i32> {
     let mut best: Option<(i32, usize)> = None;
     for &w in ws.iter().flatten() {
@@ -125,6 +131,29 @@ pub fn select_center_z(tile_zs: &[i32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cover::Slot;
+
+    /// A source with a hole gives no summary; a whole one gives the three
+    /// rules' answers from the same seven tiles.
+    #[test]
+    fn a_summary_needs_all_seven_samples() {
+        struct Flat(Option<(i32, i32)>);
+        impl SummarySource for Flat {
+            fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
+                if self.0 == Some((q, r)) {
+                    return None;
+                }
+                let cover = Cover::NONE.with(0, Slot::Pine);
+                Some(TileSample { z: 5 + (q == 0 && r == 0) as i32 * 20, water: Some(9), cover })
+            }
+        }
+        let (dq, dr) = sample_offsets(1)[3];
+        assert_eq!(summarize(1, 0, 0, &Flat(Some((dq, dr)))), None);
+        let cell = summarize(1, 0, 0, &Flat(None)).expect("every sample is there");
+        assert_eq!(cell.z, 25, "the peak survives");
+        assert_eq!(cell.water, Some(9));
+        assert_eq!(cell.canopy.count(Slot::Pine), SAMPLES as u16);
+    }
 
     #[test]
     fn select_center_z_single_tile() {

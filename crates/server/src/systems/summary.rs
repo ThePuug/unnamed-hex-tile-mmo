@@ -6,7 +6,7 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, mesh_region_lattice, sample_center_water, sample_center_z, summary_lattice},
+    summary::{compute_active_bands, mesh_region_lattice, summarize, summary_lattice},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
@@ -97,7 +97,7 @@ pub fn pass_summary_regions(
             let cached: Option<Vec<SummaryData>> = region_lat.tiles_in_cell((rk.mn, rk.mm))
                 .map(|(sq, sr)| {
                     summary_cache.get(&SummaryKey { r: rk.r, sq, sr })
-                        .map(|(center_z, water)| SummaryData { r: rk.r, sq, sr, center_z, water })
+                        .map(|cell| SummaryData { r: rk.r, sq, sr, cell })
                 })
                 .collect();
             match cached {
@@ -154,9 +154,8 @@ pub fn dispatch_summary_tasks(
                 let rl = mesh_region_lattice();
                 rl.tiles_in_cell((rk.mn, rk.mm))
                     .map(|(sq, sr)| {
-                        let center_z = sample_center_z(rk.r, sq, sr, |q, r| reg.elevation_at(q, r));
-                        let water = sample_center_water(rk.r, sq, sr, |q, r| reg.water_at(q, r));
-                        SummaryData { r: rk.r, sq, sr, center_z, water }
+                        let cell = summarize(rk.r, sq, sr, &reg).expect("the registry has every tile");
+                        SummaryData { r: rk.r, sq, sr, cell }
                     })
                     .collect()
             });
@@ -184,7 +183,7 @@ pub fn poll_summary_tasks(
             continue;
         };
         for data in &results {
-            summary_cache.insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr }, data.center_z, data.water);
+            summary_cache.insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr }, data.cell);
         }
         for ent in task_queue.waiting.remove(&region_key).unwrap_or_default() {
             let Ok(mut vis_cache) = query.get_mut(ent) else { continue };

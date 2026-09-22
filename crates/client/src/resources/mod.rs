@@ -408,10 +408,9 @@ pub struct SummaryCache {
     new_data: Arc<AtomicBool>,
 }
 
-/// One mesh region's summary cells: each cell's height and the water
-/// surface over it, or None where it is dry.
+/// One mesh region's summary cells.
 pub struct RegionData {
-    pub cells: HashMap<(i32, i32), (i32, Option<i32>)>,
+    pub cells: HashMap<(i32, i32), common_bevy::summary::SummaryCell>,
     pub source: RegionSource,
 }
 

@@ -880,7 +880,7 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
 /// water in blue by depth. What the band costs is logged: the first tile,
 /// which opens the cells, and then the summaries, each seven tiles.
 fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8> {
-    use common::summary::{sample_center_canopy, sample_center_water, sample_center_z, scale as summary_scale};
+    use common::summary::{scale as summary_scale, summarize};
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let s = summary_scale(r) as f64;
@@ -902,18 +902,13 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
     composite.tile_at(sq * s as i32, sr * s as i32);
     let first = t.elapsed();
     let t = Instant::now();
-    let summaries: HashMap<(i32, i32), (i32, Option<i32>, common::Canopy)> = cells
+    let summaries: HashMap<(i32, i32), common::summary::SummaryCell> = cells
         .par_iter()
-        .map(|&(sq, sr)| {
-            let z = sample_center_z(r, sq, sr, |q, rr| composite.elevation_at(q, rr));
-            let water = sample_center_water(r, sq, sr, |q, rr| composite.water_at(q, rr));
-            let canopy = sample_center_canopy(r, sq, sr, |q, rr| composite.cover_at(q, rr));
-            ((sq, sr), (z, water, canopy))
-        })
+        .map(|&(sq, sr)| ((sq, sr), summarize(r, sq, sr, composite).expect("the composite has every tile")))
         .collect();
     let took = t.elapsed();
-    let wet = summaries.values().filter(|(_, w, _)| w.is_some()).count();
-    let wooded = summaries.values().filter(|(_, _, c)| !c.is_empty()).count();
+    let wet = summaries.values().filter(|c| c.water.is_some()).count();
+    let wooded = summaries.values().filter(|c| !c.canopy.is_empty()).count();
     log::info!(
         "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, {} wooded, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
         summaries.len(),
@@ -932,12 +927,12 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .flat_map(|py| {
             (0..w)
                 .flat_map(move |px| {
-                    let (z, water, canopy) = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
-                    let c = match water {
+                    let cell = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
+                    let c = match cell.water {
                         // Depth on the water field's blue ramp: pale at a
                         // step deep, deep blue at 30.
-                        Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - z) as f64 / 30.0).clamp(0.0, 1.0)),
-                        None => canopy_color(orogen_ramp(z as f64), canopy),
+                        Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - cell.z) as f64 / 30.0).clamp(0.0, 1.0)),
+                        None => canopy_color(orogen_ramp(cell.z as f64), cell.canopy),
                     };
                     [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
                 })

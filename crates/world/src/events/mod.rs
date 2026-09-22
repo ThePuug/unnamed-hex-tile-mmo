@@ -689,7 +689,10 @@ impl Composite {
     /// surface at a step covers the tiles below it and leaves the tiles at
     /// it dry, so ground under less than half a step of water is dry.
     pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
-        let view = self.tile_at(q, r);
+        Self::water_of(&self.tile_at(q, r))
+    }
+
+    fn water_of(view: &TileView) -> Option<i32> {
         let surface = view.water?.round() as i32;
         (surface > view.elevation.round() as i32).then_some(surface)
     }
@@ -698,7 +701,7 @@ impl Composite {
         self.tile_at(q, r).tags
     }
 
-    /// What stands in a tile's seven slots.
+    /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
         self.tile_at(q, r).cover
     }
@@ -861,6 +864,15 @@ impl Composite {
         }
 
         view
+    }
+}
+
+/// Every tile is there: one materialisation serves the height, the water
+/// and the cover.
+impl common::summary::SummarySource for Composite {
+    fn sample(&self, q: i32, r: i32) -> Option<common::summary::TileSample> {
+        let view = self.tile_at(q, r);
+        Some(common::summary::TileSample { z: view.elevation.round() as i32, water: Self::water_of(&view), cover: view.cover })
     }
 }
 
