@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Slot, SLOTS};
+use common::{Cover, Slot, SLOTS};
 use common_bevy::geometry::{flat_top_tile_center, slot_center};
 use common_bevy::surface::{height_y, surface_y};
 use common_bevy::summary_mesh::MeshRegionKey;
@@ -392,14 +392,16 @@ pub fn place_canopy(
         if canopy.is_empty() {
             continue;
         }
-        let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * canopy.density() as f32;
         for (q, r) in lattice.tiles_in_cell(cell) {
+            // The tile's cover as the canopy fills it, so its trees grow
+            // to the same edge factor the tile's own would.
+            let mut cover = Cover::NONE;
             for k in 0..SLOTS.len() {
                 let (fill, kind, mix) = world::events::forest::slot_draws(q, r, k, world::WORLD_SEED);
-                let slot = canopy.slot(fill, kind, mix);
-                if slot == Slot::Empty {
-                    continue;
-                }
+                cover = cover.with(k, canopy.slot(fill, kind, mix));
+            }
+            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.fullness() as f32 / SLOTS.len() as f32;
+            for (k, slot) in cover.filled() {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
                 let Some((y, _)) = surface.at(Vec2::new(x, z)) else { continue };
@@ -448,7 +450,7 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
 /// and an instance buffer of every tree drawn with it, the first layer
 /// of its seed's pictures in the model's texture; `shaped` cards stand
 /// in the depth buffer by their pictures' depth.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice, shaped: bool) {
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice, shaped: bool, level: u32) {
     let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
@@ -467,7 +469,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         for ((slot, k), instances) in batches {
             let v = &kit.kit.of(slot)[k];
             let Some(cards) = &v.cards else { continue };
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), shaped);
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), shaped, level);
             parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Card));
         }
     });
@@ -529,7 +531,7 @@ fn update_trees(
             state.trees_spawned = false;
         }
         if !state.cards_spawned && d > TREE_KEEP {
-            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device, near);
+            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device, near, key.r);
             state.cards_spawned = true;
         } else if state.cards_spawned && d <= TREE_REACH {
             take_down::<Card>(&mut commands, entity, &children, &cards);

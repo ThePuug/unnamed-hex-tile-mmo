@@ -65,20 +65,46 @@ impl TerrainCut {
 #[derive(Resource, Default)]
 pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 
-/// The outer edge of the level that stands its trees as cards, as the
-/// shaders see it: where its ground morphs onto the coarser level's, the
-/// cards sink into the ground that wears their colour, across the same
-/// strip by the same weight. No strip while the edge is forced.
-#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
-pub struct CardEdge {
-    pub center: Vec2,
+/// Each level's band cut as the card shader sees it, keyed by level: the
+/// level's cards are confined to its band as its ground is, or a region
+/// built whole would stand its cards over the level beside it. A card
+/// past either edge is under the ground; over a strip inside the edge it
+/// sinks, each card in its own turn. At the seam between two levels that
+/// both stand cards the strip is short — the trees mostly agree across
+/// it — and at the outermost card level's edge it is long, into the
+/// ground that wears the trees' colour and crowns, where a wood going
+/// under is seen from far off. No strips while the edge is forced.
+#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
+pub struct CardCuts(pub HashMap<u32, CardCut>);
+
+#[derive(Clone, Copy, Default)]
+pub struct CardCut {
+    pub inner_center: Vec2,
+    pub inner: f32,
+    pub inner_strip: f32,
+    pub outer_center: Vec2,
     pub outer: f32,
-    pub fade: f32,
+    pub outer_strip: f32,
 }
 
-impl CardEdge {
-    pub fn of(cut: TerrainCut) -> Self {
-        CardEdge { center: cut.outer_center, outer: cut.outer, fade: cut.fade }
+/// The strips the cards leave over, in world units: at a seam between
+/// card levels, and at the last card level's outer edge.
+pub const CARD_SEAM_WU: f32 = 24.0;
+pub const CARD_SINK_WU: f32 = 240.0;
+
+impl CardCut {
+    /// The cut of level `r`, from its ground's; `last` when no level past
+    /// it stands cards.
+    pub fn of(cut: TerrainCut, last: bool) -> Self {
+        let sinks = cut.fade > 0.0;
+        CardCut {
+            inner_center: cut.inner_center,
+            inner: cut.inner,
+            inner_strip: if sinks { CARD_SEAM_WU } else { 0.0 },
+            outer_center: cut.outer_center,
+            outer: cut.outer,
+            outer_strip: if !sinks { 0.0 } else if last { CARD_SINK_WU } else { CARD_SEAM_WU },
+        }
     }
 }
 
