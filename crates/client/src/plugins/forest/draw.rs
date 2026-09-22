@@ -37,6 +37,10 @@ use bytemuck::{Pod, Zeroable};
 use crate::systems::camera::{Sightline, NEAR_FADE_RADIUS, SIGHTLINE_RADIUS};
 
 const SHADER: &str = "shaders/trees.wgsl";
+/// What the tree shader imports. A module is resolved only once its
+/// asset is loaded, and a pipeline whose import is missing waits forever
+/// and says nothing, so the handle is held here for the life of the app.
+const SHARED_SHADER: &str = "shaders/forest_shared.wgsl";
 
 /// One tree as the shader reads it: its place in the region's frame and
 /// its scale, then the cosine and sine of its turn.
@@ -137,6 +141,8 @@ struct RegionUniform {
 #[derive(Resource)]
 struct TreePipeline {
     shader: Handle<Shader>,
+    /// Held, never read: the shared module's asset stays loaded.
+    _shared: Handle<Shader>,
     mesh_pipeline: MeshPipeline,
     region_layout: BindGroupLayoutDescriptor,
     region_bind_group_layout: BindGroupLayout,
@@ -151,6 +157,7 @@ fn init_tree_pipeline(
     let entries = BindGroupLayoutEntries::single(ShaderStages::VERTEX_FRAGMENT, uniform_buffer::<RegionUniform>(false));
     commands.insert_resource(TreePipeline {
         shader: asset_server.load(SHADER),
+        _shared: asset_server.load(SHARED_SHADER),
         mesh_pipeline: mesh_pipeline.clone(),
         region_layout: BindGroupLayoutDescriptor::new("trees_region", &entries),
         region_bind_group_layout: render_device.create_bind_group_layout("trees_region", &entries),
