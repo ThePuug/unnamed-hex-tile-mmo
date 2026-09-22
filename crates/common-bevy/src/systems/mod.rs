@@ -15,7 +15,7 @@ pub const YEAR_MS: u128 = SEASON_MS*4;      // ~1 month real time = 4-season yea
 
 /// The seasons of the year and the weeks of a season, in order.
 pub const SEASONS: [&str; 4] = ["Thaw", "Blaze", "Ash", "Freeze"];
-pub const WEEKS: [&str; 7] = ["Mon", "Tus", "Wed", "Tur", "Fid", "Sat", "Sun"];
+pub const WEEKS: [&str; 7] = ["Mot", "Tus", "Wad", "Tur", "Fid", "Sut", "Sud"];
 
 /// A day of the year by its season, week of the season and day of the
 /// week, shown as `day.week.season`.
