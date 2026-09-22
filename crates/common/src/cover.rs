@@ -1,4 +1,6 @@
-//! A tile's cover: what stands in each of its three slots.
+//! A tile's cover: what stands in each of its three slots. And the canopy,
+//! what stands over many tiles as seven of them say, from which a summary
+//! fills the slots of every tile it covers by the tile's own rule.
 
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +80,12 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// A slot's chance and kind draw, hashed like its sway: the same for
+/// every process that fills a summary's slots.
+fn unit(q: i32, r: i32, k: usize, channel: u64) -> f64 {
+    (mix(q, r, k, channel) >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// The three slots of a tile, two bits each, slot `k` in bits `2k..2k+2`
 /// in [`SLOTS`] order. Fullness is how many hold anything: what movement
 /// reads. Fits a `u16` with room, so it crosses the wire as one.
@@ -118,6 +126,92 @@ impl Cover {
     /// The filled slots, each with what it holds.
     pub fn filled(self) -> impl Iterator<Item = (usize, Slot)> {
         (0..SLOTS.len()).map(move |k| (k, self.slot(k))).filter(|(_, s)| *s != Slot::Empty)
+    }
+}
+
+/// What stands over the tiles a summary covers, read from the
+/// [`crate::summary::SAMPLES`] sample tiles' slots: how many of those
+/// readings hold pine, deciduous and scrub, five bits each, the rest
+/// empty. Lossless for the reading, two bytes on the wire, and the density
+/// and the kinds' shares fall out of it; the summary fills each slot of
+/// every tile it covers from those by [`Canopy::slot`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Canopy(u16);
+
+/// The slot readings a canopy is made of, and the most it can count.
+pub const CANOPY_READINGS: u16 = crate::summary::SAMPLES as u16 * SLOTS.len() as u16;
+
+impl Canopy {
+    pub const NONE: Canopy = Canopy(0);
+
+    /// The canopy of the sample tiles' covers.
+    pub fn of(covers: &[Cover]) -> Canopy {
+        debug_assert!(covers.len() <= crate::summary::SAMPLES);
+        let mut counts = [0u16; 3];
+        for cover in covers {
+            for (_, slot) in cover.filled() {
+                counts[Self::index(slot)] += 1;
+            }
+        }
+        Canopy(counts[0] | counts[1] << 5 | counts[2] << 10)
+    }
+
+    pub fn from_bits(bits: u16) -> Canopy {
+        Canopy(bits & 0x7FFF)
+    }
+
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+
+    fn index(kind: Slot) -> usize {
+        match kind {
+            Slot::Pine => 0,
+            Slot::Deciduous => 1,
+            Slot::Scrub => 2,
+            Slot::Empty => unreachable!("an empty slot is not counted"),
+        }
+    }
+
+    /// How many readings hold `kind`; the empty ones are the rest.
+    pub fn count(self, kind: Slot) -> u16 {
+        match kind {
+            Slot::Empty => CANOPY_READINGS - self.filled(),
+            kind => (self.0 >> (5 * Self::index(kind))) & 31,
+        }
+    }
+
+    /// How many readings hold anything.
+    pub fn filled(self) -> u16 {
+        self.count(Slot::Pine) + self.count(Slot::Deciduous) + self.count(Slot::Scrub)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The share of the readings holding anything, 0 to 1.
+    pub fn density(self) -> f64 {
+        self.filled() as f64 / CANOPY_READINGS as f64
+    }
+
+    /// What slot `k` of tile `(q, r)` holds under this canopy: filled by
+    /// the slot's own hash against the density, a kind drawn by another
+    /// from the shares, so a denser canopy only adds trees and never moves
+    /// one, and a canopy of one kind gives nothing else.
+    pub fn slot(self, q: i32, r: i32, k: usize) -> Slot {
+        if self.density() <= unit(q, r, k, 6) {
+            return Slot::Empty;
+        }
+        let draw = (unit(q, r, k, 7) * self.filled() as f64) as u16;
+        let pine = self.count(Slot::Pine);
+        if draw < pine {
+            Slot::Pine
+        } else if draw < pine + self.count(Slot::Deciduous) {
+            Slot::Deciduous
+        } else {
+            Slot::Scrub
+        }
     }
 }
 
@@ -162,5 +256,41 @@ mod tests {
         }
         assert_eq!(c.fullness(), 3);
         assert_eq!(c.bits() >> (2 * SLOTS.len()), 0, "nothing past the last slot");
+    }
+
+    /// A canopy counts what its covers hold, and its slots follow: none
+    /// from none, every one from a full canopy of one kind, and as the
+    /// density climbs a slot that was filled stays filled.
+    #[test]
+    fn a_canopy_counts_its_covers_and_fills_by_them() {
+        let samples = crate::summary::SAMPLES;
+        assert_eq!(Canopy::of(&vec![Cover::NONE; samples]), Canopy::NONE);
+        let all = |kind: Slot| Cover::NONE.with(0, kind).with(1, kind).with(2, kind);
+        let pines = Canopy::of(&vec![all(Slot::Pine); samples]);
+        assert_eq!(pines.count(Slot::Pine), CANOPY_READINGS);
+        assert_eq!(pines.count(Slot::Empty), 0);
+        assert_eq!(pines.density(), 1.0);
+        assert_eq!(Canopy::from_bits(pines.bits()), pines);
+        for k in 0..SLOTS.len() {
+            assert_eq!(pines.slot(11, -4, k), Slot::Pine);
+            assert_eq!(Canopy::NONE.slot(11, -4, k), Slot::Empty);
+        }
+        let mixed = Canopy::of(&[all(Slot::Pine), all(Slot::Deciduous), Cover::NONE.with(1, Slot::Scrub)]);
+        assert_eq!((mixed.count(Slot::Pine), mixed.count(Slot::Deciduous), mixed.count(Slot::Scrub)), (3, 3, 1));
+        assert_eq!(mixed.filled(), 7);
+        let mut covers = Vec::new();
+        let mut was = vec![Slot::Empty; 30];
+        for n in 0..=samples {
+            let canopy = Canopy::of(&covers);
+            for (i, slot) in was.iter_mut().enumerate() {
+                let now = canopy.slot(i as i32 * 7, -(i as i32), i % SLOTS.len());
+                assert!(*slot == Slot::Empty || now == *slot, "a filled slot stays as the canopy thickens");
+                *slot = now;
+            }
+            if n < samples {
+                covers.push(all(Slot::Deciduous));
+            }
+        }
+        assert!(was.iter().all(|s| *s == Slot::Deciduous));
     }
 }

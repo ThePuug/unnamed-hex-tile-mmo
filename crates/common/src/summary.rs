@@ -1,8 +1,10 @@
-//! The summary sampling rule: what one height and one water surface stand
-//! for a group of tiles at a distance, read from seven of them. Every
-//! producer of a summary — the client's map, the server, the flyover, the
-//! world viewer — reads this one rule, or their silhouettes differ where
-//! they meet.
+//! The summary sampling rule: what one height, one water surface and one
+//! canopy stand for a group of tiles at a distance, read from seven of
+//! them. Every producer of a summary — the client's map, the server, the
+//! flyover, the world viewer — reads this one rule, or their silhouettes
+//! differ where they meet.
+
+use crate::cover::{Canopy, Cover};
 
 /// Nested LoD levels: summary scales triple per level.
 ///
@@ -25,12 +27,15 @@ pub fn center_tile(r: u32, sq: i32, sr: i32) -> (i32, i32) {
     (sq * scale(r), sr * scale(r))
 }
 
+/// How many tiles a summary is read from.
+pub const SAMPLES: usize = 7;
+
 /// The seven tiles a summary of radius `r` is read from, as offsets from
 /// its center: the center and one a third of the width out along each hex
 /// axis. For nested levels (scale divisible by 3) the six land exactly on
 /// the child level's centers (INV-006), so refinement keeps the
 /// silhouette. At r=1 the seven are the whole hexball.
-pub fn sample_offsets(r: u32) -> [(i32, i32); 7] {
+pub fn sample_offsets(r: u32) -> [(i32, i32); SAMPLES] {
     let d = scale(r) / 3;
     [(0, 0), (d, 0), (-d, 0), (0, d), (0, -d), (d, -d), (-d, d)]
 }
@@ -45,7 +50,7 @@ pub fn sample_center_z(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i3
 /// available.
 pub fn sample_center_z_opt(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMut(i32, i32) -> Option<i32>) -> Option<i32> {
     let (cq, cr) = center_tile(r, sq, sr);
-    let mut zs = [0i32; 7];
+    let mut zs = [0i32; SAMPLES];
     for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
         zs[i] = elevation_at(cq + dq, cr + dr)?;
     }
@@ -59,11 +64,22 @@ pub fn sample_center_z_opt(r: u32, sq: i32, sr: i32, mut elevation_at: impl FnMu
 /// tile's surface, or None where it is dry.
 pub fn sample_center_water(r: u32, sq: i32, sr: i32, mut water_at: impl FnMut(i32, i32) -> Option<i32>) -> Option<i32> {
     let (cq, cr) = center_tile(r, sq, sr);
-    let mut ws = [None; 7];
+    let mut ws = [None; SAMPLES];
     for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
         ws[i] = water_at(cq + dq, cr + dr);
     }
     select_center_water(&ws)
+}
+
+/// The canopy a summary carries: what its seven samples' slots hold,
+/// counted. `cover_at` is a tile's cover, none where it has nothing.
+pub fn sample_center_canopy(r: u32, sq: i32, sr: i32, mut cover_at: impl FnMut(i32, i32) -> Cover) -> Canopy {
+    let (cq, cr) = center_tile(r, sq, sr);
+    let mut covers = [Cover::NONE; SAMPLES];
+    for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
+        covers[i] = cover_at(cq + dq, cr + dr);
+    }
+    Canopy::of(&covers)
 }
 
 /// The surface more than half of the samples share, or None.

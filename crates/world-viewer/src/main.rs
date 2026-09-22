@@ -166,8 +166,9 @@ struct Cli {
 
     /// Render as the client draws a distance band: summaries of this
     /// radius (0 is the tiles; the ladder is 1, 4, 13, 40), each read from
-    /// its seven sample tiles through the whole stack, in place of the
-    /// views, with the cost logged. What a band costs, and what survives it.
+    /// its seven sample tiles through the whole stack, ground, water and
+    /// canopy, in place of the views, with the cost logged. What a band
+    /// costs, and what survives it.
     #[arg(long)]
     lod: Option<u32>,
 }
@@ -879,7 +880,7 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
 /// water in blue by depth. What the band costs is logged: the first tile,
 /// which opens the cells, and then the summaries, each seven tiles.
 fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8> {
-    use common::summary::{sample_center_water, sample_center_z, scale as summary_scale};
+    use common::summary::{sample_center_canopy, sample_center_water, sample_center_z, scale as summary_scale};
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let s = summary_scale(r) as f64;
@@ -901,20 +902,23 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
     composite.tile_at(sq * s as i32, sr * s as i32);
     let first = t.elapsed();
     let t = Instant::now();
-    let summaries: HashMap<(i32, i32), (i32, Option<i32>)> = cells
+    let summaries: HashMap<(i32, i32), (i32, Option<i32>, common::Canopy)> = cells
         .par_iter()
         .map(|&(sq, sr)| {
             let z = sample_center_z(r, sq, sr, |q, rr| composite.elevation_at(q, rr));
             let water = sample_center_water(r, sq, sr, |q, rr| composite.water_at(q, rr));
-            ((sq, sr), (z, water))
+            let canopy = sample_center_canopy(r, sq, sr, |q, rr| composite.cover_at(q, rr));
+            ((sq, sr), (z, water, canopy))
         })
         .collect();
     let took = t.elapsed();
-    let wet = summaries.values().filter(|(_, w)| w.is_some()).count();
+    let wet = summaries.values().filter(|(_, w, _)| w.is_some()).count();
+    let wooded = summaries.values().filter(|(_, _, c)| !c.is_empty()).count();
     log::info!(
-        "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
+        "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, {} wooded, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
         summaries.len(),
         wet,
+        wooded,
         summaries.len() * 7,
         first.as_secs_f64() * 1e3,
         took.as_secs_f64(),
@@ -928,12 +932,12 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .flat_map(|py| {
             (0..w)
                 .flat_map(move |px| {
-                    let (z, water) = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
+                    let (z, water, canopy) = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
                     let c = match water {
                         // Depth on the water field's blue ramp: pale at a
                         // step deep, deep blue at 30.
                         Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - z) as f64 / 30.0).clamp(0.0, 1.0)),
-                        None => orogen_ramp(z as f64),
+                        None => canopy_color(orogen_ramp(z as f64), canopy),
                     };
                     [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
                 })
@@ -945,27 +949,40 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
 /// The plateau on the substrate, hillshaded, so the thickening's shape reads
 /// independently of how the vertical scale is calibrated. Marches the fronts
 /// under the viewport itself, since the plateau rises with the wedge.
-/// A tile's cover over the colour beneath it: the canopy's green, pine
-/// blue-green, deciduous green, scrub olive, blended by the kinds' shares
-/// and laid over the ground by the tile's fullness.
-fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64) {
-    let fullness = cover.fullness();
-    if fullness == 0 {
+/// A kind's green: pine blue-green, deciduous green, scrub olive.
+fn kind_color(kind: common::Slot) -> (f64, f64, f64) {
+    match kind {
+        common::Slot::Pine => (0.05, 0.30, 0.22),
+        common::Slot::Deciduous => (0.16, 0.48, 0.12),
+        common::Slot::Scrub => (0.45, 0.50, 0.18),
+        common::Slot::Empty => (0.0, 0.0, 0.0),
+    }
+}
+
+/// Trees over the colour beneath them: the kinds' greens blended by their
+/// shares, laid over the ground by the density.
+fn trees_color(ground: (f64, f64, f64), kinds: impl Iterator<Item = common::Slot>, density: f64) -> (f64, f64, f64) {
+    let (mut canopy, mut n) = ((0.0, 0.0, 0.0), 0.0);
+    for kind in kinds {
+        let c = kind_color(kind);
+        canopy = (canopy.0 + c.0, canopy.1 + c.1, canopy.2 + c.2);
+        n += 1.0;
+    }
+    if n == 0.0 {
         return ground;
     }
-    let mut canopy = (0.0, 0.0, 0.0);
-    for (_, slot) in cover.filled() {
-        let c = match slot {
-            common::Slot::Pine => (0.05, 0.30, 0.22),
-            common::Slot::Deciduous => (0.16, 0.48, 0.12),
-            common::Slot::Scrub => (0.45, 0.50, 0.18),
-            common::Slot::Empty => ground,
-        };
-        canopy = (canopy.0 + c.0, canopy.1 + c.1, canopy.2 + c.2);
-    }
-    let n = fullness as f64;
-    let canopy = (canopy.0 / n, canopy.1 / n, canopy.2 / n);
-    lerp_rgb(ground, canopy, 0.35 + 0.65 * n / common::SLOTS.len() as f64)
+    lerp_rgb(ground, (canopy.0 / n, canopy.1 / n, canopy.2 / n), 0.35 + 0.65 * density)
+}
+
+/// A tile's cover over the colour beneath it, by its fullness.
+fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64) {
+    trees_color(ground, cover.filled().map(|(_, s)| s), cover.fullness() as f64 / common::SLOTS.len() as f64)
+}
+
+/// A summary's canopy over the colour beneath it, by its density.
+fn canopy_color(ground: (f64, f64, f64), canopy: common::Canopy) -> (f64, f64, f64) {
+    let kinds = [common::Slot::Pine, common::Slot::Deciduous, common::Slot::Scrub];
+    trees_color(ground, kinds.into_iter().flat_map(|k| std::iter::repeat(k).take(canopy.count(k) as usize)), canopy.density())
 }
 
 /// What the sky gives each position, on a ramp from the dry ground's tan
