@@ -81,7 +81,8 @@ pub struct Kit {
 
 /// What a model declares of its cards in its first node's extras, as
 /// modelgen writes it: the texture array's path, and each view's
-/// elevation in degrees and frame in world units, the side then the top.
+/// elevation in degrees and frame and depth span in world units, the
+/// side then the top.
 #[derive(Deserialize)]
 struct CardExtras {
     card: CardDecl,
@@ -98,6 +99,7 @@ struct CardViewDecl {
     elevation: f32,
     width: f32,
     height: f32,
+    depth: f32,
 }
 
 impl CardDecl {
@@ -106,7 +108,7 @@ impl CardDecl {
     }
 
     fn cards(&self, asset_server: &AssetServer) -> Option<draw::Cards> {
-        let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, elevation: d.elevation.to_radians() };
+        let view = |d: &CardViewDecl| draw::CardView { width: d.width, height: d.height, depth: d.depth, elevation: d.elevation.to_radians() };
         let [side, top] = self.views.as_slice() else { return None };
         Some(draw::Cards { texture: asset_server.load(self.texture.clone()), side: view(side), top: view(top) })
     }
@@ -441,8 +443,9 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
 /// Spawn a region's trees as cards, children of its entity: one batch
 /// per variation present whose model shipped cards, each the shared quad
 /// and an instance buffer of every tree drawn with it, the first layer
-/// of its seed's pictures in the model's texture.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
+/// of its seed's pictures in the model's texture; `shaped` cards stand
+/// in the depth buffer by their pictures' depth.
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice, shaped: bool) {
     let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
@@ -461,7 +464,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         for ((slot, k), instances) in batches {
             let v = &kit.kit.of(slot)[k];
             let Some(cards) = &v.cards else { continue };
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone());
+            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards.clone(), shaped);
             parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Card));
         }
     });
@@ -511,8 +514,10 @@ fn update_trees(
             continue;
         }
         // Only the tiles' own trees are ever models: a summary's stand as
-        // cards from the moment its ground does.
-        let d = if key.r == 0 { state.mesh_origin.xz().distance(camera.xz()) } else { f32::INFINITY };
+        // cards from the moment its ground does, and only the tiles' cards,
+        // near enough for their overlaps to show, are shaped in depth.
+        let near = key.r == 0;
+        let d = if near { state.mesh_origin.xz().distance(camera.xz()) } else { f32::INFINITY };
         if !state.trees_spawned && d <= TREE_REACH {
             spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
             state.trees_spawned = true;
@@ -521,7 +526,7 @@ fn update_trees(
             state.trees_spawned = false;
         }
         if !state.cards_spawned && d > TREE_KEEP {
-            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device);
+            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device, near);
             state.cards_spawned = true;
         } else if state.cards_spawned && d <= TREE_REACH {
             take_down::<Card>(&mut commands, entity, &children, &cards);

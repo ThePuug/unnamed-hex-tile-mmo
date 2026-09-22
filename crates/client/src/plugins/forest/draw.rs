@@ -81,10 +81,12 @@ impl Instance {
     }
 }
 
-/// A batch of instances the draw takes its buffer and count from.
+/// A batch of instances the draw takes its buffer and count from, and
+/// whether it writes its own depth.
 pub trait Batch: Component {
     fn buffer(&self) -> &Buffer;
     fn len(&self) -> u32;
+    fn writes_depth(&self) -> bool { false }
 }
 
 /// The instance buffer of `instances`, built now, with the bounding box
@@ -128,17 +130,19 @@ impl Batch for TreeBatch {
     fn len(&self) -> u32 { self.len }
 }
 
-/// One view of a kind's card, as the model declared it: the frame in
-/// world units and the elevation it was baked from, in radians.
+/// One view of a kind's card, as the model declared it: the frame and
+/// the span its depth picture covers, in world units, and the elevation
+/// it was baked from, in radians.
 #[derive(Clone, Copy, Debug)]
 pub struct CardView {
     pub width: f32,
     pub height: f32,
+    pub depth: f32,
     pub elevation: f32,
 }
 
 /// The layers of one variation's pictures in a card texture: each view's
-/// unlit colour then its normals, side then top, as modelgen packs them.
+/// unlit colour then its shape, side then top, as modelgen packs them.
 pub const CARD_LAYERS: u32 = 4;
 
 /// A kind's cards: the texture array, `CARD_LAYERS` per variation, and
@@ -151,7 +155,10 @@ pub struct Cards {
 }
 
 /// A region's trees of one variation as cards: the instance buffer and
-/// its count, and the kind's cards. The entity holds the shared quad.
+/// its count, the kind's cards, and whether the cards stand in the depth
+/// buffer by their shape — the near ones, whose overlaps would otherwise
+/// fight along the quad; a far stand keeps the quad's depth and the
+/// early test against its overdraw. The entity holds the shared quad.
 #[derive(Component, Clone)]
 #[require(VisibilityClass)]
 #[component(on_add = visibility::add_visibility_class::<CardBatch>)]
@@ -159,18 +166,20 @@ pub struct CardBatch {
     pub buffer: Buffer,
     pub len: u32,
     pub cards: Arc<Cards>,
+    pub shaped: bool,
 }
 
 impl CardBatch {
-    pub fn new(render_device: &RenderDevice, instances: &[Instance], reach: f32, cards: Arc<Cards>) -> (CardBatch, Aabb) {
+    pub fn new(render_device: &RenderDevice, instances: &[Instance], reach: f32, cards: Arc<Cards>, shaped: bool) -> (CardBatch, Aabb) {
         let (buffer, aabb) = instance_buffer(render_device, instances, reach);
-        (CardBatch { buffer, len: instances.len() as u32, cards }, aabb)
+        (CardBatch { buffer, len: instances.len() as u32, cards, shaped }, aabb)
     }
 }
 
 impl Batch for CardBatch {
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
+    fn writes_depth(&self) -> bool { self.shaped }
 }
 
 /// The batch's world transform, extracted with it each frame: the region's,
@@ -240,8 +249,8 @@ struct RegionUniform {
     near_fade: f32,
 }
 
-/// A kind's two card frames as the shader's uniform: width, height and
-/// elevation of the side, then the top.
+/// A kind's two card frames as the shader's uniform: width, height,
+/// elevation and depth span of the side, then the top.
 #[derive(Clone, Copy, ShaderType)]
 struct CardUniform {
     side: Vec4,
@@ -250,25 +259,40 @@ struct CardUniform {
 
 impl CardUniform {
     fn of(cards: &Cards) -> Self {
-        let v = |c: CardView| Vec4::new(c.width, c.height, c.elevation, 0.0);
+        let v = |c: CardView| Vec4::new(c.width, c.height, c.elevation, c.depth);
         CardUniform { side: v(cards.side), top: v(cards.top) }
     }
 }
 
+/// What a batch's pipeline is specialised on: the mesh pipeline's key for
+/// the view and mesh, and whether the fragment writes its own depth.
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct BatchKey {
+    mesh: MeshPipelineKey,
+    writes_depth: bool,
+}
+
 /// A pipeline over the mesh pipeline's descriptor: its shader, and the
 /// layout that takes the mesh's place at group 2.
-trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = MeshPipelineKey> {
+trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
     fn parts(&self) -> (&Handle<Shader>, &MeshPipeline, &BindGroupLayoutDescriptor);
     fn two_sided(&self) -> bool { false }
 
     /// The mesh pipeline's descriptor for the key, its view layouts and
     /// shader defs kept, with the batch shader, the instance buffer as a
-    /// second vertex buffer, and the batch's layout in the mesh's place.
-    fn batch_descriptor(&self, key: MeshPipelineKey, layout: &MeshVertexBufferLayoutRef, label: &'static str) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
+    /// second vertex buffer, and the batch's layout in the mesh's place;
+    /// a batch that writes depth gets CARD_DEPTH in both stages.
+    fn batch_descriptor(&self, key: BatchKey, layout: &MeshVertexBufferLayoutRef, label: &'static str) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         let (shader, mesh_pipeline, group) = self.parts();
-        let mut descriptor = mesh_pipeline.specialize(key, layout)?;
+        let mut descriptor = mesh_pipeline.specialize(key.mesh, layout)?;
         descriptor.label = Some(label.into());
         descriptor.vertex.shader = shader.clone();
+        if key.writes_depth {
+            descriptor.vertex.shader_defs.push("CARD_DEPTH".into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("CARD_DEPTH".into());
+            }
+        }
         descriptor.vertex.buffers.push(VertexBufferLayout {
             array_stride: size_of::<Instance>() as u64,
             step_mode: VertexStepMode::Instance,
@@ -347,7 +371,7 @@ impl BatchPipeline for TreePipeline {
 }
 
 impl SpecializedMeshPipeline for TreePipeline {
-    type Key = MeshPipelineKey;
+    type Key = BatchKey;
 
     fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         self.batch_descriptor(key, layout, "trees")
@@ -364,7 +388,7 @@ impl BatchPipeline for CardPipeline {
 }
 
 impl SpecializedMeshPipeline for CardPipeline {
-    type Key = MeshPipelineKey;
+    type Key = BatchKey;
 
     fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         self.batch_descriptor(key, layout, "cards")
@@ -386,6 +410,7 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
     meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
     mesh_allocator: Res<MeshAllocator>,
+    batches: Query<&B>,
     mut change_tick: Local<Tick>,
 ) {
     let draw_function = draw_functions.read().id::<D>();
@@ -395,9 +420,13 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
         // prepasses and samples pick the view layout the bind group holds.
         let Some(&view_key) = view_keys.get(&view.retained_view_entity) else { continue };
         for &(render_entity, main_entity) in visible.get::<B>().iter() {
+            let Ok(batch) = batches.get(render_entity) else { continue };
             let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(main_entity) else { continue };
             let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id) else { continue };
-            let key = view_key | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology());
+            let key = BatchKey {
+                mesh: view_key | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology()),
+                writes_depth: batch.writes_depth(),
+            };
             let pipeline = match pipelines.specialize(&pipeline_cache, &batch_pipeline, key, &mesh.layout) {
                 Ok(pipeline) => pipeline,
                 Err(e) => {
