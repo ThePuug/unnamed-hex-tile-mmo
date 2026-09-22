@@ -13,6 +13,7 @@
 //! the camera, with the model's baked picture on it: the card pipeline
 //! binds the variation's card texture and frames beside the region.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::camera::primitives::Aabb;
@@ -219,6 +220,7 @@ impl Plugin for TreeDrawPlugin {
         render_app
             .init_resource::<SpecializedMeshPipelines<TreePipeline>>()
             .init_resource::<SpecializedMeshPipelines<CardPipeline>>()
+            .init_resource::<Regions>()
             .add_render_command::<Opaque3d, DrawTrees>()
             .add_render_command::<Opaque3d, DrawCards>()
             .add_systems(RenderStartup, init_pipelines)
@@ -227,8 +229,8 @@ impl Plugin for TreeDrawPlugin {
                 (
                     queue_batches::<TreeBatch, TreePipeline, DrawTrees>.in_set(RenderSystems::Queue),
                     queue_batches::<CardBatch, CardPipeline, DrawCards>.in_set(RenderSystems::Queue),
-                    prepare_tree_bind_groups.in_set(RenderSystems::PrepareBindGroups),
-                    prepare_card_bind_groups.in_set(RenderSystems::PrepareBindGroups),
+                    prepare_regions.in_set(RenderSystems::PrepareResources),
+                    prepare_region_bind_groups.in_set(RenderSystems::PrepareBindGroups),
                 ),
             );
     }
@@ -324,7 +326,7 @@ fn init_pipelines(
     mesh_pipeline: Res<MeshPipeline>,
     render_device: Res<RenderDevice>,
 ) {
-    let region = BindGroupLayoutEntries::single(ShaderStages::VERTEX_FRAGMENT, uniform_buffer::<RegionUniform>(false));
+    let region = BindGroupLayoutEntries::single(ShaderStages::VERTEX_FRAGMENT, uniform_buffer::<RegionUniform>(true));
     commands.insert_resource(TreePipeline {
         shader: asset_server.load(TREE_SHADER),
         _shared: asset_server.load(SHARED_SHADER),
@@ -335,7 +337,7 @@ fn init_pipelines(
     let card = BindGroupLayoutEntries::with_indices(
         ShaderStages::VERTEX_FRAGMENT,
         (
-            (0, uniform_buffer::<RegionUniform>(false)),
+            (0, uniform_buffer::<RegionUniform>(true)),
             (1, uniform_buffer::<CardUniform>(false)),
             (2, texture_2d_array(TextureSampleType::Float { filterable: true })),
             (3, sampler(SamplerBindingType::Filtering)),
@@ -438,105 +440,112 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static>(
     }
 }
 
-/// A batch's group 2: the region's uniform, made once and written every
-/// frame from the extracted transform and sightline, and the bind group
-/// holding it with whatever else the batch's pipeline binds.
-#[derive(Component)]
-struct BatchBindGroup {
-    region: Buffer,
-    bind_group: BindGroup,
+/// Every batch's region uniform in one buffer, written once a frame, and
+/// the bind groups that read it at a batch's own offset. A buffer each,
+/// written one at a time, cost the frame a write per batch and the wood
+/// stands in thousands of them. A bind group holds the buffer it was
+/// made against, so all of them go when the buffer is re-allocated.
+#[derive(Resource, Default)]
+struct Regions {
+    uniforms: DynamicUniformBuffer<RegionUniform>,
+    held: Option<BufferId>,
+    trees: Option<BindGroup>,
+    /// One per card texture: a card's group binds its model's pictures
+    /// and their frames beside the region.
+    cards: HashMap<AssetId<Image>, BindGroup>,
 }
 
-/// The region uniform's bytes for this frame.
-fn region_bytes(transform: &TreeTransform, sightline: Option<&Sightline>, band: Option<&CardBand>) -> Vec<u8> {
+/// Where in [`Regions`] this batch's uniform sits.
+#[derive(Component)]
+struct RegionOffset(u32);
+
+/// A batch's uniform for this frame.
+fn region_uniform(transform: &TreeTransform, sightline: Option<&Sightline>, band: Option<&CardBand>) -> RegionUniform {
     let sightline = match sightline.and_then(|s| s.player) {
         Some(p) => p.extend(SIGHTLINE_RADIUS),
         None => Vec4::ZERO,
     };
     let (band, sink_to) = band.map_or((Vec4::ZERO, 0.0), |b| (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.sink_to));
-    let uniform = RegionUniform { world_from_local: transform.0, sightline, band, sink_to, near_fade: NEAR_FADE_RADIUS };
-    let mut bytes = encase::UniformBuffer::new(Vec::new());
-    bytes.write(&uniform).expect("a uniform of plain floats writes");
-    bytes.into_inner()
+    RegionUniform { world_from_local: transform.0, sightline, band, sink_to, near_fade: NEAR_FADE_RADIUS }
 }
 
-fn region_buffer(render_device: &RenderDevice, bytes: &[u8]) -> Buffer {
-    render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("trees_region"),
-        contents: bytes,
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-    })
-}
-
-fn prepare_tree_bind_groups(
+/// Every batch's uniform into the one buffer in one write, each batch
+/// keeping the offset its own sits at.
+fn prepare_regions(
     mut commands: Commands,
-    pipeline: Res<TreePipeline>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     sightline: Option<Res<Sightline>>,
     band: Option<Res<CardBand>>,
-    batches: Query<(Entity, &TreeTransform, Option<&BatchBindGroup>), With<TreeBatch>>,
+    regions: ResMut<Regions>,
+    mut batches: Query<(Entity, &TreeTransform, Option<&mut RegionOffset>)>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("tree_bg");
-    for (entity, transform, existing) in &batches {
-        let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
-        match existing {
-            Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
+    let _t = timers.0.scope("regions");
+    let regions = regions.into_inner();
+    regions.uniforms.clear();
+    for (entity, transform, offset) in &mut batches {
+        let at = regions.uniforms.push(&region_uniform(transform, sightline.as_deref(), band.as_deref()));
+        match offset {
+            Some(mut offset) => offset.0 = at,
             None => {
-                let region = region_buffer(&render_device, &bytes);
-                let bind_group = render_device.create_bind_group(
-                    "trees_region",
-                    &pipeline.bind_group_layout,
-                    &BindGroupEntries::single(region.as_entire_binding()),
-                );
-                commands.entity(entity).insert(BatchBindGroup { region, bind_group });
+                commands.entity(entity).insert(RegionOffset(at));
             }
         }
     }
+    regions.uniforms.write_buffer(&render_device, &render_queue);
+    let held = regions.uniforms.buffer().map(Buffer::id);
+    if regions.held != held {
+        regions.held = held;
+        regions.trees = None;
+        regions.cards.clear();
+    }
 }
 
-/// A card batch's group 2 waits for its texture: until the image is on
-/// the GPU the batch has no bind group and the draw skips it.
-fn prepare_card_bind_groups(
-    mut commands: Commands,
-    pipeline: Res<CardPipeline>,
+/// The groups that read the buffer: one for the trees, and one for each
+/// card texture standing. A card batch whose texture is not on the GPU
+/// yet has no group, and the draw skips it.
+fn prepare_region_bind_groups(
+    tree_pipeline: Res<TreePipeline>,
+    card_pipeline: Res<CardPipeline>,
     render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    sightline: Option<Res<Sightline>>,
-    band: Option<Res<CardBand>>,
     images: Res<RenderAssets<GpuImage>>,
-    batches: Query<(Entity, &TreeTransform, &CardBatch, Option<&BatchBindGroup>)>,
+    regions: ResMut<Regions>,
+    cards: Query<&CardBatch>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("card_bg");
-    for (entity, transform, batch, existing) in &batches {
-        let bytes = region_bytes(transform, sightline.as_deref(), band.as_deref());
-        match existing {
-            Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
-            None => {
-                let Some(image) = images.get(&batch.cards.texture) else { continue };
-                let region = region_buffer(&render_device, &bytes);
-                let mut card_bytes = encase::UniformBuffer::new(Vec::new());
-                card_bytes.write(&CardUniform::of(&batch.cards)).expect("a uniform of plain floats writes");
-                let card = render_device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("cards_frames"),
-                    contents: card_bytes.as_ref(),
-                    usage: BufferUsages::UNIFORM,
-                });
-                let bind_group = render_device.create_bind_group(
-                    "cards_region",
-                    &pipeline.bind_group_layout,
-                    &BindGroupEntries::with_indices((
-                        (0, region.as_entire_binding()),
-                        (1, card.as_entire_binding()),
-                        (2, &image.texture_view),
-                        (3, &image.sampler),
-                    )),
-                );
-                commands.entity(entity).insert(BatchBindGroup { region, bind_group });
-            }
+    let _t = timers.0.scope("bgroups");
+    let Regions { uniforms, trees, cards: groups, .. } = regions.into_inner();
+    if trees.is_none() {
+        *trees = uniforms.binding().map(|region| {
+            render_device.create_bind_group("trees_region", &tree_pipeline.bind_group_layout, &BindGroupEntries::single(region))
+        });
+    }
+    for batch in &cards {
+        let id = batch.cards.texture.id();
+        if groups.contains_key(&id) {
+            continue;
         }
+        let Some(image) = images.get(&batch.cards.texture) else { continue };
+        let Some(region) = uniforms.binding() else { continue };
+        let mut frames = encase::UniformBuffer::new(Vec::new());
+        frames.write(&CardUniform::of(&batch.cards)).expect("a uniform of plain floats writes");
+        let frames = render_device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("cards_frames"),
+            contents: frames.as_ref(),
+            usage: BufferUsages::UNIFORM,
+        });
+        let group = render_device.create_bind_group(
+            "cards_region",
+            &card_pipeline.bind_group_layout,
+            &BindGroupEntries::with_indices((
+                (0, region),
+                (1, frames.as_entire_binding()),
+                (2, &image.texture_view),
+                (3, &image.sampler),
+            )),
+        );
+        groups.insert(id, group);
     }
 }
 
@@ -544,7 +553,7 @@ type DrawTrees = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
-    SetBatchBindGroup<2>,
+    SetTreeRegion<2>,
     DrawBatch<TreeBatch>,
 );
 
@@ -552,26 +561,50 @@ type DrawCards = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
-    SetBatchBindGroup<2>,
+    SetCardRegion<2>,
     DrawBatch<CardBatch>,
 );
 
-struct SetBatchBindGroup<const I: usize>;
+/// The wood's one group, read at this batch's offset into it.
+struct SetTreeRegion<const I: usize>;
 
-impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetBatchBindGroup<I> {
-    type Param = ();
+impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetTreeRegion<I> {
+    type Param = SRes<Regions>;
     type ViewQuery = ();
-    type ItemQuery = Read<BatchBindGroup>;
+    type ItemQuery = Read<RegionOffset>;
 
     fn render<'w>(
         _item: &P,
         _view: (),
-        group: Option<&'w BatchBindGroup>,
-        _param: SystemParamItem<'w, '_, Self::Param>,
+        offset: Option<&'w RegionOffset>,
+        regions: SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let Some(group) = group else { return RenderCommandResult::Skip };
-        pass.set_bind_group(I, &group.bind_group, &[]);
+        let Some(offset) = offset else { return RenderCommandResult::Skip };
+        let Some(group) = regions.into_inner().trees.as_ref() else { return RenderCommandResult::Skip };
+        pass.set_bind_group(I, group, &[offset.0]);
+        RenderCommandResult::Success
+    }
+}
+
+/// The group of this batch's card texture, read at this batch's offset.
+struct SetCardRegion<const I: usize>;
+
+impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetCardRegion<I> {
+    type Param = SRes<Regions>;
+    type ViewQuery = ();
+    type ItemQuery = (Read<RegionOffset>, Read<CardBatch>);
+
+    fn render<'w>(
+        _item: &P,
+        _view: (),
+        batch: Option<(&'w RegionOffset, &'w CardBatch)>,
+        regions: SystemParamItem<'w, '_, Self::Param>,
+        pass: &mut TrackedRenderPass<'w>,
+    ) -> RenderCommandResult {
+        let Some((offset, batch)) = batch else { return RenderCommandResult::Skip };
+        let Some(group) = regions.into_inner().cards.get(&batch.cards.texture.id()) else { return RenderCommandResult::Skip };
+        pass.set_bind_group(I, group, &[offset.0]);
         RenderCommandResult::Success
     }
 }
