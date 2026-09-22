@@ -87,7 +87,7 @@ fn straight_seams_in_the_belt_window() {
 #[ignore]
 fn fine_seams_in_the_belt_window() {
     let c = composite();
-    let (cx, cy, half, step) = (-48_000.0, 9_000.0, 12_000.0, 8.0);
+    let (cx, cy, half, step) = (98_000.0, -2_000.0, 12_000.0, 8.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let coasts = Coasts::in_box(cx, cy, half, SEED);
     let valleys = Valleys::in_box(cx, cy, half, SEED);

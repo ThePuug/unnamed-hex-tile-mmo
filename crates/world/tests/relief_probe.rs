@@ -16,7 +16,7 @@ use world::events::plates::Coasts;
 use world::{hex_to_world, substrate_elevation_at};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
-const SPAWN: (i32, i32) = (-58204, 4907);
+const SPAWN: (i32, i32) = (104289, -4677);
 
 /// Tiles per second at MOVEMENT_SPEED 0.0075 WU/ms with hex radius 1.0
 /// (neighbour spacing sqrt(3) WU): 7.5 / 1.732.
@@ -478,7 +478,7 @@ fn belt_reaches_its_ceiling() {
     let c = composite();
     // The belt window the seam probes scan, on a coarse grid: the tallest
     // ground, and how much of it is plateau and how much range.
-    let (cx, cy, half) = (-48_000.0, 9_000.0, 24_000.0);
+    let (cx, cy, half) = (98_000.0, -2_000.0, 24_000.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let (mut best, mut at, mut plateau, mut relief) = (f64::MIN, (0.0, 0.0), 0.0, 0.0);
     let mut stacked: Vec<f64> = Vec::new();
@@ -569,7 +569,7 @@ fn slope_census() {
 #[ignore]
 fn haven_candidates() {
     let c = composite();
-    let (cx, cy, half, step) = (-48_000.0, 9_000.0, 24_000.0, 250.0);
+    let (cx, cy, half, step) = (98_000.0, -2_000.0, 24_000.0, 250.0);
     let n = (2.0 * half / step) as i32 + 1;
     let at = |i: i32, j: i32| (cx - half + i as f64 * step, cy - half + j as f64 * step);
     let mut z = vec![0.0f64; (n * n) as usize];
@@ -617,7 +617,7 @@ fn haven_candidates() {
 #[ignore]
 fn valley_census() {
     println!("\n=== valley census (the belt window) ===\n");
-    let (cx, cy, half, step) = (-48_000.0, 9_000.0, 12_000.0, 250.0);
+    let (cx, cy, half, step) = (98_000.0, -2_000.0, 12_000.0, 250.0);
     let t = Instant::now();
     let valleys = Valleys::in_box(cx, cy, half, SEED);
     let outlines = Outlines::in_box(cx, cy, half, SEED);

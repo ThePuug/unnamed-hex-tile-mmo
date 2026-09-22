@@ -969,7 +969,7 @@ mod tests {
         use super::super::thrusting::Outlines;
         use crate::hex_to_world;
         let lattice = DrainageIndex::lattice();
-        let cell = lattice.cell_id(-58_204, 4_907);
+        let cell = lattice.cell_id(104_289, -4_677);
         let (cq, cr) = lattice.cell_center(cell);
         let (cx, cy) = hex_to_world(cq, cr);
         let window = (3 * lattice.radius + 1) as f64;
@@ -977,7 +977,7 @@ mod tests {
         let outlines = Outlines::in_box(cx, cy, window, S);
         let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
         let fine = ChannelIndex::lattice();
-        let own = fine.cell_id(-58_204, 4_907);
+        let own = fine.cell_id(104_289, -4_677);
         let all = channels(&[&published], |_| true, S);
         let owned = channels(&[&published], |p| fine.cell_id(p.q, p.r) == own, S);
         assert!(!all.is_empty() && !owned.is_empty() && owned.len() < all.len());

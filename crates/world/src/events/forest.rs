@@ -666,7 +666,7 @@ mod tests {
     use crate::tectonic::PLATE_REACH;
 
     const S: u64 = 0x9E3779B97F4A7C15;
-    const SPAWN: (i32, i32) = (-58_204, 4_907);
+    const SPAWN: (i32, i32) = (104_289, -4_677);
 
     /// Density and the tree share rise with moisture, from nothing below
     /// the scrub line to full at the closed line, and a stand never fills

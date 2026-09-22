@@ -1,15 +1,17 @@
 //! Plate probe — what the plate graph and the motion on it come to: how
-//! much of the world is continental, how big continents are, what the edges
-//! resolve to, and how hard convergent edges close. The convergence
-//! distribution is what `CONVERGENCE_FULL` is read from.
+//! much of the world is continental, how big continents are and how the
+//! sites' claims fare, what the edges resolve to, and how hard convergent
+//! edges close. The convergence distribution is what `CONVERGENCE_FULL` is
+//! read from; the claims report is what `SITE_SPACING` is read from.
 //!
 //! Run: cargo test -p world --release --test plate_probe -- --ignored --nocapture
 
 use std::collections::{HashMap, HashSet};
 
+use world::continents::{claim, site, SiteId, SITE_JITTER, SITE_SPACING};
 use world::events::motion::{resolve, BoundaryRegime, MarginClass};
 use world::events::thrusting::CONVERGENCE_FULL;
-use world::tectonic::{edges_of, plate, PlateId, CONTINENT_GATE, PLATE_SPACING};
+use world::tectonic::{edges_of, plate, seed_point, PlateId, PLATE_SPACING};
 
 const SEEDS: [u64; 3] = [0x9E3779B97F4A7C15, 0x0123456789abcdef, 0xdeadbeefcafe1235];
 
@@ -27,6 +29,76 @@ fn plate_ids(n: i32) -> Vec<PlateId> {
 fn percentile(v: &mut Vec<f64>, f: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[((v.len() - 1) as f64 * f) as usize]
+}
+
+/// The longer over the shorter principal extent of a set of plates' seeds:
+/// 1 for a disc, more the longer the set.
+fn aspect(plates: &[PlateId], seed: u64) -> f64 {
+    let pts: Vec<(f64, f64)> = plates.iter().map(|&p| seed_point(p, seed)).collect();
+    let n = pts.len() as f64;
+    let (mx, my) = (pts.iter().map(|p| p.0).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n);
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for (x, y) in &pts {
+        let (dx, dy) = (x - mx, y - my);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    // A plate's own footprint, so a single plate is a disc and not a point.
+    let own = PLATE_SPACING * PLATE_SPACING / 4.0;
+    let (sxx, syy) = (sxx / n + own, syy / n + own);
+    let sxy = sxy / n;
+    let tr = sxx + syy;
+    let det = sxx * syy - sxy * sxy;
+    let disc = (tr * tr / 4.0 - det).max(0.0).sqrt();
+    ((tr / 2.0 + disc) / (tr / 2.0 - disc).max(1e-9)).sqrt()
+}
+
+/// How the sites' claims fare: continents by size against what they
+/// hashed, subcontinents found against hashed, and the aspect of each.
+fn report_claims(seed: u64) {
+    let mut sites_seen = 0usize;
+    let (mut empty, mut subs_hashed, mut subs_found, mut subs_short) = (0usize, 0usize, 0usize, 0usize);
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut aspects: Vec<f64> = Vec::new();
+    let mut sub_sizes: Vec<usize> = Vec::new();
+    for cq in -4..=4 {
+        for cr in -4..=4 {
+            let id: SiteId = (cq, cr);
+            let s = site(id, seed);
+            let c = claim(id, seed);
+            sites_seen += 1;
+            if c.continent.is_empty() {
+                empty += 1;
+                continue;
+            }
+            sizes.push(c.continent.len());
+            aspects.push(aspect(&c.continent, seed));
+            if let Some((n, _)) = s.subcontinent {
+                subs_hashed += 1;
+                if c.subcontinent.is_empty() {
+                    continue;
+                }
+                subs_found += 1;
+                sub_sizes.push(c.subcontinent.len());
+                if c.subcontinent.len() < n {
+                    subs_short += 1;
+                }
+            }
+        }
+    }
+    let mut by_size: HashMap<usize, usize> = HashMap::new();
+    for s in &sizes { *by_size.entry(*s).or_default() += 1 }
+    let mut by_size: Vec<(usize, usize)> = by_size.into_iter().collect();
+    by_size.sort();
+    println!("sites {sites_seen}: {empty} claim nothing; continents by size: {}",
+        by_size.iter().map(|(s, n)| format!("{s}×{n}")).collect::<Vec<_>>().join(" "));
+    println!("aspect: p50 {:.2} p90 {:.2} max {:.2}",
+        percentile(&mut aspects, 0.5), percentile(&mut aspects, 0.9), percentile(&mut aspects, 1.0));
+    let mut sub_sizes: Vec<f64> = sub_sizes.iter().map(|&n| n as f64).collect();
+    println!("subcontinents: {subs_hashed} hashed, {subs_found} found ({subs_short} short of their size); size p50 {:.0} max {:.0}",
+        if sub_sizes.is_empty() { 0.0 } else { percentile(&mut sub_sizes, 0.5) },
+        if sub_sizes.is_empty() { 0.0 } else { percentile(&mut sub_sizes, 1.0) });
 }
 
 /// Land share, continent sizes, edge lengths, regime shares by length, and
@@ -99,10 +171,11 @@ fn plate_graph_report() {
         }
         let total = conv_len + div_len + tr_len;
 
-        println!("\n=== seed {seed:#x}: {} plates, spacing {PLATE_SPACING}, continental gate {CONTINENT_GATE} ===", ids.len());
-        println!("continental plates {} ({:.1}%); continents by plate count: {}",
+        println!("\n=== seed {seed:#x}: {} plates, spacing {PLATE_SPACING}, sites {SITE_SPACING} jitter {SITE_JITTER} ===", ids.len());
+        println!("continental plates {} ({:.1}%); landmasses by plate count: {}",
             continental, 100.0 * continental as f64 / ids.len() as f64,
             by_size.iter().map(|(s, n)| format!("{s}×{n}")).collect::<Vec<_>>().join(" "));
+        report_claims(seed);
         let mut ages: Vec<f64> = plates.values().map(|p| p.age).collect();
         let (new, aged) = (ages.iter().filter(|&&a| a <= 0.0).count(), ages.iter().filter(|&&a| a >= 1.0).count());
         println!("age: new {:.1}%, fully aged {:.1}%, p25 {:.2} p50 {:.2} p75 {:.2}",

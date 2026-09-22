@@ -117,7 +117,7 @@ fn channels_against_routing() {
     use world::events::thrusting::Outlines;
     use world::hex_to_world;
     let lattice = DrainageIndex::lattice();
-    let cell = lattice.cell_id(-58_204, 4_907);
+    let cell = lattice.cell_id(104_289, -4_677);
     let (cq, cr) = lattice.cell_center(cell);
     let (cx, cy) = hex_to_world(cq, cr);
     let window = (3 * lattice.radius + 1) as f64;
@@ -155,7 +155,7 @@ fn vigour_over_a_cell() {
     use world::events::thrusting::Outlines;
     use world::hex_to_world;
     let lattice = DrainageIndex::lattice();
-    for (name, q, r) in [("spawn", -58_204, 4_907), ("platform", -53_000, 7_000), ("east", -45_000, 3_000)] {
+    for (name, q, r) in [("spawn", 104_289, -4_677), ("north brink", 108_820, -27_540), ("west brink", 72_150, 7_101)] {
         let cell = lattice.cell_id(q, r);
         let (cq, cr) = lattice.cell_center(cell);
         let (cx, cy) = hex_to_world(cq, cr);

@@ -21,7 +21,7 @@ use world::hex_to_world;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 /// Spawn: on land, under a belt.
-const SPAWN: (i32, i32) = (-58204, 4907);
+const SPAWN: (i32, i32) = (104289, -4677);
 
 fn composite() -> Composite {
     let mut c = Composite::new(SEED);

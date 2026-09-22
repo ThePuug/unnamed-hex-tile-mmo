@@ -210,7 +210,7 @@ fn layer_costs() {
         c
     };
     let names = ["plates", "tilt", "motion", "thrusting", "thickening", "lithology", "drainage", "migration", "dissection"];
-    let (sq, sr) = (-58_204, 4_907);
+    let (sq, sr) = (104_289, -4_677);
     let patch = hexball(sq, sr, 100);
     let next = hexball(sq + 400, sr - 200, 100);
     // A summary's samples: sparse, a stride apart, over a wide reach.
@@ -254,7 +254,7 @@ fn ground_sample_costs() {
     use world::events::thrusting::Outlines;
     use world::events::tilt::tilt_at;
     use world::hex_to_world;
-    let (cx, cy) = hex_to_world(-58_204, 4_907);
+    let (cx, cy) = hex_to_world(104_289, -4_677);
     let coasts = Coasts::in_box(cx, cy, 6_000.0, SEED);
     let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
     let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
@@ -286,7 +286,7 @@ fn outline_lookup_costs() {
     use world::events::thrusting::Outlines;
     use world::tectonic::plate_at;
     use world::hex_to_world;
-    let (cx, cy) = hex_to_world(-58_204, 4_907);
+    let (cx, cy) = hex_to_world(104_289, -4_677);
     let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
     let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
     let n = pts.len() as f64;

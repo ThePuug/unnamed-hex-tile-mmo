@@ -1,14 +1,15 @@
 //! Tectonic plates — the primary object of the world: Voronoi cells around
-//! seeds a continent-width apart, each continental or oceanic, with every
-//! edge between two of them drawn on the lattice.
+//! seeds a few of which make a continent, each continental or oceanic, with
+//! every edge between two of them drawn on the lattice.
 //!
 //! # Claims
 //!
 //! A plate is a Voronoi cell around a seed on a jittered hex lattice. It is
-//! continental or oceanic by one slow field sampled at its seed, so
-//! continental plates cluster, and a continent is a connected group of them.
-//! It has an age by a second such field: how far erosion has carried its
-//! landscape, which drainage and dissection read and nothing here uses.
+//! continental when a continent site claims it (`crate::continents`), so
+//! continental plates come as the compact clusters the sites grow, and a
+//! continent is one site's claim. It has an age by a slow field sampled at
+//! its seed: how far erosion has carried its landscape, which drainage,
+//! lithology and migration read and nothing here uses.
 //! An edge between two plates is the straight line between two Voronoi
 //! vertices, drawn on the lattice as runs with sparse corners. A coast is an
 //! edge with one continental side and one oceanic.
@@ -25,28 +26,18 @@
 use crate::lattice::{lattice_path, nearest_node, NodeKey};
 use crate::noise::{hash_f64, simplex_2d};
 
-/// Seed spacing in world units: a continent-width, so a continent is one
-/// plate or a cluster of a few.
+/// Seed spacing in world units: a plate is a province, and a continent a
+/// cluster of several.
 pub const PLATE_SPACING: f64 = 12_500.0;
 
 /// How far a seed is displaced from its lattice point, as a share of the
 /// spacing, in each axis. What stops every plate being the same hexagon.
 pub const PLATE_JITTER: f64 = 0.35;
 
-/// Wavelength of the field that makes a plate continental: three plates, so
-/// continents come as clusters of a few plates rather than as a checkerboard
-/// or as one landmass.
-pub const CONTINENT_WAVELENGTH: f64 = 3.0 * PLATE_SPACING;
-
-/// Level of that field above which a plate is continental.
-///
-/// EMPIRICAL: set for under a third of plates continental, measured by
-/// `plate_probe`.
-pub const CONTINENT_GATE: f64 = 0.20;
-
-/// Wavelength of the field that gives a plate its age: the continent's, so
-/// the plates of one orogeny are of one age.
-pub const AGE_WAVELENGTH: f64 = CONTINENT_WAVELENGTH;
+/// Wavelength of the field that gives a plate its age: a few plates, so a
+/// continent holds plates of different ages, a gorge-cut one beside one
+/// still filling its basins, and neighbours often share one.
+pub const AGE_WAVELENGTH: f64 = 3.0 * PLATE_SPACING;
 
 /// The level of that field at which a plate is fully aged; at its negative
 /// the plate is new, and between them age runs linearly.
@@ -75,10 +66,9 @@ pub fn aged(age: f64) -> f64 {
 /// gather of plates around a position is sized by.
 pub const PLATE_REACH: f64 = 12_000.0;
 
-const ROW: f64 = 0.866_025_403_784_438_6;
+pub(crate) const ROW: f64 = 0.866_025_403_784_438_6;
 const JITTER_SEED_X: u64 = 0x506C_6174_655F_5F58; // "Plate__X"
 const JITTER_SEED_Y: u64 = 0x506C_6174_655F_5F59; // "Plate__Y"
-const CONTINENT_SEED: u64 = 0x436F_6E74_696E_656E; // "Continen"
 const AGE_SEED: u64 = 0x506C_6174_6541_6765; // "PlateAge"
 
 /// A plate's identity: its seed's lattice cell.
@@ -95,35 +85,46 @@ pub struct Plate {
     pub age: f64,
 }
 
+/// The cell of a hex lattice of `spacing`, odd rows shifted half a cell,
+/// whose undisplaced centre is nearest a position.
+pub(crate) fn cell_for(wx: f64, wy: f64, spacing: f64) -> (i32, i32) {
+    let cr = (wy / (spacing * ROW)).round() as i32;
+    let odd_shift = if cr & 1 != 0 { spacing * 0.5 } else { 0.0 };
+    let cq = ((wx - odd_shift) / spacing).round() as i32;
+    (cq, cr)
+}
+
+/// A cell's point on a hex lattice of `spacing`, displaced by up to
+/// `jitter` of the spacing in each axis by a hash of the cell.
+pub(crate) fn lattice_point(id: (i32, i32), spacing: f64, jitter: f64, seed: u64) -> (f64, f64) {
+    let (cq, cr) = id;
+    let odd_shift = if cr & 1 != 0 { spacing * 0.5 } else { 0.0 };
+    let cx = cq as f64 * spacing + odd_shift;
+    let cy = cr as f64 * spacing * ROW;
+    let jx = (hash_f64(cq as i64, cr as i64, seed ^ JITTER_SEED_X) * 2.0 - 1.0) * jitter * spacing;
+    let jy = (hash_f64(cq as i64, cr as i64, seed ^ JITTER_SEED_Y) * 2.0 - 1.0) * jitter * spacing;
+    (cx + jx, cy + jy)
+}
+
 /// The lattice cell whose undisplaced centre is nearest a position.
 pub fn plate_cell_for(wx: f64, wy: f64) -> PlateId {
-    let cr = (wy / (PLATE_SPACING * ROW)).round() as i32;
-    let odd_shift = if cr & 1 != 0 { PLATE_SPACING * 0.5 } else { 0.0 };
-    let cq = ((wx - odd_shift) / PLATE_SPACING).round() as i32;
-    (cq, cr)
+    cell_for(wx, wy, PLATE_SPACING)
 }
 
 /// The seed of a plate: its lattice point, jittered.
 pub fn seed_point(id: PlateId, seed: u64) -> (f64, f64) {
-    let (cq, cr) = id;
-    let odd_shift = if cr & 1 != 0 { PLATE_SPACING * 0.5 } else { 0.0 };
-    let cx = cq as f64 * PLATE_SPACING + odd_shift;
-    let cy = cr as f64 * PLATE_SPACING * ROW;
-    let jx = (hash_f64(cq as i64, cr as i64, seed ^ JITTER_SEED_X) * 2.0 - 1.0) * PLATE_JITTER * PLATE_SPACING;
-    let jy = (hash_f64(cq as i64, cr as i64, seed ^ JITTER_SEED_Y) * 2.0 - 1.0) * PLATE_JITTER * PLATE_SPACING;
-    (cx + jx, cy + jy)
+    lattice_point(id, PLATE_SPACING, PLATE_JITTER, seed)
 }
 
 pub fn plate(id: PlateId, seed: u64) -> Plate {
     let (wx, wy) = seed_point(id, seed);
-    let level = simplex_2d(wx / CONTINENT_WAVELENGTH, wy / CONTINENT_WAVELENGTH, seed ^ CONTINENT_SEED);
     let aged = simplex_2d(wx / AGE_WAVELENGTH, wy / AGE_WAVELENGTH, seed ^ AGE_SEED);
     let age = ((aged + AGE_SPREAD) / (2.0 * AGE_SPREAD)).clamp(0.0, 1.0);
-    Plate { id, wx, wy, continental: level > CONTINENT_GATE, age }
+    Plate { id, wx, wy, continental: crate::continents::is_continental(id, seed), age }
 }
 
 /// Lattice cells within `rings` of a cell, in odd-r offset coordinates.
-fn cells_around(id: PlateId, rings: i32) -> Vec<PlateId> {
+pub(crate) fn cells_around(id: (i32, i32), rings: i32) -> Vec<(i32, i32)> {
     let mut out = Vec::new();
     for dr in -rings..=rings {
         let r = id.1 + dr;
@@ -227,11 +228,21 @@ fn circumcentre(mut ids: [PlateId; 3], seed: u64) -> (f64, f64) {
     (ux, uy)
 }
 
-/// The edges of one plate: its Voronoi polygon, clipped by the bisector of
+/// One side of a plate's polygon: the neighbour across it, its vertices,
+/// the lesser by `(x, y)` first, and its chain on the lattice.
+struct Side {
+    other: PlateId,
+    p0: (f64, f64),
+    p1: (f64, f64),
+    chain: Vec<NodeKey>,
+}
+
+/// The sides of one plate: its Voronoi polygon, clipped by the bisector of
 /// every seed within three rings, read for which neighbour makes each side.
-pub fn edges_of(id: PlateId, seed: u64) -> Vec<Edge> {
-    let me = plate(id, seed);
-    let (sx, sy) = (me.wx, me.wy);
+/// Geometry alone, from the seeds: what a claim grows over, so it never
+/// asks what a plate is.
+fn sides(id: PlateId, seed: u64) -> Vec<Side> {
+    let (sx, sy) = seed_point(id, seed);
     // A square far past any vertex; every side of it is clipped away.
     let big = 3.0 * PLATE_SPACING;
     let mut pts: Vec<(f64, f64)> = vec![(sx - big, sy - big), (sx + big, sy - big), (sx + big, sy + big), (sx - big, sy + big)];
@@ -273,7 +284,7 @@ pub fn edges_of(id: PlateId, seed: u64) -> Vec<Edge> {
     }
 
     let n = pts.len();
-    let mut edges = Vec::with_capacity(n);
+    let mut sides = Vec::with_capacity(n);
     for k in 0..n {
         let (Some(prev), Some(this), Some(next)) = (side[(k + n - 1) % n], side[k], side[(k + 1) % n]) else {
             debug_assert!(false, "a plate polygon side survived from the initial square");
@@ -289,11 +300,29 @@ pub fn edges_of(id: PlateId, seed: u64) -> Vec<Edge> {
         // plates touch at a point and share no boundary.
         let chain = lattice_path(nearest_node(p0.0, p0.1), nearest_node(p1.0, p1.1));
         if chain.len() < 2 { continue }
-        let other = plate(this, seed);
-        let (a, b) = if me.id < other.id { (me, other) } else { (other, me) };
-        edges.push(Edge { a, b, x0: p0.0, y0: p0.1, x1: p1.0, y1: p1.1, chain });
+        sides.push(Side { other: this, p0, p1, chain });
     }
-    edges
+    sides
+}
+
+/// The plates across a plate's sides: the ones it shares an edge with, so
+/// a coast or a strait lies between it and each. Two plates that touch at
+/// a point are not neighbours.
+pub fn neighbours_of(id: PlateId, seed: u64) -> Vec<PlateId> {
+    sides(id, seed).into_iter().map(|s| s.other).collect()
+}
+
+/// The edges of one plate, one per side, with both plates built.
+pub fn edges_of(id: PlateId, seed: u64) -> Vec<Edge> {
+    let me = plate(id, seed);
+    sides(id, seed)
+        .into_iter()
+        .map(|s| {
+            let other = plate(s.other, seed);
+            let (a, b) = if me.id < other.id { (me, other) } else { (other, me) };
+            Edge { a, b, x0: s.p0.0, y0: s.p0.1, x1: s.p1.0, y1: s.p1.1, chain: s.chain }
+        })
+        .collect()
 }
 
 #[cfg(test)]

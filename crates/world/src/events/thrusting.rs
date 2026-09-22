@@ -805,9 +805,9 @@ mod tests {
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
-    /// A position among the seed's strongest belts, where fronts carry
-    /// scree to the front and past it.
-    const BELT: (f64, f64) = (-46_300.0, 3_200.0);
+    /// The home continent's centre, among its collision fronts and active
+    /// margins, where fronts carry scree to the front and past it.
+    const BELT: (f64, f64) = (98_000.0, -2_000.0);
 
     /// A range stands at a thrust wedge's structural dips: the forelimb at the
     /// dip it is built from, and the backlimb inside the 10–25° the same

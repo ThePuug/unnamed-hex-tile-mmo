@@ -4,6 +4,7 @@
 
 pub(crate) mod noise;
 pub mod chains;
+pub mod continents;
 pub mod events;
 pub mod lattice;
 pub mod tectonic;

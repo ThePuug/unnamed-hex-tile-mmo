@@ -21,7 +21,7 @@ use world::events::Composite;
 use world::hex_to_world;
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
-const SPAWN: (i32, i32) = (-58204, 4907);
+const SPAWN: (i32, i32) = (104289, -4677);
 
 /// The stack to dissection, without the forest: what the layer is
 /// measured against.

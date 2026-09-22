@@ -494,7 +494,7 @@ mod tests {
     /// drain the closed ground of any one cell.
     fn spawn_valleys() -> (DrainageCell, Valleys) {
         let lattice = DrainageIndex::lattice();
-        let spawn = lattice.cell_id(-58_204, 4_907);
+        let spawn = lattice.cell_id(104_289, -4_677);
         let mut cells = lattice.cells_within_distance(spawn, 2);
         cells.sort_by_key(|&c| (hex_distance(lattice.cell_center(c), lattice.cell_center(spawn)), c));
         for cell in cells {

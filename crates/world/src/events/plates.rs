@@ -3,9 +3,9 @@
 //!
 //! # Claims
 //!
-//! The plate is the primary object. A plate is a Voronoi cell around a seed a
-//! continent-width apart, continental or oceanic, and a continent is a
-//! connected group of continental plates. Every edge between two plates is
+//! The plate is the primary object. A plate is a Voronoi cell around a seed,
+//! continental where a continent site claims it or oceanic, and a continent
+//! is one site's claim: a compact cluster. Every edge between two plates is
 //! drawn on the lattice and published: which two plates, which sides are
 //! continental, and the chain. A coast is an edge with one continental side,
 //! and there is no coast inside a plate. The substrate is a function of
