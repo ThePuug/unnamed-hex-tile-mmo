@@ -40,6 +40,7 @@ use bevy::render::view::{ExtractedView, RenderVisibleEntities};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
 
+use crate::resources::CardEdge;
 use crate::systems::camera::{Sightline, NEAR_FADE_RADIUS, SIGHTLINE_RADIUS};
 
 const TREE_SHADER: &str = "shaders/trees.wgsl";
@@ -205,6 +206,7 @@ impl Plugin for TreeDrawPlugin {
             ExtractComponentPlugin::<TreeBatch>::default(),
             ExtractComponentPlugin::<CardBatch>::default(),
             ExtractResourcePlugin::<Sightline>::default(),
+            ExtractResourcePlugin::<CardEdge>::default(),
         ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
@@ -227,12 +229,14 @@ impl Plugin for TreeDrawPlugin {
 
 /// The region's transform as the shader's uniform, with the sightline:
 /// the player's centre and the tunnel's radius about the line from the
-/// camera to it, zero when nothing is seen through, and the radius about
-/// the camera inside which everything fades.
+/// camera to it, zero when nothing is seen through; the edge the cards
+/// sink at, its centre, radius and the strip's width; and the radius
+/// about the camera inside which everything fades.
 #[derive(Clone, Copy, ShaderType)]
 struct RegionUniform {
     world_from_local: Mat4,
     sightline: Vec4,
+    edge: Vec4,
     near_fade: f32,
 }
 
@@ -433,12 +437,13 @@ struct BatchBindGroup {
 }
 
 /// The region uniform's bytes for this frame.
-fn region_bytes(transform: &TreeTransform, sightline: Option<&Sightline>) -> Vec<u8> {
+fn region_bytes(transform: &TreeTransform, sightline: Option<&Sightline>, edge: Option<&CardEdge>) -> Vec<u8> {
     let sightline = match sightline.and_then(|s| s.player) {
         Some(p) => p.extend(SIGHTLINE_RADIUS),
         None => Vec4::ZERO,
     };
-    let uniform = RegionUniform { world_from_local: transform.0, sightline, near_fade: NEAR_FADE_RADIUS };
+    let edge = edge.map_or(Vec4::ZERO, |e| Vec4::new(e.center.x, e.center.y, e.outer, e.fade));
+    let uniform = RegionUniform { world_from_local: transform.0, sightline, edge, near_fade: NEAR_FADE_RADIUS };
     let mut bytes = encase::UniformBuffer::new(Vec::new());
     bytes.write(&uniform).expect("a uniform of plain floats writes");
     bytes.into_inner()
@@ -461,7 +466,7 @@ fn prepare_tree_bind_groups(
     batches: Query<(Entity, &TreeTransform, Option<&BatchBindGroup>), With<TreeBatch>>,
 ) {
     for (entity, transform, existing) in &batches {
-        let bytes = region_bytes(transform, sightline.as_deref());
+        let bytes = region_bytes(transform, sightline.as_deref(), None);
         match existing {
             Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
             None => {
@@ -485,11 +490,12 @@ fn prepare_card_bind_groups(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     sightline: Option<Res<Sightline>>,
+    edge: Option<Res<CardEdge>>,
     images: Res<RenderAssets<GpuImage>>,
     batches: Query<(Entity, &TreeTransform, &CardBatch, Option<&BatchBindGroup>)>,
 ) {
     for (entity, transform, batch, existing) in &batches {
-        let bytes = region_bytes(transform, sightline.as_deref());
+        let bytes = region_bytes(transform, sightline.as_deref(), edge.as_deref());
         match existing {
             Some(bg) => render_queue.write_buffer(&bg.region, 0, &bytes),
             None => {

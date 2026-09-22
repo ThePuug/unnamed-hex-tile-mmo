@@ -65,6 +65,23 @@ impl TerrainCut {
 #[derive(Resource, Default)]
 pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 
+/// The outer edge of the level that stands its trees as cards, as the
+/// shaders see it: where its ground morphs onto the coarser level's, the
+/// cards sink into the ground that wears their colour, across the same
+/// strip by the same weight. No strip while the edge is forced.
+#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
+pub struct CardEdge {
+    pub center: Vec2,
+    pub outer: f32,
+    pub fade: f32,
+}
+
+impl CardEdge {
+    pub fn of(cut: TerrainCut) -> Self {
+        CardEdge { center: cut.outer_center, outer: cut.outer, fade: cut.fade }
+    }
+}
+
 /// The coarser level's surface at a terrain vertex: normal xyz, height w in
 /// the mesh's frame. The vertex shaders morph position and normal onto it
 /// across the transition strip.

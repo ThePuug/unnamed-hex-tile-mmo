@@ -779,6 +779,7 @@ pub fn update_terrain_cut(
     forced_radius: Res<ForcedSummaryRadius>,
     summary_meshes: Res<SummaryMeshes>,
     mut edges: ResMut<crate::resources::EdgeCenters>,
+    mut card_edge: ResMut<crate::resources::CardEdge>,
     time: Res<Time>,
     render_origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
@@ -807,6 +808,9 @@ pub fn update_terrain_cut(
         } else {
             level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz())
         };
+        if r == common_bevy::summary::LOD_LEVELS[1] {
+            *card_edge = crate::resources::CardEdge::of(material.extension.cut);
+        }
     }
 }
 
