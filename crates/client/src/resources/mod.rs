@@ -415,6 +415,12 @@ pub struct SummaryMeshState {
     /// retrying every frame would take the build slots from regions that
     /// can be built.
     pub waiting: bool,
+    /// Whether every chunk under the region had been streamed when its
+    /// last build was dispatched. A region's ground can be built from the
+    /// summaries the server sends, which reach past the tiles, while the
+    /// covers its trees come from have not arrived; such a region is
+    /// built once more when they all have.
+    pub tiles_loaded: bool,
     /// `SummaryMeshes::epoch` when the last build was dispatched. Data that
     /// lands while a build is in flight, or on a run whose task budget was
     /// spent before this region's turn, is data the region has not built
@@ -423,10 +429,18 @@ pub struct SummaryMeshState {
 }
 
 impl SummaryMeshState {
-    /// Whether a build may be dispatched at data `epoch`: none in flight,
-    /// nothing built, and not still waiting on the data it last built from.
-    pub fn wants_build(&self, epoch: u64) -> bool {
-        self.task.is_none() && self.entity.is_none() && !(self.waiting && self.epoch == epoch)
+    /// Whether a build may be dispatched at data `epoch` with the region's
+    /// tiles `tiles_loaded`: none in flight, and either nothing built and
+    /// not still waiting on the data it last built from, or built without
+    /// the tiles its trees come from and holding them now.
+    pub fn wants_build(&self, epoch: u64, tiles_loaded: bool) -> bool {
+        if self.task.is_some() {
+            return false;
+        }
+        if self.entity.is_none() {
+            return !(self.waiting && self.epoch == epoch);
+        }
+        tiles_loaded && !self.tiles_loaded
     }
 }
 

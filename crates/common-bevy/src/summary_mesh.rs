@@ -529,6 +529,22 @@ pub fn visible_mesh_regions_in_band_ungated(
     regions
 }
 
+/// Whether every chunk a region stands on has been streamed. A region's
+/// ground can come from the summaries the producers send, which reach
+/// past the tiles, but the trees on it come from the map's own covers, so
+/// a region built before its tiles arrived stands none. The disc is the
+/// region's footprint rounded out to whole chunks, so it never calls a
+/// region ready while a tile under it is still missing.
+pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>) -> bool {
+    use crate::summary::{mesh_region_extent_wu, summary_width_wu};
+    let region_center = mesh_region_lattice().cell_center((key.mn, key.mm));
+    let (cq, cr) = summary_lattice(key.r).cell_center(region_center);
+    let centre = chunk::loc_to_chunk(qrz::Qrz { q: cq, r: cr, z: 0 });
+    let reach = mesh_region_extent_wu(key.r) / 3.0_f32.sqrt() + summary_width_wu(key.r);
+    let radius = (reach / (chunk::CHUNK_EXTENT_WU * chunk::APOTHEM_FACTOR)).ceil() as u8;
+    chunk::calculate_visible_chunks(centre, radius).iter().all(|c| loaded_chunks.contains(c))
+}
+
 /// Collect visible mesh regions across all bands for the producers (server,
 /// flyover): everything beyond the local-data boundary, plus regions whose
 /// footprint straddles it.

@@ -674,17 +674,21 @@ pub fn dispatch_summary_tasks(
 
     for (d2, region_key, mesh_origin) in ordered {
         if mesh_dispatched >= MAX_MESH_TASKS { break; }
+        let radius = region_key.r;
+
         // Built regions are final: their heights are durable. A region
         // still waiting for data is retried once data has arrived since its
         // build was dispatched, judged by epoch and never by this run's
         // flag alone: the flag is consumed whether or not the region could
         // act on it, and it cannot while a build is in flight or once the
-        // task budget is spent.
-        if summary_meshes.states.get(&region_key).is_some_and(|state| !state.wants_build(epoch)) {
+        // task budget is spent. The one level standing the tiles' trees is
+        // final only once it holds the tiles too: its ground may have been
+        // built from the summaries, which arrive first.
+        let tiles_loaded = radius != common_bevy::summary::LOD_LEVELS[1]
+            || common_bevy::summary_mesh::region_tiles_loaded(region_key, &loaded_chunks.chunks);
+        if summary_meshes.states.get(&region_key).is_some_and(|state| !state.wants_build(epoch, tiles_loaded)) {
             continue;
         }
-
-        let radius = region_key.r;
 
         // r>0 regions beyond the local-data boundary are server/flyover-owned:
         // without cache data their build would produce nothing — wait for it.
@@ -710,6 +714,7 @@ pub fn dispatch_summary_tasks(
         if let Some(state) = summary_meshes.states.get_mut(&region_key) {
             state.task = Some(task);
             state.epoch = epoch;
+            state.tiles_loaded = tiles_loaded;
         } else {
             summary_meshes.states.insert(
                 region_key,
@@ -730,6 +735,7 @@ pub fn dispatch_summary_tasks(
                     trees_spawned: false,
                     cards_spawned: false,
                     waiting: false,
+                    tiles_loaded,
                     epoch,
                 },
             );
@@ -1483,6 +1489,7 @@ mod tests {
                         trees_spawned: false,
                         cards_spawned: false,
                         waiting: false,
+                        tiles_loaded: true,
                         epoch: 0,
                     });
                 }
@@ -1530,17 +1537,26 @@ mod tests {
             trees_spawned: false,
             cards_spawned: false,
             waiting: true,
+            tiles_loaded: true,
             epoch: 3,
         };
-        assert!(!state.wants_build(3), "nothing new to build from");
-        assert!(state.wants_build(4), "data arrived after the build was dispatched");
-        assert!(state.wants_build(7), "and stays wanted until a build is dispatched");
+        assert!(!state.wants_build(3, true), "nothing new to build from");
+        assert!(state.wants_build(4, true), "data arrived after the build was dispatched");
+        assert!(state.wants_build(7, true), "and stays wanted until a build is dispatched");
 
         state.waiting = false;
-        assert!(state.wants_build(3), "a fresh region builds at any epoch");
+        assert!(state.wants_build(3, true), "a fresh region builds at any epoch");
 
         state.entity = Some(Entity::from_raw_u32(1).unwrap());
-        assert!(!state.wants_build(9), "a built region is final");
+        assert!(!state.wants_build(9, true), "a built region is final");
+
+        // Built from the summaries before its tiles arrived, it stands no
+        // trees: it is built once more when they are all there, and once.
+        state.tiles_loaded = false;
+        assert!(!state.wants_build(9, false), "the tiles are still coming");
+        assert!(state.wants_build(9, true), "the tiles are all there");
+        state.tiles_loaded = true;
+        assert!(!state.wants_build(10, true), "and it is final again");
     }
 
     /// Coverage invariant for the LoD band system: every ground point inside
