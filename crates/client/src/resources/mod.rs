@@ -124,19 +124,25 @@ impl MaterialExtension for TerrainExtension {
     }
     /// One vertex layout for every pass, the locations both vertex shaders
     /// declare: Bevy's own layouts differ between the main pass and the
-    /// prepass and leave out the coarse surface.
+    /// prepass and leave out the coarse surface. A level that colours its
+    /// ground by the canopy carries it as the vertex colour, which Bevy
+    /// already interpolates to the fragment.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.vertex.buffers = vec![layout.0.get_layout(&[
+        let mut attributes = vec![
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
             Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
             ATTRIBUTE_COARSE_SURFACE.at_shader_location(3),
-        ])?];
+        ];
+        if layout.0.contains(Mesh::ATTRIBUTE_COLOR) {
+            attributes.push(Mesh::ATTRIBUTE_COLOR.at_shader_location(4));
+        }
+        descriptor.vertex.buffers = vec![layout.0.get_layout(&attributes)?];
         Ok(())
     }
 }
@@ -312,6 +318,7 @@ pub struct SummaryMeshState {
     pub base_positions: Vec<[f32; 3]>,
     pub base_normals: Vec<[f32; 3]>,
     pub base_coarse: Vec<[f32; 4]>,
+    pub base_canopy: Vec<[f32; 4]>,
     pub base_indices: Vec<u32>,
     pub base_tri_count: u32,
     /// The water standing over the region, built with the ground and drawn
@@ -360,6 +367,9 @@ pub struct SummaryMeshBuildResult {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub coarse: Vec<[f32; 4]>,
+    /// The canopy per vertex where the level colours its ground by it,
+    /// else empty.
+    pub canopy: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,

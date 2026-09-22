@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
+use common::cover::{Canopy, Slot};
 
 use crate::{
     chunk::{self, ChunkId},
@@ -51,10 +52,24 @@ pub struct SummaryMeshResult {
     /// normal xyz, height w. The vertex's own normal and height at the
     /// coarsest level, which has nothing to morph onto.
     pub coarse: Vec<[f32; 4]>,
+    /// Per vertex, the canopy over it as [`canopy_vertex`] states it, a
+    /// corner's the mean of the three cells meeting there; empty when the
+    /// level was built without one.
+    pub canopy: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
     /// World-space origin of this mesh region (for Transform).
     pub mesh_origin: Vec3,
+}
+
+/// A canopy as a vertex carries it: the density, then the density's
+/// pine, deciduous and scrub parts, which sum to it. Parts interpolate
+/// across a fan the way a premultiplied colour does — a wood's edge
+/// against bare ground thins without shifting hue — where shares would
+/// fade twice and counts would not blend at all.
+pub fn canopy_vertex(canopy: Canopy) -> [f32; 4] {
+    let part = |kind: Slot| canopy.count(kind) as f32 / common::cover::CANOPY_READINGS as f32;
+    [canopy.density() as f32, part(Slot::Pine), part(Slot::Deciduous), part(Slot::Scrub)]
 }
 
 /// Cells in a mesh region (radius-9 hex ball).
@@ -153,6 +168,10 @@ impl<'a> LevelSurface<'a> {
 /// is the same lookup over the next coarser level, which every vertex's
 /// morph target is read from; None at the coarsest level.
 
+/// `canopy`, where given, is the same lookup for the canopy over a cell,
+/// carried per vertex: a level that colours its ground by what stands on
+/// it rather than standing it.
+///
 /// Built only once every cell of the region and of the ring around it has a
 /// height — the ring is what the perimeter corners are made of — and every
 /// coarser cell under a vertex and around it has one, and then final:
@@ -165,6 +184,7 @@ pub fn build_summary_mesh_region(
     region_key: MeshRegionKey,
     height: &dyn Fn(i32, i32) -> Option<i32>,
     coarse: Option<&dyn Fn(i32, i32) -> Option<i32>>,
+    canopy: Option<&dyn Fn(i32, i32) -> Option<Canopy>>,
 ) -> Option<SummaryMeshResult> {
     let lattice = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -179,6 +199,7 @@ pub fn build_summary_mesh_region(
     let region_cells: Vec<(i32, i32)> = region_lat.tiles_in_cell(region_id).collect();
     let region_set: HashSet<(i32, i32)> = region_cells.iter().copied().collect();
     let mut heights: HashMap<(i32, i32), i32> = HashMap::new();
+    let mut canopies: HashMap<(i32, i32), [f32; 4]> = HashMap::new();
     for &(sq, sr) in &region_cells {
         for (dq, dr) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
             let cell = (sq + dq, sr + dr);
@@ -186,6 +207,9 @@ pub fn build_summary_mesh_region(
                 continue;
             }
             heights.insert(cell, height(cell.0, cell.1)?);
+            if let Some(canopy) = canopy {
+                canopies.insert(cell, canopy_vertex(canopy(cell.0, cell.1)?));
+            }
         }
     }
 
@@ -206,21 +230,27 @@ pub fn build_summary_mesh_region(
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut coarse_attr: Vec<[f32; 4]> = Vec::new();
+    let mut canopy_attr: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let mut corner_index: HashMap<(i32, i32), u32> = HashMap::new();
 
-    let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3)| -> u32 {
+    let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
         let v = p - mesh_origin;
         let (ty, tn) = target;
         positions.push([v.x, v.y, v.z]);
         normals.push([n.x, n.y, n.z]);
         coarse_attr.push([tn.x, tn.y, tn.z, ty - mesh_origin.y]);
+        if !canopies.is_empty() {
+            canopy_attr.push(canopy);
+        }
         (positions.len() - 1) as u32
     };
+    let canopy_of = |cell: (i32, i32)| canopies.get(&cell).copied().unwrap_or([0.0; 4]);
 
     for &cell in &region_cells {
         let fan = cell_fan(&lattice, cell, |q, r| heights.get(&(q, r)).copied())
             .expect("region and ring heights are present");
+        let centre_canopy = canopy_of(cell);
 
         let mut corner_pos = [Vec3::ZERO; 6];
         let mut corner_target = [(0.0, Vec3::Y); 6];
@@ -230,13 +260,16 @@ pub fn build_summary_mesh_region(
             corner_pos[i] = p;
             corner_target[i] = target(p, fan.corner_n[i])?;
             let id = canonical_vertex_id(cell.0, cell.1, i);
-            corner_idx[i] = *corner_index
-                .entry(id)
-                .or_insert_with(|| push(p, fan.corner_n[i], corner_target[i]));
+            corner_idx[i] = *corner_index.entry(id).or_insert_with(|| {
+                let [a, b] = CORNER_NEIGHBOURS[i];
+                let (ca, cb) = (canopy_of((cell.0 + a.0, cell.1 + a.1)), canopy_of((cell.0 + b.0, cell.1 + b.1)));
+                let corner_canopy = std::array::from_fn(|c| (centre_canopy[c] + ca[c] + cb[c]) / 3.0);
+                push(p, fan.corner_n[i], corner_target[i], corner_canopy)
+            });
         }
 
         let centre_pos = Vec3::new(fan.centre.x, fan.centre_y - bias, fan.centre.y);
-        let ci = push(centre_pos, fan.centre_n, target(centre_pos, fan.centre_n)?);
+        let ci = push(centre_pos, fan.centre_n, target(centre_pos, fan.centre_n)?, centre_canopy);
         for i in 0..6 {
             let j = (i + 1) % 6;
             indices.extend([ci, corner_idx[j], corner_idx[i]]);
@@ -257,10 +290,10 @@ pub fn build_summary_mesh_region(
             let outward = (top1 - top0).normalize_or_zero().cross(Vec3::NEG_Y).normalize_or_zero();
             let n = if outward.length_squared() > 0.5 { outward } else { Vec3::Z };
             let (ty0, ty1) = (corner_target[i].0, corner_target[j].0);
-            let base = push(top0, n, (ty0, n));
-            push(top1, n, (ty1, n));
-            push(bot1, n, (ty1 - CURTAIN_DEPTH_WU, n));
-            push(bot0, n, (ty0 - CURTAIN_DEPTH_WU, n));
+            let base = push(top0, n, (ty0, n), [0.0; 4]);
+            push(top1, n, (ty1, n), [0.0; 4]);
+            push(bot1, n, (ty1 - CURTAIN_DEPTH_WU, n), [0.0; 4]);
+            push(bot0, n, (ty0 - CURTAIN_DEPTH_WU, n), [0.0; 4]);
             indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
@@ -270,6 +303,7 @@ pub fn build_summary_mesh_region(
         positions,
         normals,
         coarse: coarse_attr,
+        canopy: canopy_attr,
         indices,
         mesh_origin,
     })
@@ -361,6 +395,7 @@ pub fn build_water_mesh_region(
         positions,
         normals,
         coarse: Vec::new(),
+        canopy: Vec::new(),
         indices,
         mesh_origin,
     }
@@ -647,7 +682,7 @@ mod tests {
 
     #[test]
     fn build_returns_none_when_no_data() {
-        assert!(build_summary_mesh_region(1, REGION, &|_, _| None, None).is_none());
+        assert!(build_summary_mesh_region(1, REGION, &|_, _| None, None, None).is_none());
     }
 
     /// Water is a flat fan over each flooded cell at its surface, half a
@@ -690,7 +725,7 @@ mod tests {
 
     #[test]
     fn flat_region_is_fans_plus_perimeter_curtains() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
         let fans = fan_vertices(&result);
         let y = fans[0].0.y;
@@ -700,7 +735,7 @@ mod tests {
 
     #[test]
     fn shared_corners_are_single_vertices() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
     }
 
@@ -708,9 +743,9 @@ mod tests {
     fn build_waits_for_every_cell_of_region_and_ring() {
         let region_lat = mesh_region_lattice();
         let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &hole, None).is_none(), "built with a cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &hole, None, None).is_none(), "built with a cell missing");
         let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &no_ring, None).is_none(), "built with the ring missing");
+        assert!(build_summary_mesh_region(1, REGION, &no_ring, None, None).is_none(), "built with the ring missing");
     }
 
     #[test]
@@ -718,12 +753,12 @@ mod tests {
         let flat = |_: i32, _: i32| Some(5);
         // The coarser cell under the region's centre is absent.
         let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole)).is_none(), "built with a coarser cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole), None).is_none(), "built with a coarser cell missing");
         // A ring cell of the coarser cell at the region's edge is absent: the
         // region's cells reach 9 fine cells out, three coarse cells, whose
         // ring is the fourth.
         let far = |q: i32, _: i32| (q != 4).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far)).is_none(), "built with a coarser ring cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far), None).is_none(), "built with a coarser ring cell missing");
     }
 
     /// Without a coarser level a vertex's target is itself: the morph is a
@@ -731,7 +766,7 @@ mod tests {
     #[test]
     fn coarse_target_is_the_vertex_itself_at_the_coarsest_level() {
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let result = build_summary_mesh_region(1, REGION, &field, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         for ((p, n), c) in result.positions.iter().zip(&result.normals).zip(&result.coarse) {
             assert!((c[3] - p[1]).abs() < 1e-5, "target height {} is not the vertex's {}", c[3], p[1]);
             assert!((Vec3::from_array(*n) - Vec3::new(c[0], c[1], c[2])).length() < 1e-5);
@@ -746,7 +781,7 @@ mod tests {
     fn coarse_targets_lie_on_the_coarser_surface() {
         let fine = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
         let flat = |_: i32, _: i32| Some(20);
-        let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat)).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat), None).unwrap();
         let want = height_y(20.0) - level_depth_bias(1);
         // Fan vertices only: a curtain keeps its own normal and hangs from
         // its corners' targets.
@@ -757,7 +792,7 @@ mod tests {
         assert!(result.positions.iter().any(|p| (p[1] - want).abs() > 0.5), "the fine relief is flat");
 
         let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
-        let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse)).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse), None).unwrap();
         let coarse_lat = summary_lattice(4);
         let mut centres = 0;
         for (p, c) in result.positions.iter().zip(&result.coarse) {
@@ -780,8 +815,8 @@ mod tests {
         // A varying field: every vertex the two regions both place must be
         // at the same height, or the seam between them opens.
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let a = build_summary_mesh_region(1, REGION, &field, None).unwrap();
-        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None).unwrap();
+        let a = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
+        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None).unwrap();
         let av = fan_vertices(&a);
         let mut shared = 0;
         for (pb, _) in fan_vertices(&b) {
@@ -801,9 +836,34 @@ mod tests {
         // shares its vertices (no vertex duplicated among the fans), and the
         // fan normals at the cliff lean over.
         let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
-        let result = build_summary_mesh_region(1, REGION, &field, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
         let leaning = fan_vertices(&result).iter().filter(|(_, n)| n.y < 0.7).count();
         assert!(leaning > 0, "a 20-step cliff produced no steep normals");
+    }
+
+    /// A level built with a canopy carries one per vertex: a cell's own at
+    /// its centre, the mean of the three cells meeting at a corner, none
+    /// under a curtain, and none at all when built without.
+    #[test]
+    fn canopy_rides_the_vertices_by_the_corner_rule() {
+        use common::cover::{Canopy, Cover, Slot};
+        let flat = |_: i32, _: i32| Some(5);
+        let bare = build_summary_mesh_region(1, REGION, &flat, None, None).unwrap();
+        assert!(bare.canopy.is_empty());
+
+        let pines = Canopy::of(&[Cover::NONE.with(0, Slot::Pine).with(1, Slot::Pine); 7]);
+        let one = |q: i32, r: i32| Some(if (q, r) == (0, 0) { pines } else { Canopy::NONE });
+        let result = build_summary_mesh_region(1, REGION, &flat, None, Some(&one)).unwrap();
+        assert_eq!(result.canopy.len(), result.positions.len());
+        let own = canopy_vertex(pines);
+        assert!((own[0] - 14.0 / 21.0).abs() < 1e-6 && own[1] == own[0] && own[2] == 0.0, "density, all of it pine");
+        let at_centre = result.positions.iter().zip(&result.canopy).find(|(p, _)| p[0].abs() < 1e-4 && p[2].abs() < 1e-4);
+        let (_, centre) = at_centre.expect("the origin cell's centre vertex");
+        assert_eq!(*centre, own);
+        let thirds = result.canopy.iter().filter(|c| c.iter().zip(&own).all(|(a, b)| (a - b / 3.0).abs() < 1e-6)).count();
+        assert_eq!(thirds, 6, "each of the cell's six corners averages it with two bare cells");
+        let none = result.canopy.iter().filter(|c| **c == [0.0; 4]).count();
+        assert_eq!(none, result.canopy.len() - 7, "everything else, curtains included, carries nothing");
     }
 }

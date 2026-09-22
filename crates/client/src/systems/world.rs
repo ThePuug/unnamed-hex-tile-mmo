@@ -722,6 +722,7 @@ pub fn dispatch_summary_tasks(
                     base_positions: Vec::new(),
                     base_normals: Vec::new(),
                     base_coarse: Vec::new(),
+                    base_canopy: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
                     base_water: Default::default(),
@@ -1005,6 +1006,7 @@ fn collect_and_build_summary_mesh(
         positions: Vec::new(),
         normals: Vec::new(),
         coarse: Vec::new(),
+        canopy: Vec::new(),
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
@@ -1065,7 +1067,7 @@ fn collect_and_build_summary_mesh(
     // the ground once the kit is loaded.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
-        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse)
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
             .as_ref()
             .map_or(empty, |smr| {
                 let mut result = with_water(smr, &tile_water);
@@ -1084,14 +1086,15 @@ fn collect_and_build_summary_mesh(
         }
     };
 
-    // The level's canopy follows the height's provenance too. Only the
-    // first level above the tiles stands its trees; the levels above it
-    // carry the canopy as a tint of the ground, unbuilt.
+    // The level's canopy follows the height's provenance too. Every level
+    // above the tiles carries it on the ground as a colour, and the first
+    // stands its trees on that ground as well, so the ground under the
+    // trees is the ground past them and the band edge shows no line.
     let summary_canopy = |sq: i32, sr: i32| -> Option<common::Canopy> {
         cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
     };
 
-    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse)
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, Some(&summary_canopy))
         .as_ref()
         .map_or(empty, |smr| {
             let mut result = with_water(smr, &summary_water);
@@ -1107,6 +1110,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         positions: smr.positions.clone(),
         normals: smr.normals.clone(),
         coarse: smr.coarse.clone(),
+        canopy: smr.canopy.clone(),
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
@@ -1116,11 +1120,14 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
 }
 
 /// Build a Bevy Mesh from raw geometry buffers. `coarse` is the ground's
-/// morph target per vertex; the water carries none.
+/// morph target per vertex; the water carries none. `canopy` is the
+/// canopy per vertex, as the vertex colour, where the level colours its
+/// ground by it.
 fn build_bevy_mesh(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
     coarse: Option<&[[f32; 4]]>,
+    canopy: &[[f32; 4]],
     indices: &[u32],
 ) -> Mesh {
     use bevy::render::render_resource::PrimitiveTopology;
@@ -1142,9 +1149,14 @@ fn build_bevy_mesh(
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
     .with_inserted_indices(Indices::U32(indices.to_vec()));
-    match coarse {
+    let mesh = match coarse {
         Some(coarse) => mesh.with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec()),
         None => mesh,
+    };
+    if canopy.is_empty() {
+        mesh
+    } else {
+        mesh.with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, canopy.to_vec())
     }
 }
 
@@ -1176,6 +1188,7 @@ pub fn poll_summary_meshes(
                 state.base_positions = result.positions;
                 state.base_normals = result.normals;
                 state.base_coarse = result.coarse;
+                state.base_canopy = result.canopy;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.base_water = result.water;
@@ -1200,6 +1213,7 @@ pub fn poll_summary_meshes(
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
         coarse: Vec<[f32; 4]>,
+        canopy: Vec<[f32; 4]>,
         indices: Vec<u32>,
         tri_count: u32,
         water: crate::resources::WaterGeometry,
@@ -1214,6 +1228,7 @@ pub fn poll_summary_meshes(
                 positions: state.base_positions.clone(),
                 normals: state.base_normals.clone(),
                 coarse: state.base_coarse.clone(),
+                canopy: state.base_canopy.clone(),
                 indices: state.base_indices.clone(),
                 tri_count: state.base_tri_count,
                 water: state.base_water.clone(),
@@ -1227,7 +1242,7 @@ pub fn poll_summary_meshes(
             continue;
         }
 
-        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.indices);
+        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.canopy, &build.indices);
         let mesh_handle = meshes.add(mesh);
 
         let state = summary_meshes.states.get_mut(&build.key).unwrap();
@@ -1259,7 +1274,7 @@ pub fn poll_summary_meshes(
         state.cards_spawned = false;
 
         if !build.water.indices.is_empty() {
-            let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &build.water.indices);
+            let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &[], &build.water.indices);
             commands.entity(entity).with_child((
                 Mesh3d(meshes.add(water)),
                 MeshMaterial3d(water_material.0.clone()),
@@ -1440,6 +1455,7 @@ mod tests {
                         base_positions: Vec::new(),
                         base_normals: Vec::new(),
                         base_coarse: Vec::new(),
+                        base_canopy: Vec::new(),
                         base_indices: Vec::new(),
                         base_tri_count: 0,
                         base_water: Default::default(),
@@ -1486,6 +1502,7 @@ mod tests {
             base_positions: Vec::new(),
             base_normals: Vec::new(),
             base_coarse: Vec::new(),
+            base_canopy: Vec::new(),
             base_indices: Vec::new(),
             base_tri_count: 0,
             base_water: Default::default(),
