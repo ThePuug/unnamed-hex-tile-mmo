@@ -30,7 +30,9 @@ pub struct Tick {
 fn main() {
     let mut app = App::new();
     app.add_plugins((
-        MinimalPlugins,
+        // Without a wait the runner spins a core. Physics is FixedUpdate, so
+        // the wait only bounds how long a Try or Do sits before Update runs.
+        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))),
         LogPlugin {
             level: bevy::log::Level::TRACE,
             // world=warn keeps the terrain pipeline's per-tile tracing spans
