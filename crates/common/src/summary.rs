@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::cover::{Canopy, Cover};
+use crate::cover::{Canopy, Cover, Outcrop};
 
 /// What a summary is read from: tiles, each giving its height, the water
 /// over it and its cover at once, so a source that materialises a tile
@@ -25,12 +25,14 @@ pub struct TileSample {
 }
 
 /// One summary: the height, the water surface over it or None where it is
-/// dry, and the canopy. What every cache holds and the wire carries.
+/// dry, the canopy and the outcrop. What every cache holds and the wire
+/// carries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryCell {
     pub z: i32,
     pub water: Option<i32>,
     pub canopy: Canopy,
+    pub outcrop: Outcrop,
 }
 
 /// Nested LoD levels: summary scales triple per level.
@@ -69,7 +71,8 @@ pub fn sample_offsets(r: u32) -> [(i32, i32); SAMPLES] {
 
 /// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
 /// seven samples: the height by [`select_center_z`], the water by
-/// [`select_center_water`], the canopy by [`Canopy::of`]. None unless the
+/// [`select_center_water`], the canopy by [`Canopy::of`], the outcrop by
+/// [`Outcrop::of`]. None unless the
 /// source has all seven (the client's map while chunks stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
@@ -82,7 +85,12 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
         ws[i] = sample.water;
         covers[i] = sample.cover;
     }
-    Some(SummaryCell { z: select_center_z(&zs), water: select_center_water(&ws), canopy: Canopy::of(&covers) })
+    Some(SummaryCell {
+        z: select_center_z(&zs),
+        water: select_center_water(&ws),
+        canopy: Canopy::of(&covers),
+        outcrop: Outcrop::of(&covers),
+    })
 }
 
 /// The water surface a summary carries: the surface more than half of

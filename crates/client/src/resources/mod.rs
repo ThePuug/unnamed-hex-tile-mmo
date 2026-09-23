@@ -72,14 +72,20 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// centre and radius, the width of the overlap inside it over which the
 /// models dither out and the cards dither in, and the distance by which
 /// the cards, sinking from the ring on, have gone wholly under the
-/// ground that wears their colour. Rendered coordinates, as the regions'
-/// transforms are; an unset ring shows the models and hides the cards.
+/// ground that wears their colour. And the band the far cards stand in,
+/// the crags a summary past the tiles stands: from the first summary
+/// level's outer edge, where the tiles' own boulders end, to the next
+/// level's, each as its centre, radius and overlap. Rendered coordinates,
+/// as the regions' transforms are; an unset ring shows the models and
+/// hides the cards, and an unset far band hides the far cards.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
 pub struct CardBand {
     pub center: Vec2,
     pub inner: f32,
     pub overlap: f32,
     pub sink_to: f32,
+    pub far_in: Vec4,
+    pub far_out: Vec4,
 }
 
 /// The coarser level's surface at a terrain vertex: normal xyz, height w in

@@ -220,6 +220,8 @@ pub struct TreeInstance {
     pub growth: f32,
     pub kind: Kind,
     pub variation: u32,
+    /// Whether it stands for a crag past the tiles, drawn in the far band.
+    pub far: bool,
 }
 
 /// What the wood costs to draw: the stands drawing and the trees in
@@ -471,6 +473,7 @@ pub fn place_trees(
                     growth: sway.growth as f32 * edge,
                     kind: slot.into(),
                     variation: sway.variation,
+                    far: false,
                 });
             }
             // A boulder grows with the rock round it: small where one shows
@@ -486,6 +489,49 @@ pub fn place_trees(
                     growth: sway.growth as f32 * crowding,
                     kind: Kind::Boulder,
                     variation: sway.variation,
+                    far: false,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The crags a mesh region at level `radius` stands past the tiles, from
+/// its summaries' outcrops: each summary's every tile has its seven slots,
+/// and each holds a boulder by its own draw against the share of rock the
+/// summary read, so a crag stands as much rock as its tiles do, in the
+/// same slots, though not the same ones. Each stands in the far band.
+pub fn place_crags(
+    radius: u32,
+    region_key: MeshRegionKey,
+    mesh_origin: Vec3,
+    outcrop: &dyn Fn(i32, i32) -> Option<common::Outcrop>,
+    height: &dyn Fn(i32, i32) -> Option<i32>,
+) -> Vec<TreeInstance> {
+    let lattice = common_bevy::summary::summary_lattice(radius);
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
+    let mut out = Vec::new();
+    for cell in region_lat.tiles_in_cell((region_key.mn, region_key.mm)) {
+        let Some(rock) = outcrop(cell.0, cell.1).filter(|o| !o.is_empty()) else { continue };
+        let Some(cell_z) = height(cell.0, cell.1) else { continue };
+        let share = rock.density();
+        for (q, r) in lattice.tiles_covered(cell) {
+            for k in 0..TILE_SLOTS as usize {
+                if common::boulder_draw(q, r, k) >= share {
+                    continue;
+                }
+                let sway = common::boulder_sway(q, r, k);
+                let (x, z) = boulder_center(q, r, k, &sway);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                out.push(TreeInstance {
+                    translation: Vec3::new(x, y, z) - mesh_origin,
+                    yaw: sway.yaw as f32,
+                    growth: sway.growth as f32 * share as f32,
+                    kind: Kind::Boulder,
+                    variation: sway.variation,
+                    far: true,
                 });
             }
         }
@@ -545,7 +591,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
             .entry(cards.texture.id())
             .or_insert_with(|| (cards.clone(), Vec::new()))
             .1
-            .push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale));
+            .push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale, t.far));
     }
     let parts = parts
         .into_iter()
@@ -657,6 +703,33 @@ mod tests {
             let own = (world.x - cx).hypot(world.z - cz);
             assert!(own < 0.87, "a tree {own} from its tile's centre, past the edge");
         }
+    }
+}
+
+/// A crag past the tiles stands boulders only in the summaries that read
+/// rock, all in the far band, and more of them where more was read.
+#[cfg(test)]
+mod crag_tests {
+    use super::*;
+    use common::{Cover, Outcrop, Rock};
+
+    fn crags(boulders: usize) -> Vec<TreeInstance> {
+        let radius = common_bevy::summary::LOD_LEVELS[2];
+        let region_lat = common_bevy::summary::mesh_region_lattice();
+        let cells: Vec<(i32, i32)> = region_lat.tiles_in_cell((0, 0)).collect();
+        let rocky = cells[cells.len() / 2];
+        let face = (0..boulders).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
+        let outcrop = move |sq: i32, sr: i32| Some(if (sq, sr) == rocky { Outcrop::of(&[face; 7]) } else { Outcrop::NONE });
+        let key = MeshRegionKey { r: radius, mn: 0, mm: 0 };
+        place_crags(radius, key, Vec3::ZERO, &outcrop, &|_, _| Some(0))
+    }
+
+    #[test]
+    fn a_crag_stands_where_its_summary_read_rock() {
+        assert!(crags(0).is_empty());
+        let (few, many) = (crags(2), crags(6));
+        assert!(!few.is_empty() && many.len() > few.len());
+        assert!(many.iter().all(|t| t.far && t.kind == Kind::Boulder));
     }
 }
 

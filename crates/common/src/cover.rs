@@ -1,7 +1,7 @@
 //! A tile's cover: what grows at each of its three sites and the boulders
-//! in its seven slots. And the canopy,
-//! what stands over many tiles as seven of them say, which is what the
-//! far ground is coloured by.
+//! in its seven slots. And what stands over many tiles as seven of them
+//! say: the canopy the far ground is coloured by, and the outcrop the far
+//! crags are stood from.
 
 use serde::{Deserialize, Serialize};
 
@@ -103,6 +103,12 @@ pub fn sway(q: i32, r: i32, k: usize) -> Sway {
 /// [`SLOT_TOWARD`] order: its own, apart from any site's.
 pub fn boulder_sway(q: i32, r: i32, k: usize) -> Sway {
     sway(q, r, SITES.len() + k)
+}
+
+/// A draw in [0, 1) for slot `k` of tile `(q, r)`: what a far crag's
+/// slots are filled by, against the share of rock its summary read.
+pub fn boulder_draw(q: i32, r: i32, k: usize) -> f64 {
+    (mix(q, r, SITES.len() + k, 6) >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// A hash of a slot and a channel: exact in the integers, so a tile a
@@ -279,6 +285,61 @@ impl Canopy {
 
 }
 
+/// The rock over the tiles a summary covers, read from the
+/// [`crate::summary::SAMPLES`] sample tiles' slots: how many of those
+/// readings hold a boulder, six bits, and the rock of the first sample
+/// that holds one, two. A crag is rare and small, so the count is what
+/// says one stands here and the rock is its own. One byte on the wire.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Outcrop(u8);
+
+/// The slot readings an outcrop is made of, and the most it can count.
+pub const OUTCROP_READINGS: u8 = crate::summary::SAMPLES as u8 * TILE_SLOTS;
+
+impl Outcrop {
+    pub const NONE: Outcrop = Outcrop(0);
+
+    /// The outcrop of the sample tiles' covers.
+    pub fn of(covers: &[Cover]) -> Outcrop {
+        debug_assert!(covers.len() <= crate::summary::SAMPLES);
+        let count = covers.iter().map(|c| c.boulders().count() as u8).sum::<u8>();
+        match covers.iter().find(|c| c.boulders().next().is_some()) {
+            Some(first) => {
+                let rock = (Cover::NONE.with_rock(first.rock()).bits() >> ROCK_BIT) as u8;
+                Outcrop(count | rock << 6)
+            }
+            None => Outcrop::NONE,
+        }
+    }
+
+    pub fn from_bits(bits: u8) -> Outcrop {
+        Outcrop(bits)
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// How many readings hold a boulder.
+    pub fn boulders(self) -> u8 {
+        self.0 & 63
+    }
+
+    /// The rock the boulders are.
+    pub fn rock(self) -> Rock {
+        Cover::from_bits(((self.0 >> 6) as u16) << ROCK_BIT).rock()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.boulders() == 0
+    }
+
+    /// The share of the readings holding a boulder, 0 to 1.
+    pub fn density(self) -> f64 {
+        self.boulders() as f64 / OUTCROP_READINGS as f64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +388,22 @@ mod tests {
         let all = (0..TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
         assert_eq!(all.fullness(), TILE_SLOTS);
         assert_eq!(Cover::from_bits(u16::MAX), Cover::from_bits(all.bits() | 0x3F));
+    }
+
+    /// An outcrop counts its covers' boulders and keeps their rock: none
+    /// from none, every reading from covers all rock.
+    #[test]
+    fn an_outcrop_counts_the_boulders_its_covers_hold() {
+        let samples = crate::summary::SAMPLES;
+        assert!(Outcrop::of(&vec![Cover::NONE; samples]).is_empty());
+        let face = (0..TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Sandstone);
+        let all = Outcrop::of(&vec![face; samples]);
+        assert_eq!(all.boulders(), OUTCROP_READINGS);
+        assert_eq!(all.rock(), Rock::Sandstone);
+        assert_eq!(all.density(), 1.0);
+        assert_eq!(Outcrop::from_bits(all.bits()), all);
+        let one = Outcrop::of(&[Cover::NONE.with(0, Slot::Pine), Cover::NONE.with_boulder(3).with_rock(Rock::Basement)]);
+        assert_eq!((one.boulders(), one.rock()), (1, Rock::Basement));
     }
 
     /// Every site's slots are ring slots, each held by one site only.

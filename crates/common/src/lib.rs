@@ -9,7 +9,7 @@ pub mod plate_tags;
 pub mod rock;
 pub mod summary;
 pub mod timers;
-pub use cover::{boulder_sway, sway, Canopy, Cover, Slot, Sway, SITES, SITE_SLOTS, SLOT_JITTER, SLOT_SHARE, SLOT_TOWARD, TILE_SLOTS};
+pub use cover::{boulder_draw, boulder_sway, sway, Canopy, Cover, Outcrop, Slot, Sway, SITES, SITE_SLOTS, SLOT_JITTER, SLOT_SHARE, SLOT_TOWARD, TILE_SLOTS};
 pub use hex_lattice::HexLattice;
 pub use hex_spatial_grid::HexSpatialGrid;
 pub use plate_tags::{PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};

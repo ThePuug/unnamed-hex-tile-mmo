@@ -98,9 +98,12 @@ impl Instance {
 
     /// A card: the first layer of its variation's pictures, mirrored by
     /// its turn, facing left or right of the front, and `height` tall as
-    /// scaled, which the shader centres the picture on.
-    pub fn card(translation: Vec3, yaw: f32, scale: f32, layer: u32, height: f32) -> Self {
-        let mirror = if yaw.sin() < 0.0 { -1.0 } else { 1.0 };
+    /// scaled, which the shader centres the picture on. A far card stands
+    /// in the far band and not the ring's, and says so by its mirror's
+    /// size, two where a near card's is one.
+    pub fn card(translation: Vec3, yaw: f32, scale: f32, layer: u32, height: f32, far: bool) -> Self {
+        let side = if yaw.sin() < 0.0 { -1.0 } else { 1.0 };
+        let mirror = if far { 2.0 * side } else { side };
         Instance {
             pos_scale: [translation.x, translation.y, translation.z, scale],
             turn: [layer as f32, mirror, height, 0.0],
@@ -425,11 +428,14 @@ impl Plugin for TreeDrawPlugin {
 }
 
 /// What every drawing of the wood reads alike: the ring where the models
-/// hand over to the cards — its centre, radius and overlap — and the
-/// radius about the camera inside which everything fades.
+/// hand over to the cards — its centre, radius and overlap — the far
+/// cards' band, its inner and outer edge each alike, and the radius about
+/// the camera inside which everything fades.
 #[derive(Clone, Copy, Default, ShaderType)]
 struct ForestUniform {
     band: Vec4,
+    far_in: Vec4,
+    far_out: Vec4,
     near_fade: f32,
 }
 
@@ -767,8 +773,10 @@ fn prepare_wood_buffers(
 ) {
     let _t = timers.0.scope("regions");
     let buffers = buffers.into_inner();
-    let band = band.map_or(Vec4::ZERO, |b| Vec4::new(b.center.x, b.center.y, b.inner, b.overlap));
-    buffers.forest.set(ForestUniform { band, near_fade: NEAR_FADE_RADIUS });
+    let (ring, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
+        (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.far_in, b.far_out)
+    });
+    buffers.forest.set(ForestUniform { band: ring, far_in, far_out, near_fade: NEAR_FADE_RADIUS });
     buffers.forest.write_buffer(&render_device, &render_queue);
     buffers.frames.set(table.frames.clone());
     buffers.frames.write_buffer(&render_device, &render_queue);

@@ -853,6 +853,10 @@ pub fn update_terrain_cut(
         }
         if r == common_bevy::summary::LOD_LEVELS[1] {
             band.sink_to = cut.outer;
+            band.far_in = cut.outer_center.extend(cut.outer).extend(cut.fade);
+        }
+        if r == common_bevy::summary::LOD_LEVELS[2] {
+            band.far_out = cut.outer_center.extend(cut.outer).extend(cut.fade);
         }
     }
     card_band.set_if_neq(band);
@@ -1154,6 +1158,12 @@ fn collect_and_build_summary_mesh(
             let mut result = with_water(smr, &summary_water);
             if radius == common_bevy::summary::LOD_LEVELS[1] {
                 result.trees = crate::plugins::forest::place_trees(radius, region_key, smr.mesh_origin, map, &height);
+            }
+            // Past the tiles a crag stands from the summaries' own reading
+            // of it, the level after the first.
+            if radius == common_bevy::summary::LOD_LEVELS[2] {
+                let outcrop = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.outcrop);
+                result.trees = crate::plugins::forest::place_crags(radius, region_key, smr.mesh_origin, &outcrop, &height);
             }
             result
         })
