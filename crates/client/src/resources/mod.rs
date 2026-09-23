@@ -25,12 +25,14 @@ use common_bevy::summary_mesh::MeshRegionKey;
 /// with its own centre since an edge follows the player only as fast as
 /// both its levels are on screen (`EdgeCenters`). The shaders drop
 /// fragments inside `inner` of `inner_center` or beyond `outer` of
-/// `outer_center`, and morph the vertices across `[outer - fade, outer]`
-/// onto the coarser level's surface. Field order is the uniform layout in
-/// `terrain_cut.wgsl`; the tail pads the struct to the uniform stride. No
-/// name in an imported shader module may end in a digit or start with an
-/// underscore: the composer rejects any identifier naga's namer would
-/// rewrite.
+/// `outer_center`, and morph the vertices across
+/// `[outer - fade, outer - settle]` onto the coarser level's surface.
+/// `settle` is one of the level's own cells: every triangle that reaches
+/// the edge then lies wholly on the coarser surface, the two levels meet
+/// parallel, and no sightline passes between them where they part. Field
+/// order is the uniform layout in `terrain_cut.wgsl`. No name in an
+/// imported shader module may end in a digit or start with an underscore:
+/// the composer rejects any identifier naga's namer would rewrite.
 #[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
 pub struct TerrainCut {
     pub inner_center: Vec2,
@@ -38,13 +40,13 @@ pub struct TerrainCut {
     pub inner: f32,
     pub outer: f32,
     pub fade: f32,
-    pub pad: f32,
+    pub settle: f32,
 }
 
 impl Default for TerrainCut {
     /// No cut: everything shows.
     fn default() -> Self {
-        Self { inner_center: Vec2::ZERO, outer_center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, pad: 0.0 }
+        Self { inner_center: Vec2::ZERO, outer_center: Vec2::ZERO, inner: 0.0, outer: f32::MAX, fade: 0.0, settle: 0.0 }
     }
 }
 

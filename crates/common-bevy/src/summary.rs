@@ -87,7 +87,14 @@ pub struct Band {
 
 /// Flat-to-flat width of one summary at level `r`, in world units.
 pub fn summary_width_wu(r: u32) -> f32 {
-    (2 * r + 1) as f32 * HEX_OUTER_RADIUS * 3.0_f32.sqrt()
+    summary_outer_radius_wu(r) * 3.0_f32.sqrt()
+}
+
+/// Centre-to-corner radius of one summary at level `r`, in world units:
+/// the longest edge of the fan triangles its mesh is made of, so every
+/// vertex of a triangle over a point lies within it of that point.
+pub fn summary_outer_radius_wu(r: u32) -> f32 {
+    (2 * r + 1) as f32 * HEX_OUTER_RADIUS
 }
 
 /// The next coarser level of the ladder, if `r` is not the coarsest.

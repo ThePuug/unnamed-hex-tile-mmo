@@ -938,8 +938,9 @@ impl<'a> DrawnGround<'a> {
     }
 }
 
-/// Level `r`'s cut: its band, with the morph strip inside its outer edge.
-/// The outermost band ends at the horizon and morphs nowhere. The level
+/// Level `r`'s cut: its band, with the morph strip inside its outer edge,
+/// complete a cell short of it. The outermost band ends at the horizon and
+/// morphs nowhere. The level
 /// begins exactly where the finer one ends, since the finer surface has
 /// become this one there; anything drawn under the finer level's strip
 /// could only show through where it stands higher. Each circle is centred
@@ -951,9 +952,10 @@ fn level_cut(
     edges: &HashMap<u32, Vec2>,
     target: Vec2,
 ) -> crate::resources::TerrainCut {
-    use common_bevy::summary::{finer_level, level_band, transition_wu};
+    use common_bevy::summary::{finer_level, level_band, summary_outer_radius_wu, transition_wu};
     let (band, outermost) = level_band(r, bands);
-    let (outer, fade) = if outermost { (f32::MAX, 0.0) } else { (band.outer_wu, transition_wu(r)) };
+    let (outer, fade, settle) =
+        if outermost { (f32::MAX, 0.0, 0.0) } else { (band.outer_wu, transition_wu(r), summary_outer_radius_wu(r)) };
     let centre_of = |edge: Option<u32>| edge.and_then(|e| edges.get(&e)).copied().unwrap_or(target);
     crate::resources::TerrainCut {
         inner_center: centre_of(finer_level(r)),
@@ -961,7 +963,7 @@ fn level_cut(
         inner: band.inner_wu,
         outer,
         fade,
-        pad: 0.0,
+        settle,
     }
 }
 
@@ -1411,11 +1413,13 @@ mod tests {
     }
 
     /// A level begins exactly where the finer one ends, with the morph
-    /// strip inside the finer one's edge. The finest level begins at the
-    /// player and the outermost band ends at the horizon, morphing nowhere.
+    /// strip inside the finer one's edge and complete a cell of the finer
+    /// level short of it, so every finer triangle reaching the edge lies on
+    /// the coarser surface. The finest level begins at the player and the
+    /// outermost band ends at the horizon, morphing nowhere.
     #[test]
     fn level_cut_meets_the_finer_level_at_its_edge() {
-        use common_bevy::summary::{compute_active_bands, transition_wu};
+        use common_bevy::summary::{compute_active_bands, summary_outer_radius_wu, transition_wu};
         let bands = compute_active_bands(25_000.0);
         let (edges, target) = (HashMap::new(), Vec2::ZERO);
         for pair in bands.windows(2) {
@@ -1425,11 +1429,13 @@ mod tests {
             assert_eq!(f.outer, fine.outer_wu);
             assert!((f.fade - transition_wu(fine.r)).abs() < 0.01);
             assert!(f.fade < f.outer - f.inner);
+            assert_eq!(f.settle, summary_outer_radius_wu(fine.r));
+            assert!(f.settle < f.fade, "r={} settles before its strip begins", fine.r);
             assert_eq!(c.inner, f.outer, "r={} begins off r={}'s edge", coarse.r, fine.r);
         }
         assert_eq!(level_cut(bands[0].r, &bands, &edges, target).inner, 0.0);
         let last = level_cut(bands.last().unwrap().r, &bands, &edges, target);
-        assert_eq!((last.outer, last.fade), (f32::MAX, 0.0));
+        assert_eq!((last.outer, last.fade, last.settle), (f32::MAX, 0.0, 0.0));
     }
 
     /// The cut as the frame computes it at a fresh spawn: no edges placed,
