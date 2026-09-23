@@ -31,7 +31,7 @@ use common_bevy::summary_mesh::MeshRegionKey;
 /// name in an imported shader module may end in a digit or start with an
 /// underscore: the composer rejects any identifier naga's namer would
 /// rewrite.
-#[derive(ShaderType, Debug, Clone, Copy)]
+#[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
 pub struct TerrainCut {
     pub inner_center: Vec2,
     pub outer_center: Vec2,
@@ -72,7 +72,7 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// the cards, sinking from the ring on, have gone wholly under the
 /// ground that wears their colour. Rendered coordinates, as the regions'
 /// transforms are; an unset ring shows the models and hides the cards.
-#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
+#[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
 pub struct CardBand {
     pub center: Vec2,
     pub inner: f32,

@@ -822,26 +822,35 @@ pub fn update_terrain_cut(
         ring.outer_center.extend(ring.outer).extend(cards)
     };
 
+    // A material is written only where its cut or lift has moved: a
+    // changed material is prepared again and every region wearing it
+    // specialised again, which for the terrain is every mesh it has.
+    let mut band = *card_band;
     for (&r, handle) in &terrain_material.by_level {
-        let Some(mut material) = materials.get_mut(handle) else { continue };
-        material.extension.canopy.lift = lift;
-        material.extension.cut = if forced_radius.0.is_some() {
+        let cut = if forced_radius.0.is_some() {
             crate::resources::TerrainCut::default()
         } else {
             level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz())
         };
+        let Some(material) = materials.get(handle) else { continue };
+        if material.extension.cut != cut || material.extension.canopy.lift != lift {
+            if let Some(mut material) = materials.get_mut(handle) {
+                material.extension.cut = cut;
+                material.extension.canopy.lift = lift;
+            }
+        }
         // The ring is the tiles' own outer edge, with their ground's
         // overlap; the cards have sunk away by the first summary level's.
         if r == 0 {
-            let cut = material.extension.cut;
-            card_band.center = cut.outer_center;
-            card_band.inner = if cut.fade > 0.0 { cut.outer } else { 0.0 };
-            card_band.overlap = cut.fade;
+            band.center = cut.outer_center;
+            band.inner = if cut.fade > 0.0 { cut.outer } else { 0.0 };
+            band.overlap = cut.fade;
         }
         if r == common_bevy::summary::LOD_LEVELS[1] {
-            card_band.sink_to = material.extension.cut.outer;
+            band.sink_to = cut.outer;
         }
     }
+    card_band.set_if_neq(band);
 }
 
 /// Ease each active edge's centre toward `target`, as far as both its
