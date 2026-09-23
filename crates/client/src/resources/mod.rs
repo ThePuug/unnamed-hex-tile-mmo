@@ -106,6 +106,12 @@ pub struct CanopyLook {
     /// sun's: read from there, every pass would lift a different surface
     /// and the ground would shadow itself from one it never draws.
     pub lift: Vec4,
+    /// The circle the rise falls away across, as `lift` states its own:
+    /// the third summary level's outer edge's centre in xy, and in zw its
+    /// band, where the rise ends to where the next level begins, so the
+    /// ground under the canopy is bare where those two meet and neither
+    /// draws a rise the other does not.
+    pub fall: Vec4,
     /// The ground distances the relief is full at and gone by.
     pub relief_full: f32,
     pub relief_gone: f32,
@@ -309,6 +315,7 @@ impl TerrainMaterial {
             // The span is the band cut's, handed over each frame by
             // `update_terrain_cut`; until it has run the ground is flat.
             lift: Vec4::ZERO,
+            fall: Vec4::ZERO,
             relief_full,
             relief_gone,
         }

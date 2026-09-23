@@ -812,14 +812,17 @@ pub fn update_terrain_cut(
 
     // The span the canopy's ground rises over is the cards' own: from the
     // ring where the models hand over to where the last card is drawn.
-    // Every level is given the same one, so the ground they draw agrees
-    // where their bands meet.
-    let lift = if forced_radius.0.is_some() {
-        Vec4::ZERO
+    // It falls away again across the whole of the next level's band, so
+    // the level past that carries none. Every level is given the same
+    // spans, so the ground they draw agrees where their bands meet.
+    let (lift, fall) = if forced_radius.0.is_some() {
+        (Vec4::ZERO, Vec4::ZERO)
     } else {
-        let ring = level_cut(0, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
-        let cards = level_cut(common_bevy::summary::LOD_LEVELS[1], &bands, &edges.0, target).outer;
-        ring.outer_center.extend(ring.outer).extend(cards)
+        let at = |r: u32| level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
+        let ring = at(0);
+        let cards = at(common_bevy::summary::LOD_LEVELS[1]).outer;
+        let third = at(common_bevy::summary::LOD_LEVELS[2]);
+        (ring.outer_center.extend(ring.outer).extend(cards), third.outer_center.extend(third.inner).extend(third.outer))
     };
 
     // A material is written only where its cut or lift has moved: a
@@ -833,10 +836,12 @@ pub fn update_terrain_cut(
             level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz())
         };
         let Some(material) = materials.get(handle) else { continue };
-        if material.extension.cut != cut || material.extension.canopy.lift != lift {
+        let canopy = &material.extension.canopy;
+        if material.extension.cut != cut || canopy.lift != lift || canopy.fall != fall {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.extension.cut = cut;
                 material.extension.canopy.lift = lift;
+                material.extension.canopy.fall = fall;
             }
         }
         // The ring is the tiles' own outer edge, with their ground's
