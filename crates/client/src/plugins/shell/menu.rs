@@ -152,7 +152,7 @@ pub fn route_keys(
             Choice::Settings => panel.open(),
             Choice::CharacterSelect => {
                 menu.confirming = true;
-                menu.cancel_picked = false;
+                menu.cancel_picked = true;
             }
             Choice::Quit => {
                 exit.write(AppExit::Success);
