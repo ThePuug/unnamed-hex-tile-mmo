@@ -16,18 +16,26 @@ pub enum Piece {
     LeatherPants,
     LeatherBoots,
     SwordBreaker,
+    PlateHelm,
+    PlateGauntlets,
+    PlateLeggings,
+    PlateSabatons,
 }
 
 impl Piece {
     /// Every piece, in slot order.
-    pub const ALL: [Piece; 8] = [
+    pub const ALL: [Piece; 12] = [
         Piece::LeatherHood,
+        Piece::PlateHelm,
         Piece::LeatherVest,
         Piece::PlateCuirass,
         Piece::LeatherGloves,
+        Piece::PlateGauntlets,
         Piece::LeatherGirdle,
         Piece::LeatherPants,
+        Piece::PlateLeggings,
         Piece::LeatherBoots,
+        Piece::PlateSabatons,
         Piece::SwordBreaker,
     ];
 
@@ -43,6 +51,10 @@ impl Piece {
             Piece::LeatherPants => "leather-pants",
             Piece::LeatherBoots => "leather-boots",
             Piece::SwordBreaker => "sword-breaker",
+            Piece::PlateHelm => "plate-helm",
+            Piece::PlateGauntlets => "plate-gauntlets",
+            Piece::PlateLeggings => "plate-leggings",
+            Piece::PlateSabatons => "plate-sabatons",
         }
     }
 
@@ -56,12 +68,12 @@ impl Piece {
     /// both fit the legs.
     pub fn slot(self) -> Slot {
         match self {
-            Piece::LeatherHood => Slot::Head,
+            Piece::LeatherHood | Piece::PlateHelm => Slot::Head,
             Piece::LeatherVest | Piece::PlateCuirass => Slot::Torso,
-            Piece::LeatherGloves => Slot::Hands,
+            Piece::LeatherGloves | Piece::PlateGauntlets => Slot::Hands,
             Piece::LeatherGirdle => Slot::Waist,
-            Piece::LeatherPants => Slot::Legs,
-            Piece::LeatherBoots => Slot::Feet,
+            Piece::LeatherPants | Piece::PlateLeggings => Slot::Legs,
+            Piece::LeatherBoots | Piece::PlateSabatons => Slot::Feet,
             Piece::SwordBreaker => Slot::OffHand,
         }
     }
@@ -76,6 +88,10 @@ impl Piece {
             Piece::LeatherPants => "Leather Pants",
             Piece::LeatherBoots => "Leather Boots",
             Piece::SwordBreaker => "Sword-breaker",
+            Piece::PlateHelm => "Plate Helm",
+            Piece::PlateGauntlets => "Plate Gauntlets",
+            Piece::PlateLeggings => "Plate Leggings",
+            Piece::PlateSabatons => "Plate Sabatons",
         }
     }
 }
