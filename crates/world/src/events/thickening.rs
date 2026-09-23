@@ -43,7 +43,7 @@ use super::plates::GRAPH_CELL_SCALE;
 use std::sync::Arc;
 
 use super::thrusting::{outlines_for, sheets_in, sheets_of, smoothstep, Outlines, PlateOutline, RANGE_RISE, RANGE_SPACING};
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The plateau ─────────────────────────────────────────────────────────────
 
@@ -143,7 +143,8 @@ impl WorldEvent for ThickeningEvent {
         let (wx, wy) = hex_to_world(q, r);
         let rise = thickening_on(wx, wy, outlines);
         if rise <= 0.0 { return None }
-        Some(TileOutput { elevation_delta: rise, ..TileOutput::default() })
+        let gradient = gradient_of(wx, wy, rise, |x, y| thickening_on(x, y, outlines));
+        Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })
     }
 }
 

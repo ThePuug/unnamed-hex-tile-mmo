@@ -93,7 +93,7 @@ use super::migration::{channels, Channel, ChannelIndex, Train, AXIS_SWING, CHANN
 pub use super::migration::VALLEY_HALF_WIDTH;
 use super::plates::Coasts;
 use super::thrusting::Outlines;
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The channel ─────────────────────────────────────────────────────────────
 
@@ -474,7 +474,14 @@ impl WorldEvent for DissectionEvent {
         if cut <= 0.0 && water.is_none() && valley.is_none() {
             return None;
         }
-        Some(TileOutput { elevation_delta: -cut, water, valley, ..TileOutput::default() })
+        // The wall's slope, never the channel's: a bank is a step, and a
+        // step read over half a tile is a cliff that is not there. The
+        // envelope leans with the ground beneath, which the cut follows.
+        let (gx, gy) = below.gradient;
+        let (dx, dy) = gradient_of(wx, wy, cuts.valley, |x, y| {
+            valleys.cuts_at(x, y, below.elevation + gx * (x - wx) + gy * (y - wy)).valley
+        });
+        Some(TileOutput { elevation_delta: -cut, gradient: (-dx, -dy), water, valley, ..TileOutput::default() })
     }
 }
 

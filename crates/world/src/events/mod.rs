@@ -106,6 +106,11 @@ pub struct TileOutput {
     pub tags_added: TagSet,
     pub tags_removed: TagSet,
     pub elevation_delta: f64,
+    /// How steeply `elevation_delta` climbs, in z-levels per world unit
+    /// along x and y, where the layer makes ground steep enough to read.
+    /// Composes by the sum, as the deltas do, so a valley cut into a
+    /// range's flank is as steep as the two together.
+    pub gradient: (f64, f64),
     /// The surface water stands at over this tile, in z-levels, where the
     /// layer puts one. Surfaces compose by the highest: water covers what
     /// lies under it.
@@ -128,6 +133,9 @@ pub struct TileView {
     pub wy: f64,
     pub tags: TagSet,
     pub elevation: f64,
+    /// How steeply the ground climbs, as [`TileOutput::gradient`], summed
+    /// over the layers beneath.
+    pub gradient: (f64, f64),
     /// The highest water surface any layer below put over this tile.
     pub water: Option<f64>,
     /// The tile's place up the nearest valley's wall, as [`TileOutput::valley`].
@@ -139,13 +147,15 @@ pub struct TileView {
 impl TileView {
     fn at(q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, water: None, valley: None, cover: Cover::NONE }
+        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, cover: Cover::NONE }
     }
 
     fn compose(&mut self, out: &TileOutput) {
         for t in out.tags_added.iter() { self.tags.add(t); }
         for t in out.tags_removed.iter() { self.tags.remove(t); }
         self.elevation += out.elevation_delta;
+        self.gradient.0 += out.gradient.0;
+        self.gradient.1 += out.gradient.1;
         if let Some(w) = out.water {
             self.water = Some(self.water.map_or(w, |v| v.max(w)));
         }
@@ -156,6 +166,26 @@ impl TileView {
             self.cover = out.cover;
         }
     }
+}
+
+impl TileView {
+    /// How steep the ground is: the gradient's length, in z-levels per
+    /// world unit.
+    pub fn grade(&self) -> f64 {
+        self.gradient.0.hypot(self.gradient.1)
+    }
+}
+
+/// How far apart [`gradient_of`] reads a layer's own height: half a tile,
+/// short of any feature a tile can show and long enough to read the slope
+/// a tile's neighbours would.
+pub const GRADIENT_STEP: f64 = 0.5;
+
+/// The gradient of a layer's own height `f` at a position where it is
+/// `here`, read off `f` a step along x and along y. A layer reads its own
+/// function, never the composite, so no neighbour tile is resolved.
+pub fn gradient_of(wx: f64, wy: f64, here: f64, f: impl Fn(f64, f64) -> f64) -> (f64, f64) {
+    ((f(wx + GRADIENT_STEP, wy) - here) / GRADIENT_STEP, (f(wx, wy + GRADIENT_STEP) - here) / GRADIENT_STEP)
 }
 
 // ── CellScope ───────────────────────────────────────────────────────────────
@@ -903,6 +933,40 @@ impl common::summary::SummarySource for Composite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where the ground is steeper than a step, the gradient the layers
+    /// report reads the slope between a tile's neighbours along the
+    /// steepest axis, though no layer read a neighbour. Not everywhere: a
+    /// cuesta's contact is a step no layer reports, and a tile at a brink
+    /// reads the slope above it.
+    #[test]
+    fn the_grade_reads_the_slope_between_neighbours() {
+        let c = Composite::standard(0x9E3779B97F4A7C15);
+        let axes = [(1, 0), (0, 1), (-1, 1)];
+        let (mut steep, mut close) = (0, 0);
+        for dq in (-120..=120).step_by(11) {
+            for dr in (-120..=120).step_by(11) {
+                let (q, r) = (104_289 + dq, -4_677 + dr);
+                let v = c.tile_at(q, r);
+                if v.water.is_some() {
+                    continue;
+                }
+                let (fd, along) = axes.iter().map(|&(aq, ar)| {
+                    let (ux, uy) = hex_to_world(aq, ar);
+                    let d = (c.tile_at(q + aq, r + ar).elevation - c.tile_at(q - aq, r - ar).elevation) / 2.0;
+                    (d, v.gradient.0 * ux + v.gradient.1 * uy)
+                }).max_by(|a, b| a.0.abs().total_cmp(&b.0.abs())).unwrap();
+                if fd.abs() > 1.0 {
+                    steep += 1;
+                    if (along - fd).abs() < 0.1 * fd.abs() {
+                        close += 1;
+                    }
+                }
+            }
+        }
+        assert!(steep > 50, "only {steep} steep tiles about the spawn");
+        assert!(close * 10 >= steep * 9, "{close} of {steep} steep tiles read within a tenth");
+    }
 
     /// The translation onto another lattice holds every cell touching the
     /// footprint, and their ring, however much finer the other lattice is:

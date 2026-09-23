@@ -94,7 +94,7 @@ use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
 use super::thickening::ESCARPMENT;
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 // ── Sheet geometry ──────────────────────────────────────────────────────────
 
@@ -787,7 +787,8 @@ impl WorldEvent for ThrustingEvent {
         let (wx, wy) = hex_to_world(q, r);
         let rise = outlines.relief(wx, wy);
         if rise <= 0.0 { return None }
-        Some(TileOutput { elevation_delta: rise, ..TileOutput::default() })
+        let gradient = gradient_of(wx, wy, rise, |x, y| outlines.relief(x, y));
+        Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })
     }
 }
 
