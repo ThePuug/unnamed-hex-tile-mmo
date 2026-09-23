@@ -47,13 +47,9 @@ impl Piece {
     }
 
     /// How many styles the piece is made in: the glTF scenes its asset
-    /// holds, one outfit each. The leather set comes in three; the plate
-    /// kit in one.
+    /// holds, one outfit each.
     pub fn styles(self) -> u8 {
-        match self {
-            Piece::PlateCuirass | Piece::SwordBreaker => 1,
-            _ => STYLES,
-        }
+        STYLES
     }
 
     /// The slot a piece is worn in. The game assigns it: pants and boots
@@ -118,8 +114,9 @@ hand",
     }
 }
 
-/// The styles the leather set is made in: its seeds, one outfit each,
-/// which are a piece's glTF scenes in order (`Piece::styles`).
+/// The styles every set is made in: its seeds, one outfit each, which
+/// are a piece's glTF scenes in order (`Piece::styles`). A style of the
+/// leather and the same style of the plate are one outfit.
 pub const STYLES: u8 = 3;
 
 /// A piece in a style.
