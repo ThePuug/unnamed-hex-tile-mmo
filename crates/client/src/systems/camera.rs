@@ -84,9 +84,23 @@ const TILT_EASE: f32 = 3.0;
 const PLANE_CLEARANCE: f32 = BOOM_CLEARANCE + 0.2;
 const BOOM_MIN: f32 = 4.0;
 const SHOULDER_WU: f32 = 1.2;
+/// Among trees the camera closes in: the rest pose's elevation on a boom
+/// this share of its length, with this lens, so the frame still looks down
+/// on the player from over the shoulder and never up past the horizon. It
+/// closes in quickly and draws back out slowly, so a gap in a wood does
+/// not pump the boom.
+const CLOSE_REACH: f32 = 0.075;
+const CLOSE_FOV: f32 = 40_f32.to_radians();
+const CLOSE_IN_EASE: f32 = 3.0;
+const CLOSE_OUT_EASE: f32 = 0.4;
 /// Ground distances around the player at which the plane is fitted, in
-/// world units, in each of six directions.
+/// world units, in each of six directions; and, closed in among trees,
+/// two and three tiles out, since a boom that short stands on the ground
+/// at the player's feet and not on the hillside around it.
 const TILT_RINGS_WU: [f32; 2] = [20.0, 45.0];
+const CLOSE_TILT_RINGS_WU: [f32; 2] = [2.0 * TILE_ACROSS_WU, 3.0 * TILE_ACROSS_WU];
+/// A tile's width flat to flat.
+const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::camera::HEX_RADIUS;
 /// Maximum FOV for flyover mode (admin).
 pub const MAX_FLYOVER_FOV: f32 = 90_f32.to_radians();
 
@@ -136,6 +150,9 @@ pub struct Pose {
     pub yaw: f32,
     pub elevation: f32,
     pub fov: f32,
+    /// The boom's length as a share of its full length, before the plane
+    /// draws it in beneath the eye.
+    pub reach: f32,
 }
 
 /// The ground's plane under the player as a gradient: its rise per unit
@@ -145,18 +162,24 @@ pub type Tilt = Vec2;
 impl Pose {
     /// The widest pose: the frame's top ray above the horizontal.
     fn ceiling(yaw: f32) -> Self {
-        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV }
+        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV, reach: 1.0 }
     }
 
     /// The pose nothing pulls on: from the height the ladder is measured
     /// by, the lens narrow.
     fn rest(yaw: f32) -> Self {
-        Pose { yaw, elevation: (gameplay_camera_height() / CAMERA_DISTANCE).atan(), fov: REST_FOV }
+        Pose { yaw, elevation: (gameplay_camera_height() / CAMERA_DISTANCE).atan(), fov: REST_FOV, reach: 1.0 }
+    }
+
+    /// The pose among trees: rest's elevation, over the shoulder on a
+    /// short boom.
+    fn close(yaw: f32) -> Self {
+        Pose { yaw, fov: CLOSE_FOV, reach: CLOSE_REACH, ..Pose::rest(yaw) }
     }
 
     /// The tightest pose.
     fn floor(yaw: f32) -> Self {
-        Pose { yaw, elevation: FLOOR_ELEVATION, fov: FLOOR_FOV }
+        Pose { yaw, elevation: FLOOR_ELEVATION, fov: FLOOR_FOV, reach: 1.0 }
     }
 
     /// The pose that holds a climb of `up` ahead, from the pose `open`
@@ -182,6 +205,7 @@ impl Pose {
         Pose {
             elevation: self.elevation.lerp(to.elevation, t),
             fov: self.fov.lerp(to.fov, t),
+            reach: self.reach.lerp(to.reach, t),
             ..self
         }
     }
@@ -192,13 +216,14 @@ impl Pose {
         Vec2::new(sin, cos)
     }
 
-    /// The boom's length: full above the eye, and beneath it as long as
-    /// keeps the camera its clearance above the plane.
+    /// The boom's length: its reach above the eye, and beneath it as long
+    /// as keeps the camera its clearance above the plane.
     fn boom(&self) -> f32 {
+        let reach = CAMERA_DISTANCE * self.reach;
         if self.elevation >= 0.0 {
-            return CAMERA_DISTANCE;
+            return reach;
         }
-        CAMERA_DISTANCE.min((EYE_HEIGHT - PLANE_CLEARANCE) / (-self.elevation).tan())
+        reach.min((EYE_HEIGHT - PLANE_CLEARANCE) / (-self.elevation).tan())
     }
 
     /// Where the camera stands relative to the player's eye on ground of
@@ -263,6 +288,8 @@ pub struct CameraPose {
     /// sweeps on.
     tilt: Tilt,
     clearance: f32,
+    /// How far the camera has closed in among trees, 0 to 1, smoothed.
+    closed: f32,
 }
 
 /// whether or not it is on the line: a boom drawn in among crowns would
@@ -346,7 +373,7 @@ pub fn setup(
     mut commands: Commands,
 ) {
     commands.insert_resource(CameraOrbit::default());
-    commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0 });
+    commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0, closed: 0.0 });
     commands.insert_resource(ClearColor(HAZE_COLOR));
 
     commands.spawn((
@@ -444,9 +471,9 @@ fn majority_mean(readings: &[f32]) -> f32 {
 /// fitted to the tiles' standing heights on rings around the feet, capped
 /// at the steepest tilt. None where a ring is not loaded. Six directions
 /// on each ring make the fit's normal equations diagonal.
-fn ground_tilt(player: Vec3, map: &Map, origin: Vec3) -> Option<Tilt> {
+fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: Vec3) -> Option<Tilt> {
     let (mut xh, mut zh, mut xx) = (0.0_f32, 0.0_f32, 0.0_f32);
-    for radius in TILT_RINGS_WU {
+    for radius in rings {
         for k in 0..6 {
             let angle = k as f32 * std::f32::consts::TAU / 6.0;
             let p = Vec2::from_angle(angle) * radius;
@@ -738,7 +765,8 @@ pub fn update(
         state.climb = ease(state.climb, ahead.climb, PULL_EASE, dt);
     }
     // The plane the camera sweeps on follows the ground under the player.
-    if let Some(tilt) = ground_tilt(feet, &map, origin) {
+    let rings = [0, 1].map(|i| TILT_RINGS_WU[i].lerp(CLOSE_TILT_RINGS_WU[i], state.closed));
+    if let Some(tilt) = ground_tilt(feet, rings, &map, origin) {
         let k = 1.0 - (-TILT_EASE * dt).exp();
         state.tilt = state.tilt.lerp(tilt, k);
     }
@@ -747,9 +775,16 @@ pub fn update(
     let mut wanted = open.toward(Pose::hill(open, state.climb, tilt), (state.climb / HILL_GRADE).min(1.0));
     wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
+    // Among trees the camera closes in over the shoulder.
+    let tile: Qrz = map.convert(feet + origin);
+    let among = crate::plugins::forest::among_trees(&map, tile.q, tile.r);
+    let (to, k) = if among { (1.0, CLOSE_IN_EASE) } else { (0.0, CLOSE_OUT_EASE) };
+    state.closed = ease(state.closed, to, k, dt);
+    wanted = wanted.toward(Pose::close(wanted.yaw), state.closed);
+
     // The close-up holds the lowest pose whatever the ground says.
     if diagnostics.camera_closeup {
-        wanted = Pose { yaw: wanted.yaw, elevation: Pose::elevation_min(), fov: CEILING_FOV };
+        wanted = Pose { yaw: wanted.yaw, elevation: Pose::elevation_min(), fov: CEILING_FOV, reach: 1.0 };
     }
     let next = if diagnostics.camera_envelope_off || diagnostics.camera_closeup {
         step(current, wanted, &mut state.limit, dt, |_| true)
@@ -797,6 +832,21 @@ mod tests {
         for yaw in [0.0, 1.0, 2.5, 4.0] {
             assert!(reach_of(&Pose::rest(yaw)) < inside, "rest reaches {} of {inside}", reach_of(&Pose::rest(yaw)));
             assert!(reach_of(&Pose::floor(yaw)) < reach_of(&Pose::rest(yaw)), "the floor is tighter than rest");
+        }
+    }
+
+    /// Among trees the camera stands near, slid over the shoulder, its
+    /// frame's top under the horizon and its footprint inside the tiles the
+    /// client always holds, so closing in never waits on the stream.
+    #[test]
+    fn the_close_pose_stands_near_inside_the_streamed_tiles() {
+        let inside = common_bevy::chunk::FIXED_STREAM_APOTHEM_WU;
+        for yaw in [0.0, 1.0, 2.5, 4.0] {
+            let close = Pose::close(yaw);
+            assert!(close.boom() < 0.2 * Pose::rest(yaw).boom(), "boom {}", close.boom());
+            assert!(close.shift(close.boom()).length() > 0.5 * SHOULDER_WU, "not over the shoulder");
+            assert!(close.pitch(Vec2::ZERO) - close.fov / 2.0 > 0.0, "top ray above the horizon");
+            assert!(reach_of(&close) < inside, "close reaches {} of {inside}", reach_of(&close));
         }
     }
 
@@ -861,7 +911,7 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let tilt = ground_tilt(feet, &map, Vec3::ZERO).expect("loaded");
+        let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, Vec3::ZERO).expect("loaded");
         assert!(tilt.y < -0.2 && tilt.x.abs() < 0.1, "rises toward -z: {tilt:?}");
         let rest = Pose::rest(0.0);
         let facing_up = Pose { yaw: 0.0, ..rest };

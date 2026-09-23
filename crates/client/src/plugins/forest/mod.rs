@@ -65,6 +65,13 @@ pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize
     map.cover_at(q, r).filled().filter(|&(_, s)| s != Slot::Scrub).count()
 }
 
+/// Whether a tree stands on this tile or any of the six around it,
+/// bushes aside: the camera closes in over the shoulder there, since a
+/// boom at its length would stand among the crowns.
+pub fn among_trees(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> bool {
+    trees_on(map, q, r) > 0 || NEIGHBOURS.iter().any(|&(dq, dr)| trees_on(map, q + dq, r + dr) > 0)
+}
+
 /// Whether the trees of a tile stand inside a wood: it and each of the six
 /// around it stand `INTERIOR_TREES` or more. A tile not yet streamed in
 /// stands none, so a wood's rim reads as its edge until it arrives.
