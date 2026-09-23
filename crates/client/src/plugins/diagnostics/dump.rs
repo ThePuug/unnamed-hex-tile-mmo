@@ -47,6 +47,7 @@ pub fn dump_metrics(
     wood: Res<crate::plugins::forest::ForestDraws>,
     diagnostics: Res<DiagnosticsStore>,
     map: Res<common_bevy::resources::map::Map>,
+    history: Res<super::metrics_overlay::MetricsHistory>,
     time: Res<Time>,
 ) {
     if !dump.on {
@@ -84,6 +85,12 @@ pub fn dump_metrics(
         let _ = writeln!(out, "census/{name}/triangles = {}", group.triangles);
     }
     let _ = writeln!(out, "census/total/triangles = {}", census.total_triangles());
+
+    let mut named: Vec<_> = history.timings.iter().collect();
+    named.sort_by_key(|(name, _)| **name);
+    for (name, entry) in named {
+        let _ = writeln!(out, "timer/{name} = {:.4}", entry.latest());
+    }
 
     let _ = std::fs::write(PATH, out);
 }

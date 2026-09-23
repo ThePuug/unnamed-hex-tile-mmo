@@ -127,13 +127,17 @@ impl FrameTimeWindow {
 }
 
 /// Per-system timing entry (drained from ClientTimers).
-struct TimingEntry {
+pub(super) struct TimingEntry {
     hist_p95: History,
     cached_p95: Vec<f32>,
 }
 
 impl TimingEntry {
     fn new() -> Self { Self { hist_p95: History::new(), cached_p95: Vec::new() } }
+
+    /// The newest sample, for a reader that wants the number rather than
+    /// the shape of it.
+    pub(super) fn latest(&self) -> f32 { self.cached_p95.last().copied().unwrap_or(0.0) }
 }
 
 /// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
@@ -151,7 +155,7 @@ pub struct MetricsHistory {
     bw: History,
     msg: History,
     /// Per-system timing histories (drained from ClientTimers).
-    timings: std::collections::HashMap<&'static str, TimingEntry>,
+    pub(super) timings: std::collections::HashMap<&'static str, TimingEntry>,
     cached_frame: Vec<f32>,
     cached_bw: Vec<f32>,
     cached_msg: Vec<f32>,
