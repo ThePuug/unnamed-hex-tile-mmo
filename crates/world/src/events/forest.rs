@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES};
+use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES, SITE_SLOTS};
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{nearest_node, PATH_SWING};
@@ -573,18 +573,21 @@ fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
     )
 }
 
-/// A tile's cover from the density and tree share it lands on at
-/// `temperature`: each slot filled by its own draw against the density,
-/// brush or a tree by another against the share.
-pub fn cover_of(q: i32, r: i32, density: f64, trees: f64, temperature: f64, seed: u64) -> Cover {
-    let mut cover = Cover::NONE;
+/// A tile's cover over `ground`, the boulders already standing on it, from
+/// the density and tree share it lands on at `temperature`: each site
+/// filled by its own draw against the density, brush or a tree by another
+/// against the share, and nothing where a boulder holds a slot it needs.
+pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, temperature: f64, seed: u64) -> Cover {
+    let mut cover = ground;
     for k in 0..SITES.len() {
         let (fill, kind, mix) = slot_draws(q, r, k, seed);
         if density <= fill {
             continue;
         }
         let slot = if kind >= trees { Slot::Brush } else { tree_at(temperature, mix) };
-        cover = cover.with(k, slot);
+        if ground.has_room(k, slot) {
+            cover = cover.with(k, slot);
+        }
     }
     cover
 }
@@ -652,8 +655,8 @@ impl WorldEvent for ForestEvent {
             }
         }
         let band = smoothstep((t - TREELINE) / TREELINE_BAND);
-        let cover = cover_of(q, r, density * band, trees * band, t, seed);
-        if cover.is_empty() {
+        let cover = cover_of(q, r, below.cover, density * band, trees * band, t, seed);
+        if cover == below.cover {
             return None;
         }
         Some(TileOutput { cover, ..TileOutput::default() })
@@ -733,15 +736,28 @@ mod tests {
     #[test]
     fn sites_fill_with_density() {
         for (q, r) in [(0, 0), (SPAWN.0, SPAWN.1), (1_000_000, -2_000_000)] {
-            assert!(cover_of(q, r, 0.0, 1.0, 20.0, S).is_empty());
-            assert_eq!(cover_of(q, r, 1.0, 1.0, 20.0, S).filled().count(), SITES.len());
+            assert!(cover_of(q, r, Cover::NONE, 0.0, 1.0, 20.0, S).is_empty());
+            assert_eq!(cover_of(q, r, Cover::NONE, 1.0, 1.0, 20.0, S).filled().count(), SITES.len());
             let mut last = 0;
             for i in 0..=20 {
-                let f = cover_of(q, r, i as f64 / 20.0, 1.0, 20.0, S).filled().count();
+                let f = cover_of(q, r, Cover::NONE, i as f64 / 20.0, 1.0, 20.0, S).filled().count();
                 assert!(f >= last, "fullness fell at {i}");
                 last = f;
             }
         }
+    }
+
+    /// Growth keeps the boulders beneath it and stands only where its
+    /// slots are free of them: brush beside a boulder, never a tree.
+    #[test]
+    fn nothing_grows_on_a_boulder() {
+        let ground = Cover::NONE.with_boulder(SITE_SLOTS[0][1]).with_boulder(SITE_SLOTS[1][0]).with_rock(common::Rock::Basement);
+        let cover = cover_of(3, 4, ground, 1.0, 1.0, 20.0, S);
+        assert_eq!(cover.boulders().collect::<Vec<_>>(), ground.boulders().collect::<Vec<_>>());
+        assert_eq!(cover.rock(), common::Rock::Basement);
+        assert_eq!((cover.slot(0), cover.slot(1)), (Slot::Empty, Slot::Empty));
+        assert!(cover.slot(2) != Slot::Empty);
+        assert_eq!(cover_of(3, 4, ground, 1.0, 0.0, 20.0, S).slot(0), Slot::Brush);
     }
 
     /// No slot holds a tree where the share is nothing, none holds brush
@@ -749,9 +765,9 @@ mod tests {
     #[test]
     fn kinds_follow_the_share_and_the_temperature() {
         let all = |f: &dyn Fn(Slot) -> bool, c: Cover| c.filled().all(|(_, s)| f(s));
-        assert!(all(&|s| s == Slot::Brush, cover_of(3, 4, 1.0, 0.0, 20.0, S)));
-        assert!(all(&|s| s == Slot::Pine, cover_of(3, 4, 1.0, 1.0, PINE_BELOW - 1.0, S)));
-        assert!(all(&|s| s == Slot::Deciduous, cover_of(3, 4, 1.0, 1.0, DECIDUOUS_ABOVE + 1.0, S)));
+        assert!(all(&|s| s == Slot::Brush, cover_of(3, 4, Cover::NONE, 1.0, 0.0, 20.0, S)));
+        assert!(all(&|s| s == Slot::Pine, cover_of(3, 4, Cover::NONE, 1.0, 1.0, PINE_BELOW - 1.0, S)));
+        assert!(all(&|s| s == Slot::Deciduous, cover_of(3, 4, Cover::NONE, 1.0, 1.0, DECIDUOUS_ABOVE + 1.0, S)));
     }
 
     /// A stand's origin has one owner: over a cell and its neighbours, no

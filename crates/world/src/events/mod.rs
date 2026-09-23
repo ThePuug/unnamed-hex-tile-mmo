@@ -77,6 +77,7 @@ pub mod index;
 pub mod lithology;
 pub mod migration;
 pub mod motion;
+pub mod outcrop;
 pub mod thickening;
 pub mod thrusting;
 pub mod plates;
@@ -90,7 +91,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use dashmap::DashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex};
 
-use common::{Cover, HexLattice, TagSet};
+use common::{Cover, HexLattice, Rock, TagSet};
 
 use crate::hex_to_world;
 
@@ -119,6 +120,9 @@ pub struct TileOutput {
     /// belt the river has swept to one at the divide, where the layer that
     /// cut the valley says so. Composes by the lowest: the nearer floor.
     pub valley: Option<f64>,
+    /// The rock at the surface, where the layer knows it. A later layer's
+    /// replaces an earlier one's.
+    pub rock: Option<Rock>,
     /// What stands in the tile's seven slots, where a layer puts anything.
     /// A later layer's cover replaces an earlier one's.
     pub cover: Cover,
@@ -140,6 +144,8 @@ pub struct TileView {
     pub water: Option<f64>,
     /// The tile's place up the nearest valley's wall, as [`TileOutput::valley`].
     pub valley: Option<f64>,
+    /// The rock at the surface, as [`TileOutput::rock`].
+    pub rock: Option<Rock>,
     /// What stands in the tile's seven slots.
     pub cover: Cover,
 }
@@ -147,7 +153,7 @@ pub struct TileView {
 impl TileView {
     fn at(q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, cover: Cover::NONE }
+        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -161,6 +167,9 @@ impl TileView {
         }
         if let Some(u) = out.valley {
             self.valley = Some(self.valley.map_or(u, |v| v.min(u)));
+        }
+        if out.rock.is_some() {
+            self.rock = out.rock;
         }
         if !out.cover.is_empty() {
             self.cover = out.cover;
@@ -642,6 +651,7 @@ impl Composite {
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
         composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));
+        composite.add_event(Box::new(outcrop::OutcropEvent::new()));
         composite.add_event(Box::new(forest::ForestEvent::new()));
         composite
     }

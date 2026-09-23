@@ -292,8 +292,7 @@ impl WorldEvent for LithologyEvent {
         let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
         let ground = rock_on(wx, wy, seed, &reach.coasts, &reach.outlines);
-        if ground.stand <= 0.0 { return None }
-        Some(TileOutput { elevation_delta: ground.stand, ..TileOutput::default() })
+        Some(TileOutput { elevation_delta: ground.stand.max(0.0), rock: Some(ground.rock), ..TileOutput::default() })
     }
 }
 

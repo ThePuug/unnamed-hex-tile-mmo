@@ -1,8 +1,11 @@
-//! A tile's cover: what stands at each of its three sites. And the canopy,
+//! A tile's cover: what grows at each of its three sites and the boulders
+//! in its seven slots. And the canopy,
 //! what stands over many tiles as seven of them say, which is what the
 //! far ground is coloured by.
 
 use serde::{Deserialize, Serialize};
+
+use crate::Rock;
 
 /// What stands in one slot of a tile.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -44,11 +47,18 @@ impl Slot {
 /// What stands on the ground holds some of them, by its size.
 pub const TILE_SLOTS: u8 = 7;
 
+/// Where each slot lies: the centre, then toward each neighbour in turn
+/// round the tile.
+pub const SLOT_TOWARD: [(i32, i32); TILE_SLOTS as usize] = [(0, 0), (1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+
 /// Where each site lies: toward every other neighbour of a flat-top hex,
 /// a third of a turn apart, so the centre stays free and three trunks
-/// stand as far from each other as from the tile's edge. A tree at a site
-/// holds its slot and the next one round.
+/// stand as far from each other as from the tile's edge.
 pub const SITES: [(i32, i32); 3] = [(1, 0), (-1, 1), (0, -1)];
+
+/// The slots each site's growth holds, in [`SLOT_TOWARD`] order: brush the
+/// first, a tree both, the site's own and the next one round.
+pub const SITE_SLOTS: [[usize; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
 
 /// How far from the centre toward the neighbour's centre a slot lies, as a
 /// share of the centre spacing: the edge is at half, so this and the
@@ -99,17 +109,25 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// The three sites of a tile, two bits each, site `k` in bits `2k..2k+2`
-/// in [`SITES`] order. Fits a `u16` with room, so it crosses the wire as
-/// one.
+/// What stands on a tile, in one `u16` so it crosses the wire as one: the
+/// three sites, two bits each, site `k` in bits `2k..2k+2` in [`SITES`]
+/// order; a boulder bit for each of the seven slots from bit
+/// [`BOULDER_BIT`] in [`SLOT_TOWARD`] order; and the boulders' rock in the
+/// two bits past those, read only where a boulder stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cover(u16);
+
+/// The first boulder bit.
+const BOULDER_BIT: u32 = 2 * SITES.len() as u32;
+
+/// The first rock bit.
+const ROCK_BIT: u32 = BOULDER_BIT + TILE_SLOTS as u32;
 
 impl Cover {
     pub const NONE: Cover = Cover(0);
 
     pub fn from_bits(bits: u16) -> Cover {
-        Cover(bits & ((1 << (2 * SITES.len())) - 1))
+        Cover(bits & ((1 << (ROCK_BIT + 2)) - 1))
     }
 
     pub fn bits(self) -> u16 {
@@ -127,17 +145,62 @@ impl Cover {
         Cover((self.0 & !(3 << (2 * k))) | ((slot as u16) << (2 * k)))
     }
 
-    /// How many of the tile's [`TILE_SLOTS`] solid things hold: what
-    /// movement reads.
+    /// Whether a boulder stands in slot `k`, in [`SLOT_TOWARD`] order.
+    pub fn boulder(self, k: usize) -> bool {
+        debug_assert!(k < TILE_SLOTS as usize);
+        self.0 >> (BOULDER_BIT + k as u32) & 1 == 1
+    }
+
+    /// This cover with a boulder in slot `k`.
+    pub fn with_boulder(self, k: usize) -> Cover {
+        debug_assert!(k < TILE_SLOTS as usize);
+        Cover(self.0 | 1 << (BOULDER_BIT + k as u32))
+    }
+
+    /// The slots boulders stand in.
+    pub fn boulders(self) -> impl Iterator<Item = usize> {
+        (0..TILE_SLOTS as usize).filter(move |&k| self.boulder(k))
+    }
+
+    /// The rock the boulders are.
+    pub fn rock(self) -> Rock {
+        match self.0 >> ROCK_BIT & 3 {
+            0 => Rock::Shale,
+            1 => Rock::Sandstone,
+            2 => Rock::Limestone,
+            _ => Rock::Basement,
+        }
+    }
+
+    /// This cover with its boulders of `rock`.
+    pub fn with_rock(self, rock: Rock) -> Cover {
+        let bits = match rock {
+            Rock::Shale => 0,
+            Rock::Sandstone => 1,
+            Rock::Limestone => 2,
+            Rock::Basement => 3,
+        };
+        Cover((self.0 & !(3 << ROCK_BIT)) | bits << ROCK_BIT)
+    }
+
+    /// Whether growth may stand at site `k` as `slot`: every slot it would
+    /// hold is free of boulders.
+    pub fn has_room(self, k: usize, slot: Slot) -> bool {
+        SITE_SLOTS[k][..slot.slots() as usize].iter().all(|&s| !self.boulder(s))
+    }
+
+    /// How many of the tile's [`TILE_SLOTS`] solid things hold, trees and
+    /// boulders alike: what movement reads.
     pub fn fullness(self) -> u8 {
-        self.filled().filter(|(_, s)| s.is_solid()).map(|(_, s)| s.slots()).sum()
+        let trees: u8 = self.filled().filter(|(_, s)| s.is_solid()).map(|(_, s)| s.slots()).sum();
+        trees + self.boulders().count() as u8
     }
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The filled slots, each with what it holds.
+    /// The filled sites, each with what grows there.
     pub fn filled(self) -> impl Iterator<Item = (usize, Slot)> {
         (0..SITES.len()).map(move |k| (k, self.slot(k))).filter(|(_, s)| *s != Slot::Empty)
     }
@@ -239,6 +302,38 @@ mod tests {
             }
         }
         assert_ne!(sway(1_000_000, -2_000_000, 0), sway(1_000_000, -2_000_000, 1));
+    }
+
+    /// A boulder holds one slot and stands in the way, whatever its rock;
+    /// growth does not stand where one does.
+    #[test]
+    fn boulders_fill_their_slots() {
+        let c = Cover::NONE.with_boulder(0).with_boulder(4).with_rock(Rock::Limestone);
+        assert_eq!(c.boulders().collect::<Vec<_>>(), vec![0, 4]);
+        assert_eq!(c.rock(), Rock::Limestone);
+        assert_eq!(c.fullness(), 2);
+        assert_eq!(Cover::from_bits(c.bits()), c);
+        for rock in [Rock::Shale, Rock::Sandstone, Rock::Limestone, Rock::Basement] {
+            assert_eq!(c.with_rock(rock).rock(), rock);
+        }
+        assert!(c.has_room(0, Slot::Pine) && !c.has_room(1, Slot::Pine) && c.has_room(1, Slot::Brush));
+        assert_eq!(c.with(0, Slot::Pine).fullness(), 4, "a tree beside two boulders closes a tile");
+        let all = (0..TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
+        assert_eq!(all.fullness(), TILE_SLOTS);
+        assert_eq!(Cover::from_bits(u16::MAX), Cover::from_bits(all.bits() | 0x3F));
+    }
+
+    /// Every site's slots are ring slots, each held by one site only.
+    #[test]
+    fn sites_hold_their_own_slots() {
+        let mut seen = [false; TILE_SLOTS as usize];
+        for (k, slots) in SITE_SLOTS.iter().enumerate() {
+            assert_eq!(SLOT_TOWARD[slots[0]], SITES[k]);
+            for &s in slots {
+                assert!(s != 0 && !seen[s]);
+                seen[s] = true;
+            }
+        }
     }
 
     /// A tree holds two slots and stands in the way; brush holds one and
