@@ -392,8 +392,10 @@ fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
 ///
 /// The search ball only has to be wide enough to hold every candidate: a cell
 /// centre at lattice distance k sits at least `k·step − r_other` away in hex
-/// distance, `step` being the nearest-neighbour centre spacing, so nothing past
-/// that k can touch. The exact test discards the rest. Bounding the *search*
+/// distance, `step` being the least hex distance a lattice step covers. That
+/// is along a diagonal, not to a neighbour: `v1 + v2` is two steps and only
+/// `3R + 2` long, so `step` is `(3R² + 3R + 1) / (2R + 1)`, about `1.5R`
+/// where a neighbour sits `2R + 1` away. Nothing past that k can touch. The exact test discards the rest. Bounding the *search*
 /// that way is not the same as charging both circumradii to the *answer* —
 /// doing that is what turned equal-scale hops into two rings where the geometry
 /// needs none.
@@ -406,7 +408,7 @@ pub(super) fn footprint_plus_ring(
     let touch = (lattice.radius + other.radius) as i32;
 
     let r_other = other.radius as f64;
-    let step = (3.0 * r_other * r_other + 3.0 * r_other + 1.0).sqrt();
+    let step = (3.0 * r_other * r_other + 3.0 * r_other + 1.0) / (2.0 * r_other + 1.0);
     let search = ((touch as f64 + r_other) / step).floor() as u32 + 1;
 
     let mut out: HashSet<CellId> = HashSet::new();
@@ -879,6 +881,28 @@ impl common::summary::SummarySource for Composite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The translation onto another lattice holds every cell touching the
+    /// footprint, and their ring, however much finer the other lattice is:
+    /// the same set a search wide enough to hold everything finds.
+    #[test]
+    fn footprint_plus_ring_misses_nothing_at_any_ratio() {
+        for (big, small) in [(7416u32, 70u32), (21415, 1012), (9464, 1012), (1800, 9), (600, 70), (70, 600)] {
+            let (lattice, other) = (HexLattice::new(big), HexLattice::new(small));
+            let cell = lattice.cell_id(104_289, -4_677);
+            let centre = lattice.cell_center(cell);
+            let touch = (big + small) as i32;
+            let wide = 2 * touch as u32 / small + 4;
+            let mut expected: HashSet<CellId> = HashSet::new();
+            for id in other.cells_within_distance(other.cell_id(centre.0, centre.1), wide) {
+                if hex_distance(other.cell_center(id), centre) <= touch {
+                    expected.extend(other.cells_within_distance(id, 1));
+                }
+            }
+            let got: HashSet<CellId> = footprint_plus_ring(&lattice, cell, &other).into_iter().collect();
+            assert_eq!(got, expected, "radius {big} onto radius {small}: {} of {} cells missing", expected.difference(&got).count(), expected.len());
+        }
+    }
 
     /// Records which cells the framework deforms, so the one-ring contract can
     /// be checked without paying for real terrain generation.
