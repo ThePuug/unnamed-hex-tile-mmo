@@ -32,8 +32,9 @@ use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::{lifetimeless::*, SystemParamItem};
 use bevy::math::{primitives::ViewFrustum, Affine3A};
 use bevy::mesh::{MeshVertexBufferLayoutRef, VertexBufferLayout};
-use bevy::pbr::{MeshPipeline, MeshPipelineKey, MeshPipelineSystems, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache};
+use bevy::pbr::{MeshPipeline, MeshPipelineKey, MeshPipelineSystems, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache, MATERIAL_BIND_GROUP_INDEX};
 use bevy::prelude::*;
+use bevy::shader::ShaderDefVal;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::mesh::{
@@ -472,6 +473,10 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
         let mut descriptor = mesh_pipeline.specialize(key.view, layout)?;
         descriptor.label = Some(if key.depth_only { format!("{label}_depth").into() } else { label.into() });
         descriptor.vertex.shader = shader.clone();
+        // The standard lighting the wood is lit by declares the material's
+        // group, which a stand never binds: unread, it needs only its index.
+        let material_group = ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), MATERIAL_BIND_GROUP_INDEX as u32);
+        descriptor.vertex.shader_defs.push(material_group.clone());
         descriptor.vertex.buffers.push(VertexBufferLayout {
             array_stride: size_of::<Instance>() as u64,
             step_mode: VertexStepMode::Instance,
@@ -482,6 +487,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
         });
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader.clone();
+            fragment.shader_defs.push(material_group);
             if key.depth_only {
                 fragment.entry_point = Some(DEPTH_ENTRY.into());
                 fragment.targets.clear();
