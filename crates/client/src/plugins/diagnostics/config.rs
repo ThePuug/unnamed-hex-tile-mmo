@@ -49,6 +49,14 @@ pub struct DiagnosticsState {
     pub shadows: Shadows,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
+    /// The sightline's tunnel is not cut: nothing on the line from the
+    /// eye to the player is seen through, so what the tunnel costs shows
+    /// as the difference.
+    pub sightline_off: bool,
+    /// Every tree batch takes the depth pipeline that masks, whether or
+    /// not anything can reach it: what the plain pipeline saves shows as
+    /// the difference.
+    pub mask_every_stand: bool,
     /// Every stand of trees and cards is hidden. The batches hang under
     /// the region meshes, so hiding terrain hides these too; this hides
     /// them alone, leaving the ground to be measured by itself.
@@ -129,6 +137,8 @@ impl Default for DiagnosticsState {
             shadows: Shadows::Gaussian,
             terrain_hidden: false,
             forest_hidden: false,
+            sightline_off: false,
+            mask_every_stand: false,
             camera_closeup: false,
             camera_envelope_off: false,
         }

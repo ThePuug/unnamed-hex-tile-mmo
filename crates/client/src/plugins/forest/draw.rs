@@ -272,6 +272,7 @@ impl Plugin for TreeDrawPlugin {
             ExtractComponentPlugin::<CardBatch>::default(),
             ExtractResourcePlugin::<Sightline>::default(),
             ExtractResourcePlugin::<CardBand>::default(),
+            ExtractResourcePlugin::<crate::resources::MaskEveryStand>::default(),
         ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
@@ -560,6 +561,7 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
     bounds: Query<&BatchBounds>,
     sightline: Option<Res<Sightline>>,
     band: Option<Res<CardBand>>,
+    mask_every: Option<Res<crate::resources::MaskEveryStand>>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = timers.0.scope(if I::DEPTH_ONLY { B::DEPTH_TIMER } else { B::TIMER });
@@ -576,6 +578,7 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
             // Only the depth pass can drop its fragment stage, and only
             // for a kind whose shape is not an alpha test.
             let masked = !I::DEPTH_ONLY
+                || mask_every.as_deref().is_some_and(|m| m.0)
                 || !B::CAN_GO_UNMASKED
                 || bounds.get(render_entity).map_or(true, |b| {
                     anything_masks(b, view.world_from_view.translation(), sightline.as_deref(), band.as_deref())

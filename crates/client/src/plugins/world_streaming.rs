@@ -21,6 +21,7 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<TerrainMaterial>();
         app.init_resource::<crate::resources::EdgeCenters>();
         app.init_resource::<crate::resources::CardBand>();
+        app.init_resource::<crate::resources::MaskEveryStand>();
 
         app.add_systems(Update, (
             world::do_spawn,

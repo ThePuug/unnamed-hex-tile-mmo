@@ -297,6 +297,24 @@ pub fn update_console_menu(
                     ));
 
                     parent.spawn((
+                        Text::new(format!(
+                            "3. Sightline Tunnel         [{}]",
+                            on_off(!diagnostics_state.sightline_off)
+                        )),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(!diagnostics_state.sightline_off)),
+                    ));
+
+                    parent.spawn((
+                        Text::new(format!(
+                            "4. Mask Every Stand         [{}]",
+                            on_off(diagnostics_state.mask_every_stand)
+                        )),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(!diagnostics_state.mask_every_stand)),
+                    ));
+
+                    parent.spawn((
                         Text::new(""),
                         TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));

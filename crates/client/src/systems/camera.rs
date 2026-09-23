@@ -738,7 +738,9 @@ pub fn update(
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
-    sightline.player = Some(feet + Vec3::Y * BODY_HALF_HEIGHT);
+    // A tunnel with no player to run to has no radius, so nothing is
+    // seen through and the near fade is all that is left.
+    sightline.player = (!diagnostics.sightline_off).then(|| feet + Vec3::Y * BODY_HALF_HEIGHT);
 
     // The yaw follows the heading. The ground ahead pulls the pose: open
     // ground toward the ceiling, a climb down to the pose that holds it,

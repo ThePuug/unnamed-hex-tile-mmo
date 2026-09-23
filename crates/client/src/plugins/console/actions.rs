@@ -21,6 +21,8 @@ pub enum DevConsoleAction {
     ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
+    ToggleSightline,
+    ToggleStandMasking,
     ToggleTerrainHidden,
     ToggleForestHidden,
     ToggleCameraCloseup,
@@ -47,6 +49,7 @@ pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
     mut metrics_dump: ResMut<crate::plugins::diagnostics::MetricsDump>,
+    mut mask_every: ResMut<crate::resources::MaskEveryStand>,
     mut reader: MessageReader<DevConsoleAction>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -136,6 +139,15 @@ pub fn execute_console_actions(
                     light.shadow_maps_enabled = shadows != Shadows::Off;
                 }
                 info!("Shadows: {}", shadows.label());
+            }
+            DevConsoleAction::ToggleSightline => {
+                diagnostics_state.sightline_off = !diagnostics_state.sightline_off;
+                info!("Sightline tunnel: {}", if diagnostics_state.sightline_off { "OFF" } else { "on" });
+            }
+            DevConsoleAction::ToggleStandMasking => {
+                diagnostics_state.mask_every_stand = !diagnostics_state.mask_every_stand;
+                mask_every.0 = diagnostics_state.mask_every_stand;
+                info!("Stand masking: {}", if diagnostics_state.mask_every_stand { "EVERY" } else { "only what is reached" });
             }
             DevConsoleAction::ToggleTerrainHidden => {
                 diagnostics_state.terrain_hidden = !diagnostics_state.terrain_hidden;
