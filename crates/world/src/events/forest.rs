@@ -526,7 +526,7 @@ pub struct Reach {
 }
 
 impl Reach {
-    fn new(stands: impl Iterator<Item = Stand>) -> Self {
+    pub fn new(stands: impl Iterator<Item = Stand>) -> Self {
         let mut grid = HexSpatialGrid::new(STAND_REACH);
         for s in stands {
             grid.insert_radius(s.wx, s.wy, s.reach(), s);

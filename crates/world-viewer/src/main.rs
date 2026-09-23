@@ -60,6 +60,9 @@ enum Layer {
     /// Composite: each tile's cover over whatever is drawn beneath, the
     /// canopy's green by fullness and the kinds' shares.
     Forest,
+    /// Stand index: the density the stands give each position, in four
+    /// plain bands over whatever is drawn beneath, open ground showing it.
+    Stands,
     /// Moisture field: what the sky gives each position, the sea's share
     /// less the belts' shadow, on a dry-to-wet ramp; the wind is logged.
     MoistureField,
@@ -82,6 +85,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("drainage-reaches", Layer::Reaches),
     ("channels", Layer::Channels),
     ("forest", Layer::Forest),
+    ("stands", Layer::Stands),
     ("moisture-field", Layer::MoistureField),
 ];
 
@@ -417,6 +421,18 @@ fn main() {
         vec![]
     };
 
+    // Every stand the deformed cells published, as the tiles read them.
+    let stands: Option<forest::Reach> = layers.contains(&Layer::Stands).then(|| {
+        composite.with_indexes(|indexes| {
+            let all: Vec<forest::Stand> = indexes
+                .get::<forest::StandIndex>()
+                .map(|idx| idx.cells.values().flat_map(|c| c.stands.iter().cloned()).collect())
+                .unwrap_or_default();
+            forest::Reach::new(all.into_iter())
+        })
+    });
+    let stands = stands.as_ref();
+
     // ── Phase 3: Render pixels (parallel by row) ──
 
     let lap = Instant::now();
@@ -480,6 +496,11 @@ fn main() {
                             }
                             Layer::Forest => {
                                 color = cover_color(color, cover);
+                            }
+                            Layer::Stands => {
+                                if let Some(reach) = stands {
+                                    color = stand_color(color, reach.at(wx, wy).0);
+                                }
                             }
                             _ => {} // marker layers rendered as dot overdraw
                         }
@@ -972,6 +993,23 @@ fn trees_color(ground: (f64, f64, f64), kinds: impl Iterator<Item = common::Slot
 /// A tile's cover over the colour beneath it, by its fullness.
 fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64) {
     trees_color(ground, cover.filled().map(|(_, s)| s), cover.fullness() as f64 / common::SLOTS.len() as f64)
+}
+
+/// A stand's density over the colour beneath it, in four bands by its
+/// share of a closed stand's: open shows the ground, then thin, half and
+/// closed, one green darkening. Bands, not a ramp, so a boundary reads as
+/// an edge and the tile hash never shows.
+fn stand_color(ground: (f64, f64, f64), density: f64) -> (f64, f64, f64) {
+    let share = density / forest::DENSITY_MAX;
+    if share < 0.05 {
+        ground
+    } else if share < 1.0 / 3.0 {
+        (0.60, 0.70, 0.35)
+    } else if share < 2.0 / 3.0 {
+        (0.30, 0.52, 0.20)
+    } else {
+        (0.08, 0.30, 0.10)
+    }
 }
 
 /// A summary's canopy over the colour beneath it, by its density.

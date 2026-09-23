@@ -36,6 +36,7 @@ assets repo keeps its proof sheets.
 | `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
 | `channels` | channel index | every channel as its train across its flow line, paler where the river holds the line, width by catchment |
 | `forest` | composite | each tile's cover over what is drawn beneath: the canopy's green by fullness, pine blue-green, deciduous green, scrub olive |
+| `stands` | stand index | the density the stands give each position, in four plain bands (open, thin, half, closed) over what is drawn beneath: where the woods are and where they open, without the tiles' own draws; the treeline and the galleries along channels are the tile's, and not in it |
 | `moisture-field` | forest field | what the sky gives each position, the sea's share less the belts' shadow, tan dry to deep green wet, the sea blue; builds the coasts and plate outlines under the viewport itself, and logs the wind |
 
 Views stack bottom to top in the order given: fills first, markers as
