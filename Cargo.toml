@@ -23,3 +23,82 @@ opt-level = 3
 codegen-units = 1
 incremental = false
 debug = false
+
+# Bevy's shadow pass opens no diagnostic span, so what the shadow maps
+# cost is the one pass in the frame nothing measures. The fork adds the
+# `pass_span` every other pass already has, and adds together spans that
+# share a name within a frame, so a pass run once per view (the shadow
+# pass per cascade) reports what it cost the frame rather than a blend of
+# its views. Cut from the 0.19.1 tag the rest of Bevy resolves to.
+#
+# Every crate of that workspace is patched, not just bevy_pbr: patching
+# one leaves its siblings resolving to the registry as well as to the
+# fork, and two copies of bevy_ecs are two sets of types that do not
+# meet.
+[patch.crates-io]
+bevy = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_a11y = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_android = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_animation = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_animation_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_anti_alias = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_app = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_asset = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_asset_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_audio = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_camera = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_clipboard = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_color = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_core_pipeline = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_derive = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_dev_tools = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_diagnostic = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_dylib = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ecs = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ecs_macro_logic = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ecs_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_encase_derive = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_feathers = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_gilrs = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_gizmos = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_gizmos_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_gizmos_render = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_gltf = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_image = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_input = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_input_focus = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_internal = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_light = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_log = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_macro_utils = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_material = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_material_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_math = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_mesh = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_pbr = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_picking = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_platform = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_post_process = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ptr = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_reflect = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_reflect_derive = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_render = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_render_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_scene = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_scene_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_shader = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_sprite = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_sprite_render = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_state = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_state_macros = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_tasks = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_text = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_time = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_transform = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ui = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ui_render = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_ui_widgets = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_utils = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_window = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_winit = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
+bevy_world_serialization = { git = "https://github.com/ThePuug/bevy", branch = "shadow-pass-diagnostic" }
