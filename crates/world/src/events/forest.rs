@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES, SITE_SLOTS};
+use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES};
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{nearest_node, PATH_SWING};
@@ -751,7 +751,7 @@ mod tests {
     /// slots are free of them: brush beside a boulder, never a tree.
     #[test]
     fn nothing_grows_on_a_boulder() {
-        let ground = Cover::NONE.with_boulder(SITE_SLOTS[0][1]).with_boulder(SITE_SLOTS[1][0]).with_rock(common::Rock::Basement);
+        let ground = Cover::NONE.with_boulder(common::SITE_SLOTS[0][1]).with_boulder(common::SITE_SLOTS[1][0]).with_rock(common::Rock::Basement);
         let cover = cover_of(3, 4, ground, 1.0, 1.0, 20.0, S);
         assert_eq!(cover.boulders().collect::<Vec<_>>(), ground.boulders().collect::<Vec<_>>());
         assert_eq!(cover.rock(), common::Rock::Basement);
