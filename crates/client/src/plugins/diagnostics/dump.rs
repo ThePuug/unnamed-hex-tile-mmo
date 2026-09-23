@@ -62,6 +62,8 @@ pub fn dump_metrics(
     diagnostics: Res<DiagnosticsStore>,
     map: Res<common_bevy::resources::map::Map>,
     history: Res<super::metrics_overlay::MetricsHistory>,
+    buffers: Res<common_bevy::resources::InputQueues>,
+    locs: Query<&common_bevy::components::Loc>,
     time: Res<Time>,
 ) {
     let asked = std::mem::take(&mut dump.asked);
@@ -71,12 +73,15 @@ pub fn dump_metrics(
     }
     dump.due = EVERY;
 
+    // The local player is the one entity with an input queue.
+    let tile = buffers.entities().find_map(|&ent| locs.get(ent).ok()).map(|loc| **loc);
     let mut out = String::new();
     let _ = writeln!(
         out,
         "
-# {:.1}s up | msaa={} shadows={} | {}",
+# {:.1}s up | tile={} | msaa={} shadows={} | {}",
         time.elapsed_secs(),
+        tile.map_or("none".to_string(), |t| format!("({},{},{})", t.q, t.r, t.z)),
         video.samples.label(),
         video.shadows.label(),
         if asked { "asked for" } else { "every few seconds" },
@@ -110,6 +115,34 @@ pub fn dump_metrics(
     let _ = writeln!(out, "census/total/triangles = {}", census.total_triangles());
     let _ = writeln!(out, "census/forest/interior_trees = {}", census.interior.trees);
     let _ = writeln!(out, "census/forest/interior_savable_triangles = {}", census.interior.savable);
+
+    // The cover of the player's own mesh region, tile by tile: how dense
+    // the wood about the player is, in the terms the interior rule reads.
+    if let Some(t) = tile {
+        let region = common_bevy::summary::mesh_region_lattice();
+        let (mut tiles, mut covered, mut treed, mut scrub_only, mut interior) = (0, 0, 0, 0, 0);
+        for (q, r) in region.tiles_in_cell(region.cell_id(t.q, t.r)) {
+            tiles += 1;
+            let cover = map.cover_at(q, r);
+            if cover.is_empty() {
+                continue;
+            }
+            covered += 1;
+            if crate::plugins::forest::trees_on(&map, q, r) > 0 {
+                treed += 1;
+            } else {
+                scrub_only += 1;
+            }
+            if crate::plugins::forest::is_interior(&map, q, r) {
+                interior += 1;
+            }
+        }
+        let _ = writeln!(out, "region/tiles = {tiles}");
+        let _ = writeln!(out, "region/covered_tiles = {covered}");
+        let _ = writeln!(out, "region/tiles_with_trees = {treed}");
+        let _ = writeln!(out, "region/scrub_only_tiles = {scrub_only}");
+        let _ = writeln!(out, "region/interior_tiles = {interior}");
+    }
 
     let mut named: Vec<_> = history.timings.iter().collect();
     named.sort_by_key(|(name, _)| **name);
