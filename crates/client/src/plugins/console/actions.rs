@@ -21,7 +21,6 @@ pub enum DevConsoleAction {
     ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
-    ToggleSightline,
     ToggleStandMasking,
     ToggleTerrainHidden,
     ToggleForestHidden,
@@ -150,10 +149,6 @@ pub fn execute_console_actions(
                     light.shadow_maps_enabled = shadows != Shadows::Off;
                 }
                 info!("Shadows: {}", shadows.label());
-            }
-            DevConsoleAction::ToggleSightline => {
-                diagnostics_state.sightline_off = !diagnostics_state.sightline_off;
-                info!("Sightline tunnel: {}", if diagnostics_state.sightline_off { "OFF" } else { "on" });
             }
             DevConsoleAction::ToggleStandMasking => {
                 diagnostics_state.mask_every_stand = !diagnostics_state.mask_every_stand;

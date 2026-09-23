@@ -49,7 +49,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
 
 use crate::resources::CardBand;
-use crate::systems::camera::{Sightline, NEAR_FADE_RADIUS, SIGHTLINE_RADIUS};
+use crate::systems::camera::NEAR_FADE_RADIUS;
 
 const TREE_SHADER: &str = "shaders/trees.wgsl";
 const CARD_SHADER: &str = "shaders/cards.wgsl";
@@ -109,6 +109,7 @@ pub trait Batch: Component {
     /// stage masking it. A card cannot: its picture's own shape is an
     /// alpha test every fragment must take.
     const CAN_GO_UNMASKED: bool;
+
 
     fn buffer(&self) -> &Buffer;
     fn len(&self) -> u32;
@@ -227,6 +228,11 @@ impl BatchBounds {
         BatchBounds { centre, half: Vec3::from(aabb.half_extents) }
     }
 
+    /// The nearest point of the box to `p`.
+    fn nearest(&self, p: Vec3) -> Vec3 {
+        p.clamp(self.centre - self.half, self.centre + self.half)
+    }
+
     /// The furthest this box reaches from `p` on the ground plane.
     fn furthest_xz(&self, p: Vec2) -> f32 {
         let c = Vec2::new(self.centre.x, self.centre.z);
@@ -270,7 +276,6 @@ impl Plugin for TreeDrawPlugin {
         app.add_plugins((
             ExtractComponentPlugin::<TreeBatch>::default(),
             ExtractComponentPlugin::<CardBatch>::default(),
-            ExtractResourcePlugin::<Sightline>::default(),
             ExtractResourcePlugin::<CardBand>::default(),
             ExtractResourcePlugin::<crate::resources::MaskEveryStand>::default(),
         ));
@@ -300,16 +305,13 @@ impl Plugin for TreeDrawPlugin {
     }
 }
 
-/// The region's transform as the shader's uniform, with the sightline:
-/// the player's centre and the tunnel's radius about the line from the
-/// camera to it, zero when nothing is seen through; the ring where the
-/// models hand over to the cards, its centre, radius and overlap; the
-/// distance the cards have sunk away by; and the radius about the camera
-/// inside which everything fades.
+/// The region's transform as the shader's uniform, with the ring where
+/// the models hand over to the cards — its centre, radius and overlap —
+/// the distance the cards have sunk away by, and the radius about the
+/// camera inside which everything fades.
 #[derive(Clone, Copy, ShaderType)]
 struct RegionUniform {
     world_from_local: Mat4,
-    sightline: Vec4,
     band: Vec4,
     sink_to: f32,
     near_fade: f32,
@@ -559,7 +561,6 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
     render_mesh_instances: Res<RenderMeshInstances>,
     mesh_allocator: Res<MeshAllocator>,
     bounds: Query<&BatchBounds>,
-    sightline: Option<Res<Sightline>>,
     band: Option<Res<CardBand>>,
     mask_every: Option<Res<crate::resources::MaskEveryStand>>,
     timers: Res<crate::resources::ClientTimers>,
@@ -581,7 +582,7 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
                 || mask_every.as_deref().is_some_and(|m| m.0)
                 || !B::CAN_GO_UNMASKED
                 || bounds.get(render_entity).map_or(true, |b| {
-                    anything_masks(b, view.world_from_view.translation(), sightline.as_deref(), band.as_deref())
+                    anything_masks(b, view.world_from_view.translation(), band.as_deref())
                 });
             let key = BatchKey {
                 view: view_key | MeshPipelineKey::from_primitive_topology_and_strip_index(mesh.primitive_topology(), mesh.index_format()),
@@ -635,35 +636,16 @@ struct RegionOffset(u32);
 /// say so. Conservative in every term — a batch wrongly called masked
 /// costs what it costs today, one wrongly called plain would punch a
 /// hole in the wood.
-fn anything_masks(bounds: &BatchBounds, camera: Vec3, sightline: Option<&Sightline>, band: Option<&CardBand>) -> bool {
-    // Every reach below is measured against the box's own bounding
-    // sphere, never a corner of it: the corner nearest the eye is not
-    // the corner nearest the sightline, and measuring from one to reach
-    // the other calls a batch plain that the tunnel runs straight
-    // through. The sphere is larger than the box in every direction, so
-    // it can only ever call a batch masked that need not have been.
-    let radius = bounds.half.length();
-
-    // Close to the eye, everything thins out.
-    if bounds.centre.distance(camera) - radius < NEAR_FADE_RADIUS {
+fn anything_masks(bounds: &BatchBounds, camera: Vec3, band: Option<&CardBand>) -> bool {
+    // Close to the eye, everything thins out. Measured to the nearest
+    // point of the box, which is exactly what the shader asks of each
+    // fragment.
+    if bounds.nearest(camera).distance(camera) < NEAR_FADE_RADIUS {
         return true;
     }
-    // The tunnel is a cylinder about the line from the eye to the
-    // player, and it fades out a radius past them rather than ending at
-    // their feet.
-    if let Some(player) = sightline.and_then(|s| s.player) {
-        let axis = player - camera;
-        let reach = axis.length();
-        if reach > f32::EPSILON {
-            let axis = axis / reach;
-            let along = (bounds.centre - camera).dot(axis).clamp(0.0, reach + SIGHTLINE_RADIUS);
-            let off = (bounds.centre - (camera + axis * along)).length();
-            if off - radius < SIGHTLINE_RADIUS {
-                return true;
-            }
-        }
-    }
     // Past the ring's inner edge a model starts dithering into its card.
+    // Measured to the furthest of the box, so a batch reaching the ring
+    // at one corner is masked whole.
     match band {
         Some(band) if band.inner > 0.0 && band.overlap > 0.0 => {
             bounds.furthest_xz(band.center) > band.inner - band.overlap
@@ -673,13 +655,9 @@ fn anything_masks(bounds: &BatchBounds, camera: Vec3, sightline: Option<&Sightli
 }
 
 /// A batch's uniform for this frame.
-fn region_uniform(transform: &TreeTransform, sightline: Option<&Sightline>, band: Option<&CardBand>) -> RegionUniform {
-    let sightline = match sightline.and_then(|s| s.player) {
-        Some(p) => p.extend(SIGHTLINE_RADIUS),
-        None => Vec4::ZERO,
-    };
+fn region_uniform(transform: &TreeTransform, band: Option<&CardBand>) -> RegionUniform {
     let (band, sink_to) = band.map_or((Vec4::ZERO, 0.0), |b| (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.sink_to));
-    RegionUniform { world_from_local: transform.0, sightline, band, sink_to, near_fade: NEAR_FADE_RADIUS }
+    RegionUniform { world_from_local: transform.0, band, sink_to, near_fade: NEAR_FADE_RADIUS }
 }
 
 /// Every batch's uniform into the one buffer in one write, each batch
@@ -688,7 +666,6 @@ fn prepare_regions(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
-    sightline: Option<Res<Sightline>>,
     band: Option<Res<CardBand>>,
     regions: ResMut<Regions>,
     mut batches: Query<(Entity, &TreeTransform, Option<&mut RegionOffset>)>,
@@ -698,7 +675,7 @@ fn prepare_regions(
     let regions = regions.into_inner();
     regions.uniforms.clear();
     for (entity, transform, offset) in &mut batches {
-        let at = regions.uniforms.push(&region_uniform(transform, sightline.as_deref(), band.as_deref()));
+        let at = regions.uniforms.push(&region_uniform(transform, band.as_deref()));
         match offset {
             Some(mut offset) => offset.0 = at,
             None => {

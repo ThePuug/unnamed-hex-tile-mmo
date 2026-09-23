@@ -423,7 +423,6 @@ fn flyover_movement(
 fn flyover_camera_update(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut orbit: ResMut<CameraOrbit>,
-    mut sightline: ResMut<crate::systems::camera::Sightline>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     map: Res<Map>,
     time: Res<Time>,
@@ -431,7 +430,6 @@ fn flyover_camera_update(
     origin: Res<crate::resources::RenderOrigin>,
 ) {
     // Nothing frames the player from here, so nothing is seen through.
-    sightline.player = None;
     let target = orbit.target_angle();
     let diff = {
         let d = (target - orbit.current).rem_euclid(2.0 * PI);

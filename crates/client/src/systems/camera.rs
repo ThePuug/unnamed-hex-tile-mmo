@@ -265,24 +265,6 @@ pub struct CameraPose {
     clearance: f32,
 }
 
-/// The line the camera sees the player along: the player's body centre
-/// in rendered coordinates, or none while no camera is framing a player,
-/// as in flyover. What is drawn on it between the camera and the player
-/// is seen through — cover, never the ground or a solid, which shorten
-/// the boom instead.
-#[derive(Resource, Clone, Default, ExtractResource)]
-pub struct Sightline {
-    pub player: Option<Vec3>,
-}
-
-/// Half the height of the body the sightline runs to: a player is about
-/// two units tall, so the centre stands this far over the feet.
-const BODY_HALF_HEIGHT: f32 = 1.0;
-/// The tunnel seen through about the sightline, in world units: wide
-/// enough that a body the sightline runs to shows whole, narrow enough
-/// that a stand keeps its trunks either side of the player.
-pub const SIGHTLINE_RADIUS: f32 = 1.6;
-/// Within this of the camera everything on the sightline's terms fades
 /// whether or not it is on the line: a boom drawn in among crowns would
 /// otherwise show their insides at the near plane.
 pub const NEAR_FADE_RADIUS: f32 = 2.5;
@@ -366,7 +348,6 @@ pub fn setup(
     commands.insert_resource(CameraOrbit::default());
     commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0 });
     commands.insert_resource(ClearColor(HAZE_COLOR));
-    commands.insert_resource(Sightline::default());
 
     commands.spawn((
         Camera3d::default(),
@@ -718,7 +699,6 @@ fn clearance_step(current: f32, measured: f32, dt: f32) -> f32 {
 pub fn update(
     mut orbit: ResMut<CameraOrbit>,
     mut state: ResMut<CameraPose>,
-    mut sightline: ResMut<Sightline>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     actor: Query<(&VisualPosition, &Heading), (With<Actor>, Without<Camera3d>)>,
     map: Res<Map>,
@@ -738,9 +718,6 @@ pub fn update(
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
-    // A tunnel with no player to run to has no radius, so nothing is
-    // seen through and the near fade is all that is left.
-    sightline.player = (!diagnostics.sightline_off).then(|| feet + Vec3::Y * BODY_HALF_HEIGHT);
 
     // The yaw follows the heading. The ground ahead pulls the pose: open
     // ground toward the ceiling, a climb down to the pose that holds it,

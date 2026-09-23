@@ -264,11 +264,8 @@ fn handle_video_menu(
         action_writer.write(DevConsoleAction::ToggleShadowFilter);
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) {
-        action_writer.write(DevConsoleAction::ToggleSightline);
-        consumed = Some(KeyCode::Numpad3);
-    } else if keyboard.just_pressed(KeyCode::Numpad4) {
         action_writer.write(DevConsoleAction::ToggleStandMasking);
-        consumed = Some(KeyCode::Numpad4);
+        consumed = Some(KeyCode::Numpad3);
     }
 
     if let Some(key) = consumed {
