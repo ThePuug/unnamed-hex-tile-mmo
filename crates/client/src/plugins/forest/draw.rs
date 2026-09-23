@@ -227,11 +227,6 @@ impl BatchBounds {
         BatchBounds { centre, half: Vec3::from(aabb.half_extents) }
     }
 
-    /// The nearest point of the box to `p`.
-    fn nearest(&self, p: Vec3) -> Vec3 {
-        p.clamp(self.centre - self.half, self.centre + self.half)
-    }
-
     /// The furthest this box reaches from `p` on the ground plane.
     fn furthest_xz(&self, p: Vec2) -> f32 {
         let c = Vec2::new(self.centre.x, self.centre.z);
@@ -638,20 +633,29 @@ struct RegionOffset(u32);
 /// costs what it costs today, one wrongly called plain would punch a
 /// hole in the wood.
 fn anything_masks(bounds: &BatchBounds, camera: Vec3, sightline: Option<&Sightline>, band: Option<&CardBand>) -> bool {
+    // Every reach below is measured against the box's own bounding
+    // sphere, never a corner of it: the corner nearest the eye is not
+    // the corner nearest the sightline, and measuring from one to reach
+    // the other calls a batch plain that the tunnel runs straight
+    // through. The sphere is larger than the box in every direction, so
+    // it can only ever call a batch masked that need not have been.
+    let radius = bounds.half.length();
+
     // Close to the eye, everything thins out.
-    if bounds.nearest(camera).distance(camera) < NEAR_FADE_RADIUS {
+    if bounds.centre.distance(camera) - radius < NEAR_FADE_RADIUS {
         return true;
     }
     // The tunnel is a cylinder about the line from the eye to the
-    // player, so the batch is clear of it when its nearest point is.
+    // player, and it fades out a radius past them rather than ending at
+    // their feet.
     if let Some(player) = sightline.and_then(|s| s.player) {
         let axis = player - camera;
         let reach = axis.length();
         if reach > f32::EPSILON {
             let axis = axis / reach;
-            let near = bounds.nearest(camera);
-            let along = (near - camera).dot(axis).clamp(0.0, reach);
-            if (near - (camera + axis * along)).length() < SIGHTLINE_RADIUS {
+            let along = (bounds.centre - camera).dot(axis).clamp(0.0, reach + SIGHTLINE_RADIUS);
+            let off = (bounds.centre - (camera + axis * along)).length();
+            if off - radius < SIGHTLINE_RADIUS {
                 return true;
             }
         }
