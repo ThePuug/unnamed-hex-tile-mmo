@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
 use common::{Slot, SITES, TILE_SLOTS};
-use common_bevy::geometry::{boulder_center, slot_center};
+use common_bevy::geometry::{boulder_center, flat_top_tile_center, slot_center};
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
@@ -497,11 +497,18 @@ pub fn place_trees(
     out
 }
 
+/// How much larger a far crag's blocks stand, and how much wider its slots
+/// lie, than a tile's: a summary past the tiles is one tile of rock seen
+/// from far off, a few blocks a landmark's size where the tiles would
+/// stand a hundred stones too small to see.
+pub const FAR_BLOCK: f32 = 3.0;
+
 /// The crags a mesh region at level `radius` stands past the tiles, from
-/// its summaries' outcrops: each summary's every tile has its seven slots,
-/// and each holds a boulder by its own draw against the share of rock the
-/// summary read, so a crag stands as much rock as its tiles do, in the
-/// same slots, though not the same ones. Each stands in the far band.
+/// its summaries' outcrops: each summary a tile [`FAR_BLOCK`] times the
+/// size, its seven slots each holding a block by its own draw against the
+/// square root of the share of rock the summary read, so a thin reading
+/// still stands a few, and the centre always one. Each stands in the far
+/// band.
 pub fn place_crags(
     radius: u32,
     region_key: MeshRegionKey,
@@ -517,23 +524,25 @@ pub fn place_crags(
         let Some(rock) = outcrop(cell.0, cell.1).filter(|o| !o.is_empty()) else { continue };
         let Some(cell_z) = height(cell.0, cell.1) else { continue };
         let share = rock.density();
-        for (q, r) in lattice.tiles_covered(cell) {
-            for k in 0..TILE_SLOTS as usize {
-                if common::boulder_draw(q, r, k) >= share {
-                    continue;
-                }
-                let sway = common::boulder_sway(q, r, k);
-                let (x, z) = boulder_center(q, r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
-                out.push(TreeInstance {
-                    translation: Vec3::new(x, y, z) - mesh_origin,
-                    yaw: sway.yaw as f32,
-                    growth: sway.growth as f32 * share as f32,
-                    kind: Kind::Boulder,
-                    variation: sway.variation,
-                    far: true,
-                });
+        let (sq, sr) = cell;
+        let (cq, cr) = lattice.cell_center(cell);
+        let (cx, cz) = flat_top_tile_center(cq, cr, 1.0);
+        for k in 0..TILE_SLOTS as usize {
+            if k != 0 && common::boulder_draw(sq, sr, k) >= share.sqrt() {
+                continue;
             }
+            let sway = common::boulder_sway(sq, sr, k);
+            let (dx, dz) = boulder_center(0, 0, k, &sway);
+            let (x, z) = (cx + dx * FAR_BLOCK, cz + dz * FAR_BLOCK);
+            let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+            out.push(TreeInstance {
+                translation: Vec3::new(x, y, z) - mesh_origin,
+                yaw: sway.yaw as f32,
+                growth: sway.growth as f32 * share.sqrt() as f32,
+                kind: Kind::Boulder,
+                variation: sway.variation,
+                far: true,
+            });
         }
     }
     out
@@ -585,7 +594,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         }
         let v = &all[t.variation as usize % all.len()];
         let Some(cards) = &v.cards else { continue };
-        let scale = Kit::scale(t.kind, v.height, t.growth);
+        let scale = Kit::scale(t.kind, v.height, t.growth) * if t.far { FAR_BLOCK } else { 1.0 };
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
         parts
             .entry(cards.texture.id())
@@ -727,8 +736,9 @@ mod crag_tests {
     #[test]
     fn a_crag_stands_where_its_summary_read_rock() {
         assert!(crags(0).is_empty());
-        let (few, many) = (crags(2), crags(6));
-        assert!(!few.is_empty() && many.len() > few.len());
+        let (few, many) = (crags(1), crags(7));
+        assert!(!few.is_empty() && many.len() >= few.len());
+        assert_eq!(many.len(), TILE_SLOTS as usize, "a summary all rock stands every slot");
         assert!(many.iter().all(|t| t.far && t.kind == Kind::Boulder));
     }
 }
