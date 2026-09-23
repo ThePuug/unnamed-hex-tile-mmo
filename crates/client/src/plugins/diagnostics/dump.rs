@@ -7,6 +7,12 @@
 //! through egui, which a screen capture does not reliably carry, and a
 //! number nobody can read is a number nobody can check.
 //!
+//! Snapshots are appended, never overwritten. A render number means
+//! nothing on its own and everything beside the one taken a moment
+//! later with a single setting changed, so a log that keeps both is the
+//! whole point: a file that streams over itself leaves only the last
+//! state, which is the one comparison that cannot be made.
+//!
 //! Nothing here defines a metric. It reads the sources the overlay
 //! reads, so a metric added there arrives here by being added there.
 
@@ -17,24 +23,28 @@ use std::time::Duration;
 
 use super::{DiagnosticsState, RenderCensus};
 
-/// How often a snapshot is written while dumping.
-const EVERY: Duration = Duration::from_millis(500);
+/// How often a snapshot is appended while logging without being asked
+/// each time. Far apart, because a run is read afterwards and a log of
+/// a thousand near-identical blocks is no easier to read than none.
+const EVERY: Duration = Duration::from_secs(5);
 
-/// Where the snapshot lands. Gitignored, beside the other proofs.
-const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/client/metrics.txt");
+/// Where the snapshots land. Gitignored, beside the other proofs.
+const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/client/metrics.log");
 
-/// Whether the metrics are being written, and where they have got to.
-/// Off unless asked for, by `--dump-metrics` at launch or the console.
+/// How the metrics are being logged: every few seconds while `on`, and
+/// once wherever `asked` is set, which the console does on a keypress.
 #[derive(Resource, Default)]
 pub struct MetricsDump {
     pub on: bool,
+    pub asked: bool,
     due: Duration,
 }
 
 impl MetricsDump {
-    /// On when the binary was launched with `--dump-metrics`.
+    /// Logging from the start when the binary was launched with
+    /// `--dump-metrics`.
     pub fn from_args() -> Self {
-        Self { on: std::env::args().any(|a| a == "--dump-metrics"), due: Duration::ZERO }
+        Self { on: std::env::args().any(|a| a == "--dump-metrics"), asked: false, due: Duration::ZERO }
     }
 }
 
@@ -50,17 +60,23 @@ pub fn dump_metrics(
     history: Res<super::metrics_overlay::MetricsHistory>,
     time: Res<Time>,
 ) {
-    if !dump.on {
-        return;
-    }
+    let asked = std::mem::take(&mut dump.asked);
     dump.due = dump.due.saturating_sub(time.delta());
-    if !dump.due.is_zero() {
+    if !asked && (!dump.on || !dump.due.is_zero()) {
         return;
     }
     dump.due = EVERY;
 
     let mut out = String::new();
-    let _ = writeln!(out, "# msaa={} shadows={}", state.samples.label(), state.shadows.label());
+    let _ = writeln!(
+        out,
+        "
+# {:.1}s up | msaa={} shadows={} | {}",
+        time.elapsed_secs(),
+        state.samples.label(),
+        state.shadows.label(),
+        if asked { "asked for" } else { "every few seconds" },
+    );
 
     for d in diagnostics.iter() {
         if let Some(v) = d.smoothed() {
@@ -92,5 +108,10 @@ pub fn dump_metrics(
         let _ = writeln!(out, "timer/{name} = {:.4}", entry.latest());
     }
 
-    let _ = std::fs::write(PATH, out);
+    // Appended: see the module doc. A snapshot that replaces the one
+    // before it destroys the only comparison worth having.
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(PATH) {
+        let _ = file.write_all(out.as_bytes());
+    }
 }

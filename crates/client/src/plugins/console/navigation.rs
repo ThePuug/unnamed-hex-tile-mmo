@@ -130,7 +130,7 @@ fn handle_root_menu(
 
     let dump_key = if cfg!(feature = "admin") { KeyCode::Numpad5 } else { KeyCode::Numpad4 };
     if consumed.is_none() && keyboard.just_pressed(dump_key) {
-        action_writer.write(DevConsoleAction::ToggleMetricsDump);
+        action_writer.write(DevConsoleAction::WriteMetricsSnapshot);
         consumed = Some(dump_key);
     }
 

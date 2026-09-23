@@ -142,9 +142,13 @@ pub fn update_console_menu(
 
                     let dump_key = if cfg!(feature = "admin") { "5" } else { "4" };
                     parent.spawn((
-                        Text::new(format!("{}. Write Metrics To File     [{}]", dump_key, on_off(metrics_dump.on))),
+                        Text::new(format!(
+                            "{}. Write Metrics Snapshot{}",
+                            dump_key,
+                            if metrics_dump.on { "  [also logging]" } else { "" }
+                        )),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(metrics_dump.on)),
+                        TextColor(state_color(true)),
                     ));
 
                     parent.spawn((

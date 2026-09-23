@@ -27,7 +27,7 @@ pub enum DevConsoleAction {
 
     // Top-level toggles
     ToggleMetricsOverlay,
-    ToggleMetricsDump,
+    WriteMetricsSnapshot,
 
     // Admin actions
     #[cfg(feature = "admin")]
@@ -181,9 +181,9 @@ pub fn execute_console_actions(
                 }
                 info!("MSAA: {}", samples.label());
             }
-            DevConsoleAction::ToggleMetricsDump => {
-                metrics_dump.on = !metrics_dump.on;
-                info!("Metrics dump: {}", if metrics_dump.on { "ON (proofs/client/metrics.txt)" } else { "off" });
+            DevConsoleAction::WriteMetricsSnapshot => {
+                metrics_dump.asked = true;
+                info!("Metrics: a snapshot appended to proofs/client/metrics.log");
             }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;
