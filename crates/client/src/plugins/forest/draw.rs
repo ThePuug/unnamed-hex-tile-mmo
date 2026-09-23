@@ -105,6 +105,11 @@ pub trait Batch: Component {
     const TIMER: &'static str;
     const DEPTH_TIMER: &'static str;
 
+    /// Whether a batch of this kind can ever be drawn without a fragment
+    /// stage masking it. A card cannot: its picture's own shape is an
+    /// alpha test every fragment must take.
+    const CAN_GO_UNMASKED: bool;
+
     fn buffer(&self) -> &Buffer;
     fn len(&self) -> u32;
 }
@@ -148,6 +153,7 @@ impl TreeBatch {
 impl Batch for TreeBatch {
     const TIMER: &'static str = "tree_q";
     const DEPTH_TIMER: &'static str = "tree_z";
+    const CAN_GO_UNMASKED: bool = true;
 
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
@@ -196,6 +202,7 @@ impl CardBatch {
 impl Batch for CardBatch {
     const TIMER: &'static str = "card_q";
     const DEPTH_TIMER: &'static str = "card_z";
+    const CAN_GO_UNMASKED: bool = false;
 
     fn buffer(&self) -> &Buffer { &self.buffer }
     fn len(&self) -> u32 { self.len }
@@ -206,17 +213,44 @@ impl Batch for CardBatch {
 #[derive(Component, Clone, Copy)]
 pub struct TreeTransform(pub Mat4);
 
+/// The batch's bounds in rendered space, extracted so the queue can ask
+/// whether anything that masks a fragment can reach this batch at all.
+#[derive(Component, Clone, Copy)]
+pub struct BatchBounds {
+    centre: Vec3,
+    half: Vec3,
+}
+
+impl BatchBounds {
+    fn of(aabb: &Aabb, transform: &GlobalTransform) -> Self {
+        let centre = transform.transform_point(Vec3::from(aabb.center));
+        BatchBounds { centre, half: Vec3::from(aabb.half_extents) }
+    }
+
+    /// The nearest point of the box to `p`.
+    fn nearest(&self, p: Vec3) -> Vec3 {
+        p.clamp(self.centre - self.half, self.centre + self.half)
+    }
+
+    /// The furthest this box reaches from `p` on the ground plane.
+    fn furthest_xz(&self, p: Vec2) -> f32 {
+        let c = Vec2::new(self.centre.x, self.centre.z);
+        let h = Vec2::new(self.half.x, self.half.z);
+        ((c - p).abs() + h).length()
+    }
+}
+
 impl SyncComponent for TreeBatch {
-    type Target = (TreeBatch, TreeTransform);
+    type Target = (TreeBatch, TreeTransform, BatchBounds);
 }
 
 impl ExtractComponent for TreeBatch {
-    type QueryData = (&'static TreeBatch, &'static GlobalTransform);
+    type QueryData = (&'static TreeBatch, &'static GlobalTransform, &'static Aabb);
     type QueryFilter = ();
-    type Out = (TreeBatch, TreeTransform);
+    type Out = (TreeBatch, TreeTransform, BatchBounds);
 
-    fn extract_component((batch, transform): QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
-        Some((batch.clone(), TreeTransform(transform.to_matrix())))
+    fn extract_component((batch, transform, aabb): QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
+        Some((batch.clone(), TreeTransform(transform.to_matrix()), BatchBounds::of(aabb, transform)))
     }
 }
 
@@ -300,12 +334,14 @@ impl CardUniform {
     }
 }
 
-/// Which pipeline a batch is drawn with: the view's own key, and whether
-/// this is the depth prepass's drawing of it.
+/// Which pipeline a batch is drawn with: the view's own key, whether
+/// this is the depth prepass's drawing of it, and whether that drawing
+/// has to run a fragment stage to decide what it keeps.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct BatchKey {
     view: MeshPipelineKey,
     depth_only: bool,
+    masked: bool,
 }
 
 /// A pipeline over the mesh pipeline's descriptor: its shader, and the
@@ -333,7 +369,14 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
                 VertexAttribute { format: VertexFormat::Float32x4, offset: VertexFormat::Float32x4.size(), shader_location: 11 },
             ],
         });
-        if let Some(fragment) = descriptor.fragment.as_mut() {
+        // A depth pass over a batch nothing can mask wants no fragment
+        // stage at all: a shader that may `discard` forfeits the early
+        // depth test, so the hardware shades every fragment of every
+        // crown behind every other before it can reject one. Dropping
+        // the stage gives that test back.
+        if key.depth_only && !key.masked {
+            descriptor.fragment = None;
+        } else if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader.clone();
             if key.depth_only {
                 fragment.entry_point = Some(DEPTH_ENTRY.into());
@@ -519,6 +562,9 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
     meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
     mesh_allocator: Res<MeshAllocator>,
+    bounds: Query<&BatchBounds>,
+    sightline: Option<Res<Sightline>>,
+    band: Option<Res<CardBand>>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = timers.0.scope(if I::DEPTH_ONLY { B::DEPTH_TIMER } else { B::TIMER });
@@ -532,9 +578,17 @@ fn queue_batches<B: Batch, P: BatchPipeline, D: 'static, I: BatchPhase>(
         for &(render_entity, main_entity) in class.entities_cpu_culling.iter() {
             let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(main_entity) else { continue };
             let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id()) else { continue };
+            // Only the depth pass can drop its fragment stage, and only
+            // for a kind whose shape is not an alpha test.
+            let masked = !I::DEPTH_ONLY
+                || !B::CAN_GO_UNMASKED
+                || bounds.get(render_entity).map_or(true, |b| {
+                    anything_masks(b, view.world_from_view.translation(), sightline.as_deref(), band.as_deref())
+                });
             let key = BatchKey {
                 view: view_key | MeshPipelineKey::from_primitive_topology_and_strip_index(mesh.primitive_topology(), mesh.index_format()),
                 depth_only: I::DEPTH_ONLY,
+                masked,
             };
             let pipeline = match pipelines.specialize(&pipeline_cache, &batch_pipeline, key, &mesh.layout) {
                 Ok(pipeline) => pipeline,
@@ -575,6 +629,41 @@ struct Regions {
 /// Where in [`Regions`] this batch's uniform sits.
 #[derive(Component)]
 struct RegionOffset(u32);
+
+/// Whether anything that masks a fragment can reach this batch: the
+/// near fade or the sightline's tunnel about it, or the ring where the
+/// models hand over to the cards. A batch none of them reaches keeps
+/// every fragment it rasterises, so its depth pass needs no shader to
+/// say so. Conservative in every term — a batch wrongly called masked
+/// costs what it costs today, one wrongly called plain would punch a
+/// hole in the wood.
+fn anything_masks(bounds: &BatchBounds, camera: Vec3, sightline: Option<&Sightline>, band: Option<&CardBand>) -> bool {
+    // Close to the eye, everything thins out.
+    if bounds.nearest(camera).distance(camera) < NEAR_FADE_RADIUS {
+        return true;
+    }
+    // The tunnel is a cylinder about the line from the eye to the
+    // player, so the batch is clear of it when its nearest point is.
+    if let Some(player) = sightline.and_then(|s| s.player) {
+        let axis = player - camera;
+        let reach = axis.length();
+        if reach > f32::EPSILON {
+            let axis = axis / reach;
+            let near = bounds.nearest(camera);
+            let along = (near - camera).dot(axis).clamp(0.0, reach);
+            if (near - (camera + axis * along)).length() < SIGHTLINE_RADIUS {
+                return true;
+            }
+        }
+    }
+    // Past the ring's inner edge a model starts dithering into its card.
+    match band {
+        Some(band) if band.inner > 0.0 && band.overlap > 0.0 => {
+            bounds.furthest_xz(band.center) > band.inner - band.overlap
+        }
+        _ => false,
+    }
+}
 
 /// A batch's uniform for this frame.
 fn region_uniform(transform: &TreeTransform, sightline: Option<&Sightline>, band: Option<&CardBand>) -> RegionUniform {
