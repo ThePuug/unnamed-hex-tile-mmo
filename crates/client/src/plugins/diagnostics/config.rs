@@ -43,10 +43,6 @@ pub struct DiagnosticsState {
     pub metrics_overlay_visible: bool,
     /// Which set of numbers the overlay's panel shows.
     pub metrics_tab: MetricsTab,
-    /// How many samples every camera renders with.
-    pub samples: Samples,
-    /// How the sun's shadows are drawn, if at all.
-    pub shadows: Shadows,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
     /// Every stand of trees and cards is hidden. The batches hang under
@@ -61,63 +57,6 @@ pub struct DiagnosticsState {
     pub camera_envelope_off: bool,
 }
 
-/// How many samples a camera takes per pixel. Coverage work — every
-/// silhouette the depth prepass rasterises — scales with this, and the
-/// wood is nothing but silhouette.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Samples {
-    Four,
-    Two,
-    Off,
-}
-
-impl Samples {
-    /// The next setting the toggle cycles to.
-    pub fn next(self) -> Self {
-        match self {
-            Samples::Four => Samples::Two,
-            Samples::Two => Samples::Off,
-            Samples::Off => Samples::Four,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Samples::Four => "4x",
-            Samples::Two => "2x",
-            Samples::Off => "Off",
-        }
-    }
-}
-
-/// The sun's shadows: filtered by the Gaussian, by the hardware's 2×2
-/// tap, or not cast at all.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shadows {
-    Gaussian,
-    Hard,
-    Off,
-}
-
-impl Shadows {
-    /// The next setting the toggle cycles to.
-    pub fn next(self) -> Self {
-        match self {
-            Shadows::Gaussian => Shadows::Hard,
-            Shadows::Hard => Shadows::Off,
-            Shadows::Off => Shadows::Gaussian,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Shadows::Gaussian => "Gaussian",
-            Shadows::Hard => "2x2",
-            Shadows::Off => "Off",
-        }
-    }
-}
-
 impl Default for DiagnosticsState {
     fn default() -> Self {
         Self {
@@ -125,8 +64,6 @@ impl Default for DiagnosticsState {
             lighting: LightingClock::default(),
             metrics_overlay_visible: false,
             metrics_tab: MetricsTab::default(),
-            samples: Samples::Four,
-            shadows: Shadows::Gaussian,
             terrain_hidden: false,
             forest_hidden: false,
             camera_closeup: false,

@@ -87,6 +87,15 @@ impl ServerNet {
         }
     }
 
+    /// Drop every message queued for a client and not yet handed to the
+    /// transport.
+    pub fn drop_queued(&mut self, client_id: ClientId) {
+        if let Some(state) = self.clients.get_mut(&client_id) {
+            state.ordered.queue.clear();
+            state.unordered.queue.clear();
+        }
+    }
+
     /// Send an unreliable message immediately. Never budget-gated (no ACK accumulation).
     pub fn send_unreliable(&mut self, client_id: ClientId, message: Vec<u8>) {
         self.server.send_message(client_id, DefaultChannel::Unreliable, message);

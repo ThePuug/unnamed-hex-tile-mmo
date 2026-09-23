@@ -23,6 +23,7 @@ impl Plugin for UiPlugin {
             Startup,
             (
                 ui::setup.after(crate::systems::camera::setup),
+                closeup::setup,
                 character_panel::setup,
                 resource_bars::setup.after(crate::systems::camera::setup),
                 action_bar::setup.after(crate::systems::camera::setup),
@@ -58,8 +59,7 @@ impl Plugin for UiPlugin {
                 equipment_panel::rebuild_bag,
                 equipment_panel::update_bag,
                 equipment_panel::update_slots,
-                closeup::setup,
-                closeup::spawn_figure,
+                closeup::show,
                 closeup::sync_figure,
                 closeup::stage_layers,
                 closeup::activate,

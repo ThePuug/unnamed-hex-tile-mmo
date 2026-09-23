@@ -18,7 +18,7 @@ use bevy::{
 };
 use bevy_easings::*;
 use common_bevy::{
-    components::{entity_type::*, *},
+    components::*,
     message::*,
     plugins::nntree,
     resources::*,
@@ -27,6 +27,8 @@ use crate::{
     plugins::{
         console::DevConsolePlugin,
         diagnostics::DiagnosticsPlugin,
+        settings::SettingsPlugin,
+        shell::ShellPlugin,
         ui::UiPlugin,
         vignette::VignettePlugin,
         water::WaterPlugin,
@@ -77,6 +79,7 @@ fn main() {
         MaterialPlugin::<world::DiscMaterial>::default(),
         MaterialPlugin::<world::SkyMaterial>::default(),
     ));
+    app.add_plugins((SettingsPlugin, ShellPlugin));
 
     // wgpu reports a validation error where a draw and its pass disagree,
     // and the default handler quits. A custom draw that misses a frame's
@@ -101,10 +104,13 @@ fn main() {
     ));
 
 
+    // Keys move the character only while the world is played: loading, it
+    // stands where the server put it.
+    let playing = in_state(crate::plugins::shell::Stage::Playing);
     #[cfg(feature = "admin")]
-    app.add_systems(PreUpdate, input::update_keybits.run_if(flyover::not_in_flyover));
+    app.add_systems(PreUpdate, input::update_keybits.run_if(playing.and_then(flyover::not_in_flyover)));
     #[cfg(not(feature = "admin"))]
-    app.add_systems(PreUpdate, input::update_keybits);
+    app.add_systems(PreUpdate, input::update_keybits.run_if(playing));
 
     app.add_systems(FixedUpdate, (
         input::tick,
@@ -201,13 +207,7 @@ fn main() {
         world::follow_camera,
     ));
 
-    app.insert_resource(common_bevy::resources::map::Map::new(
-        qrz::Map::<EntityType>::new(
-            common::camera::HEX_RADIUS,
-            common::camera::RISE,
-            qrz::HexOrientation::FlatTop,
-        ),
-    ));
+    app.insert_resource(crate::resources::world_map());
 
     app.init_resource::<InputQueues>();
     app.init_resource::<crate::resources::RenderOrigin>();

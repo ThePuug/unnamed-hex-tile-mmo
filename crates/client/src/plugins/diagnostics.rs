@@ -18,7 +18,7 @@ use bevy_egui::EguiPlugin;
 
 pub use census::RenderCensus;
 pub use dump::MetricsDump;
-pub use config::{DateField, DiagnosticsState, LightingClock, Samples, Shadows};
+pub use config::{DateField, DiagnosticsState, LightingClock};
 
 pub struct DiagnosticsPlugin;
 

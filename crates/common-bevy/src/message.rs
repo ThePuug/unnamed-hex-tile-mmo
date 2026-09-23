@@ -107,6 +107,12 @@ pub enum Event {
         instinct_presence_spectrum: i8,
         instinct_presence_shift: i8,
     },
+    /// Client → Server: put this connection's character in the world. The
+    /// server answers with `Init`; a connection already playing is ignored.
+    Play,
+    /// Client → Server: take this connection's character out of the world,
+    /// keeping the connection open to play again.
+    Leave,
 }
 
 /// Types of abilities that can be used ( MVP ability set + Counter)

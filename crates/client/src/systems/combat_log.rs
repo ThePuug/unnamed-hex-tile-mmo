@@ -18,7 +18,7 @@ const LINE_HEIGHT: f32 = 20.0; // Pixels per line scroll (for MouseScrollUnit::L
 /// Creates a scrollable panel that will display timestamped combat events
 pub fn setup(
     mut commands: Commands,
-    query: Query<Entity, Added<Camera3d>>,
+    query: Query<Entity, With<IsDefaultUiCamera>>,
 ) {
     let camera = query.single().expect("query did not return exactly one result");
 

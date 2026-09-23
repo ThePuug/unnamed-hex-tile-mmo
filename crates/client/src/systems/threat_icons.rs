@@ -74,7 +74,7 @@ pub fn severity_rgb(severity: f32) -> (f32, f32, f32) {
 /// Creates a container that will hold threat icons in a horizontal line above the player
 pub fn setup(
     mut commands: Commands,
-    query: Query<Entity, Added<Camera3d>>,
+    query: Query<Entity, With<IsDefaultUiCamera>>,
 ) {
     let camera = query.single().expect("query did not return exactly one result");
 

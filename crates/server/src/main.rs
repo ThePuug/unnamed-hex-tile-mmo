@@ -58,6 +58,7 @@ fn main() {
 
     // Add observers for triggered events
     app.add_observer(renet::do_manage_connections);
+    app.add_observer(renet::do_presence);
     app.add_observer(combat::process_deal_damage);
     app.add_observer(combat::resolve_threat);
 

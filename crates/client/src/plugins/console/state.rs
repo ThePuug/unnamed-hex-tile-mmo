@@ -77,7 +77,6 @@ pub enum MenuPath {
     Root,
     Terrain,
     LightingTime,
-    Video,
     #[cfg(feature = "admin")]
     Flyover,
     #[cfg(feature = "admin")]
@@ -94,7 +93,6 @@ impl MenuPath {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
             MenuPath::LightingTime => "Lighting Time",
-            MenuPath::Video => "Video Settings",
             #[cfg(feature = "admin")]
             MenuPath::Flyover => "Flyover Camera",
             #[cfg(feature = "admin")]

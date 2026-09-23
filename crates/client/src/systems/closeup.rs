@@ -1,10 +1,13 @@
 //! The closeup: the player as the world draws it, dressed as the server
-//! says, idling on a stage of its own, drawn into the equipment tab.
+//! says, idling on a stage of its own, drawn into the equipment tab and
+//! onto the character screen.
 //!
 //! The stage is a second scene of the player's model on a render layer of
 //! its own, far under the world, with its own light and a camera drawing
-//! into a texture the panel shows. The figure carries the player's
-//! Equipment, so the one dressing pipeline dresses it.
+//! into a texture every `CloseupView` shows. The figure carries the
+//! player's Equipment while there is a player, and the outfit the
+//! character screen dresses it in while there is not, so the one dressing
+//! pipeline dresses it.
 
 use bevy::{
     camera::{visibility::RenderLayers, ClearColorConfig, RenderTarget},
@@ -18,10 +21,13 @@ use common_bevy::{
     resources::map::Map,
 };
 
-use crate::systems::{
-    actor, animator,
-    character_panel::{CharacterPanelState, PanelTab},
-    equipment_panel::CloseupView,
+use crate::{
+    plugins::{settings::SettingsPanel, shell::Stage},
+    systems::{
+        actor, animator,
+        character_panel::{CharacterPanelState, PanelTab},
+        equipment_panel::CloseupView,
+    },
 };
 
 /// The stage's layer, seen by its own camera and lit by its own light.
@@ -52,17 +58,19 @@ pub struct Turn {
     current: f32,
 }
 
-/// Spawns the stage's camera and light and gives the panel's view the
-/// texture the camera draws into, once the view exists.
+/// The texture the stage's camera draws into.
+#[derive(Resource)]
+pub struct Closeup(Handle<Image>);
+
+/// Builds the stage: its camera and light, and the figure on it.
 pub fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
     map: Res<Map>,
-    view: Query<Entity, Added<CloseupView>>,
 ) {
-    let Ok(view) = view.single() else { return };
     let target = images.add(Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None));
-    commands.entity(view).insert(ImageNode::new(target.clone()));
+    commands.insert_resource(Closeup(target.clone()));
 
     // The figure fills the frame's height with a little over it and under.
     // Its front faces -z, so the camera stands there, looking back at it.
@@ -92,21 +100,9 @@ pub fn setup(
         Transform::from_translation(STAGE + Vec3::new(-2.0, 4.0, -3.0) * r).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
     ));
-}
 
-/// Puts the player's figure on the stage once the player exists, wearing
-/// what the player wears.
-pub fn spawn_figure(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    map: Res<Map>,
-    player: Query<(&EntityType, &Equipment), With<Actor>>,
-    figure: Query<(), With<Figure>>,
-) {
-    if !figure.is_empty() {
-        return;
-    }
-    let Ok((&typ, &equipment)) = player.single() else { return };
+    let typ: EntityType = crate::plugins::shell::preview_body();
+    let equipment: Equipment = crate::plugins::shell::preview_outfit();
     commands
         .spawn((
             Figure,
@@ -123,6 +119,23 @@ pub fn spawn_figure(
             RenderLayers::layer(LAYER),
         ))
         .observe(actor::ready);
+}
+
+/// Gives every view of the closeup the texture the stage is drawn into.
+pub fn show(mut commands: Commands, closeup: Res<Closeup>, views: Query<Entity, Added<CloseupView>>) {
+    for view in &views {
+        commands.entity(view).insert(ImageNode::new(closeup.0.clone()));
+    }
+}
+
+/// Whether the closeup is on screen: the equipment tab shows it in the
+/// world, the character screen outside it.
+fn on_screen(panel: &CharacterPanelState, stage: Stage) -> bool {
+    match stage {
+        Stage::CharacterSelect => true,
+        Stage::Playing => panel.visible && panel.tab == PanelTab::Equipment,
+        _ => false,
+    }
 }
 
 /// Keeps the figure wearing what the player wears.
@@ -152,16 +165,17 @@ pub fn stage_layers(
     }
 }
 
-/// The camera draws only while the equipment tab shows.
+/// The camera draws only while the closeup is on screen.
 pub fn activate(
     state: Res<CharacterPanelState>,
+    stage: Res<State<Stage>>,
     mut camera: Query<&mut Camera, With<CloseupCamera>>,
 ) {
-    if !state.is_changed() {
+    if !state.is_changed() && !stage.is_changed() {
         return;
     }
     let Ok(mut camera) = camera.single_mut() else { return };
-    camera.is_active = state.visible && state.tab == PanelTab::Equipment;
+    camera.is_active = on_screen(&state, *stage.get());
 }
 
 /// Left and right turn the figure a stop at a time, as they orbit the
@@ -169,11 +183,13 @@ pub fn activate(
 pub fn turn(
     keyboard: Res<ButtonInput<KeyCode>>,
     state: Res<CharacterPanelState>,
+    stage: Res<State<Stage>>,
+    settings: Res<SettingsPanel>,
     time: Res<Time>,
     mut turn: ResMut<Turn>,
     mut figure: Query<&mut Transform, With<Figure>>,
 ) {
-    if state.visible && state.tab == PanelTab::Equipment {
+    if on_screen(&state, *stage.get()) && !settings.open {
         if keyboard.just_pressed(KeyCode::ArrowLeft) {
             turn.target += TURN;
         }

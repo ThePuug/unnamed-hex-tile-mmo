@@ -17,7 +17,7 @@ const POP_APPEAR_DELAY: f32 = 0.4; // Synced with pop travel duration
 /// Entries use relative positioning so they naturally stack and reflow on despawn
 pub fn setup(
     mut commands: Commands,
-    query: Query<Entity, Added<Camera3d>>,
+    query: Query<Entity, With<IsDefaultUiCamera>>,
 ) {
     let camera = query.single().expect("query did not return exactly one result");
 

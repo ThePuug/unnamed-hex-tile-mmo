@@ -205,6 +205,15 @@ pub type TerrainMaterialAsset = ExtendedMaterial<StandardMaterial, TerrainExtens
 #[derive(Debug, Default, Deref, DerefMut, Resource)]
 pub struct EntityMap(BiMap<Entity,Entity>);
 
+/// The map before any of the world has arrived.
+pub fn world_map() -> common_bevy::resources::map::Map {
+    common_bevy::resources::map::Map::new(qrz::Map::<common_bevy::components::entity_type::EntityType>::new(
+        common::camera::HEX_RADIUS,
+        common::camera::RISE,
+        qrz::HexOrientation::FlatTop,
+    ))
+}
+
 #[derive(Debug, Resource)]
 pub struct Server {
     /// Server's game world time when Init event was received

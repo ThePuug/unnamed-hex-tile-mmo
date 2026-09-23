@@ -46,7 +46,7 @@ const SLOT_BORDER_PX: f32 = 3.;
 /// Creates 4 ability slots (Q, W, E, R), and the compass beside them
 pub fn setup(
     mut commands: Commands,
-    query: Query<Entity, Added<Camera3d>>,
+    query: Query<Entity, With<IsDefaultUiCamera>>,
 ) {
     let camera = query.single().expect("query did not return exactly one result");
 

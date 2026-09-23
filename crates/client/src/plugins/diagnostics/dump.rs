@@ -21,7 +21,8 @@ use bevy::prelude::*;
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use super::{DiagnosticsState, RenderCensus};
+use super::RenderCensus;
+use crate::plugins::settings::VideoSettings;
 
 /// How often a snapshot is appended while logging without being asked
 /// each time. Far apart, because a run is read afterwards and a log of
@@ -55,7 +56,7 @@ impl MetricsDump {
 /// run being measured should not have to be watched as well.
 pub fn dump_metrics(
     mut dump: ResMut<MetricsDump>,
-    state: Res<DiagnosticsState>,
+    video: Res<VideoSettings>,
     census: Res<RenderCensus>,
     wood: Res<crate::plugins::forest::ForestDraws>,
     diagnostics: Res<DiagnosticsStore>,
@@ -76,8 +77,8 @@ pub fn dump_metrics(
         "
 # {:.1}s up | msaa={} shadows={} | {}",
         time.elapsed_secs(),
-        state.samples.label(),
-        state.shadows.label(),
+        video.samples.label(),
+        video.shadows.label(),
         if asked { "asked for" } else { "every few seconds" },
     );
 

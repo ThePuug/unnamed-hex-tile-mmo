@@ -1,7 +1,7 @@
-use bevy::{light::ShadowFilteringMethod, prelude::*};
+use bevy::prelude::*;
 
 use crate::{
-    plugins::diagnostics::{DateField, DiagnosticsState, Shadows, grid::HexGridOverlay},
+    plugins::diagnostics::{DateField, DiagnosticsState, grid::HexGridOverlay},
     components::PlayerOriginDebug,
 };
 use common_bevy::components::behaviour::Behaviour;
@@ -19,8 +19,6 @@ pub enum DevConsoleAction {
     StepLightingDate(DateField, i32),
     SyncLightingClock,
     ToggleCameraEnvelope,
-    ToggleMsaa,
-    ToggleShadowFilter,
     ToggleTerrainHidden,
     ToggleForestHidden,
     ToggleCameraCloseup,
@@ -61,9 +59,6 @@ pub fn execute_console_actions(
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay)>,
     actor_query: Query<Entity, With<Behaviour>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
-    mut camera_msaa: Query<&mut Msaa, With<Camera>>,
-    world_camera: Query<Entity, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
-    mut sun: Query<&mut DirectionalLight, With<common_bevy::components::Sun>>,
     mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
     mut forest: Query<
         &mut Visibility,
@@ -132,21 +127,6 @@ pub fn execute_console_actions(
                 diagnostics_state.camera_envelope_off = !diagnostics_state.camera_envelope_off;
                 info!("Camera envelope: {}", if diagnostics_state.camera_envelope_off { "LIFTED" } else { "ON" });
             }
-            DevConsoleAction::ToggleShadowFilter => {
-                let shadows = diagnostics_state.shadows.next();
-                diagnostics_state.shadows = shadows;
-                let method = match shadows {
-                    Shadows::Hard => ShadowFilteringMethod::Hardware2x2,
-                    _ => ShadowFilteringMethod::Gaussian,
-                };
-                for camera in world_camera.iter() {
-                    commands.entity(camera).insert(method);
-                }
-                for mut light in sun.iter_mut() {
-                    light.shadow_maps_enabled = shadows != Shadows::Off;
-                }
-                info!("Shadows: {}", shadows.label());
-            }
             DevConsoleAction::ToggleTerrainHidden => {
                 diagnostics_state.terrain_hidden = !diagnostics_state.terrain_hidden;
                 let shown = if diagnostics_state.terrain_hidden { Visibility::Hidden } else { Visibility::Inherited };
@@ -166,20 +146,6 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCameraCloseup => {
                 diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;
                 info!("Camera close-up: {}", if diagnostics_state.camera_closeup { "ON" } else { "off" });
-            }
-            DevConsoleAction::ToggleMsaa => {
-                let samples = diagnostics_state.samples.next();
-                diagnostics_state.samples = samples;
-                // Every camera on the window, or the ones left behind stop
-                // sharing its main texture and draw the UI a second time.
-                for mut msaa in camera_msaa.iter_mut() {
-                    *msaa = match samples {
-                        crate::plugins::diagnostics::Samples::Four => Msaa::Sample4,
-                        crate::plugins::diagnostics::Samples::Two => Msaa::Sample2,
-                        crate::plugins::diagnostics::Samples::Off => Msaa::Off,
-                    };
-                }
-                info!("MSAA: {}", samples.label());
             }
             DevConsoleAction::WriteMetricsSnapshot => {
                 metrics_dump.asked = true;

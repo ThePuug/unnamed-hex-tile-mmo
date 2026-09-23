@@ -364,6 +364,9 @@ pub fn setup(
         }),
         Transform::default(),
         Actor,
+        // Every UI node is drawn by the world's camera: the closeup's draws
+        // into a texture and the overlay's is egui's.
+        IsDefaultUiCamera,
         VignetteSettings::default(),
         haze(),
         // Depth first, so the terrain's fragment shader runs once per pixel

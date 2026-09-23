@@ -35,15 +35,18 @@ pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
     console: Res<crate::plugins::console::DevConsole>,
+    menu: Res<crate::plugins::shell::menu::GameMenu>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
 ) {
-    // The character panel and the console's lighting panel, whose arrows
-    // scrub the clock, are modal: while one is open every gameplay key
-    // reads as released, so the character stops and nothing fires.
+    // The character panel, the menu, and the console's lighting panel,
+    // whose arrows scrub the clock, are modal: while one is open every
+    // gameplay key reads as released, so the character stops and nothing
+    // fires.
     let modal = panel.visible
+        || menu.open
         || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
     let released = ButtonInput::default();
     let keyboard: &ButtonInput<KeyCode> = if modal { &released } else { &keyboard };

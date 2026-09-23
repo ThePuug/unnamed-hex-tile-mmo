@@ -27,9 +27,34 @@ use crate::*;
 
 use crate::network::{ServerNet, NetServerEvent};
 
-#[allow(clippy::too_many_arguments)]
+/// A connected client entering the world or leaving it. Connection is not
+/// presence: a client connects to its character select, enters when it
+/// asks to play, and may leave and enter again on the one connection. A
+/// disconnect leaves the world too.
+#[derive(Event, Debug)]
+pub enum Presence {
+    Enter { client_id: ::renet::ClientId },
+    Leave { client_id: ::renet::ClientId },
+}
+
 pub fn do_manage_connections(
     trigger: On<NetServerEvent>,
+    mut commands: Commands,
+) {
+    match trigger.event() {
+        NetServerEvent::ClientConnected { client_id } => {
+            info!("Client {} connected", client_id);
+        }
+        NetServerEvent::ClientDisconnected { client_id, reason } => {
+            info!("Client {} disconnected: {:?}", client_id, reason);
+            commands.trigger(Presence::Leave { client_id: *client_id });
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn do_presence(
+    trigger: On<Presence>,
     mut commands: Commands,
     mut conn: ResMut<ServerNet>,
     mut lobby: ResMut<Lobby>,
@@ -42,9 +67,12 @@ pub fn do_manage_connections(
     spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
 ) {
     match trigger.event() {
-        NetServerEvent::ClientConnected { client_id } => {
+        Presence::Enter { client_id } => {
             let client_id = *client_id;
-                info!("Player {} connected", client_id);
+                if lobby.contains_left(&client_id) {
+                    return;
+                }
+                info!("Player {} entered the world", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
                     Origin::Evolved,
                     Approach::Direct,
@@ -162,10 +190,14 @@ pub fn do_manage_connections(
 
                 lobby.insert(client_id, ent);
             }
-            NetServerEvent::ClientDisconnected { client_id, reason } => {
+            Presence::Leave { client_id } => {
                 let client_id = *client_id;
-                info!("Player {} disconnected: {:?}", client_id, reason);
-                let ent = lobby.remove_by_left(&client_id).unwrap().1;
+                let Some((_, ent)) = lobby.remove_by_left(&client_id) else { return };
+                info!("Player {} left the world", client_id);
+                // What is queued for the character goes with it: a chunk
+                // arriving after the client left would stand in its map
+                // with nothing to evict it.
+                conn.drop_queued(client_id);
                 buffers.remove(&ent);
                 guards.0.remove(&ent);
 
@@ -192,6 +224,7 @@ pub fn do_manage_connections(
 }
 
 pub fn write_try(
+    mut commands: Commands,
     mut writer: MessageWriter<Try>,
     mut conn: ResMut<ServerNet>,
     lobby: Res<Lobby>,
@@ -205,14 +238,14 @@ pub fn write_try(
                     writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
                 }
                 Try { event: Event::Gcd { typ, .. } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
                 Try { event: Event::Ping { client_time } } => {
@@ -223,24 +256,30 @@ pub fn write_try(
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 Try { event: Event::Dismiss { ent: _ } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Dismiss { ent }});
                 }
                 Try { event: Event::SetTierLock { ent: _, tier } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::SetTierLock { ent, tier }});
                 }
                 Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }});
                 }
                 Try { event: Event::Wear { ent: _, item, on } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { panic!("no {client_id} in lobby") };
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Wear { ent, item, on }});
                 }
                 Try { event: Event::Teleport { ent: _, q, r } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Teleport { ent, q, r }});
+                }
+                Try { event: Event::Play } => {
+                    commands.trigger(Presence::Enter { client_id });
+                }
+                Try { event: Event::Leave } => {
+                    commands.trigger(Presence::Leave { client_id });
                 }
                 _ => {}
             }

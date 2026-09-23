@@ -56,7 +56,8 @@ pub fn write_do(
     mut commands: Commands,
     mut do_writer: MessageWriter<Do>,
     mut try_writer: MessageWriter<Try>,
-    mut conn: ResMut<ClientNet>,
+    conn: Option<ResMut<ClientNet>>,
+    entered: Res<crate::plugins::shell::Entered>,
     mut l2r: ResMut<EntityMap>,
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
@@ -67,13 +68,20 @@ pub fn write_do(
     time: Res<Time>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
+    let Some(mut conn) = conn else { return };
     let _t = client_timers.0.scope("write_do");
+    // Out of the world every message is about a world the client has left,
+    // or not yet entered: what was in flight when it left is drained unread.
+    let in_world = entered.0;
     while let Some(serialized) = conn.receive_message(DefaultChannel::ReliableOrdered) {
         let (message, _) = bincode::serde::decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
 
         // Track network metrics (received from server)
         let message_type = get_message_type_name(&message);
         network_metrics.record_received(message_type, serialized.len());
+        if !in_world {
+            continue;
+        }
 
         match message {
 
@@ -240,6 +248,9 @@ pub fn write_do(
 
         let message_type = get_message_type_name(&message);
         network_metrics.record_received(message_type, serialized.len());
+        if !in_world {
+            continue;
+        }
 
         match message {
             Do { event: Event::ChunkData { ent: _, chunk_id, tiles } } => {
@@ -289,6 +300,9 @@ pub fn write_do(
         // Track network metrics (received from server)
         let message_type = get_message_type_name(&message);
         network_metrics.record_received(message_type, serialized.len());
+        if !in_world {
+            continue;
+        }
 
         match message {
             Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } } => {
@@ -308,10 +322,14 @@ pub fn write_do(
 }
 
 pub fn send_try(
-    mut conn: ResMut<ClientNet>,
+    conn: Option<ResMut<ClientNet>>,
     mut reader: MessageReader<Try>,
     l2r: Res<EntityMap>,
 ) {
+    let Some(mut conn) = conn else {
+        reader.clear();
+        return;
+    };
     for message in reader.read() {
         match &message.event {
             Event::Input { ent, key_bits, dt, seq } => {
@@ -339,6 +357,9 @@ pub fn send_try(
                     ability: *ability,
                     target: remote_target
                 }}, bincode::config::legacy()).unwrap());
+            }
+            Event::Play | Event::Leave => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap());
             }
             Event::Ping { client_time } => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {

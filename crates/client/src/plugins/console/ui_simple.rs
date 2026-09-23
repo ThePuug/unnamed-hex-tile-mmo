@@ -120,27 +120,20 @@ pub fn update_console_menu(
                         TextColor(Color::WHITE),
                     ));
 
-                    let video_key = if cfg!(feature = "admin") { "3" } else { "2" };
-                    parent.spawn((
-                        Text::new(format!("{video_key}. Video")),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::WHITE),
-                    ));
-
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
                     // Toggles after
-                    let metrics_key = if cfg!(feature = "admin") { "4" } else { "3" };
+                    let metrics_key = if cfg!(feature = "admin") { "3" } else { "2" };
                     parent.spawn((
                         Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
                     ));
 
-                    let dump_key = if cfg!(feature = "admin") { "5" } else { "4" };
+                    let dump_key = if cfg!(feature = "admin") { "4" } else { "3" };
                     parent.spawn((
                         Text::new(format!(
                             "{}. Write Metrics Snapshot{}",
@@ -275,38 +268,6 @@ pub fn update_console_menu(
 
                     parent.spawn((
                         Text::new("Esc. Back"),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
-                    ));
-                }
-                MenuPath::Video => {
-                    parent.spawn((
-                        Text::new(format!(
-                            "1. MSAA                     [{}]",
-                            diagnostics_state.samples.label()
-                        )),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(
-                            diagnostics_state.samples == crate::plugins::diagnostics::Samples::Four
-                        )),
-                    ));
-
-                    parent.spawn((
-                        Text::new(format!(
-                            "2. Shadows                  [{}]",
-                            diagnostics_state.shadows.label()
-                        )),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(diagnostics_state.shadows == crate::plugins::diagnostics::Shadows::Gaussian)),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: FontSize::Px(8.0), ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("0. Back to Main Menu"),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 0.3)),
                     ));
