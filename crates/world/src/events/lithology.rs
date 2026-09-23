@@ -87,6 +87,19 @@ impl Rock {
         }
     }
 
+    /// How much of the rain the rock keeps where roots reach it, as a
+    /// share of what shale keeps: shale's clays hold it, a sandstone lets
+    /// it through, basement carries a thin soil over sound rock, and a
+    /// limestone drains it underground.
+    pub fn retention(self) -> f64 {
+        match self {
+            Rock::Shale => 1.0,
+            Rock::Sandstone => 0.75,
+            Rock::Basement => 0.7,
+            Rock::Limestone => 0.6,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Rock::Shale => "shale",

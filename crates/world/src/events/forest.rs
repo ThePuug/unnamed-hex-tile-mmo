@@ -19,8 +19,9 @@
 //!
 //! A stand is a feature: it originates at a point of a jittered lattice,
 //! the cell that point falls in publishes it, and it reaches its radius.
-//! The climate is read once at the origin, with the ground's own water,
-//! the valley floor and a flooded basin, and sets the stand's density and
+//! The climate is read once at the origin, with what the rock there keeps
+//! of it and the ground's own water, the valley floor and a flooded basin,
+//! and sets the stand's density and
 //! how many of its slots are trees rather than scrub. A stand stands with
 //! the probability its density gives, so between the wet core and the dry
 //! ground the woods are islands with edges: forest and open ground as
@@ -45,6 +46,7 @@ use crate::tectonic::{Edge, PLATE_SPACING};
 use crate::{hex_to_world, world_to_hex};
 use super::drainage::DrainageIndex;
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::lithology::{rock_on, Rock};
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
 use super::thrusting::{rim_of, sheets_of, smoothstep, EdgeOutline, OutlineIndex, Outlines, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
@@ -387,15 +389,16 @@ pub fn trees_of(moisture: f64) -> f64 {
     smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
 }
 
-/// The moisture a stand's origin reads: the sky's, raised toward the
-/// closed forest's by how low on the valley's wall it lies, and to it on a
-/// basin's flooded floor.
-pub fn ground_moisture(sky: f64, wall: f64, flooded: bool) -> f64 {
+/// The moisture a stand's origin reads: the share of the sky's the rock
+/// keeps, raised toward the closed forest's by how low on the valley's
+/// wall it lies, and to it on a basin's flooded floor, whatever the rock.
+pub fn ground_moisture(sky: f64, retention: f64, wall: f64, flooded: bool) -> f64 {
+    let held = sky * retention;
     if flooded {
-        return sky.max(MOISTURE_CLOSED);
+        return held.max(MOISTURE_CLOSED);
     }
     let foot = (1.0 - wall.clamp(0.0, 1.0)).powi(3);
-    sky + (MOISTURE_CLOSED - sky).max(0.0) * foot
+    held + (MOISTURE_CLOSED - held).max(0.0) * foot
 }
 
 /// A stand's density at a share `u` of its radius from the origin: full
@@ -485,7 +488,8 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
             .as_ref()
             .and_then(|idx| idx.node(nearest_node(ox, oy)))
             .is_some_and(|n| n.flooded);
-        let moisture = ground_moisture(sky, wall, flooded);
+        let retention = rock_on(ox, oy, seed, &coasts, &outline).rock.retention();
+        let moisture = ground_moisture(sky, retention, wall, flooded);
         let density = density_of(moisture);
         if density <= 0.0 {
             continue;
@@ -683,6 +687,22 @@ mod tests {
         }
         assert!((density_of(1.0) - DENSITY_MAX).abs() < 1e-12);
         assert_eq!(trees_of(1.0), 1.0);
+    }
+
+    /// The rock sets how much of the sky's water the ground keeps, so
+    /// shale's ground is the wettest and limestone's the driest, while a
+    /// valley's floor and a flooded basin are wet whatever the rock.
+    #[test]
+    fn the_rock_keeps_the_rain() {
+        let rocks = [Rock::Limestone, Rock::Basement, Rock::Sandstone, Rock::Shale];
+        for sky in [0.2, 0.42, 0.7] {
+            let wet: Vec<f64> = rocks.iter().map(|r| ground_moisture(sky, r.retention(), 1.0, false)).collect();
+            assert!(wet.windows(2).all(|w| w[0] <= w[1]), "not ordered by the rock at sky {sky}: {wet:?}");
+            for r in rocks {
+                assert!(ground_moisture(sky, r.retention(), 0.0, false) >= MOISTURE_CLOSED.min(sky));
+                assert!(ground_moisture(sky, r.retention(), 1.0, true) >= MOISTURE_CLOSED);
+            }
+        }
     }
 
     /// The temperature falls with elevation at the lapse rate, so the
