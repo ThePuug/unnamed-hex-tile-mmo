@@ -1,5 +1,6 @@
-//! Which of an actor's clips plays: the walk while it moves, the idle while
-//! it stands, a one-shot over either when the server says it used an
+//! Which of an actor's clips plays: the walk or the run while it moves,
+//! whichever its pace keeps the feet on the ground at, the idle while it
+//! stands, a one-shot over either when the server says it used an
 //! ability, held until the one-shot ends, and the jump in three parts
 //! while the physics carries the actor through the air.
 
@@ -18,20 +19,24 @@ use common_bevy::{
 };
 
 /// An actor's clips, each found in its GLB by name: the rest pose, the
-/// idle, the walk, then the one-shots. An actor's asset holds whichever it
-/// has; `Clips` says which.
+/// idle, the walk and the run, then the one-shots. An actor's asset holds
+/// whichever it has; `Clips` says which.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Clip {
     Tee,
     Idle,
     Walk,
+    Run,
     Jump,
     Attack,
     Counter,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 6] = [Clip::Tee, Clip::Idle, Clip::Walk, Clip::Jump, Clip::Attack, Clip::Counter];
+    pub const ALL: [Clip; 7] = [Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter];
+
+    /// The cycles that cover ground, slowest first.
+    const GAITS: [Clip; 2] = [Clip::Walk, Clip::Run];
 
     /// The animation's name in the asset.
     pub fn name(self) -> &'static str {
@@ -39,6 +44,7 @@ impl Clip {
             Clip::Tee => "_tee",
             Clip::Idle => "idle",
             Clip::Walk => "walk",
+            Clip::Run => "run",
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
@@ -62,11 +68,13 @@ impl Clip {
 pub struct Rig(pub Handle<Gltf>);
 
 /// What a clip declares in the asset's extras, under `animgen` on the
-/// armature node, keyed by the clip's name — as much of it as is read:
-/// a jump's three moments. Its length and the ground a cycle covers are
-/// there too.
+/// armature node, keyed by the clip's name: its length in seconds, the
+/// ground one cycle covers in the model's units — zero for a clip that
+/// covers none — and a jump's three moments.
 #[derive(Clone, Copy, Debug, Deserialize)]
 struct Declaration {
+    stride: Option<f32>,
+    seconds: Option<f32>,
     leave: Option<f32>,
     freeze: Option<f32>,
     land: Option<f32>,
@@ -88,13 +96,35 @@ pub struct Moments {
     pub land: f32,
 }
 
+/// A cycle that covers ground: `length` in the model's units per cycle,
+/// over `seconds` as authored.
+#[derive(Clone, Copy, Debug)]
+pub struct Stride {
+    pub length: f32,
+    pub seconds: f32,
+}
+
+impl Stride {
+    /// The playback rate that keeps the feet planted on ground passing at
+    /// `speed` world units a second, under an actor drawn at `scale`.
+    fn rate(self, speed: f32, scale: f32) -> f32 {
+        speed * self.seconds / (self.length * scale)
+    }
+}
+
+/// How much nearer its authored pace the other gait must play before an
+/// actor changes to it, as a ratio, so a pace between the two holds one.
+const GAIT_SWITCH: f32 = 1.25;
+
 /// The node in an actor's animation graph for each clip its asset holds,
-/// and the jump's moments where it declares them, on the entity with its
-/// `AnimationPlayer`; a clip the asset lacks has no node.
+/// the jump's moments and each gait's stride where it declares them, on
+/// the entity with its `AnimationPlayer`; a clip the asset lacks has no
+/// node.
 #[derive(Component, Default)]
 pub struct Clips {
     nodes: HashMap<Clip, AnimationNodeIndex>,
     jump: Option<Moments>,
+    strides: HashMap<Clip, Stride>,
 }
 
 impl Clips {
@@ -108,13 +138,22 @@ impl Clips {
                 clips.nodes.insert(clip, graph.add_clip(handle.clone(), 1.0, graph.root));
             }
         }
-        clips.jump = gltf.nodes.iter()
+        let Some(declared) = gltf.nodes.iter()
             .filter_map(|h| nodes.get(h)?.extras.as_ref())
             .find_map(|extras| serde_json::from_str::<Extras>(&extras.value).ok())
-            .and_then(|extras| {
-                let d = extras.animgen.get(Clip::Jump.name())?;
-                Some(Moments { leave: d.leave?, freeze: d.freeze?, land: d.land? })
-            });
+        else {
+            return (graph, clips);
+        };
+        clips.jump = declared.animgen.get(Clip::Jump.name())
+            .and_then(|d| Some(Moments { leave: d.leave?, freeze: d.freeze?, land: d.land? }));
+        for clip in Clip::GAITS {
+            let Some(d) = declared.animgen.get(clip.name()) else { continue };
+            if let (Some(length), Some(seconds)) = (d.stride, d.seconds) {
+                if length > 0.0 && seconds > 0.0 {
+                    clips.strides.insert(clip, Stride { length, seconds });
+                }
+            }
+        }
         (graph, clips)
     }
 
@@ -130,6 +169,31 @@ impl Clips {
     /// The jump and its moments, where the asset has one and declares them.
     pub fn jump(&self) -> Option<(AnimationNodeIndex, Moments)> {
         Some((self.node(Clip::Jump)?, self.jump?))
+    }
+
+    /// Whether `node` plays a gait.
+    fn is_gait(&self, node: AnimationNodeIndex) -> bool {
+        Clip::GAITS.iter().any(|&clip| self.is(node, clip))
+    }
+
+    /// The stride of the gait `node` plays, where the asset declares one.
+    fn stride_of(&self, node: AnimationNodeIndex) -> Option<Stride> {
+        Clip::GAITS.iter().find(|&&clip| self.is(node, clip)).and_then(|clip| self.strides.get(clip).copied())
+    }
+
+    /// The gait an actor covering ground at `speed` plays under `scale`,
+    /// and its rate: of the gaits with a declared stride, the one whose
+    /// rate lies nearest its authored pace, `current` held until another
+    /// is nearer by [`GAIT_SWITCH`]. With none declared, the walk as
+    /// authored.
+    fn gait(&self, speed: f32, scale: f32, current: Option<AnimationNodeIndex>) -> Option<(AnimationNodeIndex, f32)> {
+        // How far a rate lies from the authored pace, the current gait's
+        // taken as nearer by the switch margin.
+        let cost = |node, rate: f32| rate.ln().abs() - if Some(node) == current { GAIT_SWITCH.ln() } else { 0.0 };
+        Clip::GAITS.iter()
+            .filter_map(|clip| Some((self.node(*clip)?, self.strides.get(clip)?.rate(speed, scale))))
+            .min_by(|a, b| cost(a.0, a.1).total_cmp(&cost(b.0, b.1)))
+            .or_else(|| Some((self.node(Clip::Walk)?, 1.0)))
     }
 }
 
@@ -201,7 +265,7 @@ impl Jumping {
     }
 }
 
-/// How long a one-shot blends in and the walk and idle blend between.
+/// How long a one-shot blends in and the gaits and idle blend between.
 const BLEND: Duration = Duration::from_millis(120);
 const SETTLE: Duration = Duration::from_millis(300);
 
@@ -232,17 +296,20 @@ fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
 
 pub fn update(
     mut commands: Commands,
-    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, Option<&mut Jumping>)>,
+    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
 ) {
-    for (entity, &airtime, &animates, vis_pos, &heading, jumping) in &mut query {
+    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
         let travel = vis_pos.to - vis_pos.from;
         let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
-        // Walking against the facing plays the walk in reverse.
-        let speed = if travel.xz().dot(heading.to_world_dir()) < 0.0 { -1. } else { 1. };
+        // Every re-target starts from where the visual is, so in steady
+        // motion it crosses each segment at the actor's own speed.
+        let ground_speed = if vis_pos.duration > 0.0 { travel.xz().length() / vis_pos.duration } else { 0.0 };
+        // Moving against the facing plays the gait in reverse.
+        let direction = if travel.xz().dot(heading.to_world_dir()) < 0.0 { -1. } else { 1. };
 
         let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
         let (Some(idle), Some(walk)) = (clips.node(Clip::Idle), clips.node(Clip::Walk)) else { continue };
@@ -284,17 +351,27 @@ pub fn update(
 
         // A one-shot holds the actor until it ends.
         if let Some(node) = main {
-            let one_shot = !clips.is(node, Clip::Idle) && !clips.is(node, Clip::Walk) && !clips.is(node, Clip::Tee);
+            let one_shot = !clips.is(node, Clip::Idle) && !clips.is_gait(node) && !clips.is(node, Clip::Tee);
             if one_shot && player.animation(node).is_some_and(|a| !a.is_finished()) {
                 continue;
             }
         }
-        // An actor with no jump walks in the air.
+        // An actor with no jump keeps its gait in the air.
         if is_moving || (airborne && jump.is_none()) {
-            if main != Some(walk) {
-                transitions.play(&mut player, walk, SETTLE).set_speed(speed).repeat();
-            } else if let Some(walk) = player.animation_mut(walk) {
-                walk.set_speed(speed);
+            let current = main.filter(|&node| clips.is_gait(node));
+            let (gait, rate) = clips.gait(ground_speed, transform.scale.y, current).unwrap_or((walk, 1.0));
+            if main != Some(gait) {
+                // The gaits all land the same foot at the start of their
+                // cycle, so a change carries the cycle's phase across.
+                let phase = current
+                    .and_then(|node| Some(player.animation(node)?.seek_time() / clips.stride_of(node)?.seconds))
+                    .map(|phase| phase.rem_euclid(1.0));
+                let anim = transitions.play(&mut player, gait, SETTLE).set_speed(rate * direction).repeat();
+                if let (Some(phase), Some(stride)) = (phase, clips.stride_of(gait)) {
+                    anim.set_seek_time(phase * stride.seconds);
+                }
+            } else if let Some(anim) = player.animation_mut(gait) {
+                anim.set_speed(rate * direction);
             }
         } else if main != Some(idle) {
             transitions.play(&mut player, idle, SETTLE).set_speed(1.).repeat();

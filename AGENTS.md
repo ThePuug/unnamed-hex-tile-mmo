@@ -207,7 +207,7 @@ squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
 100.
 
 **Clips.** An actor's GLB names its animations — `_tee`, `idle`, `walk`,
-`jump`, `attack`, `counter` — and `client::systems::animator::Clips` finds
+`run`, `jump`, `attack`, `counter` — and `client::systems::animator::Clips` finds
 each by name from `Gltf::named_animations` when the scene is ready, so a
 new clip is a new name and an actor lacking one has no node for it; the
 actor holds its `Gltf` root (`animator::Rig`) from spawn or the names are
@@ -216,7 +216,9 @@ extras declare `leave`, `freeze` and `land` in seconds, and `animator::Jumping`
 plays it to the freeze as `AirTime` goes airborne, holds it there by speed
 (never `pause`, which `AnimationTransitions::play` will not fade out),
 resumes it when the fall at `GRAVITY` has `land − freeze` left, and plays
-it out from `land` once the ground comes.
+it out from `land` once the ground comes. A gait, the walk or the run, declares
+its `stride` and `seconds` there too; `Clips::gait` plays the one whose
+rate keeps the feet planted at the drawn speed nearest its authored pace.
 
 **Worn pieces.** A piece loads from `models/<piece>-<actor>.glb`, scene =
 style, as a child of the actor. `client::systems::equipment` points its
