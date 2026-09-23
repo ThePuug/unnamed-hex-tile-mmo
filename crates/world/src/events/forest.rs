@@ -529,11 +529,11 @@ impl Reach {
         Reach { grid }
     }
 
-    /// The stands over a position as one: the density a slot is filled
-    /// at by any of them, short of the closed stand's, and the share of
-    /// the filling that is trees.
+    /// The stands over a position as one: the densest of them, so thin
+    /// woods overlapping stay thin, and the share of the filling that is
+    /// trees, weighted by each stand's density there.
     pub fn at(&self, wx: f64, wy: f64) -> (f64, f64) {
-        let mut open = 1.0;
+        let mut densest: f64 = 0.0;
         let mut trees = 0.0;
         let mut weight = 0.0;
         if let Some(stands) = self.grid.cell_contents(self.grid.cell_at(wx, wy)) {
@@ -543,7 +543,7 @@ impl Reach {
                     continue;
                 }
                 let d = s.density * taper(u);
-                open *= 1.0 - d;
+                densest = densest.max(d);
                 trees += s.trees * d;
                 weight += d;
             }
@@ -551,7 +551,7 @@ impl Reach {
         if weight <= 0.0 {
             return (0.0, 0.0);
         }
-        ((1.0 - open).min(DENSITY_MAX), trees / weight)
+        (densest, trees / weight)
     }
 }
 
@@ -687,6 +687,18 @@ mod tests {
         }
         assert!((density_of(1.0) - DENSITY_MAX).abs() < 1e-12);
         assert_eq!(trees_of(1.0), 1.0);
+    }
+
+    /// Stands overlapping are as dense as the densest of them: two thin
+    /// woods never make a closed one.
+    #[test]
+    fn overlap_takes_the_densest() {
+        let stand = |wx: f64, density: f64| Stand { wx, wy: 0.0, radius: 100.0, stretch: 0.0, along: (1.0, 0.0), density, trees: 1.0 };
+        let one = Reach::new([stand(0.0, 0.2)].into_iter()).at(0.0, 0.0).0;
+        let two = Reach::new([stand(0.0, 0.2), stand(1.0, 0.2)].into_iter()).at(0.0, 0.0).0;
+        let mixed = Reach::new([stand(0.0, 0.2), stand(1.0, 0.5)].into_iter()).at(0.0, 0.0).0;
+        assert!((two - one).abs() < 0.01, "two thin woods {two} denser than one {one}");
+        assert!(mixed > two && mixed <= 0.5);
     }
 
     /// The rock sets how much of the sky's water the ground keeps, so
