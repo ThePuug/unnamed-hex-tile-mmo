@@ -27,6 +27,7 @@ pub enum DevConsoleAction {
 
     // Top-level toggles
     ToggleMetricsOverlay,
+    ToggleMetricsDump,
 
     // Admin actions
     #[cfg(feature = "admin")]
@@ -45,6 +46,7 @@ pub enum DevConsoleAction {
 pub fn execute_console_actions(
     mut commands: Commands,
     mut diagnostics_state: ResMut<DiagnosticsState>,
+    mut metrics_dump: ResMut<crate::plugins::diagnostics::MetricsDump>,
     mut reader: MessageReader<DevConsoleAction>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -168,6 +170,10 @@ pub fn execute_console_actions(
                     };
                 }
                 info!("MSAA: {}", samples.label());
+            }
+            DevConsoleAction::ToggleMetricsDump => {
+                metrics_dump.on = !metrics_dump.on;
+                info!("Metrics dump: {}", if metrics_dump.on { "ON (proofs/client/metrics.txt)" } else { "off" });
             }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;

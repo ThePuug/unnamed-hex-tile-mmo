@@ -1,4 +1,6 @@
+pub mod census;
 mod config;
+pub mod dump;
 pub mod grid;
 pub mod metrics_overlay;
 pub mod network_ui;
@@ -14,6 +16,8 @@ use bevy::{
 use bevy::render::diagnostic::*;
 use bevy_egui::EguiPlugin;
 
+pub use census::RenderCensus;
+pub use dump::MetricsDump;
 pub use config::{DateField, DiagnosticsState, LightingClock, Samples, Shadows};
 
 pub struct DiagnosticsPlugin;
@@ -33,6 +37,9 @@ impl Plugin for DiagnosticsPlugin {
         share_timers(app);
 
         app.init_resource::<DiagnosticsState>();
+        app.init_resource::<RenderCensus>();
+        app.insert_resource(MetricsDump::from_args());
+        app.add_systems(Update, (census::take_census, dump::dump_metrics).chain());
         app.init_resource::<network_ui::NetworkMetrics>();
         app.init_resource::<grid::PendingGridMesh>();
         app.init_resource::<metrics_overlay::MetricsHistory>();

@@ -79,6 +79,7 @@ pub fn update_console_visibility(
 pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
+    metrics_dump: Res<crate::plugins::diagnostics::MetricsDump>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
@@ -137,6 +138,13 @@ pub fn update_console_menu(
                         Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
+                    ));
+
+                    let dump_key = if cfg!(feature = "admin") { "5" } else { "4" };
+                    parent.spawn((
+                        Text::new(format!("{}. Write Metrics To File     [{}]", dump_key, on_off(metrics_dump.on))),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(metrics_dump.on)),
                     ));
 
                     parent.spawn((

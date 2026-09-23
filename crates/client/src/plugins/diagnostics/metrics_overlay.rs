@@ -495,6 +495,7 @@ pub fn update_metrics_overlay(
     tri_stats: Res<crate::resources::LodTriangleStats>,
     origin: Res<crate::resources::RenderOrigin>,
     wood: Res<crate::plugins::forest::ForestDraws>,
+    census: Res<super::RenderCensus>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
@@ -711,6 +712,22 @@ pub fn update_metrics_overlay(
                                 s.half(&format!("{:>5}  ", ENTS.fmt(trees as f64)), COLOR_DIM);
                                 s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
                                 s.half(&format!("{:>5}  ", ENTS.fmt(draws as f64)), ALARM_DRAWS.color(draws as f64));
+                            });
+                        }
+                        // What each group hands the rasteriser. The
+                        // triangles are what a pass is paid in; the draws
+                        // beside them say whether they came in one go.
+                        for (what, group) in [
+                            ("GROUND", &census.terrain),
+                            ("WOOD", &census.forest),
+                            ("ACTORS", &census.actors),
+                            ("OTHER", &census.other),
+                        ] {
+                            seg_row(ui, cw, |s| {
+                                s.half(&format!("{what:>7}"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(group.triangles as f64)), COLOR_DIM);
+                                s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(group.draws as f64)), ALARM_DRAWS.color(group.draws as f64));
                             });
                         }
                     });
