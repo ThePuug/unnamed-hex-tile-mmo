@@ -737,6 +737,14 @@ pub fn update_metrics_overlay(
                                 s.half(&format!("{:>5}  ", ENTS.fmt(group.draws as f64)), ALARM_DRAWS.color(group.draws as f64));
                             });
                         }
+                        // The wood's models inside a wood, and the triangles
+                        // they would shed showing only their canopy's top.
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "INNER"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", ENTS.fmt(census.interior.trees as f64)), COLOR_DIM);
+                            s.half(&format!("{:>7}", "SHEDS"), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", ENTS.fmt(census.interior.savable as f64)), COLOR_DIM);
+                        });
                     });
 
 

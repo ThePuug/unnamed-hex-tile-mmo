@@ -53,6 +53,26 @@ pub const SCRUB_SMALL: f32 = 0.6;
 /// and none flickers at its edge.
 const RING_MARGIN: f32 = 40.0;
 
+/// Trees a tile stands, bushes aside, for it to count as wood: a tree
+/// with wood on its own tile and all six around is inside one.
+const INTERIOR_TREES: usize = 1;
+
+/// The six tiles around a tile, as coordinate offsets.
+const NEIGHBOURS: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+
+/// The trees a tile stands, bushes aside.
+pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize {
+    map.cover_at(q, r).filled().filter(|&(_, s)| s != Slot::Scrub).count()
+}
+
+/// Whether the trees of a tile stand inside a wood: it and each of the six
+/// around it stand `INTERIOR_TREES` or more. A tile not yet streamed in
+/// stands none, so a wood's rim reads as its edge until it arrives.
+pub fn is_interior(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> bool {
+    let wooded = |q, r| trees_on(map, q, r) >= INTERIOR_TREES;
+    wooded(q, r) && NEIGHBOURS.iter().all(|&(dq, dr)| wooded(q + dq, r + dr))
+}
+
 /// One variation of a kind: its mesh in the tree's own frame, foot at the
 /// origin, up +y, the GLB's units the world's, and its height there; and
 /// its model's cards, where the model shipped them, with which seed of
@@ -66,6 +86,10 @@ pub struct Variation {
     pub color: Vec3,
     pub cards: Option<Arc<draw::Cards>>,
     pub seed: u32,
+    /// Its triangles, and those of them that make its canopy's top: what
+    /// a tree inside a wood shows, seen over the trees at its edge.
+    pub triangles: u32,
+    pub top_triangles: u32,
 }
 
 /// Every variation of every kind, and the quad every card is drawn on.
@@ -171,6 +195,18 @@ pub struct TreeInstance {
     pub growth: f32,
     pub slot: Slot,
     pub variation: u32,
+    /// Inside a wood: its tile and each of the six around it stand
+    /// `INTERIOR_TREES` or more trees, bushes aside. Only the trees at a wood's edge are
+    /// seen from the side; the rest show their tops over them.
+    pub interior: bool,
+}
+
+/// Of a batch's trees, how many stand inside a wood, and the triangles
+/// they would not draw if each showed only its canopy's top.
+#[derive(Component, Clone, Copy, Default)]
+pub struct Interior {
+    pub trees: u32,
+    pub savable: u64,
 }
 
 /// A drawn tree.
@@ -301,7 +337,21 @@ fn load_kit(
                 _ => (0.0, 0.0),
             };
             let color = surface_color(&merged);
-            let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
+            let (triangles, top_triangles) = canopy_top(&merged, height);
+            info!(
+                "tree {slot:?} #{seed}: {top_triangles} of {triangles} triangles in the canopy's top ({:.0}%)",
+                100.0 * top_triangles as f32 / triangles.max(1) as f32
+            );
+            let variation = Variation {
+                mesh: meshes.add(merged),
+                height,
+                width,
+                color,
+                cards: cards.clone(),
+                seed: seed as u32,
+                triangles,
+                top_triangles,
+            };
             match slot {
                 Slot::Pine => kit.pine.push(variation),
                 Slot::Deciduous => kit.deciduous.push(variation),
@@ -317,6 +367,26 @@ fn load_kit(
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
+}
+
+/// How much of the canopy's top a crown's triangles make: those facing
+/// up, above half the tree's height, which is what shows of a tree seen
+/// from above over its neighbours' crowns. The whole count, then the top's.
+fn canopy_top(mesh: &Mesh, height: f32) -> (u32, u32) {
+    let (Some(VertexAttributeValues::Float32x3(p)), Some(Indices::U32(idx))) =
+        (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.indices())
+    else {
+        return (0, 0);
+    };
+    let mut top = 0;
+    for tri in idx.chunks_exact(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(p[tri[i] as usize]));
+        let up = (b - a).cross(c - a).y > 0.0;
+        if up && (a.y + b.y + c.y) / 3.0 > 0.5 * height {
+            top += 1;
+        }
+    }
+    ((idx.len() / 3) as u32, top)
 }
 
 /// What a stand of this model reads as from far off: the mean of its own
@@ -413,6 +483,8 @@ pub fn place_trees(
                 continue;
             }
             let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.fullness() as f32 / SLOTS.len() as f32;
+            // Only the tiles' own level stands models, so only it asks.
+            let interior = radius == 0 && is_interior(map, q, r);
             for (k, slot) in cover.filled() {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
@@ -423,6 +495,7 @@ pub fn place_trees(
                     growth: sway.growth as f32 * edge,
                     slot,
                     variation: sway.variation,
+                    interior,
                 });
             }
         }
@@ -435,7 +508,7 @@ pub fn place_trees(
 /// every tree drawn with it, built now. Trees cast no shadow: the
 /// cascades would draw every tree four times over for it.
 pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
-    let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
+    let mut batches: HashMap<(Slot, usize), (Vec<draw::Instance>, Interior)> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
         let all = kit.kit.of(t.slot);
@@ -446,13 +519,18 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         let v = &all[k];
         let scale = Kit::scale(t.slot, v.height, t.growth);
         reach = reach.max(v.height * scale);
-        batches.entry((t.slot, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
+        let (instances, interior) = batches.entry((t.slot, k)).or_default();
+        instances.push(draw::Instance::new(t.translation, t.yaw, scale));
+        if t.interior {
+            interior.trees += 1;
+            interior.savable += (v.triangles - v.top_triangles) as u64;
+        }
     }
     commands.entity(entity).with_children(|parent| {
-        for ((slot, k), instances) in batches {
+        for ((slot, k), (instances, interior)) in batches {
             let v = &kit.kit.of(slot)[k];
             let (batch, aabb) = draw::TreeBatch::new(render_device, &instances, reach);
-            parent.spawn((Mesh3d(v.mesh.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Tree));
+            parent.spawn((Mesh3d(v.mesh.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Tree, interior));
         }
     });
 }

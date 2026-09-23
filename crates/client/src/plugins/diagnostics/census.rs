@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use std::time::Duration;
 
 use crate::plugins::forest::draw::{Batch, CardBatch, TreeBatch};
+use crate::plugins::forest::Interior;
 use crate::resources::SummaryMesh;
 use common_bevy::components::Actor;
 
@@ -50,6 +51,9 @@ pub struct RenderCensus {
     /// Everything else drawn: the sky dome, the water plane, the sun and
     /// moon discs, the grid overlay.
     pub other: Group,
+    /// Of the wood's models, those inside a wood, and the triangles they
+    /// would not draw showing only their canopy's top.
+    pub interior: Interior,
 }
 
 impl RenderCensus {
@@ -85,6 +89,7 @@ pub fn take_census(
         Option<&SummaryMesh>,
         Option<&TreeBatch>,
         Option<&CardBatch>,
+        Option<&Interior>,
     )>,
     parents: Query<&ChildOf>,
     actors: Query<(), With<Actor>>,
@@ -99,14 +104,20 @@ pub fn take_census(
     *due = EVERY;
 
     let mut next = RenderCensus::default();
-    for (entity, mesh, visible, summary, trees, cards) in &drawn {
+    for (entity, mesh, visible, summary, trees, cards, interior) in &drawn {
         if !visible.get() {
             continue;
         }
         let Some(triangles) = meshes.get(&mesh.0).map(triangles_of) else { continue };
         match (summary, trees, cards) {
             (Some(_), _, _) => next.terrain.add(triangles, 1),
-            (_, Some(batch), _) => next.forest.add(triangles, batch.len()),
+            (_, Some(batch), _) => {
+                next.forest.add(triangles, batch.len());
+                if let Some(i) = interior {
+                    next.interior.trees += i.trees;
+                    next.interior.savable += i.savable;
+                }
+            }
             (_, _, Some(batch)) => next.forest.add(triangles, batch.len()),
             _ if under_actor(entity, &parents, &actors) => next.actors.add(triangles, 1),
             _ => next.other.add(triangles, 1),

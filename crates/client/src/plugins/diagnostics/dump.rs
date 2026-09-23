@@ -108,6 +108,8 @@ pub fn dump_metrics(
         let _ = writeln!(out, "census/{name}/triangles = {}", group.triangles);
     }
     let _ = writeln!(out, "census/total/triangles = {}", census.total_triangles());
+    let _ = writeln!(out, "census/forest/interior_trees = {}", census.interior.trees);
+    let _ = writeln!(out, "census/forest/interior_savable_triangles = {}", census.interior.savable);
 
     let mut named: Vec<_> = history.timings.iter().collect();
     named.sort_by_key(|(name, _)| **name);
