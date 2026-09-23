@@ -48,7 +48,7 @@ use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
 use super::thrusting::{rim_of, sheets_of, smoothstep, EdgeOutline, OutlineIndex, Outlines, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
-use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent};
+use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const WIND_SEED: u64 = 0x7769_6e64;
 const CLIMATE_SEED: u64 = 0x636c_696d;
@@ -265,12 +265,19 @@ pub const STAND_STRETCH: f64 = 0.4;
 /// lattice's centre spacing, per axis: half, so the lattice never shows.
 pub const STAND_JITTER: f64 = 0.5;
 
-/// The furthest a stand reaches from its origin: the cell scale's floor.
+/// The furthest a stand reaches from its origin.
 pub const STAND_REACH: f64 = STAND_RADIUS * (1.0 + STAND_SPREAD) * (1.0 + STAND_STRETCH);
 
-/// The cell scale: far above what one ring of stands asks, so the coasts
-/// and channels a cell folds are folded for many origins at once.
-pub const FOREST_CELL_SCALE: u32 = 600;
+/// The furthest from its origin a stand reads the coasts: the shore
+/// ramp, with the swing a chain and the warp take off a coast's line.
+pub const COAST_READ: f64 = COAST_REACH + WARP_SWING + PATH_SWING;
+
+/// The furthest anything a tile of the layer depends on lies from it: a
+/// stand reaching it, or a coast its stand's origin reads.
+pub const FOREST_REACH: f64 = if COAST_READ > STAND_REACH { COAST_READ } else { STAND_REACH };
+
+/// The cell scale: one ring holds everything within [`FOREST_REACH`].
+pub const FOREST_CELL_SCALE: u32 = (FOREST_REACH / RING_CLEARANCE) as u32 + 1;
 
 /// A stand of trees: where it originates, how far it reaches and which way
 /// it is drawn out, how densely it fills its slots, and how many of them
@@ -410,7 +417,7 @@ pub fn gallery(wall: f64) -> f64 {
 fn coasts_of(scope: &CellScope) -> Coasts {
     let (cq, cr) = scope.lattice().cell_center(scope.cell());
     let (cx, cy) = hex_to_world(cq, cr);
-    let within = scope.lattice().radius as f64 + COAST_REACH + WARP_SWING + PATH_SWING;
+    let within = scope.lattice().radius as f64 + COAST_READ;
     let edges = scope.read::<PlateEdgeIndex>();
     let near = |e: &&Edge| e.is_coast() && Segment::along((e.x0, e.y0), (e.x1, e.y1), true).distance(cx, cy).0 <= within;
     Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()).filter(near), scope.seed())
@@ -594,8 +601,9 @@ impl WorldEvent for ForestEvent {
     fn name(&self) -> &str { "forest" }
     fn scale(&self) -> u32 { FOREST_CELL_SCALE }
 
-    /// A stand reaches its radius from an origin in the cell.
-    fn max_influence(&self) -> u32 { STAND_REACH.ceil() as u32 }
+    /// A stand reaches its radius from an origin in the cell, and reads
+    /// the coasts out to [`COAST_READ`].
+    fn max_influence(&self) -> u32 { FOREST_REACH.ceil() as u32 }
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<StandIndex>();
