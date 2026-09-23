@@ -435,7 +435,10 @@ pub struct OverlayCamera;
 #[derive(Resource)]
 pub struct OverlayCameraEntity(pub Entity);
 
-pub fn setup_overlay_camera(mut commands: Commands) {
+pub fn setup_overlay_camera(mut commands: Commands, mut egui: ResMut<bevy_egui::EguiGlobalSettings>) {
+    // The overlay's camera is the one Egui draws on, so it is the primary
+    // context and no other is made: two contexts sharing the pass panic.
+    egui.auto_create_primary_context = false;
     let entity = commands
         .spawn((
             OverlayCamera,
@@ -448,7 +451,7 @@ pub fn setup_overlay_camera(mut commands: Commands) {
                 clear_color: ClearColorConfig::None,
                 ..default()
             },
-            EguiContext::default(),
+            bevy_egui::PrimaryEguiContext,
         ))
         .id();
     commands.insert_resource(OverlayCameraEntity(entity));

@@ -61,8 +61,15 @@ impl Plugin for DiagnosticsPlugin {
                 grid::poll_grid_mesh_task,
                 network_ui::update_network_metrics,
                 metrics_overlay::sample_metrics,
-                metrics_overlay::update_metrics_overlay,
             ),
+        );
+
+        // Egui builds its UI inside its context's own pass, never in
+        // Update: a pass run outside it leaves an output nothing applies,
+        // and the textures it made are dropped with it.
+        app.add_systems(
+            bevy_egui::EguiPrimaryContextPass,
+            metrics_overlay::update_metrics_overlay,
         );
     }
 }
