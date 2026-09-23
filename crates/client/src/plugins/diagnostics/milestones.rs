@@ -40,6 +40,11 @@ pub fn log_stage(mut transitions: MessageReader<StateTransitionEvent<Stage>>, lo
 /// after a toggle can be shown to follow it.
 pub fn log_video(video: Res<VideoSettings>) {
     if video.is_changed() {
-        info!("milestone: video msaa={} shadows={}", video.samples.label(), video.shadows.label());
+        info!(
+            "milestone: video msaa={} shadows={} vsync={}",
+            video.samples.label(),
+            video.shadows.label(),
+            video.vsync.label()
+        );
     }
 }

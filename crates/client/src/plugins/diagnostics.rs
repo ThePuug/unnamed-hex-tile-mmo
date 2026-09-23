@@ -77,28 +77,65 @@ impl Plugin for DiagnosticsPlugin {
     }
 }
 
-/// When the render thread took up this frame.
+/// When the render thread took up this frame, and when it last passed
+/// one of the schedule's phases.
 #[derive(Resource)]
 struct RenderStart(Instant);
+#[derive(Resource)]
+struct RenderMark(Instant);
 
 /// The render app records into the same timers as the main world, and
 /// brackets its whole schedule as `render`: the frame is that thread's
 /// work or the main thread's, and which one it is decides where to look.
+/// Within it, each phase of the schedule is timed from the end of the one
+/// before, as `render_<phase>`. Presenting the frame falls inside the
+/// render phase, so under vsync that phase holds the wait for the display.
 fn share_timers(app: &mut App) {
+    use RenderSystems as S;
     let timers = app.world().resource::<crate::resources::ClientTimers>().clone();
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
     render_app.insert_resource(timers);
     render_app.insert_resource(RenderStart(Instant::now()));
+    render_app.insert_resource(RenderMark(Instant::now()));
     render_app.add_systems(
         Render,
         (
-            (|mut start: ResMut<RenderStart>| start.0 = Instant::now()).before(RenderSystems::ExtractCommands),
+            (|mut start: ResMut<RenderStart>, mut mark: ResMut<RenderMark>| {
+                start.0 = Instant::now();
+                mark.0 = start.0;
+            })
+            .before(S::ExtractCommands),
             (|start: Res<RenderStart>, timers: Res<crate::resources::ClientTimers>| {
                 timers.0.record("render", start.0.elapsed().as_secs_f32() * 1000.0);
             })
-            .after(RenderSystems::PostCleanup),
+            .after(S::PostCleanup),
         ),
     );
+    // The schedule's phases run as one chain; a mark between each pair.
+    let phases: [(RenderSystems, RenderSystems, &'static str); 10] = [
+        (S::ExtractCommands, S::PrepareMeshes, "render_extract_commands"),
+        (S::PrepareMeshes, S::CreateViews, "render_prepare_meshes"),
+        (S::CreateViews, S::Specialize, "render_create_views"),
+        (S::Specialize, S::PrepareViews, "render_specialize"),
+        (S::PrepareViews, S::Queue, "render_prepare_views"),
+        (S::Queue, S::PhaseSort, "render_queue"),
+        (S::PhaseSort, S::Prepare, "render_phase_sort"),
+        (S::Prepare, S::Render, "render_prepare"),
+        (S::Render, S::Cleanup, "render_render"),
+        (S::Cleanup, S::PostCleanup, "render_cleanup"),
+    ];
+    for (done, next, name) in phases {
+        render_app.add_systems(
+            Render,
+            (move |mut mark: ResMut<RenderMark>, timers: Res<crate::resources::ClientTimers>| {
+                let now = Instant::now();
+                timers.0.record(name, (now - mark.0).as_secs_f32() * 1000.0);
+                mark.0 = now;
+            })
+            .after(done)
+            .before(next),
+        );
+    }
 }
 
 #[cfg(test)]

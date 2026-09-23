@@ -11,6 +11,10 @@ admin = ["dep:world"]
 # with `--no-default-features` for an optimized build.
 dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
 trace = ["bevy/trace", "bevy/trace_tracy", "bevy/debug"]
+# Every system and span on every thread, written on exit to a
+# `trace-<time>.json` in the working directory that chrome://tracing or
+# Perfetto opens, or a script reads; no profiler to install.
+trace_chrome = ["bevy/trace_chrome"]
 
 [dependencies]
 common = { path = "../common" }

@@ -79,11 +79,12 @@ pub fn dump_metrics(
     let _ = writeln!(
         out,
         "
-# {:.1}s up | tile={} | msaa={} shadows={} | {}",
+# {:.1}s up | tile={} | msaa={} shadows={} vsync={} | {}",
         time.elapsed_secs(),
         tile.map_or("none".to_string(), |t| format!("({},{},{})", t.q, t.r, t.z)),
         video.samples.label(),
         video.shadows.label(),
+        video.vsync.label(),
         if asked { "asked for" } else { "every few seconds" },
     );
 
