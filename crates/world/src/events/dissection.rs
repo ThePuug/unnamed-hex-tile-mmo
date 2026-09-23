@@ -420,15 +420,13 @@ impl Valleys {
 /// under the cell and its ring, with the drainage cells their nodes are
 /// in, keeping the channels within a valley's reach of the cell's ground.
 pub fn valleys_of(scope: &CellScope) -> Valleys {
-    let drainage_cells = scope.source_cells::<DrainageIndex>();
-    let channel_cells = scope.source_cells::<ChannelIndex>();
     let (Some(drainage), Some(channels)) = (scope.read::<DrainageIndex>(), scope.read::<ChannelIndex>()) else {
         return Valleys::new(&[], &[], |_| true);
     };
     let centre = scope.lattice().cell_center(scope.cell());
     let keep_within = scope.lattice().radius as i32 + NODE_SPACING + (2.0 * NODE_SWING + VALLEY_HALF_WIDTH + AXIS_SWING).ceil() as i32;
-    let cells = drainage.cells_in(&drainage_cells);
-    let drawn: Vec<&Channel> = channels.cells_in(&channel_cells).iter().flat_map(|c| c.channels.iter()).collect();
+    let cells: Vec<&DrainageCell> = drainage.entries().collect();
+    let drawn: Vec<&Channel> = channels.entries().flat_map(|c| c.channels.iter()).collect();
     Valleys::new(&cells, &drawn, |key| hex_distance(node_site(key), centre) <= keep_within)
 }
 

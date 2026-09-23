@@ -185,6 +185,10 @@ impl CellIndex for PlateEdgeIndex {
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
     }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
+    }
 }
 
 impl EventIndex for PlateEdgeIndex {
@@ -215,10 +219,10 @@ pub struct Coasts {
 
 impl Coasts {
     /// The coasts among a set of edges.
-    pub fn new(edges: &[Edge], seed: u64) -> Self {
+    pub fn new<'a>(edges: impl IntoIterator<Item = &'a Edge>, seed: u64) -> Self {
         let mut segments = Vec::new();
         let mut nodes = Vec::new();
-        for e in edges.iter().filter(|e| e.is_coast()) {
+        for e in edges.into_iter().filter(|e| e.is_coast()) {
             let land = if e.a.continental { &e.a } else { &e.b };
             // One side per chain, read off the straight edge, so every step
             // of the chain faces the land the edge does.
@@ -358,12 +362,8 @@ impl WorldEvent for PlateEvent {
 
     /// Every coast a tile in this cell can see: the cell's and its ring's.
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        let cells = scope.lattice().cells_within_distance(scope.cell(), 1);
-        let edges = scope
-            .read::<PlateEdgeIndex>()
-            .map(|idx| idx.edges_in(&cells))
-            .unwrap_or_default();
-        Box::new(Coasts::new(&edges, scope.seed()))
+        let edges = scope.read::<PlateEdgeIndex>();
+        Box::new(Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed()))
     }
 
     fn query(

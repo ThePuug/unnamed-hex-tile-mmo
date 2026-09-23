@@ -309,8 +309,8 @@ impl WorldEvent for LithologyEvent {
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        let edge_cells = scope.source_cells::<PlateEdgeIndex>();
-        let coasts = Coasts::new(&scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(), scope.seed());
+        let edges = scope.read::<PlateEdgeIndex>();
+        let coasts = Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed());
         Box::new(Reach { coasts, outlines: outlines_for(scope) })
     }
 

@@ -314,17 +314,15 @@ pub struct StandIndex {
     pub cells: HashMap<CellId, ForestCell>,
 }
 
-impl StandIndex {
-    pub fn cells_in(&self, cell_ids: &[CellId]) -> Vec<&ForestCell> {
-        cell_ids.iter().filter_map(|id| self.cells.get(id)).collect()
-    }
-}
-
 impl CellIndex for StandIndex {
     type Cell = ForestCell;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
+    }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
     }
 }
 
@@ -410,32 +408,23 @@ pub fn gallery(wall: f64) -> f64 {
 /// within the shore ramp's reach of the cell, with the swing a chain and
 /// the warp take off it. The rest would be built and never read.
 fn coasts_of(scope: &CellScope) -> Coasts {
-    let cells = scope.source_cells::<PlateEdgeIndex>();
     let (cq, cr) = scope.lattice().cell_center(scope.cell());
     let (cx, cy) = hex_to_world(cq, cr);
     let within = scope.lattice().radius as f64 + COAST_REACH + WARP_SWING + PATH_SWING;
-    let edges: Vec<Edge> = scope
-        .read::<PlateEdgeIndex>()
-        .map(|idx| {
-            idx.edges_in(&cells)
-                .into_iter()
-                .filter(|e| e.is_coast() && Segment::along((e.x0, e.y0), (e.x1, e.y1), true).distance(cx, cy).0 <= within)
-                .collect()
-        })
-        .unwrap_or_default();
-    Coasts::new(&edges, scope.seed())
+    let edges = scope.read::<PlateEdgeIndex>();
+    let near = |e: &&Edge| e.is_coast() && Segment::along((e.x0, e.y0), (e.x1, e.y1), true).distance(cx, cy).0 <= within;
+    Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()).filter(near), scope.seed())
 }
 
 /// The channel axes in reach of a cell's origins, from the channels
 /// migration published under the cell and its ring.
 fn axes_of(scope: &CellScope) -> SegmentGrid {
-    let cells = scope.source_cells::<ChannelIndex>();
     let (cq, cr) = scope.lattice().cell_center(scope.cell());
     let (cx, cy) = hex_to_world(cq, cr);
     let within = scope.lattice().radius as f64 + 2.0 * VALLEY_HALF_WIDTH;
     let mut segments = Vec::new();
     if let Some(idx) = scope.read::<ChannelIndex>() {
-        for c in idx.cells_in(&cells) {
+        for c in idx.entries() {
             for ch in &c.channels {
                 let near = ch.axis.iter().any(|&(x, y)| (x - cx).hypot(y - cy) <= within);
                 if !near {
@@ -481,7 +470,7 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
         let graph_cell = graph.cell_id(oq, or);
         let outline = by_graph_cell
             .entry(graph_cell)
-            .or_insert_with(|| outlines.as_ref().and_then(|idx| idx.cell(graph_cell)).unwrap_or_else(|| Arc::new(Outlines::new(&[], seed))))
+            .or_insert_with(|| outlines.as_ref().and_then(|idx| idx.entry(graph_cell).cloned()).unwrap_or_else(|| Arc::new(Outlines::new(&[], seed))))
             .clone();
         let sky = sky_moisture(ox, oy, wind, &coasts, &outline);
         let wall = axes.nearest(ox, oy, VALLEY_HALF_WIDTH).map_or(1.0, |n| n.distance / VALLEY_HALF_WIDTH);
@@ -619,10 +608,9 @@ impl WorldEvent for ForestEvent {
 
     /// Every stand reaching the cell, from the cell and its ring.
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        let cells = scope.source_cells::<StandIndex>();
         let stands: Vec<Stand> = scope
             .read::<StandIndex>()
-            .map(|idx| idx.cells_in(&cells).iter().flat_map(|c| c.stands.iter().cloned()).collect())
+            .map(|idx| idx.entries().flat_map(|c| c.stands.iter().cloned()).collect())
             .unwrap_or_default();
         Box::new(Reach::new(stands.into_iter()))
     }

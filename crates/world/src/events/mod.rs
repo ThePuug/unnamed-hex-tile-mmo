@@ -160,10 +160,12 @@ impl TileView {
 
 // ── CellScope ───────────────────────────────────────────────────────────────
 
-/// The cell a layer is being evaluated for, and the only cell it may write.
+/// The cell a layer is being evaluated for, the neighbourhood it may read,
+/// and the only cell it may write.
 ///
-/// Reads are unrestricted — seeing a neighbour is how a layer composites the
-/// features reaching into its own ground. Writes are not: [`CellScope::publish`]
+/// Reads reach exactly the neighbourhood: [`CellScope::read`] hands out a
+/// [`Neighbourhood`], never the index, so an entry past the footprint and
+/// its ring cannot be read. Writes reach only the cell: [`CellScope::publish`]
 /// takes no cell id, so a layer physically cannot record an entry against
 /// another cell. It has no way to name one.
 ///
@@ -187,24 +189,22 @@ impl<'a> CellScope<'a> {
     /// This layer's cell lattice, for reaching a neighbourhood of cells.
     pub fn lattice(&self) -> &HexLattice { self.lattice }
 
-    /// Read an index. A lower layer's cells under this cell's footprint plus
-    /// one ring are deformed first, so the read is complete: a lower layer is
-    /// deformed on demand by the reads that need it, and a layer that reads
-    /// nothing costs nothing beneath it. This layer's own index is never
-    /// deformed from here — its ring is `prepare`'s to read, and it is
-    /// deformed before `prepare` runs.
-    pub fn read<T: EventIndex>(&self) -> Option<MappedRwLockReadGuard<'_, T>> {
-        self.composite.deform_under::<T>(self.layer, self.lattice, self.cell);
-        self.composite.indexes.get::<T>()
+    /// Read an index over this cell's neighbourhood. A lower layer's cells
+    /// under this cell's footprint plus one ring are deformed first, so the
+    /// read is complete: a lower layer is deformed on demand by the reads
+    /// that need it, and a layer that reads nothing costs nothing beneath
+    /// it. This layer's own index is never deformed from here — its ring is
+    /// `prepare`'s to read, and it is deformed before `prepare` runs.
+    pub fn read<T: CellIndex>(&self) -> Option<Neighbourhood<'_, T>> {
+        let cells = self.source_cells::<T>().into_iter().collect();
+        self.composite.indexes.get::<T>().map(|index| Neighbourhood { index, cells })
     }
 
     /// The cells of `T`'s own lattice this cell may read — its footprint plus
-    /// one ring, which is exactly the set the cascade deformed.
-    ///
-    /// Every read of a lower layer's index goes through here. Working the set
-    /// out per event is how the framework ended up with two copies of the same
-    /// arithmetic that disagreed about which cells were in scope, and an index
-    /// read outside the deformed set returns empty rather than failing.
+    /// one ring, which is exactly the set the cascade deformed, and the set a
+    /// [`Neighbourhood`] answers for. Asking for it deforms them without
+    /// taking the index's lock, so a layer can deform every index it reads
+    /// before holding any of them.
     pub fn source_cells<T: EventIndex>(&self) -> Vec<CellId> {
         self.composite.deform_under::<T>(self.layer, self.lattice, self.cell);
         let scale = self.composite.indexes
@@ -217,6 +217,28 @@ impl<'a> CellScope<'a> {
     /// cell: it is always the one being evaluated.
     pub fn publish<T: CellIndex>(&self, entry: T::Cell) {
         self.composite.indexes.get_or_create::<T>().set(self.cell, entry);
+    }
+}
+
+/// An index as one cell sees it: the entries of the cells its footprint and
+/// one ring translate to on the index's lattice, and no others. A layer
+/// needing a value past the ring needs a larger cell scale.
+pub struct Neighbourhood<'a, T: CellIndex> {
+    index: MappedRwLockReadGuard<'a, T>,
+    cells: HashSet<CellId>,
+}
+
+impl<T: CellIndex> Neighbourhood<'_, T> {
+    /// Every entry in the neighbourhood.
+    pub fn entries(&self) -> impl Iterator<Item = &T::Cell> + '_ {
+        self.cells.iter().filter_map(|&id| self.index.get(id))
+    }
+
+    /// One cell's entry. Panics on a cell outside the neighbourhood: that
+    /// read is the one this view exists to refuse.
+    pub fn entry(&self, cell: CellId) -> Option<&T::Cell> {
+        assert!(self.cells.contains(&cell), "cell {cell:?} is outside the neighbourhood");
+        self.index.get(cell)
     }
 }
 

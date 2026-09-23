@@ -141,21 +141,15 @@ pub struct PlateBoundaryIndex {
     pub cells: HashMap<CellId, Vec<BoundarySegment>>,
 }
 
-impl PlateBoundaryIndex {
-    /// Segments owned by any of `cell_ids`.
-    pub fn segments_in(&self, cell_ids: &[CellId]) -> Vec<&BoundarySegment> {
-        cell_ids.iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|v| v.iter())
-            .collect()
-    }
-}
-
 impl CellIndex for PlateBoundaryIndex {
     type Cell = Vec<BoundarySegment>;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
+    }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
     }
 }
 
@@ -275,7 +269,7 @@ impl WorldEvent for MotionEvent {
         let cell = scope.cell();
         let edges = scope
             .read::<PlateEdgeIndex>()
-            .map(|idx| idx.edges_in(&[cell]))
+            .and_then(|idx| idx.entry(cell).cloned())
             .unwrap_or_default();
         let segments: Vec<BoundarySegment> = edges.iter().map(|e| resolve(e, scope.seed())).collect();
         scope.publish::<PlateBoundaryIndex>(segments);

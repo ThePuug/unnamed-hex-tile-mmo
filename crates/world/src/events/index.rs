@@ -35,6 +35,9 @@ pub trait CellIndex: EventIndex {
 
     /// Record a cell's entry, replacing whatever it held.
     fn set(&mut self, cell: CellId, entry: Self::Cell);
+
+    /// A cell's entry, where it has one.
+    fn get(&self, cell: CellId) -> Option<&Self::Cell>;
 }
 
 /// Spatial index populated by one event, queryable by others.

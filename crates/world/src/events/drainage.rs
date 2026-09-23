@@ -79,7 +79,7 @@ use super::plates::{Coasts, PlateEdgeIndex};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
 use super::tilt::tilt_at;
-use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
+use super::{CellScope, Neighbourhood, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
 pub use crate::lattice::{node_site, site_at, site_world, NodeKey, NODE_SPACING, NODE_SWING};
 pub use crate::tectonic::{aged, YOUNG_SHARE};
@@ -401,10 +401,13 @@ impl DrainageIndex {
         self.cells.get(&Self::lattice().cell_id(q, r))?.nodes.get(&key)
     }
 
-    /// The published cells among `cell_ids`: what a reader gathers over its
-    /// footprint and ring.
-    pub fn cells_in(&self, cell_ids: &[CellId]) -> Vec<&DrainageCell> {
-        cell_ids.iter().filter_map(|id| self.cells.get(id)).collect()
+}
+
+impl Neighbourhood<'_, DrainageIndex> {
+    /// The node, from whichever cell of the neighbourhood owns it.
+    pub fn node(&self, key: NodeKey) -> Option<&DrainageNode> {
+        let (q, r) = node_site(key);
+        self.entry(DrainageIndex::lattice().cell_id(q, r))?.nodes.get(&key)
     }
 }
 
@@ -413,6 +416,10 @@ impl CellIndex for DrainageIndex {
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
+    }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
     }
 }
 
@@ -1150,11 +1157,8 @@ impl WorldEvent for DrainageEvent {
     /// node, and its elevation is the same in all of them.
     fn deform(&self, scope: &CellScope) {
         let outlines = outlines_of(scope);
-        let edge_cells = scope.source_cells::<PlateEdgeIndex>();
-        let coasts = Coasts::new(
-            &scope.read::<PlateEdgeIndex>().map(|idx| idx.edges_in(&edge_cells)).unwrap_or_default(),
-            scope.seed(),
-        );
+        let edges = scope.read::<PlateEdgeIndex>();
+        let coasts = Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed());
         let routing = self.route(scope.lattice(), scope.cell(), scope.seed(), &coasts, &outlines);
         scope.publish::<DrainageIndex>(routing.owned_cell());
     }

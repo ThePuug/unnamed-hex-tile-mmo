@@ -645,12 +645,6 @@ impl ChannelIndex {
     pub fn lattice() -> HexLattice {
         HexLattice::new(MIGRATION_CELL_SCALE)
     }
-
-    /// The published cells among `cell_ids`: what a reader gathers over its
-    /// footprint and ring.
-    pub fn cells_in(&self, cell_ids: &[CellId]) -> Vec<&MigrationCell> {
-        cell_ids.iter().filter_map(|id| self.cells.get(id)).collect()
-    }
 }
 
 impl CellIndex for ChannelIndex {
@@ -658,6 +652,10 @@ impl CellIndex for ChannelIndex {
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
+    }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
     }
 }
 
@@ -764,12 +762,11 @@ impl WorldEvent for MigrationEvent {
     /// from the drainage cells under the footprint and ring, which hold
     /// every end node a spacing away.
     fn deform(&self, scope: &CellScope) {
-        let cells = scope.source_cells::<DrainageIndex>();
         let lattice = scope.lattice();
         let cell = scope.cell();
         let channels = scope
             .read::<DrainageIndex>()
-            .map(|idx| channels(&idx.cells_in(&cells), |p| lattice.cell_id(p.q, p.r) == cell, scope.seed()))
+            .map(|idx| channels(&idx.entries().collect::<Vec<_>>(), |p| lattice.cell_id(p.q, p.r) == cell, scope.seed()))
             .unwrap_or_default();
         scope.publish::<ChannelIndex>(MigrationCell { channels });
     }

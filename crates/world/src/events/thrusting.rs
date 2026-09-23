@@ -380,7 +380,7 @@ impl Outlines {
     /// outlines, facing each, carrying its convergence for the plate that
     /// overrides on it. Corners join across each whole outline, so a position
     /// nearest a plate corner reads the corner's side.
-    pub fn new(resolved: &[&BoundarySegment], seed: u64) -> Self {
+    pub fn new<'a>(resolved: impl IntoIterator<Item = &'a BoundarySegment>, seed: u64) -> Self {
         let mut plates: HashMap<PlateId, PlateOutline> = HashMap::new();
         for s in resolved {
             let e = &s.edge;
@@ -452,8 +452,7 @@ impl Outlines {
                 }
             }
         }
-        let refs: Vec<&BoundarySegment> = resolved.iter().collect();
-        Self::new(&refs, seed)
+        Self::new(&resolved, seed)
     }
 
     pub fn plate(&self, id: PlateId) -> Option<&PlateOutline> {
@@ -714,17 +713,15 @@ pub struct OutlineIndex {
     cells: HashMap<CellId, Arc<Outlines>>,
 }
 
-impl OutlineIndex {
-    pub fn cell(&self, cell: CellId) -> Option<Arc<Outlines>> {
-        self.cells.get(&cell).cloned()
-    }
-}
-
 impl CellIndex for OutlineIndex {
     type Cell = Arc<Outlines>;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
+    }
+
+    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
+        self.cells.get(&cell)
     }
 }
 
@@ -747,18 +744,15 @@ impl EventIndex for OutlineIndex {
 pub fn outlines_for(scope: &CellScope) -> Arc<Outlines> {
     scope
         .read::<OutlineIndex>()
-        .and_then(|idx| idx.cell(scope.cell()))
+        .and_then(|idx| idx.entry(scope.cell()).cloned())
         .unwrap_or_else(|| Arc::new(Outlines::new(&[], scope.seed())))
 }
 
 /// The outlines of every plate a cell's tiles can stand in: the resolved
 /// edges of the graph's cells under the cell and its ring.
 pub fn outlines_of(scope: &CellScope) -> Outlines {
-    let cells = scope.source_cells::<PlateBoundaryIndex>();
-    scope
-        .read::<PlateBoundaryIndex>()
-        .map(|idx| Outlines::new(&idx.segments_in(&cells), scope.seed()))
-        .unwrap_or_else(|| Outlines::new(&[], scope.seed()))
+    let resolved = scope.read::<PlateBoundaryIndex>();
+    Outlines::new(resolved.iter().flat_map(|idx| idx.entries().flatten()), scope.seed())
 }
 
 impl WorldEvent for ThrustingEvent {
