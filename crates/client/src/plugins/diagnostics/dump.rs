@@ -28,6 +28,9 @@ use super::{DiagnosticsState, RenderCensus};
 /// a thousand near-identical blocks is no easier to read than none.
 const EVERY: Duration = Duration::from_secs(5);
 
+/// How long a diagnostic may go unmeasured and still be written.
+const STALE: Duration = Duration::from_secs(1);
+
 /// Where the snapshots land. Gitignored, beside the other proofs.
 const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/client/metrics.log");
 
@@ -78,8 +81,11 @@ pub fn dump_metrics(
         if asked { "asked for" } else { "every few seconds" },
     );
 
+    // A pass that stopped running — the shadow views once shadows are off —
+    // keeps its last value in the store, which would read as current.
     for d in diagnostics.iter() {
-        if let Some(v) = d.smoothed() {
+        let fresh = d.measurement().is_some_and(|m| m.time.elapsed() < STALE);
+        if let (true, Some(v)) = (fresh, d.smoothed()) {
             let _ = writeln!(out, "{} = {:.4}", d.path(), v);
         }
     }
