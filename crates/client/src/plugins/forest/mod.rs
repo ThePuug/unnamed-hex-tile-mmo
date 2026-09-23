@@ -1,4 +1,5 @@
-//! The trees: each tile's slots drawn as instances of a kind's model, in
+//! The trees and the boulders: each tile's sites and boulder slots drawn
+//! as instances of a kind's model, in
 //! batches that are children of the mesh region their tiles lie in, so
 //! they are evicted and re-based with the ground as the water is. A kind's
 //! GLB carries its variations as its meshes; each is merged once into one
@@ -15,19 +16,40 @@ use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Slot, SITES};
-use common_bevy::geometry::slot_center;
+use common::{Slot, SITES, TILE_SLOTS};
+use common_bevy::geometry::{boulder_center, slot_center};
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
-/// The model each kind of slot is drawn with: one GLB for each tree, three
-/// for brush, each carrying its variations as its meshes.
-const MODELS: &[(Slot, &str)] = &[
-    (Slot::Pine, "models/pine-tree.glb"),
-    (Slot::Deciduous, "models/deciduous-tree.glb"),
-    (Slot::Brush, "models/scrub-mound.glb"),
-    (Slot::Brush, "models/scrub-broom.glb"),
-    (Slot::Brush, "models/scrub-sprawl.glb"),
+/// What stands on the ground and is drawn: what grows at a site, or a
+/// boulder in a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Pine,
+    Deciduous,
+    Brush,
+    Boulder,
+}
+
+impl From<Slot> for Kind {
+    fn from(slot: Slot) -> Kind {
+        match slot {
+            Slot::Pine => Kind::Pine,
+            Slot::Deciduous => Kind::Deciduous,
+            _ => Kind::Brush,
+        }
+    }
+}
+
+/// The model each kind is drawn with: one GLB for each tree and the
+/// boulder, three for brush, each carrying its variations as its meshes.
+const MODELS: &[(Kind, &str)] = &[
+    (Kind::Pine, "models/pine-tree.glb"),
+    (Kind::Deciduous, "models/deciduous-tree.glb"),
+    (Kind::Brush, "models/scrub-mound.glb"),
+    (Kind::Brush, "models/scrub-broom.glb"),
+    (Kind::Brush, "models/scrub-sprawl.glb"),
+    (Kind::Boulder, "models/boulder.glb"),
 ];
 
 /// How far a tree on a tile with one slot filled has grown, as a share of
@@ -44,6 +66,14 @@ pub const GROWN: f32 = 2.5;
 
 /// The least a bush stands, as a share of its model.
 pub const BRUSH_SMALL: f32 = 0.6;
+
+/// The least a boulder stands, as a share of its model: a stone a player
+/// steps over, on ground where the rock has only begun to show.
+pub const BOULDER_SMALL: f32 = 0.4;
+
+/// The most a boulder stands, as a share of its model: a block taller than
+/// a player, where every slot is rock and the tile is a face.
+pub const BOULDER_LARGE: f32 = 3.3;
 
 /// How far from the camera a region's trees are drawn as models, in
 /// world units, and the further reach they are kept to once drawn, so a
@@ -88,6 +118,7 @@ pub struct Kit {
     pine: Vec<Variation>,
     deciduous: Vec<Variation>,
     brush: Vec<Variation>,
+    boulder: Vec<Variation>,
     quad: Handle<Mesh>,
 }
 
@@ -145,21 +176,25 @@ fn card_quad() -> Mesh {
 }
 
 impl Kit {
-    pub fn of(&self, slot: Slot) -> &Vec<Variation> {
-        match slot {
-            Slot::Pine => &self.pine,
-            Slot::Deciduous => &self.deciduous,
-            _ => &self.brush,
+    pub fn of(&self, kind: Kind) -> &Vec<Variation> {
+        match kind {
+            Kind::Pine => &self.pine,
+            Kind::Deciduous => &self.deciduous,
+            Kind::Brush => &self.brush,
+            Kind::Boulder => &self.boulder,
         }
     }
 
     /// The scale a tree `growth` of the way grown is drawn at: a tree from
     /// the sapling's height toward [`GROWN`] times its model's, a bush from
-    /// [`BRUSH_SMALL`] of its model toward the whole.
-    pub fn scale(slot: Slot, model_height: f32, growth: f32) -> f32 {
+    /// [`BRUSH_SMALL`] of its model toward the whole, a boulder from
+    /// [`BOULDER_SMALL`] toward [`BOULDER_LARGE`].
+    pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
-        if slot == Slot::Brush {
-            return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth;
+        match kind {
+            Kind::Brush => return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
+            Kind::Boulder => return BOULDER_SMALL + (BOULDER_LARGE - BOULDER_SMALL) * growth,
+            _ => {}
         }
         let full = model_height * GROWN;
         let height = SAPLING_HEIGHT + (full - SAPLING_HEIGHT).max(0.0) * growth;
@@ -174,16 +209,16 @@ pub struct TreeKit {
 }
 
 #[derive(Resource)]
-struct Loading(Vec<(Slot, Handle<Gltf>)>);
+struct Loading(Vec<(Kind, Handle<Gltf>)>);
 
-/// A tree to draw: where it stands from its region's origin, its turn, how
-/// far it has grown, and which model.
+/// A tree or a boulder to draw: where it stands from its region's origin,
+/// its turn, how far it has grown, and which model.
 #[derive(Clone, Copy, Debug)]
 pub struct TreeInstance {
     pub translation: Vec3,
     pub yaw: f32,
     pub growth: f32,
-    pub slot: Slot,
+    pub kind: Kind,
     pub variation: u32,
 }
 
@@ -247,18 +282,18 @@ fn dress_far_ground(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
 ) {
     use crate::resources::KindLook;
-    let of = |slot: Slot| -> KindLook {
-        let variations = kit.kit.of(slot);
+    let of = |kind: Kind| -> KindLook {
+        let variations = kit.kit.of(kind);
         let Some(first) = variations.first() else { return KindLook { color: Vec3::ZERO, width: 0.0, height: 0.0 } };
         let color = variations.iter().map(|v| v.color).sum::<Vec3>() / variations.len() as f32;
-        let scale = Kit::scale(slot, first.height, CROWN_GROWTH);
+        let scale = Kit::scale(kind, first.height, CROWN_GROWTH);
         KindLook { color, width: first.width * scale, height: first.height * scale }
     };
-    terrain_material.set_kinds([of(Slot::Pine), of(Slot::Deciduous), of(Slot::Brush)], &mut materials);
+    terrain_material.set_kinds([of(Kind::Pine), of(Kind::Deciduous), of(Kind::Brush)], &mut materials);
 }
 
 fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let handles = MODELS.iter().map(|(slot, path)| (*slot, asset_server.load::<Gltf>(*path))).collect();
+    let handles = MODELS.iter().map(|(kind, path)| (*kind, asset_server.load::<Gltf>(*path))).collect();
     commands.insert_resource(Loading(handles));
 }
 
@@ -283,9 +318,9 @@ fn load_kit(
         }
     }
     let mut kit = Kit { quad: meshes.add(card_quad()), ..default() };
-    for (slot, handle) in &loading.0 {
+    for (kind, handle) in &loading.0 {
         let Some(gltf) = gltfs.get(handle) else {
-            warn!("tree model for {slot:?} did not load; its kind is drawn as nothing");
+            warn!("model for {kind:?} did not load; its kind is drawn as nothing");
             continue;
         };
         // The model's cards, declared on its first node; a model without
@@ -299,7 +334,7 @@ fn load_kit(
             .and_then(|d| d.cards(&asset_server))
             .map(Arc::new);
         if cards.is_none() {
-            info!("tree model for {slot:?} ships no cards; nothing of it stands past the trees' reach");
+            info!("model for {kind:?} ships no cards; nothing of it stands past the trees' reach");
         }
         for (seed, mesh_handle) in gltf.meshes.iter().enumerate() {
             let Some(gm) = gltf_meshes.get(mesh_handle) else { continue };
@@ -313,18 +348,20 @@ fn load_kit(
             };
             let color = surface_color(&merged);
             let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
-            match slot {
-                Slot::Pine => kit.pine.push(variation),
-                Slot::Deciduous => kit.deciduous.push(variation),
-                _ => kit.brush.push(variation),
+            match kind {
+                Kind::Pine => kit.pine.push(variation),
+                Kind::Deciduous => kit.deciduous.push(variation),
+                Kind::Brush => kit.brush.push(variation),
+                Kind::Boulder => kit.boulder.push(variation),
             }
         }
     }
     info!(
-        "tree kit: {} pine, {} deciduous, {} brush variations",
+        "tree kit: {} pine, {} deciduous, {} brush, {} boulder variations",
         kit.pine.len(),
         kit.deciduous.len(),
-        kit.brush.len()
+        kit.brush.len(),
+        kit.boulder.len()
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
@@ -395,10 +432,10 @@ fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::Gl
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// The trees of a mesh region at level `radius`, from the map's covers:
-/// one instance per filled slot of every tile the region's cells cover,
-/// standing on the level's drawn surface at its slot, from the region's
-/// origin. The same covers at every level the map reaches, so a tree is
+/// The trees and boulders of a mesh region at level `radius`, from the
+/// map's covers: one instance per filled site and boulder slot of every
+/// tile the region's cells cover, standing on the level's drawn surface
+/// at its slot, from the region's origin. The same covers at every level the map reaches, so a tree is
 /// the same tree on both sides of a band edge and the edge hands one
 /// drawing of the wood to the other. Reads the map's covers and the
 /// level's heights and nothing else, so it runs where the ground is
@@ -432,7 +469,22 @@ pub fn place_trees(
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
                     growth: sway.growth as f32 * edge,
-                    slot,
+                    kind: slot.into(),
+                    variation: sway.variation,
+                });
+            }
+            // A boulder grows with the rock round it: small where one shows
+            // through the soil, a block where every slot is rock.
+            let crowding = cover.boulders().count() as f32 / TILE_SLOTS as f32;
+            for k in cover.boulders() {
+                let sway = common::boulder_sway(q, r, k);
+                let (x, z) = boulder_center(q, r, k, &sway);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                out.push(TreeInstance {
+                    translation: Vec3::new(x, y, z) - mesh_origin,
+                    yaw: sway.yaw as f32,
+                    growth: sway.growth as f32 * crowding,
+                    kind: Kind::Boulder,
                     variation: sway.variation,
                 });
             }
@@ -446,24 +498,24 @@ pub fn place_trees(
 /// cast no shadow: the cascades would draw every tree four times over for
 /// it.
 pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit) {
-    let mut parts: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
+    let mut parts: HashMap<(Kind, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
-        let all = kit.kit.of(t.slot);
+        let all = kit.kit.of(t.kind);
         if all.is_empty() {
             continue;
         }
         let k = t.variation as usize % all.len();
         let v = &all[k];
-        let scale = Kit::scale(t.slot, v.height, t.growth);
+        let scale = Kit::scale(t.kind, v.height, t.growth);
         reach = reach.max(v.height * scale);
-        parts.entry((t.slot, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
+        parts.entry((t.kind, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
     }
     let parts = parts
         .into_iter()
-        .map(|((slot, k), instances)| draw::WoodPart {
-            key: draw::StandKey::Model(slot, k),
-            mesh: kit.kit.of(slot)[k].mesh.clone(),
+        .map(|((kind, k), instances)| draw::WoodPart {
+            key: draw::StandKey::Model(kind, k),
+            mesh: kit.kit.of(kind)[k].mesh.clone(),
             cards: None,
             instances,
         })
@@ -481,13 +533,13 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
     let mut parts: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
-        let all = kit.kit.of(t.slot);
+        let all = kit.kit.of(t.kind);
         if all.is_empty() {
             continue;
         }
         let v = &all[t.variation as usize % all.len()];
         let Some(cards) = &v.cards else { continue };
-        let scale = Kit::scale(t.slot, v.height, t.growth);
+        let scale = Kit::scale(t.kind, v.height, t.growth);
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
         parts
             .entry(cards.texture.id())
@@ -568,10 +620,11 @@ mod tests {
     use common_bevy::resources::map::Map;
     use qrz::{Convert, Qrz};
 
-    /// On flat wooded ground a region places one tree per filled slot,
-    /// each standing on the surface within its own tile.
+    /// On flat wooded, rocky ground a region places one tree per filled
+    /// site and one boulder per boulder slot, each standing on the surface
+    /// within its own tile.
     #[test]
-    fn a_region_places_one_tree_per_filled_slot() {
+    fn a_region_places_one_instance_per_filled_slot() {
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
         let region_lat = common_bevy::summary::mesh_region_lattice();
         let lattice = common_bevy::summary::summary_lattice(0);
@@ -584,7 +637,10 @@ mod tests {
             for k in 0..n.min(SITES.len()) {
                 cover = cover.with(k, if k % 2 == 0 { Slot::Pine } else { Slot::Brush });
             }
-            expected += cover.filled().count();
+            if n >= 4 {
+                cover = cover.with_boulder(0).with_boulder(n - 2);
+            }
+            expected += cover.filled().count() + cover.boulders().count();
             map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
         }
         let (oq, or) = lattice.cell_center(region_lat.cell_center((0, 0)));
@@ -613,16 +669,16 @@ mod scale_tests {
     #[test]
     fn growth_runs_from_a_sapling_to_grown() {
         let model = 5.0;
-        assert!((Kit::scale(Slot::Pine, model, 0.0) * model - SAPLING_HEIGHT).abs() < 1e-5);
-        assert!((Kit::scale(Slot::Pine, model, 1.0) * model - model * GROWN).abs() < 1e-5);
+        assert!((Kit::scale(Kind::Pine, model, 0.0) * model - SAPLING_HEIGHT).abs() < 1e-5);
+        assert!((Kit::scale(Kind::Pine, model, 1.0) * model - model * GROWN).abs() < 1e-5);
         let mut last = 0.0;
         for i in 0..=10 {
-            let s = Kit::scale(Slot::Deciduous, 3.0, i as f32 / 10.0);
+            let s = Kit::scale(Kind::Deciduous, 3.0, i as f32 / 10.0);
             assert!(s >= last);
             last = s;
         }
-        assert!((Kit::scale(Slot::Brush, 1.0, 0.0) - BRUSH_SMALL).abs() < 1e-6);
-        assert!((Kit::scale(Slot::Brush, 1.0, 1.0) - 1.0).abs() < 1e-6);
+        assert!((Kit::scale(Kind::Brush, 1.0, 0.0) - BRUSH_SMALL).abs() < 1e-6);
+        assert!((Kit::scale(Kind::Brush, 1.0, 1.0) - 1.0).abs() < 1e-6);
     }
 }
 

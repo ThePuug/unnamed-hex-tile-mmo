@@ -55,7 +55,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::view::{ExtractedView, RenderVisibleEntities, RetainedViewEntity};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
-use common::Slot;
+use super::Kind;
 
 use crate::resources::CardBand;
 use crate::systems::camera::NEAR_FADE_RADIUS;
@@ -112,7 +112,7 @@ impl Instance {
 /// cards, whose variations differ only by the layers their instances name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StandKey {
-    Model(Slot, usize),
+    Model(Kind, usize),
     Cards(AssetId<Image>),
 }
 

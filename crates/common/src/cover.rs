@@ -99,6 +99,12 @@ pub fn sway(q: i32, r: i32, k: usize) -> Sway {
     }
 }
 
+/// The sway of the boulder in slot `k` of tile `(q, r)`, in
+/// [`SLOT_TOWARD`] order: its own, apart from any site's.
+pub fn boulder_sway(q: i32, r: i32, k: usize) -> Sway {
+    sway(q, r, SITES.len() + k)
+}
+
 /// A hash of a slot and a channel: exact in the integers, so a tile a
 /// million tiles out sways as one at the origin would.
 fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
