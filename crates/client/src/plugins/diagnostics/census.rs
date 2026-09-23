@@ -3,17 +3,20 @@
 //! stand for, and how many triangles reach the clipper.
 //!
 //! A pass timing says the frame is slow; this says which group made it
-//! so. The forest draws instanced, so its draw count and its triangle
-//! count move independently — one batch of a thousand trees is one draw
+//! so. The forest draws in stands, so its draw count and its triangle
+//! count move independently — one stand of a thousand trees is one draw
 //! and a thousand crowns — and terrain is the reverse, a draw per region
-//! and the triangles of the tiles in it. Only what a camera can see is
-//! counted, so the numbers move as the view does.
+//! and the triangles of the tiles in it. Only what the world's camera can
+//! see is counted, so the numbers move as the view does: a stand's trees
+//! by whether their region's box is in its frustum, as the draw decides.
 
+use bevy::camera::primitives::Frustum;
 use bevy::camera::visibility::ViewVisibility;
 use bevy::prelude::*;
+use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::plugins::forest::draw::{Batch, CardBatch, TreeBatch};
+use crate::plugins::forest::draw::{CardStand, Stand, Stands, TreeStand};
 use crate::resources::SummaryMesh;
 use common_bevy::components::Actor;
 
@@ -78,16 +81,14 @@ pub fn take_census(
     time: Res<Time>,
     mut due: Local<Duration>,
     meshes: Res<Assets<Mesh>>,
-    drawn: Query<(
-        Entity,
-        &Mesh3d,
-        &ViewVisibility,
-        Option<&SummaryMesh>,
-        Option<&TreeBatch>,
-        Option<&CardBatch>,
-    )>,
+    drawn: Query<(Entity, &Mesh3d, &ViewVisibility, Option<&SummaryMesh>), (Without<TreeStand>, Without<CardStand>)>,
     parents: Query<&ChildOf>,
     actors: Query<(), With<Actor>>,
+    stands: Res<Stands>,
+    tree_stands: Query<(&Mesh3d, &TreeStand)>,
+    card_stands: Query<(&Mesh3d, &CardStand)>,
+    frames: Query<&GlobalTransform>,
+    camera: Query<&Frustum, (With<Camera3d>, With<IsDefaultUiCamera>)>,
 ) {
     if !state.metrics_overlay_visible && !dump.on {
         return;
@@ -99,17 +100,36 @@ pub fn take_census(
     *due = EVERY;
 
     let mut next = RenderCensus::default();
-    for (entity, mesh, visible, summary, trees, cards) in &drawn {
+    for (entity, mesh, visible, summary) in &drawn {
         if !visible.get() {
             continue;
         }
         let Some(triangles) = meshes.get(&mesh.0).map(triangles_of) else { continue };
-        match (summary, trees, cards) {
-            (Some(_), _, _) => next.terrain.add(triangles, 1),
-            (_, Some(batch), _) => next.forest.add(triangles, batch.len()),
-            (_, _, Some(batch)) => next.forest.add(triangles, batch.len()),
-            _ if under_actor(entity, &parents, &actors) => next.actors.add(triangles, 1),
-            _ => next.other.add(triangles, 1),
+        match summary {
+            Some(_) => next.terrain.add(triangles, 1),
+            None if under_actor(entity, &parents, &actors) => next.actors.add(triangles, 1),
+            None => next.other.add(triangles, 1),
+        }
+    }
+
+    // The regions whose box the camera sees, and of each stand the trees
+    // standing in them.
+    if let Ok(frustum) = camera.single() {
+        let seen: HashSet<u32> = stands
+            .regions()
+            .filter(|(entity, _, bounds)| {
+                frames.get(*entity).is_ok_and(|frame| frustum.intersects_obb(bounds, &frame.affine(), true, true))
+            })
+            .map(|(_, slot, _)| slot)
+            .collect();
+        let stood = tree_stands.iter().map(|(m, s)| (m, s.draw())).chain(card_stands.iter().map(|(m, s)| (m, s.draw())));
+        for (mesh, stand) in stood {
+            let trees: u32 = stand.ranges.iter().filter(|r| seen.contains(&r.slot)).map(|r| r.count).sum();
+            if trees == 0 {
+                continue;
+            }
+            let Some(triangles) = meshes.get(&mesh.0).map(triangles_of) else { continue };
+            next.forest.add(triangles, trees);
         }
     }
     *census = next;

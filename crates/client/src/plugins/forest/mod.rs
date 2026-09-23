@@ -13,7 +13,6 @@ use std::sync::Arc;
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
-use bevy::render::renderer::RenderDevice;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
 use common::{Slot, SLOTS};
@@ -188,14 +187,10 @@ pub struct TreeInstance {
     pub variation: u32,
 }
 
-/// A drawn tree.
-#[derive(Component)]
-pub struct Tree;
-
-/// What the wood costs to draw: the batches standing and the trees in
-/// them, models and cards apart. A batch is one draw call, and its
-/// instances cost the draw nothing more, so the two numbers say which
-/// of the two a frame is paying for.
+/// What the wood costs to draw: the stands drawing and the trees in
+/// them, models and cards apart. A stand is one call a pass however many
+/// regions its trees stand in, so the two numbers say which of the two a
+/// frame is paying for.
 #[derive(Resource, Default)]
 pub struct ForestDraws {
     pub models: u32,
@@ -204,16 +199,17 @@ pub struct ForestDraws {
     pub card_trees: u32,
 }
 
-fn count_draws(mut draws: ResMut<ForestDraws>, trees: Query<&draw::TreeBatch>, cards: Query<&draw::CardBatch>) {
-    use draw::Batch;
+fn count_draws(mut draws: ResMut<ForestDraws>, trees: Query<&draw::TreeStand>, cards: Query<&draw::CardStand>) {
+    use draw::Stand;
     *draws = ForestDraws::default();
-    for batch in &trees {
+    let standing = |stand: &draw::StandDraw| stand.ranges.iter().map(|r| r.count).sum::<u32>();
+    for stand in trees.iter().filter(|s| s.draw().buffer.is_some()) {
         draws.models += 1;
-        draws.model_trees += batch.len();
+        draws.model_trees += standing(stand.draw());
     }
-    for batch in &cards {
+    for stand in cards.iter().filter(|s| s.draw().buffer.is_some()) {
         draws.cards += 1;
-        draws.card_trees += batch.len();
+        draws.card_trees += standing(stand.draw());
     }
 }
 
@@ -224,7 +220,7 @@ impl Plugin for ForestPlugin {
         app.add_plugins(draw::TreeDrawPlugin);
         app.init_resource::<ForestDraws>();
         app.add_systems(Startup, begin_loading);
-        app.add_systems(Update, count_draws);
+        app.add_systems(Update, (count_draws, draw::update_stands));
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
         app.add_systems(Update, dress_far_ground.run_if(resource_added::<TreeKit>));
         app.add_systems(
@@ -445,12 +441,12 @@ pub fn place_trees(
     out
 }
 
-/// Spawn a region's trees as children of its entity: one batch per
-/// variation present, each the variation's mesh and an instance buffer of
-/// every tree drawn with it, built now. Trees cast no shadow: the
-/// cascades would draw every tree four times over for it.
-pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
-    let mut batches: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
+/// Stand a region's trees as models: its wood, one part per variation
+/// present, each the variation's mesh and every tree drawn with it. Trees
+/// cast no shadow: the cascades would draw every tree four times over for
+/// it.
+pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit) {
+    let mut parts: HashMap<(Slot, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
         let all = kit.kit.of(t.slot);
@@ -461,27 +457,28 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         let v = &all[k];
         let scale = Kit::scale(t.slot, v.height, t.growth);
         reach = reach.max(v.height * scale);
-        batches.entry((t.slot, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
+        parts.entry((t.slot, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
     }
-    commands.entity(entity).with_children(|parent| {
-        for ((slot, k), instances) in batches {
-            let v = &kit.kit.of(slot)[k];
-            let (batch, aabb) = draw::TreeBatch::new(render_device, &instances, reach);
-            parent.spawn((Mesh3d(v.mesh.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY, Tree));
-        }
-    });
+    let parts = parts
+        .into_iter()
+        .map(|((slot, k), instances)| draw::WoodPart {
+            key: draw::StandKey::Model(slot, k),
+            mesh: kit.kit.of(slot)[k].mesh.clone(),
+            cards: None,
+            instances,
+        })
+        .collect();
+    commands.entity(entity).insert(draw::RegionWood::new(parts, reach));
 }
 
-/// Spawn a region's trees as cards, children of its entity: one batch
-/// per model whose cards stand here, each the shared quad and an
-/// instance buffer of every tree drawn from that model's pictures. A
-/// batch is one draw the frame pays for, and a model's variations
-/// differ only by which layer of its texture an instance names, so
-/// they go in together — a kind is one draw here where its models are
-/// one each near. The cards stand past the ring, far enough that their
-/// overlaps do not show, so they keep the quad's own depth.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit, render_device: &RenderDevice) {
-    let mut batches: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
+/// Stand a region's trees as cards: its wood, one part per model whose
+/// cards stand here, each the shared quad and every tree drawn from that
+/// model's pictures. A model's variations differ only by which layer of
+/// its texture an instance names, so they go in together. The cards stand
+/// past the ring, far enough that their overlaps do not show, so they
+/// keep the quad's own depth.
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit) {
+    let mut parts: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
     let mut reach = 0.0f32;
     for t in trees {
         let all = kit.kit.of(t.slot);
@@ -492,29 +489,22 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         let Some(cards) = &v.cards else { continue };
         let scale = Kit::scale(t.slot, v.height, t.growth);
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
-        batches
+        parts
             .entry(cards.texture.id())
             .or_insert_with(|| (cards.clone(), Vec::new()))
             .1
             .push(draw::Instance::card(t.translation, t.yaw, scale, v.seed * draw::CARD_LAYERS, v.height * scale));
     }
-    commands.entity(entity).with_children(|parent| {
-        for (_, (cards, instances)) in batches {
-            let (batch, aabb) = draw::CardBatch::new(render_device, &instances, reach, cards);
-            parent.spawn((Mesh3d(kit.kit.quad.clone()), batch, aabb, bevy::camera::visibility::NoAutoAabb, Transform::IDENTITY));
-        }
-    });
-}
-
-/// Take down a region's children of one kind.
-fn take_down<M: Component>(commands: &mut Commands, entity: Entity, children: &Query<&Children>, marked: &Query<(), With<M>>) {
-    if let Ok(kids) = children.get(entity) {
-        for &kid in kids {
-            if marked.get(kid).is_ok() {
-                commands.entity(kid).despawn();
-            }
-        }
-    }
+    let parts = parts
+        .into_iter()
+        .map(|(texture, (cards, instances))| draw::WoodPart {
+            key: draw::StandKey::Cards(texture),
+            mesh: kit.kit.quad.clone(),
+            cards: Some(cards),
+            instances,
+        })
+        .collect();
+    commands.entity(entity).insert(draw::RegionWood::new(parts, reach));
 }
 
 /// Stand the trees of every region within reach of the camera as models
@@ -525,12 +515,9 @@ fn take_down<M: Component>(commands: &mut Commands, entity: Entity, children: &Q
 fn update_trees(
     mut commands: Commands,
     kit: Res<TreeKit>,
-    render_device: Res<RenderDevice>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
-    children: Query<&Children>,
-    trees: Query<(), With<Tree>>,
     band: Res<crate::resources::CardBand>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
@@ -559,14 +546,14 @@ fn update_trees(
         if key.r == 0 {
             let d = state.mesh_origin.xz().distance(camera.xz());
             if !state.trees_spawned && d <= ring + RING_MARGIN {
-                spawn_trees(&mut commands, entity, &state.base_trees, &kit, &render_device);
+                spawn_trees(&mut commands, entity, &state.base_trees, &kit);
                 state.trees_spawned = true;
             } else if state.trees_spawned && d > ring + 2.0 * RING_MARGIN {
-                take_down::<Tree>(&mut commands, entity, &children, &trees);
+                commands.entity(entity).remove::<draw::RegionWood>();
                 state.trees_spawned = false;
             }
         } else if !state.cards_spawned {
-            spawn_cards(&mut commands, entity, &state.base_trees, &kit, &render_device);
+            spawn_cards(&mut commands, entity, &state.base_trees, &kit);
             state.cards_spawned = true;
         }
     }

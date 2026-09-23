@@ -64,8 +64,8 @@ pub fn execute_console_actions(
         &mut Visibility,
         (
             Or<(
-                With<crate::plugins::forest::draw::TreeBatch>,
-                With<crate::plugins::forest::draw::CardBatch>,
+                With<crate::plugins::forest::draw::TreeStand>,
+                With<crate::plugins::forest::draw::CardStand>,
             )>,
             Without<crate::resources::SummaryMesh>,
             Without<HexGridOverlay>,
