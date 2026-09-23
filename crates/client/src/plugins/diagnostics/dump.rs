@@ -119,7 +119,7 @@ pub fn dump_metrics(
     // the wood about the player is, and whether trees or bushes make it.
     if let Some(t) = tile {
         let region = common_bevy::summary::mesh_region_lattice();
-        let (mut tiles, mut covered, mut treed, mut scrub_only) = (0, 0, 0, 0);
+        let (mut tiles, mut covered, mut treed, mut brush_only) = (0, 0, 0, 0);
         for (q, r) in region.tiles_in_cell(region.cell_id(t.q, t.r)) {
             tiles += 1;
             let cover = map.cover_at(q, r);
@@ -130,13 +130,13 @@ pub fn dump_metrics(
             if crate::plugins::forest::trees_on(&map, q, r) > 0 {
                 treed += 1;
             } else {
-                scrub_only += 1;
+                brush_only += 1;
             }
         }
         let _ = writeln!(out, "region/tiles = {tiles}");
         let _ = writeln!(out, "region/covered_tiles = {covered}");
         let _ = writeln!(out, "region/tiles_with_trees = {treed}");
-        let _ = writeln!(out, "region/scrub_only_tiles = {scrub_only}");
+        let _ = writeln!(out, "region/brush_only_tiles = {brush_only}");
     }
 
     let mut named: Vec<_> = history.timings.iter().collect();

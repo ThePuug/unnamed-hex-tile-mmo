@@ -22,7 +22,7 @@
 //! The climate is read once at the origin, with what the rock there keeps
 //! of it and the ground's own water, the valley floor and a flooded basin,
 //! and sets the stand's density and
-//! how many of its slots are trees rather than scrub. A stand stands with
+//! how many of its slots are trees rather than brush. A stand stands with
 //! the probability its density gives, so between the wet core and the dry
 //! ground the woods are islands with edges: forest and open ground as
 //! alternative states, decided at the origin and never per tile.
@@ -203,7 +203,7 @@ pub const TREELINE_RISE: f64 = 1.5 * RANGE_RISE;
 /// The lapse rate in degrees per z-level, from [`TREELINE_RISE`].
 pub const LAPSE: f64 = (SEA_LEVEL_MEAN - TREELINE) / TREELINE_RISE;
 
-/// How many degrees above the treeline the forest thins to scrub.
+/// How many degrees above the treeline the forest thins to brush.
 pub const TREELINE_BAND: f64 = 2.0;
 
 /// Below this the trees are pine; above [`DECIDUOUS_ABOVE`] deciduous;
@@ -231,9 +231,9 @@ pub fn temperature(wx: f64, wy: f64, elevation: f64, seed: u64) -> f64 {
 
 // ── The stands ──────────────────────────────────────────────────────────────
 
-/// Below this moisture nothing stands; from here scrub, and from
+/// Below this moisture nothing stands; from here brush, and from
 /// [`MOISTURE_TREES`] trees among it, both whole at [`MOISTURE_CLOSED`].
-pub const MOISTURE_SCRUB: f64 = 0.12;
+pub const MOISTURE_BRUSH: f64 = 0.12;
 pub const MOISTURE_TREES: f64 = 0.25;
 pub const MOISTURE_CLOSED: f64 = 0.55;
 
@@ -283,7 +283,7 @@ pub const FOREST_CELL_SCALE: u32 = (FOREST_REACH / RING_CLEARANCE) as u32 + 1;
 
 /// A stand of trees: where it originates, how far it reaches and which way
 /// it is drawn out, how densely it fills its slots, and how many of them
-/// are trees rather than scrub.
+/// are trees rather than brush.
 #[derive(Clone, Debug)]
 pub struct Stand {
     pub wx: f64,
@@ -378,12 +378,12 @@ fn candidate_origins(lattice: &HexLattice, cell: CellId) -> Vec<CellId> {
 }
 
 /// A stand's density from the moisture at its origin, short of full, or
-/// nothing below the scrub line.
+/// nothing below the brush line.
 pub fn density_of(moisture: f64) -> f64 {
-    DENSITY_MAX * smoothstep((moisture - MOISTURE_SCRUB) / (MOISTURE_CLOSED - MOISTURE_SCRUB))
+    DENSITY_MAX * smoothstep((moisture - MOISTURE_BRUSH) / (MOISTURE_CLOSED - MOISTURE_BRUSH))
 }
 
-/// The share of a stand's slots that are trees rather than scrub, from
+/// The share of a stand's slots that are trees rather than brush, from
 /// the moisture at its origin.
 pub fn trees_of(moisture: f64) -> f64 {
     smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
@@ -564,7 +564,7 @@ pub fn tree_at(temperature: f64, mix: f64) -> Slot {
 
 /// The three draws slot `k` of tile `(q, r)` is filled by, each in
 /// [0, 1): against the density, whether it holds anything; against the
-/// tree share, scrub or a tree; and which tree.
+/// tree share, brush or a tree; and which tree.
 fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
     (
         hash_channel_f64(q as i64, r as i64, seed, SLOT_FILL + k as u64),
@@ -575,7 +575,7 @@ fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
 
 /// A tile's cover from the density and tree share it lands on at
 /// `temperature`: each slot filled by its own draw against the density,
-/// scrub or a tree by another against the share.
+/// brush or a tree by another against the share.
 pub fn cover_of(q: i32, r: i32, density: f64, trees: f64, temperature: f64, seed: u64) -> Cover {
     let mut cover = Cover::NONE;
     for k in 0..SLOTS.len() {
@@ -583,7 +583,7 @@ pub fn cover_of(q: i32, r: i32, density: f64, trees: f64, temperature: f64, seed
         if density <= fill {
             continue;
         }
-        let slot = if kind >= trees { Slot::Scrub } else { tree_at(temperature, mix) };
+        let slot = if kind >= trees { Slot::Brush } else { tree_at(temperature, mix) };
         cover = cover.with(k, slot);
     }
     cover
@@ -671,11 +671,11 @@ mod tests {
     const SPAWN: (i32, i32) = (104_289, -4_677);
 
     /// Density and the tree share rise with moisture, from nothing below
-    /// the scrub line to full at the closed line, and a stand never fills
+    /// the brush line to full at the closed line, and a stand never fills
     /// every slot.
     #[test]
     fn density_and_trees_rise_with_moisture() {
-        assert_eq!(density_of(MOISTURE_SCRUB), 0.0);
+        assert_eq!(density_of(MOISTURE_BRUSH), 0.0);
         assert_eq!(trees_of(MOISTURE_TREES), 0.0);
         let (mut d, mut t) = (0.0, 0.0);
         for i in 0..=100 {
@@ -744,12 +744,12 @@ mod tests {
         }
     }
 
-    /// No slot holds a tree where the share is nothing, none holds scrub
+    /// No slot holds a tree where the share is nothing, none holds brush
     /// where it is everything, and the kind follows the temperature.
     #[test]
     fn kinds_follow_the_share_and_the_temperature() {
         let all = |f: &dyn Fn(Slot) -> bool, c: Cover| c.filled().all(|(_, s)| f(s));
-        assert!(all(&|s| s == Slot::Scrub, cover_of(3, 4, 1.0, 0.0, 20.0, S)));
+        assert!(all(&|s| s == Slot::Brush, cover_of(3, 4, 1.0, 0.0, 20.0, S)));
         assert!(all(&|s| s == Slot::Pine, cover_of(3, 4, 1.0, 1.0, PINE_BELOW - 1.0, S)));
         assert!(all(&|s| s == Slot::Deciduous, cover_of(3, 4, 1.0, 1.0, DECIDUOUS_ABOVE + 1.0, S)));
     }

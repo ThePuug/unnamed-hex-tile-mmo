@@ -301,7 +301,7 @@ mod tests {
         use common::{Cover, Slot};
         use crate::components::entity_type::decorator::Decorator;
         let map = make_flat_map();
-        let cover = Cover::NONE.with(0, Slot::Pine).with(2, Slot::Scrub);
+        let cover = Cover::NONE.with(0, Slot::Pine).with(2, Slot::Brush);
         map.insert(Qrz { q: 1, r: 1, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
         assert_eq!(map.cover_at(1, 1), cover);
         assert_eq!(map.cover_at(1, 1).fullness(), 2);

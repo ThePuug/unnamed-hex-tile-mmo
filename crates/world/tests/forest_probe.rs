@@ -122,8 +122,8 @@ fn forest_census() {
     println!("mean fullness where covered: {:.2}", full as f64 / covered.max(1) as f64);
     println!("fullness histogram 0..3: {hist:?}");
     println!(
-        "slots: scrub {}, pine {}, deciduous {}",
-        kinds[Slot::Scrub as usize], kinds[Slot::Pine as usize], kinds[Slot::Deciduous as usize]
+        "slots: brush {}, pine {}, deciduous {}",
+        kinds[Slot::Brush as usize], kinds[Slot::Pine as usize], kinds[Slot::Deciduous as usize]
     );
 }
 

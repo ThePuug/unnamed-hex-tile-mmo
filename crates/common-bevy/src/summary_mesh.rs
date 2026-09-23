@@ -63,13 +63,13 @@ pub struct SummaryMeshResult {
 }
 
 /// A canopy as a vertex carries it: the density, then the density's
-/// pine, deciduous and scrub parts, which sum to it. Parts interpolate
+/// pine, deciduous and brush parts, which sum to it. Parts interpolate
 /// across a fan the way a premultiplied colour does — a wood's edge
 /// against bare ground thins without shifting hue — where shares would
 /// fade twice and counts would not blend at all.
 pub fn canopy_vertex(canopy: Canopy) -> [f32; 4] {
     let part = |kind: Slot| canopy.count(kind) as f32 / common::cover::CANOPY_READINGS as f32;
-    [canopy.density() as f32, part(Slot::Pine), part(Slot::Deciduous), part(Slot::Scrub)]
+    [canopy.density() as f32, part(Slot::Pine), part(Slot::Deciduous), part(Slot::Brush)]
 }
 
 /// Cells in a mesh region (radius-9 hex ball).

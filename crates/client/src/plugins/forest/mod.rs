@@ -21,13 +21,13 @@ use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// The model each kind of slot is drawn with: one GLB for each tree, three
-/// for scrub, each carrying its variations as its meshes.
+/// for brush, each carrying its variations as its meshes.
 const MODELS: &[(Slot, &str)] = &[
     (Slot::Pine, "models/pine-tree.glb"),
     (Slot::Deciduous, "models/deciduous-tree.glb"),
-    (Slot::Scrub, "models/scrub-mound.glb"),
-    (Slot::Scrub, "models/scrub-broom.glb"),
-    (Slot::Scrub, "models/scrub-sprawl.glb"),
+    (Slot::Brush, "models/scrub-mound.glb"),
+    (Slot::Brush, "models/scrub-broom.glb"),
+    (Slot::Brush, "models/scrub-sprawl.glb"),
 ];
 
 /// How far a tree on a tile with one slot filled has grown, as a share of
@@ -43,7 +43,7 @@ pub const SAPLING_HEIGHT: f32 = 2.0;
 pub const GROWN: f32 = 2.5;
 
 /// The least a bush stands, as a share of its model.
-pub const SCRUB_SMALL: f32 = 0.6;
+pub const BRUSH_SMALL: f32 = 0.6;
 
 /// How far from the camera a region's trees are drawn as models, in
 /// world units, and the further reach they are kept to once drawn, so a
@@ -57,7 +57,7 @@ const NEIGHBOURS: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), 
 
 /// The trees a tile stands, bushes aside.
 pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize {
-    map.cover_at(q, r).filled().filter(|&(_, s)| s != Slot::Scrub).count()
+    map.cover_at(q, r).filled().filter(|&(_, s)| s != Slot::Brush).count()
 }
 
 /// Whether a tree stands on this tile or any of the six around it,
@@ -87,7 +87,7 @@ pub struct Variation {
 pub struct Kit {
     pine: Vec<Variation>,
     deciduous: Vec<Variation>,
-    scrub: Vec<Variation>,
+    brush: Vec<Variation>,
     quad: Handle<Mesh>,
 }
 
@@ -149,17 +149,17 @@ impl Kit {
         match slot {
             Slot::Pine => &self.pine,
             Slot::Deciduous => &self.deciduous,
-            _ => &self.scrub,
+            _ => &self.brush,
         }
     }
 
     /// The scale a tree `growth` of the way grown is drawn at: a tree from
     /// the sapling's height toward [`GROWN`] times its model's, a bush from
-    /// [`SCRUB_SMALL`] of its model toward the whole.
+    /// [`BRUSH_SMALL`] of its model toward the whole.
     pub fn scale(slot: Slot, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
-        if slot == Slot::Scrub {
-            return SCRUB_SMALL + (1.0 - SCRUB_SMALL) * growth;
+        if slot == Slot::Brush {
+            return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth;
         }
         let full = model_height * GROWN;
         let height = SAPLING_HEIGHT + (full - SAPLING_HEIGHT).max(0.0) * growth;
@@ -254,7 +254,7 @@ fn dress_far_ground(
         let scale = Kit::scale(slot, first.height, CROWN_GROWTH);
         KindLook { color, width: first.width * scale, height: first.height * scale }
     };
-    terrain_material.set_kinds([of(Slot::Pine), of(Slot::Deciduous), of(Slot::Scrub)], &mut materials);
+    terrain_material.set_kinds([of(Slot::Pine), of(Slot::Deciduous), of(Slot::Brush)], &mut materials);
 }
 
 fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -316,15 +316,15 @@ fn load_kit(
             match slot {
                 Slot::Pine => kit.pine.push(variation),
                 Slot::Deciduous => kit.deciduous.push(variation),
-                _ => kit.scrub.push(variation),
+                _ => kit.brush.push(variation),
             }
         }
     }
     info!(
-        "tree kit: {} pine, {} deciduous, {} scrub variations",
+        "tree kit: {} pine, {} deciduous, {} brush variations",
         kit.pine.len(),
         kit.deciduous.len(),
-        kit.scrub.len()
+        kit.brush.len()
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
@@ -582,7 +582,7 @@ mod tests {
             let n = ((q - 3 * r).rem_euclid(8)) as usize;
             let mut cover = Cover::NONE;
             for k in 0..n.min(SLOTS.len()) {
-                cover = cover.with(k, if k % 2 == 0 { Slot::Pine } else { Slot::Scrub });
+                cover = cover.with(k, if k % 2 == 0 { Slot::Pine } else { Slot::Brush });
             }
             expected += cover.fullness() as usize;
             map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
@@ -621,8 +621,8 @@ mod scale_tests {
             assert!(s >= last);
             last = s;
         }
-        assert!((Kit::scale(Slot::Scrub, 1.0, 0.0) - SCRUB_SMALL).abs() < 1e-6);
-        assert!((Kit::scale(Slot::Scrub, 1.0, 1.0) - 1.0).abs() < 1e-6);
+        assert!((Kit::scale(Slot::Brush, 1.0, 0.0) - BRUSH_SMALL).abs() < 1e-6);
+        assert!((Kit::scale(Slot::Brush, 1.0, 1.0) - 1.0).abs() < 1e-6);
     }
 }
 

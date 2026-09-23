@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum Slot {
     #[default]
     Empty = 0,
-    Scrub = 1,
+    Brush = 1,
     Pine = 2,
     Deciduous = 3,
 }
@@ -18,7 +18,7 @@ pub enum Slot {
 impl Slot {
     fn from_bits(bits: u16) -> Slot {
         match bits & 3 {
-            1 => Slot::Scrub,
+            1 => Slot::Brush,
             2 => Slot::Pine,
             3 => Slot::Deciduous,
             _ => Slot::Empty,
@@ -125,7 +125,7 @@ impl Cover {
 
 /// What stands over the tiles a summary covers, read from the
 /// [`crate::summary::SAMPLES`] sample tiles' slots: how many of those
-/// readings hold pine, deciduous and scrub, five bits each, the rest
+/// readings hold pine, deciduous and brush, five bits each, the rest
 /// empty. Lossless for the reading, two bytes on the wire, and the density
 /// and the kinds' shares fall out of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -161,7 +161,7 @@ impl Canopy {
         match kind {
             Slot::Pine => 0,
             Slot::Deciduous => 1,
-            Slot::Scrub => 2,
+            Slot::Brush => 2,
             Slot::Empty => unreachable!("an empty slot is not counted"),
         }
     }
@@ -176,7 +176,7 @@ impl Canopy {
 
     /// How many readings hold anything.
     pub fn filled(self) -> u16 {
-        self.count(Slot::Pine) + self.count(Slot::Deciduous) + self.count(Slot::Scrub)
+        self.count(Slot::Pine) + self.count(Slot::Deciduous) + self.count(Slot::Brush)
     }
 
     pub fn is_empty(self) -> bool {
@@ -227,7 +227,7 @@ mod tests {
     fn three_of_anything_is_full() {
         let mut c = Cover::NONE;
         for k in 0..SLOTS.len() {
-            c = c.with(k, Slot::Scrub);
+            c = c.with(k, Slot::Brush);
         }
         assert_eq!(c.fullness(), 3);
         assert_eq!(c.bits() >> (2 * SLOTS.len()), 0, "nothing past the last slot");
@@ -245,8 +245,8 @@ mod tests {
         assert_eq!(pines.count(Slot::Empty), 0);
         assert_eq!(pines.density(), 1.0);
         assert_eq!(Canopy::from_bits(pines.bits()), pines);
-        let mixed = Canopy::of(&[all(Slot::Pine), all(Slot::Deciduous), Cover::NONE.with(1, Slot::Scrub)]);
-        assert_eq!((mixed.count(Slot::Pine), mixed.count(Slot::Deciduous), mixed.count(Slot::Scrub)), (3, 3, 1));
+        let mixed = Canopy::of(&[all(Slot::Pine), all(Slot::Deciduous), Cover::NONE.with(1, Slot::Brush)]);
+        assert_eq!((mixed.count(Slot::Pine), mixed.count(Slot::Deciduous), mixed.count(Slot::Brush)), (3, 3, 1));
         assert_eq!(mixed.filled(), 7);
         assert_eq!(mixed.count(Slot::Empty), CANOPY_READINGS - 7);
     }

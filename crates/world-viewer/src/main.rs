@@ -965,12 +965,12 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
 /// The plateau on the substrate, hillshaded, so the thickening's shape reads
 /// independently of how the vertical scale is calibrated. Marches the fronts
 /// under the viewport itself, since the plateau rises with the wedge.
-/// A kind's green: pine blue-green, deciduous green, scrub olive.
+/// A kind's green: pine blue-green, deciduous green, brush olive.
 fn kind_color(kind: common::Slot) -> (f64, f64, f64) {
     match kind {
         common::Slot::Pine => (0.05, 0.30, 0.22),
         common::Slot::Deciduous => (0.16, 0.48, 0.12),
-        common::Slot::Scrub => (0.45, 0.50, 0.18),
+        common::Slot::Brush => (0.45, 0.50, 0.18),
         common::Slot::Empty => (0.0, 0.0, 0.0),
     }
 }
@@ -1014,7 +1014,7 @@ fn stand_color(ground: (f64, f64, f64), density: f64) -> (f64, f64, f64) {
 
 /// A summary's canopy over the colour beneath it, by its density.
 fn canopy_color(ground: (f64, f64, f64), canopy: common::Canopy) -> (f64, f64, f64) {
-    let kinds = [common::Slot::Pine, common::Slot::Deciduous, common::Slot::Scrub];
+    let kinds = [common::Slot::Pine, common::Slot::Deciduous, common::Slot::Brush];
     trees_color(ground, kinds.into_iter().flat_map(|k| std::iter::repeat(k).take(canopy.count(k) as usize)), canopy.density())
 }
 
