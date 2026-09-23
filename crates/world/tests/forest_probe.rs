@@ -73,7 +73,7 @@ fn cover_stands_only_where_it_may() {
         assert!(v.water.is_none(), "cover in water at ({q}, {r})");
         let (wx, wy) = hex_to_world(q, r);
         assert!(forest::temperature(wx, wy, v.elevation, SEED) > forest::TREELINE, "cover above the treeline at ({q}, {r})");
-        assert!(v.cover.fullness() <= 3);
+        assert!(v.cover.fullness() <= common::TILE_SLOTS);
     }
 }
 
@@ -105,8 +105,8 @@ fn forest_census() {
         if temp <= forest::TREELINE {
             cold += 1;
         }
-        let f = v.cover.fullness();
-        hist[f as usize] += 1;
+        let f = v.cover.filled().count();
+        hist[f] += 1;
         if f > 0 {
             covered += 1;
             full += f as u64;
@@ -119,8 +119,8 @@ fn forest_census() {
     println!("{} tiles in {secs:.2}s ({:.1} µs per tile, sparse)", tiles.len(), secs * 1e6 / tiles.len() as f64);
     println!("land {land}: {:.1}% covered, {:.1}% above the treeline", 100.0 * covered as f64 / land.max(1) as f64, 100.0 * cold as f64 / land.max(1) as f64);
     println!("temperature on land: {t_min:.1} to {t_max:.1}, mean {:.1} (treeline {})", t_sum / land.max(1) as f64, forest::TREELINE);
-    println!("mean fullness where covered: {:.2}", full as f64 / covered.max(1) as f64);
-    println!("fullness histogram 0..3: {hist:?}");
+    println!("mean sites filled where covered: {:.2}", full as f64 / covered.max(1) as f64);
+    println!("sites filled histogram 0..3: {hist:?}");
     println!(
         "slots: brush {}, pine {}, deciduous {}",
         kinds[Slot::Brush as usize], kinds[Slot::Pine as usize], kinds[Slot::Deciduous as usize]

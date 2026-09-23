@@ -67,23 +67,28 @@ pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
     }
 }
 
-/// The fullness at which a tile's trees refuse entry: every slot.
-pub const COVER_FULL: u8 = common::SLOTS.len() as u8;
+/// The fullness at which a tile refuses entry: more than half its
+/// [`common::TILE_SLOTS`] held by solid things, so two trees close it.
+pub const COVER_FULL: u8 = 4;
 
-/// A walker's pace through a tile one tree short of full, as a share of
+/// The fullness a walker crosses at full pace: one tree's slots.
+pub const COVER_FREE: u8 = 2;
+
+/// A walker's pace through a tile one slot short of full, as a share of
 /// full: the slowest it goes before the last refuses it.
 pub const COVER_PACE_MIN: f32 = 0.5;
 
 /// A walker's pace through a tile as a share of full, by the tile's
-/// fullness: one tree costs nothing, and from there the pace eases to
-/// [`COVER_PACE_MIN`] one short of full. Full is refused in
+/// fullness: [`COVER_FREE`] costs nothing, and from there the pace eases
+/// to [`COVER_PACE_MIN`] one short of full. Full is refused in
 /// [`is_tile_blocked`], never slowed to nothing.
 pub fn pace(fullness: u8) -> f32 {
-    let n = fullness.saturating_sub(1).min(COVER_FULL - 2) as f32;
-    1.0 - n / (COVER_FULL - 2) as f32 * (1.0 - COVER_PACE_MIN)
+    let span = COVER_FULL - 1 - COVER_FREE;
+    let n = fullness.saturating_sub(COVER_FREE).min(span) as f32;
+    1.0 - n / span as f32 * (1.0 - COVER_PACE_MIN)
 }
 
-/// Whether a tile's trees fill every slot, so nothing walks in.
+/// Whether a tile's solid things fill it, so nothing walks in.
 pub fn is_full_cover(map: &Map, q: i32, r: i32) -> bool {
     map.cover_at(q, r).fullness() >= COVER_FULL
 }
@@ -514,11 +519,11 @@ mod tests {
     }
 
     /// The pace never rises with fullness, costs nothing to one tree, and
-    /// never falls to nothing: the seventh tree refuses, it does not stall.
+    /// never falls to nothing: full refuses, it does not stall.
     #[test]
     fn pace_falls_with_fullness_and_never_to_nothing() {
         assert_eq!(pace(0), 1.0);
-        assert_eq!(pace(1), 1.0);
+        assert_eq!(pace(COVER_FREE), 1.0);
         let mut last = 1.0;
         for n in 0..=COVER_FULL {
             let p = pace(n);
@@ -528,7 +533,7 @@ mod tests {
         assert!((pace(COVER_FULL - 1) - COVER_PACE_MIN).abs() < 1e-6);
     }
 
-    /// A tile of trees: `n` slots filled, at (q, r), on the flat ground.
+    /// A tile of `n` trees at (q, r), on the flat ground.
     fn wooded(map: &Map, q: i32, r: i32, n: usize) {
         use common::{Cover, Slot};
         let mut cover = Cover::NONE;
@@ -538,11 +543,10 @@ mod tests {
         map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: false }));
     }
 
-    /// A walk through wooded ground covers less than one across open
-    /// ground, less again through a heavier wood, and the same however the
-    /// time is sliced; a full tile is a wall.
+    /// A walk through a wood short of full covers what its pace gives, the
+    /// same however the time is sliced; two trees make a wall.
     #[test]
-    fn trees_slow_a_walk_and_seven_stop_it() {
+    fn a_wood_short_of_full_is_walked_and_two_trees_stop_it() {
         let nntree = create_test_nntree();
         let heading = Heading::from_slot(0);
         let input = walking(heading, true);
@@ -551,8 +555,7 @@ mod tests {
             flat_ground(&map, 6);
             calculate_movement(input, 1000, &map, &nntree).position.offset.xz().length()
         };
-        let mut last = open;
-        for n in 2..COVER_FULL as usize {
+        for n in 1..2 {
             let map = create_test_map();
             flat_ground(&map, 6);
             for q in -6..=6 {
@@ -567,9 +570,9 @@ mod tests {
             }
             assert!(whole.position.offset.abs_diff_eq(sliced.position.offset, 1e-3), "{n} trees: whole {:?} vs sliced {:?}", whole.position.offset, sliced.position.offset);
             let went = whole.position.offset.xz().length();
-            assert!(went < last, "{n} trees: went {went}, no slower than {last}");
-            assert!((went - open * pace(n as u8)).abs() < 1e-3, "{n} trees: {went} is not the pace's share of {open}");
-            last = went;
+            let fullness = map.cover_at(0, 0).fullness();
+            assert!(fullness < COVER_FULL);
+            assert!((went - open * pace(fullness)).abs() < 1e-3, "{n} trees: {went} is not the pace's share of {open}");
         }
         let map = create_test_map();
         flat_ground(&map, 6);
@@ -577,7 +580,7 @@ mod tests {
         let far: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
         let first: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset / 20.0 * 3.0);
         assert!((first.q, first.r) != (0, 0) && (first.q, first.r) != (far.q, far.r), "the walk should cross more than one tile");
-        wooded(&map, first.q, first.r, COVER_FULL as usize);
+        wooded(&map, first.q, first.r, 2);
         let out = calculate_movement(input, 2000, &map, &nntree);
         let here: Qrz = Qrz { q: 0, r: 0, z: 1 } + map.convert(out.position.offset);
         assert_eq!((here.q, here.r), (0, 0), "walked into a full tile");

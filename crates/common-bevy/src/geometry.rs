@@ -14,7 +14,7 @@ pub fn flat_top_tile_center(q: i32, r: i32, radius: f32) -> (f32, f32) {
 /// along that way and across it.
 pub fn slot_center(q: i32, r: i32, k: usize, sway: &common::Sway) -> (f32, f32) {
     let (cx, cz) = flat_top_tile_center(q, r, 1.0);
-    let (dq, dr) = common::SLOTS[k];
+    let (dq, dr) = common::SITES[k];
     let (nx, nz) = flat_top_tile_center(q + dq, r + dr, 1.0);
     let (dx, dz) = (nx - cx, nz - cz);
     let spacing = dx.hypot(dz);
@@ -35,7 +35,7 @@ mod slot_tests {
         let extremes = [-common::SLOT_JITTER, common::SLOT_JITTER];
         for (q, r) in [(0, 0), (7, -3), (-100_000, 250_000)] {
             let (cx, cz) = flat_top_tile_center(q, r, 1.0);
-            for k in 0..common::SLOTS.len() {
+            for k in 0..common::SITES.len() {
                 for &along in &extremes {
                     for &across in &extremes {
                         let sway = common::Sway { along, across, yaw: 0.0, growth: 1.0, variation: 0 };

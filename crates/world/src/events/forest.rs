@@ -29,7 +29,7 @@
 //!
 //! A tile reads the stands over it from the ring, the treeline from its
 //! own elevation, and its valley from what dissection published, and
-//! fills each of its seven slots by a hash against the density it lands
+//! fills each of its three sites by a hash against the density it lands
 //! on. Nothing is read from a neighbour.
 
 use std::any::Any;
@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use common::{Cover, HexLattice, HexSpatialGrid, Slot, SLOTS};
+use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES};
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{nearest_node, PATH_SWING};
@@ -578,7 +578,7 @@ fn slot_draws(q: i32, r: i32, k: usize, seed: u64) -> (f64, f64, f64) {
 /// brush or a tree by another against the share.
 pub fn cover_of(q: i32, r: i32, density: f64, trees: f64, temperature: f64, seed: u64) -> Cover {
     let mut cover = Cover::NONE;
-    for k in 0..SLOTS.len() {
+    for k in 0..SITES.len() {
         let (fill, kind, mix) = slot_draws(q, r, k, seed);
         if density <= fill {
             continue;
@@ -728,16 +728,16 @@ mod tests {
         assert_eq!(temperature(wx, wy, -50.0, S), t0, "the sea is at sea level");
     }
 
-    /// Fullness never passes seven, is nothing at no density and every slot
-    /// at a density past every hash, and never falls as density rises.
+    /// No site is filled at no density, every site at a density past
+    /// every hash, and the count never falls as density rises.
     #[test]
-    fn slots_fill_with_density() {
+    fn sites_fill_with_density() {
         for (q, r) in [(0, 0), (SPAWN.0, SPAWN.1), (1_000_000, -2_000_000)] {
             assert!(cover_of(q, r, 0.0, 1.0, 20.0, S).is_empty());
-            assert_eq!(cover_of(q, r, 1.0, 1.0, 20.0, S).fullness(), SLOTS.len() as u8);
+            assert_eq!(cover_of(q, r, 1.0, 1.0, 20.0, S).filled().count(), SITES.len());
             let mut last = 0;
             for i in 0..=20 {
-                let f = cover_of(q, r, i as f64 / 20.0, 1.0, 20.0, S).fullness();
+                let f = cover_of(q, r, i as f64 / 20.0, 1.0, 20.0, S).filled().count();
                 assert!(f >= last, "fullness fell at {i}");
                 last = f;
             }

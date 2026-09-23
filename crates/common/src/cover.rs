@@ -1,4 +1,4 @@
-//! A tile's cover: what stands in each of its three slots. And the canopy,
+//! A tile's cover: what stands at each of its three sites. And the canopy,
 //! what stands over many tiles as seven of them say, which is what the
 //! far ground is coloured by.
 
@@ -16,6 +16,20 @@ pub enum Slot {
 }
 
 impl Slot {
+    /// How many of a tile's [`TILE_SLOTS`] it holds: a tree two, brush one.
+    pub fn slots(self) -> u8 {
+        match self {
+            Slot::Empty => 0,
+            Slot::Brush => 1,
+            Slot::Pine | Slot::Deciduous => 2,
+        }
+    }
+
+    /// Whether it stands in a walker's way: a tree does, brush does not.
+    pub fn is_solid(self) -> bool {
+        matches!(self, Slot::Pine | Slot::Deciduous)
+    }
+
     fn from_bits(bits: u16) -> Slot {
         match bits & 3 {
             1 => Slot::Brush,
@@ -26,10 +40,15 @@ impl Slot {
     }
 }
 
-/// Where each slot lies: toward every other neighbour of a flat-top hex,
+/// How many slots a tile has: its centre and one toward each neighbour.
+/// What stands on the ground holds some of them, by its size.
+pub const TILE_SLOTS: u8 = 7;
+
+/// Where each site lies: toward every other neighbour of a flat-top hex,
 /// a third of a turn apart, so the centre stays free and three trunks
-/// stand as far from each other as from the tile's edge.
-pub const SLOTS: [(i32, i32); 3] = [(1, 0), (-1, 1), (0, -1)];
+/// stand as far from each other as from the tile's edge. A tree at a site
+/// holds its slot and the next one round.
+pub const SITES: [(i32, i32); 3] = [(1, 0), (-1, 1), (0, -1)];
 
 /// How far from the centre toward the neighbour's centre a slot lies, as a
 /// share of the centre spacing: the edge is at half, so this and the
@@ -80,9 +99,9 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// The three slots of a tile, two bits each, slot `k` in bits `2k..2k+2`
-/// in [`SLOTS`] order. Fullness is how many hold anything: what movement
-/// reads. Fits a `u16` with room, so it crosses the wire as one.
+/// The three sites of a tile, two bits each, site `k` in bits `2k..2k+2`
+/// in [`SITES`] order. Fits a `u16` with room, so it crosses the wire as
+/// one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cover(u16);
 
@@ -90,7 +109,7 @@ impl Cover {
     pub const NONE: Cover = Cover(0);
 
     pub fn from_bits(bits: u16) -> Cover {
-        Cover(bits & ((1 << (2 * SLOTS.len())) - 1))
+        Cover(bits & ((1 << (2 * SITES.len())) - 1))
     }
 
     pub fn bits(self) -> u16 {
@@ -98,19 +117,20 @@ impl Cover {
     }
 
     pub fn slot(self, k: usize) -> Slot {
-        debug_assert!(k < SLOTS.len());
+        debug_assert!(k < SITES.len());
         Slot::from_bits(self.0 >> (2 * k))
     }
 
     /// This cover with slot `k` holding `slot`.
     pub fn with(self, k: usize, slot: Slot) -> Cover {
-        debug_assert!(k < SLOTS.len());
+        debug_assert!(k < SITES.len());
         Cover((self.0 & !(3 << (2 * k))) | ((slot as u16) << (2 * k)))
     }
 
-    /// How many slots hold anything, none to three.
+    /// How many of the tile's [`TILE_SLOTS`] solid things hold: what
+    /// movement reads.
     pub fn fullness(self) -> u8 {
-        (0..SLOTS.len()).filter(|&k| self.slot(k) != Slot::Empty).count() as u8
+        self.filled().filter(|(_, s)| s.is_solid()).map(|(_, s)| s.slots()).sum()
     }
 
     pub fn is_empty(self) -> bool {
@@ -119,7 +139,7 @@ impl Cover {
 
     /// The filled slots, each with what it holds.
     pub fn filled(self) -> impl Iterator<Item = (usize, Slot)> {
-        (0..SLOTS.len()).map(move |k| (k, self.slot(k))).filter(|(_, s)| *s != Slot::Empty)
+        (0..SITES.len()).map(move |k| (k, self.slot(k))).filter(|(_, s)| *s != Slot::Empty)
     }
 }
 
@@ -132,7 +152,7 @@ impl Cover {
 pub struct Canopy(u16);
 
 /// The slot readings a canopy is made of, and the most it can count.
-pub const CANOPY_READINGS: u16 = crate::summary::SAMPLES as u16 * SLOTS.len() as u16;
+pub const CANOPY_READINGS: u16 = crate::summary::SAMPLES as u16 * SITES.len() as u16;
 
 impl Canopy {
     pub const NONE: Canopy = Canopy(0);
@@ -200,9 +220,7 @@ mod tests {
         assert_eq!(c.slot(0), Slot::Pine);
         assert_eq!(c.slot(1), Slot::Empty);
         assert_eq!(c.slot(2), Slot::Deciduous);
-        assert_eq!(c.fullness(), 2);
         assert_eq!(Cover::from_bits(c.bits()), c);
-        assert_eq!(c.with(2, Slot::Empty).fullness(), 1);
         assert_eq!(c.filled().count(), 2);
     }
 
@@ -211,7 +229,7 @@ mod tests {
     #[test]
     fn sway_is_the_slots_own_and_bounded() {
         assert_eq!(sway(5, -7, 2), sway(5, -7, 2));
-        let sways: Vec<Sway> = (0..SLOTS.len()).map(|k| sway(5, -7, k)).collect();
+        let sways: Vec<Sway> = (0..SITES.len()).map(|k| sway(5, -7, k)).collect();
         for (i, a) in sways.iter().enumerate() {
             assert!(a.along.abs() <= SLOT_JITTER && a.across.abs() <= SLOT_JITTER);
             assert!((0.0..=1.0).contains(&a.growth));
@@ -223,14 +241,17 @@ mod tests {
         assert_ne!(sway(1_000_000, -2_000_000, 0), sway(1_000_000, -2_000_000, 1));
     }
 
+    /// A tree holds two slots and stands in the way; brush holds one and
+    /// does not, so fullness counts only the trees' slots.
     #[test]
-    fn three_of_anything_is_full() {
-        let mut c = Cover::NONE;
-        for k in 0..SLOTS.len() {
-            c = c.with(k, Slot::Brush);
-        }
-        assert_eq!(c.fullness(), 3);
-        assert_eq!(c.bits() >> (2 * SLOTS.len()), 0, "nothing past the last slot");
+    fn fullness_counts_the_solid_slots() {
+        let brush = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Slot::Brush));
+        assert_eq!(brush.fullness(), 0);
+        assert_eq!(brush.bits() >> (2 * SITES.len()), 0, "nothing past the last site");
+        assert_eq!(Cover::NONE.with(1, Slot::Pine).fullness(), 2);
+        assert_eq!(brush.with(0, Slot::Pine).with(2, Slot::Deciduous).fullness(), 4);
+        let trees = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Slot::Pine));
+        assert!(trees.fullness() <= TILE_SLOTS);
     }
 
     /// A canopy counts what its covers hold: none from none, every

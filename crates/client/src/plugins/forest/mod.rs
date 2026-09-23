@@ -15,7 +15,7 @@ use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Slot, SLOTS};
+use common::{Slot, SITES};
 use common_bevy::geometry::slot_center;
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
@@ -423,7 +423,7 @@ pub fn place_trees(
             if cover.is_empty() {
                 continue;
             }
-            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.fullness() as f32 / SLOTS.len() as f32;
+            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.filled().count() as f32 / SITES.len() as f32;
             for (k, slot) in cover.filled() {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
@@ -581,10 +581,10 @@ mod tests {
             let (q, r) = lattice.cell_center(cell);
             let n = ((q - 3 * r).rem_euclid(8)) as usize;
             let mut cover = Cover::NONE;
-            for k in 0..n.min(SLOTS.len()) {
+            for k in 0..n.min(SITES.len()) {
                 cover = cover.with(k, if k % 2 == 0 { Slot::Pine } else { Slot::Brush });
             }
-            expected += cover.fullness() as usize;
+            expected += cover.filled().count();
             map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
         }
         let (oq, or) = lattice.cell_center(region_lat.cell_center((0, 0)));

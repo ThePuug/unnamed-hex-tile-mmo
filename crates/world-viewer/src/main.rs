@@ -58,7 +58,7 @@ enum Layer {
     /// the line where it holds it, width by catchment.
     Channels,
     /// Composite: each tile's cover over whatever is drawn beneath, the
-    /// canopy's green by fullness and the kinds' shares.
+    /// canopy's green by how many sites it fills and the kinds' shares.
     Forest,
     /// Stand index: the density the stands give each position, in four
     /// plain bands over whatever is drawn beneath, open ground showing it.
@@ -990,9 +990,9 @@ fn trees_color(ground: (f64, f64, f64), kinds: impl Iterator<Item = common::Slot
     lerp_rgb(ground, (canopy.0 / n, canopy.1 / n, canopy.2 / n), 0.35 + 0.65 * density)
 }
 
-/// A tile's cover over the colour beneath it, by its fullness.
+/// A tile's cover over the colour beneath it, by how many sites it fills.
 fn cover_color(ground: (f64, f64, f64), cover: common::Cover) -> (f64, f64, f64) {
-    trees_color(ground, cover.filled().map(|(_, s)| s), cover.fullness() as f64 / common::SLOTS.len() as f64)
+    trees_color(ground, cover.filled().map(|(_, s)| s), cover.filled().count() as f64 / common::SITES.len() as f64)
 }
 
 /// A stand's density over the colour beneath it, in four bands by its

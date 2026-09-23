@@ -8,7 +8,7 @@ pub mod numfmt;
 pub mod plate_tags;
 pub mod summary;
 pub mod timers;
-pub use cover::{sway, Canopy, Cover, Slot, Sway, SLOTS, SLOT_JITTER, SLOT_SHARE};
+pub use cover::{sway, Canopy, Cover, Slot, Sway, SITES, SLOT_JITTER, SLOT_SHARE, TILE_SLOTS};
 pub use hex_lattice::HexLattice;
 pub use hex_spatial_grid::HexSpatialGrid;
 pub use plate_tags::{PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};
