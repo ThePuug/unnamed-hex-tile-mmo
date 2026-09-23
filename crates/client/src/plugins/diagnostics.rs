@@ -3,6 +3,7 @@ mod config;
 pub mod dump;
 pub mod grid;
 pub mod metrics_overlay;
+mod milestones;
 pub mod network_ui;
 
 use std::time::Instant;
@@ -40,6 +41,8 @@ impl Plugin for DiagnosticsPlugin {
         app.init_resource::<RenderCensus>();
         app.insert_resource(MetricsDump::from_args());
         app.add_systems(Update, (census::take_census, dump::dump_metrics).chain());
+        app.add_systems(PostStartup, milestones::log_started);
+        app.add_systems(Update, (milestones::log_stage, milestones::log_video));
         app.init_resource::<network_ui::NetworkMetrics>();
         app.init_resource::<grid::PendingGridMesh>();
         app.init_resource::<metrics_overlay::MetricsHistory>();
