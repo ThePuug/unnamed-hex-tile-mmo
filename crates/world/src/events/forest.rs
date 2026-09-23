@@ -48,7 +48,7 @@ use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
 use super::thrusting::{rim_of, sheets_of, smoothstep, EdgeOutline, OutlineIndex, Outlines, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
-use super::{CellScope, TileOutput, TileView, WorldEvent};
+use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent};
 
 const WIND_SEED: u64 = 0x7769_6e64;
 const CLIMATE_SEED: u64 = 0x636c_696d;
@@ -365,14 +365,9 @@ pub fn origin_of(lattice: &HexLattice, id: CellId, seed: u64) -> (f64, f64) {
 }
 
 /// The stand lattice cells whose origins can fall in a cell of `lattice`:
-/// its footprint plus the jitter, as lattice rings.
+/// those touching its footprint and their ring, which holds the jitter.
 fn candidate_origins(lattice: &HexLattice, cell: CellId) -> Vec<CellId> {
-    let stands = stand_lattice();
-    let spacing = (stands.tiles_per_cell() as f64).sqrt();
-    let reach = lattice.radius as f64 + STAND_JITTER * spacing * 2.0;
-    let rings = (reach / spacing).ceil() as u32 + 1;
-    let centre = lattice.cell_center(cell);
-    stands.cells_within_distance(stands.cell_id(centre.0, centre.1), rings)
+    footprint_plus_ring(lattice, cell, &stand_lattice())
 }
 
 /// A stand's density from the moisture at its origin, short of full, or
@@ -732,8 +727,9 @@ mod tests {
     }
 
     /// A stand's origin has one owner: over a cell and its neighbours, no
-    /// lattice point's origin falls in two cells, and every point near the
-    /// centre falls in one.
+    /// lattice point's origin falls in two cells, every point near the
+    /// centre falls in one, and every origin falling in the cell, out to
+    /// its corners, is among its candidates.
     #[test]
     fn every_origin_has_one_owner() {
         let lattice = HexLattice::new(FOREST_CELL_SCALE);
@@ -753,6 +749,16 @@ mod tests {
         let centre = lattice.cell_center(home);
         for id in stands.cells_within_distance(stands.cell_id(centre.0, centre.1), 2) {
             assert!(owners.contains_key(&id), "origin {id:?} near the centre has no owner");
+        }
+        let candidates: std::collections::HashSet<CellId> = candidate_origins(&lattice, home).into_iter().collect();
+        let spacing = (stands.tiles_per_cell() as f64).sqrt();
+        let rings = (2.0 * lattice.radius as f64 / spacing) as u32 + 2;
+        for id in stands.cells_within_distance(stands.cell_id(centre.0, centre.1), rings) {
+            let (ox, oy) = origin_of(&stands, id, S);
+            let (oq, or) = world_to_hex(ox, oy);
+            if lattice.cell_id(oq, or) == home {
+                assert!(candidates.contains(&id), "origin {id:?} falls in the cell but is no candidate");
+            }
         }
     }
 
