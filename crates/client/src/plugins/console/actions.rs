@@ -45,11 +45,19 @@ pub enum DevConsoleAction {
 }
 
 /// System that executes console actions
+/// Everything the console switches, gathered into one parameter: a
+/// system takes at most sixteen, and the actions already read most of
+/// the scene in order to act on it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Switches<'w> {
+    state: ResMut<'w, DiagnosticsState>,
+    dump: ResMut<'w, crate::plugins::diagnostics::MetricsDump>,
+    mask_every: ResMut<'w, crate::resources::MaskEveryStand>,
+}
+
 pub fn execute_console_actions(
     mut commands: Commands,
-    mut diagnostics_state: ResMut<DiagnosticsState>,
-    mut metrics_dump: ResMut<crate::plugins::diagnostics::MetricsDump>,
-    mut mask_every: ResMut<crate::resources::MaskEveryStand>,
+    mut switches: Switches,
     mut reader: MessageReader<DevConsoleAction>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -75,6 +83,9 @@ pub fn execute_console_actions(
     server: Res<crate::resources::Server>,
 ) {
     let game = server.current_time(time.elapsed().as_millis());
+    let diagnostics_state = &mut *switches.state;
+    let metrics_dump = &mut *switches.dump;
+    let mask_every = &mut *switches.mask_every;
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
