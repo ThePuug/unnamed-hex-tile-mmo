@@ -21,7 +21,6 @@ pub enum DevConsoleAction {
     ToggleCameraEnvelope,
     ToggleMsaa,
     ToggleShadowFilter,
-    ToggleStandMasking,
     ToggleTerrainHidden,
     ToggleForestHidden,
     ToggleCameraCloseup,
@@ -51,7 +50,6 @@ pub enum DevConsoleAction {
 pub struct Switches<'w> {
     state: ResMut<'w, DiagnosticsState>,
     dump: ResMut<'w, crate::plugins::diagnostics::MetricsDump>,
-    mask_every: ResMut<'w, crate::resources::MaskEveryStand>,
 }
 
 pub fn execute_console_actions(
@@ -84,7 +82,6 @@ pub fn execute_console_actions(
     let game = server.current_time(time.elapsed().as_millis());
     let diagnostics_state = &mut *switches.state;
     let metrics_dump = &mut *switches.dump;
-    let mask_every = &mut *switches.mask_every;
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
@@ -149,11 +146,6 @@ pub fn execute_console_actions(
                     light.shadow_maps_enabled = shadows != Shadows::Off;
                 }
                 info!("Shadows: {}", shadows.label());
-            }
-            DevConsoleAction::ToggleStandMasking => {
-                diagnostics_state.mask_every_stand = !diagnostics_state.mask_every_stand;
-                mask_every.0 = diagnostics_state.mask_every_stand;
-                info!("Stand masking: {}", if diagnostics_state.mask_every_stand { "EVERY" } else { "only what is reached" });
             }
             DevConsoleAction::ToggleTerrainHidden => {
                 diagnostics_state.terrain_hidden = !diagnostics_state.terrain_hidden;

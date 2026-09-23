@@ -3,7 +3,7 @@
 //! is not drawn. No key moves it. Flyover drives the same camera entity by
 //! hand through `CameraOrbit` and its own update.
 
-use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*, render::extract_resource::ExtractResource};
+use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::systems::closeup::CloseupCamera;
 use qrz::{Convert, Qrz};
 use std::f32::consts::PI;

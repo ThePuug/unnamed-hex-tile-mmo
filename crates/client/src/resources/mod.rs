@@ -72,11 +72,6 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// the cards, sinking from the ring on, have gone wholly under the
 /// ground that wears their colour. Rendered coordinates, as the regions'
 /// transforms are; an unset ring shows the models and hides the cards.
-/// Whether every tree batch is to be masked in the depth prepass,
-/// whatever reaches it. Set from the console, read in the render world.
-#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
-pub struct MaskEveryStand(pub bool);
-
 #[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
 pub struct CardBand {
     pub center: Vec2,

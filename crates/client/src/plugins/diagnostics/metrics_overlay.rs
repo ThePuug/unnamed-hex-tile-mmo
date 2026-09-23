@@ -4,7 +4,7 @@ use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTime
 use bevy::prelude::*;
 use crate::systems::closeup::CloseupCamera;
 use bevy_camera::Viewport;
-use bevy_egui::{egui, EguiContext, EguiContexts};
+use bevy_egui::{egui, EguiContexts};
 
 use super::config::{DiagnosticsState, MetricsTab};
 use super::network_ui::NetworkMetrics;
