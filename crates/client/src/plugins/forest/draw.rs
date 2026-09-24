@@ -371,6 +371,11 @@ pub fn update_stands(
     }
     for (key, (instances, ranges)) in gathered {
         let Some(stand) = stands.stands.get_mut(&key) else { continue };
+        // A stand spawned this pass is not in the world until its commands
+        // apply: it stays stale and takes its buffer on the next pass.
+        if !tree_stands.contains(stand.entity) && !card_stands.contains(stand.entity) {
+            continue;
+        }
         stand.stale = false;
         let buffer = (!instances.is_empty()).then(|| {
             render_device.create_buffer_with_data(&BufferInitDescriptor {
