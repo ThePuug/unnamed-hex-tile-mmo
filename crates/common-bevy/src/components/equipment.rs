@@ -218,14 +218,14 @@ pub const CARRY_LIMIT: u32 = 100;
 /// material, and a piece is a stack of one.
 pub const BAG_STACKS: usize = 27;
 
-/// Everything a player owns, in the order it came by it, worn or not, and
-/// how much of each material it carries. The bag is what it owns and does
-/// not wear: wearing moves an item out of the bag and never reorders this.
-/// Server authority, sent to its owner only.
+/// Everything a player owns, in the order it came by it: its pieces, worn
+/// or not, and a stack of each stackable kind it carries. The bag is what
+/// it owns and does not wear: wearing moves an item out of the bag and
+/// never reorders this. Server authority, sent to its owner only.
 #[derive(Clone, Component, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Inventory {
     pub items: Vec<Item>,
-    pub materials: [u32; common::Material::ALL.len()],
+    pub stock: Vec<common::Stack>,
 }
 
 impl Inventory {
@@ -238,12 +238,19 @@ impl Inventory {
         self.items.contains(&item)
     }
 
-    pub fn material(&self, material: common::Material) -> u32 {
-        self.materials[material.index()]
+    /// How many of `kind` the bag holds.
+    pub fn count(&self, kind: common::Stackable) -> u32 {
+        self.stock.iter().find(|s| s.kind == kind).map_or(0, |s| s.count)
     }
 
-    pub fn add_material(&mut self, material: common::Material, amount: u32) {
-        self.materials[material.index()] += amount;
+    /// Puts `stack` in the bag: onto the stack of its kind, or a new one
+    /// after the rest.
+    pub fn add(&mut self, stack: common::Stack) {
+        match self.stock.iter_mut().find(|s| s.kind == stack.kind) {
+            Some(held) => held.count += stack.count,
+            None if stack.count > 0 => self.stock.push(stack),
+            None => {}
+        }
     }
 
     /// The pieces in the bag: owned and not worn.
@@ -253,14 +260,14 @@ impl Inventory {
 
     /// How many of the bag's [`BAG_STACKS`] its contents take.
     pub fn stacks(&self, worn: &Equipment) -> usize {
-        self.bagged(worn).count() + self.materials.iter().filter(|&&n| n > 0).count()
+        self.bagged(worn).count() + self.stock.len()
     }
 
     /// What everything the player owns weighs, worn and bagged together.
     pub fn weight(&self) -> u32 {
         let pieces: u32 = self.items.iter().map(|i| i.piece.weight()).sum();
-        let materials: u32 = common::Material::ALL.iter().map(|&m| m.weight() * self.material(m)).sum();
-        pieces + materials
+        let stock: u32 = self.stock.iter().map(|s| s.weight()).sum();
+        pieces + stock
     }
 
     /// Whether the player carries past [`BURDEN_LIMIT`].
@@ -268,12 +275,11 @@ impl Inventory {
         self.weight() > BURDEN_LIMIT
     }
 
-    /// Whether `amount` of `material` goes in whole: within
-    /// [`CARRY_LIMIT`], and into a stack the material holds already or a
-    /// free one.
-    pub fn has_room_for(&self, worn: &Equipment, material: common::Material, amount: u32) -> bool {
-        self.weight() + material.weight() * amount <= CARRY_LIMIT
-            && (self.material(material) > 0 || self.stacks(worn) < BAG_STACKS)
+    /// Whether `stack` goes in whole: within [`CARRY_LIMIT`], and onto a
+    /// stack of its kind already held or into a free one.
+    pub fn has_room_for(&self, worn: &Equipment, stack: common::Stack) -> bool {
+        self.weight() + stack.weight() <= CARRY_LIMIT
+            && (self.count(stack.kind) > 0 || self.stacks(worn) < BAG_STACKS)
     }
 }
 
@@ -290,6 +296,10 @@ mod tests {
 
     fn item(piece: Piece, style: u8) -> Item {
         Item { piece, style }
+    }
+
+    fn of(material: common::Material, count: u32) -> common::Stack {
+        common::Stack { kind: common::Stackable::Material(material), count }
     }
 
     #[test]
@@ -332,9 +342,9 @@ mod tests {
         let vest = worn.worn(Slot::Torso).unwrap();
         worn.take_off(vest);
         assert_eq!(bag.bagged(&worn).collect::<Vec<_>>(), vec![vest]);
-        bag.add_material(common::Material::Softwood, 4);
+        bag.add(of(common::Material::Softwood, 4));
         assert_eq!(bag.stacks(&worn), 2);
-        bag.add_material(common::Material::Softwood, 4);
+        bag.add(of(common::Material::Softwood, 4));
         assert_eq!(bag.stacks(&worn), 2, "a material stacks");
         worn.wear(vest);
         assert_eq!(bag.stacks(&worn), 1);
@@ -349,12 +359,12 @@ mod tests {
         assert!(bag.weight() > 0 && !bag.is_burdened());
         let stone = common::Material::Basement;
         while !bag.is_burdened() {
-            assert!(bag.has_room_for(&worn, stone, 1));
-            bag.add_material(stone, 1);
+            assert!(bag.has_room_for(&worn, of(stone, 1)));
+            bag.add(of(stone, 1));
         }
         assert!(bag.weight() > BURDEN_LIMIT);
-        while bag.has_room_for(&worn, stone, 1) {
-            bag.add_material(stone, 1);
+        while bag.has_room_for(&worn, of(stone, 1)) {
+            bag.add(of(stone, 1));
         }
         assert!(bag.weight() <= CARRY_LIMIT && bag.weight() + stone.weight() > CARRY_LIMIT);
     }
@@ -366,10 +376,10 @@ mod tests {
         let mut bag = Inventory::default();
         let pieces: Vec<Item> = Piece::ALL.iter().flat_map(|&piece| (0..piece.styles()).map(move |style| item(piece, style))).collect();
         bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
-        bag.add_material(common::Material::Softwood, 1);
+        bag.add(of(common::Material::Softwood, 1));
         assert_eq!(bag.stacks(&worn), BAG_STACKS);
-        assert!(bag.has_room_for(&worn, common::Material::Softwood, 1));
-        assert!(!bag.has_room_for(&worn, common::Material::Hardwood, 1));
+        assert!(bag.has_room_for(&worn, of(common::Material::Softwood, 1)));
+        assert!(!bag.has_room_for(&worn, of(common::Material::Hardwood, 1)));
     }
 
     #[test]

@@ -58,6 +58,43 @@ impl Material {
     }
 }
 
+/// What stacks, in a bag or a loot window: a kind of thing of which one is
+/// as good as another, so it is counted and never told apart. A piece is
+/// never one; each is its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Stackable {
+    Material(Material),
+}
+
+impl Stackable {
+    pub fn name(self) -> &'static str {
+        match self {
+            Stackable::Material(m) => m.name(),
+        }
+    }
+
+    /// What one of it weighs.
+    pub fn weight(self) -> u32 {
+        match self {
+            Stackable::Material(m) => m.weight(),
+        }
+    }
+}
+
+/// A count of one stackable kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Stack {
+    pub kind: Stackable,
+    pub count: u32,
+}
+
+impl Stack {
+    /// What the whole stack weighs.
+    pub fn weight(self) -> u32 {
+        self.kind.weight() * self.count
+    }
+}
+
 /// How much one felled tree gives.
 pub const TREE_YIELD: u32 = 4;
 
@@ -71,6 +108,13 @@ pub struct Harvest {
     pub cover: Cover,
     pub material: Material,
     pub amount: u32,
+}
+
+impl Harvest {
+    /// What the gather yields, as a stack.
+    pub fn stack(&self) -> Stack {
+        Stack { kind: Stackable::Material(self.material), count: self.amount }
+    }
 }
 
 /// The slot a gather of slot `k` acts on: a tree's first slot for either

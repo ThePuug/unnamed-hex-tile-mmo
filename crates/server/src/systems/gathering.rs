@@ -70,7 +70,7 @@ pub fn try_gather(
         };
         // Until a loot window can leave the rest on the ground, a yield the
         // bag cannot take whole is not taken at all.
-        if !bag.has_room_for(worn, harvest.material, harvest.amount) {
+        if !bag.has_room_for(worn, harvest.stack()) {
             info!("gather: {ent} has no room for {} {:?}", harvest.amount, harvest.material);
             continue;
         }
@@ -85,7 +85,7 @@ pub fn try_gather(
             }
         }
 
-        bag.add_material(harvest.material, harvest.amount);
+        bag.add(harvest.stack());
         writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
     }
 }

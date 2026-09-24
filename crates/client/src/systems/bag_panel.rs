@@ -22,30 +22,27 @@ pub struct BagSummary;
 #[derive(Component)]
 pub struct BagCells;
 
-/// One stack in the bag.
+/// What one of the bag's cells holds.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Stack {
+pub enum Cell {
     Piece(Item),
-    Material(common::Material, u32),
+    Stack(common::Stack),
 }
 
-/// The bag's stacks in the order the tab lays them out: its pieces in the
-/// order the player came by them, then each material it holds.
-fn stacks(bag: &Inventory, worn: &Equipment) -> Vec<Stack> {
-    bag.bagged(worn)
-        .map(Stack::Piece)
-        .chain(common::Material::ALL.iter().filter(|&&m| bag.material(m) > 0).map(|&m| Stack::Material(m, bag.material(m))))
-        .collect()
+/// The bag's cells in the order the tab lays them out: its pieces in the
+/// order the player came by them, then its stacks in the order they came.
+fn cells_of(bag: &Inventory, worn: &Equipment) -> Vec<Cell> {
+    bag.bagged(worn).map(Cell::Piece).chain(bag.stock.iter().copied().map(Cell::Stack)).collect()
 }
 
-/// A material's icon: the build writes it under the material's name.
-fn material_icon(asset_server: &AssetServer, material: common::Material) -> Handle<Image> {
-    let stem = match material {
-        common::Material::Softwood => "softwood",
-        common::Material::Hardwood => "hardwood",
-        common::Material::Sandstone => "sandstone",
-        common::Material::Limestone => "limestone",
-        common::Material::Basement => "basement",
+/// A stackable kind's icon: the build writes a material's under its name.
+fn stack_icon(asset_server: &AssetServer, kind: common::Stackable) -> Handle<Image> {
+    let stem = match kind {
+        common::Stackable::Material(common::Material::Softwood) => "softwood",
+        common::Stackable::Material(common::Material::Hardwood) => "hardwood",
+        common::Stackable::Material(common::Material::Sandstone) => "sandstone",
+        common::Stackable::Material(common::Material::Limestone) => "limestone",
+        common::Stackable::Material(common::Material::Basement) => "basement",
     };
     asset_server.load(format!("icons/{stem}.png"))
 }
@@ -65,7 +62,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
         ))
         .with_children(|tab| {
             tab.spawn((
-                Text::new("Bag     - + tab     0 close"),
+                Text::new("Bag     - + tab     C close"),
                 TextFont { font_size: FontSize::Px(12.0), ..default() },
                 TextColor(Color::srgb(0.6, 0.6, 0.6)),
             ));
@@ -91,7 +88,7 @@ pub fn update(
     player: Query<(&Inventory, &Equipment), With<Actor>>,
     mut summary: Query<&mut Text, With<BagSummary>>,
     cells: Query<Entity, With<BagCells>>,
-    mut shown: Local<Option<Vec<Stack>>>,
+    mut shown: Local<Option<Vec<Cell>>>,
 ) {
     if !state.visible || state.tab != PanelTab::Bag {
         *shown = None;
@@ -108,20 +105,20 @@ pub fn update(
         summary.0 = text;
     }
 
-    let now = stacks(bag, worn);
+    let now = cells_of(bag, worn);
     if shown.as_ref() == Some(&now) {
         return;
     }
     commands.entity(cells).despawn_related::<Children>();
-    let slots: Vec<Option<Stack>> = (0..BAG_STACKS.max(now.len())).map(|k| now.get(k).copied()).collect();
+    let slots: Vec<Option<Cell>> = (0..BAG_STACKS.max(now.len())).map(|k| now.get(k).copied()).collect();
     for row in slots.chunks(BAG_WIDTH) {
         commands
             .spawn((Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.), ..default() }, ChildOf(cells)))
             .with_children(|row_cells| {
                 for &slot in row {
-                    let contents = slot.map(|stack| match stack {
-                        Stack::Piece(item) => (icon(&asset_server, item), None),
-                        Stack::Material(material, n) => (material_icon(&asset_server, material), Some(n)),
+                    let contents = slot.map(|cell| match cell {
+                        Cell::Piece(item) => (icon(&asset_server, item), None),
+                        Cell::Stack(stack) => (stack_icon(&asset_server, stack.kind), Some(stack.count)),
                     });
                     row_cells
                         .spawn((
