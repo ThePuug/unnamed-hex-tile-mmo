@@ -140,6 +140,98 @@ pub fn boulder_sway(q: i32, r: i32, k: usize) -> Sway {
     sway(q, r, SITES.len() + k)
 }
 
+/// How far a tree on a tile with one site grown has grown, as a share of
+/// what its own growth gives it: a stand tapers at its edge, and a sparse
+/// tile is an edge.
+pub const EDGE_GROWTH: f32 = 0.5;
+
+/// A sapling's height in world units, the least a tree stands: a player's.
+pub const SAPLING_HEIGHT: f32 = 2.0;
+
+/// A grown tree's height as a multiple of its model's: the model is built
+/// to fit a tile, and the tree grows past it.
+pub const GROWN: f32 = 2.5;
+
+/// A tree model as modelgen builds it, one to a variation: its height, its
+/// trunk's radius at the foot, and its stump's height, the stump being
+/// that trunk's base. What the client draws a tree at and a walker keeps
+/// clear of; a test holds the table to the models.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TreeForm {
+    pub height: f32,
+    pub trunk: f32,
+    pub stump: f32,
+}
+
+/// The pine's variations, in the order its model holds them.
+pub const PINE_FORMS: [TreeForm; 3] = [
+    TreeForm { height: 5.5754, trunk: 0.17, stump: 0.4544 },
+    TreeForm { height: 5.2143, trunk: 0.17, stump: 0.4315 },
+    TreeForm { height: 5.8816, trunk: 0.17, stump: 0.4971 },
+];
+
+/// The deciduous tree's variations, in the order its model holds them.
+pub const DECIDUOUS_FORMS: [TreeForm; 3] = [
+    TreeForm { height: 3.6588, trunk: 0.28, stump: 0.6477 },
+    TreeForm { height: 3.7533, trunk: 0.28, stump: 0.6297 },
+    TreeForm { height: 3.7191, trunk: 0.28, stump: 0.6876 },
+];
+
+/// The form of the tree, or of the tree a stump was, that `content` names,
+/// as its sway's `variation` picks it: none for anything else.
+pub fn tree_form(content: Content, variation: u32) -> Option<TreeForm> {
+    let forms: &[TreeForm] = match content {
+        Content::Pine | Content::PineStump => &PINE_FORMS,
+        Content::Deciduous | Content::DeciduousStump => &DECIDUOUS_FORMS,
+        _ => return None,
+    };
+    Some(forms[variation as usize % forms.len()])
+}
+
+/// How far the tree at site `k` of tile `(q, r)` has grown, 0 to 1: its
+/// own growth, less at a thin tile's edge. A stump counts as the tree it
+/// was, so felling one leaves its neighbours the size they grew to.
+pub fn tree_growth(cover: Cover, q: i32, r: i32, k: usize) -> f32 {
+    let grown = cover.filled().count() + cover.stumps().count();
+    let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * grown as f32 / SITES.len() as f32;
+    sway(q, r, k).growth as f32 * edge
+}
+
+/// The scale a tree model `model_height` tall stands at, `growth` of the
+/// way grown: from the sapling's height toward [`GROWN`] times its own.
+pub fn tree_scale(model_height: f32, growth: f32) -> f32 {
+    let full = model_height * GROWN;
+    let height = SAPLING_HEIGHT + (full - SAPLING_HEIGHT).max(0.0) * growth.clamp(0.0, 1.0);
+    height / model_height.max(1e-3)
+}
+
+/// The least a boulder stands, as a share of its model: a stone a player
+/// steps over, on ground where the rock has only begun to show.
+pub const BOULDER_SMALL: f32 = 0.4;
+
+/// The most a boulder stands, as a share of its model: a block taller than
+/// a player, where every slot is rock and the tile is a face.
+pub const BOULDER_LARGE: f32 = 3.3;
+
+/// The boulder model's half-width and height at its own scale, which the
+/// client draws it at: what a walker keeps clear of, and steps over where
+/// it stands lower than the walker's waist.
+pub const BOULDER_RADIUS: f32 = 0.6;
+pub const BOULDER_HEIGHT: f32 = 0.55;
+
+/// How far the boulder in slot `k` of tile `(q, r)` has grown, 0 to 1: its
+/// own growth as the rock round it crowds it, small where one shows
+/// through the soil, full where every slot is rock.
+pub fn boulder_growth(cover: Cover, q: i32, r: i32, k: usize) -> f32 {
+    boulder_sway(q, r, k).growth as f32 * cover.boulders().count() as f32 / TILE_SLOTS as f32
+}
+
+/// The scale a boulder `growth` of the way grown stands at, from
+/// [`BOULDER_SMALL`] of its model toward [`BOULDER_LARGE`].
+pub fn boulder_scale(growth: f32) -> f32 {
+    BOULDER_SMALL + (BOULDER_LARGE - BOULDER_SMALL) * growth.clamp(0.0, 1.0)
+}
+
 /// A draw in [0, 1) for slot `k` of tile `(q, r)`: what a far crag's
 /// slots are filled by, against the share of rock its summary read.
 pub fn boulder_draw(q: i32, r: i32, k: usize) -> f64 {

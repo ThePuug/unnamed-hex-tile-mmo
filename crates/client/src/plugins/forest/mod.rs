@@ -100,28 +100,8 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::BasementPile, "models/stone-pile-basement.glb"),
 ];
 
-/// How far a tree on a tile with one slot filled has grown, as a share of
-/// what its own growth gives it: a stand tapers at its edge, and a sparse
-/// tile is an edge.
-pub const EDGE_GROWTH: f32 = 0.5;
-
-/// A sapling's height in world units, the least a tree stands: a player's.
-pub const SAPLING_HEIGHT: f32 = 2.0;
-
-/// A grown tree's height as a multiple of its model's: the model is built
-/// to fit a tile, and the tree grows past it.
-pub const GROWN: f32 = 2.5;
-
 /// The least a bush stands, as a share of its model.
 pub const BRUSH_SMALL: f32 = 0.6;
-
-/// The least a boulder stands, as a share of its model: a stone a player
-/// steps over, on ground where the rock has only begun to show.
-pub const BOULDER_SMALL: f32 = 0.4;
-
-/// The most a boulder stands, as a share of its model: a block taller than
-/// a player, where every slot is rock and the tile is a face.
-pub const BOULDER_LARGE: f32 = 3.3;
 
 /// How far from the camera a region's trees are drawn as models, in
 /// world units, and the further reach they are kept to once drawn, so a
@@ -236,9 +216,10 @@ impl Kit {
     }
 
     /// The scale a tree `growth` of the way grown is drawn at: a tree from
-    /// the sapling's height toward [`GROWN`] times its model's, a bush from
+    /// the sapling's height toward `common::cover::GROWN` times its model's,
+    /// a bush from
     /// [`BRUSH_SMALL`] of its model toward the whole, a boulder from
-    /// [`BOULDER_SMALL`] toward [`BOULDER_LARGE`].
+    /// `common::cover::BOULDER_SMALL` toward `BOULDER_LARGE`.
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
         if kind.is_pile() {
@@ -246,12 +227,10 @@ impl Kit {
         }
         match kind {
             Kind::Brush => return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
-            Kind::Boulder => return BOULDER_SMALL + (BOULDER_LARGE - BOULDER_SMALL) * growth,
+            Kind::Boulder => return common::cover::boulder_scale(growth),
             _ => {}
         }
-        let full = model_height * GROWN;
-        let height = SAPLING_HEIGHT + (full - SAPLING_HEIGHT).max(0.0) * growth;
-        height / model_height.max(1e-3)
+        common::cover::tree_scale(model_height, growth)
     }
 }
 
@@ -512,10 +491,6 @@ pub fn place_trees(
             if cover.is_empty() {
                 continue;
             }
-            // A stump counts as the tree it was, so felling one leaves its
-            // neighbours the size they grew to.
-            let grown = cover.filled().count() + cover.stumps().count();
-            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * grown as f32 / SITES.len() as f32;
             for (k, slot) in cover.filled().chain(cover.stumps()) {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
@@ -523,7 +498,7 @@ pub fn place_trees(
                 out.push(TreeInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
-                    growth: sway.growth as f32 * edge,
+                    growth: common::cover::tree_growth(cover, q, r, k),
                     kind: slot.into(),
                     variation: sway.variation,
                     far: false,
@@ -545,9 +520,6 @@ pub fn place_trees(
                     far: false,
                 });
             }
-            // A boulder grows with the rock round it: small where one shows
-            // through the soil, a block where every slot is rock.
-            let crowding = cover.boulders().count() as f32 / TILE_SLOTS as f32;
             for k in cover.boulders() {
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q, r, k, &sway);
@@ -555,7 +527,7 @@ pub fn place_trees(
                 out.push(TreeInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
-                    growth: sway.growth as f32 * crowding,
+                    growth: common::cover::boulder_growth(cover, q, r, k),
                     kind: Kind::Boulder,
                     variation: sway.variation,
                     far: false,
@@ -861,8 +833,8 @@ mod scale_tests {
     #[test]
     fn growth_runs_from_a_sapling_to_grown() {
         let model = 5.0;
-        assert!((Kit::scale(Kind::Pine, model, 0.0) * model - SAPLING_HEIGHT).abs() < 1e-5);
-        assert!((Kit::scale(Kind::Pine, model, 1.0) * model - model * GROWN).abs() < 1e-5);
+        assert!((Kit::scale(Kind::Pine, model, 0.0) * model - common::cover::SAPLING_HEIGHT).abs() < 1e-5);
+        assert!((Kit::scale(Kind::Pine, model, 1.0) * model - model * common::cover::GROWN).abs() < 1e-5);
         let mut last = 0.0;
         for i in 0..=10 {
             let s = Kit::scale(Kind::Deciduous, 3.0, i as f32 / 10.0);
@@ -874,3 +846,55 @@ mod scale_tests {
     }
 }
 
+/// The shared table of tree forms stays what the models are: a model rebuilt
+/// taller or thicker fails here before collision and drawing part.
+#[cfg(test)]
+mod form_tests {
+    fn positions(model: &str) -> Vec<Vec<([f32; 3], [f32; 3])>> {
+        let path = format!("{}/../../assets/models/{model}.glb", env!("CARGO_MANIFEST_DIR"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let json: serde_json::Value = serde_json::from_slice(&bytes[20..20 + len]).unwrap();
+        let bound = |a: &serde_json::Value, k: &str| -> [f32; 3] {
+            let v: Vec<f32> = a[k].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
+            [v[0], v[1], v[2]]
+        };
+        json["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|mesh| {
+                mesh["primitives"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| {
+                        let a = &json["accessors"][p["attributes"]["POSITION"].as_u64().unwrap() as usize];
+                        (bound(a, "min"), bound(a, "max"))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tree_forms_are_the_models() {
+        for (tree, stump, forms) in [
+            ("pine-tree", "pine-stump", common::cover::PINE_FORMS),
+            ("deciduous-tree", "deciduous-stump", common::cover::DECIDUOUS_FORMS),
+        ] {
+            let trees = positions(tree);
+            let stumps = positions(stump);
+            assert_eq!(trees.len(), forms.len(), "{tree}'s variations");
+            for (k, form) in forms.iter().enumerate() {
+                let height = trees[k].iter().map(|(_, max)| max[1]).fold(0.0, f32::max);
+                let (min, max) = stumps[k][0];
+                let trunk = [min[0].abs(), max[0].abs(), min[2].abs(), max[2].abs()].into_iter().fold(0.0, f32::max);
+                let stump_height = stumps[k].iter().map(|(_, max)| max[1]).fold(0.0, f32::max);
+                assert!((height - form.height).abs() < 1e-3, "{tree} {k}: height {height} against {}", form.height);
+                assert!((trunk - form.trunk).abs() < 1e-3, "{stump} {k}: trunk {trunk} against {}", form.trunk);
+                assert!((stump_height - form.stump).abs() < 1e-3, "{stump} {k}: height {stump_height} against {}", form.stump);
+            }
+        }
+    }
+}
