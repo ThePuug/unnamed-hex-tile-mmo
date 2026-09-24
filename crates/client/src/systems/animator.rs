@@ -349,9 +349,9 @@ pub fn update(
             _ => {}
         }
 
-        // A one-shot holds the actor until it ends.
+        // An ability's one-shot holds the actor until it ends.
         if let Some(node) = main {
-            let one_shot = !clips.is(node, Clip::Idle) && !clips.is_gait(node) && !clips.is(node, Clip::Tee);
+            let one_shot = clips.is(node, Clip::Attack) || clips.is(node, Clip::Counter);
             if one_shot && player.animation(node).is_some_and(|a| !a.is_finished()) {
                 continue;
             }
