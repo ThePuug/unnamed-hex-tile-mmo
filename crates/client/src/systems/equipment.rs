@@ -74,9 +74,9 @@ pub fn do_inventory(
     mut reader: MessageReader<Do>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Inventory { ent, items } } = message else { continue };
+        let Do { event: Event::Inventory { ent, bag } } = message else { continue };
         if let Ok(mut entity) = commands.get_entity(*ent) {
-            entity.insert(Inventory { items: items.clone() });
+            entity.insert(bag.clone());
         }
     }
 }

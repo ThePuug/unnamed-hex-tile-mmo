@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
     systems::{combat::gcd::*, targeting::RangeTier},
 };
 
@@ -94,7 +94,13 @@ pub enum Event {
     /// Client → Server (Try): wear an item from the bag, or take it off
     Wear { ent: Entity, item: Item, on: bool },
     /// Server → Client: the bag, sent to its owner only
-    Inventory { ent: Entity, items: Vec<Item> },
+    Inventory { ent: Entity, bag: Inventory },
+    /// Client → Server (Try): gather what stands in `slot` of tile `(q, r)`
+    Gather { ent: Entity, q: i32, r: i32, slot: u8 },
+    /// Server → Client: tile `(q, r)` now holds `cover`, sent to `ent`, a
+    /// player holding the tile's chunk. The whole cover, so applying it
+    /// twice or after the chunk's own copy leaves the same tile.
+    CoverChanged { ent: Entity, q: i32, r: i32, cover: common::Cover },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,

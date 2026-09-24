@@ -17,6 +17,7 @@ use common_bevy::{
 };
 use crate::resources::event_registry::EventRegistry;
 use crate::plugins::metrics::SystemTimings;
+use crate::systems::gathering::WorldChanges;
 
 
 
@@ -228,15 +229,16 @@ fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
 }
 
 /// Merge a chunk's tiles into the server Map for physics, collision and AI,
-/// leaving ground already there alone, and build the tiles as sent.
-fn merge_and_pack(chunk: &TerrainChunk, map: &Map) -> tinyvec::ArrayVec<[(i32, EntityType, Option<i32>); 272]> {
+/// leaving ground already there alone, and build the tiles as sent: each
+/// as generated with what players changed laid over it.
+fn merge_and_pack(chunk: &TerrainChunk, map: &Map, changes: &WorldChanges) -> tinyvec::ArrayVec<[(i32, EntityType, Option<i32>); 272]> {
     for &(qrz, typ, water) in &chunk.tiles {
         if map.get(qrz).is_none() {
-            map.insert(qrz, typ);
+            map.insert(qrz, changes.laid_over(qrz, typ));
             map.set_water(qrz.q, qrz.r, water);
         }
     }
-    chunk.tiles.iter().map(|&(qrz, typ, water)| (qrz.z, typ, water)).collect()
+    chunk.tiles.iter().map(|&(qrz, typ, water)| (qrz.z, changes.laid_over(qrz, typ), water)).collect()
 }
 
 /// Dispatch chunk generation: cache hits → immediate Do, cache misses →
@@ -250,6 +252,7 @@ pub fn try_discover_chunk(
     map: ResMut<Map>,
     mut task_queue: ResMut<ChunkTaskQueue>,
     locs: Query<&Loc>,
+    changes: Res<WorldChanges>,
 ) {
     for message in reader.read() {
         // Passthrough: EvictChunks Try → Do (server-authoritative eviction)
@@ -263,7 +266,7 @@ pub fn try_discover_chunk(
 
             // Cache hit → immediate send
             if world_cache.chunks.contains_key(&chunk_id) {
-                send_cached_chunk(&[ent], chunk_id, &mut world_cache, &*map, &mut writer);
+                send_cached_chunk(&[ent], chunk_id, &mut world_cache, &*map, &changes, &mut writer);
                 continue;
             }
 
@@ -293,7 +296,7 @@ pub fn try_discover_chunk(
             // Generated for another request while queued: send now.
             if world_cache.chunks.contains_key(&chunk_id) {
                 let waiting = task_queue.release(chunk_id);
-                send_cached_chunk(&waiting, chunk_id, &mut world_cache, &*map, &mut writer);
+                send_cached_chunk(&waiting, chunk_id, &mut world_cache, &*map, &changes, &mut writer);
                 continue;
             }
 
@@ -319,11 +322,12 @@ fn send_cached_chunk(
     chunk_id: ChunkId,
     world_cache: &mut WorldDiscoveryCache,
     map: &Map,
+    changes: &WorldChanges,
     writer: &mut MessageWriter<Do>,
 ) {
     world_cache.access_order.get_or_insert(chunk_id, || ());
     let chunk = Arc::clone(world_cache.chunks.get(&chunk_id).unwrap());
-    let wire_tiles = merge_and_pack(&chunk, map);
+    let wire_tiles = merge_and_pack(&chunk, map, changes);
     for &ent in ents {
         writer.write(Do {
             event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles.clone() }
@@ -339,6 +343,7 @@ pub fn poll_chunk_tasks(
     mut task_queue: ResMut<ChunkTaskQueue>,
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
     timings: Res<SystemTimings>,
+    changes: Res<WorldChanges>,
 ) {
     let mut _t = None;
     let mut pending = Vec::new();
@@ -359,7 +364,7 @@ pub fn poll_chunk_tasks(
             world_cache.chunks.insert(chunk_id, Arc::clone(&chunk));
             world_cache.access_order.get_or_insert(chunk_id, || ());
 
-            let wire_tiles = merge_and_pack(&chunk, &map);
+            let wire_tiles = merge_and_pack(&chunk, &map, &changes);
             for ent in task_queue.release(chunk_id) {
                 writer.write(Do {
                     event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles.clone() }

@@ -142,6 +142,13 @@ refills from `Time<Real>` and is capped. The server never times a player
 input itself and never applies one that was not accepted. Refilling from the
 virtual clock would let one long server frame clamp every honest client.
 
+**INV-008 — Player changes are laid over every tile built.** A tile is its
+generated cover with what players changed laid over it. Every path that
+builds a tile for the map or the wire takes it through `laid_over`:
+`server::systems::gathering::WorldChanges` in `actor::merge_and_pack`,
+`client::systems::gathering::CoverChanges` in `world::do_spawn`. A path
+that skips it serves the tree a player felled.
+
 ## Patterns
 
 **Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is server

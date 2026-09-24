@@ -181,7 +181,7 @@ pub fn do_presence(
 
                 // The bag goes to its owner only, after Init so the client has its entity
                 let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Inventory { ent, items: bag.items }},
+                    Do { event: Event::Inventory { ent, bag }},
                     bincode::config::legacy()).unwrap();
                 conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
 
@@ -243,6 +243,10 @@ pub fn write_try(
                 }
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                }
+                Try { event: Event::Gather { ent: _, q, r, slot } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Gather { ent, q, r, slot }});
                 }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
@@ -445,7 +449,7 @@ pub fn write_try(
                     conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Event::Inventory { ent, .. } => {
+            Event::Inventory { ent, .. } | Event::CoverChanged { ent, .. } => {
                 let ent = *ent;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let serialized = bincode::serde::encode_to_vec(

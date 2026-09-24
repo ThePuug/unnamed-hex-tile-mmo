@@ -57,6 +57,7 @@ impl Plugin for UiPlugin {
                 character_panel::update_tabs,
                 equipment_panel::handle_numpad,
                 equipment_panel::rebuild_bag,
+                equipment_panel::update_materials,
                 equipment_panel::update_bag,
                 equipment_panel::update_slots,
                 closeup::show,

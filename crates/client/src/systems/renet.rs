@@ -48,6 +48,8 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::EvictChunks { .. } => "EvictChunks",
         Event::SummaryBatch { .. } => "SummaryBatch",
         Event::Inventory { .. } => "Inventory",
+        Event::Gather { .. } => "Gather",
+        Event::CoverChanged { .. } => "CoverChanged",
         _ => "Other",
     }
 }
@@ -164,12 +166,15 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::Incremental { ent, component } });
             }
-            Do { event: Event::Inventory { ent, items } } => {
+            Do { event: Event::Inventory { ent, bag } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     warn!("Client: Inventory for {:?} before its entity", ent);
                     continue
                 };
-                do_writer.write(Do { event: Event::Inventory { ent, items } });
+                do_writer.write(Do { event: Event::Inventory { ent, bag } });
+            }
+            Do { event: Event::CoverChanged { ent: _, q, r, cover } } => {
+                do_writer.write(Do { event: Event::CoverChanged { ent: Entity::PLACEHOLDER, q, r, cover } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
@@ -268,9 +273,6 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
             }
             Do { event: Event::SummaryBatch { ent: _, additions, removals: _ } } => {
-                if !additions.is_empty() {
-                    debug!("[summary-client] batch: +{}", additions.len());
-                }
                 // Group additions by mesh region
                 let region_lat = common_bevy::summary::mesh_region_lattice();
                 let mut by_region: std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, std::collections::HashMap<(i32,i32), common_bevy::summary::SummaryCell>> = std::collections::HashMap::new();
@@ -370,6 +372,12 @@ pub fn send_try(
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     tier: *tier
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Event::Gather { ent, q, r, slot } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gather {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    q: *q, r: *r, slot: *slot,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Wear { ent, item, on } => {

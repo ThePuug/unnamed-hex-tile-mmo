@@ -283,6 +283,7 @@ pub fn evict_data(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut l2r: ResMut<crate::resources::EntityMap>,
     map: Res<common_bevy::resources::map::Map>,
+    mut changes: ResMut<crate::systems::gathering::CoverChanges>,
     actor_query: Query<(Entity, &Loc, &EntityType)>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
@@ -318,6 +319,8 @@ pub fn evict_data(
     for &chunk_id in &all_evicted {
         map.remove_chunk(chunk_id);
     }
+    // A chunk sent again arrives with the server's changes already in it.
+    changes.0.retain(|&(q, r), _| !all_evicted.contains(&loc_to_chunk(qrz::Qrz { q, r, z: 0 })));
     loaded_chunks.evict(&all_evicted);
 }
 
@@ -347,12 +350,13 @@ pub fn do_init(
 pub fn do_spawn(
     mut reader: MessageReader<Do>,
     map: Res<common_bevy::resources::map::Map>,
+    changes: Res<crate::systems::gathering::CoverChanges>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = client_timers.0.scope("do_spawn");
     for message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
-        map.insert(*qrz, EntityType::Decorator(*decorator));
+        map.insert(*qrz, changes.laid_over(*qrz, EntityType::Decorator(*decorator)));
     }
 }
 
@@ -718,6 +722,7 @@ pub fn dispatch_summary_tasks(
             state.task = Some(task);
             state.epoch = epoch;
             state.tiles_loaded = tiles_loaded;
+            state.stale = false;
         } else {
             summary_meshes.states.insert(
                 region_key,
@@ -739,6 +744,7 @@ pub fn dispatch_summary_tasks(
                     cards_spawned: false,
                     waiting: false,
                     tiles_loaded,
+                    stale: false,
                     epoch,
                 },
             );
@@ -1536,6 +1542,7 @@ mod tests {
                         cards_spawned: false,
                         waiting: false,
                         tiles_loaded: true,
+                        stale: false,
                         epoch: 0,
                     });
                 }
@@ -1584,6 +1591,7 @@ mod tests {
             cards_spawned: false,
             waiting: true,
             tiles_loaded: true,
+            stale: false,
             epoch: 3,
         };
         assert!(!state.wants_build(3, true), "nothing new to build from");
@@ -1603,6 +1611,10 @@ mod tests {
         assert!(state.wants_build(9, true), "the tiles are all there");
         state.tiles_loaded = true;
         assert!(!state.wants_build(10, true), "and it is final again");
+
+        // A tile under it changed: built once more, whatever the epoch.
+        state.stale = true;
+        assert!(state.wants_build(10, true), "a changed tile rebuilds its region");
     }
 
     /// Coverage invariant for the LoD band system: every ground point inside

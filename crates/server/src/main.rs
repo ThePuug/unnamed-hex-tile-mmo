@@ -109,6 +109,7 @@ fn main() {
         input::try_set_tier_lock, // Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
         crate::systems::equipment::try_wear,
+        crate::systems::gathering::try_gather,
         common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
@@ -135,6 +136,7 @@ fn main() {
     )));
 
     app.init_resource::<Lobby>();
+    app.init_resource::<crate::systems::gathering::WorldChanges>();
     app.init_resource::<InputQueues>();
     app.init_resource::<input::InputGuards>();
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);

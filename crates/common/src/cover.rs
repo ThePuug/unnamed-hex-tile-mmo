@@ -19,6 +19,9 @@ pub enum Content {
     /// The second slot of the tree in the site's first.
     Spanned = 4,
     Boulder = 5,
+    /// What a felled tree leaves in its first slot.
+    PineStump = 6,
+    DeciduousStump = 7,
 }
 
 impl Content {
@@ -27,15 +30,15 @@ impl Content {
     pub fn slots(self) -> u8 {
         match self {
             Content::Empty | Content::Spanned => 0,
-            Content::Brush | Content::Boulder => 1,
+            Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
 
     /// Whether the slot stands in a walker's way: a tree's two do, a
-    /// boulder's does, brush's does not.
+    /// boulder's and a stump's do, brush's does not.
     pub fn is_solid(self) -> bool {
-        matches!(self, Content::Pine | Content::Deciduous | Content::Spanned | Content::Boulder)
+        !matches!(self, Content::Empty | Content::Brush)
     }
 
     /// Whether it grows at a site: brush or a tree.
@@ -50,6 +53,8 @@ impl Content {
             3 => Content::Deciduous,
             4 => Content::Spanned,
             5 => Content::Boulder,
+            6 => Content::PineStump,
+            7 => Content::DeciduousStump,
             _ => Content::Empty,
         }
     }
@@ -169,7 +174,7 @@ impl Cover {
     }
 
     /// This cover with slot `k` holding `content`, and nothing else moved.
-    fn with_content(self, k: usize, content: Content) -> Cover {
+    pub(crate) fn with_content(self, k: usize, content: Content) -> Cover {
         debug_assert!(k < TILE_SLOTS as usize);
         let at = k as u32 * CONTENT_BITS;
         Cover((self.0 & !(CONTENT_MASK << at)) | (content as u32) << at)

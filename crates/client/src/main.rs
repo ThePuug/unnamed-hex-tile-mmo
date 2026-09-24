@@ -34,7 +34,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, hiding, input, movement, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::flyover;
@@ -201,6 +201,11 @@ fn main() {
         renet::periodic_ping,
         world::update,
     ));
+
+    app.add_systems(Update, (
+        gathering::request,
+        gathering::mark,
+    ).run_if(in_state(crate::plugins::shell::Stage::Playing)));
 
     app.add_systems(PostUpdate, (
         renet::send_try,

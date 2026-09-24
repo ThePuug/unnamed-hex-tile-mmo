@@ -1,5 +1,6 @@
 pub mod camera;
 pub mod cover;
+pub mod gathering;
 pub mod glyphs;
 pub mod hex_lattice;
 pub mod hex_spatial_grid;
@@ -10,6 +11,7 @@ pub mod rock;
 pub mod summary;
 pub mod timers;
 pub use cover::{boulder_draw, boulder_sway, sway, Canopy, Content, Cover, Outcrop, Sway, SITES, SITE_SLOTS, SLOT_JITTER, SLOT_SHARE, SLOT_TOWARD, TILE_SLOTS};
+pub use gathering::Material;
 pub use hex_lattice::HexLattice;
 pub use hex_spatial_grid::HexSpatialGrid;
 pub use plate_tags::{PlateTag, TagSet, Tagged, MAX_PLATE_TAGS};

@@ -177,11 +177,13 @@ impl Equipment {
     }
 }
 
-/// Everything a player owns, worn or not, in the order it arrived. Server
-/// authority, sent to its owner only.
+/// Everything a player owns, worn or not, in the order it arrived, and
+/// how much of each material it has gathered. Server authority, sent to
+/// its owner only.
 #[derive(Clone, Component, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Inventory {
     pub items: Vec<Item>,
+    pub materials: [u32; common::Material::ALL.len()],
 }
 
 impl Inventory {
@@ -191,11 +193,19 @@ impl Inventory {
             .iter()
             .flat_map(|&piece| (0..piece.styles()).map(move |style| Item { piece, style }))
             .collect();
-        Self { items }
+        Self { items, ..default() }
     }
 
     pub fn contains(&self, item: Item) -> bool {
         self.items.contains(&item)
+    }
+
+    pub fn material(&self, material: common::Material) -> u32 {
+        self.materials[material.index()]
+    }
+
+    pub fn add_material(&mut self, material: common::Material, amount: u32) {
+        self.materials[material.index()] += amount;
     }
 }
 

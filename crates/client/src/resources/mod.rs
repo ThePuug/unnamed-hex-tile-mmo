@@ -466,6 +466,9 @@ pub struct SummaryMeshState {
     /// covers its trees come from have not arrived; such a region is
     /// built once more when they all have.
     pub tiles_loaded: bool,
+    /// Whether a tile under the region changed since its last build, so
+    /// its trees stand as they were: built once more.
+    pub stale: bool,
     /// `SummaryMeshes::epoch` when the last build was dispatched. Data that
     /// lands while a build is in flight, or on a run whose task budget was
     /// spent before this region's turn, is data the region has not built
@@ -485,7 +488,7 @@ impl SummaryMeshState {
         if self.entity.is_none() {
             return !(self.waiting && self.epoch == epoch);
         }
-        tiles_loaded && !self.tiles_loaded
+        self.stale || tiles_loaded && !self.tiles_loaded
     }
 }
 
