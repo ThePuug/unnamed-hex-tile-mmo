@@ -8,7 +8,7 @@ use common_bevy::{
     chunk::loc_to_chunk,
     components::{
         entity_type::{decorator::Decorator, EntityType},
-        equipment::Inventory,
+        equipment::{Equipment, Inventory},
         heading::Heading,
         Loc,
     },
@@ -44,13 +44,13 @@ pub fn try_gather(
     mut writer: MessageWriter<Do>,
     mut changes: ResMut<WorldChanges>,
     map: Res<Map>,
-    mut players: Query<(&Loc, &Heading, &mut Inventory)>,
+    mut players: Query<(&Loc, &Heading, &Equipment, &mut Inventory)>,
     holders: Query<(Entity, &VisibleChunkCache)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
-        let Ok((loc, heading, mut bag)) = players.get_mut(ent) else {
+        let Ok((loc, heading, worn, mut bag)) = players.get_mut(ent) else {
             warn!("gather: {ent} is not a player");
             continue;
         };
@@ -68,6 +68,12 @@ pub fn try_gather(
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
             continue;
         };
+        // Until a loot window can leave the rest on the ground, a yield the
+        // bag cannot take whole is not taken at all.
+        if !bag.has_room_for(worn, harvest.material, harvest.amount) {
+            info!("gather: {ent} has no room for {} {:?}", harvest.amount, harvest.material);
+            continue;
+        }
         info!("gather: {ent} took {} {:?} from slot {slot} of ({q}, {r})", harvest.amount, harvest.material);
 
         map.insert(qrz, EntityType::Decorator(Decorator { cover: harvest.cover, ..decorator }));

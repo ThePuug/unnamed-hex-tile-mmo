@@ -118,8 +118,8 @@ pub fn do_presence(
                 // Initialize reaction queue with capacity based on Focus attribute
                 let queue_capacity = attrs.window_size();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
-                let equipment = Equipment::default();
-                let bag = Inventory::every_piece();
+                let equipment = Equipment::starting_outfit();
+                let bag = Inventory::wearing(&equipment);
 
                 let ent = commands.spawn((
                     typ,

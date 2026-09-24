@@ -19,7 +19,7 @@ use common_bevy::{
     chunk::{calculate_visible_chunks, loc_to_chunk, FIXED_STREAM_RADIUS},
     components::{
         entity_type::{actor::*, EntityType},
-        equipment::{Equipment, Item, Piece},
+        equipment::Equipment,
         Actor, Loc,
     },
     message::{Event, Try},
@@ -155,25 +155,6 @@ pub fn leave(writer: &mut MessageWriter<Try>, next: &mut NextState<Stage>, enter
     next.set(Stage::CharacterSelect);
 }
 
-/// The outfit the character screen shows until characters are stored:
-/// the strapped leather, buckled down the vest, and the sword-breaker.
-pub fn preview_outfit() -> Equipment {
-    const STRAPPED: u8 = 2;
-    let mut outfit = Equipment::default();
-    for piece in [
-        Piece::LeatherHood,
-        Piece::LeatherVest,
-        Piece::LeatherGloves,
-        Piece::LeatherGirdle,
-        Piece::LeatherPants,
-        Piece::LeatherBoots,
-    ] {
-        outfit.wear(Item { piece, style: STRAPPED });
-    }
-    outfit.wear(Item { piece: Piece::SwordBreaker, style: 0 });
-    outfit
-}
-
 /// The body the character screen shows, the one the server gives a player.
 pub fn preview_body() -> EntityType {
     EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player))
@@ -181,7 +162,7 @@ pub fn preview_body() -> EntityType {
 
 fn dress_preview(mut figure: Query<&mut Equipment, With<Figure>>) {
     if let Ok(mut worn) = figure.single_mut() {
-        worn.set_if_neq(preview_outfit());
+        worn.set_if_neq(Equipment::starting_outfit());
     }
 }
 

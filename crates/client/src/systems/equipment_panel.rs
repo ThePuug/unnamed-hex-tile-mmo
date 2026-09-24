@@ -35,7 +35,7 @@ pub struct SlotIcon {
 }
 
 /// The icon asset an item is shown by: the piece alone, in the item's style.
-fn icon(asset_server: &AssetServer, item: Item) -> Handle<Image> {
+pub(crate) fn icon(asset_server: &AssetServer, item: Item) -> Handle<Image> {
     asset_server.load(format!("icons/{}-{}.png", item.piece.name(), item.style))
 }
 
@@ -51,13 +51,13 @@ pub struct BagCell(pub usize);
 #[derive(Component)]
 pub struct BagCellKey;
 
-const CELL: f32 = 64.0;
+pub(crate) const CELL: f32 = 64.0;
 /// A slot square: six of them stand as tall as the closeup.
 const SLOT: f32 = 56.0;
 const WORN: Color = Color::srgb(0.85, 0.65, 0.13);
-const UNWORN: Color = Color::srgb(0.35, 0.35, 0.35);
+pub(crate) const UNWORN: Color = Color::srgb(0.35, 0.35, 0.35);
 const CURSOR_ROW: Color = Color::srgba(0.25, 0.25, 0.25, 0.9);
-const OTHER_ROW: Color = Color::srgba(0.15, 0.15, 0.15, 0.8);
+pub(crate) const OTHER_ROW: Color = Color::srgba(0.15, 0.15, 0.15, 0.8);
 
 /// Spawns the tab's content under `content`, hidden until the tab is chosen.
 pub fn spawn_tab(commands: &mut Commands, content: Entity) {
@@ -145,7 +145,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
             })
             .with_children(|bag| {
                 bag.spawn((
-                    Text::new("Bag     1-9 wear or take off     . next row     - + tab     0 close"),
+                    Text::new("Wearables     1-9 wear or take off     . next row     - + tab     0 close"),
                     TextFont { font_size: FontSize::Px(12.0), ..default() },
                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 ));

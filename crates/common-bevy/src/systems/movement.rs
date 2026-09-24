@@ -14,6 +14,7 @@ use qrz::{Convert, Qrz};
 use crate::{
     components::{
         entity_type::{decorator::*, EntityType},
+        equipment::Burdened,
         heading::Heading,
         position::Position,
         Loc,
@@ -41,6 +42,32 @@ pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 
 /// Base movement speed in world units per millisecond
 pub const MOVEMENT_SPEED: f32 = 0.0075;
+
+/// The share of its speed an overburdened entity keeps: a walk.
+pub const BURDENED_PACE: f32 = 1.0 / 3.0;
+
+/// The speed an entity moves at: its own, or a third of it overburdened.
+/// Every caller of the physics takes its speed through here, so the
+/// server, the owner's prediction and every remote simulation agree.
+pub fn speed(own: f32, burdened: bool) -> f32 {
+    if burdened { own * BURDENED_PACE } else { own }
+}
+
+/// Keeps [`Burdened`] on every entity whose bag weighs past the limit: on
+/// the server for every player, on the client for its own, whose bag it
+/// holds. A remote entity's comes with its intent.
+pub fn update_burden(
+    mut commands: Commands,
+    bags: Query<(Entity, &crate::components::equipment::Inventory, Has<Burdened>), Changed<crate::components::equipment::Inventory>>,
+) {
+    for (ent, bag, burdened) in &bags {
+        match (bag.is_burdened(), burdened) {
+            (true, false) => { commands.entity(ent).insert(Burdened); }
+            (false, true) => { commands.entity(ent).remove::<Burdened>(); }
+            _ => {}
+        }
+    }
+}
 
 /// Milliseconds of input time between steps of a held turn key, and the
 /// least time between any two steps: a tap after a rest turns at once, and a
@@ -406,6 +433,20 @@ mod tests {
             airtime: None,
             movement_speed: MOVEMENT_SPEED,
         }
+    }
+
+    /// A burden slows a walk and never stops it or turns it.
+    #[test]
+    fn a_burden_slows_a_walk() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let free = calculate_movement(walking(Heading::NORTH, true), 200, &map, &nntree);
+        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, true), ..walking(Heading::NORTH, true) };
+        let slow = calculate_movement(slow, 200, &map, &nntree);
+        let (free, slow) = (free.position.offset.xz(), slow.position.offset.xz());
+        assert!(slow.length() > 0.0 && slow.length() < free.length());
+        assert!(slow.normalize().dot(free.normalize()) > 0.999);
     }
 
     /// `input` carried on by `out`: position, heading and clock.

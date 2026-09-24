@@ -13,4 +13,5 @@ pub struct MovementIntentState {
     pub sent_back: bool,
     pub sent_tile: Qrz,
     pub sent_airborne: bool,
+    pub sent_burdened: bool,
 }

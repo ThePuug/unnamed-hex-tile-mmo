@@ -94,6 +94,18 @@ impl Piece {
             Piece::PlateSabatons => "Plate Sabatons",
         }
     }
+
+    /// What the piece weighs, worn or carried.
+    pub fn weight(self) -> u32 {
+        match self {
+            Piece::LeatherHood | Piece::LeatherGloves | Piece::LeatherGirdle => 1,
+            Piece::LeatherPants | Piece::LeatherBoots => 2,
+            Piece::LeatherVest | Piece::SwordBreaker | Piece::PlateGauntlets => 3,
+            Piece::PlateHelm | Piece::PlateSabatons => 4,
+            Piece::PlateLeggings => 6,
+            Piece::PlateCuirass => 10,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -175,11 +187,42 @@ impl Equipment {
     pub fn items(&self) -> impl Iterator<Item = Item> + '_ {
         self.worn.iter().flatten().copied()
     }
+
+    /// What a player starts wearing, and what the character screen shows:
+    /// the strapped leather, buckled down the vest, and the sword-breaker.
+    pub fn starting_outfit() -> Self {
+        const STRAPPED: u8 = 2;
+        let mut outfit = Equipment::default();
+        for piece in [
+            Piece::LeatherHood,
+            Piece::LeatherVest,
+            Piece::LeatherGloves,
+            Piece::LeatherGirdle,
+            Piece::LeatherPants,
+            Piece::LeatherBoots,
+        ] {
+            outfit.wear(Item { piece, style: STRAPPED });
+        }
+        outfit.wear(Item { piece: Piece::SwordBreaker, style: 0 });
+        outfit
+    }
 }
 
-/// Everything a player owns, worn or not, in the order it arrived, and
-/// how much of each material it has gathered. Server authority, sent to
-/// its owner only.
+/// Past this weight a player is overburdened and slows to a third of its
+/// speed.
+pub const BURDEN_LIMIT: u32 = 60;
+
+/// Past this weight a player picks up nothing more.
+pub const CARRY_LIMIT: u32 = 100;
+
+/// How many stacks the bag holds: a material stacks, one stack to a
+/// material, and a piece is a stack of one.
+pub const BAG_STACKS: usize = 27;
+
+/// Everything a player owns, in the order it came by it, worn or not, and
+/// how much of each material it carries. The bag is what it owns and does
+/// not wear: wearing moves an item out of the bag and never reorders this.
+/// Server authority, sent to its owner only.
 #[derive(Clone, Component, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Inventory {
     pub items: Vec<Item>,
@@ -187,13 +230,9 @@ pub struct Inventory {
 }
 
 impl Inventory {
-    /// Every piece in every style, slot by slot: the bag a player starts with.
-    pub fn every_piece() -> Self {
-        let items = Piece::ALL
-            .iter()
-            .flat_map(|&piece| (0..piece.styles()).map(move |style| Item { piece, style }))
-            .collect();
-        Self { items, ..default() }
+    /// What a player starts owning: the outfit it wears, and an empty bag.
+    pub fn wearing(outfit: &Equipment) -> Self {
+        Self { items: outfit.items().collect(), ..default() }
     }
 
     pub fn contains(&self, item: Item) -> bool {
@@ -207,7 +246,43 @@ impl Inventory {
     pub fn add_material(&mut self, material: common::Material, amount: u32) {
         self.materials[material.index()] += amount;
     }
+
+    /// The pieces in the bag: owned and not worn.
+    pub fn bagged<'a>(&'a self, worn: &'a Equipment) -> impl Iterator<Item = Item> + 'a {
+        self.items.iter().copied().filter(|&item| !worn.is_worn(item))
+    }
+
+    /// How many of the bag's [`BAG_STACKS`] its contents take.
+    pub fn stacks(&self, worn: &Equipment) -> usize {
+        self.bagged(worn).count() + self.materials.iter().filter(|&&n| n > 0).count()
+    }
+
+    /// What everything the player owns weighs, worn and bagged together.
+    pub fn weight(&self) -> u32 {
+        let pieces: u32 = self.items.iter().map(|i| i.piece.weight()).sum();
+        let materials: u32 = common::Material::ALL.iter().map(|&m| m.weight() * self.material(m)).sum();
+        pieces + materials
+    }
+
+    /// Whether the player carries past [`BURDEN_LIMIT`].
+    pub fn is_burdened(&self) -> bool {
+        self.weight() > BURDEN_LIMIT
+    }
+
+    /// Whether `amount` of `material` goes in whole: within
+    /// [`CARRY_LIMIT`], and into a stack the material holds already or a
+    /// free one.
+    pub fn has_room_for(&self, worn: &Equipment, material: common::Material, amount: u32) -> bool {
+        self.weight() + material.weight() * amount <= CARRY_LIMIT
+            && (self.material(material) > 0 || self.stacks(worn) < BAG_STACKS)
+    }
 }
+
+/// Marks an actor carrying past [`BURDEN_LIMIT`]: it moves at a third of
+/// its speed. The server sets it from the bag and sends it with the intent;
+/// the owning client sets it from the bag it holds.
+#[derive(Clone, Component, Copy, Debug, Default)]
+pub struct Burdened;
 
 #[cfg(test)]
 mod tests {
@@ -246,20 +321,55 @@ mod tests {
         assert_ne!(Piece::LeatherPants.slot(), Piece::LeatherBoots.slot());
     }
 
+    /// A player starts wearing its outfit with nothing in the bag; what it
+    /// takes off goes into the bag, and what it wears leaves it.
     #[test]
-    fn every_piece_fills_the_bag_slot_by_slot() {
-        let bag = Inventory::every_piece();
-        assert_eq!(bag.items.len(), Piece::ALL.iter().map(|p| p.styles() as usize).sum::<usize>());
-        let slots: Vec<Slot> = bag.items.iter().map(|i| i.piece.slot()).collect();
-        let mut sorted = slots.clone();
-        sorted.sort_by_key(|s| s.index());
-        assert_eq!(slots, sorted);
-        for piece in Piece::ALL {
-            for style in 0..piece.styles() {
-                assert!(bag.contains(item(piece, style)));
-            }
-            assert!(!bag.contains(item(piece, piece.styles())));
+    fn the_bag_is_what_is_owned_and_not_worn() {
+        let mut worn = Equipment::starting_outfit();
+        let mut bag = Inventory::wearing(&worn);
+        assert_eq!(bag.items.len(), worn.items().count());
+        assert_eq!(bag.stacks(&worn), 0);
+        let vest = worn.worn(Slot::Torso).unwrap();
+        worn.take_off(vest);
+        assert_eq!(bag.bagged(&worn).collect::<Vec<_>>(), vec![vest]);
+        bag.add_material(common::Material::Softwood, 4);
+        assert_eq!(bag.stacks(&worn), 2);
+        bag.add_material(common::Material::Softwood, 4);
+        assert_eq!(bag.stacks(&worn), 2, "a material stacks");
+        worn.wear(vest);
+        assert_eq!(bag.stacks(&worn), 1);
+    }
+
+    /// Weight counts what is worn and what is bagged; past the first limit
+    /// a player is burdened, and nothing goes in past the second.
+    #[test]
+    fn weight_burdens_and_then_bars() {
+        let worn = Equipment::starting_outfit();
+        let mut bag = Inventory::wearing(&worn);
+        assert!(bag.weight() > 0 && !bag.is_burdened());
+        let stone = common::Material::Basement;
+        while !bag.is_burdened() {
+            assert!(bag.has_room_for(&worn, stone, 1));
+            bag.add_material(stone, 1);
         }
+        assert!(bag.weight() > BURDEN_LIMIT);
+        while bag.has_room_for(&worn, stone, 1) {
+            bag.add_material(stone, 1);
+        }
+        assert!(bag.weight() <= CARRY_LIMIT && bag.weight() + stone.weight() > CARRY_LIMIT);
+    }
+
+    /// A new material needs a free stack; one already carried does not.
+    #[test]
+    fn a_full_bag_takes_only_what_it_stacks() {
+        let worn = Equipment::default();
+        let mut bag = Inventory::default();
+        let pieces: Vec<Item> = Piece::ALL.iter().flat_map(|&piece| (0..piece.styles()).map(move |style| item(piece, style))).collect();
+        bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
+        bag.add_material(common::Material::Softwood, 1);
+        assert_eq!(bag.stacks(&worn), BAG_STACKS);
+        assert!(bag.has_room_for(&worn, common::Material::Softwood, 1));
+        assert!(!bag.has_room_for(&worn, common::Material::Hardwood, 1));
     }
 
     #[test]

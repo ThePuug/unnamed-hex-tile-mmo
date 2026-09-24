@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use common_bevy::{
     components::{
         entity_type::EntityType,
-        equipment::{Equipment, Inventory, Item},
+        equipment::{Equipment, Item},
     },
     message::{Event, *},
 };

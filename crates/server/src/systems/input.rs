@@ -7,13 +7,13 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use common_bevy::{
     components::{
-        heading::Heading, keybits::*, movement_intent_state::MovementIntentState,
+        equipment::Burdened, heading::Heading, keybits::*, movement_intent_state::MovementIntentState,
         position::Position, resources::RespawnTimer, tier_lock::TierLock, *,
     },
     message::{Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
+    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
 };
 use crate::{network::ServerNet, systems::stagger::Knockback, *};
 
@@ -194,7 +194,7 @@ pub fn apply(
     mut reader: MessageReader<Do>,
     mut commands: Commands,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>)>,
+    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Has<Burdened>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
@@ -202,7 +202,7 @@ pub fn apply(
         let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
-        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead)) = query.get_mut(ent) else { continue };
+        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, burdened)) = query.get_mut(ent) else { continue };
         let Some(front) = buffer.queue.front_mut() else {
             panic!("Queue invariant violation: entity {ent} has empty queue");
         };
@@ -226,7 +226,7 @@ pub fn apply(
         if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() {
             airtime.state = Some(JUMP_DURATION_MS);
         }
-        let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened);
         let out = calculate_movement(MovementInput {
             position: *position,
             heading: turn.heading,
@@ -256,10 +256,10 @@ pub fn apply(
 pub fn broadcast_movement_intent(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &Position, &Heading, &AirTime, Option<&mut MovementIntentState>), Without<Knockback>>,
+    mut query: Query<(Entity, &Loc, &Position, &Heading, &AirTime, Has<Burdened>, Option<&mut MovementIntentState>), Without<Knockback>>,
     map: Res<Map>,
 ) {
-    for (ent, loc, position, heading, airtime, state) in &mut query {
+    for (ent, loc, position, heading, airtime, burdened, state) in &mut query {
         let Some(mut state) = state else {
             commands.entity(ent).insert(MovementIntentState {
                 last_tick: *position,
@@ -284,6 +284,7 @@ pub fn broadcast_movement_intent(
             || back != state.sent_back
             || *heading != state.sent_heading
             || airborne != state.sent_airborne
+            || burdened != state.sent_burdened
             || (moving && **loc != state.sent_tile);
         if !changed {
             continue;
@@ -292,6 +293,7 @@ pub fn broadcast_movement_intent(
         state.sent_back = back;
         state.sent_heading = *heading;
         state.sent_airborne = airborne;
+        state.sent_burdened = burdened;
         state.sent_tile = **loc;
 
         writer.write(Do { event: Event::MovementIntent {
@@ -301,6 +303,7 @@ pub fn broadcast_movement_intent(
             moving,
             back,
             airtime: airtime.state,
+            burdened,
         }});
     }
 }

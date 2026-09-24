@@ -102,7 +102,7 @@ pub fn setup(
     ));
 
     let typ: EntityType = crate::plugins::shell::preview_body();
-    let equipment: Equipment = crate::plugins::shell::preview_outfit();
+    let equipment = Equipment::starting_outfit();
     commands
         .spawn((
             Figure,

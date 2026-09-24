@@ -205,6 +205,7 @@ fn main() {
     app.add_systems(Update, (
         gathering::request,
         gathering::mark,
+        common_bevy::systems::movement::update_burden,
     ).run_if(in_state(crate::plugins::shell::Stage::Playing)));
 
     app.add_systems(PostUpdate, (

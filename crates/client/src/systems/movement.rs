@@ -13,6 +13,7 @@ use crate::resources::RenderOrigin;
 use common_bevy::{
     components::{
         displacing::Displacing,
+        equipment::Burdened,
         heading::Heading,
         keybits::*,
         position::{Position, VisualPosition},
@@ -21,7 +22,7 @@ use common_bevy::{
     message::{Component, Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
+    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
@@ -47,7 +48,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -56,8 +57,8 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs)) = query.get_mut(ent) else { continue; };
-        let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened)) = query.get_mut(ent) else { continue; };
+        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened);
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
@@ -91,7 +92,7 @@ pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>), Without<Displacing>>,
+    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -99,13 +100,13 @@ pub fn simulate_remote(
     let delta_us = time.delta().as_micros() as u32;
     let tick = fixed_time.timestep().as_secs_f32();
 
-    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs) in &mut query {
+    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened) in &mut query {
         if buffers.get(&ent).is_some() { continue; }
         motion.residual_us += delta_us;
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
         if dt > 0 {
-            let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened);
             let out = calculate_movement(MovementInput {
                 position: *position,
                 heading: *heading,
@@ -142,14 +143,19 @@ pub fn advance_interpolation(
 pub fn apply_intent(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, Option<&mut RemoteMotion>)>,
+    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, Option<&mut RemoteMotion>, Has<Burdened>)>,
     buffers: Res<InputQueues>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } } = message else { continue };
+        let Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } } = message else { continue };
         let ent = *ent;
         if buffers.get(&ent).is_some() { continue; }
-        let Ok((mut position0, mut heading0, mut airtime0, motion)) = query.get_mut(ent) else { continue; };
+        let Ok((mut position0, mut heading0, mut airtime0, motion, was_burdened)) = query.get_mut(ent) else { continue; };
+        match (*burdened, was_burdened) {
+            (true, false) => { commands.entity(ent).insert(Burdened); }
+            (false, true) => { commands.entity(ent).remove::<Burdened>(); }
+            _ => {}
+        }
         *position0 = *position;
         if *heading0 != *heading { *heading0 = *heading; }
         airtime0.state = *airtime;

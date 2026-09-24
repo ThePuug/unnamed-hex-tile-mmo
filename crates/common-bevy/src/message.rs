@@ -71,7 +71,7 @@ pub enum Event {
     SetTierLock { ent: Entity, tier: RangeTier },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
-    MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16> },
+    MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16>, burdened: bool },
     /// Server → Client: the entity slides to a standing-height tile under an
     /// ability (lunge, knockback), arriving after `duration_ms`.
     Displace { ent: Entity, destination: Qrz, duration_ms: u16 },

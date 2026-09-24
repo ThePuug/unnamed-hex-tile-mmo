@@ -35,6 +35,17 @@ impl Material {
         self as usize
     }
 
+    /// What one of it weighs in the bag: wood lighter than stone, and the
+    /// hard of each heavier.
+    pub fn weight(self) -> u32 {
+        match self {
+            Material::Softwood => 3,
+            Material::Hardwood => 4,
+            Material::Sandstone | Material::Limestone => 5,
+            Material::Basement => 6,
+        }
+    }
+
     /// The stone a boulder of `rock` gives, or None for shale, which breaks
     /// to clay.
     pub fn stone(rock: Rock) -> Option<Material> {

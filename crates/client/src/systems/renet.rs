@@ -307,10 +307,10 @@ pub fn write_do(
         }
 
         match message {
-            Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } } => {
+            Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } } => {
                 // An intent for an entity not yet spawned is dropped: the next one repairs it.
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime } });
+                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } });
             }
             Do { event: Event::Displace { ent, destination, duration_ms } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
