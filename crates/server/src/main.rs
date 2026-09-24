@@ -141,7 +141,6 @@ fn main() {
     )));
 
     app.init_resource::<Lobby>();
-    app.init_resource::<crate::systems::gathering::WorldChanges>();
     app.init_resource::<crate::systems::gathering::Piles>();
     app.init_resource::<InputQueues>();
     app.init_resource::<input::InputGuards>();
@@ -149,6 +148,22 @@ fn main() {
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::spatial_difficulty::HAVEN_LOCATION;
+    // `CLEARING=<radius>[@<q>,<r>]` fells and mines every tile that far round
+    // the tile named, or the haven, before anything is served: a fixture for
+    // seeing changes from afar.
+    let changes = match std::env::var("CLEARING") {
+        Ok(spec) => {
+            let (radius, at) = spec.split_once('@').unwrap_or((&spec, ""));
+            let radius: i32 = radius.parse().expect("CLEARING starts with a radius in tiles");
+            let at = at.split_once(',').map_or((haven.q, haven.r), |(q, r)| {
+                (q.parse().expect("CLEARING's q is a whole number"), r.parse().expect("CLEARING's r is a whole number"))
+            });
+            info!("clearing {radius} tiles round ({}, {})", at.0, at.1);
+            crate::systems::gathering::WorldChanges::clearing(|q, r| registry.cover_at(q, r), at, radius)
+        }
+        Err(_) => default(),
+    };
+    app.insert_resource(changes);
     let spawn_z = registry.elevation_at(haven.q, haven.r) + 1;
     app.insert_resource(common_bevy::components::resources::SpawnPoint(
         qrz::Qrz { q: haven.q, r: haven.r, z: spawn_z }));

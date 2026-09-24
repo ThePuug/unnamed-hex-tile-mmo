@@ -58,6 +58,25 @@ impl WorldChanges {
         std::mem::take(&mut self.fresh)
     }
 
+    /// Every tree felled and every boulder mined within `radius` tiles of
+    /// `(q, r)`, by the rule a gather follows, with nothing left lying: a
+    /// clearing laid down before the world is served, so what the far
+    /// ground makes of a change can be seen without making it by hand.
+    pub fn clearing(cover_at: impl Fn(i32, i32) -> common::Cover, (q, r): (i32, i32), radius: i32) -> Self {
+        let mut tiles = HashMap::new();
+        for dq in -radius..=radius {
+            for dr in (-radius).max(-dq - radius)..=radius.min(-dq + radius) {
+                let generated = cover_at(q + dq, r + dr);
+                let cleared = (0..common::TILE_SLOTS as usize)
+                    .fold(generated, |cover, k| common::gathering::harvest(cover, k).map_or(cover, |h| h.cover));
+                if cleared != generated {
+                    tiles.insert((q + dq, r + dr), cleared);
+                }
+            }
+        }
+        Self { tiles: Arc::new(tiles), fresh: Vec::new() }
+    }
+
     fn set(&mut self, q: i32, r: i32, cover: common::Cover) {
         Arc::make_mut(&mut self.tiles).insert((q, r), cover);
         self.fresh.push((q, r));
@@ -440,5 +459,18 @@ mod tests {
         assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
         assert_eq!(changes.take_fresh(), vec![(1, 1), (dq, dr)]);
         assert!(changes.take_fresh().is_empty());
+    }
+
+    /// A clearing takes every tree and boulder within its radius, leaves
+    /// a stump for each tree and no pile, and touches nothing past it.
+    #[test]
+    fn a_clearing_takes_what_stands_within_its_radius() {
+        let wood = |_: i32, _: i32| Cover::NONE.with(0, Content::Pine).with_boulder(4).with_rock(common::Rock::Limestone);
+        let changes = WorldChanges::clearing(wood, (10, -4), 2);
+        assert_eq!(changes.tiles.len(), 19, "a radius of 2 is 19 tiles");
+        let cleared = changes.tiles[&(12, -6)];
+        assert_eq!(cleared.content(common::SITE_SLOTS[0][0]), Content::PineStump);
+        assert!((0..common::TILE_SLOTS as usize).all(|k| !cleared.content(k).is_pile() && common::gathering::harvest(cleared, k).is_none()));
+        assert!(!changes.tiles.contains_key(&(13, -4)), "three tiles out is untouched");
     }
 }
