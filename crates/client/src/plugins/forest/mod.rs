@@ -21,22 +21,38 @@ use common_bevy::geometry::{boulder_center, flat_top_tile_center, slot_center};
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
-/// What stands on the ground and is drawn: what grows at a site, or a
-/// boulder in a slot.
+/// What stands on the ground and is drawn: what grows at a site or the
+/// stump a felled tree left there, or a boulder in a slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     Pine,
     Deciduous,
     Brush,
     Boulder,
+    PineStump,
+    DeciduousStump,
 }
 
 impl From<Content> for Kind {
-    fn from(growth: Content) -> Kind {
-        match growth {
+    fn from(content: Content) -> Kind {
+        match content {
             Content::Pine => Kind::Pine,
             Content::Deciduous => Kind::Deciduous,
+            Content::PineStump => Kind::PineStump,
+            Content::DeciduousStump => Kind::DeciduousStump,
             _ => Kind::Brush,
+        }
+    }
+}
+
+impl Kind {
+    /// The tree a stump is the base of: it is built at that tree's scale,
+    /// so it is drawn at the scale that tree was.
+    fn felled(self) -> Option<Kind> {
+        match self {
+            Kind::PineStump => Some(Kind::Pine),
+            Kind::DeciduousStump => Some(Kind::Deciduous),
+            _ => None,
         }
     }
 }
@@ -50,6 +66,8 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Brush, "models/scrub-broom.glb"),
     (Kind::Brush, "models/scrub-sprawl.glb"),
     (Kind::Boulder, "models/boulder.glb"),
+    (Kind::PineStump, "models/pine-stump.glb"),
+    (Kind::DeciduousStump, "models/deciduous-stump.glb"),
 ];
 
 /// How far a tree on a tile with one slot filled has grown, as a share of
@@ -119,6 +137,8 @@ pub struct Kit {
     deciduous: Vec<Variation>,
     brush: Vec<Variation>,
     boulder: Vec<Variation>,
+    pine_stump: Vec<Variation>,
+    deciduous_stump: Vec<Variation>,
     quad: Handle<Mesh>,
 }
 
@@ -182,7 +202,19 @@ impl Kit {
             Kind::Deciduous => &self.deciduous,
             Kind::Brush => &self.brush,
             Kind::Boulder => &self.boulder,
+            Kind::PineStump => &self.pine_stump,
+            Kind::DeciduousStump => &self.deciduous_stump,
         }
+    }
+
+    /// The scale variation `k` of `kind` stands at, `growth` of the way
+    /// grown: a stump at the scale its tree's same variation stood.
+    fn drawn_scale(&self, kind: Kind, k: usize, growth: f32) -> f32 {
+        let (as_kind, variations) = match kind.felled() {
+            Some(tree) if !self.of(tree).is_empty() => (tree, self.of(tree)),
+            _ => (kind, self.of(kind)),
+        };
+        Kit::scale(as_kind, variations[k % variations.len()].height, growth)
     }
 
     /// The scale a tree `growth` of the way grown is drawn at: a tree from
@@ -355,15 +387,18 @@ fn load_kit(
                 Kind::Deciduous => kit.deciduous.push(variation),
                 Kind::Brush => kit.brush.push(variation),
                 Kind::Boulder => kit.boulder.push(variation),
+                Kind::PineStump => kit.pine_stump.push(variation),
+                Kind::DeciduousStump => kit.deciduous_stump.push(variation),
             }
         }
     }
     info!(
-        "tree kit: {} pine, {} deciduous, {} brush, {} boulder variations",
+        "tree kit: {} pine, {} deciduous, {} brush, {} boulder, {} stump variations",
         kit.pine.len(),
         kit.deciduous.len(),
         kit.brush.len(),
-        kit.boulder.len()
+        kit.boulder.len(),
+        kit.pine_stump.len() + kit.deciduous_stump.len()
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
@@ -462,8 +497,11 @@ pub fn place_trees(
             if cover.is_empty() {
                 continue;
             }
-            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * cover.filled().count() as f32 / SITES.len() as f32;
-            for (k, slot) in cover.filled() {
+            // A stump counts as the tree it was, so felling one leaves its
+            // neighbours the size they grew to.
+            let grown = cover.filled().count() + cover.stumps().count();
+            let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * grown as f32 / SITES.len() as f32;
+            for (k, slot) in cover.filled().chain(cover.stumps()) {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
@@ -562,7 +600,7 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         }
         let k = t.variation as usize % all.len();
         let v = &all[k];
-        let scale = Kit::scale(t.kind, v.height, t.growth);
+        let scale = kit.kit.drawn_scale(t.kind, k, t.growth);
         reach = reach.max(v.height * scale);
         parts.entry((t.kind, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
     }
@@ -592,9 +630,10 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
         if all.is_empty() {
             continue;
         }
-        let v = &all[t.variation as usize % all.len()];
+        let k = t.variation as usize % all.len();
+        let v = &all[k];
         let Some(cards) = &v.cards else { continue };
-        let scale = Kit::scale(t.kind, v.height, t.growth) * if t.far { FAR_BLOCK } else { 1.0 };
+        let scale = kit.kit.drawn_scale(t.kind, k, t.growth) * if t.far { FAR_BLOCK } else { 1.0 };
         reach = reach.max(cards.side.height.max(cards.side.width) * scale);
         parts
             .entry(cards.texture.id())
@@ -712,6 +751,27 @@ mod tests {
             let own = (world.x - cx).hypot(world.z - cz);
             assert!(own < 0.87, "a tree {own} from its tile's centre, past the edge");
         }
+    }
+
+    /// A felled tree stands as its stump where it stood, turned as it was
+    /// and as grown, and the tree beside it keeps its size.
+    #[test]
+    fn a_felled_tree_stands_as_its_stump() {
+        let place = |cover: Cover| {
+            let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+            map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
+            let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
+            place_trees(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+        };
+        let wood = Cover::NONE.with(0, Content::Pine).with(1, Content::Deciduous);
+        let felled = common::gathering::harvest(wood, common::SITE_SLOTS[0][0]).unwrap().cover;
+        let (before, after) = (place(wood), place(felled));
+        let find = |trees: &[TreeInstance], kind: Kind| *trees.iter().find(|t| t.kind == kind).unwrap();
+        let (tree, stump) = (find(&before, Kind::Pine), find(&after, Kind::PineStump));
+        assert_eq!((stump.translation, stump.yaw, stump.growth, stump.variation), (tree.translation, tree.yaw, tree.growth, tree.variation));
+        let (standing, still) = (find(&before, Kind::Deciduous), find(&after, Kind::Deciduous));
+        assert_eq!(standing.growth, still.growth);
+        assert!(after.iter().all(|t| t.kind != Kind::Pine));
     }
 }
 

@@ -255,6 +255,13 @@ impl Cover {
         self.0 == 0
     }
 
+    /// The sites a felled tree left its stump at, each with the stump.
+    pub fn stumps(self) -> impl Iterator<Item = (usize, Content)> {
+        (0..SITES.len())
+            .map(move |k| (k, self.content(SITE_SLOTS[k][0])))
+            .filter(|(_, c)| matches!(c, Content::PineStump | Content::DeciduousStump))
+    }
+
     /// The sites something grows at, each with what grows there.
     pub fn filled(self) -> impl Iterator<Item = (usize, Content)> {
         (0..SITES.len()).map(move |k| (k, self.growth(k))).filter(|(_, g)| *g != Content::Empty)
