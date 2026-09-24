@@ -236,6 +236,7 @@ pub fn apply(
             since_step_ms: turn.since_step_ms,
             airtime: airtime.state,
             movement_speed,
+            collides: true,
         }, dt as i16, &map, &nntree);
         position.offset = out.position.offset;
         airtime.state = out.airtime;

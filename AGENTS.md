@@ -151,19 +151,24 @@ that skips it serves the tree a player felled.
 
 ## Patterns
 
-**Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is server
-authority; `VisualPosition` is rendering interpolation only.
+**Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is
+server authority; `VisualPosition` is rendering interpolation only.
 `WORLD_POS = map.convert(Position.tile) + Position.offset`; the offset may
 leave the tile, and `Position::rebase` moves it onto the tile it `reached`
 — on the server in `actor::update`, on the client in `movement::do_loc`.
 Movement is `Heading` (24 bearings) × speed × dt in
-`movement::calculate_movement()`, the canonical physics; `physics::apply()` is
-a thin wrapper for NPCs. Turning is physics too: a held turn key steps the
-heading once per `TURN_REPEAT_MS` of input time inside the same loop, with
-`Turn` carrying the clock, so the wire carries keys and never a heading. The
-result must not depend on how dt is partitioned — no per-call smoothing, no
-per-step constant unscaled by dt — because the client replays in different
-slices what the server applied.
+`movement::calculate_movement()`, the canonical physics;
+`physics::apply()` is a thin wrapper for NPCs. Turning is physics too: a
+held turn key steps the heading once per `TURN_REPEAT_MS` of input time
+inside the same loop, with `Turn` carrying the clock, so the wire carries
+keys and never a heading. The result must not depend on how dt is
+partitioned — no per-call smoothing, no per-step constant unscaled by dt —
+because the client replays in different slices what the server applied.
+Inside a tile it may enter, a player's pill goes round the footprint of
+each solid object above its waist, each as wide as it is drawn from the
+shared forms (`movement::footprints`, `common::cover::TreeForm`), and
+anything else walks through: the slide on the circle is solved in closed
+form (`movement::round`), never stepped, so it holds to the same rule.
 
 **Render origin.** The client draws about `client::resources::RenderOrigin`,
 a tile near the player at `z = 0`. A rendered position is

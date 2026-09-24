@@ -74,6 +74,7 @@ pub fn predict_local_player(
                 since_step_ms,
                 airtime: air,
                 movement_speed,
+                collides: true,
             }, *dt as i16, &map, &nntree);
             (offset, air, facing, since_step_ms) = (out.position.offset, out.airtime, out.heading, out.since_step_ms);
         }
@@ -92,7 +93,7 @@ pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>), Without<Displacing>>,
+    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&common_bevy::components::entity_type::EntityType>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -100,8 +101,14 @@ pub fn simulate_remote(
     let delta_us = time.delta().as_micros() as u32;
     let tick = fixed_time.timestep().as_secs_f32();
 
-    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened) in &mut query {
+    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened, typ) in &mut query {
         if buffers.get(&ent).is_some() { continue; }
+        // Only a player's pill goes round what stands in a tile.
+        let player = matches!(
+            typ,
+            Some(common_bevy::components::entity_type::EntityType::Actor(a))
+                if a.identity == common_bevy::components::entity_type::actor::ActorIdentity::Player
+        );
         motion.residual_us += delta_us;
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
@@ -116,6 +123,7 @@ pub fn simulate_remote(
                 since_step_ms: TURN_REPEAT_MS,
                 airtime: airtime.state,
                 movement_speed,
+                collides: player,
             }, dt as i16, &map, &nntree);
             position.offset = out.position.offset;
             airtime.state = out.airtime;

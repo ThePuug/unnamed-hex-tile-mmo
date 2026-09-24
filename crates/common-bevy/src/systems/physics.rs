@@ -25,7 +25,7 @@ pub fn apply(
 ) -> (Vec3, Option<i16>) {
     let input = movement::MovementInput {
         position, heading, moving, back: false, turn: 0,
-        since_step_ms: movement::TURN_REPEAT_MS, airtime, movement_speed,
+        since_step_ms: movement::TURN_REPEAT_MS, airtime, movement_speed, collides: false,
     };
     let output = movement::calculate_movement(input, dt, map, nntree);
     (output.position.offset, output.airtime)

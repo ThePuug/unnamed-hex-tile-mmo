@@ -182,6 +182,10 @@ pub struct MovementInput {
     pub airtime: Option<i16>,
     /// World units per millisecond
     pub movement_speed: f32,
+    /// Whether the walker is a player's pill, which goes round the
+    /// footprints of what stands in a tile; anything else walks through
+    /// them, and only a tile's own rules stop it.
+    pub collides: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -257,9 +261,11 @@ fn walk(
     mut floor: Option<Qrz>,
     y: f32,
     airtime: Option<i16>,
+    collides: bool,
     map: &Map,
     nntree: &NNTree,
 ) -> Vec2 {
+    let footprints = |here: Qrz| if collides { footprints(tile, here, map) } else { Vec::new() };
     let mut pos = from;
     let mut left = reach;
     let mut dir = heading;
@@ -267,11 +273,49 @@ fn walk(
     // while sliding, so a slide spends `left` faster than it covers ground.
     let mut rate = 1.0;
     let mut pace_here = pace(map.cover_at(here.q, here.r).fullness());
+    let mut about = footprints(here);
     for _ in 0..FACES_PER_WALK {
         let (to_face, next) = map.exit(pos, dir, here - tile);
         let next = next + tile;
         let speed = rate * pace_here;
         let run = left * speed;
+
+        // The first footprint the run meets before the face: the walker goes
+        // round it on its circle while the heading presses into it.
+        let met = about
+            .iter()
+            .filter_map(|&(centre, radius)| contact(pos, dir, centre, radius).map(|s| (s, centre, radius)))
+            .filter(|&(s, ..)| s <= run.min(to_face))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((s, centre, radius)) = met {
+            pos += dir * s;
+            left -= s / speed;
+            // Met while sliding along a refused face, it stands in the corner.
+            if rate < 1.0 {
+                break;
+            }
+            let (to, spent, clear) = round(pos, centre, radius, heading, pace_here, left);
+            let rel = map.convert(Vec3::new(to.x, 0.0, to.y));
+            let at = Qrz { q: tile.q + rel.q, r: tile.r + rel.r, z: here.z };
+            if (at.q, at.r) != (here.q, here.r) {
+                // Round into a tile it may not enter, it stands at the contact.
+                if is_tile_blocked(tile, floor, at, y, airtime, map, nntree) {
+                    break;
+                }
+                here = at;
+                floor = map.get_by_qr(at.q, at.r).map(|(floor, _)| floor);
+                pace_here = pace(map.cover_at(at.q, at.r).fullness());
+                about = footprints(here);
+            }
+            pos = to;
+            left -= spent;
+            if !clear {
+                break;
+            }
+            dir = heading;
+            continue;
+        }
+
         if run <= to_face {
             pos += dir * run;
             break;
@@ -293,11 +337,117 @@ fn walk(
             here = next;
             floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
             pace_here = pace(map.cover_at(next.q, next.r).fullness());
+            about = footprints(here);
             dir = heading;
             rate = 1.0;
         }
     }
     pos - from
+}
+
+/// How far a walker keeps from what it walks round: the half-width of the
+/// pill a player's body is, standing.
+pub const WALKER_RADIUS: f32 = 0.3;
+
+/// How high a walker's waist stands, in world units: what stands lower is
+/// stepped over and has no footprint.
+pub const WAIST: f32 = 0.72;
+
+/// The footprints a walker goes round in `about` and the six tiles around
+/// it: each solid object that rises above the waist, its centre from the
+/// centre of `tile` and the radius the walker keeps from it. Each is as
+/// wide as it is drawn: a tree's trunk by its form and growth, a stump the
+/// same where it stands taller than the waist, a boulder by its size where
+/// it does.
+fn footprints(tile: Qrz, about: Qrz, map: &Map) -> Vec<(Vec2, f32)> {
+    let mut out = Vec::new();
+    for offset in std::iter::once(Qrz::default()).chain(qrz::DIRECTIONS) {
+        let (q, r) = (about.q + offset.q, about.r + offset.r);
+        let cover = map.cover_at(q, r);
+        if cover.is_empty() {
+            continue;
+        }
+        for k in 0..common::TILE_SLOTS as usize {
+            let content = cover.content(k);
+            let radius = match content {
+                common::Content::Pine | common::Content::Deciduous | common::Content::PineStump | common::Content::DeciduousStump => {
+                    let Some(site) = common::SITE_SLOTS.iter().position(|s| s[0] == k) else { continue };
+                    let Some(form) = common::cover::tree_form(content, common::sway(q, r, site).variation) else { continue };
+                    let scale = common::cover::tree_scale(form.height, common::cover::tree_growth(cover, q, r, site));
+                    let stump = matches!(content, common::Content::PineStump | common::Content::DeciduousStump);
+                    if stump && form.stump * scale <= WAIST {
+                        continue;
+                    }
+                    form.trunk * scale
+                }
+                common::Content::Boulder => {
+                    let scale = common::cover::boulder_scale(common::cover::boulder_growth(cover, q, r, k));
+                    if common::cover::BOULDER_HEIGHT * scale <= WAIST {
+                        continue;
+                    }
+                    common::cover::BOULDER_RADIUS * scale
+                }
+                _ => continue,
+            };
+            let (x, z) = crate::geometry::slot_point(cover, (q, r), k, (tile.q, tile.r));
+            out.push((Vec2::new(x, z), radius + WALKER_RADIUS));
+        }
+    }
+    out
+}
+
+/// How far along the unit `dir` a walker at `pos` meets the circle of
+/// `radius` about `centre`: none where it moves off or along it, none where
+/// the line misses it, and at once where it already stands on or in it
+/// moving inward.
+fn contact(pos: Vec2, dir: Vec2, centre: Vec2, radius: f32) -> Option<f32> {
+    let m = pos - centre;
+    let b = m.dot(dir);
+    if b >= -1e-6 {
+        return None;
+    }
+    let c = m.length_squared() - radius * radius;
+    if c <= 0.0 {
+        return Some(0.0);
+    }
+    let disc = b * b - c;
+    if disc < 0.0 {
+        return None;
+    }
+    Some((-b - disc.sqrt()).max(0.0))
+}
+
+/// A walker at `pos` on the circle of `radius` about `centre`, pressed into
+/// it along the unit `heading`, goes round it with the heading's part along
+/// the circle, at `pace`, for `left` of its reach. Returns where it ends,
+/// the reach it spent, and whether it came clear: where the heading turns
+/// along the circle it leaves it, and head-on it stands.
+///
+/// Solved, not stepped: with β the heading's bearing less the walker's
+/// about the centre, dβ = −pace·sin β / radius per reach, whose solution
+/// tan(β/2) = tan(β₀/2)·e^(−pace·reach/radius) splits into any two walks
+/// as it does into one, so the result is the same however the time is
+/// sliced. The walker comes clear where |β| falls to a right angle.
+fn round(pos: Vec2, centre: Vec2, radius: f32, heading: Vec2, pace: f32, left: f32) -> (Vec2, f32, bool) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let alpha = heading.y.atan2(heading.x);
+    let m = pos - centre;
+    let at = |theta: f32| centre + Vec2::new(theta.cos(), theta.sin()) * radius;
+    let beta0 = (alpha - m.y.atan2(m.x) + PI).rem_euclid(2.0 * PI) - PI;
+    if beta0.abs() <= FRAC_PI_2 {
+        return (pos, 0.0, true);
+    }
+    let half = (beta0 / 2.0).tan();
+    if half.abs() > 1e6 {
+        return (pos, left, false);
+    }
+    let rate = pace / radius;
+    let to_clear = half.abs().ln() / rate;
+    if left < to_clear {
+        let beta = 2.0 * (half * (-rate * left).exp()).atan();
+        return (at(alpha - beta), left, false);
+    }
+    (at(alpha - FRAC_PI_2 * beta0.signum()), to_clear, true)
 }
 
 /// Advance `input` by `dt0` milliseconds in sub-steps of at most
@@ -378,7 +528,7 @@ pub fn calculate_movement(
         if input.moving {
             let moved = walk(
                 tile, offset.xz(), dir, input.movement_speed * dt as f32,
-                here, floor, offset.y, airtime, map, nntree,
+                here, floor, offset.y, airtime, input.collides, map, nntree,
             );
             offset.x += moved.x;
             offset.z += moved.y;
@@ -434,6 +584,7 @@ mod tests {
             since_step_ms: TURN_REPEAT_MS,
             airtime: None,
             movement_speed: MOVEMENT_SPEED,
+            collides: true,
         }
     }
 
@@ -449,6 +600,93 @@ mod tests {
         let (free, slow) = (free.position.offset.xz(), slow.position.offset.xz());
         assert!(slow.length() > 0.0 && slow.length() < free.length());
         assert!(slow.normalize().dot(free.normalize()) > 0.999);
+    }
+
+    /// Flat open ground with `cover` on the tile north of the walker's, and
+    /// the point in slot `k` of it from the walker's tile.
+    fn wood(cover: common::Cover, k: usize) -> (Map, NNTree, Vec2) {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let north = Qrz { q: 0, r: -1, z: 0 };
+        map.insert(north, EntityType::Decorator(Decorator { cover, is_solid: false }));
+        let (x, z) = crate::geometry::slot_point(cover, (north.q, north.r), k, (0, 0));
+        (map, create_test_nntree(), Vec2::new(x, z))
+    }
+
+    /// A walker heading north from `at`, from the walker's tile's centre.
+    fn walking_from(at: Vec2) -> MovementInput {
+        let mut input = walking(Heading::NORTH, true);
+        input.position.offset = Vec3::new(at.x, input.position.offset.y, at.y);
+        input
+    }
+
+    /// How far a walker keeps from the trunk in site 0 of the tile north.
+    fn trunk_keep(cover: common::Cover) -> f32 {
+        let north = (0, -1);
+        let form = common::cover::tree_form(cover.content(common::SITE_SLOTS[0][0]), common::sway(north.0, north.1, 0).variation).unwrap();
+        form.trunk * common::cover::tree_scale(form.height, common::cover::tree_growth(cover, north.0, north.1, 0)) + WALKER_RADIUS
+    }
+
+    /// Straight into a trunk, a walker stands against it, never in it.
+    #[test]
+    fn a_trunk_stands_a_walk_into_it() {
+        let site = common::SITE_SLOTS[0][0];
+        let cover = common::Cover::NONE.with(0, common::Content::Pine);
+        let (map, nntree, trunk) = wood(cover, site);
+        let out = calculate_movement(walking_from(trunk + Vec2::new(0.0, 2.0)), 800, &map, &nntree);
+        let d = out.position.offset.xz().distance(trunk);
+        assert!((d - trunk_keep(cover)).abs() < 1e-3, "stood {d} from the trunk's centre");
+    }
+
+    /// Only a player's pill goes round a trunk; anything else walks through.
+    #[test]
+    fn only_a_pill_goes_round_a_trunk() {
+        let site = common::SITE_SLOTS[0][0];
+        let (map, nntree, trunk) = wood(common::Cover::NONE.with(0, common::Content::Pine), site);
+        let input = MovementInput { collides: false, ..walking_from(trunk + Vec2::new(0.0, 2.0)) };
+        let out = calculate_movement(input, 800, &map, &nntree);
+        assert!(out.position.offset.z < trunk.y - 0.5, "walked through to {:?}", out.position.offset);
+    }
+
+    /// Grazing a trunk, a walker goes round it and on past it, as far out
+    /// as it keeps, whatever the slicing.
+    #[test]
+    fn a_grazing_walk_goes_round_a_trunk() {
+        let site = common::SITE_SLOTS[0][0];
+        let cover = common::Cover::NONE.with(0, common::Content::Pine);
+        let (map, nntree, trunk) = wood(cover, site);
+        let keep = trunk_keep(cover);
+        let input = walking_from(trunk + Vec2::new(keep * 0.5, 2.0));
+        let whole = calculate_movement(input, 800, &map, &nntree);
+        let end = whole.position.offset.xz();
+        assert!(end.y < trunk.y - 0.3, "the walker got past: {end:?} vs trunk {trunk:?}");
+        assert!(end.distance(trunk) >= keep - 1e-3);
+        for dt in [7, 50, 125] {
+            let (mut sliced, mut out, mut left) = (input, whole, 800);
+            while left > 0 {
+                let step = dt.min(left);
+                out = calculate_movement(sliced, step, &map, &nntree);
+                sliced = carried(sliced, &out);
+                left -= step;
+            }
+            assert!(out.position.offset.distance(whole.position.offset) < 1e-3, "slice {dt}: {:?} vs {:?}", out.position.offset, whole.position.offset);
+        }
+    }
+
+    /// A stump and a boulder lower than the waist are stepped over.
+    #[test]
+    fn what_stands_below_the_waist_is_stepped_over() {
+        let site = common::SITE_SLOTS[0][0];
+        let felled = common::gathering::harvest(common::Cover::NONE.with(0, common::Content::Pine), site).unwrap().cover;
+        let (map, nntree, stump) = wood(felled, site);
+        let out = calculate_movement(walking_from(stump + Vec2::new(0.0, 1.0)), 500, &map, &nntree);
+        assert!(out.position.offset.z < stump.y - 0.5, "a stump stood the walker at {:?}", out.position.offset);
+
+        let stone = common::Cover::NONE.with_boulder(0).with_rock(common::Rock::Sandstone);
+        assert!(common::cover::BOULDER_HEIGHT * common::cover::boulder_scale(common::cover::boulder_growth(stone, 0, -1, 0)) <= WAIST);
+        let (map, nntree, boulder) = wood(stone, 0);
+        let out = calculate_movement(walking_from(boulder + Vec2::new(0.0, 1.0)), 500, &map, &nntree);
+        assert!(out.position.offset.z < boulder.y - 0.5, "a low boulder stood the walker at {:?}", out.position.offset);
     }
 
     /// `input` carried on by `out`: position, heading and clock.
@@ -615,7 +853,10 @@ mod tests {
             let went = whole.position.offset.xz().length();
             let fullness = map.cover_at(0, 0).fullness();
             assert!(fullness < COVER_FULL);
-            assert!((went - open * pace(fullness)).abs() < 1e-3, "{n} trees: {went} is not the pace's share of {open}");
+            // The pace sets how far the walk goes; going round a trunk on
+            // the way can only shorten it.
+            let paced = open * pace(fullness);
+            assert!(went <= paced + 1e-3 && went > 0.8 * paced, "{n} trees: {went} against the pace's share {paced} of {open}");
         }
         let map = create_test_map();
         flat_ground(&map, 6);
