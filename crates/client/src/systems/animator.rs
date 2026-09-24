@@ -30,10 +30,15 @@ pub enum Clip {
     Jump,
     Attack,
     Counter,
+    Chop,
+    Mine,
+    Pickup,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 7] = [Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter];
+    pub const ALL: [Clip; 10] = [
+        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter, Clip::Chop, Clip::Mine, Clip::Pickup,
+    ];
 
     /// The cycles that cover ground, slowest first.
     const GAITS: [Clip; 2] = [Clip::Walk, Clip::Run];
@@ -48,6 +53,19 @@ impl Clip {
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
+            Clip::Chop => "chop",
+            Clip::Mine => "mine",
+            Clip::Pickup => "pickup",
+        }
+    }
+
+    /// The clip what an actor does at a gather plays: its work's loop, or
+    /// the stoop to its pile.
+    pub fn of_gathering(activity: common::gathering::Activity) -> Clip {
+        match activity {
+            common::gathering::Activity::Work(common::gathering::Work::Chop) => Clip::Chop,
+            common::gathering::Activity::Work(common::gathering::Work::Mine) => Clip::Mine,
+            common::gathering::Activity::Pickup => Clip::Pickup,
         }
     }
 
@@ -125,6 +143,7 @@ pub struct Clips {
     nodes: HashMap<Clip, AnimationNodeIndex>,
     jump: Option<Moments>,
     strides: HashMap<Clip, Stride>,
+    freezes: HashMap<Clip, f32>,
 }
 
 impl Clips {
@@ -146,6 +165,11 @@ impl Clips {
         };
         clips.jump = declared.animgen.get(Clip::Jump.name())
             .and_then(|d| Some(Moments { leave: d.leave?, freeze: d.freeze?, land: d.land? }));
+        for clip in Clip::ALL {
+            if let Some(freeze) = declared.animgen.get(clip.name()).and_then(|d| d.freeze) {
+                clips.freezes.insert(clip, freeze);
+            }
+        }
         for clip in Clip::GAITS {
             let Some(d) = declared.animgen.get(clip.name()) else { continue };
             if let (Some(length), Some(seconds)) = (d.stride, d.seconds) {
@@ -164,6 +188,11 @@ impl Clips {
     /// Whether `node` plays `clip`.
     pub fn is(&self, node: AnimationNodeIndex, clip: Clip) -> bool {
         self.node(clip) == Some(node)
+    }
+
+    /// The moment `clip` is held at, where it declares one.
+    fn freeze(&self, clip: Clip) -> Option<f32> {
+        self.freezes.get(&clip).copied()
     }
 
     /// The jump and its moments, where the asset has one and declares them.
@@ -296,12 +325,12 @@ fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
 
 pub fn update(
     mut commands: Commands,
-    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>)>,
+    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
 ) {
-    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping) in &mut query {
+    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
         let travel = vis_pos.to - vis_pos.from;
         let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
@@ -355,6 +384,23 @@ pub fn update(
             if one_shot && player.animation(node).is_some_and(|a| !a.is_finished()) {
                 continue;
             }
+        }
+        // At work, the actor loops its work's clip; stooped to its pile and
+        // standing, it plays the pickup to its freeze and holds there by
+        // speed. Either where its asset has the clip.
+        let clip = gathering.map(|g| Clip::of_gathering(g.0));
+        if let Some(node) = clip.filter(|&c| c != Clip::Pickup || !is_moving).and_then(|c| clips.node(c)) {
+            if main != Some(node) {
+                let anim = transitions.play(&mut player, node, SETTLE).set_speed(1.);
+                if clip != Some(Clip::Pickup) {
+                    anim.repeat();
+                }
+            } else if let (Some(freeze), Some(anim)) = (clip.and_then(|c| clips.freeze(c)), player.animation_mut(node)) {
+                if anim.seek_time() >= freeze {
+                    anim.set_seek_time(freeze).set_speed(0.0);
+                }
+            }
+            continue;
         }
         // An actor with no jump keeps its gait in the air.
         if is_moving || (airborne && jump.is_none()) {

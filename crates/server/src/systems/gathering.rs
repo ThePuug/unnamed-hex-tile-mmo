@@ -1,6 +1,7 @@
-//! Gathering: what a player gathers lies at once as a pile, locked to it
-//! while its loot window is open on it; it takes from the pile into its
-//! bag, and closing the window leaves the rest to anyone. Every tile changed keeps the change, and every client
+//! Gathering: a player works at what it gathers for a time, and the yield
+//! then lies at once as a pile, locked to it while its loot window is open
+//! on it; it takes from the pile into its bag, and closing the window
+//! leaves the rest to anyone. Every tile changed keeps the change, and every client
 //! holding the tile learns it.
 
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use common_bevy::{
         entity_type::{decorator::Decorator, EntityType},
         equipment::{Equipment, Inventory},
         heading::Heading,
+        position::Position,
         Loc,
     },
     message::{Do, Event, Try},
@@ -50,13 +52,16 @@ pub struct Pile {
 #[derive(Resource, Default)]
 pub struct Piles(HashMap<(i32, i32, usize), Pile>);
 
-/// The pile a player has its loot window open on. The pile is locked to it
-/// while the window is open.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+/// The pile a player has its loot window open on, and where it stood and
+/// faced as the window opened. The pile is locked to it while the window
+/// is open; the window closes the moment the player moves or turns.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Looting {
     pub q: i32,
     pub r: i32,
     pub slot: usize,
+    pub from: Position,
+    pub facing: Heading,
 }
 
 impl Looting {
@@ -102,29 +107,79 @@ impl Ground<'_, '_> {
     }
 }
 
-/// Applies each gather a player asks for: the slot must lie in its reach.
-/// Something gatherable there is gathered, and its yield lies at once as a
-/// pile in the slot the gather freed; a pile there opens. Either way the
-/// pile is locked to the player and its window opens. A pile locked to
-/// another player's open window does not open; one whose player has gone
-/// or closed it does. A window already open closes first.
+/// The work a player is at: gathering slot `slot` of tile `(q, r)`, done
+/// at `until`, from where it stood when it began. Moving from there or
+/// being struck breaks it off.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Working {
+    pub q: i32,
+    pub r: i32,
+    pub slot: usize,
+    pub until: std::time::Duration,
+    pub from: Position,
+}
+
+/// Opens `ent`'s loot window on the pile at `key`, which holds `stacks`,
+/// locking the pile to it, with the player standing `from` and facing
+/// `facing`; a window it had open on another pile closes and unlocks that
+/// pile.
+#[allow(clippy::too_many_arguments)]
+fn open(
+    ent: Entity,
+    key: (i32, i32, usize),
+    stacks: Vec<common::Stack>,
+    from: Position,
+    facing: Heading,
+    was: Option<Looting>,
+    piles: &mut Piles,
+    commands: &mut Commands,
+    writer: &mut MessageWriter<Do>,
+) {
+    if let Some(was) = was.filter(|was| was.key() != key) {
+        unlock(piles, was, ent);
+    }
+    if let Some(pile) = piles.0.get_mut(&key) {
+        pile.locked_to = Some(ent);
+    }
+    commands.entity(ent).insert(Looting { q: key.0, r: key.1, slot: key.2, from, facing });
+    writer.write(Do { event: Event::Loot { ent, entries: Some(stacks) } });
+}
+
+/// Tells everyone who sees `ent` what it is doing at a gather.
+fn show(ent: Entity, activity: Option<common::gathering::Activity>, commands: &mut Commands) {
+    commands.write_message(Do { event: Event::Activity { ent, activity } });
+}
+
+/// Stops `ent`'s work: it is seen stooped to its pile where its loot
+/// window is open, doing nothing otherwise.
+fn stop(ent: Entity, looting: bool, commands: &mut Commands) {
+    commands.entity(ent).remove::<Working>();
+    show(ent, looting.then_some(common::gathering::Activity::Pickup), commands);
+}
+
+/// Answers each gather a player asks for: the slot must lie in its reach.
+/// A pile there opens at once, unless another player's open window holds
+/// it; one whose player has gone or closed it opens. Something gatherable
+/// there sets the player to work on it, unless it is at work already.
 pub fn try_gather(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
-    mut ground: Ground,
+    ground: Ground,
     mut piles: ResMut<Piles>,
-    players: Query<(&Loc, &Heading, Option<&Looting>)>,
+    time: Res<Time>,
+    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &Position, Option<&Looting>, Has<Working>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
-        let Ok((loc, heading, open)) = players.get(ent) else {
+        let Ok((loc, heading, _, position, was, working)) = players.get(ent) else {
             warn!("gather: {ent} is not a player");
             continue;
         };
-        if !in_reach(**loc, *heading, q, r) || slot >= common::TILE_SLOTS as usize {
-            info!("gather: {ent} at {:?} asked out of reach for slot {slot} of ({q}, {r})", **loc);
+        let (loc, heading, position, was) = (**loc, *heading, *position, was.copied());
+        if !in_reach(loc, heading, q, r) || slot >= common::TILE_SLOTS as usize {
+            info!("gather: {ent} at {loc:?} asked out of reach for slot {slot} of ({q}, {r})");
             continue;
         }
         let Some(cover) = ground.cover(q, r) else {
@@ -132,35 +187,85 @@ pub fn try_gather(
             continue;
         };
         let key = (q, r, slot);
-        let (key, stacks) = if cover.content(slot).is_pile() {
+        // Answered, the player turns to face what it gathers.
+        let (x, z) = common_bevy::geometry::slot_point(cover, (q, r), slot, (position.tile.q, position.tile.r));
+        let facing = Heading::facing(position.offset.xz(), Vec2::new(x, z)).unwrap_or(heading);
+        if cover.content(slot).is_pile() {
             let Some(pile) = piles.0.get(&key) else { continue };
             let held = pile.locked_to.filter(|&other| {
-                other != ent && players.get(other).is_ok_and(|(_, _, looting)| looting.is_some_and(|l| l.key() == key))
+                other != ent && players.get(other).is_ok_and(|(_, _, _, _, looting, _)| looting.is_some_and(|l| l.key() == key))
             });
             if let Some(other) = held {
                 info!("gather: {ent} asked for the pile at slot {slot} of ({q}, {r}), which {other} has open");
                 continue;
             }
-            (key, pile.stacks.clone())
-        } else if let Some(harvest) = common::gathering::harvest(cover, slot) {
-            info!("gather: {ent} gathered {} {:?} from slot {slot} of ({q}, {r})", harvest.amount, harvest.material);
-            let stacks = vec![harvest.stack()];
-            ground.set(&mut writer, q, r, common::gathering::left(harvest.cover, harvest.freed, harvest.material));
-            let key = (q, r, harvest.freed);
-            piles.0.insert(key, Pile { stacks: stacks.clone(), locked_to: None });
-            (key, stacks)
+            let stacks = pile.stacks.clone();
+            open(ent, key, stacks, position, facing, was, &mut piles, &mut commands, &mut writer);
+            if !working {
+                show(ent, Some(common::gathering::Activity::Pickup), &mut commands);
+            }
+        } else if let Some(work) = common::gathering::work(cover, slot) {
+            if working {
+                continue;
+            }
+            let until = time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
+            commands.entity(ent).insert(Working { q, r, slot, until, from: position });
+            show(ent, Some(common::gathering::Activity::Work(work)), &mut commands);
         } else {
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
             continue;
+        }
+        if let Ok((_, mut heading, mut turn, ..)) = players.get_mut(ent) {
+            turn.heading = facing;
+            *heading = facing;
+        }
+    }
+}
+
+/// Ends each player's work: broken off where it has moved from where it
+/// began; done when its time is up, when what it worked on is gathered —
+/// its yield lies at once as a pile, locked to it, and its window opens —
+/// if it is still there and in reach.
+pub fn finish_work(
+    mut commands: Commands,
+    mut writer: MessageWriter<Do>,
+    mut ground: Ground,
+    mut piles: ResMut<Piles>,
+    time: Res<Time>,
+    players: Query<(Entity, &Loc, &Heading, &Position, &Working, Option<&Looting>)>,
+) {
+    for (ent, loc, heading, position, working, was) in &players {
+        if *position != working.from {
+            stop(ent, was.is_some(), &mut commands);
+            continue;
+        }
+        if time.elapsed() < working.until {
+            continue;
+        }
+        let Working { q, r, slot, .. } = *working;
+        let harvest = ground.cover(q, r).and_then(|cover| common::gathering::harvest(cover, slot));
+        let Some(harvest) = harvest.filter(|_| in_reach(**loc, *heading, q, r)) else {
+            info!("gather: {ent} finished on slot {slot} of ({q}, {r}), which it can no longer gather");
+            stop(ent, was.is_some(), &mut commands);
+            continue;
         };
-        if let Some(open) = open.filter(|open| open.key() != key) {
-            unlock(&mut piles, *open, ent);
+        stop(ent, true, &mut commands);
+        info!("gather: {ent} gathered {} {:?} from slot {slot} of ({q}, {r})", harvest.amount, harvest.material);
+        let stacks = vec![harvest.stack()];
+        ground.set(&mut writer, q, r, common::gathering::left(harvest.cover, harvest.freed, harvest.material));
+        let key = (q, r, harvest.freed);
+        piles.0.insert(key, Pile { stacks: stacks.clone(), locked_to: None });
+        open(ent, key, stacks, *position, *heading, was.copied(), &mut piles, &mut commands, &mut writer);
+    }
+}
+
+/// Breaks off the work of each player struck.
+pub fn interrupt_work(mut commands: Commands, mut reader: MessageReader<Do>, working: Query<Has<Looting>, With<Working>>) {
+    for message in reader.read() {
+        let Do { event: Event::ApplyDamage { ent, .. } } = message else { continue };
+        if let Ok(looting) = working.get(*ent) {
+            stop(*ent, looting, &mut commands);
         }
-        if let Some(pile) = piles.0.get_mut(&key) {
-            pile.locked_to = Some(ent);
-        }
-        commands.entity(ent).insert(Looting { q: key.0, r: key.1, slot: key.2 });
-        writer.write(Do { event: Event::Loot { ent, entries: Some(stacks) } });
     }
 }
 
@@ -180,12 +285,12 @@ pub fn try_take(
     mut writer: MessageWriter<Do>,
     mut ground: Ground,
     mut piles: ResMut<Piles>,
-    mut players: Query<(&Equipment, &mut Inventory, &Looting)>,
+    mut players: Query<(&Equipment, &mut Inventory, &Looting, Has<Working>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Take { ent, entry } } = message else { continue };
         let (ent, entry) = (*ent, *entry);
-        let Ok((worn, mut bag, looting)) = players.get_mut(ent) else { continue };
+        let Ok((worn, mut bag, looting, working)) = players.get_mut(ent) else { continue };
         let key = looting.key();
         let Some(pile) = piles.0.get_mut(&key).filter(|p| p.locked_to == Some(ent)) else { continue };
         let chosen: Vec<usize> = match entry {
@@ -212,17 +317,20 @@ pub fn try_take(
         }
         commands.entity(ent).remove::<Looting>();
         writer.write(Do { event: Event::Loot { ent, entries: None } });
+        if !working {
+            show(ent, None, &mut commands);
+        }
     }
 }
 
-/// Closes each window its player asks to close, or whose pile has left the
-/// player's reach by a turn or a step, and unlocks the pile for anyone.
+/// Closes each window its player asks to close, or whose player has moved
+/// or turned at all since it opened, and unlocks the pile for anyone.
 pub fn close_windows(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut piles: ResMut<Piles>,
-    players: Query<(Entity, &Loc, &Heading, &Looting)>,
+    players: Query<(Entity, &Position, &Heading, &Looting, Has<Working>)>,
 ) {
     let asked: Vec<Entity> = reader
         .read()
@@ -231,12 +339,15 @@ pub fn close_windows(
             _ => None,
         })
         .collect();
-    for (ent, loc, heading, looting) in &players {
-        if !asked.contains(&ent) && in_reach(**loc, *heading, looting.q, looting.r) {
+    for (ent, position, heading, looting, working) in &players {
+        if !asked.contains(&ent) && *position == looting.from && *heading == looting.facing {
             continue;
         }
         unlock(&mut piles, *looting, ent);
         commands.entity(ent).remove::<Looting>();
         writer.write(Do { event: Event::Loot { ent, entries: None } });
+        if !working {
+            show(ent, None, &mut commands);
+        }
     }
 }

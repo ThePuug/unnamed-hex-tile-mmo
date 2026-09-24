@@ -1,4 +1,5 @@
-//! Dresses actors in what the server says they wear, and keeps the local
+//! Dresses actors in what the server says they wear, puts the tool of a
+//! gather's work in the hand of an actor at it, and keeps the local
 //! player's bag.
 //!
 //! A skinned piece's GLB ships its wearer's cut with a copy of that body's
@@ -34,6 +35,56 @@ pub struct Worn {
 /// The rig socket a node hangs from, named by its extras.
 #[derive(Component)]
 pub struct SocketAnchor(pub String);
+
+/// A tool's scene in the hand of an actor at a gather's work, a child of
+/// the actor, its nodes moved onto the rig's socket once bound.
+#[derive(Component)]
+pub struct Held {
+    tool: &'static str,
+    bound: bool,
+    moved: Vec<Entity>,
+}
+
+/// The tool in hand for what an actor is doing at a gather: the stem of
+/// its asset, for work; none stooped to a pile.
+fn tool_of(activity: common::gathering::Activity) -> Option<&'static str> {
+    match activity {
+        common::gathering::Activity::Work(common::gathering::Work::Chop) => Some("wood-axe"),
+        common::gathering::Activity::Work(common::gathering::Work::Mine) => Some("pick"),
+        common::gathering::Activity::Pickup => None,
+    }
+}
+
+/// Moves each node under `piece` that names a socket onto the rig's socket
+/// of that name among `joints`, keeping the transform the build wrote
+/// relative to the socket's point. Returns the nodes moved, or None where a
+/// socket is not on the rig yet or the piece names none.
+fn hang(
+    piece: Entity,
+    joints: &HashMap<&str, Entity>,
+    children: &Query<&Children>,
+    anchors: &Query<&SocketAnchor>,
+    commands: &mut Commands,
+) -> Option<Vec<Entity>> {
+    let anchored: Vec<(Entity, &SocketAnchor)> =
+        children.iter_descendants(piece).filter_map(|e| anchors.get(e).ok().map(|a| (e, a))).collect();
+    if anchored.is_empty() {
+        return None;
+    }
+    let sockets = anchored
+        .iter()
+        .map(|(_, a)| joints.get(format!("socket.{}", a.0).as_str()).copied())
+        .collect::<Option<Vec<Entity>>>()?;
+    for (&(node, _), socket) in anchored.iter().zip(sockets) {
+        commands.entity(node).insert(ChildOf(socket));
+    }
+    Some(anchored.into_iter().map(|(node, _)| node).collect())
+}
+
+/// The joints of an actor's own rig, by name.
+fn joints_of<'a>(rig: Entity, children: &Query<&Children>, names: &'a Query<&Name>) -> HashMap<&'a str, Entity> {
+    children.iter_descendants(rig).filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e))).collect()
+}
 
 impl Worn {
     pub fn is_bound(&self) -> bool {
@@ -139,28 +190,13 @@ pub fn bind_worn(
         let body = actor_name(*typ);
 
         let Some(rig) = rig(actor, body, &children, &parents, &names, &all) else { continue };
-        let joints: HashMap<&str, Entity> = children
-            .iter_descendants(rig)
-            .filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e)))
-            .collect();
+        let joints = joints_of(rig, &children, &names);
 
-        // A socket piece hangs its nodes from the rig's sockets, keeping the
-        // transforms the build wrote relative to the socket's point.
-        let anchored: Vec<(Entity, &SocketAnchor)> = children
-            .iter_descendants(piece)
-            .filter_map(|e| anchors.get(e).ok().map(|a| (e, a)))
-            .collect();
-        if !anchored.is_empty() {
-            let Some(sockets) = anchored
-                .iter()
-                .map(|(_, a)| joints.get(format!("socket.{}", a.0).as_str()).copied())
-                .collect::<Option<Vec<Entity>>>()
-            else { continue };
+        // A socket piece hangs its nodes from the rig's sockets.
+        if children.iter_descendants(piece).any(|e| anchors.contains(e)) {
+            let Some(moved) = hang(piece, &joints, &children, &anchors, &mut commands) else { continue };
             let Ok((_, _, mut worn)) = pieces.get_mut(piece) else { continue };
-            for (&(node, _), socket) in anchored.iter().zip(sockets) {
-                commands.entity(node).insert(ChildOf(socket));
-                worn.moved.push(node);
-            }
+            worn.moved.extend(moved);
             worn.bound = true;
             commands.entity(actor).insert(Redress);
             continue;
@@ -206,5 +242,62 @@ pub fn bind_worn(
             worn.bound = true;
         }
         commands.entity(actor).insert(Redress);
+    }
+}
+
+/// Puts the tool of its work in the hand of each actor at a gather's work,
+/// and takes it away when the work stops or turns to another.
+pub fn hold(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    actors: Query<(Entity, &EntityType, Option<&crate::systems::gathering::Gathering>)>,
+    held: Query<(Entity, &ChildOf, &Held)>,
+) {
+    let mut holding = HashSet::new();
+    for (piece, child_of, h) in &held {
+        let actor = child_of.parent();
+        let wanted = actors.get(actor).ok().and_then(|(_, _, gathering)| gathering).and_then(|g| tool_of(g.0));
+        if wanted == Some(h.tool) {
+            holding.insert(actor);
+            continue;
+        }
+        for &moved in &h.moved {
+            commands.entity(moved).try_despawn();
+        }
+        commands.entity(piece).despawn();
+    }
+    for (actor, typ, gathering) in &actors {
+        let Some(tool) = gathering.filter(|_| !holding.contains(&actor)).and_then(|g| tool_of(g.0)) else { continue };
+        let path = format!("models/{tool}-{}.glb", actor_name(*typ));
+        commands.spawn((
+            Held { tool, bound: false, moved: Vec::new() },
+            Name::new(format!("held:{tool}")),
+            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(path))),
+            ChildOf(actor),
+        ));
+    }
+}
+
+/// Hangs each unbound tool from its holder's rig once both scenes are
+/// spawned: its node moves onto the socket it names.
+pub fn bind_held(
+    mut commands: Commands,
+    mut held: Query<(Entity, &ChildOf, &mut Held)>,
+    worn: Query<Entity, With<Worn>>,
+    actors: Query<&EntityType>,
+    children: Query<&Children>,
+    parents: Query<&ChildOf>,
+    names: Query<&Name>,
+    anchors: Query<&SocketAnchor>,
+) {
+    let pieces: HashSet<Entity> = worn.iter().collect();
+    for (piece, child_of, mut h) in held.iter_mut().filter(|(_, _, h)| !h.bound) {
+        let actor = child_of.parent();
+        let Ok(typ) = actors.get(actor) else { continue };
+        let Some(rig) = rig(actor, actor_name(*typ), &children, &parents, &names, &pieces) else { continue };
+        let joints = joints_of(rig, &children, &names);
+        let Some(moved) = hang(piece, &joints, &children, &anchors, &mut commands) else { continue };
+        h.moved = moved;
+        h.bound = true;
     }
 }

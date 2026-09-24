@@ -30,6 +30,19 @@ pub fn boulder_center(q: i32, r: i32, k: usize, sway: &common::Sway) -> (f32, f3
     }
 }
 
+/// Where what stands in slot `k` of tile `(q, r)` stands, in world xz from
+/// the centre of tile `from`: a tree at its site by its site's sway,
+/// anything else in its slot by the slot's. The tile difference is taken
+/// before any vector, so the point is exact however far out the tiles are.
+pub fn slot_point(cover: common::Cover, (q, r): (i32, i32), k: usize, from: (i32, i32)) -> (f32, f32) {
+    let (dq, dr) = (q - from.0, r - from.1);
+    let tree = cover.content(k).slots() == 2;
+    match common::SITE_SLOTS.iter().position(|s| s[0] == k).filter(|_| tree) {
+        Some(site) => slot_center(dq, dr, site, &common::sway(q, r, site)),
+        None => boulder_center(dq, dr, k, &common::boulder_sway(q, r, k)),
+    }
+}
+
 fn toward(q: i32, r: i32, (dq, dr): (i32, i32), sway: &common::Sway) -> (f32, f32) {
     let (cx, cz) = flat_top_tile_center(q, r, 1.0);
     let (nx, nz) = flat_top_tile_center(q + dq, r + dr, 1.0);

@@ -82,6 +82,13 @@ impl Heading {
         Some(Self::from_degrees(xz.x.atan2(-xz.y).to_degrees()))
     }
 
+    /// The heading an entity at `offset` from its tile's centre turns to
+    /// to face `target`, in world xz from the same centre: the nearest of
+    /// the bearings, or None where it stands on the target.
+    pub fn facing(offset: Vec2, target: Vec2) -> Option<Self> {
+        Self::from_world_dir(target - offset)
+    }
+
     /// The heading from one world point toward another.
     pub fn toward(from: Vec3, to: Vec3) -> Option<Self> {
         Self::from_world_dir((to - from).xz())

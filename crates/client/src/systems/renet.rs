@@ -51,6 +51,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Gather { .. } => "Gather",
         Event::CoverChanged { .. } => "CoverChanged",
         Event::Loot { .. } => "Loot",
+        Event::Activity { .. } => "Activity",
         _ => "Other",
     }
 }
@@ -180,6 +181,10 @@ pub fn write_do(
             Do { event: Event::Loot { ent, entries } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
                 do_writer.write(Do { event: Event::Loot { ent, entries } });
+            }
+            Do { event: Event::Activity { ent, activity } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
+                do_writer.write(Do { event: Event::Activity { ent, activity } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

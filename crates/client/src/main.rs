@@ -206,6 +206,8 @@ fn main() {
         gathering::request,
         gathering::mark,
         gathering::do_loot,
+        gathering::do_activity,
+        (equipment::hold, equipment::bind_held).chain(),
         crate::systems::focus::track,
         crate::systems::loot_window::update,
         common_bevy::systems::movement::update_burden,

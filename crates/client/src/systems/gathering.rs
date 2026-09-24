@@ -12,7 +12,7 @@ use common_bevy::{
         position::Position,
         Actor,
     },
-    geometry::{boulder_center, slot_center},
+    geometry::slot_point,
     message::{Do, Event, Try},
     resources::map::Map,
     summary::{mesh_region_lattice, summary_lattice, LOD_LEVELS},
@@ -94,16 +94,11 @@ pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option
         .flat_map(|(tile, typ)| {
             let EntityType::Decorator(decorator) = typ else { return Vec::new() };
             let cover = decorator.cover;
-            let (dq, dr) = (tile.q - position.tile.q, tile.r - position.tile.r);
             (0..common::TILE_SLOTS as usize)
                 .filter(|&k| common::gathering::anchor(cover, k) == k)
                 .filter(|&k| common::gathering::reachable(cover, k))
                 .map(|k| {
-                    let tree = cover.content(k).slots() == 2;
-                    let (x, z) = match common::SITE_SLOTS.iter().position(|s| s[0] == k).filter(|_| tree) {
-                        Some(site) => slot_center(dq, dr, site, &common::sway(tile.q, tile.r, site)),
-                        None => boulder_center(dq, dr, k, &common::boulder_sway(tile.q, tile.r, k)),
-                    };
+                    let (x, z) = slot_point(cover, (tile.q, tile.r), k, (position.tile.q, position.tile.r));
                     GatherTarget { tile, slot: k, at: Vec2::new(x, z) }
                 })
                 .collect()
@@ -119,13 +114,13 @@ pub fn request(
     focus: Res<crate::systems::focus::NumpadFocus>,
     mut window: ResMut<LootWindow>,
     map: Res<Map>,
-    player: Query<(Entity, &Position, &Heading), With<Actor>>,
+    mut player: Query<(Entity, &Position, &mut Heading, &mut common_bevy::components::Turn), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
     if menu.open {
         return;
     }
-    let Ok((ent, position, heading)) = player.single() else {
+    let Ok((ent, position, mut heading, mut turn)) = player.single_mut() else {
         warn!("gather: no single local player to gather with");
         return;
     };
@@ -158,6 +153,12 @@ pub fn request(
         return;
     };
     info!("gather: asking for slot {} of {:?}", target.slot, target.tile);
+    // The server turns the player to face what it gathers; turning the
+    // confirmed heading here as well spares waiting on it.
+    if let Some(facing) = Heading::facing(position.offset.xz(), target.at) {
+        turn.heading = facing;
+        *heading = facing;
+    }
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
 
@@ -173,6 +174,24 @@ pub fn mark(
     let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
     let at = origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise + 0.05, target.at.y);
     gizmos.circle(Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)), 0.35, Color::srgb(1.0, 0.85, 0.3));
+}
+
+/// What an actor is doing at a gather, as the server says: at its work,
+/// looping the work's clip with the tool in hand, or stooped to its pile.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Gathering(pub common::gathering::Activity);
+
+/// Keeps each actor's gathering as the server says, and drops it when the
+/// actor stops.
+pub fn do_activity(mut commands: Commands, mut reader: MessageReader<Do>) {
+    for message in reader.read() {
+        let Do { event: Event::Activity { ent, activity } } = message else { continue };
+        let Ok(mut actor) = commands.get_entity(*ent) else { continue };
+        match activity {
+            Some(activity) => { actor.insert(Gathering(*activity)); }
+            None => { actor.remove::<Gathering>(); }
+        }
+    }
 }
 
 /// Keeps the local player's loot window as the server sends it.

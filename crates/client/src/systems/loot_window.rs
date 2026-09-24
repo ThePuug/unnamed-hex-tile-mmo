@@ -96,8 +96,8 @@ fn spawn(commands: &mut Commands) -> Entity {
             LootPanel,
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Percent(40.),
-                right: Val::Px(24.),
+                top: Val::Percent(45.),
+                left: Val::Percent(60.),
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.),
                 padding: UiRect::all(Val::Px(10.)),

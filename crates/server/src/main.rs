@@ -111,6 +111,8 @@ fn main() {
         crate::systems::equipment::try_wear,
         crate::systems::gathering::try_gather,
         crate::systems::gathering::try_take,
+        crate::systems::gathering::finish_work,
+        crate::systems::gathering::interrupt_work,
         crate::systems::gathering::close_windows,
         common_bevy::systems::movement::update_burden,
         common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change

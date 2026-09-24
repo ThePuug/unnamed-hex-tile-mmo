@@ -95,6 +95,31 @@ impl Stack {
     }
 }
 
+/// The work a gather takes: a chop at a tree, a strike at a boulder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Work {
+    Chop,
+    Mine,
+}
+
+/// What a player is seen doing at a gather: at its work, or stooped to
+/// the pile its loot window is open on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Activity {
+    Work(Work),
+    Pickup,
+}
+
+/// How long the work of a gather takes, in milliseconds.
+pub const WORK_MS: u64 = 7500;
+
+/// The work gathering slot `k` takes, or None where nothing gatherable
+/// stands there.
+pub fn work(cover: Cover, k: usize) -> Option<Work> {
+    harvest(cover, k)?;
+    Some(if cover.content(anchor(cover, k)) == Content::Boulder { Work::Mine } else { Work::Chop })
+}
+
 /// How much one felled tree gives.
 pub const TREE_YIELD: u32 = 4;
 
@@ -222,6 +247,17 @@ mod tests {
         let crag = Cover::NONE.with_boulder(4).with_rock(Rock::Basement);
         let mined = harvest(crag, 4).unwrap();
         assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::StonePile);
+    }
+
+    /// A tree takes a chop and a boulder a strike; what is not gathered
+    /// takes no work.
+    #[test]
+    fn a_gather_takes_its_work() {
+        let ground = Cover::NONE.with(0, Content::Pine).with_boulder(0).with_rock(Rock::Sandstone);
+        assert_eq!(work(ground, SITE_SLOTS[0][1]), Some(Work::Chop));
+        assert_eq!(work(ground, 0), Some(Work::Mine));
+        assert_eq!(work(ground.with_rock(Rock::Shale), 0), None);
+        assert_eq!(work(ground, 3), None);
     }
 
     /// A boulder gives its rock's stone and frees its slot; shale gives

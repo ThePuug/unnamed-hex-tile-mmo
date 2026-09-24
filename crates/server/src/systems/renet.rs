@@ -364,6 +364,11 @@ pub fn write_try(
                     conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
                 }
             }
+            Event::Activity { ent, .. } => {
+                let Ok(loaded_by) = loaded_by_query.get(*ent) else { continue; };
+                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, *ent, bytes);
+            }
             Event::InsertThreat { ent, threat } => {
                 let ent = *ent;
                 let threat = *threat;
