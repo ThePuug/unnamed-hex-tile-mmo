@@ -208,8 +208,7 @@ impl Equipment {
     }
 }
 
-/// Past this weight a player is overburdened and slows to a third of its
-/// speed.
+/// Past this weight a player is overburdened and slows to a walk.
 pub const BURDEN_LIMIT: u32 = 60;
 
 /// Past this weight a player picks up nothing more.
@@ -278,9 +277,10 @@ impl Inventory {
     }
 }
 
-/// Marks an actor carrying past [`BURDEN_LIMIT`]: it moves at a third of
-/// its speed. The server sets it from the bag and sends it with the intent;
-/// the owning client sets it from the bag it holds.
+/// Marks an actor carrying past [`BURDEN_LIMIT`]: it moves at
+/// `movement::BURDENED_PACE` of its speed. The server sets it from the bag
+/// and sends it with the intent; the owning client sets it from the bag it
+/// holds.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Burdened;
 

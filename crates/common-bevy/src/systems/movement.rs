@@ -43,10 +43,12 @@ pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 /// Base movement speed in world units per millisecond
 pub const MOVEMENT_SPEED: f32 = 0.0075;
 
-/// The share of its speed an overburdened entity keeps: a walk.
-pub const BURDENED_PACE: f32 = 1.0 / 3.0;
+/// The share of its speed an overburdened entity keeps: slow enough that
+/// its gait plays the walk, which the actors' walk stride sets.
+pub const BURDENED_PACE: f32 = 0.2;
 
-/// The speed an entity moves at: its own, or a third of it overburdened.
+/// The speed an entity moves at: its own, or [`BURDENED_PACE`] of it
+/// overburdened.
 /// Every caller of the physics takes its speed through here, so the
 /// server, the owner's prediction and every remote simulation agree.
 pub fn speed(own: f32, burdened: bool) -> f32 {
