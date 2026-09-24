@@ -9,12 +9,15 @@ use super::{
 pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
+    panel: Res<crate::systems::character_panel::CharacterPanelState>,
     mut action_writer: MessageWriter<DevConsoleAction>,
     time: Res<Time>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
-    // Toggle console visibility with NumpadDivide
-    if keyboard.just_pressed(KeyCode::NumpadDivide) {
+    // Toggle console visibility with NumpadDivide. The open character panel
+    // has the numpad, so the console does not open over it.
+    let panel_has_numpad = panel.visible && !console.visible;
+    if keyboard.just_pressed(KeyCode::NumpadDivide) && !panel_has_numpad {
         console.visible = !console.visible;
 
         if console.visible {

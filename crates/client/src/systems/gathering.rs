@@ -81,17 +81,16 @@ pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option
         .min_by(|a, b| a.at.distance_squared(from).total_cmp(&b.at.distance_squared(from)))
 }
 
-/// Asks the server to gather the target when G is pressed; the modal
-/// panels hold it as they hold every gameplay key.
+/// Asks the server to gather the target when G is pressed; the menu holds
+/// it as it holds every gameplay key.
 pub fn request(
     keyboard: Res<ButtonInput<KeyCode>>,
-    panel: Res<crate::systems::character_panel::CharacterPanelState>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     map: Res<Map>,
     player: Query<(Entity, &Position, &Heading), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
-    if panel.visible || menu.open || !keyboard.just_pressed(KEYCODE_GATHER) {
+    if menu.open || !keyboard.just_pressed(KEYCODE_GATHER) {
         return;
     }
     let Ok((ent, position, heading)) = player.single() else {

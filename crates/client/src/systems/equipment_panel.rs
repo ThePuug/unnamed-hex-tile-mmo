@@ -13,7 +13,7 @@ use common_bevy::{
 
 use crate::{
     plugins::console::DevConsole,
-    systems::character_panel::{close, CharacterPanel, CharacterPanelState, PanelTab, TabContent},
+    systems::character_panel::{CharacterPanelState, PanelTab, TabContent},
 };
 
 /// Items to a bag row: one per digit key.
@@ -145,7 +145,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
             })
             .with_children(|bag| {
                 bag.spawn((
-                    Text::new("Wearables     1-9 wear or take off     . next row     - + tab     0 close"),
+                    Text::new("Wearables     1-9 wear or take off     . next row     - + tab     C close"),
                     TextFont { font_size: FontSize::Px(12.0), ..default() },
                     TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 ));
@@ -219,26 +219,18 @@ fn held_square() -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-/// The digits act on the bag; `-` and `+` move between tabs; `0` closes.
-/// Nothing is read while the console is open, which has the numpad then.
+/// The digits act on the bag; `-` and `+` move between tabs. The panel has
+/// every numpad key but `0`, which is left to the jump so the player moves
+/// with the panel open; `/` does not open the console over it. Nothing is
+/// read while the console is open, which has the numpad then.
 pub fn handle_numpad(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     console: Res<DevConsole>,
     mut state: ResMut<CharacterPanelState>,
-    mut panel: Query<&mut Visibility, With<CharacterPanel>>,
     player: Query<(Entity, &Inventory, &Equipment), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
     if !state.visible || console.visible {
-        return;
-    }
-    // A key the panel takes is cleared, or the input system may read it
-    // again next frame with the panel shut: 0 is also the jump.
-    if keyboard.just_pressed(KeyCode::Numpad0) {
-        keyboard.clear_just_pressed(KeyCode::Numpad0);
-        if let Ok(mut visibility) = panel.single_mut() {
-            close(&mut state, &mut visibility);
-        }
         return;
     }
     if keyboard.clear_just_pressed(KeyCode::NumpadSubtract) {
