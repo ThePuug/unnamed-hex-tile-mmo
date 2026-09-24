@@ -1,9 +1,9 @@
 //! The player's video settings and the one panel that changes them, opened
 //! from the character screen and from the in-game menu alike.
 //!
-//! The panel is driven by keys alone: Up and Down pick a row, Left, Right
-//! and Enter change it, Esc closes it. Whoever opens it routes the keys to
-//! `navigate` while it is open, so one system decides what Esc closes.
+//! The panel is driven by keys alone: Up and Down pick a row, Left and
+//! Right change it, Enter or Esc closes it. Whoever opens it routes the keys
+//! to `navigate` while it is open, so one system decides what they close.
 
 use bevy::{
     light::ShadowFilteringMethod,
@@ -203,7 +203,7 @@ impl SettingsPanel {
 }
 
 /// Acts on this frame's keys while the panel is open: picks a row, changes
-/// its setting, or closes the panel on Esc.
+/// its setting, or closes the panel on Enter or Esc.
 pub fn navigate(
     panel: &mut ResMut<SettingsPanel>,
     video: &mut ResMut<VideoSettings>,
@@ -216,7 +216,7 @@ pub fn navigate(
     if !keyboard.any_just_pressed(KEYS) {
         return;
     }
-    if keyboard.just_pressed(KeyCode::Escape) {
+    if keyboard.any_just_pressed([KeyCode::Escape, KeyCode::Enter, KeyCode::NumpadEnter]) {
         panel.open = false;
         return;
     }
@@ -229,7 +229,7 @@ pub fn navigate(
     }
     let by = if keyboard.just_pressed(KeyCode::ArrowLeft) {
         -1
-    } else if keyboard.any_just_pressed([KeyCode::ArrowRight, KeyCode::Enter, KeyCode::NumpadEnter]) {
+    } else if keyboard.just_pressed(KeyCode::ArrowRight) {
         1
     } else {
         0
@@ -326,7 +326,7 @@ fn setup(mut commands: Commands) {
                 Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), ..default() },
             ));
             parent.spawn((
-                Text::new("Up/Down choose   Left/Right change   Esc back"),
+                Text::new("Up/Down choose   Left/Right change   Enter/Esc back"),
                 TextFont { font_size: FontSize::Px(13.0), ..default() },
                 TextColor(HINT),
             ));
