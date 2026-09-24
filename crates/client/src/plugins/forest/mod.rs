@@ -898,3 +898,25 @@ mod form_tests {
         }
     }
 }
+
+/// The reach each gather stands the player at stays what the player's clips
+/// declare.
+#[cfg(test)]
+mod reach_tests {
+    #[test]
+    fn reaches_are_the_clips() {
+        let path = format!("{}/../../assets/actors/player-basic.glb", env!("CARGO_MANIFEST_DIR"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let json: serde_json::Value = serde_json::from_slice(&bytes[20..20 + len]).unwrap();
+        let declared = json["nodes"].as_array().unwrap().iter().find_map(|n| n["extras"].get("animgen")).expect("animgen extras");
+        for (clip, reach) in [
+            ("chop", common::gathering::CHOP_REACH),
+            ("mine", common::gathering::MINE_REACH),
+            ("pickup", common::gathering::PICKUP_REACH),
+        ] {
+            let declared = declared[clip]["reach"].as_f64().unwrap_or_else(|| panic!("{clip} declares no reach")) as f32;
+            assert!((declared - reach).abs() < 1e-3, "{clip}: declared {declared} against {reach}");
+        }
+    }
+}

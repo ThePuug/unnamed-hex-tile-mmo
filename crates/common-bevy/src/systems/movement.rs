@@ -353,12 +353,32 @@ pub const WALKER_RADIUS: f32 = 0.3;
 /// stepped over and has no footprint.
 pub const WAIST: f32 = 0.72;
 
+/// How wide and how tall the solid object in slot `k` of tile `(q, r)`
+/// stands, as it is drawn: a tree by its form and growth, a stump by its
+/// tree's, a boulder by its size. None for what is not solid, or names no
+/// object from its slot: the second slot a tree spans.
+pub fn solid_extent(cover: common::Cover, q: i32, r: i32, k: usize) -> Option<(f32, f32)> {
+    let content = cover.content(k);
+    match content {
+        common::Content::Pine | common::Content::Deciduous | common::Content::PineStump | common::Content::DeciduousStump => {
+            let site = common::SITE_SLOTS.iter().position(|s| s[0] == k)?;
+            let form = common::cover::tree_form(content, common::sway(q, r, site).variation)?;
+            let scale = common::cover::tree_scale(form.height, common::cover::tree_growth(cover, q, r, site));
+            let stump = matches!(content, common::Content::PineStump | common::Content::DeciduousStump);
+            Some((form.trunk * scale, if stump { form.stump } else { form.height } * scale))
+        }
+        common::Content::Boulder => {
+            let scale = common::cover::boulder_scale(common::cover::boulder_growth(cover, q, r, k));
+            Some((common::cover::BOULDER_RADIUS * scale, common::cover::BOULDER_HEIGHT * scale))
+        }
+        _ => None,
+    }
+}
+
 /// The footprints a walker goes round in `about` and the six tiles around
-/// it: each solid object that rises above the waist, its centre from the
-/// centre of `tile` and the radius the walker keeps from it. Each is as
-/// wide as it is drawn: a tree's trunk by its form and growth, a stump the
-/// same where it stands taller than the waist, a boulder by its size where
-/// it does.
+/// it: each solid object taller than the waist, its centre from the centre
+/// of `tile` and the radius the walker keeps from it, as wide as it is
+/// drawn and the walker's own half-width more.
 fn footprints(tile: Qrz, about: Qrz, map: &Map) -> Vec<(Vec2, f32)> {
     let mut out = Vec::new();
     for offset in std::iter::once(Qrz::default()).chain(qrz::DIRECTIONS) {
@@ -368,32 +388,69 @@ fn footprints(tile: Qrz, about: Qrz, map: &Map) -> Vec<(Vec2, f32)> {
             continue;
         }
         for k in 0..common::TILE_SLOTS as usize {
-            let content = cover.content(k);
-            let radius = match content {
-                common::Content::Pine | common::Content::Deciduous | common::Content::PineStump | common::Content::DeciduousStump => {
-                    let Some(site) = common::SITE_SLOTS.iter().position(|s| s[0] == k) else { continue };
-                    let Some(form) = common::cover::tree_form(content, common::sway(q, r, site).variation) else { continue };
-                    let scale = common::cover::tree_scale(form.height, common::cover::tree_growth(cover, q, r, site));
-                    let stump = matches!(content, common::Content::PineStump | common::Content::DeciduousStump);
-                    if stump && form.stump * scale <= WAIST {
-                        continue;
-                    }
-                    form.trunk * scale
-                }
-                common::Content::Boulder => {
-                    let scale = common::cover::boulder_scale(common::cover::boulder_growth(cover, q, r, k));
-                    if common::cover::BOULDER_HEIGHT * scale <= WAIST {
-                        continue;
-                    }
-                    common::cover::BOULDER_RADIUS * scale
-                }
-                _ => continue,
-            };
+            let Some((radius, _)) = solid_extent(cover, q, r, k).filter(|&(_, height)| height > WAIST) else { continue };
             let (x, z) = crate::geometry::slot_point(cover, (q, r), k, (tile.q, tile.r));
             out.push((Vec2::new(x, z), radius + WALKER_RADIUS));
         }
     }
     out
+}
+
+/// Where a player at `from`, in the frame of `tile`, turned to `heading`,
+/// stands to do `activity` at slot `k` of tile `(q, r)`: on the line
+/// through what it works along the heading, as far off as the work
+/// reaches past its drawn edge, so the edge, point or fists land on it.
+/// None where the spot's tile may not be entered from the player's, or a
+/// footprint other than what it works stands in the way there.
+#[allow(clippy::too_many_arguments)]
+pub fn stand_point(
+    tile: Qrz,
+    from: Vec3,
+    heading: Heading,
+    (q, r): (i32, i32),
+    k: usize,
+    activity: common::gathering::Activity,
+    map: &Map,
+    nntree: &NNTree,
+) -> Option<Vec2> {
+    let cover = map.cover_at(q, r);
+    let (x, z) = crate::geometry::slot_point(cover, (q, r), k, (tile.q, tile.r));
+    let target = Vec2::new(x, z);
+    let edge = match activity {
+        common::gathering::Activity::Pickup => 0.0,
+        common::gathering::Activity::Work(_) => solid_extent(cover, q, r, k).map_or(0.0, |(radius, _)| radius),
+    };
+    let stand = target - heading.to_world_dir() * (common::gathering::reach(activity) + edge);
+
+    let here: Qrz = tile + map.convert(from);
+    let rel = map.convert(Vec3::new(stand.x, 0.0, stand.y));
+    let at = Qrz { q: tile.q + rel.q, r: tile.r + rel.r, z: here.z };
+    if (at.q, at.r) != (here.q, here.r) {
+        let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
+        if is_tile_blocked(tile, floor, at, from.y, None, map, nntree) {
+            return None;
+        }
+    }
+    let start = from.xz();
+    let blocked = footprints(tile, here, map).into_iter().chain(footprints(tile, at, map)).any(|(centre, radius)| {
+        centre.distance(target) > 1e-4 && segment_distance(start, stand, centre) < radius - 1e-4
+    });
+    (!blocked).then_some(stand)
+}
+
+/// `position` moved to `stand`, given in its tile's frame, on the ground
+/// there.
+pub fn stepped(position: Position, stand: Vec2, map: &Map) -> Position {
+    let here: Qrz = position.tile + map.convert(Vec3::new(stand.x, 0.0, stand.y));
+    let y = map.get_by_qr(here.q, here.r).map_or(position.offset.y, |(floor, _)| surface_y_from(position.tile, stand, floor, map));
+    Position { tile: position.tile, offset: Vec3::new(stand.x, y, stand.y) }
+}
+
+/// How near the segment from `a` to `b` comes to `p`.
+fn segment_distance(a: Vec2, b: Vec2, p: Vec2) -> f32 {
+    let ab = b - a;
+    let s = if ab.length_squared() > 0.0 { ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+    (a + ab * s).distance(p)
 }
 
 /// How far along the unit `dir` a walker at `pos` meets the circle of
@@ -636,6 +693,40 @@ mod tests {
         let out = calculate_movement(walking_from(trunk + Vec2::new(0.0, 2.0)), 800, &map, &nntree);
         let d = out.position.offset.xz().distance(trunk);
         assert!((d - trunk_keep(cover)).abs() < 1e-3, "stood {d} from the trunk's centre");
+    }
+
+    /// A chop stands the player on its heading's line through the trunk,
+    /// as far from the trunk's drawn edge as the axe reaches.
+    #[test]
+    fn a_chop_stands_the_player_where_the_axe_meets_the_trunk() {
+        let site = common::SITE_SLOTS[0][0];
+        let cover = common::Cover::NONE.with(0, common::Content::Pine);
+        let (map, nntree, trunk) = wood(cover, site);
+        let from = trunk + Vec2::new(0.4, 2.5);
+        let facing = Heading::facing(from, trunk).unwrap();
+        let chop = common::gathering::Activity::Work(common::gathering::Work::Chop);
+        let stand = stand_point(Qrz { q: 0, r: 0, z: 1 }, Vec3::new(from.x, 0.0, from.y), facing, (0, -1), site, chop, &map, &nntree).unwrap();
+        let (radius, _) = solid_extent(cover, 0, -1, site).unwrap();
+        assert!((stand.distance(trunk) - (common::gathering::CHOP_REACH + radius)).abs() < 1e-4);
+        let along = (trunk - stand).normalize();
+        assert!(along.dot(facing.to_world_dir()) > 0.9999, "the trunk lies straight ahead of the stand");
+    }
+
+    /// A stand in a tile the player may not enter is no stand.
+    #[test]
+    fn a_stand_in_a_full_tile_is_none() {
+        let site = common::SITE_SLOTS[0][0];
+        let cover = common::Cover::NONE.with(0, common::Content::Pine);
+        let (map, nntree, trunk) = wood(cover, site);
+        let from = trunk + Vec2::new(0.0, 3.0);
+        let chop = common::gathering::Activity::Work(common::gathering::Work::Chop);
+        let stand = stand_point(Qrz { q: 0, r: 0, z: 1 }, Vec3::new(from.x, 0.0, from.y), Heading::NORTH, (0, -1), site, chop, &map, &nntree).unwrap();
+        let rel = map.convert(Vec3::new(stand.x, 0.0, stand.y));
+        let full = common::Cover::NONE.with(0, common::Content::Pine).with(1, common::Content::Pine);
+        map.insert(Qrz { q: rel.q, r: rel.r, z: 0 }, EntityType::Decorator(Decorator { cover: full, is_solid: false }));
+        if (rel.q, rel.r) != (0, 0) {
+            assert_eq!(stand_point(Qrz { q: 0, r: 0, z: 1 }, Vec3::new(from.x, 0.0, from.y), Heading::NORTH, (0, -1), site, chop, &map, &nntree), None);
+        }
     }
 
     /// Only a player's pill goes round a trunk; anything else walks through.

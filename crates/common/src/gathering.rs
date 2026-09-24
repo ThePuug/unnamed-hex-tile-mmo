@@ -110,6 +110,23 @@ pub enum Activity {
     Pickup,
 }
 
+/// How far ahead of the actor's feet each gather's clip lands its work, as
+/// the player's clips declare it: where the axe's edge meets the trunk,
+/// the pick's point the boulder, and the fists the pile. A test holds these
+/// to the clips.
+pub const CHOP_REACH: f32 = 1.1016;
+pub const MINE_REACH: f32 = 1.0572;
+pub const PICKUP_REACH: f32 = 0.5;
+
+/// How far ahead of the actor's feet `activity` lands its work.
+pub fn reach(activity: Activity) -> f32 {
+    match activity {
+        Activity::Work(Work::Chop) => CHOP_REACH,
+        Activity::Work(Work::Mine) => MINE_REACH,
+        Activity::Pickup => PICKUP_REACH,
+    }
+}
+
 /// How long the work of a gather takes, in milliseconds.
 pub const WORK_MS: u64 = 7500;
 

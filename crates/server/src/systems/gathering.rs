@@ -18,6 +18,7 @@ use common_bevy::{
     },
     message::{Do, Event, Try},
     resources::map::Map,
+    systems::movement::{stand_point, stepped},
 };
 use qrz::Qrz;
 
@@ -168,7 +169,8 @@ pub fn try_gather(
     ground: Ground,
     mut piles: ResMut<Piles>,
     time: Res<Time>,
-    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &Position, Option<&Looting>, Has<Working>)>,
+    nntree: Res<common_bevy::plugins::nntree::NNTree>,
+    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, Option<&Looting>, Has<Working>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
@@ -187,9 +189,19 @@ pub fn try_gather(
             continue;
         };
         let key = (q, r, slot);
-        // Answered, the player turns to face what it gathers.
+        // Answered, the player turns to face what it gathers and steps to
+        // where the work reaches it, where the way there is open.
         let (x, z) = common_bevy::geometry::slot_point(cover, (q, r), slot, (position.tile.q, position.tile.r));
         let facing = Heading::facing(position.offset.xz(), Vec2::new(x, z)).unwrap_or(heading);
+        let activity = if cover.content(slot).is_pile() {
+            Some(common::gathering::Activity::Pickup)
+        } else {
+            common::gathering::work(cover, slot).map(common::gathering::Activity::Work)
+        };
+        let position = activity
+            .filter(|_| !working)
+            .and_then(|activity| stand_point(position.tile, position.offset, facing, (q, r), slot, activity, &ground.map, &nntree))
+            .map_or(position, |stand| stepped(position, stand, &ground.map));
         if cover.content(slot).is_pile() {
             let Some(pile) = piles.0.get(&key) else { continue };
             let held = pile.locked_to.filter(|&other| {
@@ -215,9 +227,10 @@ pub fn try_gather(
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
             continue;
         }
-        if let Ok((_, mut heading, mut turn, ..)) = players.get_mut(ent) {
+        if let Ok((_, mut heading, mut turn, mut at, ..)) = players.get_mut(ent) {
             turn.heading = facing;
             *heading = facing;
+            *at = position;
         }
     }
 }

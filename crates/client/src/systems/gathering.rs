@@ -13,6 +13,7 @@ use common_bevy::{
         Actor,
     },
     geometry::slot_point,
+    systems::movement::{stand_point, stepped},
     message::{Do, Event, Try},
     resources::map::Map,
     summary::{mesh_region_lattice, summary_lattice, LOD_LEVELS},
@@ -114,13 +115,14 @@ pub fn request(
     focus: Res<crate::systems::focus::NumpadFocus>,
     mut window: ResMut<LootWindow>,
     map: Res<Map>,
-    mut player: Query<(Entity, &Position, &mut Heading, &mut common_bevy::components::Turn), With<Actor>>,
+    nntree: Res<common_bevy::plugins::nntree::NNTree>,
+    mut player: Query<(Entity, &mut Position, &mut Heading, &mut common_bevy::components::Turn), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
     if menu.open {
         return;
     }
-    let Ok((ent, position, mut heading, mut turn)) = player.single_mut() else {
+    let Ok((ent, mut position, mut heading, mut turn)) = player.single_mut() else {
         warn!("gather: no single local player to gather with");
         return;
     };
@@ -148,16 +150,28 @@ pub fn request(
         return;
     }
     let here = position.reached(&map);
-    let Some(target) = gather_target(&map, position, *heading) else {
+    let Some(target) = gather_target(&map, &position, *heading) else {
         info!("gather: nothing in reach at {here:?} facing {:?}", heading.hex_dir());
         return;
     };
     info!("gather: asking for slot {} of {:?}", target.slot, target.tile);
-    // The server turns the player to face what it gathers; turning the
-    // confirmed heading here as well spares waiting on it.
-    if let Some(facing) = Heading::facing(position.offset.xz(), target.at) {
-        turn.heading = facing;
-        *heading = facing;
+    // The server turns the player to face what it gathers and steps it to
+    // where the work reaches; doing the same to the confirmed state here
+    // spares waiting on it.
+    let facing = Heading::facing(position.offset.xz(), target.at).unwrap_or(*heading);
+    turn.heading = facing;
+    *heading = facing;
+    let cover = map.cover_at(target.tile.q, target.tile.r);
+    let activity = if cover.content(target.slot).is_pile() {
+        Some(common::gathering::Activity::Pickup)
+    } else {
+        common::gathering::work(cover, target.slot).map(common::gathering::Activity::Work)
+    };
+    let stand = activity.and_then(|activity| {
+        stand_point(position.tile, position.offset, facing, (target.tile.q, target.tile.r), target.slot, activity, &map, &nntree)
+    });
+    if let Some(stand) = stand {
+        *position = stepped(*position, stand, &map);
     }
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
