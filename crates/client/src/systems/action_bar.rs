@@ -126,21 +126,7 @@ pub fn setup(
         ));
 
         // Keybind label (top-left corner)
-        parent.spawn((
-            Text::new(format!("{:?}", keybind).replace("Key", "")),
-            TextFont {
-                font_size: FontSize::Px(14.0),
-                ..default()
-            },
-            TextColor(Color::srgb(0.8, 0.8, 0.8)),
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(4.),
-                left: Val::Px(6.),
-                ..default()
-            },
-            SlotKeybind,
-        ));
+        crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
 
         // Cost badge (bottom-right corner)
         if let Some(ability_type) = ability {

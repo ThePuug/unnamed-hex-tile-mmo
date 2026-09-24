@@ -144,11 +144,8 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 ..default()
             })
             .with_children(|bag| {
-                bag.spawn((
-                    Text::new("Wearables     1-9 wear or take off     . next row     - + tab     C close"),
-                    TextFont { font_size: FontSize::Px(12.0), ..default() },
-                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                ));
+                use crate::systems::keycap::{hint_row, Hint};
+                hint_row(bag, Some("Wearables"), &[Hint::range("1", "9", "wear or take off"), Hint::key(".", "next row")]);
                 bag.spawn((
                     BagGrid,
                     Node {
@@ -310,19 +307,7 @@ pub fn rebuild_bag(
                                 ImageNode::new(icon(&asset_server, item)),
                                 Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                             ));
-                            cell.spawn((
-                                BagCellKey,
-                                Text::new((c + 1).to_string()),
-                                TextFont { font_size: FontSize::Px(10.0), ..default() },
-                                TextColor(WORN),
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    top: Val::Px(2.),
-                                    left: Val::Px(4.),
-                                    ..default()
-                                },
-                                Visibility::Hidden,
-                            ));
+                            crate::systems::keycap::corner_keycap(cell, &(c + 1).to_string()).insert((BagCellKey, Visibility::Hidden));
                         });
                 }
             });

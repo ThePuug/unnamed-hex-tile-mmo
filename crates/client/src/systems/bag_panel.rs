@@ -62,11 +62,6 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
         ))
         .with_children(|tab| {
             tab.spawn((
-                Text::new("Bag     - + tab     C close"),
-                TextFont { font_size: FontSize::Px(12.0), ..default() },
-                TextColor(Color::srgb(0.6, 0.6, 0.6)),
-            ));
-            tab.spawn((
                 BagSummary,
                 Text::new(""),
                 TextFont { font_size: FontSize::Px(14.0), ..default() },

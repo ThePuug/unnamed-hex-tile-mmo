@@ -73,12 +73,7 @@ pub fn update(
                         Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                     ));
                     if cursor {
-                        cell.spawn((
-                            Text::new((i + 1).to_string()),
-                            TextFont { font_size: FontSize::Px(11.0), ..default() },
-                            TextColor(Color::srgb(0.85, 0.65, 0.13)),
-                            Node { position_type: PositionType::Absolute, top: Val::Px(2.), left: Val::Px(4.), ..default() },
-                        ));
+                        crate::systems::keycap::corner_keycap(cell, &(i + 1).to_string());
                     }
                     cell.spawn((
                         Text::new(stack.count.to_string()),
@@ -118,14 +113,16 @@ fn spawn(commands: &mut Commands) -> Entity {
             panel
                 .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() })
                 .with_children(|buttons| {
-                    for label in ["Take all  Enter", "Close  0"] {
+                    for (does, key) in [("Take all", "Ent"), ("Close", "0")] {
                         buttons
                             .spawn((
                                 Node {
                                     width: Val::Px(120.),
                                     height: Val::Px((CELL - 4.0) / 2.0),
-                                    justify_content: JustifyContent::Center,
+                                    justify_content: JustifyContent::SpaceBetween,
                                     align_items: AlignItems::Center,
+                                    padding: UiRect::horizontal(Val::Px(8.)),
+                                    column_gap: Val::Px(6.),
                                     border: UiRect::all(Val::Px(1.)),
                                     border_radius: BorderRadius::all(Val::Px(4.)),
                                     ..default()
@@ -135,10 +132,11 @@ fn spawn(commands: &mut Commands) -> Entity {
                             ))
                             .with_children(|b| {
                                 b.spawn((
-                                    Text::new(label),
+                                    Text::new(does),
                                     TextFont { font_size: FontSize::Px(13.0), ..default() },
                                     TextColor(Color::srgb(0.85, 0.85, 0.85)),
                                 ));
+                                crate::systems::keycap::keycap(b, key);
                             });
                     }
                 });

@@ -987,19 +987,12 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                         ));
                     });
             }
-            strip.spawn((
-                Text::new("- above
-+ below"),
-                TextFont { font_size: FontSize::Px(10.0), ..default() },
-                TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                TextLayout::justify(Justify::Right),
-                // A margin, since a text node takes no padding of its own.
-                Node {
-                    margin: UiRect::new(Val::Px(0.), Val::Px(20.), Val::Px(8.), Val::Px(0.)),
-                    align_self: AlignSelf::FlexEnd,
-                    ..default()
-                },
-            ));
+            use crate::systems::keycap::{hint_column, Hint};
+            hint_column(
+                strip,
+                &[Hint::key("-", "prev"), Hint::key("+", "next"), Hint::key("C", "close")],
+                Node { margin: UiRect::new(Val::Px(0.), Val::Px(8.), Val::Px(8.), Val::Px(0.)), align_self: AlignSelf::FlexEnd, ..default() },
+            );
         });
 }
 

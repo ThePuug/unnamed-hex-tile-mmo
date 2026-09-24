@@ -325,11 +325,12 @@ fn setup(mut commands: Commands) {
                 PanelRows,
                 Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), ..default() },
             ));
-            parent.spawn((
-                Text::new("Up/Down choose   Left/Right change   Enter/Esc back"),
-                TextFont { font_size: FontSize::Px(13.0), ..default() },
-                TextColor(HINT),
-            ));
+            use crate::systems::keycap::{hint_row, Hint};
+            hint_row(
+                parent,
+                None,
+                &[Hint::either(&["Up", "Dn"], "choose"), Hint::either(&["Lt", "Rt"], "change"), Hint::either(&["Ent", "Esc"], "back")],
+            );
         });
 }
 
@@ -337,7 +338,6 @@ const PANEL_WIDTH: f32 = 420.0;
 const TITLE: Color = Color::srgb(0.85, 0.75, 0.55);
 const PICKED: Color = Color::srgb(1.0, 0.9, 0.6);
 const PLAIN: Color = Color::srgb(0.75, 0.75, 0.75);
-const HINT: Color = Color::srgb(0.5, 0.5, 0.5);
 
 /// Shows the panel while it is open and redraws its rows when a setting or
 /// the picked row changes.

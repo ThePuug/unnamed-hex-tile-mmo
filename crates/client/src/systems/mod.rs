@@ -18,6 +18,7 @@ pub mod focus;
 pub mod gathering;
 pub mod hiding;
 pub mod input;
+pub mod keycap;
 pub mod loot_window;
 pub mod movement;
 pub mod renet;
