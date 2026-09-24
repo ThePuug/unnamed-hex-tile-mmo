@@ -1,6 +1,6 @@
 //! The character panel's bag tab: what the player carries and does not
-//! wear, a cell to a stack in rows of nine with a stack's count on its
-//! icon, and what it all weighs.
+//! wear, every one of the bag's cells in rows of nine, a stack to a cell
+//! with its count on its icon, and what it all weighs.
 
 use bevy::prelude::*;
 
@@ -113,15 +113,16 @@ pub fn update(
         return;
     }
     commands.entity(cells).despawn_related::<Children>();
-    for row in now.chunks(BAG_WIDTH) {
+    let slots: Vec<Option<Stack>> = (0..BAG_STACKS.max(now.len())).map(|k| now.get(k).copied()).collect();
+    for row in slots.chunks(BAG_WIDTH) {
         commands
             .spawn((Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.), ..default() }, ChildOf(cells)))
             .with_children(|row_cells| {
-                for &stack in row {
-                    let (image, count) = match stack {
+                for &slot in row {
+                    let contents = slot.map(|stack| match stack {
                         Stack::Piece(item) => (icon(&asset_server, item), None),
                         Stack::Material(material, n) => (material_icon(&asset_server, material), Some(n)),
-                    };
+                    });
                     row_cells
                         .spawn((
                             Node {
@@ -137,6 +138,7 @@ pub fn update(
                             BorderColor::all(UNWORN),
                         ))
                         .with_children(|cell| {
+                            let Some((image, count)) = contents else { return };
                             cell.spawn((
                                 ImageNode::new(image),
                                 Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
