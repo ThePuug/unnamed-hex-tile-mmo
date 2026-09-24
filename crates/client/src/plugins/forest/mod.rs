@@ -22,7 +22,8 @@ use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// What stands on the ground and is drawn: what grows at a site or the
-/// stump a felled tree left there, or a boulder in a slot.
+/// stump a felled tree left there, a boulder in a slot, or a pile a player
+/// left there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     Pine,
@@ -31,6 +32,11 @@ pub enum Kind {
     Boulder,
     PineStump,
     DeciduousStump,
+    SoftwoodPile,
+    HardwoodPile,
+    SandstonePile,
+    LimestonePile,
+    BasementPile,
 }
 
 impl From<Content> for Kind {
@@ -46,6 +52,25 @@ impl From<Content> for Kind {
 }
 
 impl Kind {
+    /// The pile `content` draws as on a tile of `rock`: its wood, or its
+    /// stone in the rock's colour.
+    fn pile(content: Content, rock: common::Rock) -> Option<Kind> {
+        match content {
+            Content::SoftwoodPile => Some(Kind::SoftwoodPile),
+            Content::HardwoodPile => Some(Kind::HardwoodPile),
+            Content::StonePile => Some(match rock {
+                common::Rock::Limestone => Kind::LimestonePile,
+                common::Rock::Basement => Kind::BasementPile,
+                common::Rock::Sandstone | common::Rock::Shale => Kind::SandstonePile,
+            }),
+            _ => None,
+        }
+    }
+
+    fn is_pile(self) -> bool {
+        matches!(self, Kind::SoftwoodPile | Kind::HardwoodPile | Kind::SandstonePile | Kind::LimestonePile | Kind::BasementPile)
+    }
+
     /// The tree a stump is the base of: it is built at that tree's scale,
     /// so it is drawn at the scale that tree was.
     fn felled(self) -> Option<Kind> {
@@ -68,6 +93,11 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Boulder, "models/boulder.glb"),
     (Kind::PineStump, "models/pine-stump.glb"),
     (Kind::DeciduousStump, "models/deciduous-stump.glb"),
+    (Kind::SoftwoodPile, "models/log-pile-softwood.glb"),
+    (Kind::HardwoodPile, "models/log-pile-hardwood.glb"),
+    (Kind::SandstonePile, "models/stone-pile-sandstone.glb"),
+    (Kind::LimestonePile, "models/stone-pile-limestone.glb"),
+    (Kind::BasementPile, "models/stone-pile-basement.glb"),
 ];
 
 /// How far a tree on a tile with one slot filled has grown, as a share of
@@ -133,12 +163,7 @@ pub struct Variation {
 /// Every variation of every kind, and the quad every card is drawn on.
 #[derive(Default)]
 pub struct Kit {
-    pine: Vec<Variation>,
-    deciduous: Vec<Variation>,
-    brush: Vec<Variation>,
-    boulder: Vec<Variation>,
-    pine_stump: Vec<Variation>,
-    deciduous_stump: Vec<Variation>,
+    kinds: HashMap<Kind, Vec<Variation>>,
     quad: Handle<Mesh>,
 }
 
@@ -196,15 +221,8 @@ fn card_quad() -> Mesh {
 }
 
 impl Kit {
-    pub fn of(&self, kind: Kind) -> &Vec<Variation> {
-        match kind {
-            Kind::Pine => &self.pine,
-            Kind::Deciduous => &self.deciduous,
-            Kind::Brush => &self.brush,
-            Kind::Boulder => &self.boulder,
-            Kind::PineStump => &self.pine_stump,
-            Kind::DeciduousStump => &self.deciduous_stump,
-        }
+    pub fn of(&self, kind: Kind) -> &[Variation] {
+        self.kinds.get(&kind).map_or(&[], |v| v.as_slice())
     }
 
     /// The scale variation `k` of `kind` stands at, `growth` of the way
@@ -223,6 +241,9 @@ impl Kit {
     /// [`BOULDER_SMALL`] toward [`BOULDER_LARGE`].
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
+        if kind.is_pile() {
+            return 1.0;
+        }
         match kind {
             Kind::Brush => return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
             Kind::Boulder => return BOULDER_SMALL + (BOULDER_LARGE - BOULDER_SMALL) * growth,
@@ -382,23 +403,17 @@ fn load_kit(
             };
             let color = surface_color(&merged);
             let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
-            match kind {
-                Kind::Pine => kit.pine.push(variation),
-                Kind::Deciduous => kit.deciduous.push(variation),
-                Kind::Brush => kit.brush.push(variation),
-                Kind::Boulder => kit.boulder.push(variation),
-                Kind::PineStump => kit.pine_stump.push(variation),
-                Kind::DeciduousStump => kit.deciduous_stump.push(variation),
-            }
+            kit.kinds.entry(*kind).or_default().push(variation);
         }
     }
     info!(
-        "tree kit: {} pine, {} deciduous, {} brush, {} boulder, {} stump variations",
-        kit.pine.len(),
-        kit.deciduous.len(),
-        kit.brush.len(),
-        kit.boulder.len(),
-        kit.pine_stump.len() + kit.deciduous_stump.len()
+        "tree kit: {} pine, {} deciduous, {} brush, {} boulder, {} stump, {} pile variations",
+        kit.of(Kind::Pine).len(),
+        kit.of(Kind::Deciduous).len(),
+        kit.of(Kind::Brush).len(),
+        kit.of(Kind::Boulder).len(),
+        kit.of(Kind::PineStump).len() + kit.of(Kind::DeciduousStump).len(),
+        kit.kinds.iter().filter(|(k, _)| k.is_pile()).map(|(_, v)| v.len()).sum::<usize>()
     );
     commands.insert_resource(TreeKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
@@ -510,6 +525,22 @@ pub fn place_trees(
                     yaw: sway.yaw as f32,
                     growth: sway.growth as f32 * edge,
                     kind: slot.into(),
+                    variation: sway.variation,
+                    far: false,
+                });
+            }
+            // A pile lies in its slot as its model stands, turned and placed
+            // by the slot's own sway as a boulder's.
+            for k in 0..TILE_SLOTS as usize {
+                let Some(kind) = Kind::pile(cover.content(k), cover.rock()) else { continue };
+                let sway = common::boulder_sway(q, r, k);
+                let (x, z) = boulder_center(q, r, k, &sway);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                out.push(TreeInstance {
+                    translation: Vec3::new(x, y, z) - mesh_origin,
+                    yaw: sway.yaw as f32,
+                    growth: 1.0,
+                    kind,
                     variation: sway.variation,
                     far: false,
                 });
@@ -772,6 +803,24 @@ mod tests {
         let (standing, still) = (find(&before, Kind::Deciduous), find(&after, Kind::Deciduous));
         assert_eq!(standing.growth, still.growth);
         assert!(after.iter().all(|t| t.kind != Kind::Pine));
+    }
+
+    /// A pile lies where it was left, as its wood or as stone in the
+    /// tile's rock.
+    #[test]
+    fn a_pile_lies_as_its_kind() {
+        let place = |cover: Cover| {
+            let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+            map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
+            let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
+            place_trees(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+        };
+        let crag = Cover::NONE.with_boulder(3).with_boulder(4).with_rock(common::Rock::Limestone);
+        let mined = common::gathering::harvest(crag, 4).unwrap();
+        let piled = common::gathering::left(mined.cover, mined.freed, mined.material);
+        let trees = place(piled);
+        assert_eq!(trees.iter().filter(|t| t.kind == Kind::LimestonePile).count(), 1);
+        assert_eq!(trees.iter().filter(|t| t.kind == Kind::Boulder).count(), 1);
     }
 }
 

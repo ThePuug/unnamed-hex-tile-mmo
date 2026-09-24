@@ -35,6 +35,7 @@ pub fn update_keybits(
     keyboard: Res<ButtonInput<KeyCode>>,
     console: Res<crate::plugins::console::DevConsole>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
+    focus: Res<crate::systems::focus::NumpadFocus>,
     mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
@@ -42,8 +43,9 @@ pub fn update_keybits(
 ) {
     // The menu and the console's lighting panel, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
-    // released, so the character stops and nothing fires. The character
-    // panel is not; it has the numpad but the jump.
+    // released, so the character stops and nothing fires. A panel is not;
+    // an open one has the numpad, so the jump on it fires only with none
+    // open.
     let modal = menu.open
         || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
     let released = ButtonInput::default();
@@ -101,7 +103,7 @@ pub fn update_keybits(
     }
 
     let mut keybits = KeyBits::default();
-    keybits.set_pressed([KB_JUMP], keyboard.any_just_pressed([KEYCODE_JUMP]));
+    keybits.set_pressed([KB_JUMP], focus.is_empty() && keyboard.any_just_pressed([KEYCODE_JUMP]));
     keybits.set_pressed([KB_FORWARD], keyboard.pressed(KEYCODE_UP));
     keybits.set_pressed([KB_BACK], keyboard.pressed(KEYCODE_DOWN));
     keybits.set_pressed([KB_LEFT], keyboard.pressed(KEYCODE_LEFT));

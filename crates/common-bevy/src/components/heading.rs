@@ -14,6 +14,17 @@ pub const HEADING_SLOTS: u8 = 24;
 /// Degrees between adjacent headings.
 pub const SLOT_DEGREES: f32 = 360.0 / HEADING_SLOTS as f32;
 
+/// The six tile-to-tile directions on the flat-top grid, clockwise from
+/// north.
+const HEX_DIRS: [Qrz; 6] = [
+    Qrz { q: 0, r: -1, z: 0 },
+    Qrz { q: 1, r: -1, z: 0 },
+    Qrz { q: 1, r: 0, z: 0 },
+    Qrz { q: 0, r: 1, z: 0 },
+    Qrz { q: -1, r: 1, z: 0 },
+    Qrz { q: -1, r: 0, z: 0 },
+];
+
 /// A compass bearing clockwise from north in steps of [`SLOT_DEGREES`].
 /// Movement travels along it; combat reads it as the facing. The six
 /// tile-to-tile bearings of the flat-top grid are every fourth slot from
@@ -91,16 +102,19 @@ impl Heading {
 
     /// The tile-to-tile direction nearest this heading on the flat-top grid.
     pub fn hex_dir(self) -> Qrz {
-        const DIRS: [Qrz; 6] = [
-            Qrz { q: 0, r: -1, z: 0 },
-            Qrz { q: 1, r: -1, z: 0 },
-            Qrz { q: 1, r: 0, z: 0 },
-            Qrz { q: 0, r: 1, z: 0 },
-            Qrz { q: -1, r: 1, z: 0 },
-            Qrz { q: -1, r: 0, z: 0 },
-        ];
+        HEX_DIRS[self.hex_index()]
+    }
+
+    /// The three tile-to-tile directions of the front half: the one nearest
+    /// this heading and the one either side of it.
+    pub fn front_dirs(self) -> [Qrz; 3] {
+        let i = self.hex_index();
+        [HEX_DIRS[(i + 5) % 6], HEX_DIRS[i], HEX_DIRS[(i + 1) % 6]]
+    }
+
+    fn hex_index(self) -> usize {
         let per = HEADING_SLOTS / 6;
-        DIRS[((self.0 + per / 2) / per) as usize % 6]
+        ((self.0 + per / 2) / per) as usize % 6
     }
 }
 
@@ -141,6 +155,24 @@ mod tests {
         assert_eq!(Heading::NORTH.reversed().degrees(), 180.0);
         assert_eq!(Heading::from_degrees(359.0), Heading::NORTH);
         assert_eq!(Heading::from_degrees(-90.0).degrees(), 270.0);
+    }
+
+    /// The front half is the faced direction and its two neighbours: never
+    /// a direction behind, and the same three however the heading leans
+    /// within its sixth.
+    #[test]
+    fn the_front_half_is_three_directions() {
+        for slot in 0..HEADING_SLOTS {
+            let heading = Heading::from_slot(slot);
+            let front = heading.front_dirs();
+            assert_eq!(front[1], heading.hex_dir());
+            assert!(!front.contains(&heading.reversed().hex_dir()));
+            assert!(front.iter().all(|d| HEX_DIRS.contains(d)));
+        }
+        assert_eq!(
+            Heading::NORTH.front_dirs(),
+            [Qrz { q: -1, r: 0, z: 0 }, Qrz { q: 0, r: -1, z: 0 }, Qrz { q: 1, r: -1, z: 0 }]
+        );
     }
 
     #[test]

@@ -101,6 +101,14 @@ pub enum Event {
     /// player holding the tile's chunk. The whole cover, so applying it
     /// twice or after the chunk's own copy leaves the same tile.
     CoverChanged { ent: Entity, q: i32, r: i32, cover: common::Cover },
+    /// Server → Client: the loot window `ent` has open, a stack to an
+    /// entry, or None where it has none open. Sent to its owner only.
+    Loot { ent: Entity, entries: Option<Vec<common::Stack>> },
+    /// Client → Server (Try): take entry `entry` of the open loot window,
+    /// or every entry where None
+    Take { ent: Entity, entry: Option<u8> },
+    /// Client → Server (Try): close the open loot window
+    CloseLoot { ent: Entity },
     RespecAttributes {
         ent: Entity,
         might_grace_axis: i8,

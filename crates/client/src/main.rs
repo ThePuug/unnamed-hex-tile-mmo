@@ -205,6 +205,9 @@ fn main() {
     app.add_systems(Update, (
         gathering::request,
         gathering::mark,
+        gathering::do_loot,
+        crate::systems::focus::track,
+        crate::systems::loot_window::update,
         common_bevy::systems::movement::update_burden,
     ).run_if(in_state(crate::plugins::shell::Stage::Playing)));
 
@@ -217,6 +220,8 @@ fn main() {
 
     app.init_resource::<InputQueues>();
     app.init_resource::<crate::resources::RenderOrigin>();
+    app.init_resource::<gathering::LootWindow>();
+    app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<hiding::HiddenMeshes>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();

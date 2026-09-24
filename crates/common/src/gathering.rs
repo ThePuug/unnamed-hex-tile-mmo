@@ -108,6 +108,9 @@ pub struct Harvest {
     pub cover: Cover,
     pub material: Material,
     pub amount: u32,
+    /// The slot the gather freed, where what the player leaves of the
+    /// yield lies as a pile.
+    pub freed: usize,
 }
 
 impl Harvest {
@@ -115,6 +118,31 @@ impl Harvest {
     pub fn stack(&self) -> Stack {
         Stack { kind: Stackable::Material(self.material), count: self.amount }
     }
+}
+
+/// The pile that holds `material`: its wood, or stone in the tile's rock.
+pub fn pile_of(material: Material) -> Content {
+    match material {
+        Material::Softwood => Content::SoftwoodPile,
+        Material::Hardwood => Content::HardwoodPile,
+        Material::Sandstone | Material::Limestone | Material::Basement => Content::StonePile,
+    }
+}
+
+/// `cover` with a pile of `material` left in slot `k`.
+pub fn left(cover: Cover, k: usize, material: Material) -> Cover {
+    cover.with_content(k, pile_of(material))
+}
+
+/// `cover` with the pile in slot `k` emptied, the slot free again.
+pub fn emptied(cover: Cover, k: usize) -> Cover {
+    cover.with_content(k, Content::Empty)
+}
+
+/// Whether G acts on slot `k`: something gatherable stands there, or a
+/// pile lies there to open.
+pub fn reachable(cover: Cover, k: usize) -> bool {
+    cover.content(k).is_pile() || harvest(cover, k).is_some()
 }
 
 /// The slot a gather of slot `k` acts on: a tree's first slot for either
@@ -138,6 +166,7 @@ pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
             cover: cover.with_content(at, stump).with_content(second, Content::Empty),
             material,
             amount: TREE_YIELD,
+            freed: second,
         })
     };
     match cover.content(at) {
@@ -147,6 +176,7 @@ pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
             cover: cover.with_content(at, Content::Empty),
             material: Material::stone(cover.rock())?,
             amount: BOULDER_YIELD,
+            freed: at,
         }),
         _ => None,
     }
@@ -174,6 +204,24 @@ mod tests {
         let both = harvest(harvest(two, first).unwrap().cover, SITE_SLOTS[1][0]).unwrap();
         assert_eq!((both.material, both.cover.fullness()), (Material::Hardwood, 2));
         assert_eq!(Cover::from_bits(both.cover.bits()), both.cover);
+    }
+
+    /// What a yield leaves lies as a pile in the slot the gather freed,
+    /// holding no one up and opened by G; emptied, the slot is free again.
+    #[test]
+    fn a_left_yield_lies_as_a_pile() {
+        let two = Cover::NONE.with(0, Content::Pine).with(1, Content::Pine);
+        let cut = harvest(two, SITE_SLOTS[0][0]).unwrap();
+        assert_eq!(cut.freed, SITE_SLOTS[0][1]);
+        let piled = left(cut.cover, cut.freed, cut.material);
+        assert_eq!(piled.content(cut.freed), Content::SoftwoodPile);
+        assert_eq!(piled.fullness(), cut.cover.fullness(), "a pile stands in no one's way");
+        assert!(reachable(piled, cut.freed) && harvest(piled, cut.freed).is_none());
+        assert_eq!(Cover::from_bits(piled.bits()), piled);
+        assert_eq!(emptied(piled, cut.freed), cut.cover);
+        let crag = Cover::NONE.with_boulder(4).with_rock(Rock::Basement);
+        let mined = harvest(crag, 4).unwrap();
+        assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::StonePile);
     }
 
     /// A boulder gives its rock's stone and frees its slot; shale gives

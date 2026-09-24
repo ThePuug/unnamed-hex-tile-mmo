@@ -22,6 +22,11 @@ pub enum Content {
     /// What a felled tree leaves in its first slot.
     PineStump = 6,
     DeciduousStump = 7,
+    /// What a player left of a yield: a pile of its wood, or of stone in
+    /// the tile's rock.
+    SoftwoodPile = 8,
+    HardwoodPile = 9,
+    StonePile = 10,
 }
 
 impl Content {
@@ -31,14 +36,20 @@ impl Content {
         match self {
             Content::Empty | Content::Spanned => 0,
             Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump => 1,
+            Content::SoftwoodPile | Content::HardwoodPile | Content::StonePile => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
 
     /// Whether the slot stands in a walker's way: a tree's two do, a
-    /// boulder's and a stump's do, brush's does not.
+    /// boulder's and a stump's do, brush's and a pile's do not.
     pub fn is_solid(self) -> bool {
-        !matches!(self, Content::Empty | Content::Brush)
+        !matches!(self, Content::Empty | Content::Brush) && !self.is_pile()
+    }
+
+    /// Whether it is a pile a player left, which anyone may open.
+    pub fn is_pile(self) -> bool {
+        matches!(self, Content::SoftwoodPile | Content::HardwoodPile | Content::StonePile)
     }
 
     /// Whether it grows at a site: brush or a tree.
@@ -55,6 +66,9 @@ impl Content {
             5 => Content::Boulder,
             6 => Content::PineStump,
             7 => Content::DeciduousStump,
+            8 => Content::SoftwoodPile,
+            9 => Content::HardwoodPile,
+            10 => Content::StonePile,
             _ => Content::Empty,
         }
     }

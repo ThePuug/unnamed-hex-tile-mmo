@@ -275,11 +275,14 @@ impl Inventory {
         self.weight() > BURDEN_LIMIT
     }
 
-    /// Whether `stack` goes in whole: within [`CARRY_LIMIT`], and onto a
-    /// stack of its kind already held or into a free one.
-    pub fn has_room_for(&self, worn: &Equipment, stack: common::Stack) -> bool {
-        self.weight() + stack.weight() <= CARRY_LIMIT
-            && (self.count(stack.kind) > 0 || self.stacks(worn) < BAG_STACKS)
+    /// How many of `kind` go in: as many as the weight left under
+    /// [`CARRY_LIMIT`] carries, onto a stack of the kind already held or
+    /// into a free one, and none of a new kind with no stack free.
+    pub fn room_for(&self, worn: &Equipment, kind: common::Stackable) -> u32 {
+        if self.count(kind) == 0 && self.stacks(worn) >= BAG_STACKS {
+            return 0;
+        }
+        CARRY_LIMIT.saturating_sub(self.weight()) / kind.weight().max(1)
     }
 }
 
@@ -358,14 +361,14 @@ mod tests {
         let mut bag = Inventory::wearing(&worn);
         assert!(bag.weight() > 0 && !bag.is_burdened());
         let stone = common::Material::Basement;
+        let kind = common::Stackable::Material(stone);
         while !bag.is_burdened() {
-            assert!(bag.has_room_for(&worn, of(stone, 1)));
+            assert!(bag.room_for(&worn, kind) > 0);
             bag.add(of(stone, 1));
         }
         assert!(bag.weight() > BURDEN_LIMIT);
-        while bag.has_room_for(&worn, of(stone, 1)) {
-            bag.add(of(stone, 1));
-        }
+        bag.add(of(stone, bag.room_for(&worn, kind)));
+        assert_eq!(bag.room_for(&worn, kind), 0);
         assert!(bag.weight() <= CARRY_LIMIT && bag.weight() + stone.weight() > CARRY_LIMIT);
     }
 
@@ -378,8 +381,8 @@ mod tests {
         bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
         bag.add(of(common::Material::Softwood, 1));
         assert_eq!(bag.stacks(&worn), BAG_STACKS);
-        assert!(bag.has_room_for(&worn, of(common::Material::Softwood, 1)));
-        assert!(!bag.has_room_for(&worn, of(common::Material::Hardwood, 1)));
+        assert!(bag.room_for(&worn, common::Stackable::Material(common::Material::Softwood)) > 0);
+        assert_eq!(bag.room_for(&worn, common::Stackable::Material(common::Material::Hardwood)), 0);
     }
 
     #[test]

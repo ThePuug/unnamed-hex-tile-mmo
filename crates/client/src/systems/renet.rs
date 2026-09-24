@@ -50,6 +50,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Inventory { .. } => "Inventory",
         Event::Gather { .. } => "Gather",
         Event::CoverChanged { .. } => "CoverChanged",
+        Event::Loot { .. } => "Loot",
         _ => "Other",
     }
 }
@@ -175,6 +176,10 @@ pub fn write_do(
             }
             Do { event: Event::CoverChanged { ent: _, q, r, cover } } => {
                 do_writer.write(Do { event: Event::CoverChanged { ent: Entity::PLACEHOLDER, q, r, cover } });
+            }
+            Do { event: Event::Loot { ent, entries } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
+                do_writer.write(Do { event: Event::Loot { ent, entries } });
             }
             Do { event: Event::Gcd { ent, typ } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
@@ -378,6 +383,17 @@ pub fn send_try(
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gather {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     q: *q, r: *r, slot: *slot,
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Event::Take { ent, entry } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Take {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    entry: *entry,
+                }}, bincode::config::legacy()).unwrap());
+            }
+            Event::CloseLoot { ent } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::CloseLoot {
+                    ent: *l2r.get_by_left(ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Wear { ent, item, on } => {

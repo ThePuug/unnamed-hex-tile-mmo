@@ -36,7 +36,7 @@ fn cells_of(bag: &Inventory, worn: &Equipment) -> Vec<Cell> {
 }
 
 /// A stackable kind's icon: the build writes a material's under its name.
-fn stack_icon(asset_server: &AssetServer, kind: common::Stackable) -> Handle<Image> {
+pub(crate) fn stack_icon(asset_server: &AssetServer, kind: common::Stackable) -> Handle<Image> {
     let stem = match kind {
         common::Stackable::Material(common::Material::Softwood) => "softwood",
         common::Stackable::Material(common::Material::Hardwood) => "hardwood",

@@ -14,9 +14,11 @@ pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;
 pub mod equipment;
 pub mod equipment_panel;
+pub mod focus;
 pub mod gathering;
 pub mod hiding;
 pub mod input;
+pub mod loot_window;
 pub mod movement;
 pub mod renet;
 pub mod resolved_threats; // Resolved threats stack below threat queue

@@ -248,6 +248,14 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Gather { ent, q, r, slot }});
                 }
+                Try { event: Event::Take { ent: _, entry } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Take { ent, entry }});
+                }
+                Try { event: Event::CloseLoot { ent: _ } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::CloseLoot { ent }});
+                }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
@@ -449,7 +457,7 @@ pub fn write_try(
                     conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Event::Inventory { ent, .. } | Event::CoverChanged { ent, .. } => {
+            Event::Inventory { ent, .. } | Event::CoverChanged { ent, .. } | Event::Loot { ent, .. } => {
                 let ent = *ent;
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let serialized = bincode::serde::encode_to_vec(

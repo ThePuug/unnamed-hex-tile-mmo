@@ -13,7 +13,7 @@ use common_bevy::{
 
 use crate::{
     plugins::console::DevConsole,
-    systems::character_panel::{CharacterPanelState, PanelTab, TabContent},
+    systems::character_panel::{close, CharacterPanel, CharacterPanelState, PanelTab, TabContent},
 };
 
 /// Items to a bag row: one per digit key.
@@ -226,11 +226,19 @@ fn held_square() -> (Node, BackgroundColor, BorderColor) {
 pub fn handle_numpad(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     console: Res<DevConsole>,
+    focus: Res<crate::systems::focus::NumpadFocus>,
     mut state: ResMut<CharacterPanelState>,
+    mut panel: Query<&mut Visibility, With<CharacterPanel>>,
     player: Query<(Entity, &Inventory, &Equipment), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
-    if !state.visible || console.visible {
+    if !focus.has(crate::systems::focus::Panel::Character) || console.visible {
+        return;
+    }
+    if keyboard.clear_just_pressed(KeyCode::Numpad0) {
+        if let Ok(mut visibility) = panel.single_mut() {
+            close(&mut state, &mut visibility);
+        }
         return;
     }
     if keyboard.clear_just_pressed(KeyCode::NumpadSubtract) {

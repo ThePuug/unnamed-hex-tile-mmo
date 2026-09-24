@@ -22,8 +22,38 @@ use qrz::Qrz;
 
 use crate::resources::{RenderOrigin, SummaryMeshes};
 
-/// The key that gathers.
+/// The key that gathers, or opens a pile.
 pub const KEYCODE_GATHER: KeyCode = KeyCode::KeyG;
+
+/// The loot window's keys: take everything, move to the next row of
+/// entries, and close.
+pub const KEYCODE_TAKE_ALL: KeyCode = KeyCode::NumpadEnter;
+pub const KEYCODE_NEXT_ROW: KeyCode = KeyCode::NumpadDecimal;
+pub const KEYCODE_CLOSE: KeyCode = KeyCode::Numpad0;
+
+/// The digit keys that take an entry of the loot window's row.
+pub const ENTRY_KEYS: [KeyCode; 9] = [
+    KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3,
+    KeyCode::Numpad4, KeyCode::Numpad5, KeyCode::Numpad6,
+    KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
+];
+
+/// The loot window the local player has open, a stack to an entry, as the
+/// server last said, None where it has none open; and the row of entries
+/// the digits take from.
+#[derive(Resource, Default)]
+pub struct LootWindow {
+    pub entries: Option<Vec<common::Stack>>,
+    pub row: usize,
+}
+
+impl LootWindow {
+    /// How many rows of [`ENTRY_KEYS`] the entries fill, never less than
+    /// one.
+    pub fn rows(&self) -> usize {
+        self.entries.as_ref().map_or(0, |e| e.len()).div_ceil(ENTRY_KEYS.len()).max(1)
+    }
+}
 
 /// Every tile the server has changed in the chunks the client holds, as its
 /// cover now stands. A tile arriving in a chunk takes its change from here,
@@ -52,14 +82,14 @@ pub struct GatherTarget {
 }
 
 /// The nearest gatherable thing in reach of an entity at `position`
-/// facing `heading`: in the tile it stands on or the one its heading
-/// faces. Measured in the frame of `position`'s tile, so it picks the same
+/// facing `heading`: in the tile it stands on or one of the three in its
+/// front half. Measured in the frame of `position`'s tile, so it picks the same
 /// however far out the world is.
 pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option<GatherTarget> {
     let here = position.reached(map);
     let from = position.offset.xz();
-    [here, here + heading.hex_dir()]
-        .into_iter()
+    std::iter::once(here)
+        .chain(heading.front_dirs().map(|d| here + d))
         .filter_map(|tile| map.get_by_qr(tile.q, tile.r))
         .flat_map(|(tile, typ)| {
             let EntityType::Decorator(decorator) = typ else { return Vec::new() };
@@ -67,7 +97,7 @@ pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option
             let (dq, dr) = (tile.q - position.tile.q, tile.r - position.tile.r);
             (0..common::TILE_SLOTS as usize)
                 .filter(|&k| common::gathering::anchor(cover, k) == k)
-                .filter(|&k| common::gathering::harvest(cover, k).is_some())
+                .filter(|&k| common::gathering::reachable(cover, k))
                 .map(|k| {
                     let tree = cover.content(k).slots() == 2;
                     let (x, z) = match common::SITE_SLOTS.iter().position(|s| s[0] == k).filter(|_| tree) {
@@ -84,22 +114,47 @@ pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option
 /// Asks the server to gather the target when G is pressed; the menu holds
 /// it as it holds every gameplay key.
 pub fn request(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
+    focus: Res<crate::systems::focus::NumpadFocus>,
+    mut window: ResMut<LootWindow>,
     map: Res<Map>,
     player: Query<(Entity, &Position, &Heading), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
-    if menu.open || !keyboard.just_pressed(KEYCODE_GATHER) {
+    if menu.open {
         return;
     }
     let Ok((ent, position, heading)) = player.single() else {
         warn!("gather: no single local player to gather with");
         return;
     };
+    // An open loot window works the numpad while it is the panel opened
+    // last.
+    if window.entries.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
+        let row = window.row;
+        for (i, key) in ENTRY_KEYS.iter().enumerate() {
+            if keyboard.clear_just_pressed(*key) {
+                let entry = (row * ENTRY_KEYS.len() + i) as u8;
+                writer.write(Try { event: Event::Take { ent, entry: Some(entry) } });
+            }
+        }
+        if keyboard.clear_just_pressed(KEYCODE_TAKE_ALL) {
+            writer.write(Try { event: Event::Take { ent, entry: None } });
+        }
+        if keyboard.clear_just_pressed(KEYCODE_NEXT_ROW) {
+            window.row = (row + 1) % window.rows();
+        }
+        if keyboard.clear_just_pressed(KEYCODE_CLOSE) {
+            writer.write(Try { event: Event::CloseLoot { ent } });
+        }
+    }
+    if !keyboard.just_pressed(KEYCODE_GATHER) {
+        return;
+    }
     let here = position.reached(&map);
     let Some(target) = gather_target(&map, position, *heading) else {
-        info!("gather: nothing in reach at {here:?} facing {:?}", here + heading.hex_dir());
+        info!("gather: nothing in reach at {here:?} facing {:?}", heading.hex_dir());
         return;
     };
     info!("gather: asking for slot {} of {:?}", target.slot, target.tile);
@@ -118,6 +173,17 @@ pub fn mark(
     let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
     let at = origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise + 0.05, target.at.y);
     gizmos.circle(Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)), 0.35, Color::srgb(1.0, 0.85, 0.3));
+}
+
+/// Keeps the local player's loot window as the server sends it.
+pub fn do_loot(mut reader: MessageReader<Do>, mut window: ResMut<LootWindow>, player: Query<(), With<Actor>>) {
+    for message in reader.read() {
+        let Do { event: Event::Loot { ent, entries } } = message else { continue };
+        if player.contains(*ent) {
+            window.entries = entries.clone();
+            window.row = window.row.min(window.rows() - 1);
+        }
+    }
 }
 
 /// Lays each tile the server changed over the map, keeps it for the chunk
@@ -157,8 +223,8 @@ mod tests {
         map
     }
 
-    /// G reaches the tile underfoot and the one faced, never one behind,
-    /// and takes the nearest thing there.
+    /// G reaches the tile underfoot and the three of the front half, never
+    /// one behind, and takes the nearest thing there.
     #[test]
     fn the_target_is_the_nearest_in_reach() {
         let here = Qrz { q: 0, r: 0, z: 0 };
