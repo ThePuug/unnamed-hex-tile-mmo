@@ -109,8 +109,8 @@ impl Ground<'_, '_> {
 }
 
 /// The work a player is at: gathering slot `slot` of tile `(q, r)`, done
-/// at `until`, from where it stood when it began. Moving from there or
-/// being struck breaks it off.
+/// at `until`, from where it stood and faced when it began. Moving from
+/// there, turning from that facing or being struck breaks it off.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Working {
     pub q: i32,
@@ -118,6 +118,7 @@ pub struct Working {
     pub slot: usize,
     pub until: std::time::Duration,
     pub from: Position,
+    pub facing: Heading,
 }
 
 /// Opens `ent`'s loot window on the pile at `key`, which holds `stacks`,
@@ -221,7 +222,7 @@ pub fn try_gather(
                 continue;
             }
             let until = time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
-            commands.entity(ent).insert(Working { q, r, slot, until, from: position });
+            commands.entity(ent).insert(Working { q, r, slot, until, from: position, facing });
             show(ent, Some(common::gathering::Activity::Work(work)), &mut commands);
         } else {
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
@@ -235,8 +236,8 @@ pub fn try_gather(
     }
 }
 
-/// Ends each player's work: broken off where it has moved from where it
-/// began; done when its time is up, when what it worked on is gathered —
+/// Ends each player's work: broken off where it has moved or turned since
+/// it began; done when its time is up, when what it worked on is gathered —
 /// its yield lies at once as a pile, locked to it, and its window opens —
 /// if it is still there and in reach.
 pub fn finish_work(
@@ -248,7 +249,7 @@ pub fn finish_work(
     players: Query<(Entity, &Loc, &Heading, &Position, &Working, Option<&Looting>)>,
 ) {
     for (ent, loc, heading, position, working, was) in &players {
-        if *position != working.from {
+        if *position != working.from || *heading != working.facing {
             stop(ent, was.is_some(), &mut commands);
             continue;
         }
