@@ -4,9 +4,10 @@
 //! leaves the rest to anyone. Every tile changed keeps the change, and every client
 //! holding the tile learns it.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bevy::{ecs::system::SystemParam, prelude::*};
+use common::summary::{SummarySource, TileSample};
 use common_bevy::{
     chunk::loc_to_chunk,
     components::{
@@ -26,17 +27,56 @@ use crate::systems::actor::VisibleChunkCache;
 
 /// Every tile players have changed, as its cover now stands. A tile is its
 /// generated cover with its change laid over: whatever builds a tile for
-/// the map or the wire takes it through [`WorldChanges::laid_over`].
+/// the map or the wire takes it through [`WorldChanges::laid_over`], and a
+/// summary reads its samples through [`WorldChanges::over`].
 #[derive(Resource, Default)]
-pub struct WorldChanges(HashMap<(i32, i32), common::Cover>);
+pub struct WorldChanges {
+    /// Shared with the summary tasks in flight, each reading the changes
+    /// as they stood when it set out; a change copies it while one holds it.
+    tiles: Arc<HashMap<(i32, i32), common::Cover>>,
+    /// Tiles changed since the summaries were last revised.
+    fresh: Vec<(i32, i32)>,
+}
 
 impl WorldChanges {
     /// The tile `typ` at `qrz` as players have left it.
     pub fn laid_over(&self, qrz: Qrz, typ: EntityType) -> EntityType {
-        match (typ, self.0.get(&(qrz.q, qrz.r))) {
+        match (typ, self.tiles.get(&(qrz.q, qrz.r))) {
             (EntityType::Decorator(d), Some(&cover)) => EntityType::Decorator(Decorator { cover, ..d }),
             _ => typ,
         }
+    }
+
+    /// `source` with every change laid over its tiles, as the changes
+    /// stand now.
+    pub fn over<S: SummarySource>(&self, source: S) -> LaidOver<S> {
+        LaidOver { source, tiles: self.tiles.clone() }
+    }
+
+    /// The tiles changed since the last call.
+    pub fn take_fresh(&mut self) -> Vec<(i32, i32)> {
+        std::mem::take(&mut self.fresh)
+    }
+
+    fn set(&mut self, q: i32, r: i32, cover: common::Cover) {
+        Arc::make_mut(&mut self.tiles).insert((q, r), cover);
+        self.fresh.push((q, r));
+    }
+}
+
+/// A summary source with the players' changes laid over its tiles.
+pub struct LaidOver<S> {
+    source: S,
+    tiles: Arc<HashMap<(i32, i32), common::Cover>>,
+}
+
+impl<S: SummarySource> SummarySource for LaidOver<S> {
+    fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
+        let mut sample = self.source.sample(q, r)?;
+        if let Some(&cover) = self.tiles.get(&(q, r)) {
+            sample.cover = cover;
+        }
+        Some(sample)
     }
 }
 
@@ -98,7 +138,7 @@ impl Ground<'_, '_> {
     fn set(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
         let Some((qrz, EntityType::Decorator(decorator))) = self.map.get_by_qr(q, r) else { return };
         self.map.insert(qrz, EntityType::Decorator(Decorator { cover, ..decorator }));
-        self.changes.0.insert((q, r), cover);
+        self.changes.set(q, r, cover);
         let chunk = loc_to_chunk(qrz);
         for (holder, cache) in &self.holders {
             if cache.sent.contains(&chunk) {
@@ -363,5 +403,42 @@ pub fn close_windows(
         if !working {
             show(ent, None, &mut commands);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::{summary::{sample_offsets, summarize}, Content, Cover};
+
+    /// A wood of one pine to a tile, everywhere.
+    struct Wood;
+    impl SummarySource for Wood {
+        fn sample(&self, _: i32, _: i32) -> Option<TileSample> {
+            Some(TileSample { z: 0, water: None, cover: Cover::NONE.with(0, Content::Pine) })
+        }
+    }
+
+    /// A summary reads its samples as players left them: a tree felled on
+    /// a tile it does not sample leaves it be, one felled on a sample comes
+    /// off its canopy, and a reading taken before the change keeps the
+    /// changes as they stood.
+    #[test]
+    fn a_summary_reads_its_samples_as_players_left_them() {
+        let r = 4;
+        let pines = |cell: Option<common::summary::SummaryCell>| cell.expect("every sample is there").canopy.count(Content::Pine);
+        let generated = pines(summarize(r, 0, 0, &Wood));
+        let mut changes = WorldChanges::default();
+
+        changes.set(1, 1, Cover::NONE);
+        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated, "no summary samples (1, 1)");
+
+        let before = changes.over(Wood);
+        let (dq, dr) = sample_offsets(r)[2];
+        changes.set(dq, dr, Cover::NONE);
+        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated - 1, "the felled sample is off the canopy");
+        assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
+        assert_eq!(changes.take_fresh(), vec![(1, 1), (dq, dr)]);
+        assert!(changes.take_fresh().is_empty());
     }
 }

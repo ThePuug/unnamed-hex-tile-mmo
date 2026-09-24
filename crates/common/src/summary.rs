@@ -69,6 +69,18 @@ pub fn sample_offsets(r: u32) -> [(i32, i32); SAMPLES] {
     [(0, 0), (d, 0), (-d, 0), (0, d), (0, -d), (d, -d), (-d, d)]
 }
 
+/// The summary on the lattice of radius `r` that reads tile `(q, rr)` as
+/// one of its samples, at lattice coordinates, or None where none does.
+/// The offsets are distinct modulo the width, so at most one summary a
+/// level reads any tile.
+pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
+    let s = scale(r);
+    sample_offsets(r).into_iter().find_map(|(dq, dr)| {
+        let (cq, cr) = (q - dq, rr - dr);
+        (cq.rem_euclid(s) == 0 && cr.rem_euclid(s) == 0).then(|| (cq.div_euclid(s), cr.div_euclid(s)))
+    })
+}
+
 /// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
 /// seven samples: the height by [`select_center_z`], the water by
 /// [`select_center_water`], the canopy by [`Canopy::of`], the outcrop by
@@ -161,6 +173,29 @@ mod tests {
         assert_eq!(cell.z, 25, "the peak survives");
         assert_eq!(cell.water, Some(9));
         assert_eq!(cell.canopy.count(Content::Pine), SAMPLES as u16);
+    }
+
+    /// Every tile a summary samples names that summary, and no other tile
+    /// names one: at each level, over a patch wider than its lattice.
+    #[test]
+    fn a_sample_names_the_summary_that_reads_it() {
+        for &r in &LOD_LEVELS {
+            let s = scale(r);
+            let mut named = std::collections::HashMap::new();
+            for sq in -3..=3 {
+                for sr in -3..=3 {
+                    let (cq, cr) = center_tile(r, sq, sr);
+                    for (dq, dr) in sample_offsets(r) {
+                        named.insert((cq + dq, cr + dr), (sq, sr));
+                    }
+                }
+            }
+            for q in -2 * s..=2 * s {
+                for rr in -2 * s..=2 * s {
+                    assert_eq!(sampled_by(r, q, rr), named.get(&(q, rr)).copied(), "r={r} tile ({q}, {rr})");
+                }
+            }
+        }
     }
 
     #[test]

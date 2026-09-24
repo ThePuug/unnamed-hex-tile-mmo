@@ -23,6 +23,7 @@ impl Plugin for WorldStreamingPlugin {
             summary::pass_summary_regions,
             summary::dispatch_summary_tasks,
             summary::poll_summary_tasks,
+            summary::revise_summaries,
         ));
     }
 }

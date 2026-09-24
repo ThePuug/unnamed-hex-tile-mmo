@@ -537,9 +537,10 @@ pub struct SummaryMesh {
 pub struct WaterMesh;
 
 /// Where a cached region's values came from. Values are identical across
-/// producers (same 7-sample rule over the same elevation field) — provenance
-/// only governs lifecycle: server data is durable for the whole session,
-/// flyover data is discarded when flyover toggles.
+/// producers (same 7-sample rule over the same elevation field) but for
+/// what players changed, which only the server lays over its samples —
+/// provenance governs lifecycle: server data is durable for the whole
+/// session, flyover data is discarded when flyover toggles.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RegionSource {
     Server,
@@ -555,6 +556,9 @@ pub enum RegionSource {
 pub struct SummaryCache {
     regions: Arc<DashMap<MeshRegionKey, Arc<RegionData>>>,
     new_data: Arc<AtomicBool>,
+    /// Built regions a revised summary is drawn in: its own and those of
+    /// the cells around it, whose rims read it.
+    revised: Arc<std::sync::Mutex<HashSet<MeshRegionKey>>>,
 }
 
 /// One mesh region's summary cells.
@@ -567,9 +571,22 @@ impl SummaryCache {
     /// Insert region data, merging into any existing entry. Merge keeps the
     /// union of cells (a partial batch can never erase previously received
     /// cells) and promotes provenance to Server if either side is Server.
+    /// A cell that arrives with a value other than the one held is a
+    /// revision: the regions drawing it are noted for [`Self::take_revised`].
     pub fn insert_region(&self, key: MeshRegionKey, data: RegionData) {
         match self.regions.get(&key).map(|r| r.value().clone()) {
             Some(existing) => {
+                let region_lat = common_bevy::summary::mesh_region_lattice();
+                let mut revised = self.revised.lock().expect("the lock is never poisoned");
+                for (&(sq, sr), cell) in &data.cells {
+                    if existing.cells.get(&(sq, sr)).is_some_and(|held| held != cell) {
+                        for (dq, dr) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
+                            let (mn, mm) = region_lat.cell_id(sq + dq, sr + dr);
+                            revised.insert(MeshRegionKey { r: key.r, mn, mm });
+                        }
+                    }
+                }
+                drop(revised);
                 let mut cells = existing.cells.clone();
                 cells.extend(data.cells);
                 let source = if existing.source == RegionSource::Server
@@ -603,10 +620,16 @@ impl SummaryCache {
         self.new_data.swap(false, Ordering::Relaxed)
     }
 
+    /// The regions noted as drawing a revised summary since the last call.
+    pub fn take_revised(&self) -> HashSet<MeshRegionKey> {
+        std::mem::take(&mut *self.revised.lock().expect("the lock is never poisoned"))
+    }
+
     /// Drop flyover-sourced regions (flyover toggle). Server-sourced data
-    /// is durable — the server tracks what it has sent per client and never
-    /// resends, so discarding it would blank the horizon until the player
-    /// walks regions out of and back into the server's visible set.
+    /// is durable — the server tracks what it has sent per client and
+    /// resends only a revision, so discarding it would blank the horizon
+    /// until the player walks regions out of and back into the server's
+    /// visible set.
     pub fn clear_flyover(&self) {
         self.regions.retain(|_, v| v.source == RegionSource::Server);
         self.new_data.store(true, Ordering::Relaxed);

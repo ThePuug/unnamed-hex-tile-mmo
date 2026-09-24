@@ -146,7 +146,9 @@ virtual clock would let one long server frame clamp every honest client.
 generated cover with what players changed laid over it. Every path that
 builds a tile for the map or the wire takes it through `laid_over`:
 `server::systems::gathering::WorldChanges` in `actor::merge_and_pack`,
-`client::systems::gathering::CoverChanges` in `world::do_spawn`. A path
+`client::systems::gathering::CoverChanges` in `world::do_spawn`. A
+summary reads its samples through `WorldChanges::over`, in
+`summary::dispatch_summary_tasks` and `summary::revise_summaries`. A path
 that skips it serves the tree a player felled.
 
 ## Patterns

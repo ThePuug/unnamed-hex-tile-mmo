@@ -220,7 +220,9 @@ pub fn do_loot(mut reader: MessageReader<Do>, mut window: ResMut<LootWindow>, pl
 }
 
 /// Lays each tile the server changed over the map, keeps it for the chunk
-/// it lies in, and has the regions standing that tile's trees built again.
+/// it lies in, and has the regions standing that tile's trees built again:
+/// the tiles' and the first summary level's, both stood from the map. The
+/// levels past them draw the summaries, which the server revises itself.
 pub fn apply(
     mut reader: MessageReader<Do>,
     map: Res<Map>,
@@ -233,7 +235,7 @@ pub fn apply(
         changes.0.insert((q, r), cover);
         let Some((qrz, typ)) = map.get_by_qr(q, r) else { continue };
         map.insert(qrz, changes.laid_over(qrz, typ));
-        for &radius in &LOD_LEVELS[..3] {
+        for &radius in &LOD_LEVELS[..2] {
             let cell = summary_lattice(radius).cell_id(q, r);
             let (mn, mm) = mesh_region_lattice().cell_id(cell.0, cell.1);
             if let Some(state) = meshes.states.get_mut(&MeshRegionKey { r: radius, mn, mm }) {

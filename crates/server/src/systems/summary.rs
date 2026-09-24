@@ -6,12 +6,13 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, mesh_region_lattice, summarize, summary_lattice},
+    summary::{compute_active_bands, mesh_region_lattice, sampled_by, summarize, summary_lattice, LOD_LEVELS},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
 use crate::resources::event_registry::EventRegistry;
 use crate::resources::summary_cache::SummaryCache;
+use crate::systems::gathering::WorldChanges;
 
 /// Per-client tracking of the summary regions sent and wanted.
 #[derive(bevy::prelude::Component, Default)]
@@ -131,6 +132,7 @@ pub fn pass_summary_regions(
 pub fn dispatch_summary_tasks(
     mut query: Query<(Entity, &mut VisibleSummaryCache)>,
     registry: Res<EventRegistry>,
+    changes: Res<WorldChanges>,
     mut task_queue: ResMut<SummaryTaskQueue>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
@@ -152,7 +154,7 @@ pub fn dispatch_summary_tasks(
             }
             budget -= 1;
             task_queue.waiting.insert(rk, vec![*ent]);
-            let reg = registry.clone();
+            let reg = changes.over(registry.clone());
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 let start = std::time::Instant::now();
                 let rl = mesh_region_lattice();
@@ -195,9 +197,13 @@ pub fn poll_summary_tasks(
             continue;
         };
         snapshot.record(&[("summary.dur_ms", duration_ms)]);
-        for data in &results {
-            summary_cache.insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr }, data.cell);
-        }
+        let results: Vec<SummaryData> = results
+            .into_iter()
+            .map(|data| {
+                let cell = summary_cache.get_or_insert(SummaryKey { r: data.r, sq: data.sq, sr: data.sr }, data.cell);
+                SummaryData { cell, ..data }
+            })
+            .collect();
         for ent in task_queue.waiting.remove(&region_key).unwrap_or_default() {
             let Ok(mut vis_cache) = query.get_mut(ent) else { continue };
             vis_cache.sent_regions.insert(region_key);
@@ -208,6 +214,50 @@ pub fn poll_summary_tasks(
     }
 
     task_queue.tasks = pending;
+}
+
+/// Read again every summary a tile players changed is a sample of, at
+/// each level, with the change laid over: into the cache, and to every
+/// client its region was sent to. Only a summary computed, or in a region
+/// being computed, is read again; one never computed reads the change when
+/// it is. A change to a tile no summary samples changes no summary.
+pub fn revise_summaries(
+    mut writer: MessageWriter<Do>,
+    mut changes: ResMut<WorldChanges>,
+    registry: Res<EventRegistry>,
+    mut summary_cache: ResMut<SummaryCache>,
+    task_queue: Res<SummaryTaskQueue>,
+    query: Query<(Entity, &VisibleSummaryCache)>,
+) {
+    let fresh = changes.take_fresh();
+    if fresh.is_empty() {
+        return;
+    }
+    let source = changes.over(registry.clone());
+    let region_lat = mesh_region_lattice();
+    let keys: HashSet<SummaryKey> = fresh
+        .into_iter()
+        .flat_map(|(q, r)| LOD_LEVELS.into_iter().filter_map(move |level| sampled_by(level, q, r).map(|(sq, sr)| SummaryKey { r: level, sq, sr })))
+        .collect();
+    for key in keys {
+        let (mn, mm) = region_lat.cell_id(key.sq, key.sr);
+        let region = MeshRegionKey { r: key.r, mn, mm };
+        let old = summary_cache.get(&key);
+        if old.is_none() && !task_queue.waiting.contains_key(&region) {
+            continue;
+        }
+        let cell = summarize(key.r, key.sq, key.sr, &source).expect("the registry has every tile");
+        if old == Some(cell) {
+            continue;
+        }
+        summary_cache.insert(key, cell);
+        let data = SummaryData { r: key.r, sq: key.sq, sr: key.sr, cell };
+        for (ent, vis_cache) in &query {
+            if vis_cache.sent_regions.contains(&region) {
+                writer.write(Do { event: Event::SummaryBatch { ent, additions: vec![data], removals: Vec::new() } });
+            }
+        }
+    }
 }
 
 /// World-space centre of a mesh region.

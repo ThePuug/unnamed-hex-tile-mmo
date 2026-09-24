@@ -175,7 +175,9 @@ impl<'a> LevelSurface<'a> {
 /// Built only once every cell of the region and of the ring around it has a
 /// height — the ring is what the perimeter corners are made of — and every
 /// coarser cell under a vertex and around it has one, and then final:
-/// heights are durable, so nothing a built region depends on ever changes.
+/// heights are durable. A canopy is not, since players fell what its
+/// samples hold, and the caller builds a region again when one it read
+/// is revised.
 /// Returns None until then. Producers cover one region ring more than
 /// consumers build, and the coarser level over every band
 /// (`visible_lod_regions`), so what a needed region waits on always arrives.

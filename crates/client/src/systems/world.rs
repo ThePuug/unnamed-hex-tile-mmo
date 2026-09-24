@@ -538,6 +538,11 @@ pub fn dispatch_summary_tasks(
 
     let map_changed = map.take_changed();
     let cache_changed = summary_cache.take_new_data();
+    for key in summary_cache.take_revised() {
+        if let Some(state) = summary_meshes.states.get_mut(&key) {
+            state.stale = true;
+        }
+    }
     let moved = match (*last_eval_pos, camera_pos) {
         (Some(prev), Some(pos)) => prev.distance_squared(pos) >= REEVAL_MOVE_WU * REEVAL_MOVE_WU,
         (None, Some(_)) => true,
