@@ -114,8 +114,8 @@ pub enum Activity {
 /// the player's clips declare it: where the axe's edge meets the trunk,
 /// the pick's point the boulder, and the fists the pile. A test holds these
 /// to the clips.
-pub const CHOP_REACH: f32 = 1.1016;
-pub const MINE_REACH: f32 = 1.0572;
+pub const CHOP_REACH: f32 = 1.1171;
+pub const MINE_REACH: f32 = 1.0200;
 pub const PICKUP_REACH: f32 = 0.5;
 
 /// How far ahead of the actor's feet `activity` lands its work.
