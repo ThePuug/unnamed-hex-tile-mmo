@@ -51,10 +51,6 @@ pub struct BagCell(pub usize);
 #[derive(Component)]
 pub struct BagCellKey;
 
-/// The line under the bag counting what gathering has brought in.
-#[derive(Component)]
-pub struct MaterialsLine;
-
 const CELL: f32 = 64.0;
 /// A slot square: six of them stand as tall as the closeup.
 const SLOT: f32 = 56.0;
@@ -160,12 +156,6 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                         row_gap: Val::Px(4.),
                         ..default()
                     },
-                ));
-                bag.spawn((
-                    MaterialsLine,
-                    Text::new(""),
-                    TextFont { font_size: FontSize::Px(12.0), ..default() },
-                    TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 ));
             });
         });
@@ -281,20 +271,6 @@ pub fn handle_numpad(
 /// The bag's row count, never less than one so the cursor has a row.
 fn rows(items: usize) -> usize {
     items.div_ceil(BAG_WIDTH).max(1)
-}
-
-/// Counts each material the bag holds, whenever its contents change.
-pub fn update_materials(
-    player: Query<&Inventory, (With<Actor>, Changed<Inventory>)>,
-    mut line: Query<&mut Text, With<MaterialsLine>>,
-) {
-    let (Ok(bag), Ok(mut line)) = (player.single(), line.single_mut()) else { return };
-    let held: Vec<String> = common::Material::ALL
-        .iter()
-        .filter(|&&m| bag.material(m) > 0)
-        .map(|&m| format!("{} {}", m.name(), bag.material(m)))
-        .collect();
-    line.0 = held.join("     ");
 }
 
 /// Lays the bag out again whenever its contents change.
@@ -428,7 +404,9 @@ mod tests {
     fn tabs_stop_at_the_strip_ends() {
         assert_eq!(PanelTab::Attributes.above(), PanelTab::Attributes);
         assert_eq!(PanelTab::Attributes.below(), PanelTab::Equipment);
-        assert_eq!(PanelTab::Equipment.below(), PanelTab::Equipment);
+        assert_eq!(PanelTab::Equipment.below(), PanelTab::Bag);
+        assert_eq!(PanelTab::Bag.below(), PanelTab::Bag);
+        assert_eq!(PanelTab::Bag.above(), PanelTab::Equipment);
         assert_eq!(PanelTab::Equipment.above(), PanelTab::Attributes);
         assert_eq!(PanelTab::ALL.first().copied(), Some(PanelTab::default()));
     }

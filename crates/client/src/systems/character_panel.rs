@@ -5,7 +5,7 @@ use common_bevy::{
     systems::combat::damage::contest_factor,
 };
 
-use crate::systems::equipment_panel;
+use crate::systems::{bag_panel, equipment_panel};
 
 /// The panel's tabs, stacked down its left edge in this order.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -13,15 +13,17 @@ pub enum PanelTab {
     #[default]
     Attributes,
     Equipment,
+    Bag,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 2] = [PanelTab::Attributes, PanelTab::Equipment];
+    pub const ALL: [PanelTab; 3] = [PanelTab::Attributes, PanelTab::Equipment, PanelTab::Bag];
 
     pub fn name(self) -> &'static str {
         match self {
             PanelTab::Attributes => "Attributes",
             PanelTab::Equipment => "Equipment",
+            PanelTab::Bag => "Bag",
         }
     }
 
@@ -29,13 +31,15 @@ impl PanelTab {
         match self {
             PanelTab::Attributes => PanelTab::Attributes,
             PanelTab::Equipment => PanelTab::Attributes,
+            PanelTab::Bag => PanelTab::Equipment,
         }
     }
 
     pub fn below(self) -> PanelTab {
         match self {
             PanelTab::Attributes => PanelTab::Equipment,
-            PanelTab::Equipment => PanelTab::Equipment,
+            PanelTab::Equipment => PanelTab::Bag,
+            PanelTab::Bag => PanelTab::Bag,
         }
     }
 }
@@ -805,6 +809,7 @@ pub fn setup(
         ))
         .id();
     equipment_panel::spawn_tab(&mut commands, content);
+    bag_panel::spawn_tab(&mut commands, content);
 
     commands
         .entity(attributes)
