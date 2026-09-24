@@ -535,10 +535,10 @@ mod tests {
 
     /// A tile of `n` trees at (q, r), on the flat ground.
     fn wooded(map: &Map, q: i32, r: i32, n: usize) {
-        use common::{Cover, Slot};
+        use common::{Cover, Content};
         let mut cover = Cover::NONE;
         for k in 0..n {
-            cover = cover.with(k, Slot::Pine);
+            cover = cover.with(k, Content::Pine);
         }
         map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: false }));
     }

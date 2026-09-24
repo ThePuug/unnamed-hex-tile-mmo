@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use common::{Cover, HexLattice, HexSpatialGrid, Slot, SITES};
+use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
 use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{nearest_node, PATH_SWING};
@@ -557,9 +557,9 @@ impl Reach {
 
 /// The tree a slot holds at a temperature: pine where cold, deciduous
 /// where warm, either between by the share of the way and the slot's hash.
-pub fn tree_at(temperature: f64, mix: f64) -> Slot {
+pub fn tree_at(temperature: f64, mix: f64) -> Content {
     let warm = (temperature - PINE_BELOW) / (DECIDUOUS_ABOVE - PINE_BELOW);
-    if mix < warm { Slot::Deciduous } else { Slot::Pine }
+    if mix < warm { Content::Deciduous } else { Content::Pine }
 }
 
 /// The three draws slot `k` of tile `(q, r)` is filled by, each in
@@ -584,7 +584,7 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
         if density <= fill {
             continue;
         }
-        let slot = if kind >= trees { Slot::Brush } else { tree_at(temperature, mix) };
+        let slot = if kind >= trees { Content::Brush } else { tree_at(temperature, mix) };
         if ground.has_room(k, slot) {
             cover = cover.with(k, slot);
         }
@@ -755,19 +755,19 @@ mod tests {
         let cover = cover_of(3, 4, ground, 1.0, 1.0, 20.0, S);
         assert_eq!(cover.boulders().collect::<Vec<_>>(), ground.boulders().collect::<Vec<_>>());
         assert_eq!(cover.rock(), common::Rock::Basement);
-        assert_eq!((cover.slot(0), cover.slot(1)), (Slot::Empty, Slot::Empty));
-        assert!(cover.slot(2) != Slot::Empty);
-        assert_eq!(cover_of(3, 4, ground, 1.0, 0.0, 20.0, S).slot(0), Slot::Brush);
+        assert_eq!((cover.growth(0), cover.growth(1)), (Content::Empty, Content::Empty));
+        assert!(cover.growth(2) != Content::Empty);
+        assert_eq!(cover_of(3, 4, ground, 1.0, 0.0, 20.0, S).growth(0), Content::Brush);
     }
 
     /// No slot holds a tree where the share is nothing, none holds brush
     /// where it is everything, and the kind follows the temperature.
     #[test]
     fn kinds_follow_the_share_and_the_temperature() {
-        let all = |f: &dyn Fn(Slot) -> bool, c: Cover| c.filled().all(|(_, s)| f(s));
-        assert!(all(&|s| s == Slot::Brush, cover_of(3, 4, Cover::NONE, 1.0, 0.0, 20.0, S)));
-        assert!(all(&|s| s == Slot::Pine, cover_of(3, 4, Cover::NONE, 1.0, 1.0, PINE_BELOW - 1.0, S)));
-        assert!(all(&|s| s == Slot::Deciduous, cover_of(3, 4, Cover::NONE, 1.0, 1.0, DECIDUOUS_ABOVE + 1.0, S)));
+        let all = |f: &dyn Fn(Content) -> bool, c: Cover| c.filled().all(|(_, s)| f(s));
+        assert!(all(&|s| s == Content::Brush, cover_of(3, 4, Cover::NONE, 1.0, 0.0, 20.0, S)));
+        assert!(all(&|s| s == Content::Pine, cover_of(3, 4, Cover::NONE, 1.0, 1.0, PINE_BELOW - 1.0, S)));
+        assert!(all(&|s| s == Content::Deciduous, cover_of(3, 4, Cover::NONE, 1.0, 1.0, DECIDUOUS_ABOVE + 1.0, S)));
     }
 
     /// A stand's origin has one owner: over a cell and its neighbours, no

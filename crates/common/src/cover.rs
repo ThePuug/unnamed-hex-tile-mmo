@@ -1,47 +1,63 @@
-//! A tile's cover: what grows at each of its three sites and the boulders
-//! in its seven slots. And what stands over many tiles as seven of them
-//! say: the canopy the far ground is coloured by, and the outcrop the far
-//! crags are stood from.
+//! A tile's cover: what stands in each of its seven slots. And what stands
+//! over many tiles as seven of them say: the canopy the far ground is
+//! coloured by, and the outcrop the far crags are stood from.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Rock;
 
-/// What stands in one slot of a tile.
+/// What stands in one slot of a tile. A tree stands in its site's first
+/// slot and spans the second, which holds [`Content::Spanned`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum Slot {
+pub enum Content {
     #[default]
     Empty = 0,
     Brush = 1,
     Pine = 2,
     Deciduous = 3,
+    /// The second slot of the tree in the site's first.
+    Spanned = 4,
+    Boulder = 5,
 }
 
-impl Slot {
-    /// How many of a tile's [`TILE_SLOTS`] it holds: a tree two, brush one.
+impl Content {
+    /// How many of a tile's [`TILE_SLOTS`] it holds from its own on: a
+    /// tree two, brush and a boulder one.
     pub fn slots(self) -> u8 {
         match self {
-            Slot::Empty => 0,
-            Slot::Brush => 1,
-            Slot::Pine | Slot::Deciduous => 2,
+            Content::Empty | Content::Spanned => 0,
+            Content::Brush | Content::Boulder => 1,
+            Content::Pine | Content::Deciduous => 2,
         }
     }
 
-    /// Whether it stands in a walker's way: a tree does, brush does not.
+    /// Whether the slot stands in a walker's way: a tree's two do, a
+    /// boulder's does, brush's does not.
     pub fn is_solid(self) -> bool {
-        matches!(self, Slot::Pine | Slot::Deciduous)
+        matches!(self, Content::Pine | Content::Deciduous | Content::Spanned | Content::Boulder)
     }
 
-    fn from_bits(bits: u16) -> Slot {
-        match bits & 3 {
-            1 => Slot::Brush,
-            2 => Slot::Pine,
-            3 => Slot::Deciduous,
-            _ => Slot::Empty,
+    /// Whether it grows at a site: brush or a tree.
+    pub fn is_growth(self) -> bool {
+        matches!(self, Content::Brush | Content::Pine | Content::Deciduous)
+    }
+
+    fn from_bits(bits: u32) -> Content {
+        match bits & CONTENT_MASK {
+            1 => Content::Brush,
+            2 => Content::Pine,
+            3 => Content::Deciduous,
+            4 => Content::Spanned,
+            5 => Content::Boulder,
+            _ => Content::Empty,
         }
     }
 }
+
+/// The bits one slot's content takes in a [`Cover`].
+const CONTENT_BITS: u32 = 4;
+const CONTENT_MASK: u32 = (1 << CONTENT_BITS) - 1;
 
 /// How many slots a tile has: its centre and one toward each neighbour.
 /// What stands on the ground holds some of them, by its size.
@@ -121,52 +137,75 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// What stands on a tile, in one `u16` so it crosses the wire as one: the
-/// three sites, two bits each, site `k` in bits `2k..2k+2` in [`SITES`]
-/// order; a boulder bit for each of the seven slots from bit
-/// [`BOULDER_BIT`] in [`SLOT_TOWARD`] order; and the boulders' rock in the
-/// two bits past those, read only where a boulder stands.
+/// What stands on a tile, in one `u32` so it crosses the wire as one:
+/// each of the seven slots' [`Content`] in [`CONTENT_BITS`], slot `k` from
+/// bit `k * CONTENT_BITS` in [`SLOT_TOWARD`] order; and the boulders' rock
+/// in the two bits past those, read only where a boulder stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Cover(u16);
-
-/// The first boulder bit.
-const BOULDER_BIT: u32 = 2 * SITES.len() as u32;
+pub struct Cover(u32);
 
 /// The first rock bit.
-const ROCK_BIT: u32 = BOULDER_BIT + TILE_SLOTS as u32;
+const ROCK_BIT: u32 = CONTENT_BITS * TILE_SLOTS as u32;
 
 impl Cover {
     pub const NONE: Cover = Cover(0);
 
-    pub fn from_bits(bits: u16) -> Cover {
-        Cover(bits & ((1 << (ROCK_BIT + 2)) - 1))
+    /// The cover these bits hold: bits past the rock's are dropped, and a
+    /// slot's bits that name no content read as empty.
+    pub fn from_bits(bits: u32) -> Cover {
+        (0..TILE_SLOTS as usize).fold(Cover(bits & (3 << ROCK_BIT)), |c, k| {
+            c.with_content(k, Content::from_bits(bits >> (k as u32 * CONTENT_BITS)))
+        })
     }
 
-    pub fn bits(self) -> u16 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
-    pub fn slot(self, k: usize) -> Slot {
-        debug_assert!(k < SITES.len());
-        Slot::from_bits(self.0 >> (2 * k))
+    /// What stands in slot `k`, in [`SLOT_TOWARD`] order.
+    pub fn content(self, k: usize) -> Content {
+        debug_assert!(k < TILE_SLOTS as usize);
+        Content::from_bits(self.0 >> (k as u32 * CONTENT_BITS))
     }
 
-    /// This cover with slot `k` holding `slot`.
-    pub fn with(self, k: usize, slot: Slot) -> Cover {
+    /// This cover with slot `k` holding `content`, and nothing else moved.
+    fn with_content(self, k: usize, content: Content) -> Cover {
+        debug_assert!(k < TILE_SLOTS as usize);
+        let at = k as u32 * CONTENT_BITS;
+        Cover((self.0 & !(CONTENT_MASK << at)) | (content as u32) << at)
+    }
+
+    /// What grows at site `k`, in [`SITES`] order: brush, a tree, or
+    /// nothing.
+    pub fn growth(self, k: usize) -> Content {
         debug_assert!(k < SITES.len());
-        Cover((self.0 & !(3 << (2 * k))) | ((slot as u16) << (2 * k)))
+        Some(self.content(SITE_SLOTS[k][0])).filter(|c| c.is_growth()).unwrap_or_default()
+    }
+
+    /// This cover with `growth` at site `k`, holding the slots its size
+    /// takes; the slots what grew there before held are freed.
+    pub fn with(self, k: usize, growth: Content) -> Cover {
+        debug_assert!(growth == Content::Empty || growth.is_growth());
+        let [first, second] = SITE_SLOTS[k];
+        let mut cover = self;
+        if self.growth(k).slots() == 2 {
+            cover = cover.with_content(second, Content::Empty);
+        }
+        cover = cover.with_content(first, growth);
+        if growth.slots() == 2 {
+            cover = cover.with_content(second, Content::Spanned);
+        }
+        cover
     }
 
     /// Whether a boulder stands in slot `k`, in [`SLOT_TOWARD`] order.
     pub fn boulder(self, k: usize) -> bool {
-        debug_assert!(k < TILE_SLOTS as usize);
-        self.0 >> (BOULDER_BIT + k as u32) & 1 == 1
+        self.content(k) == Content::Boulder
     }
 
     /// This cover with a boulder in slot `k`.
     pub fn with_boulder(self, k: usize) -> Cover {
-        debug_assert!(k < TILE_SLOTS as usize);
-        Cover(self.0 | 1 << (BOULDER_BIT + k as u32))
+        self.with_content(k, Content::Boulder)
     }
 
     /// The slots boulders stand in.
@@ -195,26 +234,25 @@ impl Cover {
         Cover((self.0 & !(3 << ROCK_BIT)) | bits << ROCK_BIT)
     }
 
-    /// Whether growth may stand at site `k` as `slot`: every slot it would
-    /// hold is free of boulders.
-    pub fn has_room(self, k: usize, slot: Slot) -> bool {
-        SITE_SLOTS[k][..slot.slots() as usize].iter().all(|&s| !self.boulder(s))
+    /// Whether `growth` may stand at site `k`: every slot it would hold is
+    /// empty.
+    pub fn has_room(self, k: usize, growth: Content) -> bool {
+        SITE_SLOTS[k][..growth.slots() as usize].iter().all(|&s| self.content(s) == Content::Empty)
     }
 
-    /// How many of the tile's [`TILE_SLOTS`] solid things hold, trees and
-    /// boulders alike: what movement reads.
+    /// How many of the tile's [`TILE_SLOTS`] hold something solid, trees
+    /// and boulders alike: what movement reads.
     pub fn fullness(self) -> u8 {
-        let trees: u8 = self.filled().filter(|(_, s)| s.is_solid()).map(|(_, s)| s.slots()).sum();
-        trees + self.boulders().count() as u8
+        (0..TILE_SLOTS as usize).filter(|&k| self.content(k).is_solid()).count() as u8
     }
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The filled sites, each with what grows there.
-    pub fn filled(self) -> impl Iterator<Item = (usize, Slot)> {
-        (0..SITES.len()).map(move |k| (k, self.slot(k))).filter(|(_, s)| *s != Slot::Empty)
+    /// The sites something grows at, each with what grows there.
+    pub fn filled(self) -> impl Iterator<Item = (usize, Content)> {
+        (0..SITES.len()).map(move |k| (k, self.growth(k))).filter(|(_, g)| *g != Content::Empty)
     }
 }
 
@@ -252,26 +290,26 @@ impl Canopy {
         self.0
     }
 
-    fn index(kind: Slot) -> usize {
+    fn index(kind: Content) -> usize {
         match kind {
-            Slot::Pine => 0,
-            Slot::Deciduous => 1,
-            Slot::Brush => 2,
-            Slot::Empty => unreachable!("an empty slot is not counted"),
+            Content::Pine => 0,
+            Content::Deciduous => 1,
+            Content::Brush => 2,
+            _ => unreachable!("only growth is counted"),
         }
     }
 
     /// How many readings hold `kind`; the empty ones are the rest.
-    pub fn count(self, kind: Slot) -> u16 {
+    pub fn count(self, kind: Content) -> u16 {
         match kind {
-            Slot::Empty => CANOPY_READINGS - self.filled(),
+            Content::Empty => CANOPY_READINGS - self.filled(),
             kind => (self.0 >> (5 * Self::index(kind))) & 31,
         }
     }
 
     /// How many readings hold anything.
     pub fn filled(self) -> u16 {
-        self.count(Slot::Pine) + self.count(Slot::Deciduous) + self.count(Slot::Brush)
+        self.count(Content::Pine) + self.count(Content::Deciduous) + self.count(Content::Brush)
     }
 
     pub fn is_empty(self) -> bool {
@@ -327,7 +365,7 @@ impl Outcrop {
 
     /// The rock the boulders are.
     pub fn rock(self) -> Rock {
-        Cover::from_bits(((self.0 >> 6) as u16) << ROCK_BIT).rock()
+        Cover::from_bits(((self.0 >> 6) as u32) << ROCK_BIT).rock()
     }
 
     pub fn is_empty(self) -> bool {
@@ -346,12 +384,16 @@ mod tests {
 
     #[test]
     fn slots_pack_and_unpack() {
-        let c = Cover::NONE.with(0, Slot::Pine).with(2, Slot::Deciduous);
-        assert_eq!(c.slot(0), Slot::Pine);
-        assert_eq!(c.slot(1), Slot::Empty);
-        assert_eq!(c.slot(2), Slot::Deciduous);
+        let c = Cover::NONE.with(0, Content::Pine).with(2, Content::Deciduous);
+        assert_eq!(c.growth(0), Content::Pine);
+        assert_eq!(c.growth(1), Content::Empty);
+        assert_eq!(c.growth(2), Content::Deciduous);
         assert_eq!(Cover::from_bits(c.bits()), c);
         assert_eq!(c.filled().count(), 2);
+        let [first, second] = SITE_SLOTS[0];
+        assert_eq!((c.content(first), c.content(second)), (Content::Pine, Content::Spanned));
+        let cut = c.with(0, Content::Brush);
+        assert_eq!((cut.content(first), cut.content(second)), (Content::Brush, Content::Empty), "brush frees the tree's second slot");
     }
 
     /// A sway is the slot's alone: the same twice, different for each
@@ -383,11 +425,12 @@ mod tests {
         for rock in [Rock::Shale, Rock::Sandstone, Rock::Limestone, Rock::Basement] {
             assert_eq!(c.with_rock(rock).rock(), rock);
         }
-        assert!(c.has_room(0, Slot::Pine) && !c.has_room(1, Slot::Pine) && c.has_room(1, Slot::Brush));
-        assert_eq!(c.with(0, Slot::Pine).fullness(), 4, "a tree beside two boulders closes a tile");
+        assert!(c.has_room(0, Content::Pine) && !c.has_room(1, Content::Pine) && c.has_room(1, Content::Brush));
+        assert_eq!(c.with(0, Content::Pine).fullness(), 4, "a tree beside two boulders closes a tile");
         let all = (0..TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
         assert_eq!(all.fullness(), TILE_SLOTS);
-        assert_eq!(Cover::from_bits(u16::MAX), Cover::from_bits(all.bits() | 0x3F));
+        assert_eq!(Cover::from_bits(u32::MAX).rock(), Rock::Basement);
+        assert!((0..TILE_SLOTS as usize).all(|k| Cover::from_bits(u32::MAX).content(k) == Content::Empty), "bits naming no content read as empty");
     }
 
     /// An outcrop counts its covers' boulders and keeps their rock: none
@@ -402,7 +445,7 @@ mod tests {
         assert_eq!(all.rock(), Rock::Sandstone);
         assert_eq!(all.density(), 1.0);
         assert_eq!(Outcrop::from_bits(all.bits()), all);
-        let one = Outcrop::of(&[Cover::NONE.with(0, Slot::Pine), Cover::NONE.with_boulder(3).with_rock(Rock::Basement)]);
+        let one = Outcrop::of(&[Cover::NONE.with(0, Content::Pine), Cover::NONE.with_boulder(3).with_rock(Rock::Basement)]);
         assert_eq!((one.boulders(), one.rock()), (1, Rock::Basement));
     }
 
@@ -423,12 +466,12 @@ mod tests {
     /// does not, so fullness counts only the trees' slots.
     #[test]
     fn fullness_counts_the_solid_slots() {
-        let brush = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Slot::Brush));
+        let brush = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Content::Brush));
         assert_eq!(brush.fullness(), 0);
-        assert_eq!(brush.bits() >> (2 * SITES.len()), 0, "nothing past the last site");
-        assert_eq!(Cover::NONE.with(1, Slot::Pine).fullness(), 2);
-        assert_eq!(brush.with(0, Slot::Pine).with(2, Slot::Deciduous).fullness(), 4);
-        let trees = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Slot::Pine));
+        assert!(SITE_SLOTS.iter().all(|&[_, second]| brush.content(second) == Content::Empty), "brush holds one slot");
+        assert_eq!(Cover::NONE.with(1, Content::Pine).fullness(), 2);
+        assert_eq!(brush.with(0, Content::Pine).with(2, Content::Deciduous).fullness(), 4);
+        let trees = (0..SITES.len()).fold(Cover::NONE, |c, k| c.with(k, Content::Pine));
         assert!(trees.fullness() <= TILE_SLOTS);
     }
 
@@ -438,15 +481,15 @@ mod tests {
     fn a_canopy_counts_what_its_covers_hold() {
         let samples = crate::summary::SAMPLES;
         assert_eq!(Canopy::of(&vec![Cover::NONE; samples]), Canopy::NONE);
-        let all = |kind: Slot| Cover::NONE.with(0, kind).with(1, kind).with(2, kind);
-        let pines = Canopy::of(&vec![all(Slot::Pine); samples]);
-        assert_eq!(pines.count(Slot::Pine), CANOPY_READINGS);
-        assert_eq!(pines.count(Slot::Empty), 0);
+        let all = |kind: Content| Cover::NONE.with(0, kind).with(1, kind).with(2, kind);
+        let pines = Canopy::of(&vec![all(Content::Pine); samples]);
+        assert_eq!(pines.count(Content::Pine), CANOPY_READINGS);
+        assert_eq!(pines.count(Content::Empty), 0);
         assert_eq!(pines.density(), 1.0);
         assert_eq!(Canopy::from_bits(pines.bits()), pines);
-        let mixed = Canopy::of(&[all(Slot::Pine), all(Slot::Deciduous), Cover::NONE.with(1, Slot::Brush)]);
-        assert_eq!((mixed.count(Slot::Pine), mixed.count(Slot::Deciduous), mixed.count(Slot::Brush)), (3, 3, 1));
+        let mixed = Canopy::of(&[all(Content::Pine), all(Content::Deciduous), Cover::NONE.with(1, Content::Brush)]);
+        assert_eq!((mixed.count(Content::Pine), mixed.count(Content::Deciduous), mixed.count(Content::Brush)), (3, 3, 1));
         assert_eq!(mixed.filled(), 7);
-        assert_eq!(mixed.count(Slot::Empty), CANOPY_READINGS - 7);
+        assert_eq!(mixed.count(Content::Empty), CANOPY_READINGS - 7);
     }
 }

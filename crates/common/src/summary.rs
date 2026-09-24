@@ -139,7 +139,7 @@ pub fn select_center_z(tile_zs: &[i32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cover::Slot;
+    use crate::cover::Content;
 
     /// A source with a hole gives no summary; a whole one gives the three
     /// rules' answers from the same seven tiles.
@@ -151,7 +151,7 @@ mod tests {
                 if self.0 == Some((q, r)) {
                     return None;
                 }
-                let cover = Cover::NONE.with(0, Slot::Pine);
+                let cover = Cover::NONE.with(0, Content::Pine);
                 Some(TileSample { z: 5 + (q == 0 && r == 0) as i32 * 20, water: Some(9), cover })
             }
         }
@@ -160,7 +160,7 @@ mod tests {
         let cell = summarize(1, 0, 0, &Flat(None)).expect("every sample is there");
         assert_eq!(cell.z, 25, "the peak survives");
         assert_eq!(cell.water, Some(9));
-        assert_eq!(cell.canopy.count(Slot::Pine), SAMPLES as u16);
+        assert_eq!(cell.canopy.count(Content::Pine), SAMPLES as u16);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use common::Slot;
+use common::Content;
 use world::events::dissection::DissectionEvent;
 use world::events::drainage::DrainageEvent;
 use world::events::forest::{self, ForestEvent};
@@ -123,7 +123,7 @@ fn forest_census() {
     println!("sites filled histogram 0..3: {hist:?}");
     println!(
         "slots: brush {}, pine {}, deciduous {}",
-        kinds[Slot::Brush as usize], kinds[Slot::Pine as usize], kinds[Slot::Deciduous as usize]
+        kinds[Content::Brush as usize], kinds[Content::Pine as usize], kinds[Content::Deciduous as usize]
     );
 }
 

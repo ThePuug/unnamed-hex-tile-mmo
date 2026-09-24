@@ -16,7 +16,7 @@ use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Slot, SITES, TILE_SLOTS};
+use common::{Content, SITES, TILE_SLOTS};
 use common_bevy::geometry::{boulder_center, flat_top_tile_center, slot_center};
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
@@ -31,11 +31,11 @@ pub enum Kind {
     Boulder,
 }
 
-impl From<Slot> for Kind {
-    fn from(slot: Slot) -> Kind {
-        match slot {
-            Slot::Pine => Kind::Pine,
-            Slot::Deciduous => Kind::Deciduous,
+impl From<Content> for Kind {
+    fn from(growth: Content) -> Kind {
+        match growth {
+            Content::Pine => Kind::Pine,
+            Content::Deciduous => Kind::Deciduous,
             _ => Kind::Brush,
         }
     }
@@ -87,7 +87,7 @@ const NEIGHBOURS: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), 
 
 /// The trees a tile stands, bushes aside.
 pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize {
-    map.cover_at(q, r).filled().filter(|&(_, s)| s != Slot::Brush).count()
+    map.cover_at(q, r).filled().filter(|&(_, s)| s != Content::Brush).count()
 }
 
 /// Whether a tree stands on this tile or any of the six around it,
@@ -690,7 +690,7 @@ mod tests {
             let n = ((q - 3 * r).rem_euclid(8)) as usize;
             let mut cover = Cover::NONE;
             for k in 0..n.min(SITES.len()) {
-                cover = cover.with(k, if k % 2 == 0 { Slot::Pine } else { Slot::Brush });
+                cover = cover.with(k, if k % 2 == 0 { Content::Pine } else { Content::Brush });
             }
             if n >= 4 {
                 cover = cover.with_boulder(0).with_boulder(n - 2);

@@ -298,10 +298,10 @@ mod tests {
     /// A tile's cover is its decorator's, and a tile not loaded has none.
     #[test]
     fn cover_is_the_decorators() {
-        use common::{Cover, Slot};
+        use common::{Cover, Content};
         use crate::components::entity_type::decorator::Decorator;
         let map = make_flat_map();
-        let cover = Cover::NONE.with(0, Slot::Pine).with(2, Slot::Brush);
+        let cover = Cover::NONE.with(0, Content::Pine).with(2, Content::Brush);
         map.insert(Qrz { q: 1, r: 1, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
         assert_eq!(map.cover_at(1, 1), cover);
         assert_eq!(map.cover_at(0, 0), Cover::NONE);

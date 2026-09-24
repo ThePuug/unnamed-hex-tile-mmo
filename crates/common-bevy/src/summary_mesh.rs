@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
-use common::cover::{Canopy, Slot};
+use common::cover::{Canopy, Content};
 
 use crate::{
     chunk::{self, ChunkId},
@@ -68,8 +68,8 @@ pub struct SummaryMeshResult {
 /// against bare ground thins without shifting hue — where shares would
 /// fade twice and counts would not blend at all.
 pub fn canopy_vertex(canopy: Canopy) -> [f32; 4] {
-    let part = |kind: Slot| canopy.count(kind) as f32 / common::cover::CANOPY_READINGS as f32;
-    [canopy.density() as f32, part(Slot::Pine), part(Slot::Deciduous), part(Slot::Brush)]
+    let part = |kind: Content| canopy.count(kind) as f32 / common::cover::CANOPY_READINGS as f32;
+    [canopy.density() as f32, part(Content::Pine), part(Content::Deciduous), part(Content::Brush)]
 }
 
 /// Cells in a mesh region (radius-9 hex ball).
@@ -863,12 +863,12 @@ mod tests {
     /// under a curtain, and none at all when built without.
     #[test]
     fn canopy_rides_the_vertices_by_the_corner_rule() {
-        use common::cover::{Canopy, Cover, Slot};
+        use common::cover::{Canopy, Content, Cover};
         let flat = |_: i32, _: i32| Some(5);
         let bare = build_summary_mesh_region(1, REGION, &flat, None, None).unwrap();
         assert!(bare.canopy.is_empty());
 
-        let pines = Canopy::of(&[Cover::NONE.with(0, Slot::Pine).with(1, Slot::Pine); 7]);
+        let pines = Canopy::of(&[Cover::NONE.with(0, Content::Pine).with(1, Content::Pine); 7]);
         let one = |q: i32, r: i32| Some(if (q, r) == (0, 0) { pines } else { Canopy::NONE });
         let result = build_summary_mesh_region(1, REGION, &flat, None, Some(&one)).unwrap();
         assert_eq!(result.canopy.len(), result.positions.len());
