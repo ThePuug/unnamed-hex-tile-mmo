@@ -176,18 +176,19 @@ pub fn request(
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
 
-/// Rings what G would gather.
+/// Marks what G would gather, for the wood to draw lit through.
 pub fn mark(
-    mut gizmos: Gizmos,
+    mut marked: ResMut<crate::plugins::forest::Marked>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
     player: Query<(&Position, &Heading), With<Actor>>,
 ) {
-    let Ok((position, heading)) = player.single() else { return };
-    let Some(target) = gather_target(&map, position, *heading) else { return };
-    let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
-    let at = origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise + 0.05, target.at.y);
-    gizmos.circle(Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)), 0.35, Color::srgb(1.0, 0.85, 0.3));
+    let foot = player.single().ok().and_then(|(position, heading)| {
+        let target = gather_target(&map, position, *heading)?;
+        let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
+        Some(origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise, target.at.y))
+    });
+    marked.set_if_neq(crate::plugins::forest::Marked(foot));
 }
 
 /// What an actor is doing at a gather, as the server says: at its work,

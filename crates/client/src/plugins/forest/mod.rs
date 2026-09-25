@@ -234,6 +234,11 @@ impl Kit {
     }
 }
 
+/// The foot of what G will act on, in rendered coordinates, which the wood
+/// draws lit through; none while nothing is in reach.
+#[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
+pub struct Marked(pub Option<Vec3>);
+
 /// The kit, present once every model has loaded.
 #[derive(Resource)]
 pub struct TreeKit {

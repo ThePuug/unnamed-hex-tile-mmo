@@ -55,7 +55,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::view::{ExtractedView, RenderVisibleEntities, RetainedViewEntity};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bytemuck::{Pod, Zeroable};
-use super::Kind;
+use super::{Kind, Marked};
 
 use crate::resources::CardBand;
 use crate::systems::camera::NEAR_FADE_RADIUS;
@@ -402,7 +402,9 @@ impl Plugin for TreeDrawPlugin {
             ExtractComponentPlugin::<TreeStand>::default(),
             ExtractComponentPlugin::<CardStand>::default(),
             ExtractResourcePlugin::<CardBand>::default(),
+            ExtractResourcePlugin::<Marked>::default(),
         ));
+        app.init_resource::<Marked>();
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
             .init_resource::<SpecializedMeshPipelines<TreePipeline>>()
@@ -434,13 +436,15 @@ impl Plugin for TreeDrawPlugin {
 
 /// What every drawing of the wood reads alike: the ring where the models
 /// hand over to the cards — its centre, radius and overlap — the far
-/// cards' band, its inner and outer edge each alike, and the radius about
-/// the camera inside which everything fades.
+/// cards' band, its inner and outer edge each alike, the foot of what G
+/// will act on with w 1 while there is one, and the radius about the
+/// camera inside which everything fades.
 #[derive(Clone, Copy, Default, ShaderType)]
 struct ForestUniform {
     band: Vec4,
     far_in: Vec4,
     far_out: Vec4,
+    marked: Vec4,
     near_fade: f32,
 }
 
@@ -772,6 +776,7 @@ fn prepare_wood_buffers(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     band: Option<Res<CardBand>>,
+    marked: Option<Res<Marked>>,
     table: Res<RegionTable>,
     buffers: ResMut<WoodBuffers>,
     timers: Res<crate::resources::ClientTimers>,
@@ -781,7 +786,8 @@ fn prepare_wood_buffers(
     let (ring, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
         (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.far_in, b.far_out)
     });
-    buffers.forest.set(ForestUniform { band: ring, far_in, far_out, near_fade: NEAR_FADE_RADIUS });
+    let marked = marked.and_then(|m| m.0).map_or(Vec4::ZERO, |foot| foot.extend(1.0));
+    buffers.forest.set(ForestUniform { band: ring, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
     buffers.forest.write_buffer(&render_device, &render_queue);
     buffers.frames.set(table.frames.clone());
     buffers.frames.write_buffer(&render_device, &render_queue);
