@@ -140,7 +140,7 @@ pub enum Event {
 }
 
 /// Types of abilities that can be used ( MVP ability set + Counter)
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AbilityType {
     /// Q: Gap closer - teleport adjacent to target (4 hex range, 20 stam, 40 dmg)
     Lunge,

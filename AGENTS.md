@@ -24,6 +24,7 @@ behavior changes. Per-crate guidance sits alongside the crate it governs —
 cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
+cargo run --bin server -- arena      # archetype v archetype balance, headless; keys in server/src/arena.rs
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
 cargo test -p server reaction_queue

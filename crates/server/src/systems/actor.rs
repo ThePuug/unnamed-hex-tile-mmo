@@ -380,14 +380,16 @@ pub fn poll_chunk_tasks(
     task_queue.tasks = pending;
 }
 
+/// Moves each actor's `Loc` onto the tile its `Position` has reached. Timed when
+/// the metrics plugin is installed; the balance arena runs without it.
 pub fn update(
     mut writer: MessageWriter<Try>,
     mut query: Query<(Entity, &mut Loc, &mut Position), Changed<Position>>,
     map: Res<Map>,
-    timings: Res<SystemTimings>,
+    timings: Option<Res<SystemTimings>>,
 ) {
     if query.is_empty() { return; }
-    let _t = timings.scope("actor_update");
+    let _t = timings.as_ref().map(|t| t.scope("actor_update"));
     for (ent, mut loc0, mut position) in &mut query {
         let qrz = position.reached(&map);
         if **loc0 != qrz {

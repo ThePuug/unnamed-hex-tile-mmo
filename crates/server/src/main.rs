@@ -1,3 +1,4 @@
+mod arena;
 mod components;
 pub mod network;
 mod plugins;
@@ -27,6 +28,11 @@ pub struct Tick {
 
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "arena") {
+        return arena::run(&args[1..]);
+    }
+
     let mut app = App::new();
     app.add_plugins((
         // Without a wait the runner spins a core. Physics is FixedUpdate, so

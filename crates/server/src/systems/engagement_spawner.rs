@@ -74,7 +74,9 @@ pub fn try_spawn_den(
         let ahead = den_ahead(**loc, *heading, *archetype);
         let den = Qrz { q: ahead.q, r: ahead.r, z: registry.elevation_at(ahead.q, ahead.r) + 1 };
         info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
-        spawn_engagement(den, *archetype, Side::WILD, &mut commands, &time, &registry);
+        let level = calculate_enemy_level(den, HAVEN_LOCATION);
+        let npc_count = rand::rng().random_range(1..=3u8);
+        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &mut commands, &time);
     }
 }
 
@@ -84,17 +86,19 @@ fn den_ahead(tile: Qrz, heading: Heading, archetype: EnemyArchetype) -> Qrz {
     tile + heading.hex_dir() * (acquisition_range(archetype) as i32 + 1 + DEN_CLEARANCE)
 }
 
-/// Spawn an engagement at a location with the given archetype.
+/// Spawn an engagement of `npc_count` NPCs of `archetype` at `level`, on
+/// `side`, round `location`; each stands a tile above the ground
+/// `elevation` gives at its column.
 pub fn spawn_engagement(
     location: Qrz,
     archetype: EnemyArchetype,
     side: Side,
+    level: u8,
+    npc_count: u8,
+    elevation: impl Fn(i32, i32) -> i32,
     commands: &mut Commands,
     time: &Time,
-    registry: &crate::resources::event_registry::EventRegistry,
 ) {
-    let level = calculate_enemy_level(location, HAVEN_LOCATION);
-    let npc_count = rand::rng().random_range(1..=3u8);
 
     let mut engagement = Engagement::new(location, level, archetype, npc_count);
 
@@ -112,7 +116,7 @@ pub fn spawn_engagement(
     for i in 0..npc_count {
         let offset = get_random_hex_offset(i as usize);
         let npc_location_base = location + offset;
-        let npc_z = registry.elevation_at(npc_location_base.q, npc_location_base.r);
+        let npc_z = elevation(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
 
         let actor_impl = ActorImpl {
