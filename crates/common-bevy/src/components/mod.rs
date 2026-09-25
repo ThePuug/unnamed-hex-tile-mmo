@@ -786,6 +786,15 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
+    /// Gravitas: Auto-attack power from presence (absolute meta-attribute)
+    /// Fully scaled like Force, so pressure — cadence and weight — is bought with Presence alone.
+    pub fn gravitas(&self) -> f32 {
+        let presence = self.presence() as f32;
+        let base = 10.0;
+        let linear = base + (presence * 0.3);
+        linear * self.damage_level_multiplier()
+    }
+
     /// Technique: Defensive power from grace (absolute meta-attribute)
     /// Fully scaled damage output including level progression. Used as base damage for defensive/reactive abilities.
     pub fn technique(&self) -> f32 {
@@ -951,6 +960,15 @@ mod tests {
 
     // ===== LEVEL MULTIPLIER TESTS =====
     // Property tests only — no specific formula values, survives balance tuning
+
+    #[test]
+    fn test_gravitas_follows_presence_not_might() {
+        let presence = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert!(presence.gravitas() > might.gravitas());
+        assert!(might.force() > presence.force());
+        assert_eq!(might.gravitas(), presence.force());
+    }
 
     #[test]
     fn test_level_multiplier_identity_at_zero() {

@@ -102,9 +102,9 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Deal damage — Force at 25%: auto-attacks are steady pressure, abilities carry the damage
+        // Deal damage — Gravitas at 25%: auto-attacks are pressure, bought with Presence
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
-        let base_damage = attrs.force() * 0.25;
+        let base_damage = attrs.gravitas() * 0.25;
 
         commands.trigger(
             Try {
