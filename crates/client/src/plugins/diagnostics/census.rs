@@ -3,11 +3,11 @@
 //! stand for, and how many triangles reach the clipper.
 //!
 //! A pass timing says the frame is slow; this says which group made it
-//! so. The forest draws in stands, so its draw count and its triangle
+//! so. The cover draws in stands, so its draw count and its triangle
 //! count move independently — one stand of a thousand trees is one draw
 //! and a thousand crowns — and terrain is the reverse, a draw per region
 //! and the triangles of the tiles in it. Only what the world's camera can
-//! see is counted, so the numbers move as the view does: a stand's trees
+//! see is counted, so the numbers move as the view does: a stand's instances
 //! by whether their region's box is in its frustum, as the draw decides.
 
 use bevy::camera::primitives::Frustum;
@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::plugins::forest::draw::{CardStand, Stand, Stands, TreeStand};
+use crate::plugins::cover::draw::{CardStand, Stand, Stands, ModelStand};
 use crate::resources::SummaryMesh;
 use common_bevy::components::Actor;
 
@@ -30,7 +30,7 @@ pub struct Group {
     /// Draws: one per entity the rasteriser is handed.
     pub draws: u32,
     /// Copies those draws stand for. Equal to `draws` unless the group
-    /// draws instanced, as the forest does.
+    /// draws instanced, as the cover does.
     pub instances: u32,
     /// Triangles reaching the clipper, instances counted.
     pub triangles: u64,
@@ -48,7 +48,7 @@ impl Group {
 #[derive(Resource, Default)]
 pub struct RenderCensus {
     pub terrain: Group,
-    pub forest: Group,
+    pub cover: Group,
     pub actors: Group,
     /// Everything else drawn: the sky dome, the water plane, the sun and
     /// moon discs, the grid overlay.
@@ -57,7 +57,7 @@ pub struct RenderCensus {
 
 impl RenderCensus {
     pub fn total_triangles(&self) -> u64 {
-        self.terrain.triangles + self.forest.triangles + self.actors.triangles + self.other.triangles
+        self.terrain.triangles + self.cover.triangles + self.actors.triangles + self.other.triangles
     }
 }
 
@@ -81,11 +81,11 @@ pub fn take_census(
     time: Res<Time>,
     mut due: Local<Duration>,
     meshes: Res<Assets<Mesh>>,
-    drawn: Query<(Entity, &Mesh3d, &ViewVisibility, Option<&SummaryMesh>), (Without<TreeStand>, Without<CardStand>)>,
+    drawn: Query<(Entity, &Mesh3d, &ViewVisibility, Option<&SummaryMesh>), (Without<ModelStand>, Without<CardStand>)>,
     parents: Query<&ChildOf>,
     actors: Query<(), With<Actor>>,
     stands: Res<Stands>,
-    tree_stands: Query<(&Mesh3d, &TreeStand)>,
+    model_stands: Query<(&Mesh3d, &ModelStand)>,
     card_stands: Query<(&Mesh3d, &CardStand)>,
     frames: Query<&GlobalTransform>,
     camera: Query<&Frustum, (With<Camera3d>, With<IsDefaultUiCamera>)>,
@@ -112,8 +112,8 @@ pub fn take_census(
         }
     }
 
-    // The regions whose box the camera sees, and of each stand the trees
-    // standing in them.
+    // The regions whose box the camera sees, and of each stand the
+    // instances standing in them.
     if let Ok(frustum) = camera.single() {
         let seen: HashSet<u32> = stands
             .regions()
@@ -122,14 +122,14 @@ pub fn take_census(
             })
             .map(|(_, slot, _)| slot)
             .collect();
-        let stood = tree_stands.iter().map(|(m, s)| (m, s.draw())).chain(card_stands.iter().map(|(m, s)| (m, s.draw())));
+        let stood = model_stands.iter().map(|(m, s)| (m, s.draw())).chain(card_stands.iter().map(|(m, s)| (m, s.draw())));
         for (mesh, stand) in stood {
-            let trees: u32 = stand.ranges.iter().filter(|r| seen.contains(&r.slot)).map(|r| r.count).sum();
-            if trees == 0 {
+            let instances: u32 = stand.ranges.iter().filter(|r| seen.contains(&r.slot)).map(|r| r.count).sum();
+            if instances == 0 {
                 continue;
             }
             let Some(triangles) = meshes.get(&mesh.0).map(triangles_of) else { continue };
-            next.forest.add(triangles, trees);
+            next.cover.add(triangles, instances);
         }
     }
     *census = next;

@@ -777,7 +777,7 @@ pub fn update(
 
     // Among trees the camera closes in over the shoulder.
     let tile: Qrz = map.convert(feet + origin);
-    let among = crate::plugins::forest::among_trees(&map, tile.q, tile.r);
+    let among = crate::plugins::cover::among_trees(&map, tile.q, tile.r);
     let (to, k) = if among { (1.0, CLOSE_IN_EASE) } else { (0.0, CLOSE_OUT_EASE) };
     state.closed = ease(state.closed, to, k, dt);
     wanted = wanted.toward(Pose::close(wanted.yaw), state.closed);

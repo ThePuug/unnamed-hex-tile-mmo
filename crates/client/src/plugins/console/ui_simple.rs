@@ -201,11 +201,11 @@ pub fn update_console_menu(
 
                     parent.spawn((
                         Text::new(format!(
-                            "6. Forest                   [{}]",
-                            if diagnostics_state.forest_hidden { "Hidden" } else { "Shown" }
+                            "6. Cover                    [{}]",
+                            if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }
                         )),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(!diagnostics_state.forest_hidden)),
+                        TextColor(state_color(!diagnostics_state.cover_hidden)),
                     ));
 
 

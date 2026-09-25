@@ -176,9 +176,9 @@ pub fn request(
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
 
-/// Marks what G would gather, for the wood to draw lit through.
+/// Marks what G would gather, for the cover to draw lit through.
 pub fn mark(
-    mut marked: ResMut<crate::plugins::forest::Marked>,
+    mut marked: ResMut<crate::plugins::cover::Marked>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
     player: Query<(&Position, &Heading), With<Actor>>,
@@ -188,7 +188,7 @@ pub fn mark(
         let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
         Some(origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise, target.at.y))
     });
-    marked.set_if_neq(crate::plugins::forest::Marked(foot));
+    marked.set_if_neq(crate::plugins::cover::Marked(foot));
 }
 
 /// What an actor is doing at a gather, as the server says: at its work,

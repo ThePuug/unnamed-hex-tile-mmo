@@ -58,7 +58,7 @@ pub fn dump_metrics(
     mut dump: ResMut<MetricsDump>,
     video: Res<VideoSettings>,
     census: Res<RenderCensus>,
-    wood: Res<crate::plugins::forest::ForestDraws>,
+    cover: Res<crate::plugins::cover::CoverDraws>,
     diagnostics: Res<DiagnosticsStore>,
     map: Res<common_bevy::resources::map::Map>,
     history: Res<super::metrics_overlay::MetricsHistory>,
@@ -98,14 +98,14 @@ pub fn dump_metrics(
     }
 
     let _ = writeln!(out, "map/tiles = {}", map.len());
-    let _ = writeln!(out, "forest/tree_draws = {}", wood.models);
-    let _ = writeln!(out, "forest/trees = {}", wood.model_trees);
-    let _ = writeln!(out, "forest/card_draws = {}", wood.cards);
-    let _ = writeln!(out, "forest/cards = {}", wood.card_trees);
+    let _ = writeln!(out, "cover/model_draws = {}", cover.models);
+    let _ = writeln!(out, "cover/models = {}", cover.model_instances);
+    let _ = writeln!(out, "cover/card_draws = {}", cover.cards);
+    let _ = writeln!(out, "cover/cards = {}", cover.card_instances);
 
     for (name, group) in [
         ("terrain", &census.terrain),
-        ("forest", &census.forest),
+        ("cover", &census.cover),
         ("actors", &census.actors),
         ("other", &census.other),
     ] {
@@ -127,7 +127,7 @@ pub fn dump_metrics(
                 continue;
             }
             covered += 1;
-            if crate::plugins::forest::trees_on(&map, q, r) > 0 {
+            if crate::plugins::cover::trees_on(&map, q, r) > 0 {
                 treed += 1;
             } else {
                 brush_only += 1;

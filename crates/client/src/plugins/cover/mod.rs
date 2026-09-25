@@ -1,10 +1,11 @@
-//! The trees and the boulders: each tile's sites and boulder slots drawn
-//! as instances of a kind's model, in
+//! The cover drawn: each tile's trees, bushes and stumps at its sites,
+//! and its boulders and piles in its slots, as instances of a kind's
+//! model, in
 //! batches that are children of the mesh region their tiles lie in, so
 //! they are evicted and re-based with the ground as the water is. A kind's
 //! GLB carries its variations as its meshes; each is merged once into one
-//! mesh coloured by its materials, and a region's trees of one variation
-//! are one draw from one instance buffer, built with the region.
+//! mesh coloured by its materials, and a region's instances of one
+//! variation are one draw from one instance buffer, built with the region.
 
 pub mod draw;
 
@@ -234,24 +235,24 @@ impl Kit {
     }
 }
 
-/// The foot of what G will act on, in rendered coordinates, which the wood
+/// The foot of what G will act on, in rendered coordinates, which the cover
 /// draws lit through; none while nothing is in reach.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
 pub struct Marked(pub Option<Vec3>);
 
 /// The kit, present once every model has loaded.
 #[derive(Resource)]
-pub struct TreeKit {
+pub struct CoverKit {
     pub kit: Arc<Kit>,
 }
 
 #[derive(Resource)]
 struct Loading(Vec<(Kind, Handle<Gltf>)>);
 
-/// A tree or a boulder to draw: where it stands from its region's origin,
+/// A tree, bush, stump, boulder or pile to draw: where it stands from its region's origin,
 /// its turn, how far it has grown, and which model.
 #[derive(Clone, Copy, Debug)]
-pub struct TreeInstance {
+pub struct CoverInstance {
     pub translation: Vec3,
     pub yaw: f32,
     pub growth: f32,
@@ -261,46 +262,46 @@ pub struct TreeInstance {
     pub far: bool,
 }
 
-/// What the wood costs to draw: the stands drawing and the trees in
-/// them, models and cards apart. A stand is one call a pass however many
-/// regions its trees stand in, so the two numbers say which of the two a
+/// What the cover costs to draw: the stands drawing and the instances
+/// in them, models and cards apart. A stand is one call a pass however
+/// many regions its instances stand in, so the two numbers say which of the two a
 /// frame is paying for.
 #[derive(Resource, Default)]
-pub struct ForestDraws {
+pub struct CoverDraws {
     pub models: u32,
-    pub model_trees: u32,
+    pub model_instances: u32,
     pub cards: u32,
-    pub card_trees: u32,
+    pub card_instances: u32,
 }
 
-fn count_draws(mut draws: ResMut<ForestDraws>, trees: Query<&draw::TreeStand>, cards: Query<&draw::CardStand>) {
+fn count_draws(mut draws: ResMut<CoverDraws>, models: Query<&draw::ModelStand>, cards: Query<&draw::CardStand>) {
     use draw::Stand;
-    *draws = ForestDraws::default();
+    *draws = CoverDraws::default();
     let standing = |stand: &draw::StandDraw| stand.ranges.iter().map(|r| r.count).sum::<u32>();
-    for stand in trees.iter().filter(|s| s.draw().buffer.is_some()) {
+    for stand in models.iter().filter(|s| s.draw().buffer.is_some()) {
         draws.models += 1;
-        draws.model_trees += standing(stand.draw());
+        draws.model_instances += standing(stand.draw());
     }
     for stand in cards.iter().filter(|s| s.draw().buffer.is_some()) {
         draws.cards += 1;
-        draws.card_trees += standing(stand.draw());
+        draws.card_instances += standing(stand.draw());
     }
 }
 
-pub struct ForestPlugin;
+pub struct CoverPlugin;
 
-impl Plugin for ForestPlugin {
+impl Plugin for CoverPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(draw::TreeDrawPlugin);
-        app.init_resource::<ForestDraws>();
+        app.add_plugins(draw::CoverDrawPlugin);
+        app.init_resource::<CoverDraws>();
         app.add_systems(Startup, begin_loading);
         app.add_systems(Update, (count_draws, draw::update_stands));
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
-        app.add_systems(Update, dress_far_ground.run_if(resource_added::<TreeKit>));
+        app.add_systems(Update, dress_far_ground.run_if(resource_added::<CoverKit>));
         app.add_systems(
             Update,
-            update_trees
-                .run_if(resource_exists::<TreeKit>)
+            update_cover
+                .run_if(resource_exists::<CoverKit>)
                 .after(crate::systems::world::poll_summary_meshes),
         );
     }
@@ -316,7 +317,7 @@ const CROWN_GROWTH: f32 = 0.75;
 /// the cards is the colour of the trees before them. A kind with no
 /// model is colourless and never drawn there.
 fn dress_far_ground(
-    kit: Res<TreeKit>,
+    kit: Res<CoverKit>,
     mut terrain_material: ResMut<crate::resources::TerrainMaterial>,
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
 ) {
@@ -339,7 +340,7 @@ fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
 /// Once every model and everything under it has loaded, or failed, merge
 /// each variation's primitives into one mesh and publish the kit. A model
 /// that failed leaves its kind with no mesh and a warning; regions built
-/// before the kit is ready get their trees when it is.
+/// before the kit is ready get their cover when it is.
 fn load_kit(
     mut commands: Commands,
     loading: Res<Loading>,
@@ -363,7 +364,7 @@ fn load_kit(
             continue;
         };
         // The model's cards, declared on its first node; a model without
-        // them is drawn as nothing past the trees' reach.
+        // them is drawn as nothing past the models' reach.
         let cards = gltf
             .nodes
             .first()
@@ -373,7 +374,7 @@ fn load_kit(
             .and_then(|d| d.cards(&asset_server))
             .map(Arc::new);
         if cards.is_none() {
-            info!("model for {kind:?} ships no cards; nothing of it stands past the trees' reach");
+            info!("model for {kind:?} ships no cards; nothing of it stands past the models' reach");
         }
         for (seed, mesh_handle) in gltf.meshes.iter().enumerate() {
             let Some(gm) = gltf_meshes.get(mesh_handle) else { continue };
@@ -391,7 +392,7 @@ fn load_kit(
         }
     }
     info!(
-        "tree kit: {} pine, {} deciduous, {} brush, {} boulder, {} stump, {} pile variations",
+        "cover kit: {} pine, {} deciduous, {} brush, {} boulder, {} stump, {} pile variations",
         kit.of(Kind::Pine).len(),
         kit.of(Kind::Deciduous).len(),
         kit.of(Kind::Brush).len(),
@@ -399,7 +400,7 @@ fn load_kit(
         kit.of(Kind::PineStump).len() + kit.of(Kind::DeciduousStump).len(),
         kit.kinds.iter().filter(|(k, _)| k.is_pile()).map(|(_, v)| v.len()).sum::<usize>()
     );
-    commands.insert_resource(TreeKit { kit: Arc::new(kit) });
+    commands.insert_resource(CoverKit { kit: Arc::new(kit) });
     commands.remove_resource::<Loading>();
 }
 
@@ -468,23 +469,23 @@ fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::Gl
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// The trees and boulders of a mesh region at level `radius`, from the
-/// map's covers: one instance per filled site and boulder slot of every
+/// The cover of a mesh region at level `radius`, from the map's covers:
+/// one instance per filled site, stump, pile and boulder slot of every
 /// tile the region's cells cover, standing on the level's drawn surface
 /// at its slot, from the region's origin. The same covers at every level the map reaches, so a tree is
 /// the same tree on both sides of a band edge and the edge hands one
-/// drawing of the wood to the other. Reads the map's covers and the
+/// drawing of the cover to the other. Reads the map's covers and the
 /// level's heights and nothing else, so it runs where the ground is
 /// built; a tile not yet streamed in stands nothing, and a tree at the
 /// rim, where a corner's cell is not there yet, stands at its cell's
 /// own height.
-pub fn place_trees(
+pub fn place_cover(
     radius: u32,
     region_key: MeshRegionKey,
     mesh_origin: Vec3,
     map: &common_bevy::resources::map::Map,
     height: &dyn Fn(i32, i32) -> Option<i32>,
-) -> Vec<TreeInstance> {
+) -> Vec<CoverInstance> {
     let lattice = common_bevy::summary::summary_lattice(radius);
     let region_lat = common_bevy::summary::mesh_region_lattice();
     let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
@@ -500,7 +501,7 @@ pub fn place_trees(
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q, r, k, &sway);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
-                out.push(TreeInstance {
+                out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
                     growth: common::cover::tree_growth(cover, q, r, k),
@@ -516,7 +517,7 @@ pub fn place_trees(
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q, r, k, &sway);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
-                out.push(TreeInstance {
+                out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
                     growth: 1.0,
@@ -529,7 +530,7 @@ pub fn place_trees(
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q, r, k, &sway);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
-                out.push(TreeInstance {
+                out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
                     growth: common::cover::boulder_growth(cover, q, r, k),
@@ -561,7 +562,7 @@ pub fn place_crags(
     mesh_origin: Vec3,
     outcrop: &dyn Fn(i32, i32) -> Option<common::Outcrop>,
     height: &dyn Fn(i32, i32) -> Option<i32>,
-) -> Vec<TreeInstance> {
+) -> Vec<CoverInstance> {
     let lattice = common_bevy::summary::summary_lattice(radius);
     let region_lat = common_bevy::summary::mesh_region_lattice();
     let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
@@ -581,7 +582,7 @@ pub fn place_crags(
             let (dx, dz) = boulder_center(0, 0, k, &sway);
             let (x, z) = (cx + dx * FAR_BLOCK, cz + dz * FAR_BLOCK);
             let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
-            out.push(TreeInstance {
+            out.push(CoverInstance {
                 translation: Vec3::new(x, y, z) - mesh_origin,
                 yaw: sway.yaw as f32,
                 growth: sway.growth as f32 * share.sqrt() as f32,
@@ -594,14 +595,13 @@ pub fn place_crags(
     out
 }
 
-/// Stand a region's trees as models: its wood, one part per variation
-/// present, each the variation's mesh and every tree drawn with it. Trees
-/// cast no shadow: the cascades would draw every tree four times over for
-/// it.
-pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit) {
+/// Stand a region's cover as models: one part per variation present,
+/// each the variation's mesh and every instance drawn with it. None casts
+/// a shadow: the cascades would draw every tree four times over for it.
+pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
     let mut parts: HashMap<(Kind, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
-    for t in trees {
+    for t in cover {
         let all = kit.kit.of(t.kind);
         if all.is_empty() {
             continue;
@@ -614,26 +614,26 @@ pub fn spawn_trees(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
     }
     let parts = parts
         .into_iter()
-        .map(|((kind, k), instances)| draw::WoodPart {
+        .map(|((kind, k), instances)| draw::CoverPart {
             key: draw::StandKey::Model(kind, k),
             mesh: kit.kit.of(kind)[k].mesh.clone(),
             cards: None,
             instances,
         })
         .collect();
-    commands.entity(entity).insert(draw::RegionWood::new(parts, reach));
+    commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
 }
 
-/// Stand a region's trees as cards: its wood, one part per model whose
-/// cards stand here, each the shared quad and every tree drawn from that
+/// Stand a region's cover as cards: one part per model whose cards
+/// stand here, each the shared quad and every instance drawn from that
 /// model's pictures. A model's variations differ only by which layer of
 /// its texture an instance names, so they go in together. The cards stand
 /// past the ring, far enough that their overlaps do not show, so they
 /// keep the quad's own depth.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstance], kit: &TreeKit) {
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
     let mut parts: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
     let mut reach = 0.0f32;
-    for t in trees {
+    for t in cover {
         let all = kit.kit.of(t.kind);
         if all.is_empty() {
             continue;
@@ -651,24 +651,24 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, trees: &[TreeInstanc
     }
     let parts = parts
         .into_iter()
-        .map(|(texture, (cards, instances))| draw::WoodPart {
+        .map(|(texture, (cards, instances))| draw::CoverPart {
             key: draw::StandKey::Cards(texture),
             mesh: kit.kit.quad.clone(),
             cards: Some(cards),
             instances,
         })
         .collect();
-    commands.entity(entity).insert(draw::RegionWood::new(parts, reach));
+    commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
 }
 
-/// Stand the trees of every region within reach of the camera as models
+/// Stand the cover of every region within reach of the camera as models
 /// and those beyond the keep as cards, and take each down where the
 /// other's ground begins: the region's origin is its measure, and a
-/// region built before the kit loaded gets its trees here too.
+/// region built before the kit loaded gets its cover here too.
 #[allow(clippy::too_many_arguments)]
-fn update_trees(
+fn update_cover(
     mut commands: Commands,
-    kit: Res<TreeKit>,
+    kit: Res<CoverKit>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
@@ -689,25 +689,25 @@ fn update_trees(
 
     for (key, state) in summary_meshes.states.iter_mut() {
         let Some(entity) = state.entity else { continue };
-        if state.base_trees.is_empty() {
+        if state.base_cover.is_empty() {
             continue;
         }
-        // The tiles' trees are models and the summaries' are cards; the
+        // The tiles' cover is models and the summaries' is cards; the
         // ring between the two levels is where one dithers out and the
         // other in, which is the shaders' to do. A region of tiles keeps
         // its models while it can reach the ring, and a summary's cards
         // stand from the moment its ground does.
         if key.r == 0 {
             let d = state.mesh_origin.xz().distance(camera.xz());
-            if !state.trees_spawned && d <= ring + RING_MARGIN {
-                spawn_trees(&mut commands, entity, &state.base_trees, &kit);
-                state.trees_spawned = true;
-            } else if state.trees_spawned && d > ring + 2.0 * RING_MARGIN {
-                commands.entity(entity).remove::<draw::RegionWood>();
-                state.trees_spawned = false;
+            if !state.models_spawned && d <= ring + RING_MARGIN {
+                spawn_models(&mut commands, entity, &state.base_cover, &kit);
+                state.models_spawned = true;
+            } else if state.models_spawned && d > ring + 2.0 * RING_MARGIN {
+                commands.entity(entity).remove::<draw::RegionCover>();
+                state.models_spawned = false;
             }
         } else if !state.cards_spawned {
-            spawn_cards(&mut commands, entity, &state.base_trees, &kit);
+            spawn_cards(&mut commands, entity, &state.base_cover, &kit);
             state.cards_spawned = true;
         }
     }
@@ -748,9 +748,9 @@ mod tests {
         let (oq, or) = lattice.cell_center(region_lat.cell_center((0, 0)));
         let (ox, oz) = flat_top_tile_center(oq, or, 1.0);
         let origin = Vec3::new(ox, 0.0, oz);
-        let trees = place_trees(0, key, origin, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z));
-        assert_eq!(trees.len(), expected);
-        for t in &trees {
+        let placed = place_cover(0, key, origin, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z));
+        assert_eq!(placed.len(), expected);
+        for t in &placed {
             assert!((t.translation.y - height_y(0.0)).abs() < 1e-4, "a tree off the ground at {:?}", t.translation);
             assert!((0.0..=1.0).contains(&t.growth));
             let world = t.translation + origin;
@@ -769,12 +769,12 @@ mod tests {
             let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
-            place_trees(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+            place_cover(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
         };
         let wood = Cover::NONE.with(0, Content::Pine).with(1, Content::Deciduous);
         let felled = common::gathering::harvest(wood, common::SITE_SLOTS[0][0]).unwrap().cover;
         let (before, after) = (place(wood), place(felled));
-        let find = |trees: &[TreeInstance], kind: Kind| *trees.iter().find(|t| t.kind == kind).unwrap();
+        let find = |trees: &[CoverInstance], kind: Kind| *trees.iter().find(|t| t.kind == kind).unwrap();
         let (tree, stump) = (find(&before, Kind::Pine), find(&after, Kind::PineStump));
         assert_eq!((stump.translation, stump.yaw, stump.growth, stump.variation), (tree.translation, tree.yaw, tree.growth, tree.variation));
         let (standing, still) = (find(&before, Kind::Deciduous), find(&after, Kind::Deciduous));
@@ -790,14 +790,14 @@ mod tests {
             let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
-            place_trees(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+            place_cover(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
         };
         let crag = Cover::NONE.with_boulder(3).with_boulder(4).with_rock(common::Rock::Limestone);
         let mined = common::gathering::harvest(crag, 4).unwrap();
         let piled = common::gathering::left(mined.cover, mined.freed, mined.material);
-        let trees = place(piled);
-        assert_eq!(trees.iter().filter(|t| t.kind == Kind::LimestonePile).count(), 1);
-        assert_eq!(trees.iter().filter(|t| t.kind == Kind::Boulder).count(), 1);
+        let placed = place(piled);
+        assert_eq!(placed.iter().filter(|t| t.kind == Kind::LimestonePile).count(), 1);
+        assert_eq!(placed.iter().filter(|t| t.kind == Kind::Boulder).count(), 1);
     }
 }
 
@@ -808,7 +808,7 @@ mod crag_tests {
     use super::*;
     use common::{Cover, Outcrop, Rock};
 
-    fn crags(boulders: usize) -> Vec<TreeInstance> {
+    fn crags(boulders: usize) -> Vec<CoverInstance> {
         let radius = common_bevy::summary::LOD_LEVELS[2];
         let region_lat = common_bevy::summary::mesh_region_lattice();
         let cells: Vec<(i32, i32)> = region_lat.tiles_in_cell((0, 0)).collect();

@@ -264,7 +264,7 @@ that break loudly:
 
 - `movement::do_loc.after(movement::apply_displace)` — a `Loc` that ends a
   slide must see the `Displacing` marker the slide inserted, or it snaps.
-- `forest::draw::init_pipelines.after(MeshPipelineSystems)` — `MeshPipeline`
+- `cover::draw::init_pipelines.after(MeshPipelineSystems)` — `MeshPipeline`
   is itself built in `RenderStartup`, so a system that clones it there finds
   no resource without the pin. Every render pipeline built on the mesh
   pipeline carries this, in Bevy's own plugins as much as ours.

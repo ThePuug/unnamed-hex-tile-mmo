@@ -20,7 +20,7 @@ pub enum DevConsoleAction {
     SyncLightingClock,
     ToggleCameraEnvelope,
     ToggleTerrainHidden,
-    ToggleForestHidden,
+    ToggleCoverHidden,
     ToggleCameraCloseup,
 
     // Top-level toggles
@@ -60,12 +60,12 @@ pub fn execute_console_actions(
     actor_query: Query<Entity, With<Behaviour>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
-    mut forest: Query<
+    mut cover: Query<
         &mut Visibility,
         (
             Or<(
-                With<crate::plugins::forest::draw::TreeStand>,
-                With<crate::plugins::forest::draw::CardStand>,
+                With<crate::plugins::cover::draw::ModelStand>,
+                With<crate::plugins::cover::draw::CardStand>,
             )>,
             Without<crate::resources::SummaryMesh>,
             Without<HexGridOverlay>,
@@ -135,13 +135,13 @@ pub fn execute_console_actions(
                 }
                 info!("Terrain: {}", if diagnostics_state.terrain_hidden { "HIDDEN" } else { "shown" });
             }
-            DevConsoleAction::ToggleForestHidden => {
-                diagnostics_state.forest_hidden = !diagnostics_state.forest_hidden;
-                let shown = if diagnostics_state.forest_hidden { Visibility::Hidden } else { Visibility::Inherited };
-                for mut visibility in forest.iter_mut() {
+            DevConsoleAction::ToggleCoverHidden => {
+                diagnostics_state.cover_hidden = !diagnostics_state.cover_hidden;
+                let shown = if diagnostics_state.cover_hidden { Visibility::Hidden } else { Visibility::Inherited };
+                for mut visibility in cover.iter_mut() {
                     *visibility = shown;
                 }
-                info!("Forest: {}", if diagnostics_state.forest_hidden { "HIDDEN" } else { "shown" });
+                info!("Cover: {}", if diagnostics_state.cover_hidden { "HIDDEN" } else { "shown" });
             }
             DevConsoleAction::ToggleCameraCloseup => {
                 diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;

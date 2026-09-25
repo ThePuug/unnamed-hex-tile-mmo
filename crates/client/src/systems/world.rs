@@ -693,7 +693,7 @@ pub fn dispatch_summary_tasks(
         // build was dispatched, judged by epoch and never by this run's
         // flag alone: the flag is consumed whether or not the region could
         // act on it, and it cannot while a build is in flight or once the
-        // task budget is spent. The one level standing the tiles' trees is
+        // task budget is spent. The one level standing the tiles' cover is
         // final only once it holds the tiles too: its ground may have been
         // built from the summaries, which arrive first.
         let tiles_loaded = radius != common_bevy::summary::LOD_LEVELS[1]
@@ -744,8 +744,8 @@ pub fn dispatch_summary_tasks(
                     base_indices: Vec::new(),
                     base_tri_count: 0,
                     base_water: Default::default(),
-                    base_trees: Vec::new(),
-                    trees_spawned: false,
+                    base_cover: Vec::new(),
+                    models_spawned: false,
                     cards_spawned: false,
                     waiting: false,
                     tiles_loaded,
@@ -1076,7 +1076,7 @@ fn collect_and_build_summary_mesh(
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
         water: Default::default(),
-        trees: Vec::new(),
+        cover: Vec::new(),
     };
 
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
@@ -1127,7 +1127,7 @@ fn collect_and_build_summary_mesh(
     let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
     let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
 
-    // The trees stand with the ground: placed here from the map's covers
+    // The cover stands with the ground: placed here from the map's covers
     // at every level the map reaches, spawned with the ground once the kit
     // is loaded.
     if radius == 0 {
@@ -1136,7 +1136,7 @@ fn collect_and_build_summary_mesh(
             .as_ref()
             .map_or(empty, |smr| {
                 let mut result = with_water(smr, &tile_water);
-                result.trees = crate::plugins::forest::place_trees(0, region_key, smr.mesh_origin, map, &height);
+                result.cover = crate::plugins::cover::place_cover(0, region_key, smr.mesh_origin, map, &height);
                 result
             });
     }
@@ -1168,13 +1168,13 @@ fn collect_and_build_summary_mesh(
         .map_or(empty, |smr| {
             let mut result = with_water(smr, &summary_water);
             if radius == common_bevy::summary::LOD_LEVELS[1] {
-                result.trees = crate::plugins::forest::place_trees(radius, region_key, smr.mesh_origin, map, &height);
+                result.cover = crate::plugins::cover::place_cover(radius, region_key, smr.mesh_origin, map, &height);
             }
             // Past the tiles a crag stands from the summaries' own reading
             // of it, the level after the first.
             if radius == common_bevy::summary::LOD_LEVELS[2] {
                 let outcrop = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.outcrop);
-                result.trees = crate::plugins::forest::place_crags(radius, region_key, smr.mesh_origin, &outcrop, &height);
+                result.cover = crate::plugins::cover::place_crags(radius, region_key, smr.mesh_origin, &outcrop, &height);
             }
             result
         })
@@ -1190,7 +1190,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
         water: Default::default(),
-        trees: Vec::new(),
+        cover: Vec::new(),
     }
 }
 
@@ -1267,7 +1267,7 @@ pub fn poll_summary_meshes(
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.base_water = result.water;
-                state.base_trees = result.trees;
+                state.base_cover = result.cover;
                 state.waiting = result.tri_count == 0;
                 to_upload.push(region_key);
             }
@@ -1327,7 +1327,7 @@ pub fn poll_summary_meshes(
         let entity = match state.entity {
             Some(entity) => {
                 commands.entity(entity).insert(Mesh3d(mesh_handle));
-                // The water and the trees are the ground's children:
+                // The water and the cover are the ground's children:
                 // rebuilt with it.
                 commands.entity(entity).despawn_related::<Children>();
                 entity
@@ -1345,7 +1345,7 @@ pub fn poll_summary_meshes(
                 entity
             }
         };
-        state.trees_spawned = false;
+        state.models_spawned = false;
         state.cards_spawned = false;
 
         if !build.water.indices.is_empty() {
@@ -1542,8 +1542,8 @@ mod tests {
                         base_indices: Vec::new(),
                         base_tri_count: 0,
                         base_water: Default::default(),
-                        base_trees: Vec::new(),
-                        trees_spawned: false,
+                        base_cover: Vec::new(),
+                        models_spawned: false,
                         cards_spawned: false,
                         waiting: false,
                         tiles_loaded: true,
@@ -1591,8 +1591,8 @@ mod tests {
             base_indices: Vec::new(),
             base_tri_count: 0,
             base_water: Default::default(),
-            base_trees: Vec::new(),
-            trees_spawned: false,
+            base_cover: Vec::new(),
+            models_spawned: false,
             cards_spawned: false,
             waiting: true,
             tiles_loaded: true,

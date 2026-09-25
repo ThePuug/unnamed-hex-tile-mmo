@@ -501,7 +501,7 @@ pub fn update_metrics_overlay(
     >,
     tri_stats: Res<crate::resources::LodTriangleStats>,
     origin: Res<crate::resources::RenderOrigin>,
-    wood: Res<crate::plugins::forest::ForestDraws>,
+    cover: Res<crate::plugins::cover::CoverDraws>,
     census: Res<super::RenderCensus>,
     #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
@@ -707,16 +707,16 @@ pub fn update_metrics_overlay(
                             s.half(&format!("{:>7}", "TILES"), COLOR_DIM);
                             s.half(&format!("{:>5}  ", TILES.fmt(map.len() as f64)), COLOR_DIM);
                         });
-                        // The wood: what it draws, and what it draws in one
+                        // The cover: what it draws, and what it draws in one
                         // go. A draw costs the thread that encodes it; an
                         // instance in it costs nothing more.
-                        for (what, draws, trees) in [
-                            ("TREES", wood.models, wood.model_trees),
-                            ("CARDS", wood.cards, wood.card_trees),
+                        for (what, draws, instances) in [
+                            ("MODELS", cover.models, cover.model_instances),
+                            ("CARDS", cover.cards, cover.card_instances),
                         ] {
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("{what:>7}"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ENTS.fmt(trees as f64)), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(instances as f64)), COLOR_DIM);
                                 s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
                                 s.half(&format!("{:>5}  ", ENTS.fmt(draws as f64)), ALARM_DRAWS.color(draws as f64));
                             });
@@ -726,7 +726,7 @@ pub fn update_metrics_overlay(
                         // beside them say whether they came in one go.
                         for (what, group) in [
                             ("GROUND", &census.terrain),
-                            ("WOOD", &census.forest),
+                            ("COVER", &census.cover),
                             ("ACTORS", &census.actors),
                             ("OTHER", &census.other),
                         ] {

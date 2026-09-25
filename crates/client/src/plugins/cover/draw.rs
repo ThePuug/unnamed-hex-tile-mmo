@@ -1,22 +1,22 @@
-//! The instanced draw of the wood: every tree of one model, whichever
-//! region it stands in, as one stand, drawn with one call per pass, near
+//! The instanced draw of the cover: every tree, stump, bush, boulder or
+//! pile of one model, whichever region it stands in, as one stand, drawn with one call per pass, near
 //! as the model and far, past the ring, as its kind's card.
 //!
 //! The world arrives in regions and the draw does not follow it: a region
-//! only says which trees it stands, as its [`RegionWood`], and each stand
-//! gathers its model's trees from every region into one instance buffer,
-//! a region's trees one run of it, rebuilt when a region comes, changes
-//! or goes. Each instance carries its region's slot in the wood's table of
-//! frames, so the trees stay in their regions' frames and the render
+//! only says what it stands, as its [`RegionCover`], and each stand
+//! gathers its model's instances from every region into one instance
+//! buffer, a region's instances one run of it, rebuilt when a region comes, changes
+//! or goes. Each instance carries its region's slot in the cover's table of
+//! frames, so the instances stay in their regions' frames and the render
 //! origin moves them all without an instance being rewritten.
 //!
 //! Every frame each view keeps the runs whose region's box it can see, as
 //! the arguments of one indirect draw each, and a stand is one multi-draw
 //! of them: the GPU draws what the regions' own culling leaves, and the
 //! CPU records a call a stand rather than a call a region and model.
-//! Trees and cards are opaque and cast no shadow, and go into the depth
+//! Models and cards are opaque and cast no shadow, and go into the depth
 //! prepass and then the opaque pass: the prepass writes every silhouette,
-//! so the opaque pass shades each pixel of the wood once and never shades
+//! so the opaque pass shades each pixel of the cover once and never shades
 //! the ground a canopy covers. A card is a quad the shader turns to the
 //! camera, with the model's baked picture on it.
 
@@ -60,12 +60,12 @@ use super::{Kind, Marked};
 use crate::resources::CardBand;
 use crate::systems::camera::NEAR_FADE_RADIUS;
 
-const TREE_SHADER: &str = "shaders/trees.wgsl";
+const MODEL_SHADER: &str = "shaders/models.wgsl";
 const CARD_SHADER: &str = "shaders/cards.wgsl";
 /// What both import. A module is resolved only once its asset is loaded,
 /// and a pipeline whose import is missing waits forever and says nothing,
 /// so the handle is held here for the life of the app.
-const SHARED_SHADER: &str = "shaders/forest_shared.wgsl";
+const SHARED_SHADER: &str = "shaders/cover_shared.wgsl";
 
 /// The fragment stage each shader writes its silhouette into the depth
 /// prepass with: the colour stage's discards and nothing else.
@@ -76,7 +76,7 @@ const DEPTH_ENTRY: &str = "prepass_fragment";
 /// name the one it wants.
 const COLOUR_ENTRY: &str = "fragment";
 
-/// One tree as the shader reads it: its place in its region's frame and
+/// One instance as the shader reads it: its place in its region's frame and
 /// its scale, then the cosine and sine of its turn; for a card, the first
 /// of its layers in the card texture, its mirror, one or minus one, and
 /// the model's height in world units. The last component of the second
@@ -111,7 +111,7 @@ impl Instance {
     }
 }
 
-/// Which stand a tree is drawn in: one variation's model, or one kind's
+/// Which stand an instance is drawn in: one variation's model, or one kind's
 /// cards, whose variations differ only by the layers their instances name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StandKey {
@@ -120,27 +120,27 @@ pub enum StandKey {
 }
 
 /// One stand's share of a region: the mesh the stand draws, the kind's
-/// cards where it is a stand of cards, and the region's trees in it.
-pub struct WoodPart {
+/// cards where it is a stand of cards, and the region's instances in it.
+pub struct CoverPart {
     pub key: StandKey,
     pub mesh: Handle<Mesh>,
     pub cards: Option<Arc<Cards>>,
     pub instances: Vec<Instance>,
 }
 
-/// The trees a region stands, by stand, and the box they stand in, in the
+/// What a region stands, by stand, and the box they stand in, in the
 /// region's frame. The region's own entity carries it, so the region
-/// going takes its trees out of their stands with it.
+/// going takes its instances out of their stands with it.
 #[derive(Component)]
-pub struct RegionWood {
-    pub parts: Vec<WoodPart>,
+pub struct RegionCover {
+    pub parts: Vec<CoverPart>,
     pub bounds: Aabb,
 }
 
-impl RegionWood {
-    /// The wood of `parts`, boxed about every instance's foot and up to
+impl RegionCover {
+    /// The cover of `parts`, boxed about every instance's foot and up to
     /// `reach` above and about it.
-    pub fn new(parts: Vec<WoodPart>, reach: f32) -> Self {
+    pub fn new(parts: Vec<CoverPart>, reach: f32) -> Self {
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for i in parts.iter().flat_map(|p| &p.instances) {
             let p = Vec3::new(i.pos_scale[0], i.pos_scale[1], i.pos_scale[2]);
@@ -148,7 +148,7 @@ impl RegionWood {
             hi = hi.max(p);
         }
         let margin = Vec3::new(reach, 0.0, reach);
-        RegionWood { parts, bounds: Aabb::from_min_max(lo - margin, hi + margin + Vec3::Y * reach) }
+        RegionCover { parts, bounds: Aabb::from_min_max(lo - margin, hi + margin + Vec3::Y * reach) }
     }
 }
 
@@ -160,8 +160,8 @@ pub struct StandRange {
     pub count: u32,
 }
 
-/// What a stand draws from: its instance buffer, none while it stands no
-/// tree, and each region's run of it.
+/// What a stand draws from: its instance buffer, none while it stands
+/// nothing, and each region's run of it.
 #[derive(Clone, Default)]
 pub struct StandDraw {
     pub buffer: Option<Buffer>,
@@ -172,8 +172,8 @@ pub struct StandDraw {
 /// so nothing else draws it, and is never culled whole: its regions are.
 #[derive(Component, Clone, Default)]
 #[require(VisibilityClass, NoFrustumCulling)]
-#[component(on_add = visibility::add_visibility_class::<TreeStand>)]
-pub struct TreeStand(pub StandDraw);
+#[component(on_add = visibility::add_visibility_class::<ModelStand>)]
+pub struct ModelStand(pub StandDraw);
 
 /// A stand of one kind's cards. The entity holds the shared quad.
 #[derive(Component, Clone)]
@@ -194,9 +194,9 @@ pub trait Stand: Component {
     fn draw(&self) -> &StandDraw;
 }
 
-impl Stand for TreeStand {
-    const TIMER: &'static str = "tree_q";
-    const DEPTH_TIMER: &'static str = "tree_z";
+impl Stand for ModelStand {
+    const TIMER: &'static str = "model_q";
+    const DEPTH_TIMER: &'static str = "model_z";
 
     fn draw(&self) -> &StandDraw { &self.0 }
 }
@@ -230,14 +230,14 @@ pub struct Cards {
     pub top: CardView,
 }
 
-impl SyncComponent for TreeStand {
-    type Target = TreeStand;
+impl SyncComponent for ModelStand {
+    type Target = ModelStand;
 }
 
-impl ExtractComponent for TreeStand {
-    type QueryData = &'static TreeStand;
+impl ExtractComponent for ModelStand {
+    type QueryData = &'static ModelStand;
     type QueryFilter = ();
-    type Out = TreeStand;
+    type Out = ModelStand;
 
     fn extract_component(stand: QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
         Some(stand.clone())
@@ -258,8 +258,8 @@ impl ExtractComponent for CardStand {
     }
 }
 
-/// Every stand and every region standing trees: each region's slot in the
-/// table of frames, its box, and the stands it has trees in; each stand's
+/// Every stand and every region standing cover: each region's slot in
+/// the table of frames, its box, and the stands it has instances in; each stand's
 /// entity and whether its buffer must be gathered again.
 #[derive(Resource, Default)]
 pub struct Stands {
@@ -281,7 +281,7 @@ struct RegionEntry {
 }
 
 impl Stands {
-    /// Each region standing trees: its entity, its slot, and its box in
+    /// Each region standing cover: its entity, its slot, and its box in
     /// its own frame.
     pub fn regions(&self) -> impl Iterator<Item = (Entity, u32, &Aabb)> {
         self.regions.iter().map(|(&e, r)| (e, r.slot, &r.bounds))
@@ -295,18 +295,18 @@ impl Stands {
     }
 }
 
-/// Follow the regions' wood into the stands: a region that comes or
+/// Follow the regions' cover into the stands: a region that comes or
 /// changes takes a slot and marks its stands, one that goes gives its slot
 /// back and marks its stands, and each marked stand gathers its model's
-/// trees from every region again. A stand is spawned the first time a
+/// instances from every region again. A stand is spawned the first time a
 /// region stands its model and kept after, empty or not.
 #[allow(clippy::too_many_arguments)]
 pub fn update_stands(
     mut commands: Commands,
     stands: ResMut<Stands>,
-    woods: Query<(Entity, Ref<RegionWood>)>,
-    mut gone: RemovedComponents<RegionWood>,
-    mut tree_stands: Query<&mut TreeStand>,
+    regions: Query<(Entity, Ref<RegionCover>)>,
+    mut gone: RemovedComponents<RegionCover>,
+    mut model_stands: Query<&mut ModelStand>,
     mut card_stands: Query<&mut CardStand>,
     render_device: Res<RenderDevice>,
     timers: Res<crate::resources::ClientTimers>,
@@ -314,7 +314,7 @@ pub fn update_stands(
     let _t = timers.0.scope("stands");
     let stands = stands.into_inner();
     for entity in gone.read() {
-        if woods.contains(entity) {
+        if regions.contains(entity) {
             continue;
         }
         let Some(region) = stands.regions.remove(&entity) else { continue };
@@ -325,27 +325,27 @@ pub fn update_stands(
             }
         }
     }
-    for (entity, wood) in &woods {
-        if !wood.is_changed() {
+    for (entity, cover) in &regions {
+        if !cover.is_changed() {
             continue;
         }
         let slot = match stands.regions.get(&entity) {
             Some(region) => region.slot,
             None => stands.take_slot(),
         };
-        let keys: Vec<StandKey> = wood.parts.iter().map(|p| p.key).collect();
-        let old = stands.regions.insert(entity, RegionEntry { slot, bounds: wood.bounds, keys: keys.clone() });
+        let keys: Vec<StandKey> = cover.parts.iter().map(|p| p.key).collect();
+        let old = stands.regions.insert(entity, RegionEntry { slot, bounds: cover.bounds, keys: keys.clone() });
         for key in old.into_iter().flat_map(|r| r.keys).chain(keys) {
             if let Some(stand) = stands.stands.get_mut(&key) {
                 stand.stale = true;
             }
         }
-        for part in &wood.parts {
+        for part in &cover.parts {
             stands.stands.entry(part.key).or_insert_with(|| {
                 let mut stand = commands.spawn((Mesh3d(part.mesh.clone()), Transform::IDENTITY));
                 match &part.cards {
                     Some(cards) => stand.insert(CardStand { draw: StandDraw::default(), cards: cards.clone() }),
-                    None => stand.insert(TreeStand::default()),
+                    None => stand.insert(ModelStand::default()),
                 };
                 StandEntry { entity: stand.id(), stale: true }
             });
@@ -357,9 +357,9 @@ pub fn update_stands(
     if gathered.is_empty() {
         return;
     }
-    for (entity, wood) in &woods {
+    for (entity, cover) in &regions {
         let Some(region) = stands.regions.get(&entity) else { continue };
-        for part in &wood.parts {
+        for part in &cover.parts {
             let Some((instances, ranges)) = gathered.get_mut(&part.key) else { continue };
             ranges.push(StandRange { slot: region.slot, start: instances.len() as u32, count: part.instances.len() as u32 });
             instances.extend(part.instances.iter().map(|i| {
@@ -373,7 +373,7 @@ pub fn update_stands(
         let Some(stand) = stands.stands.get_mut(&key) else { continue };
         // A stand spawned this pass is not in the world until its commands
         // apply: it stays stale and takes its buffer on the next pass.
-        if !tree_stands.contains(stand.entity) && !card_stands.contains(stand.entity) {
+        if !model_stands.contains(stand.entity) && !card_stands.contains(stand.entity) {
             continue;
         }
         stand.stale = false;
@@ -385,7 +385,7 @@ pub fn update_stands(
             })
         });
         let draw = StandDraw { buffer, ranges: Arc::new(ranges) };
-        if let Ok(mut s) = tree_stands.get_mut(stand.entity) {
+        if let Ok(mut s) = model_stands.get_mut(stand.entity) {
             s.0 = draw;
         } else if let Ok(mut s) = card_stands.get_mut(stand.entity) {
             s.draw = draw;
@@ -393,13 +393,13 @@ pub fn update_stands(
     }
 }
 
-pub struct TreeDrawPlugin;
+pub struct CoverDrawPlugin;
 
-impl Plugin for TreeDrawPlugin {
+impl Plugin for CoverDrawPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Stands>();
         app.add_plugins((
-            ExtractComponentPlugin::<TreeStand>::default(),
+            ExtractComponentPlugin::<ModelStand>::default(),
             ExtractComponentPlugin::<CardStand>::default(),
             ExtractResourcePlugin::<CardBand>::default(),
             ExtractResourcePlugin::<Marked>::default(),
@@ -407,14 +407,14 @@ impl Plugin for TreeDrawPlugin {
         app.init_resource::<Marked>();
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
-            .init_resource::<SpecializedMeshPipelines<TreePipeline>>()
+            .init_resource::<SpecializedMeshPipelines<ModelPipeline>>()
             .init_resource::<SpecializedMeshPipelines<CardPipeline>>()
             .init_resource::<RegionTable>()
-            .init_resource::<WoodBuffers>()
+            .init_resource::<CoverBuffers>()
             .init_resource::<StandDraws>()
-            .add_render_command::<Opaque3d, DrawTrees>()
+            .add_render_command::<Opaque3d, DrawModels>()
             .add_render_command::<Opaque3d, DrawCards>()
-            .add_render_command::<Opaque3dPrepass, DrawTrees>()
+            .add_render_command::<Opaque3dPrepass, DrawModels>()
             .add_render_command::<Opaque3dPrepass, DrawCards>()
             // `MeshPipeline` is built in `RenderStartup` as well, and this
             // clones it.
@@ -423,24 +423,24 @@ impl Plugin for TreeDrawPlugin {
             .add_systems(
                 Render,
                 (
-                    queue_stands::<TreeStand, TreePipeline, DrawTrees, Opaque3dPrepass>.in_set(RenderSystems::Queue),
-                    queue_stands::<TreeStand, TreePipeline, DrawTrees, Opaque3d>.in_set(RenderSystems::Queue),
+                    queue_stands::<ModelStand, ModelPipeline, DrawModels, Opaque3dPrepass>.in_set(RenderSystems::Queue),
+                    queue_stands::<ModelStand, ModelPipeline, DrawModels, Opaque3d>.in_set(RenderSystems::Queue),
                     queue_stands::<CardStand, CardPipeline, DrawCards, Opaque3dPrepass>.in_set(RenderSystems::Queue),
                     queue_stands::<CardStand, CardPipeline, DrawCards, Opaque3d>.in_set(RenderSystems::Queue),
-                    (prepare_wood_buffers, prepare_stand_draws).in_set(RenderSystems::PrepareResources),
-                    prepare_wood_bind_groups.in_set(RenderSystems::PrepareBindGroups),
+                    (prepare_cover_buffers, prepare_stand_draws).in_set(RenderSystems::PrepareResources),
+                    prepare_cover_bind_groups.in_set(RenderSystems::PrepareBindGroups),
                 ),
             );
     }
 }
 
-/// What every drawing of the wood reads alike: the ring where the models
+/// What every drawing of the cover reads alike: the ring where the models
 /// hand over to the cards — its centre, radius and overlap — the far
 /// cards' band, its inner and outer edge each alike, the foot of what G
 /// will act on with w 1 while there is one, and the radius about the
 /// camera inside which everything fades.
 #[derive(Clone, Copy, Default, ShaderType)]
-struct ForestUniform {
+struct CoverUniform {
     band: Vec4,
     far_in: Vec4,
     far_out: Vec4,
@@ -472,14 +472,14 @@ struct BatchKey {
 }
 
 /// A pipeline over the mesh pipeline's descriptor: its shader, and the
-/// wood's layout, which takes the mesh's place at group 2.
+/// cover's layout, which takes the mesh's place at group 2.
 trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
     fn parts(&self) -> (&Handle<Shader>, &MeshPipeline, &BindGroupLayoutDescriptor);
     fn two_sided(&self) -> bool { false }
 
     /// The mesh pipeline's descriptor for the key, its view layouts and
     /// shader defs kept, with the stand's shader, the instance buffer as a
-    /// second vertex buffer, and the wood's layout in the mesh's place.
+    /// second vertex buffer, and the cover's layout in the mesh's place.
     /// The prepass's drawing differs in its fragment stage alone — the
     /// silhouette, written to depth and to no colour target — so the
     /// depth the opaque pass tests against is the depth this wrote.
@@ -488,7 +488,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
         let mut descriptor = mesh_pipeline.specialize(key.view, layout)?;
         descriptor.label = Some(if key.depth_only { format!("{label}_depth").into() } else { label.into() });
         descriptor.vertex.shader = shader.clone();
-        // The standard lighting the wood is lit by declares the material's
+        // The standard lighting the cover is lit by declares the material's
         // group, which a stand never binds: unread, it needs only its index.
         let material_group = ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), MATERIAL_BIND_GROUP_INDEX as u32);
         descriptor.vertex.shader_defs.push(material_group.clone());
@@ -513,7 +513,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
         // Where the prepass has already written this silhouette, the
         // colour pass only tests against it. Writing it again would make
         // the hardware hold the depth test back until the shader's
-        // discards are known, and every tree behind a tree would be
+        // discards are known, and everything behind a tree would be
         // shaded before being thrown away.
         if !key.depth_only && key.view.contains(MeshPipelineKey::DEPTH_PREPASS) {
             if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
@@ -524,7 +524,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
             descriptor.primitive.cull_mode = None;
         }
         // The mesh pipeline binds the view at 0, its binding arrays at 1
-        // and the mesh at 2; the wood's group takes the mesh's place.
+        // and the mesh at 2; the cover's group takes the mesh's place.
         descriptor.layout.truncate(2);
         descriptor.layout.push(group.clone());
         Ok(descriptor)
@@ -532,7 +532,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
 }
 
 #[derive(Resource)]
-struct TreePipeline {
+struct ModelPipeline {
     shader: Handle<Shader>,
     /// Held, never read: the shared module's asset stays loaded.
     _shared: Handle<Shader>,
@@ -555,21 +555,21 @@ fn init_pipelines(
     mesh_pipeline: Res<MeshPipeline>,
     render_device: Res<RenderDevice>,
 ) {
-    let wood = BindGroupLayoutEntries::sequential(
+    let cover = BindGroupLayoutEntries::sequential(
         ShaderStages::VERTEX_FRAGMENT,
-        (uniform_buffer::<ForestUniform>(false), storage_buffer_read_only::<Mat4>(false)),
+        (uniform_buffer::<CoverUniform>(false), storage_buffer_read_only::<Mat4>(false)),
     );
-    commands.insert_resource(TreePipeline {
-        shader: asset_server.load(TREE_SHADER),
+    commands.insert_resource(ModelPipeline {
+        shader: asset_server.load(MODEL_SHADER),
         _shared: asset_server.load(SHARED_SHADER),
         mesh_pipeline: mesh_pipeline.clone(),
-        layout: BindGroupLayoutDescriptor::new("trees_wood", &wood),
-        bind_group_layout: render_device.create_bind_group_layout("trees_wood", &wood),
+        layout: BindGroupLayoutDescriptor::new("models_cover", &cover),
+        bind_group_layout: render_device.create_bind_group_layout("models_cover", &cover),
     });
     let card = BindGroupLayoutEntries::sequential(
         ShaderStages::VERTEX_FRAGMENT,
         (
-            uniform_buffer::<ForestUniform>(false),
+            uniform_buffer::<CoverUniform>(false),
             storage_buffer_read_only::<Mat4>(false),
             uniform_buffer::<CardUniform>(false),
             texture_2d_array(TextureSampleType::Float { filterable: true }),
@@ -579,22 +579,22 @@ fn init_pipelines(
     commands.insert_resource(CardPipeline {
         shader: asset_server.load(CARD_SHADER),
         mesh_pipeline: mesh_pipeline.clone(),
-        layout: BindGroupLayoutDescriptor::new("cards_wood", &card),
-        bind_group_layout: render_device.create_bind_group_layout("cards_wood", &card),
+        layout: BindGroupLayoutDescriptor::new("cards_cover", &card),
+        bind_group_layout: render_device.create_bind_group_layout("cards_cover", &card),
     });
 }
 
-impl BatchPipeline for TreePipeline {
+impl BatchPipeline for ModelPipeline {
     fn parts(&self) -> (&Handle<Shader>, &MeshPipeline, &BindGroupLayoutDescriptor) {
         (&self.shader, &self.mesh_pipeline, &self.layout)
     }
 }
 
-impl SpecializedMeshPipeline for TreePipeline {
+impl SpecializedMeshPipeline for ModelPipeline {
     type Key = BatchKey;
 
     fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
-        self.batch_descriptor(key, layout, "trees")
+        self.batch_descriptor(key, layout, "models")
     }
 }
 
@@ -711,7 +711,7 @@ fn queue_stands<S: Stand, P: BatchPipeline, D: 'static, I: BatchPhase>(
             let pipeline = match pipelines.specialize(&pipeline_cache, &batch_pipeline, key, &mesh.layout) {
                 Ok(pipeline) => pipeline,
                 Err(e) => {
-                    warn_once!("trees: no pipeline for this mesh and view: {e:?}");
+                    warn_once!("cover: no pipeline for this mesh and view: {e:?}");
                     continue;
                 }
             };
@@ -757,28 +757,28 @@ fn extract_region_table(mut table: ResMut<RegionTable>, stands: Extract<Res<Stan
     }
 }
 
-/// The wood's uniform and table of frames, written once a frame, and the
-/// groups that bind them: one for the trees, and one for each card
+/// The cover's uniform and table of frames, written once a frame, and
+/// the groups that bind them: one for the models, and one for each card
 /// texture standing. A bind group holds the buffers it was made against,
 /// so all of them go when either is re-allocated.
 #[derive(Resource, Default)]
-struct WoodBuffers {
-    forest: UniformBuffer<ForestUniform>,
+struct CoverBuffers {
+    cover: UniformBuffer<CoverUniform>,
     frames: StorageBuffer<Vec<Mat4>>,
     held: Option<(BufferId, BufferId)>,
-    trees: Option<BindGroup>,
+    models: Option<BindGroup>,
     /// One per card texture: a card's group binds its model's pictures
-    /// and their frames beside the wood's.
+    /// and their frames beside the cover's.
     cards: HashMap<AssetId<Image>, BindGroup>,
 }
 
-fn prepare_wood_buffers(
+fn prepare_cover_buffers(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     band: Option<Res<CardBand>>,
     marked: Option<Res<Marked>>,
     table: Res<RegionTable>,
-    buffers: ResMut<WoodBuffers>,
+    buffers: ResMut<CoverBuffers>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = timers.0.scope("regions");
@@ -787,38 +787,38 @@ fn prepare_wood_buffers(
         (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.far_in, b.far_out)
     });
     let marked = marked.and_then(|m| m.0).map_or(Vec4::ZERO, |foot| foot.extend(1.0));
-    buffers.forest.set(ForestUniform { band: ring, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
-    buffers.forest.write_buffer(&render_device, &render_queue);
+    buffers.cover.set(CoverUniform { band: ring, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
+    buffers.cover.write_buffer(&render_device, &render_queue);
     buffers.frames.set(table.frames.clone());
     buffers.frames.write_buffer(&render_device, &render_queue);
-    let held = buffers.forest.buffer().map(Buffer::id).zip(buffers.frames.buffer().map(Buffer::id));
+    let held = buffers.cover.buffer().map(Buffer::id).zip(buffers.frames.buffer().map(Buffer::id));
     if buffers.held != held {
         buffers.held = held;
-        buffers.trees = None;
+        buffers.models = None;
         buffers.cards.clear();
     }
 }
 
-/// The groups that read the wood's buffers: one for the trees, and one
+/// The groups that read the cover's buffers: one for the models, and one
 /// for each card texture standing. A card stand whose texture is not on
 /// the GPU yet has no group, and the draw skips it.
-fn prepare_wood_bind_groups(
-    tree_pipeline: Res<TreePipeline>,
+fn prepare_cover_bind_groups(
+    model_pipeline: Res<ModelPipeline>,
     card_pipeline: Res<CardPipeline>,
     render_device: Res<RenderDevice>,
     images: Res<RenderAssets<GpuImage>>,
-    buffers: ResMut<WoodBuffers>,
+    buffers: ResMut<CoverBuffers>,
     cards: Query<&CardStand>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
     let _t = timers.0.scope("bgroups");
-    let WoodBuffers { forest, frames, trees, cards: groups, .. } = buffers.into_inner();
-    let (Some(forest), Some(frames)) = (forest.binding(), frames.binding()) else { return };
-    if trees.is_none() {
-        *trees = Some(render_device.create_bind_group(
-            "trees_wood",
-            &tree_pipeline.bind_group_layout,
-            &BindGroupEntries::sequential((forest.clone(), frames.clone())),
+    let CoverBuffers { cover, frames, models, cards: groups, .. } = buffers.into_inner();
+    let (Some(cover), Some(frames)) = (cover.binding(), frames.binding()) else { return };
+    if models.is_none() {
+        *models = Some(render_device.create_bind_group(
+            "models_cover",
+            &model_pipeline.bind_group_layout,
+            &BindGroupEntries::sequential((cover.clone(), frames.clone())),
         ));
     }
     for stand in &cards {
@@ -835,10 +835,10 @@ fn prepare_wood_bind_groups(
             usage: BufferUsages::UNIFORM,
         });
         let group = render_device.create_bind_group(
-            "cards_wood",
+            "cards_cover",
             &card_pipeline.bind_group_layout,
             &BindGroupEntries::sequential((
-                forest.clone(),
+                cover.clone(),
                 frames.clone(),
                 uniform.as_entire_binding(),
                 &image.texture_view,
@@ -874,7 +874,7 @@ impl Default for StandDraws {
     }
 }
 
-/// For each view drawing the wood and each stand, the runs whose region's
+/// For each view drawing the cover and each stand, the runs whose region's
 /// box the view can see, as one indirect draw each of the stand's mesh.
 #[allow(clippy::too_many_arguments)]
 fn prepare_stand_draws(
@@ -884,7 +884,7 @@ fn prepare_stand_draws(
     table: Res<RegionTable>,
     views: Query<&ExtractedView>,
     phases: Res<ViewBinnedRenderPhases<Opaque3d>>,
-    tree_stands: Query<(Entity, &MainEntity, &TreeStand)>,
+    model_stands: Query<(Entity, &MainEntity, &ModelStand)>,
     card_stands: Query<(Entity, &MainEntity, &CardStand)>,
     meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
@@ -898,7 +898,7 @@ fn prepare_stand_draws(
     // Each stand's mesh as an indirect draw names it: its index count and
     // where its indices and vertices sit in their slabs.
     let mut stand_meshes = Vec::new();
-    let stands = tree_stands
+    let stands = model_stands
         .iter()
         .map(|(e, m, s)| (e, *m, &s.0))
         .chain(card_stands.iter().map(|(e, m, s)| (e, *m, &s.draw)));
@@ -951,27 +951,27 @@ fn prepare_stand_draws(
     draws.args.write_buffer(&render_device, &render_queue);
 }
 
-type DrawTrees = (
+type DrawModels = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
-    SetTreeWood<2>,
-    DrawStand<TreeStand>,
+    SetModelGroup<2>,
+    DrawStand<ModelStand>,
 );
 
 type DrawCards = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
-    SetCardWood<2>,
+    SetCardGroup<2>,
     DrawStand<CardStand>,
 );
 
-/// The wood's group for the trees.
-struct SetTreeWood<const I: usize>;
+/// The cover's group for the models.
+struct SetModelGroup<const I: usize>;
 
-impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetTreeWood<I> {
-    type Param = SRes<WoodBuffers>;
+impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetModelGroup<I> {
+    type Param = SRes<CoverBuffers>;
     type ViewQuery = ();
     type ItemQuery = ();
 
@@ -982,17 +982,17 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetTreeWood<I> {
         buffers: SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let Some(group) = buffers.into_inner().trees.as_ref() else { return RenderCommandResult::Skip };
+        let Some(group) = buffers.into_inner().models.as_ref() else { return RenderCommandResult::Skip };
         pass.set_bind_group(I, group, &[]);
         RenderCommandResult::Success
     }
 }
 
-/// The wood's group for this stand's card texture.
-struct SetCardWood<const I: usize>;
+/// The cover's group for this stand's card texture.
+struct SetCardGroup<const I: usize>;
 
-impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetCardWood<I> {
-    type Param = SRes<WoodBuffers>;
+impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetCardGroup<I> {
+    type Param = SRes<CoverBuffers>;
     type ViewQuery = ();
     type ItemQuery = Read<CardStand>;
 

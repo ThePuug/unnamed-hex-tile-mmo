@@ -159,7 +159,7 @@ fn handle_terrain_menu(
         action_writer.write(DevConsoleAction::ToggleCameraCloseup);
         consumed = Some(KeyCode::Numpad5);
     } else if keyboard.just_pressed(KeyCode::Numpad6) {
-        action_writer.write(DevConsoleAction::ToggleForestHidden);
+        action_writer.write(DevConsoleAction::ToggleCoverHidden);
         consumed = Some(KeyCode::Numpad6);
     }
 

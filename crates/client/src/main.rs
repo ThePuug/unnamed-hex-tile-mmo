@@ -74,7 +74,7 @@ fn main() {
         UiPlugin,
         VignettePlugin,
         WaterPlugin,
-        crate::plugins::forest::ForestPlugin,
+        crate::plugins::cover::CoverPlugin,
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
         MaterialPlugin::<world::DiscMaterial>::default(),
         MaterialPlugin::<world::SkyMaterial>::default(),

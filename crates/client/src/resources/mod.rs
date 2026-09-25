@@ -446,14 +446,14 @@ pub struct SummaryMeshState {
     /// The water standing over the region, built with the ground and drawn
     /// as a child of its entity, so it lives and dies with the ground.
     pub base_water: WaterGeometry,
-    /// The region's trees, placed with the ground and spawned as children
-    /// of its entity once the tree kit has loaded.
-    pub base_trees: Vec<crate::plugins::forest::TreeInstance>,
-    /// Whether the entity now standing carries its trees: set as they are
-    /// spawned within the trees' reach, cleared as they are taken down
-    /// beyond it and whenever the entity or its children go.
-    pub trees_spawned: bool,
-    /// The same for its trees as cards, past the trees' keep.
+    /// The region's cover, placed with the ground and spawned as children
+    /// of its entity once the cover kit has loaded.
+    pub base_cover: Vec<crate::plugins::cover::CoverInstance>,
+    /// Whether the entity now standing carries its cover as models: set as
+    /// they are spawned within the models' reach, cleared as they are taken
+    /// down beyond it and whenever the entity or its children go.
+    pub models_spawned: bool,
+    /// The same for its cover as cards, past the models' keep.
     pub cards_spawned: bool,
     /// The last build yielded nothing — a cell or ring cell had no data
     /// yet. Retried once data has arrived since `epoch`, not on every run:
@@ -513,7 +513,7 @@ pub struct SummaryMeshBuildResult {
     pub tri_count: u32,
     pub mesh_origin: Vec3,
     pub water: WaterGeometry,
-    pub trees: Vec<crate::plugins::forest::TreeInstance>,
+    pub cover: Vec<crate::plugins::cover::CoverInstance>,
 }
 
 /// Tracks mesh state for all summary mesh regions.
