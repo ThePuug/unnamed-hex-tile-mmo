@@ -114,6 +114,13 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             }
             cleared
         }
+        ClearType::Threat { source, inserted_at } => queue
+            .threats
+            .iter()
+            .position(|t| t.source == source && t.inserted_at == inserted_at)
+            .and_then(|pos| queue.threats.remove(pos))
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -310,6 +317,32 @@ mod tests {
         assert_eq!(cleared[1].damage, 20.0); // Second threat
         assert_eq!(queue.threats.len(), 1);
         assert_eq!(queue.threats[0].damage, 30.0); // Third threat remains
+    }
+
+    #[test]
+    fn test_clear_threats_names_one_threat_wherever_it_stands() {
+        let mut queue = ReactionQueue::new(3);
+        let a = Entity::from_raw_u32(0).unwrap();
+        let b = Entity::from_raw_u32(1).unwrap();
+        for (source, secs) in [(a, 0), (b, 0), (a, 1)] {
+            queue.threats.push_back(QueuedThreat {
+                source,
+                damage: 10.0,
+                damage_type: DamageType::Physical,
+                inserted_at: Duration::from_secs(secs),
+                timer_duration: Duration::from_secs(1),
+                ability: None,
+            });
+        }
+
+        let cleared = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Duration::from_secs(0) });
+        assert_eq!(cleared.len(), 1);
+        assert_eq!(cleared[0].source, b);
+        assert_eq!(queue.threats.iter().map(|t| (t.source, t.inserted_at.as_secs())).collect::<Vec<_>>(), vec![(a, 0), (a, 1)]);
+
+        let missing = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Duration::from_secs(0) });
+        assert!(missing.is_empty());
+        assert_eq!(queue.threats.len(), 2);
     }
 
     #[test]

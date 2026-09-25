@@ -176,6 +176,10 @@ pub enum ClearType {
     First(usize),
     /// Clear threats by damage type (Ward - future)
     ByType(DamageType),
+    /// Clear the one threat `source` inserted at `inserted_at`, wherever it
+    /// stands: an expiry, since threats from different sources expire out of
+    /// queue order.
+    Threat { source: Entity, inserted_at: std::time::Duration },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

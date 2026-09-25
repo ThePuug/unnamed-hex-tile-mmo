@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::Loc,
-    message::{AbilityType, Do, Event as GameEvent},
+    message::{AbilityType, ClearType, Do, Event as GameEvent},
 };
 
 /// Component for attack telegraph visual (ball over attacker's head)
@@ -130,11 +130,15 @@ pub fn on_clear_queue(
     balls: Query<(Entity, &AttackBall)>,
 ) {
     for message in reader.read() {
-        let Do { event: GameEvent::ClearQueue { ent: target, .. } } = message else { continue };
+        let Do { event: GameEvent::ClearQueue { ent: target, clear_type } } = message else { continue };
 
-        // Despawn all balls targeting this entity
+        // An expiry names one source's threat; every other clear takes all
+        let source = match clear_type {
+            ClearType::Threat { source, .. } => Some(*source),
+            _ => None,
+        };
         for (ball_entity, ball) in balls.iter() {
-            if ball.target == *target {
+            if ball.target == *target && source.is_none_or(|s| ball.source == s) {
                 commands.entity(ball_entity).despawn();
             }
         }

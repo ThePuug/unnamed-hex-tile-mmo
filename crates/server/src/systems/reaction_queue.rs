@@ -29,19 +29,10 @@ pub fn process_expired_threats(
 
         // Remove expired threats from the queue and emit ResolveThreat events
         for expired_threat in &expired {
-            // Find and remove the threat by matching inserted_at (unique identifier)
-            if let Some(pos) = queue.threats.iter().position(|t| {
-                t.inserted_at == expired_threat.inserted_at && t.source == expired_threat.source
-            }) {
-                queue.threats.remove(pos);
-
+            let clear_type = ClearType::Threat { source: expired_threat.source, inserted_at: expired_threat.inserted_at };
+            if !queue_utils::clear_threats(&mut queue, clear_type).is_empty() {
                 // Broadcast ClearQueue event to clients so they remove the threat from UI
-                writer.write(Do {
-                    event: GameEvent::ClearQueue {
-                        ent,
-                        clear_type: ClearType::First(1),
-                    },
-                });
+                writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type } });
 
                 // Emit ResolveThreat event to trigger damage application
                 commands.trigger(
