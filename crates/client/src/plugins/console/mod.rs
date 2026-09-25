@@ -54,5 +54,7 @@ impl Plugin for DevConsolePlugin {
             )
                 .chain(), // Run in sequence
         );
+        #[cfg(feature = "admin")]
+        app.add_systems(Update, actions::send_spawn_den.after(actions::execute_console_actions));
     }
 }

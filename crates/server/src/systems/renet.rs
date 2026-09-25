@@ -291,6 +291,10 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::Teleport { ent, q, r }});
                 }
+                Try { event: Event::SpawnDen { ent: _, archetype } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::SpawnDen { ent, archetype }});
+                }
                 Try { event: Event::Play } => {
                     commands.trigger(Presence::Enter { client_id });
                 }

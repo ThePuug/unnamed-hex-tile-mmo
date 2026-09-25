@@ -79,6 +79,10 @@ pub enum Event {
     /// request; the server decides the height and answers with the tile
     /// update every client already treats as a teleport.
     Teleport { ent: Entity, q: i32, r: i32 },
+    /// Client → Server: place a den of `archetype` ahead of the entity,
+    /// beyond the range its pack acquires a target from. An admin request,
+    /// as ungated on the wire as `Teleport`.
+    SpawnDen { ent: Entity, archetype: crate::spatial_difficulty::EnemyArchetype },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative

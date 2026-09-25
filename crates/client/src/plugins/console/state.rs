@@ -85,7 +85,16 @@ pub enum MenuPath {
     GotoInput,
     #[cfg(feature = "admin")]
     SummaryRadius,
+    #[cfg(feature = "admin")]
+    SpawnDen,
 }
+
+/// The dens the console places, in menu order from numpad 1.
+#[cfg(feature = "admin")]
+pub const DENS: [(&str, common_bevy::spatial_difficulty::EnemyArchetype); 4] = {
+    use common_bevy::spatial_difficulty::EnemyArchetype::*;
+    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender)]
+};
 
 impl MenuPath {
     pub fn display_name(&self) -> &str {
@@ -101,6 +110,8 @@ impl MenuPath {
             MenuPath::GotoInput => "Goto — Enter Coordinates",
             #[cfg(feature = "admin")]
             MenuPath::SummaryRadius => "Summary Radius",
+            #[cfg(feature = "admin")]
+            MenuPath::SpawnDen => "Spawn Den",
         }
     }
 }

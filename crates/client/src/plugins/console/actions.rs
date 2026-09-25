@@ -38,6 +38,9 @@ pub enum DevConsoleAction {
     SetForcedSummaryRadius(Option<u32>),
     #[cfg(feature = "admin")]
     ReportTerrain,
+    /// Place a den of this archetype ahead of the player.
+    #[cfg(feature = "admin")]
+    SpawnDen(common_bevy::spatial_difficulty::EnemyArchetype),
 }
 
 /// System that executes console actions
@@ -166,7 +169,24 @@ pub fn execute_console_actions(
             DevConsoleAction::SetForcedSummaryRadius(_) => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::ReportTerrain => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::SpawnDen(_) => {}
         }
     }
 }
 
+
+/// Asks the server for the den the console picked, ahead of the player.
+#[cfg(feature = "admin")]
+pub fn send_spawn_den(
+    mut reader: MessageReader<DevConsoleAction>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
+    player: Query<Entity, (With<common_bevy::components::Actor>, With<common_bevy::components::behaviour::PlayerControlled>)>,
+) {
+    for action in reader.read() {
+        let DevConsoleAction::SpawnDen(archetype) = *action else { continue };
+        let Ok(ent) = player.single() else { continue };
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::SpawnDen { ent, archetype } });
+        info!("Spawn den: {archetype:?}");
+    }
+}

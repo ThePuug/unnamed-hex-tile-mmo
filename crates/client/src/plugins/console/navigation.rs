@@ -92,6 +92,8 @@ pub fn handle_console_input(
         MenuPath::GotoInput => handle_goto_input(&mut keyboard, &mut console, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::SummaryRadius => handle_summary_radius(&mut keyboard, &mut console, &mut action_writer),
+        #[cfg(feature = "admin")]
+        MenuPath::SpawnDen => handle_spawn_den_menu(&mut keyboard, &mut action_writer),
     }
 }
 
@@ -127,6 +129,13 @@ fn handle_root_menu(
     if consumed.is_none() && keyboard.just_pressed(dump_key) {
         action_writer.write(DevConsoleAction::WriteMetricsSnapshot);
         consumed = Some(dump_key);
+    }
+
+    #[cfg(feature = "admin")]
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad5) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::SpawnDen;
+        consumed = Some(KeyCode::Numpad5);
     }
 
     if let Some(key) = consumed {
@@ -274,6 +283,22 @@ fn handle_flyover_menu(
 
     if let Some(key) = consumed {
         keyboard.clear_just_pressed(key);
+    }
+}
+
+/// Numpad 1 on places the den `DENS` lists in that row, and stays in the
+/// menu so another can follow.
+#[cfg(feature = "admin")]
+fn handle_spawn_den_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    const KEYS: [KeyCode; 4] = [KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4];
+    for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
+        if keyboard.just_pressed(key) {
+            action_writer.write(DevConsoleAction::SpawnDen(archetype));
+            keyboard.clear_just_pressed(key);
+        }
     }
 }
 

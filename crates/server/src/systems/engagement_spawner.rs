@@ -3,8 +3,8 @@
 //! Builds an engagement — a group of NPCs at a location, sized and levelled
 //! from that location — and tracks which sites already have one.
 //!
-//! Dormant: nothing selects sites. `spawn_engagement` has no caller, and
-//! `ActiveSpawners` is only ever cleared.
+//! Nothing selects sites: the only den is one an admin asks for with
+//! `Event::SpawnDen`, and `ActiveSpawners` is only ever cleared.
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -12,7 +12,7 @@ use rand::Rng;
 
 use common_bevy::{
     components::{
-        behaviour::Behaviour,
+        behaviour::{Behaviour, PlayerControlled},
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
         equipment::{Equipment, Item, Piece},
         entity_type::{
@@ -28,6 +28,7 @@ use common_bevy::{
         resources::{CombatState, Health, Mana, Stamina},
         AirTime, LastAutoAttack, Physics, Loc,
     },
+    message::{Event, Try},
     plugins::nntree::NearestNeighbor,
     spatial_difficulty::{
         calculate_enemy_attributes, calculate_enemy_level,
@@ -40,6 +41,48 @@ use common_bevy::{
 /// Cleared when engagement is cleaned up (allows re-activation).
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
+
+/// How far a chasing NPC looks for a target, in tiles.
+const CHASE_ACQUISITION_RANGE: u32 = 15;
+
+/// Tiles between the edge of a den's acquisition range and the player who
+/// asked for it, so the fight starts when the player walks in.
+const DEN_CLEARANCE: i32 = 5;
+
+/// The range an NPC of `archetype` acquires a target within.
+fn acquisition_range(archetype: EnemyArchetype) -> u32 {
+    match archetype {
+        EnemyArchetype::Kiter => crate::systems::behaviour::kite::Kite::forest_sprite().acquisition_range,
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => CHASE_ACQUISITION_RANGE,
+    }
+}
+
+/// Places the den a player asks for straight ahead of it, far enough that
+/// none of the pack, standing a tile out from the den, has the player in
+/// acquisition range. Acquisition measures `|Δz|` on top of the flat
+/// distance, so a flat distance past the range is past it on any slope.
+pub fn try_spawn_den(
+    mut reader: MessageReader<Try>,
+    mut commands: Commands,
+    query: Query<(&Loc, &Heading), With<PlayerControlled>>,
+    time: Res<Time>,
+    registry: Res<crate::resources::event_registry::EventRegistry>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
+        let Ok((loc, heading)) = query.get(*ent) else { continue };
+        let ahead = den_ahead(**loc, *heading, *archetype);
+        let den = Qrz { q: ahead.q, r: ahead.r, z: registry.elevation_at(ahead.q, ahead.r) + 1 };
+        info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
+        spawn_engagement(den, *archetype, &mut commands, &time, &registry);
+    }
+}
+
+/// The tile a den of `archetype` goes on, ahead of a player at `tile`
+/// facing `heading`; its z is the player's.
+fn den_ahead(tile: Qrz, heading: Heading, archetype: EnemyArchetype) -> Qrz {
+    tile + heading.hex_dir() * (acquisition_range(archetype) as i32 + 1 + DEN_CLEARANCE)
+}
 
 /// Spawn an engagement at a location with the given archetype.
 fn spawn_engagement(
@@ -117,7 +160,7 @@ fn spawn_engagement(
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => {
                 let chase = crate::systems::behaviour::chase::Chase {
-                    acquisition_range: 15,
+                    acquisition_range: CHASE_ACQUISITION_RANGE,
                     leash_distance: 30,
                     attack_range: 1,
                 };
@@ -176,4 +219,27 @@ fn kit(archetype: EnemyArchetype) -> Equipment {
         worn.wear(Item { piece: Piece::SwordBreaker, style: 0 });
     }
     worn
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common_bevy::components::heading::HEADING_SLOTS;
+
+    #[test]
+    fn no_member_of_a_placed_den_starts_in_acquisition_range() {
+        let player = Qrz { q: 104289, r: -4677, z: 0 };
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender] {
+            for slot in 0..HEADING_SLOTS {
+                let den = den_ahead(player, Heading::from_slot(slot), archetype);
+                for i in 0..3 {
+                    let member = den + get_random_hex_offset(i);
+                    assert!(
+                        player.flat_distance(&member) > acquisition_range(archetype) as i32,
+                        "{archetype:?} member {i} at slot {slot} starts in range",
+                    );
+                }
+            }
+        }
+    }
 }
