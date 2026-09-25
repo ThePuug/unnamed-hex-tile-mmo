@@ -83,7 +83,6 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::Overpower => 3.0,  // Heavy strike: 3s lockout
         AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
-        AbilityType::Volley => 4.0,     // NPC ranged: 4s lockout
         AbilityType::Counter => 4.0,    // Counter-attack: 4s lockout (long window for attacks to land)
         AbilityType::Kick => 4.0,       // Kick: 4s lockout (rewards chaining via self-synergy)
     }
@@ -235,7 +234,6 @@ mod tests {
         assert_eq!(get_ability_recovery_duration(AbilityType::Overpower), 3.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Deflect), 1.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
-        assert_eq!(get_ability_recovery_duration(AbilityType::Volley), 4.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Counter), 4.0);
         assert_eq!(get_ability_recovery_duration(AbilityType::Kick), 4.0);
     }

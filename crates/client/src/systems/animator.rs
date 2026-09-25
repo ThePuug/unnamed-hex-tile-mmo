@@ -73,7 +73,7 @@ impl Clip {
     /// the counter for whatever wards.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick | AbilityType::Volley => Some(Clip::Attack),
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick => Some(Clip::Attack),
             AbilityType::Counter | AbilityType::Deflect => Some(Clip::Counter),
         }
     }

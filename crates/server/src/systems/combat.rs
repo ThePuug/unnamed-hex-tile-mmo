@@ -203,7 +203,6 @@ pub fn validate_ability_prerequisites(
 // - abilities::knockback::handle_knockback
 // - abilities::counter::handle_counter
 // - abilities::deflect::handle_deflect
-// - abilities::volley::handle_volley
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
 /// System to automatically trigger auto-attacks when adjacent to hostiles

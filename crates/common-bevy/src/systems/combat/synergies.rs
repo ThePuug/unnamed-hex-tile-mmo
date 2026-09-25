@@ -55,7 +55,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
         AbilityType::Kick => Some(SynergyTrigger::Kick),        // Kick: self-synergy
-        AbilityType::AutoAttack | AbilityType::Volley => None, // No synergies
+        AbilityType::AutoAttack => None, // No synergies
     }
 }
 
@@ -155,7 +155,6 @@ mod tests {
             Some(SynergyTrigger::Kick)
         );
         assert_eq!(get_synergy_trigger(AbilityType::AutoAttack), None);
-        assert_eq!(get_synergy_trigger(AbilityType::Volley), None);
     }
 
     #[test]

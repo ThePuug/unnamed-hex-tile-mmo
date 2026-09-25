@@ -105,7 +105,6 @@ pub fn setup(
             Some(AbilityType::Overpower) => "💥",  // Heavy strike
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
-            Some(AbilityType::Volley) => "🏹",     // NPC ranged attack (not on bar)
             Some(AbilityType::Counter) => "↩",     // Counter / reflect
             Some(AbilityType::Kick) => "🦶",       // Kick / knockback
             None => "🔒",
@@ -137,7 +136,6 @@ pub fn setup(
                 AbilityType::Counter => "30".to_string(),     // 30 stamina
                 AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
-                AbilityType::Volley => String::new(),         // NPC-only
             };
 
             if !cost_text.is_empty() {
@@ -409,10 +407,6 @@ fn get_ability_state(
         }
         AbilityType::AutoAttack => {
             // Passive ability - not on action bar, always "ready" but not shown
-            AbilityState::Ready
-        }
-        AbilityType::Volley => {
-            // NPC-only ability - not on player action bar
             AbilityState::Ready
         }
         AbilityType::Counter => {

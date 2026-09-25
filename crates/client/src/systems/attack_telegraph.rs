@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{
-    message::{Do, Event as GameEvent},
+    components::Loc,
+    message::{AbilityType, Do, Event as GameEvent},
 };
 
 /// Component for attack telegraph visual (ball over attacker's head)
@@ -21,19 +22,24 @@ pub struct HitLine {
     pub duration_ms: u64,
 }
 
-/// Spawn attack ball when a threat is inserted into the queue (Volley ability only)
+/// Spawn attack ball when a ranged auto-attack is inserted into the queue:
+/// one whose source stands further than adjacent from its target.
 pub fn on_insert_threat(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    locs: Query<&Loc>,
 ) {
     for message in reader.read() {
         let Do { event: GameEvent::InsertThreat { ent: target, threat } } = message else { continue };
 
-        // Only show ball for Volley ability
-        if threat.ability != Some(common_bevy::message::AbilityType::Volley) {
-            continue; // Skip all non-Volley threats
+        if threat.ability != Some(AbilityType::AutoAttack) {
+            continue;
+        }
+        let (Ok(source_loc), Ok(target_loc)) = (locs.get(threat.source), locs.get(*target)) else { continue };
+        if source_loc.flat_distance(target_loc) <= 1 {
+            continue;
         }
 
         // Spawn attack ball as child of source entity
@@ -62,7 +68,7 @@ pub fn on_insert_threat(
     }
 }
 
-/// Replace attack ball with hit line when damage is applied (Volley ability only)
+/// Replace attack ball with hit line when damage is applied (ranged auto-attacks only)
 pub fn on_apply_damage(
     mut commands: Commands,
     mut reader: MessageReader<Do>,

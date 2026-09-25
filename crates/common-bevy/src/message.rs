@@ -150,8 +150,6 @@ pub enum AbilityType {
     Deflect,
     /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
     AutoAttack,
-    /// NPC: Ranged attack with telegraph (20 dmg, 3s CD, 5-8 hex range)
-    Volley,
     /// Counter - Clear every visible threat, reflecting damage to adjacent sources
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
