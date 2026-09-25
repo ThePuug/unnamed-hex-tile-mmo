@@ -93,38 +93,27 @@ pub fn part_sites(r: u32) -> u32 {
     (scale(r) as u32 / 3).pow(2) * crate::cover::SITES.len() as u32
 }
 
-/// What stands on each part of a summary, counted: its pine, deciduous and
-/// brush, exact however many tiles the part holds. Set from a summary's
-/// canopy as generated, where each part reads as its tile's scaled over
-/// the part and so exactly; a change to a tile moves its part's counts by
-/// what the change took or left, and the part's canopy is read from them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PartStats([[u32; 3]; PARTS]);
+/// What stands on each part of a summary players have changed, counted
+/// from its tiles: its pine, deciduous and brush. A part is counted the
+/// first time a change lands in it, from its tiles as generated, which a
+/// change has had built around the player by then; each change after moves
+/// the count by what it took or left, so a part felled whole reads bare. A
+/// part no change has reached is not counted, and wears its tile's reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartStats([Option<[u32; 3]>; PARTS]);
 
 impl PartStats {
-    /// The stats of a summary of radius `r` whose canopy is as generated.
-    pub fn generated(r: u32, canopy: &[Canopy; PARTS]) -> Self {
-        Self(canopy.map(|part| part.counts(part_sites(r))))
-    }
-
     /// Moves part `part` of a summary of radius `r` from what `before`
-    /// holds to what `after` holds, no count below nothing or past the
-    /// part's sites, and answers the part's canopy now. The counts start
-    /// from an estimate, one tile scaled over the part, so a change can
-    /// take trees the estimate never counted.
-    pub fn change(&mut self, r: u32, part: usize, before: Cover, after: Cover) -> Canopy {
-        let sites = part_sites(r);
+    /// holds to what `after` holds, counting it first by `count` — its
+    /// trees as generated — where it is not counted yet, and answers the
+    /// part's canopy now.
+    pub fn change(&mut self, r: u32, part: usize, before: Cover, after: Cover, count: impl FnOnce() -> [u32; 3]) -> Canopy {
+        let counts = self.0[part].get_or_insert_with(count);
         let (took, left) = (Canopy::tally(before), Canopy::tally(after));
         for kind in 0..3 {
-            let count = &mut self.0[part][kind];
-            *count = (*count + left[kind]).saturating_sub(took[kind]).min(sites);
+            counts[kind] = (counts[kind] + left[kind]).saturating_sub(took[kind]);
         }
-        self.canopy(r, part)
-    }
-
-    /// Part `part`'s canopy, of a summary of radius `r`.
-    pub fn canopy(&self, r: u32, part: usize) -> Canopy {
-        Canopy::of_counts(self.0[part], part_sites(r))
+        Canopy::of_counts(*counts, part_sites(r))
     }
 }
 
@@ -317,27 +306,26 @@ mod tests {
         assert_eq!(select_center_z(&[0, 10]), 10);
     }
 
-    /// A change moves only its own part, by exactly what it took: one of a
-    /// part's nine pines takes its share from ten steps to nine, the part
-    /// felled whole reads bare, and a count never goes below nothing. A
-    /// first-level part is one tile, and reads it exactly.
+    /// A part is counted from its tiles on the first change and moved by
+    /// exactly what each change takes: one of a part's nine pines takes its
+    /// share from ten steps to nine, and the part felled whole reads bare
+    /// whatever its tile read. The count is taken once.
     #[test]
     fn a_change_moves_its_part_by_what_it_took() {
         let r = 4;
         let pine = Cover::NONE.with(0, Content::Pine);
-        let generated = [Canopy::of(pine); PARTS];
-        let mut stats = PartStats::generated(r, &generated);
-        assert_eq!(stats.canopy(r, 3), generated[3]);
-        assert_eq!(stats.change(r, 3, pine, Cover::NONE).share(Content::Pine), 9, "one pine of nine");
+        let mut stats = PartStats::default();
+        let mut counted = 0;
+        let mut count = || {
+            counted += 1;
+            [9, 0, 0]
+        };
+        assert_eq!(stats.change(r, 3, pine, Cover::NONE, &mut count).share(Content::Pine), 9, "one pine of nine");
         for _ in 1..9 {
-            stats.change(r, 3, pine, Cover::NONE);
+            stats.change(r, 3, pine, Cover::NONE, &mut count);
         }
-        assert!(stats.canopy(r, 3).is_empty(), "the part felled whole");
-        assert!(stats.change(r, 3, pine, Cover::NONE).is_empty(), "never below nothing");
-        assert_eq!(stats.canopy(r, 2), generated[2], "the other parts stand");
-
-        let mut tile = PartStats::generated(1, &generated);
-        assert_eq!(tile.change(1, 0, pine, Cover::NONE), Canopy::NONE);
+        assert!(stats.change(r, 3, pine, pine, &mut count).is_empty(), "the part felled whole");
+        assert_eq!(counted, 1);
     }
 
     /// The nine parts fall on every residue of the finer lattice modulo the

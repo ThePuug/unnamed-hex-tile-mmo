@@ -6,7 +6,7 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, ladder, mesh_region_lattice, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
+    summary::{compute_active_bands, ladder, mesh_region_lattice, part_tiles, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
@@ -226,10 +226,11 @@ fn generate(r: u32, sq: i32, sr: i32, generated: &impl SummarySource, laid: &imp
 
 /// Take every change players made into the summaries. The part holding the
 /// changed tile moves at every level by what the change took or left, a
-/// summary never computed being computed first, so no change is missed
-/// and none counted twice; and each summary sampling the tile reads its
-/// outcrop again, as players left it. A summary whose drawing moved goes
-/// to every client its region was sent to.
+/// summary never computed being computed first and a part never changed
+/// counted first from its tiles as generated, which are built around the
+/// player; so no change is missed and none counted twice. Each summary
+/// sampling the tile reads its outcrop again, as players left it. A
+/// summary whose drawing moved goes to every client its region was sent to.
 pub fn revise_summaries(
     mut writer: MessageWriter<Do>,
     mut changes: ResMut<WorldChanges>,
@@ -248,7 +249,13 @@ pub fn revise_summaries(
         for (level, sq, sr, part) in ladder(change.q, change.r) {
             let key = SummaryKey { r: level, sq, sr };
             let (cell, stats) = summary_cache.touch(key, || generate(level, sq, sr, &generated, &laid));
-            let canopy = stats.change(level, part, change.before, change.after);
+            let count = || {
+                part_tiles(level, sq, sr, part).into_iter().fold([0; 3], |sum, (q, r)| {
+                    let tally = common::Canopy::tally(generated.sample(q, r).expect("the registry has every tile").cover);
+                    std::array::from_fn(|kind| sum[kind] + tally[kind])
+                })
+            };
+            let canopy = stats.change(level, part, change.before, change.after, count);
             if cell.canopy[part] != canopy {
                 cell.canopy[part] = canopy;
                 moved.insert(key);

@@ -411,12 +411,6 @@ impl Canopy {
         Canopy(share(counts[0]) | share(counts[1]) << 5 | share(counts[2]) << 10)
     }
 
-    /// The pine, deciduous and brush a ground of `sites` sites holds under
-    /// this canopy: exact where the shares are, as a tile's scaled over
-    /// its part are.
-    pub fn counts(self, sites: u32) -> [u32; 3] {
-        [Content::Pine, Content::Deciduous, Content::Brush].map(|kind| self.share(kind) as u32 * sites / CANOPY_WHOLE as u32)
-    }
 
     pub fn from_bits(bits: u16) -> Canopy {
         Canopy(bits & 0x7FFF)
@@ -628,19 +622,16 @@ mod tests {
         assert_eq!(mixed.share(Content::Empty), third);
     }
 
-    /// A tile's canopy spread over a part of many tiles gives back the
-    /// part's trees exactly, and a part short of a few rounds to the
-    /// nearest step and never past the step it came from.
+    /// A part of many tiles rounds each kind's share to the nearest step:
+    /// a third of its sites is a tile's one site, a tree short of that is
+    /// under half a step, and forty short is not.
     #[test]
-    fn a_part_reads_its_counts_back() {
+    fn a_part_rounds_to_the_nearest_step() {
         let tile = Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Brush));
         let sites = 81 * SITES.len() as u32;
-        let counts = tile.counts(sites);
-        assert_eq!(counts, [81, 0, 81]);
-        assert_eq!(Canopy::of_counts(counts, sites), tile);
-        let felled = Canopy::of_counts([counts[0] - 1, 0, counts[2]], sites);
-        assert_eq!(felled, tile, "one tree of 243 sites is under half a step");
-        let cleared = Canopy::of_counts([counts[0] - 40, 0, counts[2]], sites);
+        assert_eq!(Canopy::of_counts([81, 0, 81], sites), tile);
+        assert_eq!(Canopy::of_counts([80, 0, 81], sites), tile, "one tree of 243 sites is under half a step");
+        let cleared = Canopy::of_counts([41, 0, 81], sites);
         assert!(cleared.share(Content::Pine) < tile.share(Content::Pine));
         assert_eq!(cleared.share(Content::Brush), tile.share(Content::Brush));
     }

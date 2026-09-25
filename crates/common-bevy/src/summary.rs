@@ -386,6 +386,22 @@ pub fn ladder(q: i32, r: i32) -> [(u32, i32, i32, usize); LOD_LEVELS.len() - 1] 
     })
 }
 
+/// Every tile part `part` of the summary at `(sq, sr)` on the lattice of
+/// radius `r` holds by [`ladder`]: at the first level its one tile, and a
+/// level up the tiles of every part of the finer summary centred on its
+/// offset. `(scale / 3)²` of them.
+pub fn part_tiles(r: u32, sq: i32, sr: i32, part: usize) -> Vec<(i32, i32)> {
+    let lattice = summary_lattice(r);
+    let (cq, cr) = lattice.cell_center((sq, sr));
+    let (oq, or) = part_offsets(r)[part];
+    let (q, rr) = (cq + oq, cr + or);
+    let Some(finer) = LOD_LEVELS.iter().rev().copied().find(|&level| level < r).filter(|&level| level > 0) else {
+        return vec![(q, rr)];
+    };
+    let scale = summary_lattice(finer).scale;
+    (0..PARTS).flat_map(|p| part_tiles(finer, q / scale, rr / scale, p)).collect()
+}
+
 /// Create the mesh region lattice (groups summaries into mesh regions).
 
 /// Uses HexLattice::new(9) over summary-lattice coordinates.
@@ -479,6 +495,23 @@ mod tests {
             for summary in [(0, 0), (1, -1)] {
                 for part in 0..PARTS {
                     assert_eq!(held.get(&(summary.0, summary.1, part)), Some(&each), "level {level} summary {summary:?} part {part}");
+                }
+            }
+        }
+    }
+
+    /// A part's tiles are exactly the tiles whose chain names that part.
+    #[test]
+    fn a_parts_tiles_are_the_ladders_own() {
+        for step in 0..LOD_LEVELS.len() - 1 {
+            let level = LOD_LEVELS[step + 1];
+            for summary in [(0, 0), (1, -2)] {
+                for part in [0, 5, 8] {
+                    let tiles = part_tiles(level, summary.0, summary.1, part);
+                    assert_eq!(tiles.len() as i32, (scale(level) / 3).pow(2), "level {level}");
+                    for (q, r) in tiles {
+                        assert_eq!(ladder(q, r)[step], (level, summary.0, summary.1, part), "level {level} tile ({q}, {r})");
+                    }
                 }
             }
         }
