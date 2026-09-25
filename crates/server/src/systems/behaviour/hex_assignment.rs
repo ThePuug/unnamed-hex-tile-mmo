@@ -43,9 +43,13 @@ fn direction_index(center: Qrz, neighbor: Qrz) -> Option<usize> {
 /// Returns a map of NPC entity → assigned hex.
 
 /// Strategy priority (for mixed groups): Cluster → Surround → Perimeter/Orbital.
+/// Each NPC comes with the tile it stands on: among the hexes its strategy
+/// rates alike, it takes the nearest, so it closes from the side it
+/// approaches on. A fixed first pick sends a lone NPC round to one face of
+/// its target, and two actors chasing each other leapfrog across the map.
 pub fn calculate_assignments(
     player_tile: Qrz,
-    npcs: &[(Entity, PositioningStrategy)],
+    npcs: &[(Entity, PositioningStrategy, Qrz)],
     available_adjacent: &[(Qrz, usize)], // (hex, direction_index)
     available_secondary: &[Qrz],         // hexes at distance 2 from player
 ) -> HashMap<Entity, Qrz> {
@@ -54,17 +58,17 @@ pub fn calculate_assignments(
 
     // Sort NPCs by strategy priority: Cluster first, then Surround, then Perimeter/Orbital
     let mut sorted_npcs: Vec<_> = npcs.to_vec();
-    sorted_npcs.sort_by_key(|(_, strategy)| match strategy {
+    sorted_npcs.sort_by_key(|(_, strategy, _)| match strategy {
         PositioningStrategy::Cluster => 0,
         PositioningStrategy::Surround => 1,
         PositioningStrategy::Perimeter => 2,
         PositioningStrategy::Orbital => 3,
     });
 
-    for (npc, strategy) in &sorted_npcs {
+    for (npc, strategy, from) in &sorted_npcs {
         match strategy {
             PositioningStrategy::Cluster => {
-                if let Some(hex) = pick_cluster(available_adjacent, &taken_adjacent) {
+                if let Some(hex) = pick_cluster(available_adjacent, &taken_adjacent, *from) {
                     if let Some(dir_idx) = available_adjacent.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
                         taken_adjacent.push(dir_idx);
                     }
@@ -74,7 +78,7 @@ pub fn calculate_assignments(
                 }
             }
             PositioningStrategy::Surround => {
-                if let Some(hex) = pick_surround(available_adjacent, &taken_adjacent) {
+                if let Some(hex) = pick_surround(available_adjacent, &taken_adjacent, *from) {
                     if let Some(dir_idx) = available_adjacent.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
                         taken_adjacent.push(dir_idx);
                     }
@@ -102,54 +106,35 @@ pub fn calculate_assignments(
 }
 
 /// Pick the best adjacent hex for Cluster strategy.
-/// Minimize angular distance to already-taken faces (pack together).
+/// Minimize angular distance to already-taken faces (pack together), then
+/// distance from `from`, the NPC's tile.
 fn pick_cluster(
     available: &[(Qrz, usize)],
     taken: &[usize],
+    from: Qrz,
 ) -> Option<Qrz> {
-    let free: Vec<_> = available.iter()
+    available.iter()
         .filter(|(_, dir)| !taken.contains(dir))
-        .collect();
-
-    if free.is_empty() {
-        return None;
-    }
-
-    if taken.is_empty() {
-        // First NPC — pick any available hex (first one)
-        return Some(free[0].0);
-    }
-
-    // Pick the free hex closest to any already-taken hex
-    free.iter()
-        .min_by_key(|(_, dir)| {
-            taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(6)
+        .min_by_key(|(hex, dir)| {
+            let packing = taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(0);
+            (packing, hex.flat_distance(&from))
         })
         .map(|(hex, _)| *hex)
 }
 
 /// Pick the best adjacent hex for Surround strategy.
-/// Maximize minimum angular distance from already-taken faces (spread out).
+/// Maximize minimum angular distance from already-taken faces (spread out),
+/// then minimize distance from `from`, the NPC's tile.
 fn pick_surround(
     available: &[(Qrz, usize)],
     taken: &[usize],
+    from: Qrz,
 ) -> Option<Qrz> {
-    let free: Vec<_> = available.iter()
+    available.iter()
         .filter(|(_, dir)| !taken.contains(dir))
-        .collect();
-
-    if free.is_empty() {
-        return None;
-    }
-
-    if taken.is_empty() {
-        return Some(free[0].0);
-    }
-
-    // Pick the free hex that maximizes the minimum angular distance to any taken hex
-    free.iter()
-        .max_by_key(|(_, dir)| {
-            taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(0)
+        .min_by_key(|(hex, dir)| {
+            let spread = taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(0);
+            (std::cmp::Reverse(spread), hex.flat_distance(&from))
         })
         .map(|(hex, _)| *hex)
 }
@@ -209,18 +194,15 @@ pub fn assign_hexes(
         hex_assign.last_player_tile = Some(player_tile);
 
         // Collect living melee NPCs with their strategies
-        let alive_npcs: Vec<(Entity, PositioningStrategy)> = engagement.spawned_npcs.iter()
+        let alive_npcs: Vec<(Entity, PositioningStrategy, Qrz)> = engagement.spawned_npcs.iter()
             .filter_map(|&npc_ent| {
                 // Check NPC is alive
                 let health = health_query.get(npc_ent).ok()?;
                 if health.current() <= 0.0 { return None; }
 
                 // Only melee NPCs (those with Chase) get hex assignments
-                if npc_query.get(npc_ent).ok()?.2.is_some() {
-                    Some((npc_ent, engagement.archetype.positioning_strategy()))
-                } else {
-                    None
-                }
+                let (_, loc, chase, _) = npc_query.get(npc_ent).ok()?;
+                chase.map(|_| (npc_ent, engagement.archetype.positioning_strategy(), **loc))
             })
             .collect();
 
@@ -331,13 +313,29 @@ mod tests {
     }
 
     #[test]
+    fn first_pick_is_the_hex_nearest_the_npc() {
+        let available: Vec<(Qrz, usize)> = (0..6).map(|i| {
+            let hex = Qrz { q: 0, r: 0, z: 0 } + qrz::DIRECTIONS[i] + qrz::Qrz::Z;
+            (hex, i)
+        }).collect();
+        let npc = Entity::from_raw_u32(1).unwrap();
+        for (i, direction) in qrz::DIRECTIONS.iter().enumerate() {
+            let from = Qrz { q: 0, r: 0, z: 0 } + *direction * 4 + qrz::Qrz::Z;
+            for strategy in [PositioningStrategy::Cluster, PositioningStrategy::Surround] {
+                let assignments = calculate_assignments(Qrz { q: 0, r: 0, z: 0 }, &[(npc, strategy, from)], &available, &[]);
+                assert_eq!(assignments[&npc], available[i].0, "{strategy:?} from direction {i}");
+            }
+        }
+    }
+
+    #[test]
     fn cluster_first_picks_any() {
         let available = vec![
             (Qrz { q: 1, r: 0, z: 1 }, 3), // east
             (Qrz { q: 0, r: 1, z: 1 }, 2), // south-east
         ];
         let taken = vec![];
-        let hex = pick_cluster(&available, &taken);
+        let hex = pick_cluster(&available, &taken, Qrz { q: 0, r: 0, z: 1 });
         assert!(hex.is_some());
     }
 
@@ -349,7 +347,7 @@ mod tests {
             (Qrz { q: -1, r: 0, z: 1 }, 0),   // west (opposite)
         ];
         let taken = vec![3]; // east is taken
-        let hex = pick_cluster(&available, &taken);
+        let hex = pick_cluster(&available, &taken, Qrz { q: 0, r: 0, z: 1 });
         // Should pick north-east (dir 4, angular distance 1 from east)
         assert_eq!(hex, Some(Qrz { q: 1, r: -1, z: 1 }));
     }
@@ -362,7 +360,7 @@ mod tests {
             (Qrz { q: -1, r: 0, z: 1 }, 0),   // west (opposite)
         ];
         let taken = vec![3]; // east is taken
-        let hex = pick_surround(&available, &taken);
+        let hex = pick_surround(&available, &taken, Qrz { q: 0, r: 0, z: 1 });
         // Should pick west (dir 0, angular distance 3 — maximum spread from east)
         assert_eq!(hex, Some(Qrz { q: -1, r: 0, z: 1 }));
     }
@@ -379,8 +377,8 @@ mod tests {
         let npc2 = Entity::from_raw_u32(2).unwrap();
 
         let npcs = vec![
-            (npc1, PositioningStrategy::Surround),
-            (npc2, PositioningStrategy::Surround),
+            (npc1, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
+            (npc2, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
         ];
 
         let assignments = calculate_assignments(
@@ -414,9 +412,9 @@ mod tests {
         let npc3 = Entity::from_raw_u32(3).unwrap();
 
         let npcs = vec![
-            (npc1, PositioningStrategy::Surround),
-            (npc2, PositioningStrategy::Surround),
-            (npc3, PositioningStrategy::Surround),
+            (npc1, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
+            (npc2, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
+            (npc3, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
         ];
 
         let assignments = calculate_assignments(
@@ -447,9 +445,9 @@ mod tests {
         let npc3 = Entity::from_raw_u32(3).unwrap();
 
         let npcs = vec![
-            (npc1, PositioningStrategy::Cluster),
-            (npc2, PositioningStrategy::Cluster),
-            (npc3, PositioningStrategy::Cluster),
+            (npc1, PositioningStrategy::Cluster, Qrz { q: 0, r: 0, z: 1 }),
+            (npc2, PositioningStrategy::Cluster, Qrz { q: 0, r: 0, z: 1 }),
+            (npc3, PositioningStrategy::Cluster, Qrz { q: 0, r: 0, z: 1 }),
         ];
 
         let assignments = calculate_assignments(
@@ -487,9 +485,9 @@ mod tests {
         let juggernaut = Entity::from_raw_u32(3).unwrap();
 
         let npcs = vec![
-            (berserker1, PositioningStrategy::Cluster),
-            (berserker2, PositioningStrategy::Cluster),
-            (juggernaut, PositioningStrategy::Surround),
+            (berserker1, PositioningStrategy::Cluster, Qrz { q: 0, r: 0, z: 1 }),
+            (berserker2, PositioningStrategy::Cluster, Qrz { q: 0, r: 0, z: 1 }),
+            (juggernaut, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
         ];
 
         let assignments = calculate_assignments(
@@ -534,9 +532,9 @@ mod tests {
         let npc3 = Entity::from_raw_u32(3).unwrap();
 
         let npcs = vec![
-            (npc1, PositioningStrategy::Surround),
-            (npc2, PositioningStrategy::Surround),
-            (npc3, PositioningStrategy::Surround),
+            (npc1, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
+            (npc2, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
+            (npc3, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 }),
         ];
 
         let assignments = calculate_assignments(
@@ -561,7 +559,7 @@ mod tests {
         let secondary = vec![Qrz { q: 2, r: 0, z: 1 }];
 
         let npc = Entity::from_raw_u32(1).unwrap();
-        let npcs = vec![(npc, PositioningStrategy::Surround)];
+        let npcs = vec![(npc, PositioningStrategy::Surround, Qrz { q: 0, r: 0, z: 1 })];
 
         let assignments = calculate_assignments(
             Qrz { q: 0, r: 0, z: 0 },
@@ -584,7 +582,7 @@ mod tests {
         ];
 
         let npc = Entity::from_raw_u32(1).unwrap();
-        let npcs = vec![(npc, PositioningStrategy::Perimeter)];
+        let npcs = vec![(npc, PositioningStrategy::Perimeter, Qrz { q: 0, r: 0, z: 1 })];
 
         let assignments = calculate_assignments(
             Qrz { q: 0, r: 0, z: 0 },
