@@ -102,9 +102,9 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Deal damage — Force at 5%: auto-attacks are steady pressure, abilities carry the damage
+        // Deal damage — Force at 25%: auto-attacks are steady pressure, abilities carry the damage
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
-        let base_damage = attrs.force() * 0.05;
+        let base_damage = attrs.force() * 0.25;
 
         commands.trigger(
             Try {
