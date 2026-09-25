@@ -477,8 +477,8 @@ pub fn update_threat_queue_dots(
                             container_node.top = Val::Px(viewport_pos.y);
 
                             // Update dots visibility and colors
-                            let filled_slots = queue.threats.len();
-                            let is_full = queue.threats.len().saturating_sub(queue.window_size) > 0;
+                            let filled_slots = queue.visible_count();
+                            let is_full = queue.hidden_count() > 0;
 
                             for child in children.iter() {
                                 if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {
@@ -568,8 +568,8 @@ pub fn update_threat_queue_dots(
                             container_node.top = Val::Px(viewport_pos.y);
 
                             // Update dots visibility and colors
-                            let filled_slots = queue.threats.len();
-                            let is_full = queue.threats.len().saturating_sub(queue.window_size) > 0;
+                            let filled_slots = queue.visible_count();
+                            let is_full = queue.hidden_count() > 0;
 
                             for child in children.iter() {
                                 if let Ok((dot, mut dot_vis, mut dot_bg, mut dot_border)) = dot_query.get_mut(child) {

@@ -49,7 +49,7 @@ pub fn process_expired_threats(
 }
 
 /// Server system to process Dismiss events
-/// Pops the front threat from the queue and applies full unmitigated damage
+/// Pops the front visible threat from the queue and applies full unmitigated damage
 /// No GCD, no lockout, no resource cost
 pub fn process_dismiss(
     mut reader: MessageReader<Try>,
@@ -65,7 +65,10 @@ pub fn process_dismiss(
             continue;
         };
 
-        // Must have at least one threat to dismiss
+        // Dismiss takes the front visible threat; auto-attacks are never visible
+        if queue.visible_count() == 0 {
+            continue;
+        }
         let Some(threat) = queue.threats.pop_front() else {
             continue;
         };

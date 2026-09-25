@@ -68,12 +68,17 @@ pub fn create_threat(
 
 /// Insert a threat into the queue (unbounded, no overflow eviction)
 /// Queue is unbounded — threats always insert. Window size controls visibility only.
+/// An auto-attack goes to the back; an ability threat goes after the last
+/// ability threat, ahead of every auto-attack, so reactions reach
+/// auto-attacks only as overflow. Server and client both insert through
+/// here, so their queues hold the same order.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
     threat: crate::components::reaction_queue::QueuedThreat,
     _now: Duration,
 ) {
-    queue.threats.push_back(threat);
+    let at = if threat.is_pressure() { queue.threats.len() } else { queue.decision_count() };
+    queue.threats.insert(at, threat);
 }
 
 /// Check for expired threats in the queue
@@ -177,6 +182,30 @@ mod tests {
         assert_eq!(queue.threats.len(), 5);
         assert_eq!(queue.visible_count(), 2);
         assert_eq!(queue.hidden_count(), 3);
+    }
+
+    #[test]
+    fn test_insert_threat_puts_abilities_ahead_of_auto_attacks() {
+        use crate::message::AbilityType::{AutoAttack, Lunge, Overpower};
+        let mut queue = ReactionQueue::new(1);
+        let entity = Entity::from_raw_u32(0).unwrap();
+        let make_threat = |ability, secs: u64| QueuedThreat {
+            source: entity,
+            damage: 10.0,
+            damage_type: DamageType::Physical,
+            inserted_at: Duration::from_secs(secs),
+            timer_duration: Duration::from_secs(1),
+            ability: Some(ability),
+        };
+
+        for (ability, secs) in [(AutoAttack, 0), (Lunge, 1), (AutoAttack, 2), (Overpower, 3)] {
+            insert_threat(&mut queue, make_threat(ability, secs), Duration::from_secs(secs));
+        }
+
+        let order: Vec<_> = queue.threats.iter().map(|t| (t.ability.unwrap(), t.inserted_at.as_secs())).collect();
+        assert_eq!(order, vec![(Lunge, 1), (Overpower, 3), (AutoAttack, 0), (AutoAttack, 2)]);
+        assert_eq!(queue.visible_count(), 1);
+        assert_eq!(queue.hidden_count(), 1);
     }
 
     #[test]

@@ -197,7 +197,7 @@ pub fn handle_kick(
                         now,
                     );
 
-                    target_queue.threats.push_back(kick_threat);
+                    common_bevy::systems::combat::queue::insert_threat(&mut target_queue, kick_threat, now);
 
                     writer.write(Do {
                         event: GameEvent::InsertThreat {

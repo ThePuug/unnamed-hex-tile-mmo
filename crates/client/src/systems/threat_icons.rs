@@ -148,12 +148,12 @@ pub fn update(
 
         // Spawn all capacity slots (filled + empty)
         for index in 0..target_count {
-            let is_filled = index < queue.threats.len();
+            let is_filled = index < queue.visible_count();
             spawn_threat_icon(&mut commands, container, index, queue.window_size, is_filled);
         }
 
         // Spawn overflow counter (+N indicator) to the right of icons
-        let hidden_count = queue.threats.len().saturating_sub(queue.window_size);
+        let hidden_count = queue.hidden_count();
         if hidden_count > 0 {
             spawn_overflow_counter(&mut commands, container, queue.window_size, hidden_count);
         }
@@ -165,7 +165,7 @@ pub fn update(
         // Just update colors for filled/empty state transitions
         // And manage timer rings (spawn for filled, despawn for empty)
         for (entity, icon) in &current_icons {
-            let is_filled = icon.index < queue.threats.len();
+            let is_filled = icon.index < queue.visible_count();
 
             // Update colors — severity-based for filled, dim for empty
             if is_filled {
@@ -240,7 +240,7 @@ pub fn update(
     // - Color gradient (yellow -> orange -> red as time runs out)
     // - Growing size (small -> large as time runs out)
     for (entity, ring, mut node) in ring_query.iter_mut() {
-        if ring.index < queue.threats.len() {
+        if ring.index < queue.visible_count() {
             let threat = &queue.threats[ring.index];
             let elapsed = now.saturating_sub(threat.inserted_at);
             let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
@@ -289,7 +289,7 @@ pub fn update(
     }
 
     // Update overflow counter (+N for hidden threats)
-    let hidden_count = queue.threats.len().saturating_sub(queue.window_size);
+    let hidden_count = queue.hidden_count();
     let counter_exists = overflow_query.iter().next().is_some();
 
     if hidden_count > 0 && !counter_exists {

@@ -185,7 +185,7 @@ pub fn handle_counter(
             );
 
             // Add to target's queue
-            target_queue.threats.push_back(reflected_threat);
+            common_bevy::systems::combat::queue::insert_threat(&mut target_queue, reflected_threat, now);
 
             // Broadcast threat insertion
             writer.write(Do {

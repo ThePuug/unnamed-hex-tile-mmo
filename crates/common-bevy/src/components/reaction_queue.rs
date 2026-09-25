@@ -35,12 +35,22 @@ pub struct QueuedThreat {
     pub ability: Option<crate::message::AbilityType>,
 }
 
+impl QueuedThreat {
+    /// An auto-attack: steady pressure, queued behind every ability threat
+    /// and never shown in the visibility window.
+    pub fn is_pressure(&self) -> bool {
+        self.ability == Some(crate::message::AbilityType::AutoAttack)
+    }
+}
+
 /// Reaction queue component that holds incoming threats
-/// - threats: Unbounded queue of incoming damage (oldest at front, newest at back)
+/// - threats: Unbounded queue of incoming damage. Every ability threat stands
+///   ahead of every auto-attack, and each kind is oldest first; only
+///   `queue::insert_threat` keeps that order.
 /// - window_size: How many threats the player can see and interact with (derived from Focus)
 
-/// Queue is unbounded. Window determines visibility, not capacity.
-/// Threats behind the window still tick and resolve normally.
+/// Queue is unbounded. Window determines visibility, not capacity: it shows
+/// ability threats only. Threats behind the window still tick and resolve normally.
 #[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
 pub struct ReactionQueue {
     pub threats: VecDeque<QueuedThreat>,
@@ -59,14 +69,19 @@ impl ReactionQueue {
         self.threats.is_empty()
     }
 
-    /// Number of threats visible in the window (front of queue)
-    pub fn visible_count(&self) -> usize {
-        self.threats.len().min(self.window_size)
+    /// Number of ability threats, all at the front of the queue
+    pub fn decision_count(&self) -> usize {
+        self.threats.iter().take_while(|t| !t.is_pressure()).count()
     }
 
-    /// Number of threats behind the window (not yet visible)
+    /// Number of threats visible in the window: the front ability threats
+    pub fn visible_count(&self) -> usize {
+        self.decision_count().min(self.window_size)
+    }
+
+    /// Number of ability threats behind the window (not yet visible)
     pub fn hidden_count(&self) -> usize {
-        self.threats.len().saturating_sub(self.window_size)
+        self.decision_count().saturating_sub(self.window_size)
     }
 }
 
@@ -118,5 +133,29 @@ mod tests {
         queue.threats.push_back(make_threat(30.0, 4));
         assert_eq!(queue.visible_count(), 2);
         assert_eq!(queue.hidden_count(), 3);
+    }
+
+    #[test]
+    fn auto_attacks_are_neither_visible_nor_hidden() {
+        let mut queue = ReactionQueue::new(2);
+        let entity = Entity::from_raw_u32(0).unwrap();
+        let make_threat = |ability| QueuedThreat {
+            source: entity,
+            damage: 10.0,
+            damage_type: DamageType::Physical,
+            inserted_at: Duration::ZERO,
+            timer_duration: Duration::from_secs(1),
+            ability,
+        };
+        let auto_attack = Some(crate::message::AbilityType::AutoAttack);
+
+        queue.threats.push_back(make_threat(auto_attack));
+        queue.threats.push_back(make_threat(auto_attack));
+        assert_eq!(queue.visible_count(), 0);
+        assert_eq!(queue.hidden_count(), 0);
+
+        queue.threats.push_front(make_threat(Some(crate::message::AbilityType::Overpower)));
+        assert_eq!(queue.visible_count(), 1);
+        assert_eq!(queue.hidden_count(), 0);
     }
 }

@@ -636,9 +636,9 @@ pub fn update_queue(
 
             // Get actual queue window size from the component
             let queue_capacity = queue.window_size;
-            let filled_slots = queue.threats.len();
+            let filled_slots = queue.visible_count();
             // Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = queue.threats.len() >= queue.window_size;
+            let is_full = filled_slots >= queue.window_size;
 
             // Check if we need to rebuild capacity dots (capacity changed)
             let current_dots: Vec<_> = capacity_dot_query.iter().collect();
@@ -714,8 +714,9 @@ pub fn update_queue(
                     let now_ms = server.current_time(time.elapsed().as_millis());
                     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-                    // Filter out expired threats and limit to first 3
+                    // Filter out auto-attacks and expired threats and limit to first 3
                     let active_threats: Vec<_> = queue.threats.iter()
+                        .filter(|threat| !threat.is_pressure())
                         .filter(|threat| {
                             let elapsed = now.saturating_sub(threat.inserted_at);
                             elapsed < threat.timer_duration  // Only show non-expired threats
@@ -1076,9 +1077,9 @@ pub fn update_ally_queue(
 
             // Get actual queue window size from the component
             let queue_capacity = queue.window_size;
-            let filled_slots = queue.threats.len();
+            let filled_slots = queue.visible_count();
             // Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = queue.threats.len() >= queue.window_size;
+            let is_full = filled_slots >= queue.window_size;
 
             // Spawn capacity dots in the dots container
             if let Ok(dots_container_ent) = dots_container_query.single() {
@@ -1124,8 +1125,9 @@ pub fn update_ally_queue(
                     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
                     commands.entity(icons_ent).with_children(|parent| {
-                        // Filter out expired threats and limit to first 3
+                        // Filter out auto-attacks and expired threats and limit to first 3
                         let active_threats: Vec<_> = queue.threats.iter()
+                            .filter(|threat| !threat.is_pressure())
                             .filter(|threat| {
                                 let elapsed = now.saturating_sub(threat.inserted_at);
                                 elapsed < threat.timer_duration  // Only show non-expired threats
