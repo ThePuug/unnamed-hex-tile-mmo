@@ -170,6 +170,14 @@ fn start_loading(mut loading: ResMut<Loading>, time: Res<Time<Real>>) {
     *loading = Loading { since: time.elapsed(), ..default() };
 }
 
+/// Of the chunks the server streams around a player at `loc`, how many
+/// have arrived, and how many it streams.
+pub fn chunks_streamed(loc: &Loc, loaded: &LoadedChunks) -> (usize, usize) {
+    let wanted = calculate_visible_chunks(loc_to_chunk(**loc), FIXED_STREAM_RADIUS);
+    let have = wanted.iter().filter(|c| loaded.chunks.contains(c)).count();
+    (have, wanted.len())
+}
+
 /// Counts what has arrived of the terrain around the player and what is
 /// still being built, and plays once it has settled.
 fn track_loading(
@@ -184,9 +192,7 @@ fn track_loading(
     // The local player is the one entity with an input queue.
     let player = buffers.entities().find_map(|&ent| locs.get(ent).ok());
     if let Some(loc) = player {
-        let wanted = calculate_visible_chunks(loc_to_chunk(**loc), FIXED_STREAM_RADIUS);
-        let have = wanted.iter().filter(|c| loaded.chunks.contains(c)).count();
-        loading.chunks = (have, wanted.len());
+        loading.chunks = chunks_streamed(loc, &loaded);
     }
     loading.building = meshes.states.values().filter(|s| s.task.is_some()).count();
     loading.building_peak = loading.building_peak.max(loading.building);

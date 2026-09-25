@@ -107,6 +107,11 @@ impl LightingClock {
         self.held = Some(now - now % DAY_MS + ms_of_day % DAY_MS);
     }
 
+    /// Holds the clock at `ms` into the year, the date with the hour.
+    pub fn hold_at(&mut self, ms: u128) {
+        self.held = Some(ms % YEAR_MS);
+    }
+
     /// Reads game time again.
     pub fn sync(&mut self) {
         self.held = None;

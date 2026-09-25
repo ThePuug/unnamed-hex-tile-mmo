@@ -37,7 +37,7 @@ use crate::{
     systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
-use crate::plugins::flyover;
+use crate::plugins::{flyover, recorder};
 
 fn setup(
     mut config_store: ResMut<GizmoConfigStore>,
@@ -149,10 +149,11 @@ fn main() {
         combat::apply_gcd,
     ));
 
-    // Camera: conditional on flyover state in admin builds
+    // Camera: conditional on flyover state in admin builds, and on the
+    // recorder not running a camera path
     #[cfg(feature = "admin")]
     app.add_systems(Update, (
-        camera::update.run_if(flyover::not_in_flyover),
+        camera::update.run_if(flyover::not_in_flyover.and_then(not(recorder::camera_free))),
     ));
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
@@ -230,7 +231,7 @@ fn main() {
     app.init_resource::<crate::resources::SkipNeighborRegen>();
 
     #[cfg(feature = "admin")]
-    app.add_plugins(flyover::FlyoverPlugin);
+    app.add_plugins((flyover::FlyoverPlugin, recorder::RecorderPlugin));
 
 
     app.run();

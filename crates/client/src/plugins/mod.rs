@@ -2,6 +2,8 @@ pub mod console;
 pub mod diagnostics;
 #[cfg(feature = "admin")]
 pub mod flyover;
+#[cfg(feature = "admin")]
+pub mod recorder;
 pub mod ui;
 pub mod vignette;
 pub mod water;
