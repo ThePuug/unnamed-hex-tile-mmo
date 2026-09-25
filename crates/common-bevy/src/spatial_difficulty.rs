@@ -85,7 +85,7 @@ pub enum EnemyArchetype {
     #[default]
     Berserker,   // Highland - Aggressive melee burst (pure Might)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (pure Grace)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Presence)
     Defender,    // Coast - Reactive counter-attacks (pure Focus)
 }
 
@@ -194,7 +194,7 @@ static JUGGERNAUT_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: 1 },
@@ -469,11 +469,11 @@ mod tests {
 
     #[test]
     fn test_kiter_single_stat() {
-        // Kiter: pure Grace (MightGraceAxis, direction +1)
+        // Kiter: pure Presence (InstinctPresenceAxis, direction +1)
         let attrs = calculate_enemy_attributes(10, EnemyArchetype::Kiter);
-        assert_eq!(attrs.might_grace_axis(), 10);
+        assert_eq!(attrs.might_grace_axis(), 0);
         assert_eq!(attrs.vitality_focus_axis(), 0);
-        assert_eq!(attrs.instinct_presence_axis(), 0);
+        assert_eq!(attrs.instinct_presence_axis(), 10);
     }
 
     #[test]
