@@ -69,6 +69,22 @@ pub fn sample_offsets(r: u32) -> [(i32, i32); SAMPLES] {
     [(0, 0), (d, 0), (-d, 0), (0, d), (0, -d), (d, -d), (-d, d)]
 }
 
+/// How many parts a summary's ground divides into.
+pub const PARTS: usize = 9;
+
+/// The tiles a summary's parts are read at, as offsets from its center:
+/// the seven samples, then the two corners where it meets two neighbours
+/// that the tie between the three gives it. Levels triple, so a summary's
+/// ground is exactly nine of the next finer level's, and each offset is the
+/// center of one: the nine are distinct modulo the width, and every finer
+/// center is a part of exactly one summary. At r=1 they are every tile the
+/// summary holds.
+pub fn part_offsets(r: u32) -> [(i32, i32); PARTS] {
+    let d = scale(r) / 3;
+    let [a, b, c, e, f, g, h] = sample_offsets(r);
+    [a, b, c, e, f, g, h, (d, d), (2 * d, -d)]
+}
+
 /// The summary on the lattice of radius `r` that reads tile `(q, rr)` as
 /// one of its samples, at lattice coordinates, or None where none does.
 /// The offsets are distinct modulo the width, so at most one summary a
@@ -243,6 +259,19 @@ mod tests {
     #[test]
     fn select_center_z_symmetric_tie() {
         assert_eq!(select_center_z(&[0, 10]), 10);
+    }
+
+    /// The nine parts fall on every residue of the finer lattice modulo the
+    /// width, so each finer center is a part of exactly one summary.
+    #[test]
+    fn parts_cover_every_finer_center_once() {
+        for &r in &LOD_LEVELS[1..] {
+            let d = scale(r) / 3;
+            let residues: std::collections::HashSet<(i32, i32)> =
+                part_offsets(r).into_iter().map(|(q, rr)| ((q / d).rem_euclid(3), (rr / d).rem_euclid(3))).collect();
+            assert_eq!(residues.len(), PARTS, "r={r}");
+            assert_eq!(part_offsets(r)[..SAMPLES], sample_offsets(r), "the samples lead, r={r}");
+        }
     }
 
     /// INV-006: each LoD level's 7 sample points land exactly on the child

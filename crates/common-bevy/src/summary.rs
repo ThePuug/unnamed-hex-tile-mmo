@@ -11,7 +11,7 @@ use crate::geometry::flat_top_tile_center;
 
 /// The sampling rule is shared with every producer that has no Bevy, the
 /// world viewer among them.
-pub use common::summary::{sampled_by, select_center_water, select_center_z, summarize, SummaryCell, SummarySource, TileSample, LOD_LEVELS};
+pub use common::summary::{part_offsets, sampled_by, select_center_water, select_center_z, summarize, SummaryCell, SummarySource, TileSample, LOD_LEVELS, PARTS};
 
 // ── Constants ──
 
@@ -364,6 +364,28 @@ pub fn summary_lattice(radius: u32) -> SummaryLattice {
     SummaryLattice::new(radius)
 }
 
+/// The summary holding tile `(q, r)` at each level above the tiles, and
+/// which of its [`part_offsets`] parts holds it, as `(level, sq, sr, part)`,
+/// finest first. A tile belongs to its finest summary, and each summary to
+/// the one [`SummaryLattice::cell_id`] gives its centre a level up, so every
+/// tile has one chain and every part at a level holds the same number of
+/// tiles.
+pub fn ladder(q: i32, r: i32) -> [(u32, i32, i32, usize); LOD_LEVELS.len() - 1] {
+    let mut point = (q, r);
+    std::array::from_fn(|i| {
+        let level = LOD_LEVELS[i + 1];
+        let lattice = summary_lattice(level);
+        let (sq, sr) = lattice.cell_id(point.0, point.1);
+        let (cq, cr) = lattice.cell_center((sq, sr));
+        let part = part_offsets(level)
+            .iter()
+            .position(|&o| o == (point.0 - cq, point.1 - cr))
+            .expect("a finer centre is a part of the summary nearest it");
+        point = (cq, cr);
+        (level, sq, sr, part)
+    })
+}
+
 /// Create the mesh region lattice (groups summaries into mesh regions).
 
 /// Uses HexLattice::new(9) over summary-lattice coordinates.
@@ -397,6 +419,7 @@ pub fn canonical_vertex_id(sq: i32, sr: i32, vertex_index: usize) -> (i32, i32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::summary::scale;
 
     /// The cells' footprints tile the plane: every tile of a window is
     /// covered by exactly one cell, the one its nearest centre names.
@@ -419,6 +442,43 @@ mod tests {
                     if id.0.abs() <= 3 && id.1.abs() <= 3 {
                         assert_eq!(seen.get(&(q, r)), Some(&id), "tile ({q}, {r}) uncovered at r={radius}");
                     }
+                }
+            }
+        }
+    }
+
+    /// At the first level a summary's nine parts are exactly the tiles its
+    /// nearest-centre rule gives it, the two corners included.
+    #[test]
+    fn the_first_level_parts_are_the_tiles_it_holds() {
+        let level = LOD_LEVELS[1];
+        let held: std::collections::HashSet<(i32, i32)> = summary_lattice(level).tiles_covered((0, 0)).collect();
+        let parts: std::collections::HashSet<(i32, i32)> = part_offsets(level).into_iter().collect();
+        assert_eq!(held, parts);
+        for (q, r) in parts {
+            assert_eq!(ladder(q, r)[0], (level, 0, 0, part_offsets(level).iter().position(|&o| o == (q, r)).unwrap()));
+        }
+    }
+
+    /// Every part at a level holds the same number of tiles: a finer
+    /// summary's worth, `(scale / 3)²`, counted over the tiles whose chain
+    /// names the summary at the origin and one off it.
+    #[test]
+    fn every_part_at_a_level_holds_as_many_tiles() {
+        for step in 1..=2 {
+            let level = LOD_LEVELS[step + 1];
+            let reach = 2 * scale(level);
+            let mut held = std::collections::HashMap::<(i32, i32, usize), i32>::new();
+            for q in -reach..=reach {
+                for r in -reach..=reach {
+                    let (_, sq, sr, part) = ladder(q, r)[step];
+                    *held.entry((sq, sr, part)).or_default() += 1;
+                }
+            }
+            let each = (scale(level) / 3).pow(2);
+            for summary in [(0, 0), (1, -1)] {
+                for part in 0..PARTS {
+                    assert_eq!(held.get(&(summary.0, summary.1, part)), Some(&each), "level {level} summary {summary:?} part {part}");
                 }
             }
         }
