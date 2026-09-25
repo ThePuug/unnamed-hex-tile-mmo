@@ -205,15 +205,13 @@ pub fn validate_ability_prerequisites(
 // - abilities::deflect::handle_deflect
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
-/// System to automatically trigger auto-attacks when adjacent to hostiles
-/// Runs periodically to check if actors have adjacent hostiles and can auto-attack
-/// Auto-attack cooldown: tier-based (750ms-2000ms based on Presence commitment)
+/// System to automatically trigger auto-attacks when a hostile is in range.
+/// The cadence is fixed by `ActorAttributes::cadence_interval` alone: no
+/// random spread, and an ability's lockout does not pause it.
 pub fn process_passive_auto_attack(
     mut query: Query<
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
-         Option<&mut common_bevy::components::npc_recovery::NpcRecovery>,
          Option<&common_bevy::components::hex_assignment::AssignedHex>,
-         Option<&common_bevy::components::recovery::GlobalRecovery>,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>),
         Without<common_bevy::components::behaviour::PlayerControlled>
@@ -228,25 +226,11 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, npc_recovery_opt, assigned_hex_opt, global_recovery_opt, attrs, attack_range_opt) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, assigned_hex_opt, attrs, attack_range_opt) in query.iter_mut() {
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
                 continue; // Skip if on GCD
-            }
-        }
-
-        // Check if in ability recovery lockout (from using Lunge, Overpower, etc.)
-        if let Some(recovery) = global_recovery_opt {
-            if recovery.is_active() {
-                continue; // Skip if still locked out from ability usage
-            }
-        }
-
-        // Check NPC recovery timer (per-archetype cooldown between attacks)
-        if let Some(ref recovery) = npc_recovery_opt {
-            if recovery.is_recovering(now) {
-                continue; // Still in recovery phase
             }
         }
 
@@ -295,11 +279,6 @@ pub fn process_passive_auto_attack(
 
             // Update last attack time
             last_auto_attack.last_attack_time = now;
-
-            // Start NPC recovery timer after attacking
-            if let Some(mut recovery) = npc_recovery_opt {
-                recovery.start_recovery(now);
-            }
         }
     }
 }
