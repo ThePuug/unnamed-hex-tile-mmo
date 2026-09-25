@@ -193,7 +193,7 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 /// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
 /// * `get_entity_type` - Function to get EntityType for an entity
-/// * `is_player_controlled` - Function to check if entity is player-controlled
+/// * `side_of` - Function to get an entity's `Side`; a target must be hostile to the caster
 
 /// # Returns
 
@@ -205,14 +205,13 @@ pub fn select_target<F, G>(
     tier_lock: Option<RangeTier>,
     nntree: &NNTree,
     get_entity_type: F,
-    is_player_controlled: G,
+    side_of: G,
 ) -> Option<Entity>
 where
     F: Fn(Entity) -> Option<EntityType>,
-    G: Fn(Entity) -> bool,
+    G: Fn(Entity) -> Option<crate::components::behaviour::Side>,
 {
-    // Determine if caster is player-controlled (for team filtering)
-    let caster_is_player = is_player_controlled(caster_ent);
+    let caster_side = side_of(caster_ent)?;
 
     // Query entities within max range (20 hexes)
     // Using locate_within_distance with squared distance
@@ -239,10 +238,8 @@ where
             continue;
         }
 
-        // Filter out same-team entities
-        // Players can't target players, NPCs can't target NPCs
-        let target_is_player = is_player_controlled(ent);
-        if caster_is_player == target_is_player {
+        // Only hostile sides are targets
+        if !side_of(ent).is_some_and(|side| side.is_hostile_to(caster_side)) {
             continue;
         }
 
@@ -312,13 +309,13 @@ where
 
 /// Select the nearest ally based on heading and distance
 
-/// Similar to select_target but filters for allies (PlayerControlled) instead of hostiles.
+/// Similar to select_target but filters for allies (the caster's side) instead of hostiles.
 /// Used for ally targeting and ally target frame display.
 
 /// # Algorithm
 
 /// 1. Query entities within max range (20 hexes) using spatial index
-/// 2. Filter to allies (PlayerControlled) only
+/// 2. Filter to allies (the caster's side) only
 /// 3. Skip self (by entity)
 /// 4. Filter to entities within 120° facing cone
 /// 5. Apply tier filter if locked (None for automatic targeting)
@@ -332,7 +329,7 @@ where
 /// * `caster_heading` - Heading direction of the caster
 /// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
 /// * `nntree` - Spatial index for proximity queries
-/// * `is_player_controlled` - Function to check if entity is player-controlled
+/// * `side_of` - Function to get an entity's `Side`; an ally is on the caster's side
 
 /// # Returns
 
@@ -343,11 +340,13 @@ pub fn select_ally_target<F>(
     caster_heading: Heading,
     tier_lock: Option<RangeTier>,
     nntree: &NNTree,
-    is_player_controlled: F,
+    side_of: F,
 ) -> Option<Entity>
 where
-    F: Fn(Entity) -> bool,
+    F: Fn(Entity) -> Option<crate::components::behaviour::Side>,
 {
+    let caster_side = side_of(caster_ent)?;
+
     // Query entities within max range (20 hexes)
     let max_range_sq: i64 = 20 * 20;
     let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
@@ -364,8 +363,8 @@ where
             continue;
         }
 
-        // Filter to allies only (PlayerControlled)
-        if !is_player_controlled(ent) {
+        // Filter to allies only (the caster's side)
+        if side_of(ent) != Some(caster_side) {
             continue;
         }
 
@@ -448,7 +447,7 @@ where
 /// * `tier_lock` - Optional reference to TierLock component
 /// * `nntree` - Spatial index for proximity queries
 /// * `entity_types` - Query for EntityType components
-/// * `player_controlled` - Query for PlayerControlled components
+/// * `side_of` - Function to get an entity's `Side`
 pub fn update_targets_impl(
     ent: Entity,
     loc: Loc,
@@ -457,7 +456,7 @@ pub fn update_targets_impl(
     tier_lock: Option<&TierLock>,
     nntree: &NNTree,
     entity_types: &Query<&EntityType>,
-    player_controlled: &Query<&crate::components::behaviour::PlayerControlled>,
+    side_of: impl Fn(Entity) -> Option<crate::components::behaviour::Side>,
 ) {
     // Get tier constraint from TierLock if present
     let tier_constraint = tier_lock.and_then(|tl| tl.get());
@@ -470,7 +469,7 @@ pub fn update_targets_impl(
         tier_constraint,
         nntree,
         |e| entity_types.get(e).ok().copied(),
-        |e| player_controlled.contains(e),
+        side_of,
     );
 
     // Update Target fields directly
@@ -491,7 +490,7 @@ pub fn update_targets_impl(
 mod tests {
     use super::*;
     use qrz::Qrz;
-    use crate::components::behaviour::PlayerControlled;
+    use crate::components::behaviour::{PlayerControlled, Side};
 
     // ===== HEADING TO ANGLE CONVERSION TESTS =====
 
@@ -776,7 +775,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
@@ -795,7 +794,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
@@ -817,7 +816,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
@@ -841,7 +840,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
@@ -863,7 +862,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -887,7 +886,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(actor),
@@ -911,7 +910,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(close_target),
@@ -936,7 +935,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(mid_target),
@@ -959,7 +958,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, None,
@@ -984,7 +983,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| world.get::<PlayerControlled>(ent).is_some());
+        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         // Should select one of the targets within the cone (ne_target or se_target)
         assert!(
@@ -1015,7 +1014,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(npc),
@@ -1044,7 +1043,7 @@ mod tests {
 
         let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
             world.get::<EntityType>(ent).copied()
-        }, |ent| world.get::<PlayerControlled>(ent).is_some());
+        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
 
         assert_eq!(
             result, Some(player),
@@ -1091,7 +1090,7 @@ mod tests {
             Some(RangeTier::Close), // Tier 1
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(tier1_result, Some(close_target), "Tier 1 lock should select close target (2 hexes)");
 
@@ -1103,7 +1102,7 @@ mod tests {
             Some(RangeTier::Mid), // Tier 2
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(tier2_result, Some(mid_target), "Tier 2 lock should select mid target (5 hexes)");
 
@@ -1115,7 +1114,7 @@ mod tests {
             Some(RangeTier::Far), // Tier 3
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select far target (10 hexes)");
 
@@ -1127,7 +1126,7 @@ mod tests {
             None, // No tier lock
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(no_lock_result, Some(close_target), "Without tier lock should default to closest target");
     }
@@ -1167,7 +1166,7 @@ mod tests {
             None, // No tier lock
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(
             default_result, Some(wild_dog),
@@ -1182,7 +1181,7 @@ mod tests {
             Some(RangeTier::Mid), // Tier 2 (Mid: 4-8 hexes)
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(
             tier2_result, Some(forest_sprite),
@@ -1197,7 +1196,7 @@ mod tests {
             None, // Tier lock dropped after ability
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
         assert_eq!(
             after_ability_result, Some(wild_dog),
@@ -1234,7 +1233,7 @@ mod tests {
             heading,
             Some(RangeTier::Close),
             &nntree,
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
 
         assert_eq!(
@@ -1273,7 +1272,7 @@ mod tests {
             heading,
             Some(RangeTier::Mid),
             &nntree,
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
 
         assert_eq!(
@@ -1309,7 +1308,7 @@ mod tests {
             heading,
             Some(RangeTier::Far),
             &nntree,
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
 
         assert_eq!(
@@ -1348,7 +1347,7 @@ mod tests {
             heading,
             None,
             &nntree,
-            |ent| world.get::<PlayerControlled>(ent).is_some(),
+            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
 
         assert_eq!(

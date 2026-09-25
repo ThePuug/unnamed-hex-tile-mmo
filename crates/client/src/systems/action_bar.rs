@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, gcd::Gcd, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, gcd::Gcd, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -354,7 +354,7 @@ fn get_ability_state(
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
+                |ent| Some(Side::of_player(entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some())),
             );
 
             if let Some(target_ent) = target_opt {
@@ -382,7 +382,7 @@ fn get_ability_state(
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some(),
+                |ent| Some(Side::of_player(entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some())),
             );
 
             if let Some(target_ent) = target_opt {

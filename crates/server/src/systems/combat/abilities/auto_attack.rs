@@ -16,7 +16,7 @@ pub fn handle_auto_attack(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     loc_query: Query<&Loc>,
-    entity_type_query: Query<(&EntityType, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
+    entity_type_query: Query<(&EntityType, Option<&common_bevy::components::behaviour::Side>)>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     range_query: Query<&common_bevy::components::AttackRange>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
@@ -58,20 +58,15 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Validate target is a hostile actor (asymmetric targeting)
-        let caster_is_player = entity_type_query
-            .get(*ent)
-            .ok()
-            .and_then(|(_, pc)| pc)
-            .is_some();
-
+        // Validate target is an actor on a hostile side
+        let caster_side = entity_type_query.get(*ent).ok().and_then(|(_, side)| side.copied());
         let target_valid = entity_type_query
             .get(target_ent)
             .ok()
-            .map(|(et, pc)| {
-                matches!(et, EntityType::Actor(_)) && pc.is_some() != caster_is_player
-            })
-            .unwrap_or(false);
+            .is_some_and(|(et, side)| {
+                matches!(et, EntityType::Actor(_))
+                    && matches!((caster_side, side), (Some(a), Some(b)) if a.is_hostile_to(*b))
+            });
 
         if !target_valid {
             writer.write(Do {

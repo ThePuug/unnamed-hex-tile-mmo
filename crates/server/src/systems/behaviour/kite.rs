@@ -5,7 +5,7 @@ use qrz::Qrz;
 use common_bevy::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
-        behaviour::PlayerControlled, AirTime, ActorAttributes, target::Target,
+        behaviour::Side, AirTime, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         engagement::EngagementMember,
     },
@@ -116,15 +116,16 @@ pub fn kite(
         Option<&Returning>,
         &EngagementMember,
         Option<&Stagger>,
+        &Side,
     )>,
-    q_target: Query<(&Loc, &Health), With<PlayerControlled>>,
+    q_target: Query<(&Loc, &Health, &Side)>,
     q_spawner: Query<&Loc, Without<Kite>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
     mut writer: MessageWriter<common_bevy::message::Do>,
 ) {
-    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, stagger_opt) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, stagger_opt, own_side) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
@@ -187,7 +188,7 @@ pub fn kite(
         // 1. TARGETING: Find or keep target
         let target_entity = if let Some(lock) = lock_opt {
             // Validate existing lock
-            if let Ok((target_loc, target_health)) = q_target.get(lock.locked_target) {
+            if let Ok((target_loc, target_health, _)) = q_target.get(lock.locked_target) {
                 if target_health.current() > 0.0 {
                     if lock.is_target_valid(Some(target_loc), npc_loc) {
                         // Keep existing target
@@ -272,8 +273,8 @@ pub fn kite(
                 let valid_targets: Vec<Entity> = nearby
                     .filter_map(|result| {
                         let ent = result.ent;
-                        q_target.get(ent).ok().and_then(|(_, health)| {
-                            if health.current() > 0.0 && ent != npc_entity {
+                        q_target.get(ent).ok().and_then(|(_, health, side)| {
+                            if health.current() > 0.0 && side.is_hostile_to(*own_side) {
                                 Some(ent)
                             } else {
                                 None
@@ -299,7 +300,7 @@ pub fn kite(
         };
 
         // 2. GET TARGET LOCATION
-        let Ok((target_loc, _)) = q_target.get(target_entity) else {
+        let Ok((target_loc, _, _)) = q_target.get(target_entity) else {
             continue;
         };
 

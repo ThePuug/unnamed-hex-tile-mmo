@@ -10,7 +10,7 @@ use qrz::Qrz;
 use common_bevy::{
     components::{
         Loc,
-        behaviour::PlayerControlled,
+        behaviour::Side,
         engagement::{Engagement, EngagementMember},
         hex_assignment::{AssignedHex, HexAssignment},
         resources::Health,
@@ -177,7 +177,7 @@ pub fn assign_hexes(
     mut commands: Commands,
     mut engagement_query: Query<(&Engagement, &mut HexAssignment)>,
     npc_query: Query<(Entity, &Loc, Option<&Chase>, Option<&Target>), With<EngagementMember>>,
-    player_query: Query<(Entity, &Loc), With<PlayerControlled>>,
+    player_query: Query<(Entity, &Loc), With<Side>>,
     health_query: Query<&Health>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -190,7 +190,7 @@ pub fn assign_hexes(
         };
 
         let Ok((_, player_loc)) = player_query.get(target_player) else {
-            continue; // Target isn't a player or doesn't exist
+            continue; // Target isn't an actor or doesn't exist
         };
 
         let player_tile = **player_loc;

@@ -125,7 +125,7 @@ pub fn do_presence(
                     typ,
                     loc,
                     Behaviour::Controlled,
-                    PlayerControlled,
+                    (PlayerControlled, common_bevy::components::behaviour::Side::PLAYERS),
                     attrs,
                     health,
                     stamina,

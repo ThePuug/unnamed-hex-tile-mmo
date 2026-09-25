@@ -12,7 +12,7 @@ use rand::Rng;
 
 use common_bevy::{
     components::{
-        behaviour::{Behaviour, PlayerControlled},
+        behaviour::{Behaviour, PlayerControlled, Side},
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
         equipment::{Equipment, Item, Piece},
         entity_type::{
@@ -74,7 +74,7 @@ pub fn try_spawn_den(
         let ahead = den_ahead(**loc, *heading, *archetype);
         let den = Qrz { q: ahead.q, r: ahead.r, z: registry.elevation_at(ahead.q, ahead.r) + 1 };
         info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
-        spawn_engagement(den, *archetype, &mut commands, &time, &registry);
+        spawn_engagement(den, *archetype, Side::WILD, &mut commands, &time, &registry);
     }
 }
 
@@ -85,9 +85,10 @@ fn den_ahead(tile: Qrz, heading: Heading, archetype: EnemyArchetype) -> Qrz {
 }
 
 /// Spawn an engagement at a location with the given archetype.
-fn spawn_engagement(
+pub fn spawn_engagement(
     location: Qrz,
     archetype: EnemyArchetype,
+    side: Side,
     commands: &mut Commands,
     time: &Time,
     registry: &crate::resources::event_registry::EventRegistry,
@@ -146,7 +147,7 @@ fn spawn_engagement(
                 Gcd::new(),
                 LastAutoAttack::default(),
                 Physics,
-                Behaviour::default(),
+                (Behaviour::default(), side),
                 EngagementMember(engagement_entity),
                 common_bevy::components::loaded_by::LoadedBy::default(),
             ))

@@ -35,7 +35,7 @@ pub fn npc_ability_usage(
         (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery),
         Or<(With<Chase>, With<Kite>)>
     >,
-    target_query: Query<&Loc, With<common_bevy::components::behaviour::PlayerControlled>>,
+    target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
     time: Res<Time>,
     mut writer: MessageWriter<Try>,
 ) {

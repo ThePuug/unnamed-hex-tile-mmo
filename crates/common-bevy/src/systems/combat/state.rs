@@ -14,15 +14,15 @@ use crate::{
 /// - No hostile entities within 20 hexes
 pub fn update_combat_state(
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Behaviour>)>,
-    entity_query: Query<(Entity, &Loc, Option<&Behaviour>)>,
+    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>)>,
+    entity_query: Query<(Entity, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
     let current_time = time.elapsed();
     let combat_exit_timeout = Duration::from_secs(5);
 
-    for (ent, loc, mut combat_state, behaviour) in &mut query {
+    for (ent, loc, mut combat_state, side) in &mut query {
         if !combat_state.in_combat {
             continue; // Already out of combat
         }
@@ -37,7 +37,7 @@ pub fn update_combat_state(
         let has_nearby_hostile = has_hostile_within_radius(
             ent,
             loc,
-            behaviour,
+            side,
             &entity_query,
             &nntree,
             20,
@@ -61,13 +61,13 @@ pub fn update_combat_state(
     }
 }
 
-/// Check if there are any hostile entities within the specified radius
-/// MVP logic: All NPCs (non-Controlled Behaviour) are hostile to players and vice versa
+/// Check if there are any hostile entities within the specified radius:
+/// actors on a side other than this one's
 fn has_hostile_within_radius(
     self_ent: Entity,
     self_loc: &Loc,
-    self_behaviour: Option<&Behaviour>,
-    entity_query: &Query<(Entity, &Loc, Option<&Behaviour>)>,
+    self_side: Option<&Side>,
+    entity_query: &Query<(Entity, &Loc, Option<&Side>)>,
     nntree: &NNTree,
     radius: i16,
 ) -> bool {
@@ -80,24 +80,11 @@ fn has_hostile_within_radius(
         }
 
         // Check if this entity exists in our query
-        let Ok((_, _, other_behaviour)) = entity_query.get(other.ent) else {
+        let Ok((_, _, other_side)) = entity_query.get(other.ent) else {
             continue; // Entity doesn't have required components
         };
 
-        // MVP hostile detection logic:
-        // - Players (Controlled) are hostile to NPCs (non-Controlled)
-        // - NPCs are hostile to Players
-        // - Players are NOT hostile to other players (no PvP in MVP)
-        // - NPCs are NOT hostile to other NPCs
-        let is_hostile = match (self_behaviour, other_behaviour) {
-            // Player checking for hostiles
-            (Some(Behaviour::Controlled), Some(Behaviour::Controlled)) => false, // Player vs Player = not hostile (no PvP)
-            (Some(Behaviour::Controlled), _) => true, // Player vs NPC = hostile
-
-            // NPC checking for hostiles
-            (_, Some(Behaviour::Controlled)) => true, // NPC vs Player = hostile
-            _ => false, // NPC vs NPC = not hostile
-        };
+        let is_hostile = matches!((self_side, other_side), (Some(a), Some(b)) if a.is_hostile_to(*b));
 
         if is_hostile {
             return true;

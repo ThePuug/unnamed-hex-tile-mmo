@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{heading::Heading, Loc, target::Target, tier_lock::TierLock, entity_type::EntityType},
+    components::{behaviour::Side, heading::Heading, Loc, target::Target, tier_lock::TierLock, entity_type::EntityType},
     plugins::nntree::NNTree,
     systems::targeting::update_targets_impl,
 };
@@ -35,7 +35,7 @@ pub fn update_targets(
         Without<NpcTargetLock>
     >,
     entity_types: Query<&EntityType>,
-    player_controlled: Query<&common_bevy::components::behaviour::PlayerControlled>,
+    sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target, tier_lock) in &mut query {
@@ -47,7 +47,7 @@ pub fn update_targets(
             tier_lock,
             &nntree,
             &entity_types,
-            &player_controlled,
+            |e| sides.get(e).ok().copied(),
         );
     }
 }

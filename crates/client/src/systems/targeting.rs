@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         ally_target::AllyTarget,
+        behaviour::Side,
         heading::Heading,
         Loc,
         target::Target,
@@ -44,7 +45,7 @@ pub fn update_targets(
             tier_lock,
             &nntree,
             &entity_types,
-            &player_controlled,
+            |e| Some(Side::of_player(player_controlled.contains(e))),
         );
     }
 }
@@ -82,7 +83,7 @@ pub fn update_ally_targets(
             *heading,
             tier_constraint,
             &nntree,
-            |e| player_controlled.contains(e),
+            |e| Some(Side::of_player(player_controlled.contains(e))),
         );
 
         // Update AllyTarget fields directly
